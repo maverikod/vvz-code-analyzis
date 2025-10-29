@@ -1,0 +1,491 @@
+classes:
+  code_analysis/analyzer.py:CodeAnalyzer:
+    bases: []
+    docstring: Core code analyzer functionality.
+    file: code_analysis/analyzer.py
+    line: 18
+    methods:
+    - __init__
+    - analyze_file
+    - _has_file_docstring
+    - _analyze_ast
+    - _analyze_class
+    - _analyze_function
+    - _analyze_method
+    - _has_pass_statement
+    - _has_not_implemented_error
+    - _is_abstract_method
+    - _analyze_import
+    - _analyze_import_from
+    name: CodeAnalyzer
+  code_analysis/code_mapper.py:CodeMapper:
+    bases: []
+    docstring: Main code mapper class.
+    file: code_analysis/code_mapper.py
+    line: 27
+    methods:
+    - __init__
+    - analyze_directory
+    - generate_reports
+    name: CodeMapper
+  code_analysis/issue_detector.py:IssueDetector:
+    bases: []
+    docstring: Issue detection functionality.
+    file: code_analysis/issue_detector.py
+    line: 14
+    methods:
+    - __init__
+    - check_method_issues
+    - _check_any_type_usage
+    - _check_generic_exception_usage
+    - _check_statement_for_generic_exception
+    - check_imports_in_middle
+    name: IssueDetector
+  code_analysis/reporter.py:CodeReporter:
+    bases: []
+    docstring: Code reporting functionality.
+    file: code_analysis/reporter.py
+    line: 15
+    methods:
+    - __init__
+    - generate_code_map
+    - generate_issues_report
+    - generate_method_index
+    - print_summary
+    name: CodeReporter
+dependencies: {}
+files: {}
+functions:
+  code_analysis/analyzer.py:__init__:
+    args:
+    - self
+    - root_dir
+    - output_dir
+    - max_lines
+    docstring: Initialize code analyzer.
+    file: code_analysis/analyzer.py
+    line: 21
+    name: __init__
+  code_analysis/analyzer.py:_analyze_ast:
+    args:
+    - self
+    - tree
+    - file_path
+    docstring: Analyze AST nodes.
+    file: code_analysis/analyzer.py
+    line: 92
+    name: _analyze_ast
+  code_analysis/analyzer.py:_analyze_class:
+    args:
+    - self
+    - node
+    - file_path
+    docstring: Analyze class definition.
+    file: code_analysis/analyzer.py
+    line: 104
+    name: _analyze_class
+  code_analysis/analyzer.py:_analyze_function:
+    args:
+    - self
+    - node
+    - file_path
+    docstring: Analyze function definition.
+    file: code_analysis/analyzer.py
+    line: 135
+    name: _analyze_function
+  code_analysis/analyzer.py:_analyze_import:
+    args:
+    - self
+    - node
+    - file_path
+    docstring: Analyze import statement.
+    file: code_analysis/analyzer.py
+    line: 210
+    name: _analyze_import
+  code_analysis/analyzer.py:_analyze_import_from:
+    args:
+    - self
+    - node
+    - file_path
+    docstring: Analyze import from statement.
+    file: code_analysis/analyzer.py
+    line: 220
+    name: _analyze_import_from
+  code_analysis/analyzer.py:_analyze_method:
+    args:
+    - self
+    - node
+    - file_path
+    - class_name
+    docstring: Analyze method definition.
+    file: code_analysis/analyzer.py
+    line: 156
+    name: _analyze_method
+  code_analysis/analyzer.py:_has_file_docstring:
+    args:
+    - self
+    - tree
+    docstring: Check if file has a docstring.
+    file: code_analysis/analyzer.py
+    line: 80
+    name: _has_file_docstring
+  code_analysis/analyzer.py:_has_not_implemented_error:
+    args:
+    - self
+    - node
+    docstring: Check if function raises NotImplementedError.
+    file: code_analysis/analyzer.py
+    line: 194
+    name: _has_not_implemented_error
+  code_analysis/analyzer.py:_has_pass_statement:
+    args:
+    - self
+    - node
+    docstring: Check if function has only pass statement.
+    file: code_analysis/analyzer.py
+    line: 188
+    name: _has_pass_statement
+  code_analysis/analyzer.py:_is_abstract_method:
+    args:
+    - self
+    - node
+    docstring: Check if method is abstract.
+    file: code_analysis/analyzer.py
+    line: 203
+    name: _is_abstract_method
+  code_analysis/analyzer.py:analyze_file:
+    args:
+    - self
+    - file_path
+    docstring: Analyze a single Python file.
+    file: code_analysis/analyzer.py
+    line: 52
+    name: analyze_file
+  code_analysis/cli.py:main:
+    args:
+    - root_dir
+    - output_dir
+    - max_lines
+    - verbose
+    docstring: "Analyze Python codebase and generate comprehensive reports.\n\nThis\
+      \ tool analyzes Python code and generates:\n- Code map with classes, functions,\
+      \ and dependencies\n- Issue reports with code quality problems\n- Method index\
+      \ for easy navigation\n\nExample:\n    code-analysis --root-dir ./src --output-dir\
+      \ ./reports --max-lines 500"
+    file: code_analysis/cli.py
+    line: 51
+    name: main
+  code_analysis/code_mapper.py:__init__:
+    args:
+    - self
+    - root_dir
+    - output_dir
+    - max_lines
+    docstring: Initialize code mapper.
+    file: code_analysis/code_mapper.py
+    line: 30
+    name: __init__
+  code_analysis/code_mapper.py:analyze_directory:
+    args:
+    - self
+    - directory
+    docstring: Analyze entire directory.
+    file: code_analysis/code_mapper.py
+    line: 38
+    name: analyze_directory
+  code_analysis/code_mapper.py:generate_reports:
+    args:
+    - self
+    docstring: Generate all reports.
+    file: code_analysis/code_mapper.py
+    line: 57
+    name: generate_reports
+  code_analysis/code_mapper.py:main:
+    args: []
+    docstring: Main function.
+    file: code_analysis/code_mapper.py
+    line: 65
+    name: main
+  code_analysis/issue_detector.py:__init__:
+    args:
+    - self
+    - issues
+    docstring: Initialize issue detector.
+    file: code_analysis/issue_detector.py
+    line: 17
+    name: __init__
+  code_analysis/issue_detector.py:_check_any_type_usage:
+    args:
+    - self
+    - node
+    - file_path
+    - class_name
+    docstring: Check for Any type usage in function parameters and return type.
+    file: code_analysis/issue_detector.py
+    line: 30
+    name: _check_any_type_usage
+  code_analysis/issue_detector.py:_check_generic_exception_usage:
+    args:
+    - self
+    - node
+    - file_path
+    - class_name
+    docstring: Check for generic Exception usage in function body.
+    file: code_analysis/issue_detector.py
+    line: 79
+    name: _check_generic_exception_usage
+  code_analysis/issue_detector.py:_check_statement_for_generic_exception:
+    args:
+    - self
+    - stmt
+    - file_path
+    - class_name
+    - method_name
+    docstring: Recursively check statement for generic Exception usage.
+    file: code_analysis/issue_detector.py
+    line: 86
+    name: _check_statement_for_generic_exception
+  code_analysis/issue_detector.py:check_imports_in_middle:
+    args:
+    - self
+    - file_path
+    - line_number
+    docstring: Check for imports in the middle of files.
+    file: code_analysis/issue_detector.py
+    line: 157
+    name: check_imports_in_middle
+  code_analysis/issue_detector.py:check_method_issues:
+    args:
+    - self
+    - node
+    - file_path
+    - class_name
+    docstring: Check for method-specific issues.
+    file: code_analysis/issue_detector.py
+    line: 21
+    name: check_method_issues
+  code_analysis/reporter.py:__init__:
+    args:
+    - self
+    - output_dir
+    docstring: Initialize code reporter.
+    file: code_analysis/reporter.py
+    line: 18
+    name: __init__
+  code_analysis/reporter.py:generate_code_map:
+    args:
+    - self
+    - code_map
+    docstring: Generate code map YAML file.
+    file: code_analysis/reporter.py
+    line: 22
+    name: generate_code_map
+  code_analysis/reporter.py:generate_issues_report:
+    args:
+    - self
+    - issues
+    docstring: Generate issues report YAML file.
+    file: code_analysis/reporter.py
+    line: 29
+    name: generate_issues_report
+  code_analysis/reporter.py:generate_method_index:
+    args:
+    - self
+    - code_map
+    docstring: Generate method index YAML file.
+    file: code_analysis/reporter.py
+    line: 38
+    name: generate_method_index
+  code_analysis/reporter.py:print_summary:
+    args:
+    - self
+    - issues
+    - max_lines
+    docstring: Print analysis summary.
+    file: code_analysis/reporter.py
+    line: 56
+    name: print_summary
+imports:
+  code_analysis/__init__.py:CodeAnalyzer:
+    file: code_analysis/__init__.py
+    line: 15
+    module: analyzer
+    name: CodeAnalyzer
+    type: import_from
+  code_analysis/__init__.py:CodeMapper:
+    file: code_analysis/__init__.py
+    line: 16
+    module: code_mapper
+    name: CodeMapper
+    type: import_from
+  code_analysis/__init__.py:CodeReporter:
+    file: code_analysis/__init__.py
+    line: 18
+    module: reporter
+    name: CodeReporter
+    type: import_from
+  code_analysis/__init__.py:IssueDetector:
+    file: code_analysis/__init__.py
+    line: 17
+    module: issue_detector
+    name: IssueDetector
+    type: import_from
+  code_analysis/analyzer.py:Any:
+    file: code_analysis/analyzer.py
+    line: 13
+    module: typing
+    name: Any
+    type: import_from
+  code_analysis/analyzer.py:Dict:
+    file: code_analysis/analyzer.py
+    line: 13
+    module: typing
+    name: Dict
+    type: import_from
+  code_analysis/analyzer.py:List:
+    file: code_analysis/analyzer.py
+    line: 13
+    module: typing
+    name: List
+    type: import_from
+  code_analysis/analyzer.py:Path:
+    file: code_analysis/analyzer.py
+    line: 11
+    module: pathlib
+    name: Path
+    type: import_from
+  code_analysis/analyzer.py:ast:
+    file: code_analysis/analyzer.py
+    line: 10
+    name: ast
+    type: import
+  code_analysis/analyzer.py:logging:
+    file: code_analysis/analyzer.py
+    line: 12
+    name: logging
+    type: import
+  code_analysis/cli.py:CodeMapper:
+    file: code_analysis/cli.py
+    line: 13
+    module: code_mapper
+    name: CodeMapper
+    type: import_from
+  code_analysis/cli.py:Path:
+    file: code_analysis/cli.py
+    line: 11
+    module: pathlib
+    name: Path
+    type: import_from
+  code_analysis/cli.py:click:
+    file: code_analysis/cli.py
+    line: 9
+    name: click
+    type: import
+  code_analysis/cli.py:logging:
+    file: code_analysis/cli.py
+    line: 10
+    name: logging
+    type: import
+  code_analysis/code_mapper.py:CodeAnalyzer:
+    file: code_analysis/code_mapper.py
+    line: 18
+    module: analyzer
+    name: CodeAnalyzer
+    type: import_from
+  code_analysis/code_mapper.py:CodeReporter:
+    file: code_analysis/code_mapper.py
+    line: 20
+    module: reporter
+    name: CodeReporter
+    type: import_from
+  code_analysis/code_mapper.py:IssueDetector:
+    file: code_analysis/code_mapper.py
+    line: 19
+    module: issue_detector
+    name: IssueDetector
+    type: import_from
+  code_analysis/code_mapper.py:Path:
+    file: code_analysis/code_mapper.py
+    line: 14
+    module: pathlib
+    name: Path
+    type: import_from
+  code_analysis/code_mapper.py:argparse:
+    file: code_analysis/code_mapper.py
+    line: 13
+    name: argparse
+    type: import
+  code_analysis/code_mapper.py:logging:
+    file: code_analysis/code_mapper.py
+    line: 15
+    name: logging
+    type: import
+  code_analysis/code_mapper.py:os:
+    file: code_analysis/code_mapper.py
+    line: 12
+    name: os
+    type: import
+  code_analysis/issue_detector.py:Any:
+    file: code_analysis/issue_detector.py
+    line: 11
+    module: typing
+    name: Any
+    type: import_from
+  code_analysis/issue_detector.py:Dict:
+    file: code_analysis/issue_detector.py
+    line: 11
+    module: typing
+    name: Dict
+    type: import_from
+  code_analysis/issue_detector.py:List:
+    file: code_analysis/issue_detector.py
+    line: 11
+    module: typing
+    name: List
+    type: import_from
+  code_analysis/issue_detector.py:ast:
+    file: code_analysis/issue_detector.py
+    line: 10
+    name: ast
+    type: import
+  code_analysis/reporter.py:Any:
+    file: code_analysis/reporter.py
+    line: 11
+    module: typing
+    name: Any
+    type: import_from
+  code_analysis/reporter.py:Dict:
+    file: code_analysis/reporter.py
+    line: 11
+    module: typing
+    name: Dict
+    type: import_from
+  code_analysis/reporter.py:List:
+    file: code_analysis/reporter.py
+    line: 11
+    module: typing
+    name: List
+    type: import_from
+  code_analysis/reporter.py:Path:
+    file: code_analysis/reporter.py
+    line: 12
+    module: pathlib
+    name: Path
+    type: import_from
+  code_analysis/reporter.py:yaml:
+    file: code_analysis/reporter.py
+    line: 10
+    name: yaml
+    type: import
+  setup.py:find_packages:
+    file: setup.py
+    line: 8
+    module: setuptools
+    name: find_packages
+    type: import_from
+  setup.py:setup:
+    file: setup.py
+    line: 8
+    module: setuptools
+    name: setup
+    type: import_from

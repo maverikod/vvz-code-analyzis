@@ -19,7 +19,7 @@ with open("requirements.txt", "r", encoding="utf-8") as fh:
 
 setup(
     name="code-analysis-tool",
-    version="1.0.1",
+    version="1.0.2",
     author="Vasiliy Zdanovskiy",
     author_email="vasilyvz@gmail.com",
     description="A comprehensive Python code analysis tool that generates code maps and detects issues",
@@ -45,7 +45,7 @@ setup(
     install_requires=requirements,
     entry_points={
         "console_scripts": [
-            "code-analysis=code_analysis.cli:main",
+            "code_mapper=code_analysis.cli:main",
         ],
     },
     include_package_data=True,

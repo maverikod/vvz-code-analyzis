@@ -129,5 +129,4 @@ dmypy.json
 .pyre/
 
 # Output directories
-code_analysis/
 reports/

@@ -31,7 +31,7 @@ pip install -e .
 ### Basic usage
 
 ```bash
-code-analysis
+code_mapper
 ```
 
 This will analyze the current directory and generate reports in the `code_analysis` folder.
@@ -39,7 +39,7 @@ This will analyze the current directory and generate reports in the `code_analys
 ### Advanced usage
 
 ```bash
-code-analysis --root-dir ./src --output-dir ./reports --max-lines 500 --verbose
+code_mapper --root-dir ./src --output-dir ./reports --max-lines 500 --verbose
 ```
 
 ### Command line options
@@ -118,6 +118,15 @@ This project is licensed under the MIT License - see the LICENSE file for detail
 - GitHub: [@vasilyvz](https://github.com/vasilyvz)
 
 ## Changelog
+
+### 1.0.2
+- Changed console command name from `code-analysis` to `code_mapper`
+- Fixed .gitignore to properly track source code directory
+- All code quality checks passed
+
+### 1.0.1
+- Package configuration improvements
+- Enhanced documentation
 
 ### 1.0.0
 - Initial release

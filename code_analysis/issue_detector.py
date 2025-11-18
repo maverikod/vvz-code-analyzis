@@ -8,15 +8,20 @@ email: vasilyvz@gmail.com
 """
 
 import ast
+import importlib.util
+import sys
+from pathlib import Path
 from typing import Dict, List, Any, Optional
 
 
 class IssueDetector:
     """Issue detection functionality."""
 
-    def __init__(self, issues: Dict[str, List[Any]]):
+    def __init__(self, issues: Dict[str, List[Any]], root_dir: Optional[Path] = None):
         """Initialize issue detector."""
         self.issues = issues
+        self.root_dir = root_dir or Path(".")
+        self._stdlib_modules = set(sys.stdlib_module_names) if hasattr(sys, 'stdlib_module_names') else set()
 
     def check_method_issues(
         self, node: ast.FunctionDef, file_path: str, class_name: Optional[str] = None
@@ -160,3 +165,129 @@ class IssueDetector:
             "file": file_path,
             "line": line_number,
         })
+
+    def check_invalid_import(self, node: ast.Import, file_path: Path) -> None:
+        """Check for invalid import statements."""
+        for alias in node.names:
+            module_name = alias.name.split('.')[0]  # Get top-level module name
+            if not self._is_valid_module(module_name, file_path):
+                self.issues["invalid_imports"].append({
+                    "file": str(file_path),
+                    "line": node.lineno,
+                    "type": "import",
+                    "module": alias.name,
+                    "description": f"Module '{alias.name}' cannot be imported",
+                })
+
+    def check_invalid_import_from(self, node: ast.ImportFrom, file_path: Path) -> None:
+        """Check for invalid import from statements."""
+        if node.module is None:
+            # Relative import without module name (e.g., "from . import something")
+            if not self._is_valid_relative_import(node.level, None, file_path, node.names):
+                for alias in node.names:
+                    self.issues["invalid_imports"].append({
+                        "file": str(file_path),
+                        "line": node.lineno,
+                        "type": "import_from_relative",
+                        "module": f"{'.' * node.level}{alias.name}",
+                        "description": f"Relative import '{'.' * node.level}{alias.name}' cannot be resolved",
+                    })
+        elif node.level > 0:
+            # Relative import with module name (e.g., "from .module import something")
+            if not self._is_valid_relative_import(node.level, node.module, file_path):
+                for alias in node.names:
+                    self.issues["invalid_imports"].append({
+                        "file": str(file_path),
+                        "line": node.lineno,
+                        "type": "import_from_relative",
+                        "module": f"{'.' * node.level}{node.module}",
+                        "imported": alias.name,
+                        "description": f"Relative import '{'.' * node.level}{node.module}' cannot be resolved",
+                    })
+        else:
+            # Absolute import
+            if not self._is_valid_module(node.module, file_path):
+                for alias in node.names:
+                    self.issues["invalid_imports"].append({
+                        "file": str(file_path),
+                        "line": node.lineno,
+                        "type": "import_from",
+                        "module": node.module,
+                        "imported": alias.name,
+                        "description": f"Module '{node.module}' cannot be imported",
+                    })
+
+    def _is_valid_module(self, module_name: str, file_path: Path) -> bool:
+        """Check if a module can be imported."""
+        # Check if it's a standard library module
+        top_level = module_name.split('.')[0]
+        if top_level in self._stdlib_modules:
+            return True
+        
+        # Try to find the module using importlib
+        try:
+            spec = importlib.util.find_spec(module_name)
+            if spec is not None and spec.origin is not None:
+                return True
+        except (ImportError, ValueError, ModuleNotFoundError):
+            pass
+        
+        # Check if it's a local module in the project
+        if self._is_local_module(module_name, file_path):
+            return True
+        
+        return False
+
+    def _is_local_module(self, module_name: str, file_path: Path) -> bool:
+        """Check if module is a local module in the project."""
+        parts = module_name.split('.')
+        module_path = Path(*parts)
+
+        search_roots = [self.root_dir, file_path.parent]
+        for parent in file_path.parent.parents:
+            if parent == self.root_dir.parent:
+                break
+            search_roots.append(parent)
+
+        return any(self._module_path_exists(root / module_path) for root in search_roots)
+
+    def _resolve_relative_base(self, level: int, file_path: Path) -> Optional[Path]:
+        """Resolve the base directory for a relative import."""
+        if level <= 0:
+            return file_path.parent
+
+        target_dir = file_path.parent
+        for _ in range(level - 1):
+            target_dir = target_dir.parent
+            if target_dir == self.root_dir.parent or not target_dir.exists():
+                return None
+
+        if not target_dir.exists() or not str(target_dir).startswith(str(self.root_dir)):
+            return None
+
+        return target_dir
+
+    def _module_path_exists(self, base_path: Path) -> bool:
+        """Check if a module path exists either as file or package."""
+        return base_path.with_suffix('.py').exists() or (base_path / '__init__.py').exists()
+
+    def _is_valid_relative_import(
+        self, level: int, module_name: Optional[str], file_path: Path,
+        imported_names: Optional[List[ast.alias]] = None
+    ) -> bool:
+        """Check if a relative import can be resolved."""
+        base_dir = self._resolve_relative_base(level, file_path)
+        if base_dir is None:
+            return False
+
+        if module_name:
+            module_path = base_dir / module_name.replace('.', '/')
+            return self._module_path_exists(module_path)
+
+        if imported_names:
+            for alias in imported_names:
+                alias_path = base_dir / alias.name.replace('.', '/')
+                if not self._module_path_exists(alias_path):
+                    return False
+
+        return True

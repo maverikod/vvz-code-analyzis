@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "code-analysis-tool"
-version = "1.0.2"
+version = "1.0.3"
 description = "A comprehensive Python code analysis tool that generates code maps and detects issues"
 readme = "README.md"
 requires-python = ">=3.8"
@@ -37,6 +37,7 @@ dev = [
     "flake8>=4.0",
     "mypy>=0.950",
     "pytest>=7.0",
+    "pytest-cov>=4.0",
 ]
 
 [project.scripts]

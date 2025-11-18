@@ -19,12 +19,14 @@ class CodeAnalyzer:
     """Core code analyzer functionality."""
 
     def __init__(
-        self, root_dir: str = ".", output_dir: str = "code_analysis", max_lines: int = 400
+        self, root_dir: str = ".", output_dir: str = "code_analysis", max_lines: int = 400,
+        issue_detector = None
     ):
         """Initialize code analyzer."""
         self.root_dir = Path(root_dir)
         self.output_dir = Path(output_dir)
         self.max_lines = max_lines
+        self.issue_detector = issue_detector
 
         # Create output directory if it doesn't exist
         self.output_dir.mkdir(exist_ok=True)
@@ -47,6 +49,7 @@ class CodeAnalyzer:
             "any_type_usage": [],
             "generic_exception_usage": [],
             "imports_in_middle": [],
+            "invalid_imports": [],
         }
 
     def analyze_file(self, file_path: Path) -> None:
@@ -216,6 +219,10 @@ class CodeAnalyzer:
                 "line": node.lineno,
                 "type": "import",
             }
+        
+        # Check for invalid imports
+        if self.issue_detector:
+            self.issue_detector.check_invalid_import(node, file_path)
 
     def _analyze_import_from(self, node: ast.ImportFrom, file_path: Path) -> None:
         """Analyze import from statement."""
@@ -228,3 +235,7 @@ class CodeAnalyzer:
                 "type": "import_from",
                 "module": module,
             }
+        
+        # Check for invalid imports
+        if self.issue_detector:
+            self.issue_detector.check_invalid_import_from(node, file_path)

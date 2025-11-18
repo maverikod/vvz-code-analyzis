@@ -83,6 +83,7 @@ class CodeReporter:
             "files_without_docstrings": len(issues.get("files_without_docstrings", [])),
             "generic_exception_usage": len(issues.get("generic_exception_usage", [])),
             "imports_in_middle": len(issues.get("imports_in_middle", [])),
+            "invalid_imports": len(issues.get("invalid_imports", [])),
             "max_lines_limit": max_lines,
             "methods_with_pass": len(issues.get("methods_with_pass", [])),
             "methods_without_docstrings": len(issues.get("methods_without_docstrings", [])),

@@ -32,7 +32,8 @@ class CodeMapper:
     ):
         """Initialize code mapper."""
         self.analyzer = CodeAnalyzer(root_dir, output_dir, max_lines)
-        self.issue_detector = IssueDetector(self.analyzer.issues)
+        self.issue_detector = IssueDetector(self.analyzer.issues, self.analyzer.root_dir)
+        self.analyzer.issue_detector = self.issue_detector
         self.reporter = CodeReporter(self.analyzer.output_dir)
 
     def analyze_directory(self, directory: str = ".") -> None:

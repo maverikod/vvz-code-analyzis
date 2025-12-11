@@ -21,55 +21,7 @@ logger = logging.getLogger(__name__)
 
 class ClassSplitter:
     """Class for splitting classes into smaller components."""
-    def __init__(self):
-        self.classsplittercore = ClassSplitterCore()
-    def __init__(self, file_path):
-        return self.classsplittercore.__init__(file_path)
-    def create_backup(self):
-        return self.classsplittercore.create_backup()
-    def restore_backup(self):
-        return self.classsplittercore.restore_backup()
-    def load_file(self):
-        return self.classsplittercore.load_file()
-    def find_class(self, class_name):
-        return self.classsplittercore.find_class(class_name)
-    def extract_class_members(self, class_node):
-        return self.classsplittercore.extract_class_members(class_node)
-    def extract_init_properties(self, class_node):
-        return self.classsplittercore.extract_init_properties(class_node)
-    def validate_split_config(self, src_class, config):
-        return self.classsplittercore.validate_split_config(src_class, config)
-    def split_class(self, config):
-        return self.classsplittercore.split_class(config)
-    def validate_python_syntax(self):
-        return self.classsplittercore.validate_python_syntax()
-    def validate_imports(self):
-        return self.classsplittercore.validate_imports()
-    def validate_completeness(self, src_class_name, config, original_props, original_methods):
-        return self.classsplittercore.validate_completeness(src_class_name, config, original_props, original_methods)
-    def _perform_split(self, src_class, config):
-        return self.classsplitterimplementation._perform_split(src_class, config)
-    def _find_class_end(self, class_node, lines):
-        return self.classsplitterimplementation._find_class_end(class_node, lines)
-    def _get_indent(self, line):
-        return self.classsplitterimplementation._get_indent(line)
-    def _build_new_class(self, dst_class_name, src_class, dst_config, base_indent):
-        return self.classsplitterimplementation._build_new_class(dst_class_name, src_class, dst_config, base_indent)
-    def _find_method_in_class(self, class_node, method_name):
-        return self.classsplitterimplementation._find_method_in_class(class_node, method_name)
-    def _extract_method_code(self, method_node, indent):
-        return self.classsplitterimplementation._extract_method_code(method_node, indent)
-    def _build_modified_source_class(self, src_class, method_mapping, prop_mapping, dst_classes, base_indent):
-        return self.classsplitterimplementation._build_modified_source_class(src_class, method_mapping, prop_mapping, dst_classes, base_indent)
-    def _create_method_wrapper(self, method_name, dst_class_name, indent):
-        return self.classsplitterimplementation._create_method_wrapper(method_name, dst_class_name, indent)
-class ClassSplitterCore:
-    """Class for splitting classes into smaller components."""
-    def __init__(self):
-        self.file_path = None
-        self.backup_path = None
-        self.original_content = None
-        self.tree = None
+
     def __init__(self, file_path: Path) -> None:
         """Initialize class splitter."""
         self.file_path = Path(file_path)
@@ -78,6 +30,7 @@ class ClassSplitterCore:
         self.backup_path: Optional[Path] = None
         self.original_content: str = ""
         self.tree: Optional[ast.Module] = None
+
     def create_backup(self) -> Path:
         """Create backup copy of the file."""
         backup_dir = self.file_path.parent / ".code_mapper_backups"
@@ -90,11 +43,13 @@ class ClassSplitterCore:
         self.backup_path = backup_path
         logger.info(f"Backup created: {backup_path}")
         return backup_path
+
     def restore_backup(self) -> None:
         """Restore file from backup."""
         if self.backup_path and self.backup_path.exists():
             shutil.copy2(self.backup_path, self.file_path)
             logger.info(f"File restored from backup: {self.backup_path}")
+
     def load_file(self) -> None:
         """Load and parse file content."""
         with open(self.file_path, "r", encoding="utf-8") as f:
@@ -102,6 +57,7 @@ class ClassSplitterCore:
         self.tree = ast.parse(
             self.original_content, filename=str(self.file_path)
         )
+
     def find_class(self, class_name: str) -> Optional[ast.ClassDef]:
         """Find class definition in AST."""
         if not self.tree:
@@ -110,6 +66,7 @@ class ClassSplitterCore:
             if isinstance(node, ast.ClassDef) and node.name == class_name:
                 return node
         return None
+
     def extract_class_members(self, class_node: ast.ClassDef) -> Dict[str, List[Any]]:
         """Extract all properties and methods from class."""
         members: Dict[str, List[Any]] = {
@@ -125,6 +82,7 @@ class ClassSplitterCore:
                 members["nested_classes"].append(item)
 
         return members
+
     def extract_init_properties(self, class_node: ast.ClassDef) -> List[str]:
         """Extract properties initialized in __init__."""
         properties = []
@@ -149,6 +107,7 @@ class ClassSplitterCore:
                             ):
                                 properties.append(stmt.target.attr)
         return properties
+
     def validate_split_config(
         self, src_class: ast.ClassDef, config: Dict[str, Any]
     ) -> tuple[bool, List[str]]:
@@ -196,6 +155,7 @@ class ClassSplitterCore:
             errors.append(f"Extra methods in config (not in class): {extra_methods}")
 
         return len(errors) == 0, errors
+
     def split_class(self, config: Dict[str, Any]) -> tuple[bool, Optional[str]]:
         """Split class according to configuration."""
         try:
@@ -265,6 +225,337 @@ class ClassSplitterCore:
             if self.backup_path:
                 self.restore_backup()
             return False, f"Error during split: {str(e)}"
+
+    def _perform_split(self, src_class: ast.ClassDef, config: Dict[str, Any]) -> str:
+        """Perform the actual class splitting."""
+        if not self.tree:
+            raise ValueError("AST tree not loaded")
+
+        # Get configuration
+        dst_classes = config.get("dst_classes", {})
+
+        # Build mapping of what goes where
+        method_mapping: Dict[str, str] = {}  # method_name -> dst_class_name
+        prop_mapping: Dict[str, str] = {}  # prop_name -> dst_class_name
+
+        for dst_class_name, dst_config in dst_classes.items():
+            for method in dst_config.get("methods", []):
+                method_mapping[method] = dst_class_name
+            for prop in dst_config.get("props", []):
+                prop_mapping[prop] = dst_class_name
+
+        # Find source class position in module
+        lines = self.original_content.split("\n")
+        src_class_start = src_class.lineno - 1
+        src_class_end = self._find_class_end(src_class, lines)
+
+        # Extract class content
+        class_lines = lines[src_class_start:src_class_end]
+        class_indent = self._get_indent(class_lines[0])
+
+        # Build new classes
+        new_classes = []
+        for dst_class_name, dst_config in dst_classes.items():
+            new_class_code = self._build_new_class(
+                dst_class_name,
+                src_class,
+                dst_config,
+                class_indent,
+            )
+            new_classes.append(new_class_code)
+
+        # Build modified source class
+        modified_src_class = self._build_modified_source_class(
+            src_class,
+            method_mapping,
+            prop_mapping,
+            dst_classes,
+            class_indent,
+        )
+
+        # Reconstruct file
+        result_lines = []
+        result_lines.extend(lines[:src_class_start])
+        result_lines.append(modified_src_class)
+        result_lines.extend(new_classes)
+        result_lines.extend(lines[src_class_end:])
+
+        return "\n".join(result_lines)
+
+    def _find_class_end(self, class_node: ast.ClassDef, lines: List[str]) -> int:
+        """Find the end line of a class definition."""
+        # Find the last line of the class body
+        if class_node.body:
+            last_stmt = class_node.body[-1]
+            # Get the end line of the last statement
+            if hasattr(last_stmt, "end_lineno") and last_stmt.end_lineno:
+                return last_stmt.end_lineno
+            else:
+                # Fallback: find next class/function at same or less indentation
+                class_indent = len(lines[class_node.lineno - 1]) - len(
+                    lines[class_node.lineno - 1].lstrip()
+                )
+                for i in range(last_stmt.lineno, len(lines)):
+                    line = lines[i]
+                    if line.strip() and not line.strip().startswith("#"):
+                        indent = len(line) - len(line.lstrip())
+                        if indent <= class_indent:
+                            return i
+                return len(lines)
+        return class_node.lineno
+
+    def _get_indent(self, line: str) -> int:
+        """Get indentation level of a line."""
+        return len(line) - len(line.lstrip())
+
+    def _build_new_class(
+        self,
+        dst_class_name: str,
+        src_class: ast.ClassDef,
+        dst_config: Dict[str, Any],
+        base_indent: int,
+    ) -> str:
+        """Build code for a new destination class."""
+        indent = " " * base_indent
+        lines = [f"{indent}class {dst_class_name}:"]
+        indent += "    "
+
+        # Add docstring if source class has one
+        if src_class.body and isinstance(src_class.body[0], ast.Expr):
+            docstring = ast.get_docstring(src_class)
+            if docstring:
+                lines.append(f'{indent}"""{docstring}"""')
+
+        # Add __init__ with properties
+        props = dst_config.get("props", [])
+        if props:
+            lines.append(f"{indent}def __init__(self):")
+            init_indent = indent + "    "
+            for prop in props:
+                lines.append(f"{init_indent}self.{prop} = None")
+
+        # Add methods
+        methods = dst_config.get("methods", [])
+        for method_name in methods:
+            method_node = self._find_method_in_class(src_class, method_name)
+            if method_node:
+                method_code = self._extract_method_code(method_node, indent)
+                if method_code.strip():
+                    lines.append(method_code)
+                else:
+                    logger.warning(
+                        f"Could not extract code for method {method_name} "
+                        f"in class {dst_class_name}"
+                    )
+            else:
+                logger.warning(
+                    f"Method {method_name} not found in source class "
+                    f"for destination class {dst_class_name}"
+                )
+
+        return "\n".join(lines)
+
+    def _find_method_in_class(
+        self, class_node: ast.ClassDef, method_name: str
+    ) -> Optional[Any]:
+        """Find a method node in a class (supports both sync and async)."""
+        for item in class_node.body:
+            if (
+                isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef))
+                and item.name == method_name
+            ):
+                return item
+        return None
+
+    def _extract_method_code(self, method_node: Any, indent: str) -> str:
+        """Extract method code as string with proper indentation."""
+        # Get method lines from original content
+        lines = self.original_content.split("\n")
+        method_start = method_node.lineno - 1
+
+        # Find method end - use end_lineno if available,
+        # otherwise find by indentation
+        if hasattr(method_node, "end_lineno") and method_node.end_lineno:
+            method_end = method_node.end_lineno
+        else:
+            # Fallback: find next statement at same or less indentation
+            method_indent = len(lines[method_start]) - len(lines[method_start].lstrip())
+            method_end = method_start + 1
+            for i in range(method_start + 1, len(lines)):
+                line = lines[i]
+                if line.strip() and not line.strip().startswith("#"):
+                    line_indent = len(line) - len(line.lstrip())
+                    if line_indent <= method_indent:
+                        method_end = i
+                        break
+                method_end = i + 1
+
+        method_lines = lines[method_start:method_end]
+
+        # Adjust indentation
+        if method_lines:
+            # Find first non-empty line for base indent
+            original_indent = 0
+            for line in method_lines:
+                if line.strip():
+                    original_indent = len(line) - len(line.lstrip())
+                    break
+
+            adjusted_lines = []
+            for line in method_lines:
+                if line.strip():
+                    current_indent = len(line) - len(line.lstrip())
+                    indent_diff = current_indent - original_indent
+                    new_indent = indent + " " * indent_diff
+                    adjusted_lines.append(new_indent + line.lstrip())
+                else:
+                    adjusted_lines.append("")
+
+            result = "\n".join(adjusted_lines)
+            if result.strip():
+                return result
+        return ""
+
+    def _build_modified_source_class(
+        self,
+        src_class: ast.ClassDef,
+        method_mapping: Dict[str, str],
+        prop_mapping: Dict[str, str],
+        dst_classes: Dict[str, Dict[str, Any]],
+        base_indent: int,
+    ) -> str:
+        """Build modified source class with wrappers and property references."""
+        indent = " " * base_indent
+        lines = [f"{indent}class {src_class.name}:"]
+        indent += "    "
+
+        # Add docstring
+        docstring = ast.get_docstring(src_class)
+        if docstring:
+            lines.append(f'{indent}"""{docstring}"""')
+
+        # Add __init__ with property references
+        lines.append(f"{indent}def __init__(self):")
+        init_indent = indent + "    "
+        init_has_body = False  # Track if __init__ body has content
+
+        # Group properties by destination class
+        prop_groups: Dict[str, List[str]] = {}
+        for prop, dst_class in prop_mapping.items():
+            if dst_class not in prop_groups:
+                prop_groups[dst_class] = []
+            prop_groups[dst_class].append(prop)
+
+        # Initialize property references
+        for dst_class_name, props in prop_groups.items():
+            # Convert class name to instance variable name (camelCase)
+            instance_name = dst_class_name[0].lower() + dst_class_name[1:] if dst_class_name else dst_class_name.lower()
+            lines.append(
+                f"{init_indent}self.{instance_name} = {dst_class_name}()"
+            )
+            init_has_body = True
+
+        # Add remaining properties (not in any dst class)
+        all_props = set(self.extract_init_properties(src_class))
+        moved_props = set(prop_mapping.keys())
+        remaining_props = all_props - moved_props
+
+        # Find original __init__ to get property initializations
+        init_method = self._find_method_in_class(src_class, "__init__")
+        if init_method:
+            init_lines = self.original_content.split("\n")
+            init_start = init_method.lineno - 1
+            init_end = (
+                init_method.end_lineno
+                if hasattr(init_method, "end_lineno") and init_method.end_lineno
+                else init_start + 10
+            )
+            for i in range(init_start, min(init_end, len(init_lines))):
+                line = init_lines[i]
+                # Check if this line initializes a remaining property
+                for prop in remaining_props:
+                    if f"self.{prop}" in line and "=" in line:
+                        # Adjust indentation
+                        original_indent = len(line) - len(line.lstrip())
+                        new_indent = init_indent + " " * (
+                            original_indent - (init_method.lineno - 1)
+                        )
+                        lines.append(new_indent + line.lstrip())
+                        init_has_body = True
+                        break
+
+        # Ensure __init__ has at least pass if empty body
+        if not init_has_body:
+            lines.append(f"{init_indent}pass")
+
+        # Add wrapper methods
+        all_methods = set()
+        for item in src_class.body:
+            if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                all_methods.add(item.name)
+
+        moved_methods = set(method_mapping.keys())
+        remaining_methods = all_methods - moved_methods - {"__init__"}
+
+        for method_name in remaining_methods:
+            method_node = self._find_method_in_class(src_class, method_name)
+            if method_node:
+                method_code = self._extract_method_code(method_node, indent)
+                lines.append(method_code)
+
+        # Add wrapper methods for moved methods
+        for method_name, dst_class_name in method_mapping.items():
+            wrapper = self._create_method_wrapper(method_name, dst_class_name, indent)
+            lines.append(wrapper)
+
+        return "\n".join(lines)
+
+    def _create_method_wrapper(
+        self, method_name: str, dst_class_name: str, indent: str
+    ) -> str:
+        """Create a wrapper method that delegates to the destination class."""
+        # Get original method signature from source class
+        method_node = None
+        if self.tree:
+            # Find source class first
+            for node in ast.walk(self.tree):
+                if isinstance(node, ast.ClassDef):
+                    # Check if this class has the method
+                    for item in node.body:
+                        if (
+                            isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef))
+                            and item.name == method_name
+                        ):
+                            method_node = item
+                            break
+                    if method_node:
+                        break
+
+        if method_node:
+            # Extract arguments
+            args = [arg.arg for arg in method_node.args.args]
+            if args and args[0] == "self":
+                args = args[1:]
+
+            args_str = ", ".join(["self"] + args)
+            # Convert class name to instance variable name (camelCase)
+            dst_var = dst_class_name[0].lower() + dst_class_name[1:] if dst_class_name else dst_class_name.lower()
+
+            # Build call arguments
+            call_args = ", ".join(args) if args else ""
+
+            wrapper_lines = [
+                f"{indent}def {method_name}({args_str}):",
+                f"{indent}    return self.{dst_var}.{method_name}({call_args})",
+            ]
+
+            # Handle async methods
+            if isinstance(method_node, ast.AsyncFunctionDef):
+                wrapper_lines[0] = f"{indent}async def {method_name}({args_str}):"
+
+            return "\n".join(wrapper_lines)
+        return ""
+
     def validate_python_syntax(self) -> tuple[bool, Optional[str]]:
         """Validate Python syntax of modified file."""
         try:
@@ -281,6 +572,7 @@ class ClassSplitterCore:
             return False, "Syntax validation timeout"
         except Exception as e:
             return False, str(e)
+
     def validate_imports(self) -> tuple[bool, Optional[str]]:
         """Try to import the modified module."""
         try:
@@ -309,6 +601,7 @@ class ClassSplitterCore:
 
         except Exception as e:
             return False, str(e)
+
     def validate_completeness(
         self,
         src_class_name: str,
@@ -407,320 +700,6 @@ class ClassSplitterCore:
 
         except Exception as e:
             return False, f"Error during completeness validation: {str(e)}"
-class ClassSplitterImplementation:
-    """Class for splitting classes into smaller components."""
-    def _perform_split(self, src_class: ast.ClassDef, config: Dict[str, Any]) -> str:
-        """Perform the actual class splitting."""
-        if not self.tree:
-            raise ValueError("AST tree not loaded")
-
-        # Get configuration
-        dst_classes = config.get("dst_classes", {})
-
-        # Build mapping of what goes where
-        method_mapping: Dict[str, str] = {}  # method_name -> dst_class_name
-        prop_mapping: Dict[str, str] = {}  # prop_name -> dst_class_name
-
-        for dst_class_name, dst_config in dst_classes.items():
-            for method in dst_config.get("methods", []):
-                method_mapping[method] = dst_class_name
-            for prop in dst_config.get("props", []):
-                prop_mapping[prop] = dst_class_name
-
-        # Find source class position in module
-        lines = self.original_content.split("\n")
-        src_class_start = src_class.lineno - 1
-        src_class_end = self._find_class_end(src_class, lines)
-
-        # Extract class content
-        class_lines = lines[src_class_start:src_class_end]
-        class_indent = self._get_indent(class_lines[0])
-
-        # Build new classes
-        new_classes = []
-        for dst_class_name, dst_config in dst_classes.items():
-            new_class_code = self._build_new_class(
-                dst_class_name,
-                src_class,
-                dst_config,
-                class_indent,
-            )
-            new_classes.append(new_class_code)
-
-        # Build modified source class
-        modified_src_class = self._build_modified_source_class(
-            src_class,
-            method_mapping,
-            prop_mapping,
-            dst_classes,
-            class_indent,
-        )
-
-        # Reconstruct file
-        result_lines = []
-        result_lines.extend(lines[:src_class_start])
-        result_lines.append(modified_src_class)
-        result_lines.extend(new_classes)
-        result_lines.extend(lines[src_class_end:])
-
-        return "\n".join(result_lines)
-    def _find_class_end(self, class_node: ast.ClassDef, lines: List[str]) -> int:
-        """Find the end line of a class definition."""
-        # Find the last line of the class body
-        if class_node.body:
-            last_stmt = class_node.body[-1]
-            # Get the end line of the last statement
-            if hasattr(last_stmt, "end_lineno") and last_stmt.end_lineno:
-                return last_stmt.end_lineno
-            else:
-                # Fallback: find next class/function at same or less indentation
-                class_indent = len(lines[class_node.lineno - 1]) - len(
-                    lines[class_node.lineno - 1].lstrip()
-                )
-                for i in range(last_stmt.lineno, len(lines)):
-                    line = lines[i]
-                    if line.strip() and not line.strip().startswith("#"):
-                        indent = len(line) - len(line.lstrip())
-                        if indent <= class_indent:
-                            return i
-                return len(lines)
-        return class_node.lineno
-    def _get_indent(self, line: str) -> int:
-        """Get indentation level of a line."""
-        return len(line) - len(line.lstrip())
-    def _build_new_class(
-        self,
-        dst_class_name: str,
-        src_class: ast.ClassDef,
-        dst_config: Dict[str, Any],
-        base_indent: int,
-    ) -> str:
-        """Build code for a new destination class."""
-        indent = " " * base_indent
-        lines = [f"{indent}class {dst_class_name}:"]
-        indent += "    "
-
-        # Add docstring if source class has one
-        if src_class.body and isinstance(src_class.body[0], ast.Expr):
-            docstring = ast.get_docstring(src_class)
-            if docstring:
-                lines.append(f'{indent}"""{docstring}"""')
-
-        # Add __init__ with properties
-        props = dst_config.get("props", [])
-        if props:
-            lines.append(f"{indent}def __init__(self):")
-            init_indent = indent + "    "
-            for prop in props:
-                lines.append(f"{init_indent}self.{prop} = None")
-
-        # Add methods
-        methods = dst_config.get("methods", [])
-        for method_name in methods:
-            method_node = self._find_method_in_class(src_class, method_name)
-            if method_node:
-                method_code = self._extract_method_code(method_node, indent)
-                if method_code.strip():
-                    lines.append(method_code)
-                else:
-                    logger.warning(
-                        f"Could not extract code for method {method_name} "
-                        f"in class {dst_class_name}"
-                    )
-            else:
-                logger.warning(
-                    f"Method {method_name} not found in source class "
-                    f"for destination class {dst_class_name}"
-                )
-
-        return "\n".join(lines)
-    def _find_method_in_class(
-        self, class_node: ast.ClassDef, method_name: str
-    ) -> Optional[Any]:
-        """Find a method node in a class (supports both sync and async)."""
-        for item in class_node.body:
-            if (
-                isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef))
-                and item.name == method_name
-            ):
-                return item
-        return None
-    def _extract_method_code(self, method_node: Any, indent: str) -> str:
-        """Extract method code as string with proper indentation."""
-        # Get method lines from original content
-        lines = self.original_content.split("\n")
-        method_start = method_node.lineno - 1
-
-        # Find method end - use end_lineno if available,
-        # otherwise find by indentation
-        if hasattr(method_node, "end_lineno") and method_node.end_lineno:
-            method_end = method_node.end_lineno
-        else:
-            # Fallback: find next statement at same or less indentation
-            method_indent = len(lines[method_start]) - len(lines[method_start].lstrip())
-            method_end = method_start + 1
-            for i in range(method_start + 1, len(lines)):
-                line = lines[i]
-                if line.strip() and not line.strip().startswith("#"):
-                    line_indent = len(line) - len(line.lstrip())
-                    if line_indent <= method_indent:
-                        method_end = i
-                        break
-                method_end = i + 1
-
-        method_lines = lines[method_start:method_end]
-
-        # Adjust indentation
-        if method_lines:
-            # Find first non-empty line for base indent
-            original_indent = 0
-            for line in method_lines:
-                if line.strip():
-                    original_indent = len(line) - len(line.lstrip())
-                    break
-
-            adjusted_lines = []
-            for line in method_lines:
-                if line.strip():
-                    current_indent = len(line) - len(line.lstrip())
-                    indent_diff = current_indent - original_indent
-                    new_indent = indent + " " * indent_diff
-                    adjusted_lines.append(new_indent + line.lstrip())
-                else:
-                    adjusted_lines.append("")
-
-            result = "\n".join(adjusted_lines)
-            if result.strip():
-                return result
-        return ""
-    def _build_modified_source_class(
-        self,
-        src_class: ast.ClassDef,
-        method_mapping: Dict[str, str],
-        prop_mapping: Dict[str, str],
-        dst_classes: Dict[str, Dict[str, Any]],
-        base_indent: int,
-    ) -> str:
-        """Build modified source class with wrappers and property references."""
-        indent = " " * base_indent
-        lines = [f"{indent}class {src_class.name}:"]
-        indent += "    "
-
-        # Add docstring
-        docstring = ast.get_docstring(src_class)
-        if docstring:
-            lines.append(f'{indent}"""{docstring}"""')
-
-        # Add __init__ with property references
-        lines.append(f"{indent}def __init__(self):")
-        init_indent = indent + "    "
-
-        # Group properties by destination class
-        prop_groups: Dict[str, List[str]] = {}
-        for prop, dst_class in prop_mapping.items():
-            if dst_class not in prop_groups:
-                prop_groups[dst_class] = []
-            prop_groups[dst_class].append(prop)
-
-        # Initialize property references
-        for dst_class_name, props in prop_groups.items():
-            lines.append(
-                f"{init_indent}self.{dst_class_name.lower()} = {dst_class_name}()"
-            )
-
-        # Add remaining properties (not in any dst class)
-        all_props = set(self.extract_init_properties(src_class))
-        moved_props = set(prop_mapping.keys())
-        remaining_props = all_props - moved_props
-
-        # Find original __init__ to get property initializations
-        init_method = self._find_method_in_class(src_class, "__init__")
-        if init_method:
-            init_lines = self.original_content.split("\n")
-            init_start = init_method.lineno - 1
-            init_end = (
-                init_method.end_lineno
-                if hasattr(init_method, "end_lineno") and init_method.end_lineno
-                else init_start + 10
-            )
-            for i in range(init_start, min(init_end, len(init_lines))):
-                line = init_lines[i]
-                # Check if this line initializes a remaining property
-                for prop in remaining_props:
-                    if f"self.{prop}" in line and "=" in line:
-                        # Adjust indentation
-                        original_indent = len(line) - len(line.lstrip())
-                        new_indent = init_indent + " " * (
-                            original_indent - (init_method.lineno - 1)
-                        )
-                        lines.append(new_indent + line.lstrip())
-                        break
-
-        # Add wrapper methods
-        all_methods = set()
-        for item in src_class.body:
-            if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                all_methods.add(item.name)
-
-        moved_methods = set(method_mapping.keys())
-        remaining_methods = all_methods - moved_methods - {"__init__"}
-
-        for method_name in remaining_methods:
-            method_node = self._find_method_in_class(src_class, method_name)
-            if method_node:
-                method_code = self._extract_method_code(method_node, indent)
-                lines.append(method_code)
-
-        # Add wrapper methods for moved methods
-        for method_name, dst_class_name in method_mapping.items():
-            wrapper = self._create_method_wrapper(method_name, dst_class_name, indent)
-            lines.append(wrapper)
-
-        return "\n".join(lines)
-    def _create_method_wrapper(
-        self, method_name: str, dst_class_name: str, indent: str
-    ) -> str:
-        """Create a wrapper method that delegates to the destination class."""
-        # Get original method signature from source class
-        method_node = None
-        if self.tree:
-            # Find source class first
-            for node in ast.walk(self.tree):
-                if isinstance(node, ast.ClassDef):
-                    # Check if this class has the method
-                    for item in node.body:
-                        if (
-                            isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef))
-                            and item.name == method_name
-                        ):
-                            method_node = item
-                            break
-                    if method_node:
-                        break
-
-        if method_node:
-            # Extract arguments
-            args = [arg.arg for arg in method_node.args.args]
-            if args and args[0] == "self":
-                args = args[1:]
-
-            args_str = ", ".join(["self"] + args)
-            dst_var = dst_class_name.lower()
-
-            # Build call arguments
-            call_args = ", ".join(args) if args else ""
-
-            wrapper_lines = [
-                f"{indent}def {method_name}({args_str}):",
-                f"{indent}    return self.{dst_var}.{method_name}({call_args})",
-            ]
-
-            # Handle async methods
-            if isinstance(method_node, ast.AsyncFunctionDef):
-                wrapper_lines[0] = f"{indent}async def {method_name}({args_str}):"
-
-            return "\n".join(wrapper_lines)
-        return ""
 
 
 class SuperclassExtractor:

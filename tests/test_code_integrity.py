@@ -14,33 +14,46 @@ from code_analysis.refactorer import ClassSplitter, SuperclassExtractor, ClassMe
 
 class TestCodeIntegrity:
     """Tests for ensuring code integrity after refactoring operations."""
-
+    def __init__(self):
+        pass
+    def test_split_integrity_all_methods_preserved(self, tmp_path):
+        return self.testCodeIntegrityPart1.test_split_integrity_all_methods_preserved(tmp_path)
+    def test_extract_integrity_all_members_in_base(self, tmp_path):
+        return self.testCodeIntegrityPart1.test_extract_integrity_all_members_in_base(tmp_path)
+    def test_merge_integrity_all_members_preserved(self, tmp_path):
+        return self.testCodeIntegrityPart1.test_merge_integrity_all_members_preserved(tmp_path)
+    def test_integrity_with_complex_class(self, tmp_path):
+        return self.testCodeIntegrityPart2.test_integrity_with_complex_class(tmp_path)
+    def test_integrity_syntax_validation(self, tmp_path):
+        return self.testCodeIntegrityPart2.test_integrity_syntax_validation(tmp_path)
+class TestCodeIntegrityPart1:
+    """Tests for ensuring code integrity after refactoring operations."""
     def test_split_integrity_all_methods_preserved(self, tmp_path):
         """Test that all methods are preserved after class splitting."""
         test_file = tmp_path / "test.py"
         original_content = '''class IntegrityTest:
     """Class for integrity testing."""
-    
+
     def __init__(self):
         self.prop1 = 1
         self.prop2 = 2
         self.prop3 = 3
-    
+
     def method1(self):
         return 1
-    
+
     def method2(self):
         return 2
-    
+
     def method3(self):
         return 3
-    
+
     def method4(self):
         return 4
-    
+
     def method5(self):
         return 5
-'''
+    '''
         test_file.write_text(original_content)
 
         # Collect original members
@@ -119,7 +132,6 @@ class TestCodeIntegrity:
         regular_new = all_new_methods - special_methods
         assert regular_original.issubset(regular_new), \
             f"Missing methods: {regular_original - regular_new}"
-
     def test_extract_integrity_all_members_in_base(self, tmp_path):
         """Test that all extracted members are in base class."""
         test_file = tmp_path / "test.py"
@@ -128,24 +140,24 @@ class TestCodeIntegrity:
     def __init__(self):
         self.prop1 = 1
         self.prop2 = 2
-    
+
     def method1(self):
         return 1
-    
+
     def method2(self):
         return 2
 
-class Child2:
+    class Child2:
     def __init__(self):
         self.prop1 = 1
         self.prop3 = 3
-    
+
     def method1(self):
         return 1
-    
+
     def method2(self):
         return 2  # method2 must be in both for extraction
-'''
+    '''
         )
 
         config = {
@@ -207,7 +219,6 @@ class Child2:
         expected_methods = {"method1", "method2"}
         assert expected_methods.issubset(base_methods), \
             f"Missing methods in base: {expected_methods - base_methods}"
-
     def test_merge_integrity_all_members_preserved(self, tmp_path):
         """Test that all members are preserved after merging."""
         test_file = tmp_path / "test.py"
@@ -215,24 +226,24 @@ class Child2:
     def __init__(self):
         self.prop1 = 1
         self.prop2 = 2
-    
+
     def method1(self):
         return 1
-    
+
     def method2(self):
         return 2
 
-class Source2:
+    class Source2:
     def __init__(self):
         self.prop3 = 3
         self.prop4 = 4
-    
+
     def method3(self):
         return 3
-    
+
     def method4(self):
         return 4
-'''
+    '''
         test_file.write_text(original_content)
 
         # Collect original members
@@ -305,41 +316,42 @@ class Source2:
         regular_merged = merged_methods - special_methods
         assert regular_original.issubset(regular_merged), \
             f"Missing methods: {regular_original - regular_merged}"
-
+class TestCodeIntegrityPart2:
+    """Tests for ensuring code integrity after refactoring operations."""
     def test_integrity_with_complex_class(self, tmp_path):
         """Test integrity with complex class having many members."""
         test_file = tmp_path / "test.py"
         original_content = '''class ComplexClass:
     """Complex class with many members."""
-    
+
     def __init__(self):
         self.prop1 = 1
         self.prop2 = 2
         self.prop3 = 3
         self.prop4 = 4
         self.prop5 = 5
-    
+
     def method1(self):
         return 1
-    
+
     def method2(self):
         return 2
-    
+
     def method3(self):
         return 3
-    
+
     def method4(self):
         return 4
-    
+
     def method5(self):
         return 5
-    
+
     async def async_method1(self):
         return "async1"
-    
+
     async def async_method2(self):
         return "async2"
-'''
+    '''
         test_file.write_text(original_content)
 
         # Collect original
@@ -421,7 +433,6 @@ class Source2:
         regular_new = all_new_methods - special_methods
         assert regular_original.issubset(regular_new), \
             f"Missing methods: {regular_original - regular_new}"
-
     def test_integrity_syntax_validation(self, tmp_path):
         """Test that syntax validation works after refactoring."""
         test_file = tmp_path / "test.py"
@@ -429,10 +440,10 @@ class Source2:
             '''class SyntaxTest:
     def __init__(self):
         self.x = 1
-    
+
     def method(self):
         return 1
-'''
+    '''
         )
 
         config = {

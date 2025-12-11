@@ -17,6 +17,7 @@ from .code_mapper import CodeMapper
 from .issue_detector import IssueDetector
 from .reporter import CodeReporter
 from .database import CodeDatabase
+from .refactorer import ClassSplitter, SuperclassExtractor, ClassMerger
 
 __all__ = [
     "CodeAnalyzer",
@@ -24,4 +25,7 @@ __all__ = [
     "IssueDetector",
     "CodeReporter",
     "CodeDatabase",
+    "ClassSplitter",
+    "SuperclassExtractor",
+    "ClassMerger",
 ]

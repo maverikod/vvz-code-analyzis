@@ -1,0 +1,69 @@
+{
+  "src_class": "AtomicIndexManager",
+  "dst_classes": {
+    "AtomicIndexOperations": {
+      "props": ["redis_client", "chunk_metadata_adapter", "embedding_service", "chunk_query_support"],
+      "methods": [
+        "index_chunk",
+        "delete_chunk",
+        "soft_delete_chunk",
+        "hard_delete_chunk",
+        "restore_chunk",
+        "cleanup_chunk",
+        "check_chunk_exists",
+        "remove_vector_by_index",
+        "create_index",
+        "get_index_stats",
+        "get_field_statistics",
+        "search_by_chunk_query",
+        "set_chunk_metadata_adapter"
+      ]
+    },
+    "AtomicIndexFieldAnalysis": {
+      "props": [],
+      "methods": [
+        "_analyze_field_types",
+        "_determine_field_type",
+        "_determine_index_type",
+        "_should_index_field",
+        "_extract_field_metadata",
+        "_is_date_string"
+      ]
+    },
+    "AtomicIndexScriptGeneration": {
+      "props": [],
+      "methods": [
+        "_generate_replace_chunk_script",
+        "_generate_scalar_index_script",
+        "_generate_text_index_script",
+        "_generate_number_index_script",
+        "_generate_date_index_script",
+        "_generate_array_index_script",
+        "_generate_field_specific_script",
+        "_prepare_script_parameters",
+        "_execute_replace_script",
+        "_generate_script_key"
+      ]
+    },
+    "AtomicIndexValidation": {
+      "props": [],
+      "methods": [
+        "_validate_chunk_data"
+      ]
+    },
+    "AtomicIndexCache": {
+      "props": ["script_sha"],
+      "methods": [
+        "_get_script_sha",
+        "clear_cache"
+      ]
+    },
+    "AtomicIndexErrorHandling": {
+      "props": [],
+      "methods": [
+        "_handle_index_error",
+        "_rollback_index_operation"
+      ]
+    }
+  }
+}

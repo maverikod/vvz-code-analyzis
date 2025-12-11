@@ -145,17 +145,8 @@ class CodeAnalyzer:
             elif isinstance(node, ast.FunctionDef):
                 # Only analyze top-level functions (not methods)
                 # Methods are handled in _analyze_class
-                if not any(
-                    isinstance(parent, ast.ClassDef)
-                    for parent in ast.walk(tree)
-                    if hasattr(parent, "body")
-                    and node in getattr(parent, "body", [])
-                ):
-                    # This is a simplified check - in practice,
-                    # we need proper parent tracking
-                    # For now, we'll analyze all FunctionDef nodes
-                    # and let _analyze_class handle methods
-                    pass
+                # Skip methods here - they will be handled in _analyze_class
+                pass
             elif isinstance(node, ast.Import):
                 self._analyze_import(node, file_path, file_id)
             elif isinstance(node, ast.ImportFrom):

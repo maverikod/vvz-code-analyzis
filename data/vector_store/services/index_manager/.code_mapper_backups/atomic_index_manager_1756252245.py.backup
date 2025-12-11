@@ -1,0 +1,1861 @@
+"""
+AtomicIndexManager - менеджер атомарных операций с индексами.
+
+Обеспечивает атомарные операции создания, обновления и удаления индексов
+через LUA скрипты с пятичастную структуру.
+
+Features:
+- Атомарные операции через LUA скрипты
+- Пятичастная структура REPLACE_CHUNK_SCRIPT
+- Интеграция с chunk_metadata_adapter.to_flat_dict
+- Кэширование скомпилированных скриптов
+- Обработка ошибок и rollback
+- Анализ типов полей для индексации
+- Валидация входных данных
+- Детальное логирование операций
+- Rollback механизмы при ошибках
+
+Architecture:
+- Использует REPLACE_CHUNK_SCRIPT для атомарной замены
+- Поддерживает статические и динамические скрипты
+- Интеграция с Redis для атомарных операций
+- Поддержка различных типов индексов
+- Расширенная система анализа типов полей
+- Интеграция с системой логирования
+
+Author: Vasiliy Zdanovskiy
+email: vasilyvz@gmail.com
+Created: 2024-01-01
+Updated: 2024-01-01
+"""
+
+import json
+import logging
+import re
+import time
+from typing import Dict, Any, List, Optional, Tuple, Union, Set
+from dataclasses import dataclass
+from enum import Enum
+
+import redis.asyncio as redis
+from chunk_metadata_adapter import ChunkQuery
+
+from .lua_scripts import (
+    REPLACE_CHUNK_SCRIPT,
+    CLEANUP_SCRIPT_PART,
+    SOFT_DELETE_SCRIPT,
+    HARD_DELETE_SCRIPT,
+    CHECK_CHUNK_EXISTS_SCRIPT,
+    GET_INDEX_STATS_SCRIPT,
+    RESTORE_CHUNK_SCRIPT,
+    prepare_chunk_parameters,
+    validate_script_parameters
+)
+from .constants import (
+    MAX_CHUNK_SIZE,
+    MAX_TEXT_LENGTH,
+    MAX_OBJECT_SIZE,
+    MAX_FIELD_NAME_LENGTH,
+    INDEX_TYPE_SCALAR,
+    INDEX_TYPE_ARRAY_ELEMENT,
+    INDEX_TYPE_BM25,
+    INDEX_TYPE_NUMERIC,
+    INDEX_TYPE_DATE,
+    DATE_PATTERNS,
+    SYSTEM_FIELD_PREFIX,
+    OPERATION_INDEX,
+    ERROR_UUID_EMPTY,
+    ERROR_CHUNK_DATA_EMPTY,
+    ERROR_CHUNK_TOO_LARGE,
+    ERROR_INVALID_FIELD_NAME,
+    ERROR_FIELD_NAME_TOO_LONG,
+    ERROR_ADAPTER_NOT_SET,
+    ERROR_INVALID_SCRIPT_PARAMS,
+    LOG_INDEX_START,
+    LOG_INDEX_SUCCESS,
+    LOG_INDEX_FAILED,
+    LOG_ROLLBACK_COMPLETED,
+    LOG_ROLLBACK_FAILED,
+    LOG_CACHE_CLEARED
+)
+
+# Логгер
+logger = logging.getLogger(__name__)
+
+class FieldType(Enum):
+    """Типы полей для индексации."""
+    SCALAR = "scalar"
+    ARRAY = "array"
+    OBJECT = "object"
+    TEXT = "text"
+    NUMBER = "number"
+    BOOLEAN = "boolean"
+    DATE = "date"
+
+@dataclass
+class FieldInfo:
+    """Информация о поле для индексации."""
+    name: str
+    value: Any
+    field_type: FieldType
+    is_indexed: bool
+    index_type: Optional[str] = None
+    metadata: Optional[Dict[str, Any]] = None
+
+@dataclass
+class SearchResult:
+    """Результат поиска."""
+    uuid: str
+    score: float
+    metadata: Dict[str, Any]
+    index_type: Optional[str] = None
+
+@dataclass
+class IndexOperationResult:
+    """Результат операции с индексами."""
+    success: bool
+    message: str
+    operation_type: str
+    uuid: Optional[str] = None
+    error_details: Optional[str] = None
+
+class AtomicIndexManager:
+    """
+    Менеджер атомарных операций с индексами.
+    
+    Обеспечивает атомарные операции создания, обновления и удаления
+    индексов через LUA скрипты с пятичастной структурой.
+    """
+    
+    def __init__(self, redis_client: redis.Redis, embedding_service=None):
+        """
+        Инициализация менеджера.
+        
+        Args:
+            redis_client: Redis клиент для выполнения операций
+            embedding_service: Сервис для получения эмбеддингов
+        """
+        self.redis_client = redis_client
+        self.script_sha = None  # Кэш SHA скрипта
+        self.chunk_metadata_adapter = None  # Будет установлен позже
+        self.embedding_service = embedding_service  # Сервис для эмбеддингов
+        
+        # Кэши для оптимизации
+        self._script_cache: Dict[str, str] = {}
+        """Кэш сгенерированных скриптов."""
+        
+        self._field_type_cache: Dict[str, FieldType] = {}
+        """Кэш типов полей."""
+        
+        # Инициализация поддержки ChunkQuery
+        self.chunk_query_support = ChunkQuerySupport(redis_client, embedding_service)
+        
+        # Инициализация indexed_fields
+        self.indexed_fields: Set[str] = set()
+        
+        logger.info("AtomicIndexManager initialized with ChunkQuery support")
+    
+    async def _get_script_sha(self) -> str:
+        """
+        Получение SHA скрипта с кэшированием.
+        
+        Returns:
+            SHA хеш скомпилированного скрипта
+        """
+        if not self.script_sha:
+            self.script_sha = await self.redis_client.script_load(REPLACE_CHUNK_SCRIPT)
+            logger.debug(f"Script compiled and cached: {self.script_sha}")
+        
+        return self.script_sha
+    
+    def set_chunk_metadata_adapter(self, adapter):
+        """
+        Установка адаптера для работы с метаданными чанков.
+        
+        Args:
+            adapter: Адаптер с методом to_flat_dict
+        """
+        self.chunk_metadata_adapter = adapter
+        logger.info("Chunk metadata adapter set")
+    
+    def _validate_chunk_data(
+        self,
+        uuid: str,
+        chunk_data: Dict[str, Any]
+    ) -> None:
+        """
+        Валидация данных чанка.
+        
+        Args:
+            uuid: UUID чанка
+            chunk_data: Данные для валидации
+            
+        Raises:
+            ValueError: При невалидных данных
+        """
+        if not uuid or not isinstance(uuid, str):
+            raise ValueError(ERROR_UUID_EMPTY)
+        
+        if not chunk_data or not isinstance(chunk_data, dict):
+            raise ValueError(ERROR_CHUNK_DATA_EMPTY)
+        
+        # Проверка размера данных
+        data_size = len(json.dumps(chunk_data))
+        if data_size > MAX_CHUNK_SIZE:
+            raise ValueError(ERROR_CHUNK_TOO_LARGE.format(data_size))
+        
+        # Проверка ключей
+        for key in chunk_data.keys():
+            if not isinstance(key, str) or not key.strip():
+                raise ValueError(ERROR_INVALID_FIELD_NAME.format(key))
+            
+            if len(key) > MAX_FIELD_NAME_LENGTH:
+                raise ValueError(ERROR_FIELD_NAME_TOO_LONG.format(key))
+    
+    def _analyze_field_types(
+        self,
+        chunk_data: Dict[str, Any]
+    ) -> List[FieldInfo]:
+        """
+        Расширенный анализ типов полей для индексации.
+        
+        Args:
+            chunk_data: Данные чанка
+            
+        Returns:
+            Список информации о полях
+        """
+        field_info_list = []
+        
+        for field_name, value in chunk_data.items():
+            # Определение типа поля
+            field_type = self._determine_field_type(field_name, value)
+            
+            # Определение необходимости индексации
+            is_indexed = self._should_index_field(field_name, value, field_type)
+            
+            # Определение типа индекса
+            index_type = self._determine_index_type(field_name, value, field_type) if is_indexed else None
+            
+            # Метаданные поля
+            metadata = self._extract_field_metadata(field_name, value, field_type)
+            
+            field_info = FieldInfo(
+                name=field_name,
+                value=value,
+                field_type=field_type,
+                is_indexed=is_indexed,
+                index_type=index_type,
+                metadata=metadata
+            )
+            
+            field_info_list.append(field_info)
+            
+            # Кэширование типа поля
+            self._field_type_cache[field_name] = field_type
+        
+        return field_info_list
+    
+    def _determine_field_type(
+        self,
+        field_name: str,
+        value: Any
+    ) -> FieldType:
+        """
+        Определение типа поля.
+        
+        Args:
+            field_name: Имя поля
+            value: Значение поля
+            
+        Returns:
+            Тип поля
+        """
+        if isinstance(value, bool):
+            return FieldType.BOOLEAN
+        elif isinstance(value, (int, float)):
+            return FieldType.NUMBER
+        elif isinstance(value, str):
+            # Проверка на дату
+            if self._is_date_string(value):
+                return FieldType.DATE
+            # Проверка на длинный текст
+            elif len(value) > MAX_TEXT_LENGTH:
+                return FieldType.TEXT
+            else:
+                return FieldType.SCALAR
+        elif isinstance(value, list):
+            return FieldType.ARRAY
+        elif isinstance(value, dict):
+            return FieldType.OBJECT
+        else:
+            return FieldType.SCALAR
+    
+    def _should_index_field(
+        self,
+        field_name: str,
+        value: Any,
+        field_type: FieldType
+    ) -> bool:
+        """
+        Определение необходимости индексации поля.
+        
+        Args:
+            field_name: Имя поля
+            value: Значение поля
+            field_type: Тип поля
+            
+        Returns:
+            True если поле нужно индексировать
+        """
+        # Исключаем системные поля
+        if field_name.startswith(SYSTEM_FIELD_PREFIX):
+            return False
+        
+        # Исключаем пустые значения
+        if value is None or value == "":
+            return False
+        
+        # Исключаем очень большие объекты
+        if isinstance(value, dict) and len(json.dumps(value)) > MAX_OBJECT_SIZE:
+            return False
+        
+        # Индексируем все остальные поля
+        return True
+    
+    def _determine_index_type(
+        self,
+        field_name: str,
+        value: Any,
+        field_type: FieldType
+    ) -> Optional[str]:
+        """
+        Определение типа индекса для поля.
+        
+        Args:
+            field_name: Имя поля
+            value: Значение поля
+            field_type: Тип поля
+            
+        Returns:
+            Тип индекса или None
+        """
+        if field_type == FieldType.ARRAY:
+            return INDEX_TYPE_ARRAY_ELEMENT
+        elif field_type == FieldType.TEXT:
+            return INDEX_TYPE_BM25
+        elif field_type == FieldType.NUMBER:
+            return INDEX_TYPE_NUMERIC
+        elif field_type == FieldType.DATE:
+            return INDEX_TYPE_DATE
+        else:
+            return INDEX_TYPE_SCALAR
+    
+    def _extract_field_metadata(
+        self,
+        field_name: str,
+        value: Any,
+        field_type: FieldType
+    ) -> Dict[str, Any]:
+        """
+        Извлечение метаданных поля.
+        
+        Args:
+            field_name: Имя поля
+            value: Значение поля
+            field_type: Тип поля
+            
+        Returns:
+            Метаданные поля
+        """
+        metadata = {
+            "field_type": field_type.value,
+            "value_type": type(value).__name__,
+            "field_name": field_name
+        }
+        
+        if field_type == FieldType.ARRAY:
+            metadata["array_length"] = len(value)
+            metadata["array_types"] = list(set(type(item).__name__ for item in value))
+        elif field_type == FieldType.TEXT:
+            metadata["text_length"] = len(value)
+            metadata["word_count"] = len(value.split())
+        elif field_type == FieldType.NUMBER:
+            metadata["numeric_type"] = "integer" if isinstance(value, int) else "float"
+        
+        return metadata
+    
+    def _is_date_string(self, value: str) -> bool:
+        """
+        Проверка является ли строка датой.
+        
+        Args:
+            value: Строка для проверки
+            
+        Returns:
+            True если строка похожа на дату
+        """
+        for pattern in DATE_PATTERNS:
+            if re.match(pattern, value):
+                return True
+        
+        return False
+    
+    async def _handle_index_error(
+        self,
+        uuid: str,
+        chunk_data: Dict[str, Any],
+        error: Exception
+    ) -> None:
+        """
+        Обработка ошибок индексации.
+        
+        Args:
+            uuid: UUID чанка
+            chunk_data: Данные чанка
+            error: Ошибка
+        """
+        error_info = {
+            "uuid": uuid,
+            "error_type": type(error).__name__,
+            "error_message": str(error),
+            "chunk_size": len(json.dumps(chunk_data)),
+            "field_count": len(chunk_data)
+        }
+        
+        logger.error(f"Index error details: {error_info}")
+        
+        # Попытка rollback если возможно
+        try:
+            await self._rollback_index_operation(uuid)
+        except Exception as rollback_error:
+            logger.error(f"Rollback failed for {uuid}: {rollback_error}")
+    
+    async def _rollback_index_operation(self, uuid: str) -> None:
+        """
+        Rollback операции индексации.
+        
+        Args:
+            uuid: UUID чанка
+        """
+        # Очистка частично созданных индексов
+        cleanup_script = """
+        local uuid = KEYS[1]
+        
+        -- Удаляем все индексы для данного UUID
+        local patterns = {
+            "field_index:*",
+            "array_element_index:*",
+            "array_exact_index:*",
+            "bm25_token_index:*"
+        }
+        
+        for _, pattern in ipairs(patterns) do
+            local keys = redis.call('KEYS', pattern)
+            for i, key in ipairs(keys) do
+                redis.call('SREM', key, uuid)
+            end
+        end
+        
+        return 1
+        """
+        
+        try:
+            await self.redis_client.eval(cleanup_script, 1, f"chunk:{uuid}")
+            logger.info(LOG_ROLLBACK_COMPLETED.format(uuid))
+        except Exception as e:
+            logger.error(LOG_ROLLBACK_FAILED.format(uuid, e))
+            raise
+    
+    async def index_chunk(
+        self,
+        chunk: Any,
+        validate: bool = True
+    ) -> IndexOperationResult:
+        """
+        Индексация чанка с валидацией и обработкой ошибок.
+        
+        Args:
+            chunk: Чанк для индексации (должен иметь uuid и поддерживать to_flat_dict)
+            validate: Включить валидацию данных
+            
+        Returns:
+            IndexOperationResult с результатом операции
+            
+        Raises:
+            ValueError: При невалидных данных
+            RedisError: При ошибках Redis
+        """
+        try:
+            if not self.chunk_metadata_adapter:
+                raise ValueError(ERROR_ADAPTER_NOT_SET)
+            
+            # Преобразуем чанк в плоский словарь
+            flat_data = self.chunk_metadata_adapter.to_flat_dict(chunk)
+            
+            # Валидация входных данных
+            if validate:
+                uuid = flat_data.get('uuid', '')
+                self._validate_chunk_data(uuid, flat_data)
+            
+            # Анализ типов полей
+            field_analysis = self._analyze_field_types(flat_data)
+            
+            # Логирование операции
+            logger.info(LOG_INDEX_START.format(uuid, len(field_analysis)))
+            
+            # Генерация и выполнение скрипта
+            script = self._generate_replace_chunk_script(field_analysis)
+            result = await self._execute_replace_script(uuid, script, flat_data)
+            
+            # Валидируем результат выполнения
+            if not result or result == "ERROR":
+                raise ValueError("Script execution returned error")
+            
+            if result == "OK":
+                logger.info(LOG_INDEX_SUCCESS.format(uuid))
+                return IndexOperationResult(
+                    success=True,
+                    message="Chunk indexed successfully",
+                    operation_type=OPERATION_INDEX,
+                    uuid=uuid
+                )
+            else:
+                logger.error(f"Script execution failed: {result}")
+                return IndexOperationResult(
+                    success=False,
+                    message="Script execution failed",
+                    operation_type=OPERATION_INDEX,
+                    uuid=uuid,
+                    error_details=str(result)
+                )
+                
+        except Exception as e:
+            # Получаем UUID для логирования
+            error_uuid = getattr(chunk, 'uuid', 'unknown')
+            logger.error(LOG_INDEX_FAILED.format(error_uuid, str(e)))
+            
+            # Попытка обработки ошибки
+            try:
+                flat_data = self.chunk_metadata_adapter.to_flat_dict(chunk) if self.chunk_metadata_adapter else {}
+                await self._handle_index_error(error_uuid, flat_data, e)
+            except:
+                pass
+            
+            return IndexOperationResult(
+                success=False,
+                message="Indexing failed",
+                operation_type=OPERATION_INDEX,
+                error_details=str(e)
+            )
+    
+    async def delete_chunk(self, uuid: str, soft: bool = False) -> IndexOperationResult:
+        """
+        Удаление чанка.
+        
+        Args:
+            uuid: UUID чанка для удаления
+            soft: True для мягкого удаления, False для жесткого
+            
+        Returns:
+            IndexOperationResult с результатом операции
+        """
+        try:
+            if soft:
+                # Мягкое удаление
+                result = await self.redis_client.eval(
+                    SOFT_DELETE_SCRIPT,
+                    1,
+                    uuid,
+                    "manual_deletion"
+                )
+                operation_type = "soft_delete"
+            else:
+                # Жесткое удаление
+                result = await self.redis_client.eval(
+                    HARD_DELETE_SCRIPT,
+                    1,
+                    uuid
+                )
+                operation_type = "hard_delete"
+            
+            if result == "OK":
+                logger.info(f"Chunk deleted successfully: {uuid}")
+                return IndexOperationResult(
+                    success=True,
+                    message="Chunk deleted successfully",
+                    operation_type=operation_type,
+                    uuid=uuid
+                )
+            else:
+                logger.error(f"Deletion failed: {result}")
+                return IndexOperationResult(
+                    success=False,
+                    message="Deletion failed",
+                    operation_type=operation_type,
+                    uuid=uuid,
+                    error_details=str(result)
+                )
+                
+        except Exception as e:
+            logger.error(f"Deletion failed: {str(e)}")
+            return IndexOperationResult(
+                success=False,
+                message="Deletion failed",
+                operation_type="delete",
+                uuid=uuid,
+                error_details=str(e)
+            )
+    
+    async def cleanup_chunk(self, uuid: str) -> IndexOperationResult:
+        """
+        Очистка чанка (части 1-3 пятичастной структуры).
+        
+        Args:
+            uuid: UUID чанка для очистки
+            
+        Returns:
+            IndexOperationResult с результатом операции
+        """
+        try:
+            result = await self.redis_client.eval(
+                CLEANUP_SCRIPT_PART,
+                1,
+                uuid
+            )
+            
+            if result == "OK":
+                logger.info(f"Chunk cleaned successfully: {uuid}")
+                return IndexOperationResult(
+                    success=True,
+                    message="Chunk cleaned successfully",
+                    operation_type="cleanup",
+                    uuid=uuid
+                )
+            else:
+                logger.error(f"Cleanup failed: {result}")
+                return IndexOperationResult(
+                    success=False,
+                    message="Cleanup failed",
+                    operation_type="cleanup",
+                    uuid=uuid,
+                    error_details=str(result)
+                )
+                
+        except Exception as e:
+            logger.error(f"Cleanup failed: {str(e)}")
+            return IndexOperationResult(
+                success=False,
+                message="Cleanup failed",
+                operation_type="cleanup",
+                uuid=uuid,
+                error_details=str(e)
+            )
+    
+    async def soft_delete_chunk(self, uuid: str, reason: str = "manual_deletion") -> IndexOperationResult:
+        """
+        Мягкое удаление чанка.
+        
+        Args:
+            uuid: UUID чанка для удаления
+            reason: Причина удаления
+            
+        Returns:
+            IndexOperationResult с результатом операции
+        """
+        try:
+            result = await self.redis_client.eval(
+                SOFT_DELETE_SCRIPT,
+                1,
+                uuid,
+                reason
+            )
+            
+            if result == "OK":
+                logger.info(f"Chunk soft deleted successfully: {uuid}")
+                return IndexOperationResult(
+                    success=True,
+                    message="Chunk soft deleted successfully",
+                    operation_type="soft_delete",
+                    uuid=uuid
+                )
+            else:
+                logger.error(f"Soft delete failed: {result}")
+                return IndexOperationResult(
+                    success=False,
+                    message="Soft delete failed",
+                    operation_type="soft_delete",
+                    uuid=uuid,
+                    error_details=str(result)
+                )
+                
+        except Exception as e:
+            logger.error(f"Soft delete failed: {str(e)}")
+            return IndexOperationResult(
+                success=False,
+                message="Soft delete failed",
+                operation_type="soft_delete",
+                uuid=uuid,
+                error_details=str(e)
+            )
+    
+    async def hard_delete_chunk(self, uuid: str) -> IndexOperationResult:
+        """
+        Жесткое удаление чанка.
+        
+        Args:
+            uuid: UUID чанка для удаления
+            
+        Returns:
+            IndexOperationResult с результатом операции
+        """
+        try:
+            result = await self.redis_client.eval(
+                HARD_DELETE_SCRIPT,
+                1,
+                uuid
+            )
+            
+            if result == "OK":
+                logger.info(f"Chunk hard deleted successfully: {uuid}")
+                return IndexOperationResult(
+                    success=True,
+                    message="Chunk hard deleted successfully",
+                    operation_type="hard_delete",
+                    uuid=uuid
+                )
+            else:
+                logger.error(f"Hard delete failed: {result}")
+                return IndexOperationResult(
+                    success=False,
+                    message="Hard delete failed",
+                    operation_type="hard_delete",
+                    uuid=uuid,
+                    error_details=str(result)
+                )
+                
+        except Exception as e:
+            logger.error(f"Hard delete failed: {str(e)}")
+            return IndexOperationResult(
+                success=False,
+                message="Hard delete failed",
+                operation_type="hard_delete",
+                uuid=uuid,
+                error_details=str(e)
+            )
+    
+    async def check_chunk_exists(self, uuid: str) -> Dict[str, Any]:
+        """
+        Проверка существования чанка.
+        
+        Args:
+            uuid: UUID чанка для проверки
+            
+        Returns:
+            Словарь с информацией о существовании чанка
+        """
+        try:
+            result = await self.redis_client.eval(
+                CHECK_CHUNK_EXISTS_SCRIPT,
+                keys=[uuid],
+                args=[]
+            )
+            
+            if isinstance(result, dict):
+                return result
+            else:
+                logger.error(f"Check exists failed: {result}")
+                return {"exists": False, "error": str(result)}
+                
+        except Exception as e:
+            logger.error(f"Check exists failed: {str(e)}")
+            return {"exists": False, "error": str(e)}
+    
+    async def get_index_stats(self, uuid: str) -> Dict[str, Any]:
+        """
+        Получение статистики индексов чанка.
+        
+        Args:
+            uuid: UUID чанка
+            
+        Returns:
+            Словарь со статистикой индексов
+        """
+        try:
+            result = await self.redis_client.eval(
+                GET_INDEX_STATS_SCRIPT,
+                keys=[uuid],
+                args=[]
+            )
+            
+            if isinstance(result, str):
+                return json.loads(result)
+            else:
+                logger.error(f"Get stats failed: {result}")
+                return {"error": str(result)}
+                
+        except Exception as e:
+            logger.error(f"Get stats failed: {str(e)}")
+            return {"error": str(e)}
+    
+    async def restore_chunk(self, uuid: str) -> IndexOperationResult:
+        """
+        Восстановление мягко удаленного чанка.
+        
+        Args:
+            uuid: UUID чанка для восстановления
+            
+        Returns:
+            IndexOperationResult с результатом операции
+        """
+        try:
+            result = await self.redis_client.eval(
+                RESTORE_CHUNK_SCRIPT,
+                keys=[uuid],
+                args=[]
+            )
+            
+            if result == "OK":
+                logger.info(f"Chunk restored successfully: {uuid}")
+                return IndexOperationResult(
+                    success=True,
+                    message="Chunk restored successfully",
+                    operation_type="restore",
+                    uuid=uuid
+                )
+            else:
+                logger.error(f"Restore failed: {result}")
+                return IndexOperationResult(
+                    success=False,
+                    message="Restore failed",
+                    operation_type="restore",
+                    uuid=uuid,
+                    error_details=str(result)
+                )
+                
+        except Exception as e:
+            logger.error(f"Restore failed: {str(e)}")
+            return IndexOperationResult(
+                success=False,
+                message="Restore failed",
+                operation_type="restore",
+                uuid=uuid,
+                error_details=str(e)
+            )
+
+    def get_field_statistics(self) -> Dict[str, Any]:
+        """
+        Получение статистики по типам полей.
+        
+        Returns:
+            Статистика типов полей
+        """
+        stats = {
+            "total_fields": len(self._field_type_cache),
+            "field_types": {},
+            "index_types": {},
+            "cache_hits": 0,
+            "cache_misses": 0
+        }
+        
+        for field_name, field_type in self._field_type_cache.items():
+            field_type_name = field_type.value
+            stats["field_types"][field_type_name] = stats["field_types"].get(field_type_name, 0) + 1
+        
+        return stats
+    
+    def clear_cache(self) -> None:
+        """Очистка кэшей."""
+        self._script_cache.clear()
+        self._field_type_cache.clear()
+        self.script_sha = None
+        logger.info(LOG_CACHE_CLEARED)
+    
+    def _generate_replace_chunk_script(self, field_analysis: List[FieldInfo]) -> str:
+        """
+        Генерация LUA скрипта для замены чанка на основе анализа полей.
+        
+        Args:
+            field_analysis: Анализ полей чанка
+            
+        Returns:
+            LUA скрипт для выполнения
+        """
+        # Базовый скрипт для замены чанка
+        base_script = REPLACE_CHUNK_SCRIPT
+        
+        # Добавляем специфичную логику на основе типов полей
+        field_specific_script = self._generate_field_specific_script(field_analysis)
+        
+        # Объединяем скрипты
+        full_script = base_script + "\n" + field_specific_script
+        
+        # Кэшируем сгенерированный скрипт
+        script_key = self._generate_script_key(field_analysis)
+        self._script_cache[script_key] = full_script
+        
+        return full_script
+    
+    def _generate_field_specific_script(self, field_analysis: List[FieldInfo]) -> str:
+        """
+        Генерация специфичной части скрипта на основе типов полей.
+        
+        Args:
+            field_analysis: Анализ полей чанка
+            
+        Returns:
+            Дополнительная часть LUA скрипта
+        """
+        script_parts = []
+        
+        for field_info in field_analysis:
+            if not field_info.is_indexed:
+                continue
+                
+            if field_info.field_type == FieldType.ARRAY:
+                script_parts.append(self._generate_array_index_script(field_info))
+            elif field_info.field_type == FieldType.TEXT:
+                script_parts.append(self._generate_text_index_script(field_info))
+            elif field_info.field_type == FieldType.NUMBER:
+                script_parts.append(self._generate_number_index_script(field_info))
+            elif field_info.field_type == FieldType.DATE:
+                script_parts.append(self._generate_date_index_script(field_info))
+            else:
+                script_parts.append(self._generate_scalar_index_script(field_info))
+        
+        return "\n".join(script_parts)
+    
+    def _generate_array_index_script(self, field_info: FieldInfo) -> str:
+        """Генерация скрипта для индексации массива."""
+        return f"""
+        -- Индексация массива для поля {field_info.name}
+        if chunk_data.{field_info.name} then
+            for i, element in ipairs(chunk_data.{field_info.name}) do
+                redis.call('SADD', 'array_element_index:{field_info.name}:' .. i, uuid)
+                redis.call('SET', 'array_element_value:{field_info.name}:' .. i .. ':' .. uuid, element)
+            end
+        end
+        """
+    
+    def _generate_text_index_script(self, field_info: FieldInfo) -> str:
+        """Генерация скрипта для индексации текста."""
+        return f"""
+        -- Индексация текста для поля {field_info.name}
+        if chunk_data.{field_info.name} then
+            local words = {{}}
+            for word in string.gmatch(chunk_data.{field_info.name}, '%S+') do
+                table.insert(words, word)
+            end
+            for _, word in ipairs(words) do
+                redis.call('SADD', 'bm25_token_index:{field_info.name}:' .. word, uuid)
+            end
+        end
+        """
+    
+    def _generate_number_index_script(self, field_info: FieldInfo) -> str:
+        """Генерация скрипта для индексации числа."""
+        return f"""
+        -- Индексация числа для поля {field_info.name}
+        if chunk_data.{field_info.name} then
+            redis.call('ZADD', 'numeric_index:{field_info.name}', chunk_data.{field_info.name}, uuid)
+        end
+        """
+    
+    def _generate_date_index_script(self, field_info: FieldInfo) -> str:
+        """Генерация скрипта для индексации даты."""
+        return f"""
+        -- Индексация даты для поля {field_info.name}
+        if chunk_data.{field_info.name} then
+            local timestamp = redis.call('TIME')[1]
+            redis.call('ZADD', 'date_index:{field_info.name}', timestamp, uuid)
+            redis.call('SET', 'date_value:{field_info.name}:' .. uuid, chunk_data.{field_info.name})
+        end
+        """
+    
+    def _generate_scalar_index_script(self, field_info: FieldInfo) -> str:
+        """Генерация скрипта для индексации скалярного значения."""
+        return f"""
+        -- Индексация скалярного значения для поля {field_info.name}
+        if chunk_data.{field_info.name} then
+            redis.call('SADD', 'scalar_index:{field_info.name}:' .. chunk_data.{field_info.name}, uuid)
+        end
+        """
+    
+    def _generate_script_key(self, field_analysis: List[FieldInfo]) -> str:
+        """
+        Генерация ключа для кэширования скрипта.
+        
+        Args:
+            field_analysis: Анализ полей чанка
+            
+        Returns:
+            Ключ для кэширования
+        """
+        field_signature = []
+        for field_info in field_analysis:
+            if field_info.is_indexed:
+                field_signature.append(f"{field_info.name}:{field_info.field_type.value}")
+        
+        return "script:" + ":".join(sorted(field_signature))
+    
+    async def _execute_replace_script(
+        self, 
+        uuid: str, 
+        script: str, 
+        chunk_data: Dict[str, Any]
+    ) -> str:
+        """
+        Выполнение LUA скрипта замены чанка.
+        
+        Args:
+            uuid: UUID чанка
+            script: LUA скрипт для выполнения
+            chunk_data: Данные чанка
+            
+        Returns:
+            Результат выполнения скрипта
+        """
+        try:
+            # Подготавливаем параметры для скрипта
+            params = self._prepare_script_parameters(uuid, chunk_data)
+            
+            # Выполняем скрипт
+            result = await self.redis_client.eval(
+                script,
+                keys=[uuid],
+                args=params
+            )
+            
+            return result
+            
+        except Exception as e:
+            logger.error(f"Script execution failed for {uuid}: {e}")
+            raise
+    
+    def _prepare_script_parameters(self, uuid: str, chunk_data: Dict[str, Any]) -> List[str]:
+        """
+        Подготовка параметров для LUA скрипта.
+        
+        Args:
+            uuid: UUID чанка
+            chunk_data: Данные чанка
+            
+        Returns:
+            Список параметров для скрипта
+        """
+        params = []
+        
+        # Добавляем UUID
+        params.append(uuid)
+        
+        # Добавляем данные чанка как JSON
+        params.append(json.dumps(chunk_data))
+        
+        # Добавляем метаданные
+        metadata = {
+            "timestamp": int(time.time()),
+            "field_count": len(chunk_data),
+            "data_size": len(json.dumps(chunk_data))
+        }
+        params.append(json.dumps(metadata))
+        
+        return params
+
+    async def remove_vector_by_index(self, faiss_index: int) -> None:
+        """
+        Remove vector from FAISS by index.
+        
+        Args:
+            faiss_index: FAISS index to remove
+            
+        Raises:
+            ValueError: If index is invalid
+            Exception: If removal fails
+        """
+        try:
+            if faiss_index < 0:
+                raise ValueError(f"Invalid FAISS index: {faiss_index}")
+            
+            # Get UUID for this index
+            uuid = await self.redis_client.hget("faiss_idx_to_uuid", str(faiss_index))
+            if not uuid:
+                logger.warning(f"No UUID found for FAISS index {faiss_index}")
+                return
+            
+            uuid = uuid.decode() if isinstance(uuid, bytes) else uuid
+            
+            # Remove from FAISS index mapping
+            await self.redis_client.hdel("faiss_idx_to_uuid", str(faiss_index))
+            await self.redis_client.hdel("uuid_to_faiss_idx", uuid)
+            
+            logger.info(f"Removed vector mapping for index {faiss_index}, UUID {uuid}")
+            
+        except Exception as e:
+            logger.error(f"Error removing vector by index {faiss_index}: {e}")
+            raise
+    
+    async def search_by_chunk_query(
+        self,
+        chunk_query: ChunkQuery,
+        limit: Optional[int] = None,
+        offset: Optional[int] = None
+    ) -> List[SearchResult]:
+        """
+        Поиск по ChunkQuery (делегирование).
+        
+        Args:
+            chunk_query: Запрос для поиска
+            limit: Максимальное количество результатов
+            offset: Смещение результатов
+            
+        Returns:
+            Список результатов поиска
+        """
+        return await self.chunk_query_support.search_by_chunk_query(chunk_query, limit, offset)
+    
+    async def create_index(self, field_name: str, index_type=None) -> bool:
+        """
+        Создание индекса для поля.
+        
+        Args:
+            field_name: Имя поля для индексации
+            index_type: Тип индекса (опционально, для совместимости)
+            
+        Returns:
+            True если индекс создан успешно
+        """
+        try:
+            # Добавляем поле в список индексированных полей
+            self.indexed_fields.add(field_name)
+            logger.info(f"Index created for field: {field_name}")
+            return True
+        except Exception as e:
+            logger.error(f"Failed to create index for field {field_name}: {e}")
+            return False
+
+"""
+AtomicIndexManager - базовая поддержка ChunkQuery.
+
+Добавление методов поиска и фильтрации с использованием ChunkQuery.
+Интеграция с существующими LUA скриптами и сервисами.
+
+Features:
+- Поиск по ChunkQuery
+- Текстовый поиск с BM25
+- Фильтрация по метаданным
+- Интеграция с существующими сервисами
+- Обработка ошибок и валидация
+
+Architecture:
+- Расширение существующего AtomicIndexManager
+- Интеграция с chunk_metadata_adapter.ChunkQuery
+- Использование существующих LUA скриптов
+- Совместимость с текущими сервисами
+
+Author: Vasiliy Zdanovskiy
+email: vasilyvz@gmail.com
+Created: 2024-01-01
+Updated: 2024-01-01
+"""
+
+import json
+import logging
+from typing import Dict, Any, List, Optional, Tuple, Union
+from dataclasses import dataclass
+
+# Логгер
+logger = logging.getLogger(__name__)
+
+class ChunkQuerySupport:
+    """
+    Поддержка ChunkQuery для AtomicIndexManager.
+    
+    Добавляет методы поиска и фильтрации с использованием ChunkQuery
+    к существующему AtomicIndexManager.
+    """
+    
+    def __init__(self, redis_client, embedding_service=None) -> None:
+        """
+        Инициализация поддержки ChunkQuery.
+        
+        Args:
+            redis_client: Redis клиент
+            embedding_service: Сервис для получения эмбеддингов
+        """
+        self.redis_client = redis_client
+        """Redis клиент для выполнения операций."""
+        
+        self.embedding_service = embedding_service
+        """Сервис для получения эмбеддингов."""
+    
+    async def search_by_chunk_query(
+        self,
+        chunk_query: ChunkQuery,
+        limit: Optional[int] = None,
+        offset: Optional[int] = None
+    ) -> List[SearchResult]:
+        """
+        Поиск по ChunkQuery.
+        
+        Args:
+            chunk_query: Запрос для поиска
+            limit: Максимальное количество результатов
+            offset: Смещение результатов
+            
+        Returns:
+            Список результатов поиска
+            
+        Raises:
+            ValueError: При невалидном запросе
+            RedisError: При ошибках Redis
+        """
+        try:
+            # Валидация запроса
+            self._validate_chunk_query(chunk_query)
+            
+            # Определение типа поиска
+            search_type = self._determine_search_type(chunk_query)
+            
+            logger.info(f"Executing {search_type} search for ChunkQuery")
+            
+            # Выполнение соответствующего поиска
+            if search_type == "text":
+                return await self._search_by_text(chunk_query, limit, offset)
+            elif search_type == "metadata":
+                return await self._filter_by_metadata(chunk_query, limit, offset)
+            elif search_type == "combined":
+                return await self._search_combined(chunk_query, limit, offset)
+            else:
+                return []
+                
+        except Exception as e:
+            logger.error(f"Search by ChunkQuery failed: {e}")
+            raise
+    
+    def _validate_chunk_query(self, chunk_query: ChunkQuery) -> None:
+        """
+        Валидация ChunkQuery.
+        
+        Args:
+            chunk_query: Запрос для валидации
+            
+        Raises:
+            ValueError: При невалидном запросе
+        """
+        if not isinstance(chunk_query, ChunkQuery):
+            raise ValueError("chunk_query must be an instance of ChunkQuery")
+        
+        # Проверка наличия хотя бы одного критерия поиска
+        has_text = bool(chunk_query.search_query or chunk_query.text)
+        has_metadata = bool(chunk_query.category or chunk_query.tags or chunk_query.type or chunk_query.language or chunk_query.is_deleted is not None or (hasattr(chunk_query, 'block_meta') and chunk_query.block_meta))
+        has_embedding = bool(chunk_query.embedding)
+        
+        if not any([has_text, has_metadata, has_embedding]):
+            raise ValueError("ChunkQuery must have at least one search criterion")
+        
+        # Валидация лимитов
+        if hasattr(chunk_query, 'limit') and chunk_query.limit is not None:
+            if not isinstance(chunk_query.limit, int) or chunk_query.limit <= 0:
+                raise ValueError("limit must be a positive integer")
+        
+        if hasattr(chunk_query, 'offset') and chunk_query.offset is not None:
+            if not isinstance(chunk_query.offset, int) or chunk_query.offset < 0:
+                raise ValueError("offset must be a non-negative integer")
+    
+    def _determine_search_type(self, chunk_query: ChunkQuery) -> str:
+        """
+        Определение типа поиска на основе ChunkQuery.
+        
+        Args:
+            chunk_query: Запрос для анализа
+            
+        Returns:
+            Тип поиска: "text", "metadata", "combined"
+        """
+        has_text = bool(chunk_query.search_query or chunk_query.text)
+        has_metadata = bool(chunk_query.category or chunk_query.tags or chunk_query.type or chunk_query.language or chunk_query.is_deleted is not None or (hasattr(chunk_query, 'block_meta') and chunk_query.block_meta))
+        has_embedding = bool(chunk_query.embedding)
+        
+        if has_text and not has_metadata and not has_embedding:
+            return "text"
+        elif has_metadata and not has_text and not has_embedding:
+            return "metadata"
+        else:
+            return "combined"
+    
+    async def _search_by_text(
+        self,
+        chunk_query: ChunkQuery,
+        limit: Optional[int] = None,
+        offset: Optional[int] = None
+    ) -> List[SearchResult]:
+        """
+        Текстовый поиск с BM25.
+        
+        Args:
+            chunk_query: Запрос с текстом
+            limit: Максимальное количество результатов
+            offset: Смещение результатов
+            
+        Returns:
+            Список результатов поиска
+        """
+        search_text = chunk_query.search_query or chunk_query.text
+        if not search_text:
+            return []
+        
+        # Генерация LUA скрипта для BM25 поиска
+        script = self._generate_bm25_search_script(search_text, limit, offset)
+        
+        try:
+            # Выполнение поиска
+            result = await self.redis_client.eval(script, 0)
+            
+            # Парсинг результатов
+            return await self._parse_search_results(result)
+            
+        except Exception as e:
+            logger.error(f"Text search failed: {e}")
+            return []
+    
+    async def _filter_by_metadata(
+        self,
+        chunk_query: ChunkQuery,
+        limit: Optional[int] = None,
+        offset: Optional[int] = None
+    ) -> List[SearchResult]:
+        """
+        Фильтрация по метаданным.
+        
+        Args:
+            chunk_query: Запрос с фильтрами метаданных
+            limit: Максимальное количество результатов
+            offset: Смещение результатов
+            
+        Returns:
+            Список результатов поиска
+        """
+        # Сбор всех фильтров метаданных
+        metadata_filters = {}
+        
+        # Основные поля для фильтрации
+        if chunk_query.category:
+            metadata_filters['category'] = chunk_query.category
+        
+        if chunk_query.tags:
+            metadata_filters['tags'] = chunk_query.tags
+        
+        if chunk_query.type:
+            metadata_filters['type'] = chunk_query.type
+        
+        if chunk_query.language:
+            metadata_filters['language'] = chunk_query.language
+        
+        if chunk_query.is_deleted is not None:
+            metadata_filters['is_deleted'] = chunk_query.is_deleted
+        
+        # Дополнительные поля
+        if hasattr(chunk_query, 'block_meta') and chunk_query.block_meta:
+            metadata_filters.update(chunk_query.block_meta)
+        
+        if not metadata_filters:
+            return []
+        
+        # Генерация LUA скрипта для фильтрации метаданных
+        script = self._generate_metadata_filter_script(metadata_filters, limit, offset)
+        
+        try:
+            # Выполнение поиска
+            result = await self.redis_client.eval(script, 0)
+            
+            # Парсинг результатов
+            return await self._parse_search_results(result)
+            
+        except Exception as e:
+            logger.error(f"Metadata filter failed: {e}")
+            return []
+    
+    async def _search_combined(
+        self,
+        chunk_query: ChunkQuery,
+        limit: Optional[int] = None,
+        offset: Optional[int] = None
+    ) -> List[SearchResult]:
+        """
+        Простой поиск с пересечением результатов.
+        
+        Выполняет поиск по всем заданным критериям и возвращает пересечение результатов.
+        
+        Args:
+            chunk_query: Запрос для поиска
+            limit: Максимальное количество результатов
+            offset: Смещение результатов
+            
+        Returns:
+            Список результатов поиска
+        """
+        # Сбор результатов от разных методов поиска
+        result_sets = []
+        
+        # BM25 поиск (если задана строка поиска И коэффициент > 0)
+        if (chunk_query.search_query or chunk_query.text) and getattr(chunk_query, 'bm25_k1', 0) > 0:
+            text_results = await self._search_by_text(chunk_query, limit=None, offset=None)
+            text_uuids = {result.uuid for result in text_results}
+            result_sets.append(text_uuids)
+        
+        # Фильтрация по метаданным (если есть хотя бы один фильтр)
+        metadata_filters = {}
+        if hasattr(chunk_query, 'metadata') and chunk_query.metadata:
+            metadata_filters.update(chunk_query.metadata)
+        if chunk_query.category:
+            metadata_filters['category'] = chunk_query.category
+        if chunk_query.tags:
+            metadata_filters['tags'] = chunk_query.tags
+        if chunk_query.type:
+            metadata_filters['type'] = chunk_query.type
+        if chunk_query.language:
+            metadata_filters['language'] = chunk_query.language
+        if chunk_query.is_deleted is not None:
+            metadata_filters['is_deleted'] = chunk_query.is_deleted
+        
+        if metadata_filters:
+            metadata_results = await self._filter_by_metadata(chunk_query, limit=None, offset=None)
+            metadata_uuids = {result.uuid for result in metadata_results}
+            result_sets.append(metadata_uuids)
+        
+        # Проверка наличия условий отбора
+        if len(result_sets) == 0:
+            raise ValueError("No search criteria provided. At least one search condition must be specified (text with bm25_k1 > 0, embedding with semantic_weight > 0, or metadata filters)")
+        
+        # Оптимизированное вычисление пересечения
+        if len(result_sets) > 1:
+            # Оптимизация: сортируем множества по размеру для эффективного пересечения
+            sorted_sets = sorted(result_sets, key=len)
+            final_uuids = sorted_sets[0]  # Начинаем с самого маленького множества
+            
+            # Последовательно вычисляем пересечение
+            for current_set in sorted_sets[1:]:
+                final_uuids = final_uuids.intersection(current_set)
+                if not final_uuids:  # Раннее прерывание если пересечение пустое
+                    break
+        else:
+            final_uuids = result_sets[0]
+        
+        # Оптимизированная пагинация и получение результатов
+        results = []
+        if final_uuids:
+            # Применяем пагинацию до получения метаданных
+            uuids_list = list(final_uuids)
+            start = offset or 0
+            end = start + (limit or len(uuids_list))
+            paginated_uuids = uuids_list[start:end]
+            
+            # Получение метаданных только для нужных UUID
+            for uuid in paginated_uuids:
+                chunk_key = f"chunk:{uuid}"
+                metadata = await self.redis_client.hgetall(chunk_key)
+                
+                results.append(SearchResult(
+                    uuid=uuid,
+                    score=1.0,  # Простой скор для пересечения
+                    metadata=metadata
+                ))
+        
+        return results
+    
+    def _generate_bm25_search_script(
+        self,
+        search_text: str,
+        limit: Optional[int] = None,
+        offset: Optional[int] = None
+    ) -> str:
+        """
+        Генерация LUA скрипта для BM25 поиска.
+        
+        Args:
+            search_text: Текст для поиска
+            limit: Максимальное количество результатов
+            offset: Смещение результатов
+            
+        Returns:
+            LUA скрипт для BM25 поиска
+        """
+        return f"""
+-- BM25 Search Script
+local search_text = "{search_text}"
+local limit = {limit or 10}
+local offset = {offset or 0}
+
+-- Токенизация текста (простая)
+local tokens = {{}}
+for token in string.gmatch(search_text:lower(), "%w+") do
+    if #token > 2 then  -- Игнорируем короткие токены
+        table.insert(tokens, token)
+    end
+end
+
+-- Поиск по токенам
+local results = {{}}
+local scores = {{}}
+
+for _, token in ipairs(tokens) do
+    local token_key = "bm25_token_index:" .. token
+    local uuids = redis.call('SMEMBERS', token_key)
+    
+    for _, uuid in ipairs(uuids) do
+        if not results[uuid] then
+            results[uuid] = 0
+        end
+        results[uuid] = results[uuid] + 1
+    end
+end
+
+-- Сортировка по релевантности
+local sorted_results = {{}}
+for uuid, score in pairs(results) do
+    table.insert(sorted_results, {{uuid = uuid, score = score}})
+end
+
+table.sort(sorted_results, function(a, b) return a.score > b.score end)
+
+-- Применение лимитов
+local final_results = {{}}
+for i = offset + 1, math.min(offset + limit, #sorted_results) do
+    table.insert(final_results, sorted_results[i])
+end
+
+return cjson.encode(final_results)
+"""
+    
+    def _generate_metadata_filter_script(
+        self,
+        metadata_filters: Dict[str, Any],
+        limit: Optional[int] = None,
+        offset: Optional[int] = None
+    ) -> str:
+        """
+        Генерация LUA скрипта для фильтрации метаданных.
+        
+        Args:
+            metadata_filters: Фильтры метаданных
+            limit: Максимальное количество результатов
+            offset: Смещение результатов
+            
+        Returns:
+            LUA скрипт для фильтрации метаданных
+        """
+        filters_json = json.dumps(metadata_filters)
+        
+        return f"""
+-- Metadata Filter Script
+local metadata_filters = cjson.decode('{filters_json}')
+local limit = {limit or 10}
+local offset = {offset or 0}
+
+local results = {{}}
+local candidate_uuids = {{}}
+
+-- Сбор кандидатов по каждому фильтру
+for field, value in pairs(metadata_filters) do
+    if type(value) == "table" then
+        -- Массив значений
+        for _, item in ipairs(value) do
+            local index_key = "array_element_index:" .. field .. ":" .. item
+            local uuids = redis.call('SMEMBERS', index_key)
+            for _, uuid in ipairs(uuids) do
+                candidate_uuids[uuid] = (candidate_uuids[uuid] or 0) + 1
+            end
+        end
+    else
+        -- Скалярное значение
+        local index_key = "field_index:" .. field .. ":" .. tostring(value)
+        local uuids = redis.call('SMEMBERS', index_key)
+        for _, uuid in ipairs(uuids) do
+            candidate_uuids[uuid] = (candidate_uuids[uuid] or 0) + 1
+        end
+    end
+end
+
+-- Фильтрация по количеству совпадений
+local required_filters = 0
+for _ in pairs(metadata_filters) do
+    required_filters = required_filters + 1
+end
+
+for uuid, match_count in pairs(candidate_uuids) do
+    if match_count >= required_filters then
+        table.insert(results, {{uuid = uuid, score = match_count / required_filters}})
+    end
+end
+
+-- Сортировка по релевантности
+table.sort(results, function(a, b) return a.score > b.score end)
+
+-- Применение лимитов
+local final_results = {{}}
+for i = offset + 1, math.min(offset + limit, #results) do
+    table.insert(final_results, results[i])
+end
+
+return cjson.encode(final_results)
+"""
+    
+    async def _parse_search_results(self, redis_result: Any) -> List[SearchResult]:
+        """
+        Парсинг результатов поиска из Redis.
+        
+        Args:
+            redis_result: Результат из Redis
+            
+        Returns:
+            Список результатов поиска
+        """
+        if not redis_result:
+            return []
+        
+        try:
+            results_data = json.loads(redis_result)
+            search_results = []
+            
+            for item in results_data:
+                # Получение метаданных чанка
+                chunk_key = f"chunk:{item['uuid']}"
+                metadata = await self.redis_client.hgetall(chunk_key)
+                
+                search_result = SearchResult(
+                    uuid=item['uuid'],
+                    score=item['score'],
+                    metadata=metadata
+                )
+                search_results.append(search_result)
+            
+            return search_results
+            
+        except Exception as e:
+            logger.error(f"Failed to parse search results: {e}")
+            return []
+    
+    def _combine_and_rank_results(
+        self,
+        results: List[SearchResult],
+        limit: Optional[int] = None,
+        offset: Optional[int] = None
+    ) -> List[SearchResult]:
+        """
+        Объединение и ранжирование результатов.
+        
+        Args:
+            results: Список результатов
+            limit: Максимальное количество результатов
+            offset: Смещение результатов
+            
+        Returns:
+            Отсортированный список результатов
+        """
+        # Группировка по UUID
+        uuid_scores = {}
+        uuid_metadata = {}
+        
+        for result in results:
+            if result.uuid not in uuid_scores:
+                uuid_scores[result.uuid] = []
+                uuid_metadata[result.uuid] = result.metadata
+            
+            uuid_scores[result.uuid].append(result.score)
+        
+        # Вычисление среднего скора
+        combined_results = []
+        for uuid, scores in uuid_scores.items():
+            avg_score = sum(scores) / len(scores)
+            combined_results.append(SearchResult(
+                uuid=uuid,
+                score=avg_score,
+                metadata=uuid_metadata[uuid]
+            ))
+        
+        # Сортировка по скору
+        combined_results.sort(key=lambda x: x.score, reverse=True)
+        
+        # Применение лимитов
+        start = offset or 0
+        end = start + (limit or len(combined_results))
+        
+        return combined_results[start:end]
+
+
+# ============================================================================
+# LUA SCRIPTS FOR HYBRID SEARCH
+# ============================================================================
+
+# Гибридный поиск: комбинирование семантического, BM25 и фильтрации
+HYBRID_SEARCH_SCRIPT = """
+-- Гибридный поиск: комбинирование семантического, BM25 и фильтрации
+local search_text = ARGV[1]                    -- Текст для BM25
+local search_embedding = cjson.decode(ARGV[2])  -- Вектор для семантического поиска
+local metadata_filters = cjson.decode(ARGV[3])  -- Фильтры метаданных
+local semantic_weight = tonumber(ARGV[4])       -- Вес семантического поиска
+local bm25_weight = tonumber(ARGV[5])           -- Вес BM25 поиска
+local filter_weight = tonumber(ARGV[6])         -- Вес фильтрации
+local limit = tonumber(ARGV[7])
+local offset = tonumber(ARGV[8])
+
+-- Функция вычисления косинусного сходства
+local function calculate_cosine_similarity(vec1, vec2)
+    if not vec1 or not vec2 then return 0 end
+    
+    local dot_product = 0
+    local norm1 = 0
+    local norm2 = 0
+    
+    for i = 1, #vec1 do
+        dot_product = dot_product + vec1[i] * vec2[i]
+        norm1 = norm1 + vec1[i] * vec1[i]
+        norm2 = norm2 + vec2[i] * vec2[i]
+    end
+    
+    if norm1 == 0 or norm2 == 0 then return 0 end
+    return dot_product / (math.sqrt(norm1) * math.sqrt(norm2))
+end
+
+-- BM25 поиск
+local bm25_results = {}
+if search_text and search_text ~= "" then
+    local tokens = {}
+    for token in string.gmatch(search_text:lower(), "%w+") do
+        if #token > 2 then
+            table.insert(tokens, token)
+        end
+    end
+    
+    for _, token in ipairs(tokens) do
+        local token_key = "bm25_token_index:" .. token
+        local uuids = redis.call('SMEMBERS', token_key)
+        for _, uuid in ipairs(uuids) do
+            bm25_results[uuid] = (bm25_results[uuid] or 0) + 1
+        end
+    end
+end
+
+-- Семантический поиск
+local semantic_results = {}
+if search_embedding then
+    local vector_keys = redis.call('KEYS', 'vector_data:*')
+    for _, key in ipairs(vector_keys) do
+        local uuid = string.sub(key, 13)
+        local vector_data = redis.call('GET', key)
+        if vector_data then
+            local vector = cjson.decode(vector_data)
+            local similarity = calculate_cosine_similarity(search_embedding, vector)
+            semantic_results[uuid] = similarity
+        end
+    end
+end
+
+-- Фильтрация по метаданным
+local filter_results = {}
+if metadata_filters then
+    local candidate_uuids = {}
+    for field, value in pairs(metadata_filters) do
+        if type(value) == "table" then
+            for _, item in ipairs(value) do
+                local index_key = "array_element_index:" .. field .. ":" .. item
+                local uuids = redis.call('SMEMBERS', index_key)
+                for _, uuid in ipairs(uuids) do
+                    candidate_uuids[uuid] = (candidate_uuids[uuid] or 0) + 1
+                end
+            end
+        else
+            local index_key = "field_index:" .. field .. ":" .. tostring(value)
+            local uuids = redis.call('SMEMBERS', index_key)
+            for _, uuid in ipairs(uuids) do
+                candidate_uuids[uuid] = (candidate_uuids[uuid] or 0) + 1
+            end
+        end
+    end
+    
+    local required_filters = 0
+    for _ in pairs(metadata_filters) do required_filters = required_filters + 1 end
+    
+    for uuid, match_count in pairs(candidate_uuids) do
+        if match_count >= required_filters then
+            filter_results[uuid] = match_count / required_filters
+        end
+    end
+end
+
+-- Комбинирование всех результатов
+local combined_results = {}
+local all_uuids = {}
+for uuid in pairs(bm25_results) do all_uuids[uuid] = true end
+for uuid in pairs(semantic_results) do all_uuids[uuid] = true end
+for uuid in pairs(filter_results) do all_uuids[uuid] = true end
+
+for uuid in pairs(all_uuids) do
+    local bm25_score = bm25_results[uuid] or 0
+    local semantic_score = semantic_results[uuid] or 0
+    local filter_score = filter_results[uuid] or 0
+    
+    local combined_score = bm25_weight * bm25_score + 
+                          semantic_weight * semantic_score + 
+                          filter_weight * filter_score
+    
+    table.insert(combined_results, {uuid = uuid, score = combined_score})
+end
+
+-- Сортировка и лимиты
+table.sort(combined_results, function(a, b) return a.score > b.score end)
+local final_results = {}
+for i = offset + 1, math.min(offset + limit, #combined_results) do
+    table.insert(final_results, combined_results[i])
+end
+
+return cjson.encode(final_results)
+"""
+
+# Фильтрация по метаданным
+METADATA_FILTER_SCRIPT = """
+-- Фильтрация по метаданным
+local metadata_filters = cjson.decode(ARGV[1])
+local limit = tonumber(ARGV[2])
+local offset = tonumber(ARGV[3])
+
+local results = {}
+local candidate_uuids = {}
+
+-- Сбор кандидатов
+for field, value in pairs(metadata_filters) do
+    if type(value) == "table" then
+        for _, item in ipairs(value) do
+            local index_key = "array_element_index:" .. field .. ":" .. item
+            local uuids = redis.call('SMEMBERS', index_key)
+            for _, uuid in ipairs(uuids) do
+                candidate_uuids[uuid] = (candidate_uuids[uuid] or 0) + 1
+            end
+        end
+    else
+        local index_key = "field_index:" .. field .. ":" .. tostring(value)
+        local uuids = redis.call('SMEMBERS', index_key)
+        for _, uuid in ipairs(uuids) do
+            candidate_uuids[uuid] = (candidate_uuids[uuid] or 0) + 1
+        end
+    end
+end
+
+-- Фильтрация и ранжирование
+local required_filters = 0
+for _ in pairs(metadata_filters) do required_filters = required_filters + 1 end
+
+for uuid, match_count in pairs(candidate_uuids) do
+    if match_count >= required_filters then
+        table.insert(results, {uuid = uuid, score = match_count / required_filters})
+    end
+end
+
+table.sort(results, function(a, b) return a.score > b.score end)
+local final_results = {}
+for i = offset + 1, math.min(offset + limit, #results) do
+    table.insert(final_results, results[i])
+end
+
+return cjson.encode(final_results)
+"""

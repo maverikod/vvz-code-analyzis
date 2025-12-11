@@ -42,6 +42,7 @@ dev = [
 
 [project.scripts]
 code_mapper = "code_analysis.cli:main"
+code_refactor = "code_analysis.refactor_cli:refactor"
 
 [tool.black]
 line-length = 88

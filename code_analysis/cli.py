@@ -13,9 +13,7 @@ from pathlib import Path
 from .code_mapper import CodeMapper
 
 # Setup logging
-logging.basicConfig(
-    level=logging.INFO, format="%(levelname)s:%(name)s:%(message)s"
-)
+logging.basicConfig(level=logging.INFO, format="%(levelname)s:%(name)s:%(message)s")
 logger = logging.getLogger(__name__)
 
 
@@ -25,9 +23,7 @@ logger = logging.getLogger(__name__)
     "-r",
     default=".",
     help="Root directory to analyze",
-    type=click.Path(
-        exists=True, file_okay=False, dir_okay=True, path_type=Path
-    ),
+    type=click.Path(exists=True, file_okay=False, dir_okay=True, path_type=Path),
 )
 @click.option(
     "--output-dir",
@@ -49,9 +45,14 @@ logger = logging.getLogger(__name__)
     is_flag=True,
     help="Enable verbose output",
 )
-@click.version_option(version="1.0.2")
+@click.option(
+    "--use-sqlite/--no-sqlite",
+    default=True,
+    help="Use SQLite database (default: True)",
+)
+@click.version_option(version="1.0.3")
 def main(
-    root_dir: Path, output_dir: Path, max_lines: int, verbose: bool
+    root_dir: Path, output_dir: Path, max_lines: int, verbose: bool, use_sqlite: bool
 ) -> None:
     """
     Analyze Python codebase and generate comprehensive reports.
@@ -74,7 +75,9 @@ def main(
         click.echo()
 
         # Initialize code mapper
-        mapper = CodeMapper(str(root_dir), str(output_dir), max_lines)
+        mapper = CodeMapper(
+            str(root_dir), str(output_dir), max_lines, use_sqlite=use_sqlite
+        )
 
         # Analyze directory
         mapper.analyze_directory(str(root_dir))

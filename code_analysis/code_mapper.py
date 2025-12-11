@@ -18,6 +18,7 @@ import logging
 from .analyzer import CodeAnalyzer
 from .issue_detector import IssueDetector
 from .reporter import CodeReporter
+from .database import CodeDatabase
 
 # Setup logging
 logging.basicConfig(level=logging.INFO)
@@ -28,13 +29,30 @@ class CodeMapper:
     """Main code mapper class."""
 
     def __init__(
-        self, root_dir: str = ".", output_dir: str = "code_analysis", max_lines: int = 400
+        self,
+        root_dir: str = ".",
+        output_dir: str = "code_analysis",
+        max_lines: int = 400,
+        use_sqlite: bool = True,
     ):
         """Initialize code mapper."""
-        self.analyzer = CodeAnalyzer(root_dir, output_dir, max_lines)
-        self.issue_detector = IssueDetector(self.analyzer.issues, self.analyzer.root_dir)
+        self.output_dir = Path(output_dir)
+        self.use_sqlite = use_sqlite
+
+        # Initialize database if using SQLite
+        self.database = None
+        if use_sqlite:
+            db_path = self.output_dir / "code_analysis.db"
+            self.database = CodeDatabase(db_path)
+
+        self.analyzer = CodeAnalyzer(
+            root_dir, output_dir, max_lines, database=self.database
+        )
+        self.issue_detector = IssueDetector(
+            self.analyzer.issues, self.analyzer.root_dir, database=self.database
+        )
         self.analyzer.issue_detector = self.issue_detector
-        self.reporter = CodeReporter(self.analyzer.output_dir)
+        self.reporter = CodeReporter(self.analyzer.output_dir, use_sqlite=use_sqlite)
 
     def analyze_directory(self, directory: str = ".") -> None:
         """Analyze entire directory."""
@@ -45,12 +63,12 @@ class CodeMapper:
             dirs[:] = [
                 d
                 for d in dirs
-                if not d.startswith('.')
-                and d not in ['__pycache__', 'node_modules', '.venv', 'venv']
+                if not d.startswith(".")
+                and d not in ["__pycache__", "node_modules", ".venv", "venv"]
             ]
 
             for file in files:
-                if file.endswith('.py'):
+                if file.endswith(".py"):
                     file_path = Path(root) / file
                     print(f"INFO:__main__:Анализ файла: {file_path}")
                     self.analyzer.analyze_file(file_path)
@@ -61,21 +79,22 @@ class CodeMapper:
         self.reporter.generate_issues_report(self.analyzer.issues)
         self.reporter.generate_method_index(self.analyzer.code_map)
         self.reporter.print_summary(self.analyzer.issues, self.analyzer.max_lines)
+        # Close database connection
+        if self.database:
+            self.database.close()
 
 
 def main() -> None:
     """Main function."""
-    parser = argparse.ArgumentParser(description='Analyze Python codebase')
+    parser = argparse.ArgumentParser(description="Analyze Python codebase")
+    parser.add_argument("--root-dir", default=".", help="Root directory to analyze")
     parser.add_argument(
-        '--root-dir', default='.', help='Root directory to analyze'
+        "--output-dir", default="code_analysis", help="Output directory for reports"
     )
     parser.add_argument(
-        '--output-dir', default='code_analysis', help='Output directory for reports'
+        "--max-lines", type=int, default=400, help="Maximum lines per file"
     )
-    parser.add_argument(
-        '--max-lines', type=int, default=400, help='Maximum lines per file'
-    )
-    
+
     args = parser.parse_args()
 
     mapper = CodeMapper(args.root_dir, args.output_dir, args.max_lines)

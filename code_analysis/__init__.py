@@ -16,10 +16,12 @@ from .analyzer import CodeAnalyzer
 from .code_mapper import CodeMapper
 from .issue_detector import IssueDetector
 from .reporter import CodeReporter
+from .database import CodeDatabase
 
 __all__ = [
     "CodeAnalyzer",
     "CodeMapper",
     "IssueDetector",
     "CodeReporter",
+    "CodeDatabase",
 ]

@@ -12,6 +12,9 @@ from pathlib import Path
 from code_analysis.refactorer import ClassSplitter, SuperclassExtractor, ClassMerger
 
 
+class TestAdditionalCoverage2:
+    """Additional coverage tests part 2."""
+
     def test_merger_validate_completeness_missing_merged(self, tmp_path):
         """Test validate_completeness when merged class not found."""
         test_file = tmp_path / "test.py"

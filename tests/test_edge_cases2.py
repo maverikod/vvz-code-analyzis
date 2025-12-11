@@ -12,6 +12,9 @@ from pathlib import Path
 from code_analysis.refactorer import ClassSplitter, SuperclassExtractor, ClassMerger
 
 
+class TestEdgeCases2:
+    """Edge case tests part 2."""
+
     def test_merger_perform_merge_reverse_order(self, tmp_path):
         """Test _perform_merge handles multiple classes in reverse order."""
         test_file = tmp_path / "test.py"

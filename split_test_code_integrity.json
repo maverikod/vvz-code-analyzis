@@ -1,0 +1,20 @@
+{
+    "src_class": "TestCodeIntegrity",
+    "dst_classes": {
+        "TestCodeIntegrityPart1": {
+            "props": [],
+            "methods": [
+                "test_split_integrity_all_methods_preserved",
+                "test_extract_integrity_all_members_in_base",
+                "test_merge_integrity_all_members_preserved"
+            ]
+        },
+        "TestCodeIntegrityPart2": {
+            "props": [],
+            "methods": [
+                "test_integrity_with_complex_class",
+                "test_integrity_syntax_validation"
+            ]
+        }
+    }
+}

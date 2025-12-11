@@ -106,9 +106,9 @@ class TestEdgeCasesPart1:
         test_file.write_text(
             '''from abc import ABC
 
-    class Child(ABC):
+class Child(ABC):
     pass
-    '''
+'''
         )
 
         extractor = SuperclassExtractor(test_file)
@@ -168,9 +168,9 @@ class TestEdgeCasesPart1:
             '''class A:
     pass
 
-    class B:
+class B:
     pass
-    '''
+'''
         )
 
         extractor = SuperclassExtractor(test_file)
@@ -189,10 +189,10 @@ class TestEdgeCasesPart1:
     def method(self) -> str:
         return "a"
 
-    class B:
+class B:
     def method(self) -> int:
         return 1
-    '''
+'''
         )
 
         extractor = SuperclassExtractor(test_file)
@@ -214,10 +214,10 @@ class TestEdgeCasesPart2:
     def method(self):
         return 1
 
-    class Child2:
+class Child2:
     def method(self):
         return 2
-    '''
+'''
         )
 
         extractor = SuperclassExtractor(test_file)
@@ -240,10 +240,10 @@ class TestEdgeCasesPart2:
     def method(self):
         return 1
 
-    class Child2:
+class Child2:
     def method(self):
         return 2
-    '''
+'''
         )
 
         extractor = SuperclassExtractor(test_file)
@@ -278,13 +278,13 @@ class TestEdgeCasesPart2:
     def method2(self):
         return 2
 
-    class B:
+class B:
     def __init__(self):
         self.prop3 = 3
 
     def method3(self):
         return 3
-    '''
+'''
         )
 
         merger = ClassMerger(test_file)
@@ -332,11 +332,11 @@ class TestEdgeCasesPart2:
         test_file = tmp_path / "test.py"
         test_file.write_text(
             '''import sys
-    from pathlib import Path
+from pathlib import Path
 
-    class Test:
+class Test:
     pass
-    '''
+'''
         )
 
         splitter = ClassSplitter(test_file)

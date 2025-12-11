@@ -133,7 +133,7 @@ class TestCodeIntegrityPart1:
     def method2(self):
         return 2
 
-    class Child2:
+class Child2:
     def __init__(self):
         self.prop1 = 1
         self.prop3 = 3
@@ -143,7 +143,7 @@ class TestCodeIntegrityPart1:
 
     def method2(self):
         return 2  # method2 must be in both for extraction
-    '''
+'''
         )
 
         config = {
@@ -219,7 +219,7 @@ class TestCodeIntegrityPart1:
     def method2(self):
         return 2
 
-    class Source2:
+class Source2:
     def __init__(self):
         self.prop3 = 3
         self.prop4 = 4
@@ -229,7 +229,7 @@ class TestCodeIntegrityPart1:
 
     def method4(self):
         return 4
-    '''
+'''
         test_file.write_text(original_content)
 
         # Collect original members

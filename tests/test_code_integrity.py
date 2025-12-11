@@ -12,20 +12,6 @@ from pathlib import Path
 from code_analysis.refactorer import ClassSplitter, SuperclassExtractor, ClassMerger
 
 
-class TestCodeIntegrity:
-    """Tests for ensuring code integrity after refactoring operations."""
-    def __init__(self):
-        pass
-    def test_split_integrity_all_methods_preserved(self, tmp_path):
-        return self.testCodeIntegrityPart1.test_split_integrity_all_methods_preserved(tmp_path)
-    def test_extract_integrity_all_members_in_base(self, tmp_path):
-        return self.testCodeIntegrityPart1.test_extract_integrity_all_members_in_base(tmp_path)
-    def test_merge_integrity_all_members_preserved(self, tmp_path):
-        return self.testCodeIntegrityPart1.test_merge_integrity_all_members_preserved(tmp_path)
-    def test_integrity_with_complex_class(self, tmp_path):
-        return self.testCodeIntegrityPart2.test_integrity_with_complex_class(tmp_path)
-    def test_integrity_syntax_validation(self, tmp_path):
-        return self.testCodeIntegrityPart2.test_integrity_syntax_validation(tmp_path)
 class TestCodeIntegrityPart1:
     """Tests for ensuring code integrity after refactoring operations."""
     def test_split_integrity_all_methods_preserved(self, tmp_path):

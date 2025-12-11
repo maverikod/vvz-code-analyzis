@@ -12,46 +12,6 @@ from pathlib import Path
 from code_analysis.refactorer import ClassSplitter, SuperclassExtractor, ClassMerger
 
 
-class TestEdgeCases:
-    """Edge case tests to increase coverage."""
-    def __init__(self):
-        pass
-    def test_splitter_extract_class_members_nested_classes(self, tmp_path):
-        return self.testEdgeCasesPart1.test_splitter_extract_class_members_nested_classes(tmp_path)
-    def test_splitter_find_class_end_no_body(self, tmp_path):
-        return self.testEdgeCasesPart1.test_splitter_find_class_end_no_body(tmp_path)
-    def test_splitter_build_new_class_no_docstring_no_props(self, tmp_path):
-        return self.testEdgeCasesPart1.test_splitter_build_new_class_no_docstring_no_props(tmp_path)
-    def test_splitter_build_modified_source_class_all_moved(self, tmp_path):
-        return self.testEdgeCasesPart1.test_splitter_build_modified_source_class_all_moved(tmp_path)
-    def test_extractor_get_class_bases_qualified(self, tmp_path):
-        return self.testEdgeCasesPart1.test_extractor_get_class_bases_qualified(tmp_path)
-    def test_extractor_get_return_type_with_annotation(self, tmp_path):
-        return self.testEdgeCasesPart1.test_extractor_get_return_type_with_annotation(tmp_path)
-    def test_extractor_get_return_type_no_annotation(self, tmp_path):
-        return self.testEdgeCasesPart1.test_extractor_get_return_type_no_annotation(tmp_path)
-    def test_extractor_check_method_compatibility_no_methods(self, tmp_path):
-        return self.testEdgeCasesPart1.test_extractor_check_method_compatibility_no_methods(tmp_path)
-    def test_extractor_check_method_compatibility_incompatible_returns(self, tmp_path):
-        return self.testEdgeCasesPart1.test_extractor_check_method_compatibility_incompatible_returns(tmp_path)
-    def test_extractor_build_base_class_with_abc_import(self, tmp_path):
-        return self.testEdgeCasesPart2.test_extractor_build_base_class_with_abc_import(tmp_path)
-    def test_extractor_perform_extraction_with_abc_import(self, tmp_path):
-        return self.testEdgeCasesPart2.test_extractor_perform_extraction_with_abc_import(tmp_path)
-    def test_merger_build_merged_class_with_filter(self, tmp_path):
-        return self.testEdgeCasesPart2.test_merger_build_merged_class_with_filter(tmp_path)
-    def test_splitter_validate_completeness_missing_dst_class(self, tmp_path):
-        return self.testEdgeCasesPart2.test_splitter_validate_completeness_missing_dst_class(tmp_path)
-    def test_splitter_validate_imports_success(self, tmp_path):
-        return self.testEdgeCasesPart2.test_splitter_validate_imports_success(tmp_path)
-    def test_extractor_validate_completeness_missing_props(self, tmp_path):
-        return self.testEdgeCasesPart2.test_extractor_validate_completeness_missing_props(tmp_path)
-    def test_merger_validate_completeness_missing_methods(self, tmp_path):
-        return self.testEdgeCasesPart2.test_merger_validate_completeness_missing_methods(tmp_path)
-    def test_splitter_extract_method_code_empty_method(self, tmp_path):
-        return self.testEdgeCasesPart2.test_splitter_extract_method_code_empty_method(tmp_path)
-    def test_extractor_update_child_class_empty_after_removal(self, tmp_path):
-        return self.testEdgeCasesPart2.test_extractor_update_child_class_empty_after_removal(tmp_path)
 class TestEdgeCasesPart1:
     """Edge case tests to increase coverage."""
     def test_splitter_extract_class_members_nested_classes(self, tmp_path):

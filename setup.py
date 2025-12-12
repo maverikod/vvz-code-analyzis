@@ -45,7 +45,8 @@ setup(
     install_requires=requirements,
     entry_points={
         "console_scripts": [
-            "code_mapper=code_analysis.cli:main",
+            "code_analysis=code_analysis.cli.main:cli",
+            "code_mapper=code_analysis.code_mapper:main",  # Legacy
         ],
     },
     include_package_data=True,

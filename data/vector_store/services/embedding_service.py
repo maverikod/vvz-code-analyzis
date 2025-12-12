@@ -1,3 +1,12 @@
+"""
+Embedding service for vector store.
+
+This module provides functionality for converting text to vectors and caching embeddings.
+
+Author: Vasiliy Zdanovskiy
+email: vasilyvz@gmail.com
+"""
+
 import logging
 import numpy as np
 from typing import Optional, List, Dict, Any

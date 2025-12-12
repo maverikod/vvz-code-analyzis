@@ -1,3 +1,12 @@
+"""
+Redis utility functions for vector store.
+
+This module provides utility functions for working with Redis.
+
+Author: Vasiliy Zdanovskiy
+email: vasilyvz@gmail.com
+"""
+
 import json
 import enum
 import math

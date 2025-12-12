@@ -15,6 +15,8 @@ from typing import Dict, List, Any, Optional, TYPE_CHECKING
 if TYPE_CHECKING:
     from .database import CodeDatabase  # noqa: F401
 
+from .usage_analyzer import UsageAnalyzer
+
 logger = logging.getLogger(__name__)
 
 
@@ -35,6 +37,7 @@ class CodeAnalyzer:
         self.max_lines = max_lines
         self.issue_detector = issue_detector
         self.database = database
+        self.usage_analyzer = UsageAnalyzer(database) if database else None
 
         # Create output directory if it doesn't exist
         self.output_dir.mkdir(exist_ok=True)
@@ -81,8 +84,12 @@ class CodeAnalyzer:
             # Save file to database if using SQLite
             file_id = None
             if self.database:
+                # Get or create project
+                project_id = self.database.get_or_create_project(
+                    str(self.root_dir), name=self.root_dir.name
+                )
                 file_id = self.database.add_file(
-                    file_path_str, line_count, last_modified, has_docstring
+                    file_path_str, line_count, last_modified, has_docstring, project_id
                 )
                 # Clear old data for this file
                 self.database.clear_file_data(file_id)
@@ -119,6 +126,10 @@ class CodeAnalyzer:
 
             # Analyze AST
             self._analyze_ast(tree, file_path, file_id)
+
+            # Analyze usages (method calls, attribute accesses)
+            if self.usage_analyzer and file_id:
+                self.usage_analyzer.analyze_file(file_path, file_id)
 
         except (OSError, IOError, ValueError, SyntaxError, UnicodeDecodeError) as e:
             logger.error(f"Error analyzing file {file_path}: {e}")
@@ -185,6 +196,22 @@ class CodeAnalyzer:
             class_id = self.database.add_class(
                 file_id, class_name, node.lineno, docstring, bases
             )
+            
+            # Save class content for full-text search
+            try:
+                class_code = ast.get_source_segment(
+                    self._get_file_content(file_path), node
+                ) or ""
+                self.database.add_code_content(
+                    file_id=file_id,
+                    entity_type="class",
+                    entity_name=class_name,
+                    content=class_code,
+                    docstring=docstring,
+                    entity_id=class_id,
+                )
+            except Exception as e:
+                logger.debug(f"Error saving class content: {e}")
 
         # Check for class docstring
         if not docstring:
@@ -234,6 +261,22 @@ class CodeAnalyzer:
             function_id = self.database.add_function(
                 file_id, node.name, node.lineno, args, docstring
             )
+            
+            # Save function content for full-text search
+            try:
+                function_code = ast.get_source_segment(
+                    self._get_file_content(file_path), node
+                ) or ""
+                self.database.add_code_content(
+                    file_id=file_id,
+                    entity_type="function",
+                    entity_name=node.name,
+                    content=function_code,
+                    docstring=docstring,
+                    entity_id=function_id,
+                )
+            except Exception as e:
+                logger.debug(f"Error saving function content: {e}")
 
         # Check for function docstring
         if not docstring:
@@ -285,6 +328,24 @@ class CodeAnalyzer:
                 has_pass,
                 has_not_implemented,
             )
+            
+            # Save method content for full-text search
+            try:
+                method_code = ast.get_source_segment(
+                    self._get_file_content(file_path), node
+                ) or ""
+                file_id = self.database.get_file_id(str(file_path))
+                if file_id:
+                    self.database.add_code_content(
+                        file_id=file_id,
+                        entity_type="method",
+                        entity_name=f"{class_name}.{node.name}",
+                        content=method_code,
+                        docstring=docstring,
+                        entity_id=method_id,
+                    )
+            except Exception as e:
+                logger.debug(f"Error saving method content: {e}")
 
         # Check for method docstring
         if not docstring:
@@ -425,3 +486,18 @@ class CodeAnalyzer:
         # Check for invalid imports
         if self.issue_detector:
             self.issue_detector.check_invalid_import_from(node, file_path)
+
+    def _get_file_content(self, file_path: Path) -> str:
+        """Get file content for AST source segment extraction."""
+        if not hasattr(self, "_file_content_cache"):
+            self._file_content_cache = {}
+        
+        file_path_str = str(file_path)
+        if file_path_str not in self._file_content_cache:
+            try:
+                with open(file_path, "r", encoding="utf-8") as f:
+                    self._file_content_cache[file_path_str] = f.read()
+            except Exception:
+                self._file_content_cache[file_path_str] = ""
+        
+        return self._file_content_cache[file_path_str]

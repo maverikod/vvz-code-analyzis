@@ -1,3 +1,12 @@
+"""
+Centralized constants for vector store limits.
+
+This module defines default limits for various vector store operations.
+
+Author: Vasiliy Zdanovskiy
+email: vasilyvz@gmail.com
+"""
+
 # Centralized constants for vector store limits
 
 # Default limit for vector search

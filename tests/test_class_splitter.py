@@ -11,7 +11,7 @@ import tempfile
 from pathlib import Path
 import pytest
 
-from code_analysis.refactorer import ClassSplitter
+from code_analysis.core.refactorer import ClassSplitter
 
 
 class TestClassSplitterPositive:

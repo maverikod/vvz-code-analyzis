@@ -10,7 +10,8 @@ import click
 import logging
 from pathlib import Path
 
-from .code_mapper import CodeMapper
+from ..core.database import CodeDatabase
+from ..commands import AnalyzeCommand
 
 # Setup logging
 logging.basicConfig(level=logging.INFO, format="%(levelname)s:%(name)s:%(message)s")
@@ -21,8 +22,8 @@ logger = logging.getLogger(__name__)
 @click.option(
     "--root-dir",
     "-r",
-    default=".",
-    help="Root directory to analyze",
+    required=True,
+    help="Root directory of the project to analyze",
     type=click.Path(exists=True, file_okay=False, dir_okay=True, path_type=Path),
 )
 @click.option(
@@ -40,6 +41,11 @@ logger = logging.getLogger(__name__)
     help="Maximum lines per file",
 )
 @click.option(
+    "--comment",
+    "-c",
+    help="Human-readable comment/identifier for project",
+)
+@click.option(
     "--verbose",
     "-v",
     is_flag=True,
@@ -52,7 +58,12 @@ logger = logging.getLogger(__name__)
 )
 @click.version_option(version="1.0.3")
 def main(
-    root_dir: Path, output_dir: Path, max_lines: int, verbose: bool, use_sqlite: bool
+    root_dir: Path,
+    output_dir: Path,
+    max_lines: int,
+    comment: str | None,
+    verbose: bool,
+    use_sqlite: bool,
 ) -> None:
     """
     Analyze Python codebase and generate comprehensive reports.
@@ -72,21 +83,44 @@ def main(
         click.echo(f"🔍 Analyzing code in: {root_dir.absolute()}")
         click.echo(f"📁 Output directory: {output_dir.absolute()}")
         click.echo(f"📏 Max lines per file: {max_lines}")
+        if comment:
+            click.echo(f"💬 Project comment: {comment}")
         click.echo()
 
-        # Initialize code mapper
-        mapper = CodeMapper(
-            str(root_dir), str(output_dir), max_lines, use_sqlite=use_sqlite
-        )
+        root_dir = root_dir.resolve()
 
-        # Analyze directory
-        mapper.analyze_directory(str(root_dir))
+        if use_sqlite:
+            # Use commands layer
+            db_path = output_dir / "code_analysis.db"
+            db = CodeDatabase(db_path)
+            try:
+                project_id = db.get_or_create_project(
+                    str(root_dir), name=root_dir.name, comment=comment
+                )
+                analyze_cmd = AnalyzeCommand(db, project_id, str(root_dir), max_lines)
+                result = analyze_cmd.execute()
 
-        # Generate reports
-        mapper.generate_reports()
+                click.echo()
+                click.echo("✅ Analysis completed successfully!")
+                click.echo(f"   Files analyzed: {result['files_analyzed']}")
+                click.echo(f"   Classes: {result['classes']}")
+                click.echo(f"   Functions: {result['functions']}")
+                click.echo(f"   Issues: {result['issues']}")
+                click.echo(f"   Project ID: {result['project_id']}")
+            finally:
+                db.close()
+        else:
+            # Legacy YAML mode (if needed)
+            from ..code_mapper import CodeMapper
 
-        click.echo()
-        click.echo("✅ Analysis completed successfully!")
+            mapper = CodeMapper(
+                str(root_dir), str(output_dir), max_lines, use_sqlite=False
+            )
+            mapper.analyze_directory(str(root_dir))
+            mapper.generate_reports()
+
+            click.echo()
+            click.echo("✅ Analysis completed successfully!")
 
     except Exception as e:
         logger.error(f"Error during analysis: {e}")

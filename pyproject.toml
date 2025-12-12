@@ -29,6 +29,8 @@ classifiers = [
 dependencies = [
     "pyyaml>=6.0",
     "click>=8.0",
+    "mcp>=1.0.0",
+    "pydantic>=2.0.0",
 ]
 
 [project.optional-dependencies]
@@ -41,8 +43,9 @@ dev = [
 ]
 
 [project.scripts]
-code_mapper = "code_analysis.cli:main"
-code_refactor = "code_analysis.refactor_cli:refactor"
+code_analysis = "code_analysis.cli.main:cli"
+code_mapper = "code_analysis.code_mapper:main"  # Legacy
+test_mcp = "code_analysis.cli.test_mcp_cli:main"
 
 [tool.black]
 line-length = 88
@@ -78,8 +81,8 @@ warn_unreachable = true
 strict_equality = true
 
 [tool.flake8]
-max-line-length = 79
-extend-ignore = ["E203", "W503"]
+max-line-length = 88
+extend-ignore = ["E203", "W503", "E501"]
 exclude = [
     ".git",
     "__pycache__",

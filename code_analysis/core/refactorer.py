@@ -209,6 +209,15 @@ class ClassSplitter:
                 self.restore_backup()
                 return False, f"Completeness validation failed: {completeness_error}"
 
+            # Validate that all docstrings are preserved
+            is_docstrings_valid, docstrings_error = self.validate_docstrings(
+                src_class, config
+            )
+            if not is_docstrings_valid:
+                # Restore backup
+                self.restore_backup()
+                return False, f"Docstring validation failed: {docstrings_error}"
+
             # Import validation is optional - dependencies might not be installed
             # Syntax check is more important and already passed
             try:
@@ -368,10 +377,10 @@ class ClassSplitter:
         return None
 
     def _extract_method_code(self, method_node: Any, indent: str) -> str:
-        """Extract method code as string with proper indentation."""
+        """Extract method code as string with proper indentation, including comments."""
         # Get method lines from original content
         lines = self.original_content.split("\n")
-        method_start = method_node.lineno - 1
+        method_start_line = method_node.lineno - 1
 
         # Find method end - use end_lineno if available,
         # otherwise find by indentation
@@ -379,9 +388,9 @@ class ClassSplitter:
             method_end = method_node.end_lineno
         else:
             # Fallback: find next statement at same or less indentation
-            method_indent = len(lines[method_start]) - len(lines[method_start].lstrip())
-            method_end = method_start + 1
-            for i in range(method_start + 1, len(lines)):
+            method_indent = len(lines[method_start_line]) - len(lines[method_start_line].lstrip())
+            method_end = method_start_line + 1
+            for i in range(method_start_line + 1, len(lines)):
                 line = lines[i]
                 if line.strip() and not line.strip().startswith("#"):
                     line_indent = len(line) - len(line.lstrip())
@@ -390,7 +399,31 @@ class ClassSplitter:
                         break
                 method_end = i + 1
 
-        method_lines = lines[method_start:method_end]
+        # Find comments before method (on same or higher indentation level)
+        # Look backwards from method start to find preceding comments
+        method_indent = len(lines[method_start_line]) - len(lines[method_start_line].lstrip())
+        actual_start = method_start_line
+        
+        # Look backwards for comments and empty lines
+        for i in range(method_start_line - 1, -1, -1):
+            line = lines[i]
+            if not line.strip():
+                # Empty line - continue looking
+                continue
+            elif line.strip().startswith("#"):
+                # Comment line - check if it's at same or less indentation
+                comment_indent = len(line) - len(line.lstrip())
+                if comment_indent <= method_indent:
+                    # This comment belongs to the method
+                    actual_start = i
+                else:
+                    # Comment is more indented, might be part of previous method
+                    break
+            else:
+                # Non-comment, non-empty line - stop here
+                break
+
+        method_lines = lines[actual_start:method_end]
 
         # Adjust indentation
         if method_lines:
@@ -701,6 +734,114 @@ class ClassSplitter:
         except Exception as e:
             return False, f"Error during completeness validation: {str(e)}"
 
+    def validate_docstrings(
+        self,
+        src_class: ast.ClassDef,
+        config: Dict[str, Any],
+    ) -> tuple[bool, Optional[str]]:
+        """
+        Validate that all docstrings are preserved in destination classes.
+
+        Args:
+            src_class: Original source class AST node
+            config: Split configuration
+
+        Returns:
+            Tuple of (is_valid, error_message)
+        """
+        try:
+            # Reload file to get new AST
+            with open(self.file_path, "r", encoding="utf-8") as f:
+                new_content = f.read()
+            new_tree = ast.parse(new_content, filename=str(self.file_path))
+
+            # Get source class docstring
+            src_class_docstring = ast.get_docstring(src_class)
+            
+            # Get all method docstrings from source class
+            src_method_docstrings = {}
+            for item in src_class.body:
+                if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    method_docstring = ast.get_docstring(item)
+                    if method_docstring:
+                        src_method_docstrings[item.name] = method_docstring
+
+            # Find all destination classes
+            dst_classes = {}
+            dst_classes_config = config.get("dst_classes", {})
+            for dst_class_name in dst_classes_config.keys():
+                for node in ast.walk(new_tree):
+                    if isinstance(node, ast.ClassDef) and node.name == dst_class_name:
+                        dst_classes[dst_class_name] = node
+                        break
+
+            # Check class docstring in destination classes
+            if src_class_docstring:
+                found_in_dst = False
+                for dst_class_name, dst_class_node in dst_classes.items():
+                    dst_docstring = ast.get_docstring(dst_class_node)
+                    if dst_docstring and dst_docstring.strip() == src_class_docstring.strip():
+                        found_in_dst = True
+                        break
+                
+                if not found_in_dst:
+                    return False, (
+                        f"Class docstring not found in destination classes. "
+                        f"Expected: {src_class_docstring[:50]}..."
+                    )
+
+            # Check method docstrings in destination classes
+            method_mapping: Dict[str, str] = {}  # method_name -> dst_class_name
+            for dst_class_name, dst_config in dst_classes_config.items():
+                for method in dst_config.get("methods", []):
+                    method_mapping[method] = dst_class_name
+
+            for method_name, method_docstring in src_method_docstrings.items():
+                if method_name in method_mapping:
+                    dst_class_name = method_mapping[method_name]
+                    dst_class_node = dst_classes.get(dst_class_name)
+                    
+                    if not dst_class_node:
+                        return False, (
+                            f"Destination class '{dst_class_name}' not found "
+                            f"for method '{method_name}'"
+                        )
+                    
+                    # Find method in destination class
+                    method_found = False
+                    for item in dst_class_node.body:
+                        if (
+                            isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef))
+                            and item.name == method_name
+                        ):
+                            dst_method_docstring = ast.get_docstring(item)
+                            if not dst_method_docstring:
+                                return False, (
+                                    f"Method '{method_name}' docstring missing "
+                                    f"in destination class '{dst_class_name}'. "
+                                    f"Expected: {method_docstring[:50]}..."
+                                )
+                            if dst_method_docstring.strip() != method_docstring.strip():
+                                return False, (
+                                    f"Method '{method_name}' docstring mismatch "
+                                    f"in destination class '{dst_class_name}'. "
+                                    f"Expected: {method_docstring[:50]}..., "
+                                    f"Got: {dst_method_docstring[:50]}..."
+                                )
+                            method_found = True
+                            break
+                    
+                    if not method_found:
+                        return False, (
+                            f"Method '{method_name}' not found "
+                            f"in destination class '{dst_class_name}'"
+                        )
+
+            return True, None
+
+        except Exception as e:
+            return False, f"Error during docstring validation: {str(e)}"
+
 
 class SuperclassExtractor:
     """Class for extracting common functionality into base class."""
@@ -983,6 +1124,15 @@ class SuperclassExtractor:
                 self.restore_backup()
                 return False, f"Completeness validation failed: {completeness_error}"
 
+            # Validate that all docstrings are preserved
+            is_docstrings_valid, docstrings_error = self.validate_docstrings(
+                child_nodes, config
+            )
+            if not is_docstrings_valid:
+                # Restore backup
+                self.restore_backup()
+                return False, f"Docstring validation failed: {docstrings_error}"
+
             # Try to import the module (skip if dependencies are missing)
             try:
                 import_valid, import_error = self.validate_imports()
@@ -1258,18 +1408,60 @@ class SuperclassExtractor:
 
 
     def _extract_method_code(self, method_node: Any, indent: str) -> str:
-        """Extract method code as string with proper indentation."""
+        """Extract method code as string with proper indentation, including comments."""
         lines = self.original_content.split("\n")
-        method_start = method_node.lineno - 1
-        method_end = (
-            method_node.end_lineno
-            if hasattr(method_node, "end_lineno") and method_node.end_lineno
-            else method_start + 1
-        )
-        method_lines = lines[method_start:method_end]
+        method_start_line = method_node.lineno - 1
+
+        # Find method end - use end_lineno if available,
+        # otherwise find by indentation
+        if hasattr(method_node, "end_lineno") and method_node.end_lineno:
+            method_end = method_node.end_lineno
+        else:
+            # Fallback: find next statement at same or less indentation
+            method_indent = len(lines[method_start_line]) - len(lines[method_start_line].lstrip())
+            method_end = method_start_line + 1
+            for i in range(method_start_line + 1, len(lines)):
+                line = lines[i]
+                if line.strip() and not line.strip().startswith("#"):
+                    line_indent = len(line) - len(line.lstrip())
+                    if line_indent <= method_indent:
+                        method_end = i
+                        break
+                method_end = i + 1
+
+        # Find comments before method (on same or higher indentation level)
+        method_indent = len(lines[method_start_line]) - len(lines[method_start_line].lstrip())
+        actual_start = method_start_line
+        
+        # Look backwards for comments and empty lines
+        for i in range(method_start_line - 1, -1, -1):
+            line = lines[i]
+            if not line.strip():
+                # Empty line - continue looking
+                continue
+            elif line.strip().startswith("#"):
+                # Comment line - check if it's at same or less indentation
+                comment_indent = len(line) - len(line.lstrip())
+                if comment_indent <= method_indent:
+                    # This comment belongs to the method
+                    actual_start = i
+                else:
+                    # Comment is more indented, might be part of previous method
+                    break
+            else:
+                # Non-comment, non-empty line - stop here
+                break
+
+        method_lines = lines[actual_start:method_end]
 
         if method_lines:
-            original_indent = len(method_lines[0]) - len(method_lines[0].lstrip())
+            # Find first non-empty line for base indent
+            original_indent = 0
+            for line in method_lines:
+                if line.strip():
+                    original_indent = len(line) - len(line.lstrip())
+                    break
+
             adjusted_lines = []
             for line in method_lines:
                 if line.strip():
@@ -1391,6 +1583,123 @@ class SuperclassExtractor:
 
         except Exception as e:
             return False, f"Error during completeness validation: {str(e)}"
+
+    def validate_docstrings(
+        self,
+        child_nodes: List[ast.ClassDef],
+        config: Dict[str, Any],
+    ) -> tuple[bool, Optional[str]]:
+        """
+        Validate that all docstrings are preserved in base and child classes.
+
+        Args:
+            child_nodes: Original child class AST nodes
+            config: Extraction configuration
+
+        Returns:
+            Tuple of (is_valid, error_message)
+        """
+        try:
+            # Reload file to get new AST
+            with open(self.file_path, "r", encoding="utf-8") as f:
+                new_content = f.read()
+            new_tree = ast.parse(new_content, filename=str(self.file_path))
+
+            base_class_name = config.get("base_class")
+            extract_from = config.get("extract_from", {})
+
+            # Find base class
+            base_class = None
+            for node in ast.walk(new_tree):
+                if isinstance(node, ast.ClassDef) and node.name == base_class_name:
+                    base_class = node
+                    break
+
+            if not base_class:
+                return False, f"Base class '{base_class_name}' not found after extraction"
+
+            # Check child class docstrings are preserved
+            for child_node in child_nodes:
+                child_name = child_node.name
+                child_config = extract_from.get(child_name, {})
+                
+                # Find child class in new tree
+                new_child_class = None
+                for node in ast.walk(new_tree):
+                    if isinstance(node, ast.ClassDef) and node.name == child_name:
+                        new_child_class = node
+                        break
+
+                if not new_child_class:
+                    return False, f"Child class '{child_name}' not found after extraction"
+
+                # Check child class docstring
+                original_child_docstring = ast.get_docstring(child_node)
+                if original_child_docstring:
+                    new_child_docstring = ast.get_docstring(new_child_class)
+                    if not new_child_docstring:
+                        return False, (
+                            f"Child class '{child_name}' docstring missing. "
+                            f"Expected: {original_child_docstring[:50]}..."
+                        )
+                    if new_child_docstring.strip() != original_child_docstring.strip():
+                        return False, (
+                            f"Child class '{child_name}' docstring mismatch. "
+                            f"Expected: {original_child_docstring[:50]}..., "
+                            f"Got: {new_child_docstring[:50]}..."
+                        )
+
+                # Check method docstrings in base class
+                extracted_methods = set(child_config.get("methods", []))
+                for method_name in extracted_methods:
+                    # Find method in original child class
+                    original_method = None
+                    for item in child_node.body:
+                        if (
+                            isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef))
+                            and item.name == method_name
+                        ):
+                            original_method = item
+                            break
+
+                    if original_method:
+                        original_method_docstring = ast.get_docstring(original_method)
+                        if original_method_docstring:
+                            # Check method docstring in base class
+                            base_method = None
+                            for item in base_class.body:
+                                if (
+                                    isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef))
+                                    and item.name == method_name
+                                ):
+                                    base_method = item
+                                    break
+
+                            if not base_method:
+                                return False, (
+                                    f"Method '{method_name}' not found "
+                                    f"in base class '{base_class_name}'"
+                                )
+
+                            base_method_docstring = ast.get_docstring(base_method)
+                            if not base_method_docstring:
+                                return False, (
+                                    f"Method '{method_name}' docstring missing "
+                                    f"in base class '{base_class_name}'. "
+                                    f"Expected: {original_method_docstring[:50]}..."
+                                )
+                            if base_method_docstring.strip() != original_method_docstring.strip():
+                                return False, (
+                                    f"Method '{method_name}' docstring mismatch "
+                                    f"in base class '{base_class_name}'. "
+                                    f"Expected: {original_method_docstring[:50]}..., "
+                                    f"Got: {base_method_docstring[:50]}..."
+                                )
+
+            return True, None
+
+        except Exception as e:
+            return False, f"Error during docstring validation: {str(e)}"
 
 
 class ClassMerger:
@@ -1565,6 +1874,15 @@ class ClassMerger:
                 self.restore_backup()
                 return False, f"Completeness validation failed: {completeness_error}"
 
+            # Validate that all docstrings are preserved
+            is_docstrings_valid, docstrings_error = self.validate_docstrings(
+                source_nodes, config
+            )
+            if not is_docstrings_valid:
+                # Restore backup
+                self.restore_backup()
+                return False, f"Docstring validation failed: {docstrings_error}"
+
             # Import validation is optional
             try:
                 import_valid, import_error = self.validate_imports()
@@ -1666,16 +1984,19 @@ class ClassMerger:
         return "\n".join(lines)
 
     def _extract_method_code(self, method_node: Any, indent: str) -> str:
-        """Extract method code as string with proper indentation."""
+        """Extract method code as string with proper indentation, including comments."""
         lines = self.original_content.split("\n")
-        method_start = method_node.lineno - 1
+        method_start_line = method_node.lineno - 1
 
+        # Find method end - use end_lineno if available,
+        # otherwise find by indentation
         if hasattr(method_node, "end_lineno") and method_node.end_lineno:
             method_end = method_node.end_lineno
         else:
-            method_indent = len(lines[method_start]) - len(lines[method_start].lstrip())
-            method_end = method_start + 1
-            for i in range(method_start + 1, len(lines)):
+            # Fallback: find next statement at same or less indentation
+            method_indent = len(lines[method_start_line]) - len(lines[method_start_line].lstrip())
+            method_end = method_start_line + 1
+            for i in range(method_start_line + 1, len(lines)):
                 line = lines[i]
                 if line.strip() and not line.strip().startswith("#"):
                     line_indent = len(line) - len(line.lstrip())
@@ -1684,9 +2005,33 @@ class ClassMerger:
                         break
                 method_end = i + 1
 
-        method_lines = lines[method_start:method_end]
+        # Find comments before method (on same or higher indentation level)
+        method_indent = len(lines[method_start_line]) - len(lines[method_start_line].lstrip())
+        actual_start = method_start_line
+        
+        # Look backwards for comments and empty lines
+        for i in range(method_start_line - 1, -1, -1):
+            line = lines[i]
+            if not line.strip():
+                # Empty line - continue looking
+                continue
+            elif line.strip().startswith("#"):
+                # Comment line - check if it's at same or less indentation
+                comment_indent = len(line) - len(line.lstrip())
+                if comment_indent <= method_indent:
+                    # This comment belongs to the method
+                    actual_start = i
+                else:
+                    # Comment is more indented, might be part of previous method
+                    break
+            else:
+                # Non-comment, non-empty line - stop here
+                break
+
+        method_lines = lines[actual_start:method_end]
 
         if method_lines:
+            # Find first non-empty line for base indent
             original_indent = 0
             for line in method_lines:
                 if line.strip():
@@ -1827,3 +2172,85 @@ class ClassMerger:
 
         except Exception as e:
             return False, f"Error during completeness validation: {str(e)}"
+
+    def validate_docstrings(
+        self,
+        source_nodes: List[ast.ClassDef],
+        config: Dict[str, Any],
+    ) -> tuple[bool, Optional[str]]:
+        """
+        Validate that all docstrings are preserved in merged class.
+
+        Args:
+            source_nodes: Original source class AST nodes
+            config: Merge configuration
+
+        Returns:
+            Tuple of (is_valid, error_message)
+        """
+        try:
+            # Reload file to get new AST
+            with open(self.file_path, "r", encoding="utf-8") as f:
+                new_content = f.read()
+            new_tree = ast.parse(new_content, filename=str(self.file_path))
+
+            base_class_name = config.get("base_class")
+
+            # Find merged class
+            merged_class = None
+            for node in ast.walk(new_tree):
+                if isinstance(node, ast.ClassDef) and node.name == base_class_name:
+                    merged_class = node
+                    break
+
+            if not merged_class:
+                return False, f"Merged class '{base_class_name}' not found after merge"
+
+            # Collect all method docstrings from source classes
+            source_method_docstrings = {}
+            for src_node in source_nodes:
+                for item in src_node.body:
+                    if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                        method_docstring = ast.get_docstring(item)
+                        if method_docstring:
+                            # If method appears in multiple classes, use first one
+                            if item.name not in source_method_docstrings:
+                                source_method_docstrings[item.name] = method_docstring
+
+            # Check method docstrings in merged class
+            for method_name, expected_docstring in source_method_docstrings.items():
+                # Find method in merged class
+                merged_method = None
+                for item in merged_class.body:
+                    if (
+                        isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef))
+                        and item.name == method_name
+                    ):
+                        merged_method = item
+                        break
+
+                if not merged_method:
+                    return False, (
+                        f"Method '{method_name}' not found "
+                        f"in merged class '{base_class_name}'"
+                    )
+
+                merged_method_docstring = ast.get_docstring(merged_method)
+                if not merged_method_docstring:
+                    return False, (
+                        f"Method '{method_name}' docstring missing "
+                        f"in merged class '{base_class_name}'. "
+                        f"Expected: {expected_docstring[:50]}..."
+                    )
+                if merged_method_docstring.strip() != expected_docstring.strip():
+                    return False, (
+                        f"Method '{method_name}' docstring mismatch "
+                        f"in merged class '{base_class_name}'. "
+                        f"Expected: {expected_docstring[:50]}..., "
+                        f"Got: {merged_method_docstring[:50]}..."
+                    )
+
+            return True, None
+
+        except Exception as e:
+            return False, f"Error during docstring validation: {str(e)}"

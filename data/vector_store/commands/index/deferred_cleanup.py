@@ -1,3 +1,13 @@
+"""
+Deferred cleanup command implementation.
+
+This module provides functionality for physically removing soft-deleted records
+from FAISS and Redis storage.
+
+Author: Vasiliy Zdanovskiy
+email: vasilyvz@gmail.com
+"""
+
 from mcp_proxy_adapter.commands.base import Command
 from mcp_proxy_adapter.commands.result import SuccessResult, ErrorResult
 from vector_store.services.vector_store_service import VectorStoreService
@@ -5,6 +15,7 @@ from typing import Any, Dict
 from vector_store.utils.schema_param_validator import validate_params_against_schema
 
 class DeferredCleanupResult(SuccessResult):
+    """Result class for deferred cleanup command."""
     pass
 
 class DeferredCleanupCommand(Command):

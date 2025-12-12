@@ -15,10 +15,10 @@ from pathlib import Path
 import logging
 
 # Import from separate modules
-from .analyzer import CodeAnalyzer
-from .issue_detector import IssueDetector
-from .reporter import CodeReporter
-from .database import CodeDatabase
+from .core.analyzer import CodeAnalyzer
+from .core.issue_detector import IssueDetector
+from .core.reporter import CodeReporter
+from .core.database import CodeDatabase
 
 # Setup logging
 logging.basicConfig(level=logging.INFO)
@@ -41,9 +41,15 @@ class CodeMapper:
 
         # Initialize database if using SQLite
         self.database = None
+        self.project_id = None
         if use_sqlite:
             db_path = self.output_dir / "code_analysis.db"
             self.database = CodeDatabase(db_path)
+            # Get or create project
+            root_path = Path(root_dir).resolve()
+            self.project_id = self.database.get_or_create_project(
+                str(root_path), name=root_path.name
+            )
 
         self.analyzer = CodeAnalyzer(
             root_dir, output_dir, max_lines, database=self.database

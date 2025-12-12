@@ -1,3 +1,13 @@
+"""
+Reindex missing embeddings command implementation.
+
+This module provides functionality for reindexing metadata records that are
+missing valid embeddings.
+
+Author: Vasiliy Zdanovskiy
+email: vasilyvz@gmail.com
+"""
+
 import time
 import numpy as np
 from mcp_proxy_adapter.commands.result import SuccessResult, ErrorResult

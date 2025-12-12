@@ -9,7 +9,7 @@ import ast
 import pytest
 from pathlib import Path
 
-from code_analysis.refactorer import SuperclassExtractor
+from code_analysis.core.refactorer import SuperclassExtractor
 
 
 class TestSuperclassExtractorPositive:

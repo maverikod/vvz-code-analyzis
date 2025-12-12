@@ -9,7 +9,7 @@ import ast
 import pytest
 from pathlib import Path
 
-from code_analysis.refactorer import ClassSplitter, SuperclassExtractor, ClassMerger
+from code_analysis.core.refactorer import ClassSplitter, SuperclassExtractor, ClassMerger
 
 
 class TestEdgeCasesPart1:

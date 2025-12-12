@@ -1,3 +1,12 @@
+"""
+Embedding client adapter for vector store.
+
+This module provides an adapter for the embedding service client.
+
+Author: Vasiliy Zdanovskiy
+email: vasilyvz@gmail.com
+"""
+
 import logging
 from typing import Optional, List, Any
 import numpy as np

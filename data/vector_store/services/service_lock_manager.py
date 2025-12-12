@@ -1,3 +1,12 @@
+"""
+Service lock manager for distributed locking.
+
+This module provides functionality for managing service-wide locks using Redis.
+
+Author: Vasiliy Zdanovskiy
+email: vasilyvz@gmail.com
+"""
+
 import asyncio
 import logging
 import time

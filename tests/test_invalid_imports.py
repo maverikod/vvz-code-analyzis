@@ -1,3 +1,12 @@
+"""
+Tests for invalid import detection.
+
+This module contains tests for detecting invalid imports in Python code.
+
+Author: Vasiliy Zdanovskiy
+email: vasilyvz@gmail.com
+"""
+
 import sys
 import textwrap
 from pathlib import Path
@@ -9,8 +18,8 @@ ROOT_DIR = Path(__file__).resolve().parents[1]
 if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 
-from code_analysis.analyzer import CodeAnalyzer
-from code_analysis.issue_detector import IssueDetector
+from code_analysis.core.analyzer import CodeAnalyzer
+from code_analysis.core.issue_detector import IssueDetector
 
 
 class AnalysisEnv:

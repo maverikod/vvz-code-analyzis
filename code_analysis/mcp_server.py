@@ -11,8 +11,10 @@ import logging
 from typing import Any, Dict, List, Optional
 
 from mcp.server.fastmcp import FastMCP, Context
+from pathlib import Path
 
 from .api import CodeAnalysisAPI
+from .commands.project import ProjectCommand
 
 logger = logging.getLogger(__name__)
 
@@ -342,6 +344,97 @@ async def merge_classes(
         api.close()
 
 
+async def add_project(
+    config_path: str,
+    name: str,
+    path: str,
+    project_id: Optional[str] = None,
+    comment: Optional[str] = None,
+    db_path: Optional[str] = None,
+    context: Context | None = None,
+) -> Dict[str, Any]:
+    """
+    Add project to configuration and database.
+
+    Args:
+        config_path: Path to server configuration file
+        name: Human-readable project name (required)
+        path: Absolute path to project directory (required)
+        project_id: Optional UUID4 (generated if not provided)
+        comment: Optional comment/description
+        db_path: Optional path to database (uses config if not provided)
+        context: MCP context for logging
+
+    Returns:
+        Dictionary with success status and project information
+    """
+    if context:
+        await context.info(f"Adding project: {name} at {path}")
+    else:
+        logger.info(f"Adding project: {name} at {path}")
+
+    cmd = ProjectCommand(Path(config_path), db_path=Path(db_path) if db_path else None)
+    return await cmd.add_project(name, path, project_id, comment)
+
+
+async def remove_project(
+    config_path: str,
+    project_id: str,
+    context: Context | None = None,
+) -> Dict[str, Any]:
+    """
+    Remove project from configuration.
+
+    Args:
+        config_path: Path to server configuration file
+        project_id: Project UUID to remove
+        context: MCP context for logging
+
+    Returns:
+        Dictionary with success status and message
+    """
+    if context:
+        await context.info(f"Removing project: {project_id}")
+    else:
+        logger.info(f"Removing project: {project_id}")
+
+    cmd = ProjectCommand(Path(config_path))
+    return await cmd.remove_project(project_id)
+
+
+async def update_project(
+    config_path: str,
+    project_id: str,
+    name: Optional[str] = None,
+    path: Optional[str] = None,
+    comment: Optional[str] = None,
+    db_path: Optional[str] = None,
+    context: Context | None = None,
+) -> Dict[str, Any]:
+    """
+    Update project data in configuration and database.
+
+    Args:
+        config_path: Path to server configuration file
+        project_id: Project UUID to update
+        name: New name (optional)
+        path: New path (optional)
+        comment: New comment (optional)
+        db_path: Optional path to database (uses config if not provided)
+        context: MCP context for logging
+
+    Returns:
+        Dictionary with success status and message
+    """
+    if context:
+        await context.info(f"Updating project: {project_id}")
+    else:
+        logger.info(f"Updating project: {project_id}")
+
+    cmd = ProjectCommand(Path(config_path), db_path=Path(db_path) if db_path else None)
+    return await cmd.update_project(project_id, name, path, comment)
+
+
 def main() -> None:
     """Main function to run MCP server."""
     import argparse
@@ -402,6 +495,9 @@ def main() -> None:
     server.add_tool(split_class)
     server.add_tool(extract_superclass)
     server.add_tool(merge_classes)
+    server.add_tool(add_project)
+    server.add_tool(remove_project)
+    server.add_tool(update_project)
 
     # Run server
     server.run(transport=args.transport)

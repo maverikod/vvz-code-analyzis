@@ -12,10 +12,12 @@ from .analyze import AnalyzeCommand
 from .search import SearchCommand
 from .refactor import RefactorCommand
 from .issues import IssuesCommand
+from .project import ProjectCommand
 
 __all__ = [
     "AnalyzeCommand",
     "SearchCommand",
     "RefactorCommand",
     "IssuesCommand",
+    "ProjectCommand",
 ]

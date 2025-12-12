@@ -27,7 +27,7 @@ class IssuesCommand:
         self.database = database
         self.project_id = project_id
 
-    def get_issues(
+    async def get_issues(
         self, issue_type: Optional[str] = None
     ) -> Dict[str, Any] | List[Dict[str, Any]]:
         """

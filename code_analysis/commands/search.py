@@ -27,7 +27,7 @@ class SearchCommand:
         self.database = database
         self.project_id = project_id
 
-    def find_usages(
+    async def find_usages(
         self,
         name: str,
         target_type: Optional[str] = None,
@@ -51,7 +51,7 @@ class SearchCommand:
         logger.info(f"Found {len(usages)} usages")
         return usages
 
-    def full_text_search(
+    async def full_text_search(
         self, query: str, entity_type: Optional[str] = None, limit: int = 20
     ) -> List[Dict[str, Any]]:
         """
@@ -74,7 +74,9 @@ class SearchCommand:
         logger.info(f"Found {len(results)} results")
         return results
 
-    def search_classes(self, pattern: Optional[str] = None) -> List[Dict[str, Any]]:
+    async def search_classes(
+        self, pattern: Optional[str] = None
+    ) -> List[Dict[str, Any]]:
         """
         Search classes by name pattern.
 
@@ -92,7 +94,9 @@ class SearchCommand:
         logger.info(f"Found {len(classes)} classes")
         return classes
 
-    def search_methods(self, pattern: Optional[str] = None) -> List[Dict[str, Any]]:
+    async def search_methods(
+        self, pattern: Optional[str] = None
+    ) -> List[Dict[str, Any]]:
         """
         Search methods by name pattern.
 

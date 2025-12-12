@@ -17,7 +17,7 @@ from .api import CodeAnalysisAPI
 logger = logging.getLogger(__name__)
 
 
-def analyze_project(
+async def analyze_project(
     root_dir: str,
     max_lines: int = 400,
     comment: Optional[str] = None,
@@ -36,22 +36,29 @@ def analyze_project(
         Dictionary with analysis results including files_analyzed,
         classes, functions, and issues.
     """
-    logger.info(f"Starting analysis of project: {root_dir}")
+    if context:
+        await context.info(f"Starting analysis of project: {root_dir}")
+    else:
+        logger.info(f"Starting analysis of project: {root_dir}")
 
     api = CodeAnalysisAPI(root_dir, max_lines=max_lines, comment=comment)
     try:
-        result = api.analyze_project()
-        logger.info(
+        result = await api.analyze_project()
+        message = (
             f"Analysis complete: {result.get('files_analyzed', 0)} files, "
             f"{result.get('classes', 0)} classes, "
             f"{result.get('functions', 0)} functions"
         )
+        if context:
+            await context.info(message)
+        else:
+            logger.info(message)
         return result
     finally:
         api.close()
 
 
-def find_usages(
+async def find_usages(
     root_dir: str,
     name: str,
     target_type: Optional[str] = None,
@@ -71,18 +78,25 @@ def find_usages(
     Returns:
         List of usage records with file, line, and context information
     """
-    logger.info(f"Searching for usages of '{name}' in {root_dir}")
+    if context:
+        await context.info(f"Searching for usages of '{name}' in {root_dir}")
+    else:
+        logger.info(f"Searching for usages of '{name}' in {root_dir}")
 
     api = CodeAnalysisAPI(root_dir)
     try:
-        usages = api.find_usages(name, target_type, target_class)
-        logger.info(f"Found {len(usages)} usages")
+        usages = await api.find_usages(name, target_type, target_class)
+        message = f"Found {len(usages)} usages"
+        if context:
+            await context.info(message)
+        else:
+            logger.info(message)
         return usages
     finally:
         api.close()
 
 
-def full_text_search(
+async def full_text_search(
     root_dir: str,
     query: str,
     entity_type: Optional[str] = None,
@@ -102,18 +116,25 @@ def full_text_search(
     Returns:
         List of matching records with relevance scores
     """
-    logger.info(f"Performing full-text search for '{query}' in {root_dir}")
+    if context:
+        await context.info(f"Performing full-text search for '{query}' in {root_dir}")
+    else:
+        logger.info(f"Performing full-text search for '{query}' in {root_dir}")
 
     api = CodeAnalysisAPI(root_dir)
     try:
-        results = api.full_text_search(query, entity_type, limit)
-        logger.info(f"Found {len(results)} results")
+        results = await api.full_text_search(query, entity_type, limit)
+        message = f"Found {len(results)} results"
+        if context:
+            await context.info(message)
+        else:
+            logger.info(message)
         return results
     finally:
         api.close()
 
 
-def search_classes(
+async def search_classes(
     root_dir: str,
     pattern: Optional[str] = None,
     context: Context | None = None,
@@ -129,21 +150,28 @@ def search_classes(
     Returns:
         List of class records with name, file, and inheritance information
     """
-    logger.info(
-        f"Searching classes in {root_dir}"
-        + (f" with pattern '{pattern}'" if pattern else "")
+    message = f"Searching classes in {root_dir}" + (
+        f" with pattern '{pattern}'" if pattern else ""
     )
+    if context:
+        await context.info(message)
+    else:
+        logger.info(message)
 
     api = CodeAnalysisAPI(root_dir)
     try:
-        classes = api.search_classes(pattern)
-        logger.info(f"Found {len(classes)} classes")
+        classes = await api.search_classes(pattern)
+        result_message = f"Found {len(classes)} classes"
+        if context:
+            await context.info(result_message)
+        else:
+            logger.info(result_message)
         return classes
     finally:
         api.close()
 
 
-def search_methods(
+async def search_methods(
     root_dir: str,
     pattern: Optional[str] = None,
     context: Context | None = None,
@@ -159,21 +187,28 @@ def search_methods(
     Returns:
         List of method records with name, class, file, and signature information
     """
-    logger.info(
-        f"Searching methods in {root_dir}"
-        + (f" with pattern '{pattern}'" if pattern else "")
+    message = f"Searching methods in {root_dir}" + (
+        f" with pattern '{pattern}'" if pattern else ""
     )
+    if context:
+        await context.info(message)
+    else:
+        logger.info(message)
 
     api = CodeAnalysisAPI(root_dir)
     try:
-        methods = api.search_methods(pattern)
-        logger.info(f"Found {len(methods)} methods")
+        methods = await api.search_methods(pattern)
+        result_message = f"Found {len(methods)} methods"
+        if context:
+            await context.info(result_message)
+        else:
+            logger.info(result_message)
         return methods
     finally:
         api.close()
 
 
-def get_issues(
+async def get_issues(
     root_dir: str,
     issue_type: Optional[str] = None,
     context: Context | None = None,
@@ -189,25 +224,32 @@ def get_issues(
     Returns:
         Dictionary of issues grouped by type, or list if issue_type is specified
     """
-    logger.info(
-        f"Retrieving issues from {root_dir}"
-        + (f" (type: {issue_type})" if issue_type else "")
+    message = f"Retrieving issues from {root_dir}" + (
+        f" (type: {issue_type})" if issue_type else ""
     )
+    if context:
+        await context.info(message)
+    else:
+        logger.info(message)
 
     api = CodeAnalysisAPI(root_dir)
     try:
-        issues = api.get_issues(issue_type)
+        issues = await api.get_issues(issue_type)
         if isinstance(issues, dict):
             total = sum(len(v) if isinstance(v, list) else 1 for v in issues.values())
-            logger.info(f"Found {total} issues across {len(issues)} types")
+            result_message = f"Found {total} issues across {len(issues)} types"
         else:
-            logger.info(f"Found {len(issues)} issues")
+            result_message = f"Found {len(issues)} issues"
+        if context:
+            await context.info(result_message)
+        else:
+            logger.info(result_message)
         return issues
     finally:
         api.close()
 
 
-def split_class(
+async def split_class(
     root_dir: str,
     file_path: str,
     config: Dict[str, Any],
@@ -225,17 +267,20 @@ def split_class(
     Returns:
         Dictionary with success status and message
     """
-    logger.info(f"Splitting class in {file_path}")
+    if context:
+        await context.info(f"Splitting class in {file_path}")
+    else:
+        logger.info(f"Splitting class in {file_path}")
 
     api = CodeAnalysisAPI(root_dir)
     try:
-        result = api.split_class(file_path, config)
+        result = await api.split_class(file_path, config)
         return result
     finally:
         api.close()
 
 
-def extract_superclass(
+async def extract_superclass(
     root_dir: str,
     file_path: str,
     config: Dict[str, Any],
@@ -253,17 +298,20 @@ def extract_superclass(
     Returns:
         Dictionary with success status and message
     """
-    logger.info(f"Extracting superclass in {file_path}")
+    if context:
+        await context.info(f"Extracting superclass in {file_path}")
+    else:
+        logger.info(f"Extracting superclass in {file_path}")
 
     api = CodeAnalysisAPI(root_dir)
     try:
-        result = api.extract_superclass(file_path, config)
+        result = await api.extract_superclass(file_path, config)
         return result
     finally:
         api.close()
 
 
-def merge_classes(
+async def merge_classes(
     root_dir: str,
     file_path: str,
     config: Dict[str, Any],
@@ -281,11 +329,14 @@ def merge_classes(
     Returns:
         Dictionary with success status and message
     """
-    logger.info(f"Merging classes in {file_path}")
+    if context:
+        await context.info(f"Merging classes in {file_path}")
+    else:
+        logger.info(f"Merging classes in {file_path}")
 
     api = CodeAnalysisAPI(root_dir)
     try:
-        result = api.merge_classes(file_path, config)
+        result = await api.merge_classes(file_path, config)
         return result
     finally:
         api.close()

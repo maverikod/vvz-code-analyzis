@@ -62,16 +62,16 @@ class CodeAnalysisAPI:
         self.issues_cmd = IssuesCommand(self.database, self.project_id)
         self.refactor_cmd = RefactorCommand(self.project_id)
 
-    def analyze_project(self) -> Dict[str, Any]:
+    async def analyze_project(self) -> Dict[str, Any]:
         """
         Analyze entire project.
 
         Returns:
             Dictionary with analysis results
         """
-        return self.analyze_cmd.execute()
+        return await self.analyze_cmd.execute()
 
-    def find_usages(
+    async def find_usages(
         self,
         name: str,
         target_type: Optional[str] = None,
@@ -88,9 +88,9 @@ class CodeAnalysisAPI:
         Returns:
             List of usage records
         """
-        return self.search_cmd.find_usages(name, target_type, target_class)
+        return await self.search_cmd.find_usages(name, target_type, target_class)
 
-    def full_text_search(
+    async def full_text_search(
         self, query: str, entity_type: Optional[str] = None, limit: int = 50
     ) -> List[Dict[str, Any]]:
         """
@@ -104,9 +104,11 @@ class CodeAnalysisAPI:
         Returns:
             List of matching records
         """
-        return self.search_cmd.full_text_search(query, entity_type, limit)
+        return await self.search_cmd.full_text_search(query, entity_type, limit)
 
-    def search_classes(self, pattern: Optional[str] = None) -> List[Dict[str, Any]]:
+    async def search_classes(
+        self, pattern: Optional[str] = None
+    ) -> List[Dict[str, Any]]:
         """
         Search classes by name pattern.
 
@@ -116,9 +118,11 @@ class CodeAnalysisAPI:
         Returns:
             List of class records
         """
-        return self.search_cmd.search_classes(pattern)
+        return await self.search_cmd.search_classes(pattern)
 
-    def search_methods(self, pattern: Optional[str] = None) -> List[Dict[str, Any]]:
+    async def search_methods(
+        self, pattern: Optional[str] = None
+    ) -> List[Dict[str, Any]]:
         """
         Search methods by name pattern.
 
@@ -128,9 +132,11 @@ class CodeAnalysisAPI:
         Returns:
             List of method records
         """
-        return self.search_cmd.search_methods(pattern)
+        return await self.search_cmd.search_methods(pattern)
 
-    def get_issues(self, issue_type: Optional[str] = None) -> List[Dict[str, Any]]:
+    async def get_issues(
+        self, issue_type: Optional[str] = None
+    ) -> List[Dict[str, Any]]:
         """
         Get issues from database.
 
@@ -140,9 +146,11 @@ class CodeAnalysisAPI:
         Returns:
             List of issue records
         """
-        return self.issues_cmd.get_issues(issue_type)
+        return await self.issues_cmd.get_issues(issue_type)
 
-    def split_class(self, file_path: str, config: Dict[str, Any]) -> Dict[str, Any]:
+    async def split_class(
+        self, file_path: str, config: Dict[str, Any]
+    ) -> Dict[str, Any]:
         """
         Split a class into multiple smaller classes.
 
@@ -153,9 +161,11 @@ class CodeAnalysisAPI:
         Returns:
             Dictionary with success status and message
         """
-        return self.refactor_cmd.split_class(str(self.root_path), file_path, config)
+        return await self.refactor_cmd.split_class(
+            str(self.root_path), file_path, config
+        )
 
-    def extract_superclass(
+    async def extract_superclass(
         self, file_path: str, config: Dict[str, Any]
     ) -> Dict[str, Any]:
         """
@@ -168,11 +178,13 @@ class CodeAnalysisAPI:
         Returns:
             Dictionary with success status and message
         """
-        return self.refactor_cmd.extract_superclass(
+        return await self.refactor_cmd.extract_superclass(
             str(self.root_path), file_path, config
         )
 
-    def merge_classes(self, file_path: str, config: Dict[str, Any]) -> Dict[str, Any]:
+    async def merge_classes(
+        self, file_path: str, config: Dict[str, Any]
+    ) -> Dict[str, Any]:
         """
         Merge multiple classes into a single base class.
 
@@ -183,7 +195,9 @@ class CodeAnalysisAPI:
         Returns:
             Dictionary with success status and message
         """
-        return self.refactor_cmd.merge_classes(str(self.root_path), file_path, config)
+        return await self.refactor_cmd.merge_classes(
+            str(self.root_path), file_path, config
+        )
 
     def close(self) -> None:
         """Close database connection."""

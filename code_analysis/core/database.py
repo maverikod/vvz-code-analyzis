@@ -231,7 +231,12 @@ class CodeDatabase:
         """
         )
 
-        # Create indexes
+        self.conn.commit()
+
+        # Migrate existing database if needed (before creating indexes)
+        self._migrate_to_uuid_projects()
+
+        # Create indexes after migration
         indexes = [
             "CREATE INDEX IF NOT EXISTS idx_projects_root_path ON projects(root_path)",
             "CREATE INDEX IF NOT EXISTS idx_files_project ON files(project_id)",
@@ -247,19 +252,28 @@ class CodeDatabase:
             "CREATE INDEX IF NOT EXISTS idx_issues_type ON issues(issue_type)",
             "CREATE INDEX IF NOT EXISTS idx_issues_file ON issues(file_id)",
             "CREATE INDEX IF NOT EXISTS idx_usages_file ON usages(file_id)",
-            "CREATE INDEX IF NOT EXISTS idx_usages_target ON usages(target_type, target_name)",
-            "CREATE INDEX IF NOT EXISTS idx_usages_class_name ON usages(target_class, target_name)",
-            "CREATE INDEX IF NOT EXISTS idx_code_content_file ON code_content(file_id)",
-            "CREATE INDEX IF NOT EXISTS idx_code_content_entity ON code_content(entity_type, entity_id)",
+            (
+                "CREATE INDEX IF NOT EXISTS idx_usages_target "
+                "ON usages(target_type, target_name)"
+            ),
+            (
+                "CREATE INDEX IF NOT EXISTS idx_usages_class_name "
+                "ON usages(target_class, target_name)"
+            ),
+            (
+                "CREATE INDEX IF NOT EXISTS idx_code_content_file "
+                "ON code_content(file_id)"
+            ),
+            (
+                "CREATE INDEX IF NOT EXISTS idx_code_content_entity "
+                "ON code_content(entity_type, entity_id)"
+            ),
         ]
 
         for index_sql in indexes:
             cursor.execute(index_sql)
 
         self.conn.commit()
-
-        # Migrate existing database if needed
-        self._migrate_to_uuid_projects()
 
     def _migrate_to_uuid_projects(self) -> None:
         """Migrate projects table from INTEGER to UUID4 if needed."""
@@ -297,7 +311,9 @@ class CodeDatabase:
                 new_id = str(uuid.uuid4())
                 cursor.execute(
                     """
-                    INSERT INTO projects_new (id, root_path, name, comment, created_at, updated_at)
+                    INSERT INTO projects_new (
+                        id, root_path, name, comment, created_at, updated_at
+                    )
                     VALUES (?, ?, ?, ?, ?, ?)
                 """,
                     (
@@ -338,7 +354,17 @@ class CodeDatabase:
                 )
             """
             )
-            cursor.execute("INSERT INTO files_new SELECT * FROM files")
+            cursor.execute(
+                """
+                INSERT INTO files_new (
+                    id, project_id, path, lines, last_modified,
+                    has_docstring, created_at, updated_at
+                )
+                SELECT id, project_id, path, lines, last_modified,
+                       has_docstring, created_at, updated_at
+                FROM files
+                """
+            )
             cursor.execute("DROP TABLE files")
             cursor.execute("ALTER TABLE files_new RENAME TO files")
             cursor.execute("PRAGMA foreign_keys = ON")
@@ -603,7 +629,11 @@ class CodeDatabase:
         return result
 
     def clear_file_data(self, file_id: int) -> None:
-        """Clear all data for a file (classes, functions, imports, issues, usages, code_content)."""
+        """
+        Clear all data for a file.
+
+        Removes classes, functions, imports, issues, usages, code_content.
+        """
         assert self.conn is not None
         cursor = self.conn.cursor()
         # Get class IDs first

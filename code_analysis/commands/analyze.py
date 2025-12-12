@@ -51,7 +51,7 @@ class AnalyzeCommand:
         )
         self.analyzer.issue_detector = self.issue_detector
 
-    def execute(self) -> Dict[str, Any]:
+    async def execute(self) -> Dict[str, Any]:
         """
         Execute project analysis.
 

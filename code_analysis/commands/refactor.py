@@ -26,7 +26,7 @@ class RefactorCommand:
         """
         self.project_id = project_id
 
-    def split_class(
+    async def split_class(
         self, root_dir: str, file_path: str, config: Dict[str, Any]
     ) -> Dict[str, Any]:
         """
@@ -69,7 +69,7 @@ class RefactorCommand:
                 "project_id": self.project_id,
             }
 
-    def extract_superclass(
+    async def extract_superclass(
         self, root_dir: str, file_path: str, config: Dict[str, Any]
     ) -> Dict[str, Any]:
         """
@@ -114,7 +114,7 @@ class RefactorCommand:
                 "project_id": self.project_id,
             }
 
-    def merge_classes(
+    async def merge_classes(
         self, root_dir: str, file_path: str, config: Dict[str, Any]
     ) -> Dict[str, Any]:
         """

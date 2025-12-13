@@ -8,6 +8,8 @@ email: vasilyvz@gmail.com
 """
 
 import ast
+import json
+import hashlib
 from pathlib import Path
 import logging
 from typing import Dict, List, Any, Optional, TYPE_CHECKING
@@ -64,8 +66,14 @@ class CodeAnalyzer:
             "invalid_imports": [],
         }
 
-    def analyze_file(self, file_path: Path) -> None:
-        """Analyze a single Python file."""
+    async def analyze_file(self, file_path: Path, force: bool = False) -> None:
+        """
+        Analyze a single Python file.
+
+        Args:
+            file_path: Path to Python file
+            force: If True, process file regardless of modification time
+        """
         try:
             file_path_str = str(file_path)
             file_stat = file_path.stat()
@@ -83,6 +91,7 @@ class CodeAnalyzer:
 
             # Save file to database if using SQLite
             file_id = None
+            project_id = None
             if self.database:
                 # Get or create project
                 project_id = self.database.get_or_create_project(
@@ -91,8 +100,6 @@ class CodeAnalyzer:
                 file_id = self.database.add_file(
                     file_path_str, line_count, last_modified, has_docstring, project_id
                 )
-                # Clear old data for this file
-                self.database.clear_file_data(file_id)
 
             # Check file size
             if line_count > self.max_lines:
@@ -126,6 +133,10 @@ class CodeAnalyzer:
 
             # Analyze AST
             self._analyze_ast(tree, file_path, file_id)
+
+            # Save AST tree to database
+            if self.database and file_id:
+                await self._save_ast_tree(tree, file_id, project_id, last_modified, force=False)
 
             # Analyze usages (method calls, attribute accesses)
             if self.usage_analyzer and file_id:
@@ -501,3 +512,87 @@ class CodeAnalyzer:
                 self._file_content_cache[file_path_str] = ""
         
         return self._file_content_cache[file_path_str]
+
+    async def _save_ast_tree(
+        self,
+        tree: ast.Module,
+        file_id: int,
+        project_id: str,
+        file_mtime: float,
+        force: bool = False,
+    ) -> bool:
+        """
+        Save AST tree to database with time check.
+
+        Args:
+            tree: AST module node
+            file_id: File ID in database
+            project_id: Project ID
+            file_mtime: File modification time
+            force: If True, save regardless of time check
+
+        Returns:
+            True if AST was saved, False if skipped (not outdated)
+        """
+        if not self.database:
+            return False
+
+        try:
+            # Check if AST is outdated (unless force is True)
+            if not force:
+                if not self.database.is_ast_outdated(file_id, file_mtime):
+                    logger.debug(
+                        f"AST tree for file_id={file_id} is up to date, skipping"
+                    )
+                    return False
+
+            # Convert AST to JSON-serializable format
+            ast_dict = self._ast_to_dict(tree)
+
+            # Serialize to JSON
+            ast_json = json.dumps(ast_dict, indent=2)
+
+            # Calculate hash for change detection
+            ast_hash = hashlib.sha256(ast_json.encode("utf-8")).hexdigest()
+
+            # Save to database (overwrite existing)
+            await self.database.overwrite_ast_tree(
+                file_id=file_id,
+                project_id=project_id,
+                ast_json=ast_json,
+                ast_hash=ast_hash,
+                file_mtime=file_mtime,
+            )
+
+            logger.debug(f"Saved AST tree for file_id={file_id}, mtime={file_mtime}")
+            return True
+        except Exception as e:
+            logger.error(f"Error saving AST tree for file_id={file_id}: {e}")
+            return False
+
+    def _ast_to_dict(self, node: ast.AST) -> Dict[str, Any]:
+        """
+        Convert AST node to dictionary.
+
+        Args:
+            node: AST node
+
+        Returns:
+            Dictionary representation of AST node
+        """
+        if isinstance(node, ast.AST):
+            result = {
+                "_type": type(node).__name__,
+            }
+            for field, value in ast.iter_fields(node):
+                if isinstance(value, list):
+                    result[field] = [self._ast_to_dict(item) for item in value]
+                elif isinstance(value, ast.AST):
+                    result[field] = self._ast_to_dict(value)
+                else:
+                    result[field] = value
+            return result
+        elif isinstance(node, list):
+            return [self._ast_to_dict(item) for item in node]
+        else:
+            return node

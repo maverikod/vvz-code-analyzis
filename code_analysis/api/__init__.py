@@ -54,22 +54,26 @@ class CodeAnalysisAPI:
             str(self.root_path), name=self.root_path.name, comment=comment
         )
 
-        # Initialize command instances
-        self.analyze_cmd = AnalyzeCommand(
-            self.database, self.project_id, str(self.root_path), max_lines
-        )
+        # Initialize command instances (will be created with force parameter when needed)
+        self.max_lines = max_lines
         self.search_cmd = SearchCommand(self.database, self.project_id)
         self.issues_cmd = IssuesCommand(self.database, self.project_id)
         self.refactor_cmd = RefactorCommand(self.project_id)
 
-    async def analyze_project(self) -> Dict[str, Any]:
+    async def analyze_project(self, force: bool = False) -> Dict[str, Any]:
         """
         Analyze entire project.
+
+        Args:
+            force: If True, process all files regardless of modification time
 
         Returns:
             Dictionary with analysis results
         """
-        return await self.analyze_cmd.execute()
+        analyze_cmd = AnalyzeCommand(
+            self.database, self.project_id, str(self.root_path), self.max_lines, force
+        )
+        return await analyze_cmd.execute()
 
     async def find_usages(
         self,

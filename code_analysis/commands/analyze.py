@@ -23,6 +23,7 @@ class AnalyzeCommand:
         project_id: str,
         root_path: str,
         max_lines: int = 400,
+        force: bool = False,
     ):
         """
         Initialize analyze command.
@@ -37,6 +38,7 @@ class AnalyzeCommand:
         self.project_id = project_id
         self.root_path = Path(root_path).resolve()
         self.max_lines = max_lines
+        self.force = force
 
         # Initialize analyzer
         output_dir = self.root_path / "code_analysis"
@@ -62,6 +64,10 @@ class AnalyzeCommand:
 
         logger.info(f"Analyzing project: {self.root_path}")
 
+        # Clear all existing data for this project before analysis
+        logger.info(f"Clearing existing data for project: {self.project_id}")
+        await self.database.clear_project_data(self.project_id)
+
         for root, dirs, files in os.walk(self.root_path):
             # Skip certain directories
             dirs[:] = [
@@ -74,13 +80,47 @@ class AnalyzeCommand:
             for file in files:
                 if file.endswith(".py"):
                     file_path = Path(root) / file
-                    self.analyzer.analyze_file(file_path)
+                    await self.analyzer.analyze_file(file_path, force=self.force)
+
+        # Get statistics from database for this project
+        assert self.database.conn is not None
+        cursor = self.database.conn.cursor()
+        
+        cursor.execute(
+            "SELECT COUNT(*) FROM files WHERE project_id = ?", (self.project_id,)
+        )
+        files_count = cursor.fetchone()[0]
+        
+        cursor.execute(
+            """
+            SELECT COUNT(*) FROM classes c
+            INNER JOIN files f ON c.file_id = f.id
+            WHERE f.project_id = ?
+            """,
+            (self.project_id,),
+        )
+        classes_count = cursor.fetchone()[0]
+        
+        cursor.execute(
+            """
+            SELECT COUNT(*) FROM functions func
+            INNER JOIN files f ON func.file_id = f.id
+            WHERE f.project_id = ?
+            """,
+            (self.project_id,),
+        )
+        functions_count = cursor.fetchone()[0]
+        
+        cursor.execute(
+            "SELECT COUNT(*) FROM issues WHERE project_id = ?", (self.project_id,)
+        )
+        issues_count = cursor.fetchone()[0]
 
         result = {
-            "files_analyzed": len(self.analyzer.code_map.get("files", {})),
-            "classes": len(self.analyzer.code_map.get("classes", {})),
-            "functions": len(self.analyzer.code_map.get("functions", {})),
-            "issues": sum(len(v) for v in self.analyzer.issues.values()),
+            "files_analyzed": files_count,
+            "classes": classes_count,
+            "functions": functions_count,
+            "issues": issues_count,
             "project_id": self.project_id,
         }
 

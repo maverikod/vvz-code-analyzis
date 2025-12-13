@@ -150,6 +150,7 @@ class CodeDatabase:
             CREATE TABLE IF NOT EXISTS issues (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 file_id INTEGER,
+                project_id TEXT,
                 class_id INTEGER,
                 function_id INTEGER,
                 method_id INTEGER,
@@ -159,6 +160,7 @@ class CodeDatabase:
                 metadata TEXT,
                 created_at REAL DEFAULT (julianday('now')),
                 FOREIGN KEY (file_id) REFERENCES files(id) ON DELETE CASCADE,
+                FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE,
                 FOREIGN KEY (class_id) REFERENCES classes(id) ON DELETE CASCADE,
                 FOREIGN KEY (function_id) REFERENCES functions(id) ON DELETE CASCADE,
                 FOREIGN KEY (method_id) REFERENCES methods(id) ON DELETE CASCADE
@@ -231,10 +233,84 @@ class CodeDatabase:
         """
         )
 
+        # AST trees table - stores serialized AST trees
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS ast_trees (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                file_id INTEGER NOT NULL,
+                project_id TEXT NOT NULL,
+                ast_json TEXT NOT NULL,
+                ast_hash TEXT NOT NULL,
+                file_mtime REAL NOT NULL,
+                created_at REAL DEFAULT (julianday('now')),
+                updated_at REAL DEFAULT (julianday('now')),
+                FOREIGN KEY (file_id) REFERENCES files(id) ON DELETE CASCADE,
+                FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE,
+                UNIQUE(file_id, ast_hash)
+            )
+        """
+        )
+
+        # Add file_mtime column if it doesn't exist (migration)
+        cursor.execute("PRAGMA table_info(ast_trees)")
+        columns = {row[1]: row[2] for row in cursor.fetchall()}
+        if "file_mtime" not in columns:
+            try:
+                cursor.execute(
+                    "ALTER TABLE ast_trees ADD COLUMN file_mtime REAL NOT NULL DEFAULT 0"
+                )
+                self.conn.commit()
+            except sqlite3.OperationalError:
+                # Column might already exist in some cases
+                pass
+
+        # Vector index metadata table - stores FAISS index metadata
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS vector_index (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                project_id TEXT NOT NULL,
+                entity_type TEXT NOT NULL,
+                entity_id INTEGER NOT NULL,
+                vector_id INTEGER NOT NULL,
+                vector_dim INTEGER NOT NULL,
+                embedding_model TEXT,
+                created_at REAL DEFAULT (julianday('now')),
+                FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE,
+                UNIQUE(project_id, entity_type, entity_id)
+            )
+        """
+        )
+
+        # Code chunks table - stores semantic chunks from svo_client
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS code_chunks (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                file_id INTEGER NOT NULL,
+                project_id TEXT NOT NULL,
+                chunk_uuid TEXT NOT NULL,
+                chunk_type TEXT NOT NULL,
+                chunk_text TEXT NOT NULL,
+                chunk_ordinal INTEGER,
+                vector_id INTEGER,
+                embedding_model TEXT,
+                created_at REAL DEFAULT (julianday('now')),
+                FOREIGN KEY (file_id) REFERENCES files(id) ON DELETE CASCADE,
+                FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE,
+                UNIQUE(chunk_uuid)
+            )
+        """
+        )
+
         self.conn.commit()
 
         # Migrate existing database if needed (before creating indexes)
         self._migrate_to_uuid_projects()
+        
+        # Migrate schema (add missing columns, etc.)
+        self._migrate_schema()
 
         # Create indexes after migration
         indexes = [
@@ -268,6 +344,16 @@ class CodeDatabase:
                 "CREATE INDEX IF NOT EXISTS idx_code_content_entity "
                 "ON code_content(entity_type, entity_id)"
             ),
+            "CREATE INDEX IF NOT EXISTS idx_ast_trees_file ON ast_trees(file_id)",
+            "CREATE INDEX IF NOT EXISTS idx_ast_trees_project ON ast_trees(project_id)",
+            "CREATE INDEX IF NOT EXISTS idx_ast_trees_hash ON ast_trees(ast_hash)",
+            "CREATE INDEX IF NOT EXISTS idx_vector_index_project ON vector_index(project_id)",
+            "CREATE INDEX IF NOT EXISTS idx_vector_index_entity ON vector_index(entity_type, entity_id)",
+            "CREATE INDEX IF NOT EXISTS idx_vector_index_vector_id ON vector_index(vector_id)",
+            "CREATE INDEX IF NOT EXISTS idx_code_chunks_file ON code_chunks(file_id)",
+            "CREATE INDEX IF NOT EXISTS idx_code_chunks_project ON code_chunks(project_id)",
+            "CREATE INDEX IF NOT EXISTS idx_code_chunks_uuid ON code_chunks(chunk_uuid)",
+            "CREATE INDEX IF NOT EXISTS idx_code_chunks_vector ON code_chunks(vector_id)",
         ]
 
         for index_sql in indexes:
@@ -381,6 +467,58 @@ class CodeDatabase:
                 # Column might already exist in some cases
                 pass
 
+    def _migrate_schema(self) -> None:
+        """
+        Migrate database schema - add missing columns, update structure.
+        
+        This method is called on every database initialization to ensure
+        the schema is up to date with the latest version.
+        """
+        cursor = self.conn.cursor()
+        
+        # Check and migrate issues table - add project_id if missing
+        cursor.execute("PRAGMA table_info(issues)")
+        issues_columns = {row[1]: row[2] for row in cursor.fetchall()}
+        if "project_id" not in issues_columns:
+            try:
+                logger.info("Migrating issues table: adding project_id column")
+                cursor.execute("ALTER TABLE issues ADD COLUMN project_id TEXT")
+                
+                # Update existing issues with project_id from files
+                cursor.execute(
+                    """
+                    UPDATE issues
+                    SET project_id = (
+                        SELECT f.project_id
+                        FROM files f
+                        WHERE f.id = issues.file_id
+                    )
+                    WHERE file_id IS NOT NULL
+                    """
+                )
+                
+                # Add foreign key constraint if possible
+                # Note: SQLite doesn't support adding FK constraints to existing tables
+                # They are only enforced on new inserts
+                
+                self.conn.commit()
+                logger.info("Migration completed: issues table now has project_id")
+            except sqlite3.OperationalError as e:
+                logger.warning(f"Migration issue (may already exist): {e}")
+        
+        # Add index for project_id in issues if it doesn't exist
+        cursor.execute(
+            "SELECT name FROM sqlite_master WHERE type='index' AND name='idx_issues_project'"
+        )
+        if not cursor.fetchone():
+            try:
+                cursor.execute(
+                    "CREATE INDEX IF NOT EXISTS idx_issues_project ON issues(project_id)"
+                )
+                self.conn.commit()
+            except sqlite3.OperationalError as e:
+                logger.warning(f"Could not create index idx_issues_project: {e}")
+
     def get_or_create_project(
         self, root_path: str, name: Optional[str] = None, comment: Optional[str] = None
     ) -> str:
@@ -433,6 +571,48 @@ class CodeDatabase:
         row = cursor.fetchone()
         return row[0] if row else None
 
+    def get_project(self, project_id: str) -> Optional[Dict[str, Any]]:
+        """
+        Get project by ID.
+
+        Args:
+            project_id: Project ID (UUID4 string)
+
+        Returns:
+            Project record as dictionary or None if not found
+        """
+        assert self.conn is not None
+        cursor = self.conn.cursor()
+        cursor.execute("SELECT * FROM projects WHERE id = ?", (project_id,))
+        row = cursor.fetchone()
+        if row:
+            return dict(row)
+        return None
+
+    def get_file_by_path(
+        self, path: str, project_id: str
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Get file record by path and project ID.
+
+        Args:
+            path: File path
+            project_id: Project ID
+
+        Returns:
+            File record as dictionary or None if not found
+        """
+        assert self.conn is not None
+        cursor = self.conn.cursor()
+        cursor.execute(
+            "SELECT * FROM files WHERE path = ? AND project_id = ?",
+            (path, project_id),
+        )
+        row = cursor.fetchone()
+        if row:
+            return dict(row)
+        return None
+
     def add_file(
         self,
         path: str,
@@ -466,6 +646,16 @@ class CodeDatabase:
         )
         row = cursor.fetchone()
         return row[0] if row else None
+
+    def get_file_by_id(self, file_id: int) -> Optional[Dict[str, Any]]:
+        """Get file record by ID."""
+        assert self.conn is not None
+        cursor = self.conn.cursor()
+        cursor.execute("SELECT * FROM files WHERE id = ?", (file_id,))
+        row = cursor.fetchone()
+        if row:
+            return dict(row)
+        return None
 
     def delete_file(self, file_id: int) -> None:
         """Delete file and all related records (cascade)."""
@@ -600,20 +790,36 @@ class CodeDatabase:
         function_id: Optional[int] = None,
         method_id: Optional[int] = None,
         metadata: Optional[Dict[str, Any]] = None,
+        project_id: Optional[str] = None,
     ) -> int:
-        """Add issue record. Returns issue_id."""
+        """
+        Add issue record. Returns issue_id.
+        
+        If project_id is not provided, it will be retrieved from file_id.
+        """
         assert self.conn is not None
         cursor = self.conn.cursor()
+        
+        # Get project_id from file_id if not provided
+        if project_id is None and file_id is not None:
+            cursor.execute(
+                "SELECT project_id FROM files WHERE id = ?", (file_id,)
+            )
+            result = cursor.fetchone()
+            if result:
+                project_id = result[0]
+        
         metadata_json = json.dumps(metadata) if metadata else None
         cursor.execute(
             """
             INSERT INTO issues
-            (file_id, class_id, function_id, method_id, issue_type,
+            (file_id, project_id, class_id, function_id, method_id, issue_type,
              line, description, metadata)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
             (
                 file_id,
+                project_id,
                 class_id,
                 function_id,
                 method_id,
@@ -677,7 +883,156 @@ class CodeDatabase:
         # Delete code content
         cursor.execute("DELETE FROM code_content WHERE file_id = ?", (file_id,))
 
+        # Delete AST trees
+        cursor.execute("DELETE FROM ast_trees WHERE file_id = ?", (file_id,))
+
+        # Delete code chunks
+        cursor.execute("DELETE FROM code_chunks WHERE file_id = ?", (file_id,))
+
+        # Delete vector index entries (need to get entity IDs first)
+        cursor.execute(
+            """
+            SELECT id FROM classes WHERE file_id = ?
+            UNION
+            SELECT id FROM functions WHERE file_id = ?
+        """,
+            (file_id, file_id),
+        )
+        entity_ids = [row[0] for row in cursor.fetchall()]
+
+        # Delete vector index for file itself
+        cursor.execute(
+            "DELETE FROM vector_index WHERE entity_type = 'file' AND entity_id = ?",
+            (file_id,),
+        )
+
+        # Delete vector index for classes and functions
+        if entity_ids:
+            placeholders = ",".join("?" * len(entity_ids))
+            cursor.execute(
+                f"""
+                DELETE FROM vector_index
+                WHERE entity_type IN ('class', 'function', 'method')
+                AND entity_id IN ({placeholders})
+            """,
+                entity_ids,
+            )
+
         self.conn.commit()
+
+    async def clear_project_data(self, project_id: str) -> None:
+        """
+        Clear all data for a project.
+
+        Removes all files, classes, functions, imports, issues, usages,
+        code_content, ast_trees, code_chunks, and vector_index entries
+        for the specified project.
+
+        Args:
+            project_id: Project ID (UUID4 string)
+        """
+        assert self.conn is not None
+        cursor = self.conn.cursor()
+
+        # Get all file IDs for this project
+        cursor.execute("SELECT id FROM files WHERE project_id = ?", (project_id,))
+        file_ids = [row[0] for row in cursor.fetchall()]
+
+        if not file_ids:
+            # No files to clean, but still clean project-level data
+            cursor.execute(
+                "DELETE FROM vector_index WHERE project_id = ?", (project_id,)
+            )
+            self.conn.commit()
+            return
+
+        # Get class IDs for these files
+        placeholders = ",".join("?" * len(file_ids))
+        cursor.execute(
+            f"SELECT id FROM classes WHERE file_id IN ({placeholders})", file_ids
+        )
+        class_ids = [row[0] for row in cursor.fetchall()]
+
+        # Get content IDs for FTS cleanup
+        cursor.execute(
+            f"SELECT id FROM code_content WHERE file_id IN ({placeholders})", file_ids
+        )
+        content_ids = [row[0] for row in cursor.fetchall()]
+
+        # Delete from FTS index
+        if content_ids:
+            content_placeholders = ",".join("?" * len(content_ids))
+            cursor.execute(
+                f"DELETE FROM code_content_fts WHERE rowid IN ({content_placeholders})",
+                content_ids,
+            )
+
+        # Delete methods for these classes
+        if class_ids:
+            method_placeholders = ",".join("?" * len(class_ids))
+            cursor.execute(
+                f"DELETE FROM methods WHERE class_id IN ({method_placeholders})",
+                class_ids,
+            )
+
+        # Delete classes
+        if file_ids:
+            cursor.execute(
+                f"DELETE FROM classes WHERE file_id IN ({placeholders})", file_ids
+            )
+
+        # Delete functions
+        if file_ids:
+            cursor.execute(
+                f"DELETE FROM functions WHERE file_id IN ({placeholders})", file_ids
+            )
+
+        # Delete imports
+        if file_ids:
+            cursor.execute(
+                f"DELETE FROM imports WHERE file_id IN ({placeholders})", file_ids
+            )
+
+        # Delete issues
+        if file_ids:
+            cursor.execute(
+                f"DELETE FROM issues WHERE file_id IN ({placeholders})", file_ids
+            )
+
+        # Delete usages
+        if file_ids:
+            cursor.execute(
+                f"DELETE FROM usages WHERE file_id IN ({placeholders})", file_ids
+            )
+
+        # Delete code content
+        if file_ids:
+            cursor.execute(
+                f"DELETE FROM code_content WHERE file_id IN ({placeholders})", file_ids
+            )
+
+        # Delete AST trees
+        if file_ids:
+            cursor.execute(
+                f"DELETE FROM ast_trees WHERE file_id IN ({placeholders})", file_ids
+            )
+
+        # Delete code chunks
+        if file_ids:
+            cursor.execute(
+                f"DELETE FROM code_chunks WHERE file_id IN ({placeholders})", file_ids
+            )
+
+        # Delete vector index entries for this project
+        cursor.execute(
+            "DELETE FROM vector_index WHERE project_id = ?", (project_id,)
+        )
+
+        # Delete files
+        cursor.execute("DELETE FROM files WHERE project_id = ?", (project_id,))
+
+        self.conn.commit()
+        logger.info(f"Cleared all data for project {project_id}")
 
     def search_classes(
         self, name_pattern: Optional[str] = None, project_id: Optional[str] = None
@@ -1125,6 +1480,390 @@ class CodeDatabase:
         params.append(limit)
 
         cursor.execute(fts_query, params)
+        return [dict(row) for row in cursor.fetchall()]
+
+    def is_ast_outdated(self, file_id: int, file_mtime: float) -> bool:
+        """
+        Check if AST tree is outdated compared to file modification time.
+
+        Args:
+            file_id: File ID
+            file_mtime: File modification time
+
+        Returns:
+            True if AST is outdated or doesn't exist, False otherwise
+        """
+        assert self.conn is not None
+        cursor = self.conn.cursor()
+
+        cursor.execute(
+            """
+            SELECT file_mtime FROM ast_trees
+            WHERE file_id = ?
+            ORDER BY updated_at DESC
+            LIMIT 1
+        """,
+            (file_id,),
+        )
+        row = cursor.fetchone()
+
+        if not row:
+            # AST doesn't exist
+            return True
+
+        db_mtime = row[0]
+        # Consider outdated if file is newer than stored AST
+        return file_mtime > db_mtime
+
+    async def save_ast_tree(
+        self,
+        file_id: int,
+        project_id: str,
+        ast_json: str,
+        ast_hash: str,
+        file_mtime: float,
+        overwrite: bool = False,
+    ) -> int:
+        """
+        Save AST tree for a file.
+
+        Args:
+            file_id: File ID
+            project_id: Project ID
+            ast_json: Serialized AST as JSON string
+            ast_hash: Hash of AST for change detection
+            file_mtime: File modification time
+            overwrite: If True, delete all old AST trees for this file before saving
+
+        Returns:
+            AST tree ID
+        """
+        assert self.conn is not None
+        cursor = self.conn.cursor()
+
+        if overwrite:
+            # Delete all existing AST trees for this file
+            cursor.execute(
+                """
+                DELETE FROM ast_trees
+                WHERE file_id = ?
+            """,
+                (file_id,),
+            )
+
+        # Check if AST already exists with same hash (if not overwriting)
+        if not overwrite:
+            cursor.execute(
+                """
+                SELECT id FROM ast_trees
+                WHERE file_id = ? AND ast_hash = ?
+            """,
+                (file_id, ast_hash),
+            )
+            existing = cursor.fetchone()
+
+            if existing:
+                # Update existing record with new mtime
+                cursor.execute(
+                    """
+                    UPDATE ast_trees
+                    SET ast_json = ?, file_mtime = ?, updated_at = julianday('now')
+                    WHERE id = ?
+                """,
+                    (ast_json, file_mtime, existing[0]),
+                )
+                self.conn.commit()
+                return existing[0]
+
+        # Insert new record
+        cursor.execute(
+            """
+            INSERT INTO ast_trees
+            (file_id, project_id, ast_json, ast_hash, file_mtime)
+            VALUES (?, ?, ?, ?, ?)
+        """,
+            (file_id, project_id, ast_json, ast_hash, file_mtime),
+        )
+        self.conn.commit()
+        result = cursor.lastrowid
+        assert result is not None
+        return result
+
+    async def overwrite_ast_tree(
+        self,
+        file_id: int,
+        project_id: str,
+        ast_json: str,
+        ast_hash: str,
+        file_mtime: float,
+    ) -> int:
+        """
+        Overwrite AST tree for a file (delete old, insert new).
+
+        Args:
+            file_id: File ID
+            project_id: Project ID
+            ast_json: Serialized AST as JSON string
+            ast_hash: Hash of AST for change detection
+            file_mtime: File modification time
+
+        Returns:
+            AST tree ID
+        """
+        return await self.save_ast_tree(
+            file_id, project_id, ast_json, ast_hash, file_mtime, overwrite=True
+        )
+
+    async def get_ast_tree(self, file_id: int) -> Optional[Dict[str, Any]]:
+        """
+        Get AST tree for a file.
+
+        Args:
+            file_id: File ID
+
+        Returns:
+            AST tree record with JSON or None
+        """
+        assert self.conn is not None
+        cursor = self.conn.cursor()
+        cursor.execute(
+            """
+            SELECT id, file_id, project_id, ast_json, ast_hash, file_mtime, created_at, updated_at
+            FROM ast_trees
+            WHERE file_id = ?
+            ORDER BY updated_at DESC
+            LIMIT 1
+        """,
+            (file_id,),
+        )
+        row = cursor.fetchone()
+        if row:
+            return {
+                "id": row[0],
+                "file_id": row[1],
+                "project_id": row[2],
+                "ast_json": row[3],
+                "ast_hash": row[4],
+                "file_mtime": row[5],
+                "created_at": row[6],
+                "updated_at": row[7],
+            }
+        return None
+
+    async def add_vector_index(
+        self,
+        project_id: str,
+        entity_type: str,
+        entity_id: int,
+        vector_id: int,
+        vector_dim: int,
+        embedding_model: Optional[str] = None,
+    ) -> int:
+        """
+        Add vector index metadata.
+
+        Args:
+            project_id: Project ID
+            entity_type: Type of entity (file, class, method, function, chunk)
+            entity_id: ID of the entity
+            vector_id: FAISS vector index ID
+            vector_dim: Vector dimension
+            embedding_model: Model used for embedding
+
+        Returns:
+            Vector index record ID
+        """
+        assert self.conn is not None
+        cursor = self.conn.cursor()
+
+        # Check if vector index already exists
+        cursor.execute(
+            """
+            SELECT id FROM vector_index
+            WHERE project_id = ? AND entity_type = ? AND entity_id = ?
+        """,
+            (project_id, entity_type, entity_id),
+        )
+        existing = cursor.fetchone()
+
+        if existing:
+            # Update existing record
+            cursor.execute(
+                """
+                UPDATE vector_index
+                SET vector_id = ?, vector_dim = ?, embedding_model = ?
+                WHERE id = ?
+            """,
+                (vector_id, vector_dim, embedding_model, existing[0]),
+            )
+            self.conn.commit()
+            return existing[0]
+        else:
+            # Insert new record
+            cursor.execute(
+                """
+                INSERT INTO vector_index
+                (project_id, entity_type, entity_id, vector_id, vector_dim, embedding_model)
+                VALUES (?, ?, ?, ?, ?, ?)
+            """,
+                (project_id, entity_type, entity_id, vector_id, vector_dim, embedding_model),
+            )
+            self.conn.commit()
+            result = cursor.lastrowid
+            assert result is not None
+            return result
+
+    async def get_vector_index(
+        self,
+        project_id: str,
+        entity_type: str,
+        entity_id: int,
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Get vector index metadata.
+
+        Args:
+            project_id: Project ID
+            entity_type: Type of entity
+            entity_id: ID of the entity
+
+        Returns:
+            Vector index record or None
+        """
+        assert self.conn is not None
+        cursor = self.conn.cursor()
+        cursor.execute(
+            """
+            SELECT * FROM vector_index
+            WHERE project_id = ? AND entity_type = ? AND entity_id = ?
+        """,
+            (project_id, entity_type, entity_id),
+        )
+        row = cursor.fetchone()
+        if row:
+            return dict(row)
+        return None
+
+    async def add_code_chunk(
+        self,
+        file_id: int,
+        project_id: str,
+        chunk_uuid: str,
+        chunk_type: str,
+        chunk_text: str,
+        chunk_ordinal: Optional[int] = None,
+        vector_id: Optional[int] = None,
+        embedding_model: Optional[str] = None,
+    ) -> int:
+        """
+        Add code chunk from semantic chunker.
+
+        Args:
+            file_id: File ID
+            project_id: Project ID
+            chunk_uuid: UUID of the chunk
+            chunk_type: Type of chunk (DocBlock, CodeBlock, etc.)
+            chunk_text: Chunk text content
+            chunk_ordinal: Order of chunk in original text
+            vector_id: FAISS vector index ID
+            embedding_model: Model used for embedding
+
+        Returns:
+            Chunk ID
+        """
+        assert self.conn is not None
+        cursor = self.conn.cursor()
+
+        # Check if chunk already exists
+        cursor.execute(
+            """
+            SELECT id FROM code_chunks
+            WHERE chunk_uuid = ?
+        """,
+            (chunk_uuid,),
+        )
+        existing = cursor.fetchone()
+
+        if existing:
+            # Update existing chunk
+            cursor.execute(
+                """
+                UPDATE code_chunks
+                SET chunk_text = ?, chunk_type = ?, chunk_ordinal = ?,
+                    vector_id = ?, embedding_model = ?
+                WHERE id = ?
+            """,
+                (
+                    chunk_text,
+                    chunk_type,
+                    chunk_ordinal,
+                    vector_id,
+                    embedding_model,
+                    existing[0],
+                ),
+            )
+            self.conn.commit()
+            return existing[0]
+        else:
+            # Insert new chunk
+            cursor.execute(
+                """
+                INSERT INTO code_chunks
+                (file_id, project_id, chunk_uuid, chunk_type, chunk_text,
+                 chunk_ordinal, vector_id, embedding_model)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+                (
+                    file_id,
+                    project_id,
+                    chunk_uuid,
+                    chunk_type,
+                    chunk_text,
+                    chunk_ordinal,
+                    vector_id,
+                    embedding_model,
+                ),
+            )
+            self.conn.commit()
+            result = cursor.lastrowid
+            assert result is not None
+            return result
+
+    async def get_code_chunks(
+        self,
+        file_id: Optional[int] = None,
+        project_id: Optional[str] = None,
+        limit: int = 100,
+    ) -> List[Dict[str, Any]]:
+        """
+        Get code chunks.
+
+        Args:
+            file_id: Filter by file ID (optional)
+            project_id: Filter by project ID (optional)
+            limit: Maximum results
+
+        Returns:
+            List of chunk records
+        """
+        assert self.conn is not None
+        cursor = self.conn.cursor()
+
+        query = "SELECT * FROM code_chunks WHERE 1=1"
+        params = []
+
+        if file_id:
+            query += " AND file_id = ?"
+            params.append(file_id)
+
+        if project_id:
+            query += " AND project_id = ?"
+            params.append(project_id)
+
+        query += " ORDER BY chunk_ordinal, id LIMIT ?"
+        params.append(limit)
+
+        cursor.execute(query, params)
         return [dict(row) for row in cursor.fetchall()]
 
     def close(self) -> None:

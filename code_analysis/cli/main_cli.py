@@ -56,6 +56,14 @@ logger = logging.getLogger(__name__)
     default=True,
     help="Use SQLite database (default: True)",
 )
+@click.option(
+    "--force",
+    "-f",
+    is_flag=True,
+    default=False,
+    help="Process all files regardless of modification time. "
+    "By default, files are only processed if they are newer than stored AST trees.",
+)
 @click.version_option(version="1.0.3")
 def main(
     root_dir: Path,
@@ -64,6 +72,7 @@ def main(
     comment: str | None,
     verbose: bool,
     use_sqlite: bool,
+    force: bool,
 ) -> None:
     """
     Analyze Python codebase and generate comprehensive reports.
@@ -97,8 +106,12 @@ def main(
                 project_id = db.get_or_create_project(
                     str(root_dir), name=root_dir.name, comment=comment
                 )
-                analyze_cmd = AnalyzeCommand(db, project_id, str(root_dir), max_lines)
-                result = analyze_cmd.execute()
+                analyze_cmd = AnalyzeCommand(
+                    db, project_id, str(root_dir), max_lines, force=force
+                )
+                import asyncio
+
+                result = asyncio.run(analyze_cmd.execute())
 
                 click.echo()
                 click.echo("✅ Analysis completed successfully!")

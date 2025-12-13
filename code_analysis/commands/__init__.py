@@ -13,6 +13,10 @@ from .search import SearchCommand
 from .refactor import RefactorCommand
 from .issues import IssuesCommand
 from .project import ProjectCommand
+from .update_ast import UpdateASTCommand
+from .get_ast import GetASTCommand
+from .search_ast_nodes import SearchASTNodesCommand
+from .ast_statistics import ASTStatisticsCommand
 
 __all__ = [
     "AnalyzeCommand",
@@ -20,4 +24,8 @@ __all__ = [
     "RefactorCommand",
     "IssuesCommand",
     "ProjectCommand",
+    "UpdateASTCommand",
+    "GetASTCommand",
+    "SearchASTNodesCommand",
+    "ASTStatisticsCommand",
 ]

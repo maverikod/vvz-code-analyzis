@@ -46,6 +46,17 @@ class ProjectDir(BaseModel):
         return str(path.resolve())
 
 
+class SVOServiceConfig(BaseModel):
+    """Configuration for SVO service integration."""
+
+    enabled: bool = Field(default=False, description="Enable SVO service")
+    host: str = Field(default="localhost", description="Service host")
+    port: int = Field(default=8009, description="Service port")
+    mtls_certificates: Optional[Dict[str, str]] = Field(
+        default=None, description="mTLS certificate paths"
+    )
+
+
 class ServerConfig(BaseModel):
     """MCP server configuration."""
 
@@ -55,6 +66,12 @@ class ServerConfig(BaseModel):
     db_path: Optional[str] = Field(default=None, description="Path to SQLite database")
     dirs: List[ProjectDir] = Field(
         default_factory=list, description="Project directories"
+    )
+    chunker: Optional[SVOServiceConfig] = Field(
+        default=None, description="Chunker service configuration"
+    )
+    embedding: Optional[SVOServiceConfig] = Field(
+        default=None, description="Embedding service configuration"
     )
 
     @field_validator("port")
@@ -102,6 +119,11 @@ def generate_config(
     log: Optional[str] = None,
     db_path: Optional[str] = None,
     dirs: Optional[List[Dict[str, str]]] = None,
+    chunker_host: str = "localhost",
+    chunker_port: int = 8009,
+    embedding_host: str = "localhost",
+    embedding_port: int = 8001,
+    mtls_certificates: Optional[Dict[str, str]] = None,
 ) -> Dict[str, Any]:
     """
     Generate server configuration.
@@ -148,6 +170,22 @@ def generate_config(
         db_path_obj = Path(db_path)
         db_path_obj.parent.mkdir(parents=True, exist_ok=True)
         config["db_path"] = str(db_path_obj.resolve())
+
+    # Add SVO service configurations
+    if mtls_certificates:
+        config["chunker"] = {
+            "enabled": True,
+            "host": chunker_host,
+            "port": chunker_port,
+            "mtls_certificates": mtls_certificates,
+        }
+        config["embedding"] = {
+            "enabled": True,
+            "host": embedding_host,
+            "port": embedding_port,
+            "mtls_certificates": mtls_certificates,
+        }
+
     return config
 
 

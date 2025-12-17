@@ -13,8 +13,7 @@ from pathlib import Path
 from ..core.database import CodeDatabase
 from ..commands import RefactorCommand
 
-# Setup logging
-logging.basicConfig(level=logging.INFO, format="%(levelname)s:%(name)s:%(message)s")
+# Use logger from adapter (configured by adapter)
 logger = logging.getLogger(__name__)
 
 

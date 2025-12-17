@@ -14,7 +14,7 @@ from ..core.database import CodeDatabase
 from ..commands import AnalyzeCommand
 
 # Setup logging
-logging.basicConfig(level=logging.INFO, format="%(levelname)s:%(name)s:%(message)s")
+# Use logger from adapter (configured by adapter)
 logger = logging.getLogger(__name__)
 
 
@@ -86,7 +86,8 @@ def main(
         code_mapper --root-dir ./src --output-dir ./reports --max-lines 500
     """
     if verbose:
-        logging.getLogger().setLevel(logging.DEBUG)
+        # Set debug level for this logger only
+        logger.setLevel(logging.DEBUG)
 
     try:
         click.echo(f"🔍 Analyzing code in: {root_dir.absolute()}")
@@ -100,7 +101,10 @@ def main(
 
         if use_sqlite:
             # Use commands layer
-            db_path = output_dir / "code_analysis.db"
+            # Create database in data directory
+            data_dir = root_dir / "data"
+            data_dir.mkdir(parents=True, exist_ok=True)
+            db_path = data_dir / "code_analysis.db"
             db = CodeDatabase(db_path)
             try:
                 project_id = db.get_or_create_project(

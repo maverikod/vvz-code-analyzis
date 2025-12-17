@@ -11,6 +11,7 @@ code map with method signatures, class hierarchies, and dependencies.
 
 import os
 import argparse
+import asyncio
 from pathlib import Path
 import logging
 
@@ -20,8 +21,7 @@ from .core.issue_detector import IssueDetector
 from .core.reporter import CodeReporter
 from .core.database import CodeDatabase
 
-# Setup logging
-logging.basicConfig(level=logging.INFO)
+# Use logger from adapter (configured by adapter)
 logger = logging.getLogger(__name__)
 
 
@@ -64,6 +64,8 @@ class CodeMapper:
         """Analyze entire directory."""
         print(f"INFO:__main__:Сканирование директории: {directory}")
 
+        files_to_analyze = []
+
         for root, dirs, files in os.walk(directory):
             # Skip certain directories
             dirs[:] = [
@@ -77,7 +79,10 @@ class CodeMapper:
                 if file.endswith(".py"):
                     file_path = Path(root) / file
                     print(f"INFO:__main__:Анализ файла: {file_path}")
-                    self.analyzer.analyze_file(file_path)
+                    files_to_analyze.append(file_path)
+
+        if files_to_analyze:
+            asyncio.run(self._analyze_files(files_to_analyze))
 
     def generate_reports(self) -> None:
         """Generate all reports."""
@@ -88,6 +93,11 @@ class CodeMapper:
         # Close database connection
         if self.database:
             self.database.close()
+
+    async def _analyze_files(self, files: list[Path]) -> None:
+        """Run async file analysis sequentially."""
+        for file_path in files:
+            await self.analyzer.analyze_file(file_path)
 
 
 def main() -> None:

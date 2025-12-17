@@ -14,6 +14,7 @@ import uuid
 from pathlib import Path
 from typing import Dict, List, Any, Optional
 import logging
+import threading
 
 logger = logging.getLogger(__name__)
 
@@ -26,15 +27,18 @@ class CodeDatabase:
         self.db_path = Path(db_path)
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self.conn: sqlite3.Connection
+        # Mutex for all database operations
+        self._lock = threading.Lock()
         self._connect()
         self._create_schema()
 
     def _connect(self) -> None:
         """Establish database connection."""
-        self.conn = sqlite3.connect(str(self.db_path))
-        self.conn.row_factory = sqlite3.Row
-        # Enable foreign keys
-        self.conn.execute("PRAGMA foreign_keys = ON")
+        with self._lock:
+            self.conn = sqlite3.connect(str(self.db_path))
+            self.conn.row_factory = sqlite3.Row
+            # Enable foreign keys
+            self.conn.execute("PRAGMA foreign_keys = ON")
 
     def _create_schema(self) -> None:
         """Create database schema if it doesn't exist."""
@@ -296,13 +300,38 @@ class CodeDatabase:
                 chunk_ordinal INTEGER,
                 vector_id INTEGER,
                 embedding_model TEXT,
+                bm25_score REAL,  -- BM25 score from chunker
+                embedding_vector TEXT,  -- JSON array of embedding vector (if available from chunker)
+                -- Context binding fields
+                class_id INTEGER,
+                function_id INTEGER,
+                method_id INTEGER,
+                line INTEGER,
+                ast_node_type TEXT,
+                source_type TEXT,  -- 'docstring', 'comment', 'file_docstring'
                 created_at REAL DEFAULT (julianday('now')),
                 FOREIGN KEY (file_id) REFERENCES files(id) ON DELETE CASCADE,
                 FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE,
+                FOREIGN KEY (class_id) REFERENCES classes(id) ON DELETE CASCADE,
+                FOREIGN KEY (function_id) REFERENCES functions(id) ON DELETE CASCADE,
+                FOREIGN KEY (method_id) REFERENCES methods(id) ON DELETE CASCADE,
                 UNIQUE(chunk_uuid)
             )
         """
         )
+        
+        # Add bm25_score and embedding_vector columns if they don't exist (migration)
+        try:
+            cursor.execute("ALTER TABLE code_chunks ADD COLUMN bm25_score REAL")
+            logger.info("Added bm25_score column to code_chunks table")
+        except Exception:
+            pass  # Column already exists
+        
+        try:
+            cursor.execute("ALTER TABLE code_chunks ADD COLUMN embedding_vector TEXT")
+            logger.info("Added embedding_vector column to code_chunks table")
+        except Exception:
+            pass  # Column already exists
 
         self.conn.commit()
 
@@ -354,6 +383,8 @@ class CodeDatabase:
             "CREATE INDEX IF NOT EXISTS idx_code_chunks_project ON code_chunks(project_id)",
             "CREATE INDEX IF NOT EXISTS idx_code_chunks_uuid ON code_chunks(chunk_uuid)",
             "CREATE INDEX IF NOT EXISTS idx_code_chunks_vector ON code_chunks(vector_id)",
+            # Index for finding non-vectorized chunks (where vector_id IS NULL)
+            "CREATE INDEX IF NOT EXISTS idx_code_chunks_not_vectorized ON code_chunks(project_id, id) WHERE vector_id IS NULL",
         ]
 
         for index_sql in indexes:
@@ -519,6 +550,28 @@ class CodeDatabase:
             except sqlite3.OperationalError as e:
                 logger.warning(f"Could not create index idx_issues_project: {e}")
 
+        # Migrate code_chunks table - add context binding columns if missing
+        cursor.execute("PRAGMA table_info(code_chunks)")
+        chunks_columns = {row[1]: row[2] for row in cursor.fetchall()}
+        
+        new_columns = {
+            "class_id": "INTEGER",
+            "function_id": "INTEGER",
+            "method_id": "INTEGER",
+            "line": "INTEGER",
+            "ast_node_type": "TEXT",
+            "source_type": "TEXT",
+        }
+        
+        for col_name, col_type in new_columns.items():
+            if col_name not in chunks_columns:
+                try:
+                    logger.info(f"Migrating code_chunks table: adding {col_name} column")
+                    cursor.execute(f"ALTER TABLE code_chunks ADD COLUMN {col_name} {col_type}")
+                    self.conn.commit()
+                except sqlite3.OperationalError as e:
+                    logger.warning(f"Could not add column {col_name} to code_chunks: {e}")
+
     def get_or_create_project(
         self, root_path: str, name: Optional[str] = None, comment: Optional[str] = None
     ) -> str:
@@ -533,27 +586,28 @@ class CodeDatabase:
         Returns:
             Project ID (UUID4 string)
         """
-        assert self.conn is not None
-        cursor = self.conn.cursor()
+        with self._lock:
+            assert self.conn is not None
+            cursor = self.conn.cursor()
 
-        # Try to get existing project
-        cursor.execute("SELECT id FROM projects WHERE root_path = ?", (root_path,))
-        row = cursor.fetchone()
-        if row:
-            return row[0]
+            # Try to get existing project
+            cursor.execute("SELECT id FROM projects WHERE root_path = ?", (root_path,))
+            row = cursor.fetchone()
+            if row:
+                return row[0]
 
-        # Create new project with UUID4
-        project_id = str(uuid.uuid4())
-        project_name = name or Path(root_path).name
-        cursor.execute(
-            """
-            INSERT INTO projects (id, root_path, name, comment, updated_at)
-            VALUES (?, ?, ?, ?, julianday('now'))
-        """,
-            (project_id, root_path, project_name, comment),
-        )
-        self.conn.commit()
-        return project_id
+            # Create new project with UUID4
+            project_id = str(uuid.uuid4())
+            project_name = name or Path(root_path).name
+            cursor.execute(
+                """
+                INSERT INTO projects (id, root_path, name, comment, updated_at)
+                VALUES (?, ?, ?, ?, julianday('now'))
+            """,
+                (project_id, root_path, project_name, comment),
+            )
+            self.conn.commit()
+            return project_id
 
     def get_project_id(self, root_path: str) -> Optional[str]:
         """
@@ -838,7 +892,23 @@ class CodeDatabase:
         """
         Clear all data for a file.
 
-        Removes classes, functions, imports, issues, usages, code_content.
+        Removes all related data including:
+        - classes and their methods
+        - functions
+        - imports
+        - issues
+        - usages
+        - dependencies (both as source and target)
+        - code_content and FTS index
+        - AST trees
+        - code chunks
+        - vector index entries
+        
+        NOTE: When FAISS is implemented, this method should:
+        1. Get all vector_ids from code_chunks for this file_id
+        2. Remove these vectors from FAISS index
+        3. Then delete from database
+        This ensures FAISS stays in sync when files are updated.
         """
         assert self.conn is not None
         cursor = self.conn.cursor()
@@ -880,6 +950,12 @@ class CodeDatabase:
         # Delete usages
         cursor.execute("DELETE FROM usages WHERE file_id = ?", (file_id,))
 
+        # Delete dependencies (both as source and target)
+        cursor.execute(
+            "DELETE FROM dependencies WHERE source_file_id = ? OR target_file_id = ?",
+            (file_id, file_id),
+        )
+
         # Delete code content
         cursor.execute("DELETE FROM code_content WHERE file_id = ?", (file_id,))
 
@@ -887,7 +963,20 @@ class CodeDatabase:
         cursor.execute("DELETE FROM ast_trees WHERE file_id = ?", (file_id,))
 
         # Delete code chunks
+        # Get vector_ids before deletion to remove from FAISS index
+        cursor.execute(
+            "SELECT vector_id FROM code_chunks WHERE file_id = ? AND vector_id IS NOT NULL",
+            (file_id,),
+        )
+        vector_ids = [row[0] for row in cursor.fetchall()]
+        
+        # Delete chunks from database
         cursor.execute("DELETE FROM code_chunks WHERE file_id = ?", (file_id,))
+        
+        # NOTE: vector_ids are collected but not removed from FAISS here
+        # FAISS doesn't support direct removal. Vectors will be cleaned up
+        # on next rebuild_from_database call (on server restart).
+        # This is acceptable as per requirements - garbage is OK until restart.
 
         # Delete vector index entries (need to get entity IDs first)
         cursor.execute(
@@ -922,11 +1011,11 @@ class CodeDatabase:
 
     async def clear_project_data(self, project_id: str) -> None:
         """
-        Clear all data for a project.
+        Clear all data for a project and remove the project itself.
 
         Removes all files, classes, functions, imports, issues, usages,
-        code_content, ast_trees, code_chunks, and vector_index entries
-        for the specified project.
+        dependencies, code_content, ast_trees, code_chunks, vector_index entries,
+        and the project record itself from the database.
 
         Args:
             project_id: Project ID (UUID4 string)
@@ -1005,6 +1094,17 @@ class CodeDatabase:
                 f"DELETE FROM usages WHERE file_id IN ({placeholders})", file_ids
             )
 
+        # Delete dependencies (both as source and target)
+        if file_ids:
+            cursor.execute(
+                f"""
+                DELETE FROM dependencies 
+                WHERE source_file_id IN ({placeholders}) 
+                OR target_file_id IN ({placeholders})
+            """,
+                file_ids + file_ids,
+            )
+
         # Delete code content
         if file_ids:
             cursor.execute(
@@ -1031,8 +1131,89 @@ class CodeDatabase:
         # Delete files
         cursor.execute("DELETE FROM files WHERE project_id = ?", (project_id,))
 
+        # Delete the project itself
+        cursor.execute("DELETE FROM projects WHERE id = ?", (project_id,))
+
         self.conn.commit()
-        logger.info(f"Cleared all data for project {project_id}")
+        logger.info(f"Cleared all data and removed project {project_id}")
+
+    def get_project_files(self, project_id: str) -> List[Dict[str, Any]]:
+        """
+        Get all files for a project.
+
+        Args:
+            project_id: Project ID (UUID4 string)
+
+        Returns:
+            List of file records as dictionaries
+        """
+        assert self.conn is not None
+        cursor = self.conn.cursor()
+        cursor.execute(
+            "SELECT id, path, lines, last_modified, has_docstring FROM files WHERE project_id = ?",
+            (project_id,),
+        )
+        rows = cursor.fetchall()
+        # Convert rows to dictionaries manually
+        result = []
+        for row in rows:
+            result.append({
+                "id": row[0],
+                "path": row[1],
+                "lines": row[2],
+                "last_modified": row[3],
+                "has_docstring": row[4],
+            })
+        return result
+
+    async def remove_missing_files(self, project_id: str, root_path: Path) -> Dict[str, Any]:
+        """
+        Remove files from database that no longer exist on disk.
+
+        Args:
+            project_id: Project ID (UUID4 string)
+            root_path: Root directory path of the project
+
+        Returns:
+            Dictionary with removal statistics:
+            - removed_count: Number of files removed
+            - removed_files: List of removed file paths
+        """
+        assert self.conn is not None
+        cursor = self.conn.cursor()
+
+        # Get all files for this project
+        files = self.get_project_files(project_id)
+        removed_files = []
+        removed_count = 0
+
+        for file_record in files:
+            file_path = Path(file_record["path"])
+            
+            # Check if file exists on disk
+            if not file_path.exists():
+                file_id = file_record["id"]
+                logger.info(f"File not found on disk, removing from database: {file_path}")
+                
+                # Use clear_file_data to remove all related data
+                self.clear_file_data(file_id)
+                
+                # Delete the file record itself
+                cursor.execute("DELETE FROM files WHERE id = ?", (file_id,))
+                
+                removed_files.append(str(file_path))
+                removed_count += 1
+
+        if removed_count > 0:
+            self.conn.commit()
+            logger.info(
+                f"Removed {removed_count} missing files from database for project {project_id}"
+            )
+
+        return {
+            "removed_count": removed_count,
+            "removed_files": removed_files,
+        }
 
     def search_classes(
         self, name_pattern: Optional[str] = None, project_id: Optional[str] = None
@@ -1754,9 +1935,17 @@ class CodeDatabase:
         chunk_ordinal: Optional[int] = None,
         vector_id: Optional[int] = None,
         embedding_model: Optional[str] = None,
+        bm25_score: Optional[float] = None,
+        embedding_vector: Optional[str] = None,  # JSON array as string
+        class_id: Optional[int] = None,
+        function_id: Optional[int] = None,
+        method_id: Optional[int] = None,
+        line: Optional[int] = None,
+        ast_node_type: Optional[str] = None,
+        source_type: Optional[str] = None,
     ) -> int:
         """
-        Add code chunk from semantic chunker.
+        Add code chunk from semantic chunker with AST node binding.
 
         Args:
             file_id: File ID
@@ -1767,67 +1956,94 @@ class CodeDatabase:
             chunk_ordinal: Order of chunk in original text
             vector_id: FAISS vector index ID
             embedding_model: Model used for embedding
+            class_id: Class ID if chunk is bound to a class
+            function_id: Function ID if chunk is bound to a function
+            method_id: Method ID if chunk is bound to a method
+            line: Line number in file
+            ast_node_type: Type of AST node (ClassDef, FunctionDef, etc.)
+            source_type: Source type ('docstring', 'comment', 'file_docstring')
 
         Returns:
             Chunk ID
         """
-        assert self.conn is not None
-        cursor = self.conn.cursor()
+        with self._lock:
+            assert self.conn is not None
+            cursor = self.conn.cursor()
 
-        # Check if chunk already exists
-        cursor.execute(
-            """
-            SELECT id FROM code_chunks
-            WHERE chunk_uuid = ?
-        """,
-            (chunk_uuid,),
-        )
-        existing = cursor.fetchone()
-
-        if existing:
-            # Update existing chunk
+            # Check if chunk already exists
             cursor.execute(
                 """
-                UPDATE code_chunks
-                SET chunk_text = ?, chunk_type = ?, chunk_ordinal = ?,
-                    vector_id = ?, embedding_model = ?
-                WHERE id = ?
+                SELECT id FROM code_chunks
+                WHERE chunk_uuid = ?
             """,
-                (
-                    chunk_text,
-                    chunk_type,
-                    chunk_ordinal,
-                    vector_id,
-                    embedding_model,
-                    existing[0],
-                ),
+                (chunk_uuid,),
             )
-            self.conn.commit()
-            return existing[0]
-        else:
-            # Insert new chunk
-            cursor.execute(
-                """
-                INSERT INTO code_chunks
-                (file_id, project_id, chunk_uuid, chunk_type, chunk_text,
-                 chunk_ordinal, vector_id, embedding_model)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-                (
-                    file_id,
-                    project_id,
-                    chunk_uuid,
-                    chunk_type,
-                    chunk_text,
-                    chunk_ordinal,
-                    vector_id,
-                    embedding_model,
-                ),
-            )
-            self.conn.commit()
-            result = cursor.lastrowid
-            assert result is not None
-            return result
+            existing = cursor.fetchone()
+
+            if existing:
+                # Update existing chunk
+                cursor.execute(
+                    """
+                    UPDATE code_chunks
+                    SET chunk_text = ?, chunk_type = ?, chunk_ordinal = ?,
+                        vector_id = ?, embedding_model = ?,
+                        bm25_score = ?, embedding_vector = ?,
+                        class_id = ?, function_id = ?, method_id = ?,
+                        line = ?, ast_node_type = ?, source_type = ?
+                    WHERE id = ?
+                """,
+                    (
+                        chunk_text,
+                        chunk_type,
+                        chunk_ordinal,
+                        vector_id,
+                        embedding_model,
+                        bm25_score,
+                        embedding_vector,
+                        class_id,
+                        function_id,
+                        method_id,
+                        line,
+                        ast_node_type,
+                        source_type,
+                        existing[0],
+                    ),
+                )
+                self.conn.commit()
+                return existing[0]
+            else:
+                # Insert new chunk
+                cursor.execute(
+                    """
+                    INSERT INTO code_chunks
+                    (file_id, project_id, chunk_uuid, chunk_type, chunk_text,
+                     chunk_ordinal, vector_id, embedding_model, bm25_score, embedding_vector,
+                     class_id, function_id, method_id, line, ast_node_type, source_type)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                    (
+                        file_id,
+                        project_id,
+                        chunk_uuid,
+                        chunk_type,
+                        chunk_text,
+                        chunk_ordinal,
+                        vector_id,
+                        embedding_model,
+                        bm25_score,
+                        embedding_vector,
+                        class_id,
+                        function_id,
+                        method_id,
+                        line,
+                        ast_node_type,
+                        source_type,
+                    ),
+                )
+                self.conn.commit()
+                result = cursor.lastrowid
+                assert result is not None
+                return result
 
     async def get_code_chunks(
         self,
@@ -1865,6 +2081,182 @@ class CodeDatabase:
 
         cursor.execute(query, params)
         return [dict(row) for row in cursor.fetchall()]
+    
+    def get_all_chunks_for_faiss_rebuild(self) -> List[Dict[str, Any]]:
+        """
+        Get all code chunks with embeddings for FAISS index rebuild.
+        
+        Returns chunks that have vector_id and embedding_model.
+        Used on server startup to rebuild FAISS index from database.
+        
+        NOTE: This method should be called when FaissIndexManager initializes.
+        It will:
+        1. Get all chunks with vector_id and embedding_model
+        2. For each chunk, get embedding from SVO service (if not cached)
+        3. Add to FAISS index with corresponding vector_id
+        
+        Returns:
+            List of chunk records with vector_id and embedding_model
+        """
+        with self._lock:
+            assert self.conn is not None
+            cursor = self.conn.cursor()
+            
+            cursor.execute(
+                """
+                SELECT id, file_id, project_id, chunk_uuid, chunk_text, 
+                       vector_id, embedding_model, chunk_type, embedding_vector
+                FROM code_chunks
+                WHERE vector_id IS NOT NULL AND embedding_model IS NOT NULL
+                ORDER BY id
+                """
+            )
+            return [dict(row) for row in cursor.fetchall()]
+
+    async def get_non_vectorized_chunks(
+        self,
+        project_id: Optional[str] = None,
+        limit: int = 100,
+    ) -> List[Dict[str, Any]]:
+        """
+        Get code chunks that are not yet vectorized (vector_id IS NULL).
+        
+        Uses index idx_code_chunks_not_vectorized for fast lookup.
+        
+        Args:
+            project_id: Filter by project ID (optional)
+            limit: Maximum number of chunks to return
+            
+        Returns:
+            List of chunk records without vector_id
+        """
+        with self._lock:
+            assert self.conn is not None
+            cursor = self.conn.cursor()
+            
+            if project_id:
+                cursor.execute(
+                    """
+                    SELECT id, file_id, project_id, chunk_uuid, chunk_text,
+                           chunk_type, chunk_ordinal, embedding_model,
+                           class_id, function_id, method_id, line, ast_node_type, source_type
+                    FROM code_chunks
+                    WHERE vector_id IS NULL AND project_id = ?
+                    ORDER BY id
+                    LIMIT ?
+                    """,
+                    (project_id, limit),
+                )
+            else:
+                cursor.execute(
+                    """
+                    SELECT id, file_id, project_id, chunk_uuid, chunk_text,
+                           chunk_type, chunk_ordinal, embedding_model,
+                           class_id, function_id, method_id, line, ast_node_type, source_type
+                    FROM code_chunks
+                    WHERE vector_id IS NULL
+                    ORDER BY id
+                    LIMIT ?
+                    """,
+                    (limit,),
+                )
+            return [dict(row) for row in cursor.fetchall()]
+
+    async def update_chunk_vector_id(
+        self,
+        chunk_id: int,
+        vector_id: int,
+        embedding_model: Optional[str] = None,
+    ) -> None:
+        """
+        Update vector_id for a chunk after vectorization.
+        
+        After this update, the chunk will automatically be excluded from
+        the partial index idx_code_chunks_not_vectorized (WHERE vector_id IS NULL).
+        
+        Args:
+            chunk_id: Chunk ID
+            vector_id: FAISS vector index ID
+            embedding_model: Optional embedding model name
+        """
+        with self._lock:
+            assert self.conn is not None
+            cursor = self.conn.cursor()
+            if embedding_model:
+                cursor.execute(
+                    """
+                    UPDATE code_chunks
+                    SET vector_id = ?, embedding_model = ?
+                    WHERE id = ?
+                    """,
+                    (vector_id, embedding_model, chunk_id),
+                )
+            else:
+                cursor.execute(
+                    """
+                    UPDATE code_chunks
+                    SET vector_id = ?
+                    WHERE id = ?
+                    """,
+                    (vector_id, chunk_id),
+                )
+            self.conn.commit()
+
+    def get_files_needing_chunking(
+        self, project_id: str, limit: int = 10
+    ) -> List[Dict[str, Any]]:
+        """
+        Get files that need chunking (have docstrings but no chunks).
+        
+        Files are considered needing chunking if:
+        - They have docstrings (has_docstring = 1) OR
+        - They have classes/functions/methods with docstrings
+        - AND they have no chunks in code_chunks table
+        
+        Args:
+            project_id: Project ID
+            limit: Maximum number of files to return
+            
+        Returns:
+            List of file records that need chunking
+        """
+        with self._lock:
+            assert self.conn is not None
+            cursor = self.conn.cursor()
+            
+            # Find files with docstrings that have no chunks
+            cursor.execute(
+                """
+                SELECT DISTINCT f.id, f.project_id, f.path, f.has_docstring
+                FROM files f
+                WHERE f.project_id = ?
+                AND (
+                    f.has_docstring = 1
+                    OR EXISTS (
+                        SELECT 1 FROM classes c
+                        WHERE c.file_id = f.id AND c.docstring IS NOT NULL AND c.docstring != ''
+                    )
+                    OR EXISTS (
+                        SELECT 1 FROM functions fn
+                        WHERE fn.file_id = f.id AND fn.docstring IS NOT NULL AND fn.docstring != ''
+                    )
+                    OR EXISTS (
+                        SELECT 1 FROM methods m
+                        JOIN classes c ON m.class_id = c.id
+                        WHERE c.file_id = f.id AND m.docstring IS NOT NULL AND m.docstring != ''
+                    )
+                )
+                AND NOT EXISTS (
+                    SELECT 1 FROM code_chunks cc
+                    WHERE cc.file_id = f.id
+                )
+                ORDER BY f.updated_at DESC
+                LIMIT ?
+                """,
+                (project_id, limit),
+            )
+            
+            return [dict(row) for row in cursor.fetchall()]
 
     def close(self) -> None:
         """Close database connection."""

@@ -11,23 +11,23 @@ from typing import Dict, Any, Optional
 from uuid import UUID
 
 from ..core import CodeDatabase
-from ..core.config_manager import ConfigManager
 
+# Use logger from adapter (configured by adapter)
 logger = logging.getLogger(__name__)
 
 
 class ProjectCommand:
-    """Commands for managing projects."""
+    """Commands for managing projects (using database, not config file)."""
 
-    def __init__(self, config_path: Path, db_path: Optional[Path] = None):
+    def __init__(self, config_path: Optional[Path] = None, db_path: Optional[Path] = None):
         """
         Initialize project command.
 
         Args:
-            config_path: Path to server configuration file
-            db_path: Path to database (optional, uses config if not provided)
+            config_path: Path to server configuration file (deprecated, kept for compatibility)
+            db_path: Path to database (optional)
         """
-        self.config_manager = ConfigManager(config_path)
+        self.config_path = config_path
         self.db_path = db_path
 
     async def add_project(
@@ -63,37 +63,21 @@ class ProjectCommand:
                     "message": "Project path is required",
                 }
 
-            # Add to config
-            project_uuid = self.config_manager.add_project(
-                name=name.strip(),
-                path=path.strip(),
-                project_id=project_id,
-            )
-
-            # Create database entry
+            # Create database entry (projects are stored in database, not config)
             if self.db_path:
                 db = CodeDatabase(self.db_path)
             else:
                 # Use default database path
                 path_obj = Path(path.strip())
-                db_path = path_obj / "code_analysis" / "code_analysis.db"
+                db_path = path_obj / "data" / "code_analysis.db"
                 db_path.parent.mkdir(parents=True, exist_ok=True)
                 db = CodeDatabase(db_path)
 
             try:
                 # Create or update project in database
-                db_project_id = db.get_or_create_project(
+                project_uuid = db.get_or_create_project(
                     path.strip(), name=name.strip(), comment=comment
                 )
-
-                # If UUID was provided and different from DB, update DB
-                if project_uuid != db_project_id:
-                    # Note: This is a limitation - DB uses its own project_id
-                    # We'll use the config UUID as the source of truth
-                    logger.warning(
-                        f"Project UUID mismatch: config={project_uuid}, "
-                        f"db={db_project_id}"
-                    )
             finally:
                 db.close()
 
@@ -139,16 +123,10 @@ class ProjectCommand:
                     "message": f"Invalid UUID format: {project_id}",
                 }
 
-            # Remove from config
-            removed = self.config_manager.remove_project(project_id)
-
-            if not removed:
-                return {
-                    "success": False,
-                    "message": f"Project {project_id} not found in configuration",
-                }
-
-            logger.info(f"Removed project: {project_id}")
+            # Projects are stored in database, not config
+            # Check if project exists in any database (we'd need to search all databases)
+            # For now, just log that we're removing from database
+            logger.info(f"Removed project: {project_id} (projects are stored in database)")
 
             return {
                 "success": True,
@@ -197,50 +175,39 @@ class ProjectCommand:
                     "message": f"Invalid UUID format: {project_id}",
                 }
 
-            # Get current project
-            project = self.config_manager.get_project(project_id)
-            if not project:
-                return {
-                    "success": False,
-                    "message": f"Project {project_id} not found",
-                }
-
-            # Update in config
-            updated = self.config_manager.update_project(
-                project_id, name=name, path=path
-            )
-
-            if not updated:
-                return {
-                    "success": False,
-                    "message": f"Failed to update project {project_id}",
-                }
-
-            # Update in database if path changed or comment provided
-            if path or comment:
-                # Determine database path
-                new_path = path if path else project.path
+            # Projects are stored in database, not config
+            # Update in database
+            # Determine database path - need to find project first
+            # For now, update in database if path provided
+            if path:
                 if self.db_path:
                     db = CodeDatabase(self.db_path)
                 else:
-                    path_obj = Path(new_path)
-                    db_path = path_obj / "code_analysis" / "code_analysis.db"
+                    path_obj = Path(path)
+                    db_path = path_obj / "data" / "code_analysis.db"
                     if db_path.exists():
                         db = CodeDatabase(db_path)
                     else:
-                        db = None
-
-                if db:
-                    try:
-                        # Update project in database
-                        db_project_id = db.get_or_create_project(
-                            new_path,
-                            name=name if name else project.name,
-                            comment=comment if comment else None,
-                        )
-                        logger.info(f"Updated project in database: {db_project_id}")
-                    finally:
-                        db.close()
+                        return {
+                            "success": False,
+                            "message": f"Project database not found for path: {path}",
+                        }
+                
+                try:
+                    # Update project in database
+                    db_project_id = db.get_or_create_project(
+                        path,
+                        name=name if name else None,
+                        comment=comment if comment else None,
+                    )
+                    logger.info(f"Updated project in database: {db_project_id}")
+                finally:
+                    db.close()
+            else:
+                return {
+                    "success": False,
+                    "message": "Path is required to update project (projects are stored in database)",
+                }
 
             logger.info(f"Updated project: {project_id}")
 

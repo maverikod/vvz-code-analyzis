@@ -16,6 +16,8 @@ from typing import Dict, List, Any, Optional, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from .database import CodeDatabase  # noqa: F401
+    from .svo_client_manager import SVOClientManager  # noqa: F401
+    from .faiss_manager import FaissIndexManager  # noqa: F401
 
 from .usage_analyzer import UsageAnalyzer
 
@@ -32,6 +34,8 @@ class CodeAnalyzer:
         max_lines: int = 400,
         issue_detector=None,
         database=None,
+        svo_client_manager: Optional["SVOClientManager"] = None,
+        faiss_manager: Optional["FaissIndexManager"] = None,
     ):
         """Initialize code analyzer."""
         self.root_dir = Path(root_dir)
@@ -39,7 +43,24 @@ class CodeAnalyzer:
         self.max_lines = max_lines
         self.issue_detector = issue_detector
         self.database = database
+        self.svo_client_manager = svo_client_manager
+        self.faiss_manager = faiss_manager
         self.usage_analyzer = UsageAnalyzer(database) if database else None
+        
+        # Initialize docstring chunker if SVO client manager provided
+        self.docstring_chunker = None
+        if database and svo_client_manager:
+            from .docstring_chunker import DocstringChunker
+            # Get min_chunk_length from config if available
+            min_chunk_length = 30  # default
+            if hasattr(svo_client_manager, 'config') and svo_client_manager.config:
+                min_chunk_length = getattr(svo_client_manager.config, 'min_chunk_length', 30)
+            self.docstring_chunker = DocstringChunker(
+                database=database,
+                svo_client_manager=svo_client_manager,
+                faiss_manager=faiss_manager,
+                min_chunk_length=min_chunk_length,
+            )
 
         # Create output directory if it doesn't exist
         self.output_dir.mkdir(exist_ok=True)
@@ -74,15 +95,19 @@ class CodeAnalyzer:
             file_path: Path to Python file
             force: If True, process file regardless of modification time
         """
+        logger.info(f"📄 Analyzing file: {file_path}")
         try:
             file_path_str = str(file_path)
             file_stat = file_path.stat()
             last_modified = file_stat.st_mtime
 
+            logger.debug(f"   File size: {file_stat.st_size} bytes, mtime: {last_modified}")
             with open(file_path, "r", encoding="utf-8") as f:
                 content = f.read()
 
+            logger.debug(f"   Content length: {len(content)} chars, lines: {len(content.splitlines())}")
             tree = ast.parse(content)
+            logger.debug(f"   AST parsed successfully")
 
             # Check file size
             lines = content.split("\n")
@@ -132,15 +157,39 @@ class CodeAnalyzer:
                     )
 
             # Analyze AST
+            logger.debug(f"   Analyzing AST structure...")
             self._analyze_ast(tree, file_path, file_id)
+            logger.debug(f"   AST analysis completed")
 
             # Save AST tree to database
             if self.database and file_id:
-                await self._save_ast_tree(tree, file_id, project_id, last_modified, force=False)
+                logger.debug(f"   Saving AST tree to database...")
+                ast_saved = await self._save_ast_tree(tree, file_id, project_id, last_modified, force=False)
+                if ast_saved:
+                    logger.debug(f"   ✅ AST tree saved to database")
+                else:
+                    logger.debug(f"   ⏭️  AST tree skipped (up to date)")
 
             # Analyze usages (method calls, attribute accesses)
             if self.usage_analyzer and file_id:
+                logger.debug(f"   Analyzing usages...")
                 self.usage_analyzer.analyze_file(file_path, file_id)
+
+            # Process docstrings and comments: chunk and embed
+            if self.docstring_chunker and file_id and project_id:
+                logger.info(f"   🔍 Processing docstrings and comments for chunking...")
+                await self.docstring_chunker.process_file(
+                    file_path=file_path,
+                    file_id=file_id,
+                    project_id=project_id,
+                    tree=tree,
+                    file_content=content,
+                )
+                logger.debug(f"   ✅ Docstring chunking completed")
+            else:
+                logger.debug(f"   ⏭️  Docstring chunking skipped (chunker not available)")
+            
+            logger.info(f"✅ File analysis completed: {file_path}")
 
         except (OSError, IOError, ValueError, SyntaxError, UnicodeDecodeError) as e:
             logger.error(f"Error analyzing file {file_path}: {e}")
@@ -589,10 +638,16 @@ class CodeAnalyzer:
                     result[field] = [self._ast_to_dict(item) for item in value]
                 elif isinstance(value, ast.AST):
                     result[field] = self._ast_to_dict(value)
+                elif value is Ellipsis or value is ...:
+                    # Handle ellipsis (...) which is not JSON serializable
+                    result[field] = None
                 else:
                     result[field] = value
             return result
         elif isinstance(node, list):
             return [self._ast_to_dict(item) for item in node]
+        elif node is Ellipsis or node is ...:
+            # Handle ellipsis (...) which is not JSON serializable
+            return None
         else:
             return node

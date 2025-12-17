@@ -1,0 +1,122 @@
+{
+  "server": {
+    "host": "0.0.0.0",
+    "port": 15000,
+    "protocol": "mtls",
+    "servername": "code-analysis-server",
+    "advertised_host": "172.28.0.1",
+    "debug": false,
+    "log_level": "INFO",
+    "ssl": {
+      "cert": "mtls_certificates/mtls_certificates/server/code-analysis-server.crt",
+      "key": "mtls_certificates/mtls_certificates/server/code-analysis-server.key",
+      "ca": "mtls_certificates/mtls_certificates/ca/ca.crt",
+      "crl": null,
+      "dnscheck": false,
+      "check_hostname": false
+    },
+    "log_dir": "./logs"
+  },
+  "client": {
+    "enabled": false,
+    "protocol": "mtls",
+    "ssl": {
+      "cert": "mtls_certificates/mtls_certificates/client/code-analysis.crt",
+      "key": "mtls_certificates/mtls_certificates/client/code-analysis.key",
+      "ca": "mtls_certificates/mtls_certificates/ca/ca.crt",
+      "crl": null,
+      "dnscheck": false,
+      "check_hostname": false
+    }
+  },
+  "registration": {
+    "enabled": true,
+    "protocol": "mtls",
+    "register_url": "https://172.28.0.2:3004/register",
+    "unregister_url": "https://172.28.0.2:3004/unregister",
+    "heartbeat_interval": 30,
+    "server_id": "code-analysis-server",
+    "server_name": "Code Analysis Server",
+    "instance_uuid": "550e8400-e29b-41d4-a716-446655440000",
+    "auto_on_startup": true,
+    "auto_on_shutdown": true,
+    "ssl": {
+      "cert": "mtls_certificates/mtls_certificates/client/code-analysis.crt",
+      "key": "mtls_certificates/mtls_certificates/client/code-analysis.key",
+      "ca": "mtls_certificates/mtls_certificates/ca/ca.crt",
+      "crl": null,
+      "dnscheck": false,
+      "check_hostname": false
+    },
+    "heartbeat": {
+      "url": "https://172.28.0.2:3004/proxy/heartbeat",
+      "interval": 30
+    }
+  },
+  "server_validation": {
+    "enabled": false,
+    "protocol": "mtls",
+    "timeout": 10,
+    "use_token": false,
+    "use_roles": false,
+    "tokens": {},
+    "roles": {},
+    "auth_header": "X-API-Key",
+    "roles_header": "X-Roles",
+    "health_path": "/health",
+    "check_hostname": false,
+    "ssl": {
+      "cert": "mtls_certificates/mtls_certificates/server/code-analysis-server.crt",
+      "key": "mtls_certificates/mtls_certificates/server/code-analysis-server.key",
+      "ca": "mtls_certificates/mtls_certificates/ca/ca.crt",
+      "crl": null,
+      "dnscheck": false,
+      "check_hostname": false
+    }
+  },
+  "auth": {
+    "use_token": false,
+    "use_roles": false,
+    "tokens": {},
+    "roles": {}
+  },
+  "queue_manager": {
+    "enabled": true,
+    "in_memory": true,
+    "registry_path": null,
+    "shutdown_timeout": 30.0,
+    "max_concurrent_jobs": 5,
+    "max_queue_size": null,
+    "per_job_type_limits": null,
+    "completed_job_retention_seconds": 21600
+  },
+  "transport": {
+    "type": "https",
+    "verify_client": true,
+    "chk_hostname": false
+  },
+  "code_analysis": {
+    "host": "0.0.0.0",
+    "port": 15000,
+    "log": "logs/code_analysis.log",
+    "db_path": "data/code_analysis.db",
+    "dirs": [],
+    "chunker": {
+      "enabled": true,
+      "url": "localhost",
+      "port": 8009,
+      "protocol": "mtls",
+      "cert_file": "mtls_certificates/mtls_certificates/client/code-analysis.crt",
+      "key_file": "mtls_certificates/mtls_certificates/client/code-analysis.key",
+      "ca_cert_file": "mtls_certificates/mtls_certificates/ca/ca.crt",
+      "crl_file": null,
+      "retry_attempts": 3,
+      "retry_delay": 5.0
+    },
+    "faiss_index_path": "data/faiss_index.bin",
+    "vector_dim": 384,
+    "min_chunk_length": 30,
+    "vectorization_retry_attempts": 3,
+    "vectorization_retry_delay": 10.0
+  }
+}

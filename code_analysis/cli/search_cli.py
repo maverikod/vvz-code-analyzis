@@ -77,7 +77,7 @@ def find_usages(
     root_dir = root_dir.resolve()
     if not db_path:
         db_path = root_dir / "code_analysis" / "code_analysis.db"
-
+    
     db = CodeDatabase(db_path)
     try:
         project_id = db.get_or_create_project(str(root_dir), name=root_dir.name)
@@ -160,7 +160,7 @@ def fulltext(
     root_dir = root_dir.resolve()
     if not db_path:
         db_path = root_dir / "code_analysis" / "code_analysis.db"
-
+    
     db = CodeDatabase(db_path)
     try:
         project_id = db.get_or_create_project(str(root_dir), name=root_dir.name)
@@ -221,7 +221,7 @@ def class_methods(
     root_dir = root_dir.resolve()
     if not db_path:
         db_path = root_dir / "code_analysis" / "code_analysis.db"
-
+    
     db = CodeDatabase(db_path)
     try:
         project_id = db.get_or_create_project(str(root_dir), name=root_dir.name)
@@ -286,7 +286,7 @@ def find_classes(
     root_dir = root_dir.resolve()
     if not db_path:
         db_path = root_dir / "code_analysis" / "code_analysis.db"
-
+    
     db = CodeDatabase(db_path)
     try:
         project_id = db.get_or_create_project(str(root_dir), name=root_dir.name)

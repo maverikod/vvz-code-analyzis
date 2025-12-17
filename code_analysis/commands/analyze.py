@@ -6,10 +6,18 @@ email: vasilyvz@gmail.com
 """
 
 import logging
+import multiprocessing
+import os
 from pathlib import Path
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 
 from ..core import CodeAnalyzer, CodeDatabase, IssueDetector
+from ..core.progress_tracker import get_progress_tracker_from_context, ProgressTracker
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from ..core.svo_client_manager import SVOClientManager
+    from ..core.faiss_manager import FaissIndexManager
 
 logger = logging.getLogger(__name__)
 
@@ -24,6 +32,9 @@ class AnalyzeCommand:
         root_path: str,
         max_lines: int = 400,
         force: bool = False,
+        svo_client_manager: Optional["SVOClientManager"] = None,
+        faiss_manager: Optional["FaissIndexManager"] = None,
+        progress_tracker: Optional[ProgressTracker] = None,
     ):
         """
         Initialize analyze command.
@@ -33,12 +44,17 @@ class AnalyzeCommand:
             project_id: Project UUID
             root_path: Root directory path
             max_lines: Maximum lines per file
+            force: Force re-analysis
+            svo_client_manager: SVO client manager for chunking and embedding
+            faiss_manager: FAISS index manager for vector storage
+            progress_tracker: Progress tracker for updating job progress
         """
         self.database = database
         self.project_id = project_id
         self.root_path = Path(root_path).resolve()
         self.max_lines = max_lines
         self.force = force
+        self.progress_tracker = progress_tracker
 
         # Initialize analyzer
         output_dir = self.root_path / "code_analysis"
@@ -47,6 +63,8 @@ class AnalyzeCommand:
             str(output_dir),
             max_lines,
             database=self.database,
+            svo_client_manager=svo_client_manager,
+            faiss_manager=faiss_manager,
         )
         self.issue_detector = IssueDetector(
             self.analyzer.issues, self.root_path, database=self.database
@@ -60,14 +78,37 @@ class AnalyzeCommand:
         Returns:
             Dictionary with analysis results
         """
-        import os
+        if self.progress_tracker:
+            self.progress_tracker.set_progress(0)
+            self.progress_tracker.set_description("Starting project analysis...")
+            self.progress_tracker.log(f"Analyzing project: {self.root_path}")
 
         logger.info(f"Analyzing project: {self.root_path}")
 
-        # Clear all existing data for this project before analysis
-        logger.info(f"Clearing existing data for project: {self.project_id}")
-        await self.database.clear_project_data(self.project_id)
+        # Remove files from database that no longer exist on disk
+        # This is done ALWAYS before analysis, regardless of force flag
+        if self.progress_tracker:
+            self.progress_tracker.set_progress(5)
+            self.progress_tracker.set_description("Checking for missing files...")
+            self.progress_tracker.log(f"Checking for missing files in project: {self.project_id}")
 
+        logger.info(f"Checking for missing files in project: {self.project_id}")
+        removal_result = await self.database.remove_missing_files(
+            self.project_id, self.root_path
+        )
+        if removal_result["removed_count"] > 0:
+            msg = (
+                f"Removed {removal_result['removed_count']} missing files: "
+                f"{', '.join(removal_result['removed_files'][:5])}"
+                + (f" and {len(removal_result['removed_files']) - 5} more" 
+                   if len(removal_result['removed_files']) > 5 else "")
+            )
+            logger.info(msg)
+            if self.progress_tracker:
+                self.progress_tracker.log(msg)
+
+        # Collect all Python files first to calculate progress
+        python_files = []
         for root, dirs, files in os.walk(self.root_path):
             # Skip certain directories
             dirs[:] = [
@@ -80,9 +121,48 @@ class AnalyzeCommand:
             for file in files:
                 if file.endswith(".py"):
                     file_path = Path(root) / file
-                    await self.analyzer.analyze_file(file_path, force=self.force)
+                    python_files.append(file_path)
+
+        total_files = len(python_files)
+        if self.progress_tracker:
+            self.progress_tracker.set_progress(10)
+            self.progress_tracker.set_description(
+                f"Found {total_files} Python files. Starting analysis..."
+            )
+            self.progress_tracker.log(f"Found {total_files} Python files to analyze")
+
+        # Analyze files with progress updates
+        analyzed_count = 0
+        for idx, file_path in enumerate(python_files):
+            logger.info(f"📄 Analyzing file {analyzed_count + 1}/{total_files}: {file_path}")
+            try:
+                await self.analyzer.analyze_file(file_path, force=self.force)
+                analyzed_count += 1
+                logger.debug(f"✅ Successfully analyzed: {file_path}")
+            except Exception as e:
+                logger.error(f"❌ Error analyzing file {file_path}: {e}", exc_info=True)
+                analyzed_count += 1  # Count even failed files to continue
+
+            # Update progress every file (10% to 90% range for file analysis)
+            if self.progress_tracker and total_files > 0:
+                file_progress = 10 + int((analyzed_count / total_files) * 80)
+                self.progress_tracker.set_progress(file_progress)
+                self.progress_tracker.set_description(
+                    f"Analyzing files: {analyzed_count}/{total_files} "
+                    f"({file_progress}%) - {file_path.name}"
+                )
+                # Log every 10th file or last file
+                if analyzed_count % 10 == 0 or analyzed_count == total_files:
+                    self.progress_tracker.log(
+                        f"Analyzed {analyzed_count}/{total_files} files: {file_path}"
+                    )
+                    logger.info(f"📊 Progress: {analyzed_count}/{total_files} files analyzed ({file_progress}%)")
 
         # Get statistics from database for this project
+        if self.progress_tracker:
+            self.progress_tracker.set_progress(90)
+            self.progress_tracker.set_description("Collecting analysis statistics...")
+
         assert self.database.conn is not None
         cursor = self.database.conn.cursor()
         
@@ -124,9 +204,89 @@ class AnalyzeCommand:
             "project_id": self.project_id,
         }
 
-        logger.info(
+        completion_msg = (
             f"Analysis complete: {result['files_analyzed']} files, "
-            f"{result['classes']} classes, {result['functions']} functions"
+            f"{result['classes']} classes, {result['functions']} functions, "
+            f"{result['issues']} issues"
         )
+        logger.info(completion_msg)
+
+        if self.progress_tracker:
+            self.progress_tracker.set_progress(95)
+            self.progress_tracker.set_description(completion_msg)
+            self.progress_tracker.log(completion_msg)
+
+        # Start vectorization worker in background process if SVO and FAISS are available
+        if self.analyzer.svo_client_manager and self.analyzer.faiss_manager:
+            if self.progress_tracker:
+                self.progress_tracker.set_description("Starting vectorization worker...")
+                self.progress_tracker.log("Starting vectorization worker in background")
+            self._start_vectorization_worker()
+
+        if self.progress_tracker:
+            self.progress_tracker.set_progress(100)
+            self.progress_tracker.set_description("Analysis completed successfully")
 
         return result
+
+    def _start_vectorization_worker(self) -> None:
+        """
+        Start vectorization worker in separate process.
+        
+        Worker will process chunks that don't have vector_id yet.
+        """
+        try:
+            from ..core.vectorization_worker import run_vectorization_worker
+            from ..core.config import ServerConfig
+            
+            # Get configuration from adapter for worker
+            svo_config = None
+            try:
+                from mcp_proxy_adapter.config import get_config as get_adapter_config
+                adapter_config = get_adapter_config()
+                adapter_config_data = getattr(adapter_config, "config_data", {})
+                code_analysis_config = adapter_config_data.get("code_analysis", {})
+                
+                if code_analysis_config:
+                    server_config = ServerConfig(**code_analysis_config)
+                    svo_config = server_config.model_dump() if hasattr(server_config, 'model_dump') else server_config.dict()
+            except Exception as e:
+                logger.warning(f"Failed to get config from adapter for worker: {e}")
+            
+            # Get FAISS index path and vector dimension
+            faiss_index_path = None
+            vector_dim = None
+            
+            if hasattr(self.analyzer.faiss_manager, 'index_path'):
+                faiss_index_path = str(self.analyzer.faiss_manager.index_path)
+            if hasattr(self.analyzer.faiss_manager, 'vector_dim'):
+                vector_dim = self.analyzer.faiss_manager.vector_dim
+            
+            if not faiss_index_path or not vector_dim:
+                logger.warning(
+                    "FAISS manager missing required attributes, skipping vectorization worker"
+                )
+                return
+            
+            # Start worker in separate process
+            logger.info("Starting vectorization worker in background process")
+            process = multiprocessing.Process(
+                target=run_vectorization_worker,
+                args=(
+                    str(self.database.db_path),
+                    self.project_id,
+                    faiss_index_path,
+                    vector_dim,
+                ),
+                kwargs={
+                    "svo_config": svo_config,
+                    "batch_size": 10,
+                    "poll_interval": 30,  # Poll every 30 seconds
+                },
+            )
+            process.daemon = True  # Daemon process will be killed when parent exits
+            process.start()
+            logger.info(f"Vectorization worker started with PID {process.pid}")
+            
+        except Exception as e:
+            logger.error(f"Failed to start vectorization worker: {e}", exc_info=True)

@@ -174,11 +174,17 @@ class UpdateASTCommand:
                     result[field] = [self._ast_to_dict(item) for item in value]
                 elif isinstance(value, ast.AST):
                     result[field] = self._ast_to_dict(value)
+                elif value is Ellipsis or value is ...:
+                    # Handle ellipsis (...) which is not JSON serializable
+                    result[field] = None
                 else:
                     result[field] = value
             return result
         elif isinstance(node, list):
             return [self._ast_to_dict(item) for item in node]
+        elif node is Ellipsis or node is ...:
+            # Handle ellipsis (...) which is not JSON serializable
+            return None
         else:
             return node
 

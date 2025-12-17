@@ -12,11 +12,13 @@ import uuid
 from pathlib import Path
 from typing import List, Optional, Dict, Any
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 
 class ProjectDir(BaseModel):
     """Project directory configuration."""
+
+    model_config = {"extra": "forbid"}  # Reject unknown fields
 
     id: str = Field(..., description="UUID4 identifier")
     name: str = Field(..., description="Human-friendly identifier")
@@ -47,18 +49,78 @@ class ProjectDir(BaseModel):
 
 
 class SVOServiceConfig(BaseModel):
-    """Configuration for SVO service integration."""
+    """Configuration for SVO service integration.
+    
+    Each service (chunker, embedding) has its own configuration block with:
+    - url: Service URL/hostname
+    - port: Service port
+    - protocol: Communication protocol (http, https, mtls)
+    - Certificate files (if protocol is mtls)
+    - Retry configuration for handling service unavailability
+    """
+
+    model_config = {"extra": "forbid"}  # Reject unknown fields
 
     enabled: bool = Field(default=False, description="Enable SVO service")
-    host: str = Field(default="localhost", description="Service host")
+    url: str = Field(default="localhost", description="Service URL or hostname")
     port: int = Field(default=8009, description="Service port")
-    mtls_certificates: Optional[Dict[str, str]] = Field(
-        default=None, description="mTLS certificate paths"
+    protocol: str = Field(default="http", description="Protocol: http, https, or mtls")
+    cert_file: Optional[str] = Field(
+        default=None, description="Path to client certificate file (required for mTLS)"
     )
+    key_file: Optional[str] = Field(
+        default=None, description="Path to client private key file (required for mTLS)"
+    )
+    ca_cert_file: Optional[str] = Field(
+        default=None, description="Path to CA certificate file (required for mTLS)"
+    )
+    crl_file: Optional[str] = Field(
+        default=None, description="Path to CRL file (optional for mTLS)"
+    )
+    retry_attempts: int = Field(
+        default=3, description="Number of retry attempts on failure (default: 3)"
+    )
+    retry_delay: float = Field(
+        default=5.0, description="Delay in seconds between retry attempts (default: 5.0)"
+    )
+
+    @field_validator("protocol")
+    @classmethod
+    def validate_protocol(cls, v: str) -> str:
+        """Validate protocol value."""
+        v_lower = v.lower()
+        if v_lower not in ("http", "https", "mtls"):
+            raise ValueError(f"Protocol must be 'http', 'https', or 'mtls', got: {v}")
+        return v_lower
+
+    @field_validator("cert_file", "key_file", "ca_cert_file", "crl_file")
+    @classmethod
+    def validate_cert_path(cls, v: Optional[str]) -> Optional[str]:
+        """Validate certificate file path exists if provided."""
+        if v is None:
+            return None
+        path = Path(v)
+        if not path.exists():
+            raise ValueError(f"Certificate file does not exist: {v}")
+        return str(path.resolve())
+
+    @model_validator(mode='after')
+    def validate_mtls_config(self) -> 'SVOServiceConfig':
+        """Validate mTLS configuration after initialization."""
+        if self.protocol == "mtls":
+            if not self.cert_file:
+                raise ValueError("cert_file is required when protocol is 'mtls'")
+            if not self.key_file:
+                raise ValueError("key_file is required when protocol is 'mtls'")
+            if not self.ca_cert_file:
+                raise ValueError("ca_cert_file is required when protocol is 'mtls'")
+        return self
 
 
 class ServerConfig(BaseModel):
     """MCP server configuration."""
+
+    model_config = {"extra": "forbid"}  # Reject unknown fields
 
     host: str = Field(default="0.0.0.0", description="Server host")
     port: int = Field(default=15000, description="Server port")
@@ -68,10 +130,22 @@ class ServerConfig(BaseModel):
         default_factory=list, description="Project directories"
     )
     chunker: Optional[SVOServiceConfig] = Field(
-        default=None, description="Chunker service configuration"
+        default=None, description="Chunker service configuration (chunker handles both chunking and embeddings)"
     )
-    embedding: Optional[SVOServiceConfig] = Field(
-        default=None, description="Embedding service configuration"
+    faiss_index_path: Optional[str] = Field(
+        default=None, description="Path to FAISS index file (shared across all projects)"
+    )
+    vector_dim: Optional[int] = Field(
+        default=None, description="Vector dimension for embeddings (required if using FAISS)"
+    )
+    min_chunk_length: int = Field(
+        default=30, description="Minimum text length for chunking (default: 30). Shorter texts are grouped by level."
+    )
+    vectorization_retry_attempts: int = Field(
+        default=3, description="Number of retry attempts for vectorization on failure (default: 3)"
+    )
+    vectorization_retry_delay: float = Field(
+        default=10.0, description="Delay in seconds between vectorization retry attempts (default: 10.0)"
     )
 
     @field_validator("port")
@@ -112,6 +186,25 @@ class ServerConfig(BaseModel):
         db_path.parent.mkdir(parents=True, exist_ok=True)
         return str(db_path.resolve())
 
+    @field_validator("faiss_index_path")
+    @classmethod
+    def validate_faiss_index_path(cls, v: Optional[str]) -> Optional[str]:
+        """Validate FAISS index path."""
+        if v is None:
+            return None
+        index_path = Path(v)
+        # Ensure parent directory exists
+        index_path.parent.mkdir(parents=True, exist_ok=True)
+        return str(index_path.resolve())
+
+    @field_validator("vector_dim")
+    @classmethod
+    def validate_vector_dim(cls, v: Optional[int]) -> Optional[int]:
+        """Validate vector dimension."""
+        if v is not None and v <= 0:
+            raise ValueError("Vector dimension must be positive")
+        return v
+
 
 def generate_config(
     host: str = "0.0.0.0",
@@ -121,8 +214,6 @@ def generate_config(
     dirs: Optional[List[Dict[str, str]]] = None,
     chunker_host: str = "localhost",
     chunker_port: int = 8009,
-    embedding_host: str = "localhost",
-    embedding_port: int = 8001,
     mtls_certificates: Optional[Dict[str, str]] = None,
 ) -> Dict[str, Any]:
     """
@@ -173,17 +264,18 @@ def generate_config(
 
     # Add SVO service configurations
     if mtls_certificates:
+        # Determine protocol based on presence of certificates
+        protocol = "mtls" if mtls_certificates.get("cert_file") else "https"
+        
         config["chunker"] = {
             "enabled": True,
-            "host": chunker_host,
+            "url": chunker_host,
             "port": chunker_port,
-            "mtls_certificates": mtls_certificates,
-        }
-        config["embedding"] = {
-            "enabled": True,
-            "host": embedding_host,
-            "port": embedding_port,
-            "mtls_certificates": mtls_certificates,
+            "protocol": protocol,
+            "cert_file": mtls_certificates.get("cert_file"),
+            "key_file": mtls_certificates.get("key_file"),
+            "ca_cert_file": mtls_certificates.get("ca_cert_file"),
+            "crl_file": mtls_certificates.get("crl_file"),
         }
 
     return config

@@ -9,10 +9,15 @@ email: vasilyvz@gmail.com
 """
 
 from pathlib import Path
-from typing import Dict, List, Any, Optional
+from typing import Dict, List, Any, Optional, TYPE_CHECKING
 
 from ..core import CodeDatabase
 from ..commands import AnalyzeCommand, SearchCommand, IssuesCommand, RefactorCommand
+from ..commands.semantic_search import SemanticSearchCommand
+
+if TYPE_CHECKING:
+    from ..core.svo_client_manager import SVOClientManager
+    from ..core.faiss_manager import FaissIndexManager
 
 
 class CodeAnalysisAPI:
@@ -29,6 +34,8 @@ class CodeAnalysisAPI:
         db_path: Optional[Path] = None,
         max_lines: int = 400,
         comment: Optional[str] = None,
+        svo_client_manager: Optional["SVOClientManager"] = None,
+        faiss_manager: Optional["FaissIndexManager"] = None,
     ):
         """
         Initialize code analysis API.
@@ -38,6 +45,8 @@ class CodeAnalysisAPI:
             db_path: Path to SQLite database (optional)
             max_lines: Maximum lines per file
             comment: Optional human-readable comment/identifier for project
+            svo_client_manager: SVO client manager for chunking and embedding
+            faiss_manager: FAISS index manager for vector storage
         """
         self.root_path = Path(root_path).resolve()
         self.max_lines = max_lines
@@ -46,19 +55,26 @@ class CodeAnalysisAPI:
         if db_path:
             self.db_path = Path(db_path)
         else:
-            self.db_path = self.root_path / "code_analysis" / "code_analysis.db"
-            self.db_path.parent.mkdir(parents=True, exist_ok=True)
+            # Default: use data directory in project root
+            data_dir = self.root_path / "data"
+            data_dir.mkdir(parents=True, exist_ok=True)
+            self.db_path = data_dir / "code_analysis.db"
 
         self.database = CodeDatabase(self.db_path)
         self.project_id = self.database.get_or_create_project(
             str(self.root_path), name=self.root_path.name, comment=comment
         )
+        self.svo_client_manager = svo_client_manager
+        self.faiss_manager = faiss_manager
 
         # Initialize command instances (will be created with force parameter when needed)
         self.max_lines = max_lines
         self.search_cmd = SearchCommand(self.database, self.project_id)
         self.issues_cmd = IssuesCommand(self.database, self.project_id)
         self.refactor_cmd = RefactorCommand(self.project_id)
+        self.semantic_search_cmd = SemanticSearchCommand(
+            self.database, self.project_id, faiss_manager, svo_client_manager
+        )
 
     async def analyze_project(self, force: bool = False) -> Dict[str, Any]:
         """
@@ -71,7 +87,9 @@ class CodeAnalysisAPI:
             Dictionary with analysis results
         """
         analyze_cmd = AnalyzeCommand(
-            self.database, self.project_id, str(self.root_path), self.max_lines, force
+            self.database, self.project_id, str(self.root_path), self.max_lines, force,
+            svo_client_manager=self.svo_client_manager,
+            faiss_manager=self.faiss_manager
         )
         return await analyze_cmd.execute()
 
@@ -201,6 +219,29 @@ class CodeAnalysisAPI:
         """
         return await self.refactor_cmd.merge_classes(
             str(self.root_path), file_path, config
+        )
+
+    async def semantic_search(
+        self,
+        query: str,
+        k: int = 10,
+        max_distance: Optional[float] = None,
+        include_ast_node: bool = False,
+    ) -> List[Dict[str, Any]]:
+        """
+        Perform semantic search using vector embeddings.
+
+        Args:
+            query: Text query to search for
+            k: Number of results to return (default: 10)
+            max_distance: Maximum distance threshold (optional)
+            include_ast_node: If True, include full AST node JSON (default: False)
+
+        Returns:
+            List of search results with AST node information and context
+        """
+        return await self.semantic_search_cmd.search(
+            query, k=k, max_distance=max_distance, include_ast_node=include_ast_node
         )
 
     def close(self) -> None:

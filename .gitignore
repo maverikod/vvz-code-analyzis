@@ -130,3 +130,16 @@ dmypy.json
 
 # Output directories
 reports/
+
+# Project-specific directories
+data/
+logs/
+*.db
+*.sqlite
+*.sqlite3
+
+# Documentation build
+docs/_build/
+mtls_certificates/
+
+MagicMock/

@@ -1,0 +1,60 @@
+# Project File Organization Standards
+
+## Directory Structure Standards
+
+### 📁 scripts/
+- **Purpose**: Scripts and test utilities (NOT pytest tests)
+- **Contents**: 
+  - Utility scripts
+  - Test scripts (non-pytest)
+  - Helper scripts
+  - Registration scripts
+- **Example**: `register_mcp_server.py`, `test_project_cleanup.py`
+
+### 📁 docs/
+- **Purpose**: ALL documentation
+- **Contents**:
+  - README files
+  - Documentation files (.md)
+  - API documentation
+  - Migration guides
+  - Analysis reports
+- **Example**: `README.md`, `ANALYSIS.md`, `MIGRATION_SUMMARY.md`
+
+### 📁 logs/
+- **Purpose**: Server logs
+- **Contents**:
+  - Application logs
+  - Server logs
+  - Error logs
+  - Access logs
+- **Example**: `mcp_proxy_adapter.log`, `server.log`
+
+### 📁 data/
+- **Purpose**: Data files (databases, data files)
+- **Contents**:
+  - Database files (.db, .sqlite)
+  - Data files
+  - Test data
+  - Configuration data files
+- **Example**: `code_analysis.db`, `test.db`
+
+## Rules
+
+1. **ALL documentation files (.md) MUST be in `docs/`**
+2. **ALL scripts (non-pytest) MUST be in `scripts/`**
+3. **ALL log files MUST be in `logs/`**
+4. **ALL data files (databases, etc.) MUST be in `data/`**
+5. **Pytest tests MUST remain in `tests/`**
+6. **Source code MUST remain in `code_analysis/`**
+
+## File Organization Checklist
+
+When adding new files, ensure they are placed in the correct directory:
+- ✅ Documentation → `docs/`
+- ✅ Scripts → `scripts/`
+- ✅ Logs → `logs/`
+- ✅ Data → `data/`
+- ✅ Tests (pytest) → `tests/`
+- ✅ Source code → `code_analysis/`
+

@@ -1,153 +1,160 @@
-# mTLS Certificate Suite
+# mTLS Certificate Suite and Test Scripts
 
-**Author**: Vasiliy Zdanovskiy  
-**Email**: vasilyvz@gmail.com
+This archive contains the complete mTLS certificate infrastructure and test scripts for the MCP Proxy server.
 
-## Overview
+## 📁 Contents
 
-This directory contains a complete mTLS (mutual TLS) certificate suite for the MCP-Proxy ecosystem. All certificates are signed by a custom Root CA and are valid for 10 years (until 2035).
+### Certificates (`mtls_certificates/`)
+- **Root CA**: `ca/ca.crt`, `ca/ca.key` - Root Certificate Authority
+- **Trust Store**: `truststore.pem` - Combined CA certificates for client verification
+- **Server Certificates**: 
+  - `mcp-proxy` - MCP Proxy server certificates
+  - `embedding-service` - Embedding service certificates  
+  - `svo-chunker` - SVO chunker service certificates
+  - `chunk-writer` - Chunk writer service certificates
+  - `chunk-retriever` - Chunk retriever service certificates
+  - `doc-analyzer` - Document analyzer service certificates
+  - `primitive-server` - Test server certificates
+- **Client Certificates**: Corresponding client certificates for each service
 
-## Certificate Structure
+### Test Scripts
+- `start_and_register_server.py` - Complete test script that starts a server and registers it with MCP Proxy
+- `simple_mtls_server.py` - Simple mTLS server implementation
+- `register_primitive_server.py` - Registration script for primitive server
+
+## 🚀 Quick Start
+
+### 1. Start MCP Proxy Server
+```bash
+# In the main project directory
+source .venv/bin/activate
+python main.py --config config/mcp_config_host.json
+```
+
+### 2. Run Test Server with Auto-Registration
+```bash
+# From this archive directory
+python start_and_register_server.py
+```
+
+### 3. Verify Registration
+```bash
+# Check registered servers
+curl -s --cacert mtls_certificates/truststore.pem \
+     --cert mtls_certificates/client/mcp-proxy.pem \
+     --key mtls_certificates/client/mcp-proxy.pem \
+     https://127.0.0.1:3004/proxy/discover | jq .
+```
+
+## 🔐 Certificate Details
 
 ### Root CA
-- **File**: `ca/ca.crt`, `ca/ca.key`
-- **CN**: MCP-Proxy-Root-CA
-- **Purpose**: Root Certificate Authority for the entire ecosystem
+- **Subject**: C=UA, ST=Kyiv, L=Kyiv, O=MCP-Proxy, OU=IT, CN=MCP-Proxy-Root-CA
+- **Validity**: 10 years (2025-2035)
+- **Key Size**: 4096 bits
 
-### Services
-Each service has both server and client certificates:
+### Server Certificates
+- **Key Size**: 2048 bits
+- **Validity**: 10 years (2025-2035)
+- **SAN Extensions**: DNS names and IP addresses for localhost and Docker networks
 
-1. **mcp-proxy** - Main MCP Proxy server
-2. **embedding-service** - Embedding generation service
-3. **svo-chunker** - SVO chunking service
-4. **chunk-writer** - Chunk writing service
-5. **chunk-retriever** - Chunk retrieval service
-6. **doc-analyzer** - Document analysis service
+### Client Certificates  
+- **Key Size**: 2048 bits
+- **Validity**: 10 years (2025-2035)
+- **Purpose**: Client authentication for mTLS connections
 
-### Certificate Types
+## 🌐 Network Configuration
 
-#### Server Certificates
-- **Location**: `server/{service-name}.crt`, `server/{service-name}.key`, `server/{service-name}.pem`
-- **Purpose**: For services acting as TLS servers
-- **SAN**: Includes service name, localhost, and common IP addresses
-- **Key Usage**: Digital Signature, Key Encipherment
-- **Extended Key Usage**: Server Authentication
+### MCP Proxy
+- **MCP Interface**: `http://127.0.0.1:3002` (for Cursor AI)
+- **OpenAPI Interface**: `https://0.0.0.0:3004` (for external servers with mTLS)
 
-#### Client Certificates
-- **Location**: `client/{service-name}.crt`, `client/{service-name}.key`, `client/{service-name}.pem`
-- **Purpose**: For services acting as TLS clients
-- **SAN**: Includes service name and local variants
-- **Key Usage**: Digital Signature, Key Encipherment
-- **Extended Key Usage**: Client Authentication
+### Test Server
+- **Server URL**: `https://127.0.0.1:8001`
+- **Endpoints**:
+  - `/health` - Health check
+  - `/ping` - Ping endpoint
+  - `/info` - Server information
+  - `/openapi.json` - OpenAPI specification
 
-#### Combined Certificates (.pem files)
-- **Format**: Certificate + Private Key in PEM format
-- **Usage**: Convenient for applications that expect combined files
+## 🔧 Certificate Generation
 
-## Trust Store
-
-- **File**: `truststore.pem`
-- **Content**: Root CA certificate
-- **Usage**: Import this into your application's trust store
-
-## Certificate Details
-
-### Validity Period
-- **Valid From**: September 14, 2025
-- **Valid Until**: September 12, 2035 (10 years)
-
-### Key Sizes
-- **CA Key**: 4096 bits
-- **Server Keys**: 2048 bits
-- **Client Keys**: 2048 bits
-
-### Subject Alternative Names (SAN)
-Server certificates include:
-- Service-specific DNS names
-- `localhost`
-- Common IP addresses: `127.0.0.1`, `172.20.0.1`, `172.24.0.1`
-
-## Usage Examples
-
-### Server Configuration
-```python
-# For a service acting as a server
-ssl_context = ssl.create_default_context(ssl.Purpose.CLIENT_AUTH)
-ssl_context.load_cert_chain('server/service-name.pem')
-ssl_context.load_verify_locations('truststore.pem')
-ssl_context.verify_mode = ssl.CERT_REQUIRED
-```
-
-### Client Configuration
-```python
-# For a service acting as a client
-ssl_context = ssl.create_default_context(ssl.Purpose.SERVER_AUTH)
-ssl_context.load_cert_chain('client/service-name.pem')
-ssl_context.load_verify_locations('truststore.pem')
-ssl_context.verify_mode = ssl.CERT_REQUIRED
-```
-
-### Docker Configuration
-```yaml
-volumes:
-  - ./certs/mtls/server/service-name.pem:/etc/ssl/certs/service.pem:ro
-  - ./certs/mtls/truststore.pem:/etc/ssl/certs/ca.pem:ro
-```
-
-### curl Testing
+To regenerate certificates, use the included script:
 ```bash
-# Test server with client certificate
-curl --cert client/service-name.pem \
-     --cacert truststore.pem \
-     https://service-name:port/endpoint
-
-# Test with combined certificate
-curl --cert client/service-name.pem \
-     --cacert truststore.pem \
-     https://service-name:port/endpoint
-```
-
-## Security Notes
-
-1. **Private Keys**: All private keys have restricted permissions (600)
-2. **CA Key**: Keep the CA private key (`ca/ca.key`) secure and backed up
-3. **Certificate Rotation**: Plan for certificate renewal before 2035
-4. **Network Security**: These certificates are for internal service communication
-
-## Regeneration
-
-To regenerate all certificates:
-```bash
+cd mtls_certificates
 ./generate_certs.sh
 ```
 
-**Warning**: Regenerating certificates will invalidate all existing certificates. Ensure all services are updated simultaneously.
+## 📋 Verification
 
-## File Permissions
-
-- **Private Keys**: 600 (owner read/write only)
-- **Certificates**: 644 (owner read/write, group/other read)
-- **Trust Store**: 644 (owner read/write, group/other read)
-
-## Troubleshooting
-
-### Certificate Verification
+Verify certificates with:
 ```bash
-# Verify certificate against CA
-openssl verify -CAfile truststore.pem server/service-name.crt
-
-# Check certificate details
-openssl x509 -in server/service-name.crt -text -noout
+cd mtls_certificates
+./verify_certs.sh
 ```
 
+## 🛡️ Security Features
+
+- **Mutual TLS (mTLS)**: Both client and server authenticate each other
+- **Certificate-based Authentication**: No passwords required
+- **Strong Encryption**: TLS 1.2+ with modern cipher suites
+- **Certificate Validation**: Full chain validation with CRL support
+- **Network Isolation**: Certificates include Docker network IPs
+
+## 📝 Usage Examples
+
+### Test Server Health
+```bash
+curl -s --cacert mtls_certificates/truststore.pem \
+     --cert mtls_certificates/client/primitive-server.pem \
+     --key mtls_certificates/client/primitive-server.pem \
+     https://127.0.0.1:8001/health
+```
+
+### Register Custom Server
+```bash
+python register_primitive_server.py
+```
+
+### List All Registered Servers
+```bash
+curl -s --cacert mtls_certificates/truststore.pem \
+     --cert mtls_certificates/client/mcp-proxy.pem \
+     --key mtls_certificates/client/mcp-proxy.pem \
+     https://127.0.0.1:3004/proxy/discover
+```
+
+## ⚠️ Important Notes
+
+1. **Keep Private Keys Secure**: Never share private key files
+2. **Certificate Expiry**: Certificates are valid for 10 years
+3. **Network Access**: Ensure firewall allows connections on ports 3002, 3004, 8001
+4. **Dependencies**: Requires Python 3.8+ with httpx, fastapi, uvicorn
+5. **Virtual Environment**: Always use the project's virtual environment
+
+## 🐛 Troubleshooting
+
 ### Common Issues
-1. **Certificate not trusted**: Ensure the CA certificate is in your trust store
-2. **Hostname mismatch**: Check SAN entries in the certificate
-3. **Expired certificate**: Check validity dates
-4. **Wrong key usage**: Ensure certificate has appropriate key usage flags
+- **Certificate Verification Failed**: Ensure CA certificate is properly loaded
+- **Connection Refused**: Check if MCP Proxy is running
+- **Registration Failed**: Verify server is accessible before registration
+- **SSL Context Errors**: Check certificate file paths and permissions
 
-## Support
+### Debug Mode
+Run scripts with debug logging:
+```bash
+python start_and_register_server.py --debug
+```
 
-For issues with certificates or mTLS configuration, contact:
+## 📞 Support
+
+For issues or questions:
+- **Author**: Vasiliy Zdanovskiy
 - **Email**: vasilyvz@gmail.com
-- **Project**: MCP-Proxy Ecosystem
+- **Project**: MCP Proxy Server
+
+---
+
+**Generated**: 2025-09-15  
+**Version**: 1.0.0  
+**Certificate Suite**: mTLS v1.0

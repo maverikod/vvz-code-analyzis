@@ -21,6 +21,7 @@ from .list_project_files import ListProjectFilesCommand
 from .get_code_entity_info import GetCodeEntityInfoCommand
 from .list_code_entities import ListCodeEntitiesCommand
 from .get_imports import GetImportsCommand
+from .find_dependencies import FindDependenciesCommand
 
 __all__ = [
     "AnalyzeCommand",
@@ -36,4 +37,5 @@ __all__ = [
     "GetCodeEntityInfoCommand",
     "ListCodeEntitiesCommand",
     "GetImportsCommand",
+    "FindDependenciesCommand",
 ]

@@ -29,6 +29,7 @@ def register_code_analysis_commands(reg: registry) -> None:
         GetImportsMCPCommand,
         FindDependenciesMCPCommand,
         GetClassHierarchyMCPCommand,
+        FindUsagesMCPCommand,
     )
     from .commands.vector_commands import RebuildFaissCommand, RevectorizeCommand
     from .commands.semantic_search_mcp import SemanticSearchMCPCommand
@@ -47,6 +48,7 @@ def register_code_analysis_commands(reg: registry) -> None:
     reg.register(GetImportsMCPCommand, "custom")
     reg.register(FindDependenciesMCPCommand, "custom")
     reg.register(GetClassHierarchyMCPCommand, "custom")
+    reg.register(FindUsagesMCPCommand, "custom")
     reg.register(RebuildFaissCommand, "custom")
     reg.register(RevectorizeCommand, "custom")
     reg.register(SemanticSearchMCPCommand, "custom")

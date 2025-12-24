@@ -698,7 +698,7 @@ class ClassSplitter(BaseRefactorer):
             return False, f"Error during split: {str(e)}"
 
     def _perform_split(self, src_class: ast.ClassDef, config: Dict[str, Any]) -> str:
-        """Perform the actual class splitting."""
+        """Perform the actual class splitting using AST."""
         if not self.tree:
             raise ValueError("AST tree not loaded")
 
@@ -715,94 +715,290 @@ class ClassSplitter(BaseRefactorer):
             for prop in dst_config.get("props", []):
                 prop_mapping[prop] = dst_class_name
 
-        # Find source class position in module
-        lines = self.original_content.split("\n")
-        src_class_start = src_class.lineno - 1
-        src_class_end = self._find_class_end(src_class, lines)
+        # Find source class position in module body
+        src_class_idx = None
+        for i, node in enumerate(self.tree.body):
+            if isinstance(node, ast.ClassDef) and node.name == src_class.name:
+                src_class_idx = i
+                break
+        
+        if src_class_idx is None:
+            raise ValueError(f"Source class {src_class.name} not found in module body")
 
-        # Extract class content
-        class_lines = lines[src_class_start:src_class_end]
-        class_indent = self._get_indent(class_lines[0])
-
-        # Build new classes
-        new_classes = []
+        # Build new classes as AST nodes
+        new_class_nodes = []
         for dst_class_name, dst_config in dst_classes.items():
-            new_class_code = self._build_new_class(
+            new_class_node = self._build_new_class_ast(
                 dst_class_name,
                 src_class,
                 dst_config,
-                class_indent,
             )
-            new_classes.append(new_class_code)
+            new_class_nodes.append(new_class_node)
 
-        # Build modified source class
-        modified_src_class = self._build_modified_source_class(
+        # Build modified source class as AST node
+        modified_src_class_node = self._build_modified_source_class_ast(
             src_class,
             method_mapping,
             prop_mapping,
             dst_classes,
-            class_indent,
         )
 
-        # Reconstruct file
-        result_lines = []
-        result_lines.extend(lines[:src_class_start])
-        result_lines.append(modified_src_class)
-        result_lines.extend(new_classes)
-        result_lines.extend(lines[src_class_end:])
+        # Reconstruct module AST
+        new_module_body = []
+        # Add nodes before source class
+        new_module_body.extend(self.tree.body[:src_class_idx])
+        # Add modified source class
+        new_module_body.append(modified_src_class_node)
+        # Add new classes
+        new_module_body.extend(new_class_nodes)
+        # Add nodes after source class
+        new_module_body.extend(self.tree.body[src_class_idx + 1:])
 
-        return "\n".join(result_lines)
+        # Create new module and unparse
+        new_module = ast.Module(body=new_module_body, type_ignores=[])
+        return ast.unparse(new_module)
 
     def _get_indent(self, line: str) -> int:
         """Get indentation level of a line."""
         return len(line) - len(line.lstrip())
 
-    def _build_new_class(
+    def _build_new_class_ast(
         self,
         dst_class_name: str,
         src_class: ast.ClassDef,
         dst_config: Dict[str, Any],
-        base_indent: int,
-    ) -> str:
-        """Build code for a new destination class."""
-        indent = " " * base_indent
-        lines = [f"{indent}class {dst_class_name}:"]
-        indent += "    "
+    ) -> ast.ClassDef:
+        """Build AST node for a new destination class."""
+        # Get methods and properties for this destination class
+        methods = dst_config.get("methods", [])
+        props = dst_config.get("props", [])
+
+        # Build class body
+        class_body: List[ast.stmt] = []
 
         # Add docstring if source class has one
         if src_class.body and isinstance(src_class.body[0], ast.Expr):
             docstring = ast.get_docstring(src_class)
             if docstring:
-                lines.append(f'{indent}"""{docstring}"""')
+                class_body.append(ast.Expr(ast.Constant(value=docstring)))
 
         # Add __init__ with properties
-        props = dst_config.get("props", [])
         if props:
-            lines.append(f"{indent}def __init__(self):")
-            init_indent = indent + "    "
+            init_body: List[ast.stmt] = []
             for prop in props:
-                lines.append(f"{init_indent}self.{prop} = None")
+                # Create: self.prop = None
+                target = ast.Attribute(
+                    value=ast.Name(id="self", ctx=ast.Load()),
+                    attr=prop,
+                    ctx=ast.Store(),
+                )
+                assign = ast.Assign(
+                    targets=[target],
+                    value=ast.Constant(value=None),
+                )
+                init_body.append(assign)
+            
+            # Create __init__ method
+            init_method = ast.FunctionDef(
+                name="__init__",
+                args=ast.arguments(
+                    args=[ast.arg(arg="self")],
+                    posonlyargs=[],
+                    kwonlyargs=[],
+                    kw_defaults=[],
+                    defaults=[],
+                ),
+                body=init_body if init_body else [ast.Pass()],
+                decorator_list=[],
+                returns=None,
+            )
+            class_body.append(init_method)
 
         # Add methods
-        methods = dst_config.get("methods", [])
         for method_name in methods:
             method_node = self._find_method_in_class(src_class, method_name)
             if method_node:
-                method_code = self._extract_method_code(method_node, indent)
-                if method_code.strip():
-                    lines.append(method_code)
-                else:
-                    logger.warning(
-                        f"Could not extract code for method {method_name} "
-                        f"in class {dst_class_name}"
-                    )
+                # Deep copy method node to avoid modifying original
+                import copy
+                new_method = copy.deepcopy(method_node)
+                class_body.append(new_method)
             else:
                 logger.warning(
                     f"Method {method_name} not found in source class "
                     f"for destination class {dst_class_name}"
                 )
 
-        return "\n".join(lines)
+        # Create new class AST node
+        new_class = ast.ClassDef(
+            name=dst_class_name,
+            bases=[],
+            keywords=[],
+            body=class_body if class_body else [ast.Pass()],
+            decorator_list=[],
+        )
+        return new_class
+
+    def _build_modified_source_class_ast(
+        self,
+        src_class: ast.ClassDef,
+        method_mapping: Dict[str, str],
+        prop_mapping: Dict[str, str],
+        dst_classes: Dict[str, Dict[str, Any]],
+    ) -> ast.ClassDef:
+        """Build modified source class AST node with wrappers and property references."""
+        import copy
+        
+        # Deep copy source class to avoid modifying original
+        modified_class = copy.deepcopy(src_class)
+        
+        # Get all methods and properties
+        all_methods = set()
+        for item in modified_class.body:
+            if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                all_methods.add(item.name)
+        
+        moved_methods = set(method_mapping.keys())
+        remaining_methods = all_methods - moved_methods
+        
+        # Build new class body
+        new_body: List[ast.stmt] = []
+        
+        # Add docstring if present
+        if modified_class.body and isinstance(modified_class.body[0], ast.Expr):
+            docstring = ast.get_docstring(modified_class)
+            if docstring:
+                new_body.append(ast.Expr(ast.Constant(value=docstring)))
+        
+        # Build __init__ with property references
+        init_body: List[ast.stmt] = []
+        
+        # Group properties by destination class
+        prop_groups: Dict[str, List[str]] = {}
+        for prop, dst_class in prop_mapping.items():
+            if dst_class not in prop_groups:
+                prop_groups[dst_class] = []
+            prop_groups[dst_class].append(prop)
+        
+        # Initialize property references: self.instanceName = ClassName()
+        for dst_class_name, props in prop_groups.items():
+            instance_name = (
+                dst_class_name[0].lower() + dst_class_name[1:]
+                if dst_class_name
+                else dst_class_name.lower()
+            )
+            # Create: self.instanceName = ClassName()
+            target = ast.Attribute(
+                value=ast.Name(id="self", ctx=ast.Load()),
+                attr=instance_name,
+                ctx=ast.Store(),
+            )
+            value = ast.Call(
+                func=ast.Name(id=dst_class_name, ctx=ast.Load()),
+                args=[],
+                keywords=[],
+            )
+            assign = ast.Assign(targets=[target], value=value)
+            init_body.append(assign)
+        
+        # Add remaining properties from original __init__
+        all_props = set(self.extract_init_properties(src_class))
+        moved_props = set(prop_mapping.keys())
+        remaining_props = all_props - moved_props
+        
+        # Find original __init__ to extract remaining property initializations
+        original_init = self._find_method_in_class(src_class, "__init__")
+        if original_init:
+            for stmt in original_init.body:
+                if isinstance(stmt, ast.Assign):
+                    # Check if this assigns a remaining property
+                    for target in stmt.targets:
+                        if isinstance(target, ast.Attribute):
+                            if (
+                                isinstance(target.value, ast.Name)
+                                and target.value.id == "self"
+                                and target.attr in remaining_props
+                            ):
+                                init_body.append(copy.deepcopy(stmt))
+                                break
+                elif isinstance(stmt, ast.AnnAssign):
+                    if (
+                        isinstance(stmt.target, ast.Attribute)
+                        and isinstance(stmt.target.value, ast.Name)
+                        and stmt.target.value.id == "self"
+                        and stmt.target.attr in remaining_props
+                    ):
+                        init_body.append(copy.deepcopy(stmt))
+        
+        # Create __init__ method
+        if init_body:
+            init_method = ast.FunctionDef(
+                name="__init__",
+                args=ast.arguments(
+                    args=[ast.arg(arg="self")],
+                    posonlyargs=[],
+                    kwonlyargs=[],
+                    kw_defaults=[],
+                    defaults=[],
+                ),
+                body=init_body,
+                decorator_list=[],
+                returns=None,
+            )
+            new_body.append(init_method)
+        
+        # Add wrapper methods for moved methods
+        for method_name, dst_class_name in method_mapping.items():
+            original_method = self._find_method_in_class(src_class, method_name)
+            if original_method:
+                # Create wrapper method that calls destination class method
+                dst_var = (
+                    dst_class_name[0].lower() + dst_class_name[1:]
+                    if dst_class_name
+                    else dst_class_name.lower()
+                )
+                
+                # Build call: self.dstVar.method_name(*args, **kwargs)
+                call_args = []
+                if isinstance(original_method, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    # Extract method arguments (skip self)
+                    for arg in original_method.args.args[1:]:  # Skip self
+                        call_args.append(ast.Name(id=arg.arg, ctx=ast.Load()))
+                
+                call = ast.Call(
+                    func=ast.Attribute(
+                        value=ast.Attribute(
+                            value=ast.Name(id="self", ctx=ast.Load()),
+                            attr=dst_var,
+                            ctx=ast.Load(),
+                        ),
+                        attr=method_name,
+                        ctx=ast.Load(),
+                    ),
+                    args=call_args,
+                    keywords=[],
+                )
+                
+                # Create wrapper method
+                wrapper_method = ast.FunctionDef(
+                    name=method_name,
+                    args=original_method.args,
+                    body=[ast.Return(value=call)] if call_args else [ast.Expr(value=call)],
+                    decorator_list=copy.deepcopy(original_method.decorator_list),
+                    returns=copy.deepcopy(original_method.returns),
+                )
+                new_body.append(wrapper_method)
+        
+        # Add remaining methods (not moved)
+        for item in modified_class.body:
+            if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                if item.name not in moved_methods and item.name != "__init__":
+                    new_body.append(item)
+        
+        # Update class body
+        modified_class.body = new_body if new_body else [ast.Pass()]
+        
+        return modified_class
+
 
     def _find_method_in_class(
         self, class_node: ast.ClassDef, method_name: str
@@ -1510,7 +1706,7 @@ class SuperclassExtractor(BaseRefactorer):
     def _perform_extraction(
         self, config: Dict[str, Any], child_nodes: List[ast.ClassDef]
     ) -> str:
-        """Perform the actual superclass extraction."""
+        """Perform the actual superclass extraction using AST."""
         if not self.tree:
             raise ValueError("AST tree not loaded")
 
@@ -1530,87 +1726,115 @@ class SuperclassExtractor(BaseRefactorer):
                         has_abc_import = True
                         break
 
-        # Build base class
-        base_class_code = self._build_base_class(
+        # Build base class as AST node
+        base_class_node = self._build_base_class_ast(
             base_class_name, child_nodes, extract_from, abstract_methods
         )
 
-        # Update child classes to inherit from base
-        lines = self.original_content.split("\n")
-        updated_lines = lines.copy()
+        # Find positions of child classes in module body
+        child_indices: Dict[str, int] = {}
+        for i, node in enumerate(self.tree.body):
+            if isinstance(node, ast.ClassDef):
+                for child_node in child_nodes:
+                    if node.name == child_node.name:
+                        child_indices[child_node.name] = i
+                        break
 
-        # Find positions of child classes
-        class_positions = {}
-        for child_node in child_nodes:
-            class_positions[child_node.name] = child_node.lineno - 1
-
-        # Update each child class (process in reverse to preserve line numbers)
-        child_updates = []
+        # Update each child class
+        updated_child_nodes = []
         for child_node in child_nodes:
             child_name = child_node.name
             child_config = extract_from.get(child_name, {})
-            child_start = child_node.lineno - 1
-            child_end = self._find_class_end(child_node, lines)
-
-            # Build updated child class
-            updated_child = self._update_child_class(
-                child_node, base_class_name, child_config, lines
+            updated_child = self._update_child_class_ast(
+                child_node, base_class_name, child_config
             )
+            updated_child_nodes.append((child_indices[child_name], updated_child))
 
-            child_updates.append((child_start, child_end, updated_child))
-
-        # Apply updates in reverse order
-        for child_start, child_end, updated_child in sorted(
-            child_updates, reverse=True
-        ):
-            # Replace in lines - split string into lines
-            updated_child_lines = updated_child.split("\n")
-            updated_lines[child_start:child_end] = updated_child_lines
-
-        # Insert base class before first child class
-        first_child_pos = min(class_positions.values())
-        base_class_lines = base_class_code.split("\n")
-        # Insert lines in correct order (insert in reverse to preserve positions)
-        for line in reversed(base_class_lines):
-            updated_lines.insert(first_child_pos, line)
+        # Reconstruct module body
+        new_module_body: List[ast.stmt] = []
+        
+        # Find first child class position
+        first_child_idx = min(child_indices.values()) if child_indices else 0
+        
+        # Add nodes before first child class
+        new_module_body.extend(self.tree.body[:first_child_idx])
+        
+        # Add base class
+        new_module_body.append(base_class_node)
+        
+        # Add updated child classes and other nodes
+        # Sort by original index to maintain order
+        remaining_nodes = []
+        for i, node in enumerate(self.tree.body):
+            if isinstance(node, ast.ClassDef):
+                # Check if this is a child class
+                is_child = False
+                for child_name, child_idx in child_indices.items():
+                    if i == child_idx:
+                        # Add updated child class
+                        for updated_idx, updated_node in updated_child_nodes:
+                            if updated_idx == i:
+                                new_module_body.append(updated_node)
+                                is_child = True
+                                break
+                        break
+                if not is_child:
+                    remaining_nodes.append((i, node))
+            else:
+                remaining_nodes.append((i, node))
+        
+        # Add remaining nodes in order
+        remaining_nodes.sort(key=lambda x: x[0])
+        for _, node in remaining_nodes:
+            new_module_body.append(node)
 
         # Add ABC import if needed and not present
         if abstract_methods and not has_abc_import:
-            # Find last import line
-            last_import = -1
-            for i, line in enumerate(updated_lines):
-                if line.strip().startswith("import ") or line.strip().startswith(
-                    "from "
-                ):
-                    last_import = i
-            # Insert after last import
-            if last_import >= 0:
-                updated_lines.insert(
-                    last_import + 1, "from abc import ABC, abstractmethod"
-                )
+            # Find last import position
+            last_import_idx = -1
+            for i, node in enumerate(new_module_body):
+                if isinstance(node, (ast.Import, ast.ImportFrom)):
+                    last_import_idx = i
+            
+            # Create import node
+            abc_import = ast.ImportFrom(
+                module="abc",
+                names=[
+                    ast.alias(name="ABC", asname=None),
+                    ast.alias(name="abstractmethod", asname=None),
+                ],
+                level=0,
+            )
+            
+            if last_import_idx >= 0:
+                new_module_body.insert(last_import_idx + 1, abc_import)
             else:
-                updated_lines.insert(0, "from abc import ABC, abstractmethod")
+                new_module_body.insert(0, abc_import)
 
-        return "\n".join(updated_lines)
+        # Create new module and unparse
+        new_module = ast.Module(body=new_module_body, type_ignores=[])
+        return ast.unparse(new_module)
 
-    def _build_base_class(
+    def _build_base_class_ast(
         self,
         base_class_name: str,
         child_nodes: List[ast.ClassDef],
         extract_from: Dict[str, Dict[str, Any]],
         abstract_methods: List[str],
-    ) -> str:
-        """Build the base class code."""
-        lines = []
+    ) -> ast.ClassDef:
+        """Build the base class as AST node."""
+        import copy
+        
         # Check if ABC import is needed
         needs_abc = bool(abstract_methods)
-        if needs_abc:
-            lines.append(f"class {base_class_name}(ABC):")
-        else:
-            lines.append(f"class {base_class_name}:")
-        lines.append('    """Base class with common functionality."""')
-        lines.append("")
-
+        
+        # Build class body
+        class_body: List[ast.stmt] = []
+        
+        # Add docstring
+        docstring_node = ast.Expr(ast.Constant(value="Base class with common functionality."))
+        class_body.append(docstring_node)
+        
         # Add properties
         all_props = set()
         for child_config in extract_from.values():
@@ -1619,10 +1843,35 @@ class SuperclassExtractor(BaseRefactorer):
             all_props.update(child_config.get("props", []))
 
         if all_props:
-            lines.append("    def __init__(self):")
+            init_body: List[ast.stmt] = []
             for prop in sorted(all_props):
-                lines.append(f"        self.{prop} = None")
-            lines.append("")
+                # Create: self.prop = None
+                target = ast.Attribute(
+                    value=ast.Name(id="self", ctx=ast.Load()),
+                    attr=prop,
+                    ctx=ast.Store(),
+                )
+                assign = ast.Assign(
+                    targets=[target],
+                    value=ast.Constant(value=None),
+                )
+                init_body.append(assign)
+            
+            # Create __init__ method
+            init_method = ast.FunctionDef(
+                name="__init__",
+                args=ast.arguments(
+                    args=[ast.arg(arg="self")],
+                    posonlyargs=[],
+                    kwonlyargs=[],
+                    kw_defaults=[],
+                    defaults=[],
+                ),
+                body=init_body,
+                decorator_list=[],
+                returns=None,
+            )
+            class_body.append(init_method)
 
         # Add methods
         all_methods = set()
@@ -1636,92 +1885,101 @@ class SuperclassExtractor(BaseRefactorer):
             if method_node:
                 if method_name in abstract_methods:
                     # Create abstract method
-                    args = [arg.arg for arg in method_node.args.args]
-                    args_str = ", ".join(args)
-                    is_async = isinstance(method_node, ast.AsyncFunctionDef)
-                    async_prefix = "async " if is_async else ""
-                    lines.append(f"    @abstractmethod")
-                    lines.append(f"    {async_prefix}def {method_name}({args_str}):")
-                    lines.append(f"        raise NotImplementedError")
-                    lines.append("")
+                    import copy
+                    abstract_method = copy.deepcopy(method_node)
+                    # Add @abstractmethod decorator
+                    abstract_method.decorator_list.insert(
+                        0,
+                        ast.Name(id="abstractmethod", ctx=ast.Load())
+                    )
+                    # Replace body with raise NotImplementedError
+                    abstract_method.body = [
+                        ast.Raise(
+                            exc=ast.Call(
+                                func=ast.Name(id="NotImplementedError", ctx=ast.Load()),
+                                args=[],
+                                keywords=[],
+                            ),
+                            cause=None,
+                        )
+                    ]
+                    class_body.append(abstract_method)
                 else:
-                    # Extract full method
-                    method_code = self._extract_method_code(method_node, "    ")
-                    lines.append(method_code)
-                    lines.append("")
+                    # Deep copy method from first child
+                    new_method = copy.deepcopy(method_node)
+                    class_body.append(new_method)
 
-        return "\n".join(lines)
+        # Create base class AST node
+        bases = []
+        if needs_abc:
+            bases.append(ast.Name(id="ABC", ctx=ast.Load()))
+        
+        base_class = ast.ClassDef(
+            name=base_class_name,
+            bases=bases,
+            keywords=[],
+            body=class_body if class_body else [ast.Pass()],
+            decorator_list=[],
+        )
+        return base_class
 
-    def _update_child_class(
+    def _update_child_class_ast(
         self,
         child_node: ast.ClassDef,
         base_class_name: str,
         child_config: Dict[str, Any],
-        lines: List[str],
-    ) -> str:
-        """Update child class to inherit from base and remove extracted members."""
-        # Use AST node directly instead of parsing strings
-        # This is more reliable for large classes
-
-        # Update class definition to inherit from base
-        # Get class line from original content
-        class_start_line = child_node.lineno - 1
-        class_line = (
-            lines[class_start_line]
-            if class_start_line < len(lines)
-            else f"class {child_node.name}:"
-        )
-
-        # Update class definition line
-        if "(" in class_line:
-            # Already has bases, add to them
-            class_line = class_line.replace("(", f"({base_class_name}, ")
-        else:
-            class_line = class_line.replace(":", f"({base_class_name}):")
-
+    ) -> ast.ClassDef:
+        """Update child class AST node to inherit from base and remove extracted members."""
+        import copy
+        
+        # Deep copy child node to avoid modifying original
+        updated_class = copy.deepcopy(child_node)
+        
         # Remove extracted methods and properties
         extracted_methods = set(child_config.get("methods", []))
         # Support both "properties" and "props" keys
         extracted_props = set(child_config.get("properties", []))
         extracted_props.update(child_config.get("props", []))
-
-        # Use child_node directly (it's already an AST node)
-        child_ast = child_node
-
-        if not child_ast:
-            return class_line + "\n    pass\n"
-
-        # Build result by including non-extracted items
-        result_lines = [class_line]
-
+        
+        # Update class bases to include base class
+        base_name_node = ast.Name(id=base_class_name, ctx=ast.Load())
+        if updated_class.bases:
+            # Add to existing bases
+            updated_class.bases.insert(0, base_name_node)
+        else:
+            updated_class.bases = [base_name_node]
+        
+        # Build new class body with non-extracted items
+        new_body: List[ast.stmt] = []
+        
         # Add docstring if present
-        if child_ast.body and isinstance(child_ast.body[0], ast.Expr):
-            docstring = ast.get_docstring(child_ast)
+        if updated_class.body and isinstance(updated_class.body[0], ast.Expr):
+            docstring = ast.get_docstring(updated_class)
             if docstring:
-                result_lines.append(f'    """{docstring}"""')
-
+                new_body.append(ast.Expr(ast.Constant(value=docstring)))
+        
         # Process each body item
-        for item in child_ast.body:
+        for item in updated_class.body:
             if isinstance(item, ast.Expr):
-                # Docstring already handled
+                # Skip docstring (already handled)
                 continue
             elif isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 # Skip methods that are extracted to base class
                 if item.name in extracted_methods:
                     continue
-
+                
                 # Include this method (not extracted)
-                method_code = self._extract_method_code(item, "    ")
-                if method_code.strip():
-                    result_lines.append(method_code)
-
+                new_body.append(item)
+            else:
+                # Include other statements (assignments, etc.)
+                new_body.append(item)
+        
         # Ensure class has at least pass if empty
-        if len(result_lines) == 1 or (
-            len(result_lines) == 2 and result_lines[1].strip().startswith('"""')
-        ):
-            result_lines.append("    pass")
-
-        return "\n".join(result_lines)
+        if not new_body or (len(new_body) == 1 and isinstance(new_body[0], ast.Expr)):
+            new_body.append(ast.Pass())
+        
+        updated_class.body = new_body
+        return updated_class
 
     def validate_completeness(
         self,

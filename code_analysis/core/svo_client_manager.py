@@ -162,16 +162,34 @@ class SVOClientManager:
                 
                 # Enhanced logging for SVOServerError
                 if error_type == "SVOServerError":
-                    logger.error(
-                        f"Chunker service error (attempt {attempt}/{retry_attempts}, "
-                        f"length={len(text)}): {error_type}: {error_msg}",
-                        exc_info=True
+                    # Check if it's a Model RPC server error (infrastructure issue)
+                    is_model_rpc_error = (
+                        "Model RPC server" in error_msg or
+                        "failed after 3 attempts" in error_msg or
+                        (hasattr(e, "code") and getattr(e, "code") == -32603)
                     )
+                    
+                    if is_model_rpc_error:
+                        # Model RPC server is down - use warning level (infrastructure issue)
+                        log_level = logger.warning if attempt < retry_attempts else logger.error
+                        log_level(
+                            f"Model RPC server unavailable (attempt {attempt}/{retry_attempts}, "
+                            f"length={len(text)}): {error_msg}. "
+                            f"Check Model RPC server status."
+                        )
+                    else:
+                        # Other SVO server errors - log as error
+                        logger.error(
+                            f"Chunker service error (attempt {attempt}/{retry_attempts}, "
+                            f"length={len(text)}): {error_type}: {error_msg}",
+                            exc_info=True
+                        )
+                    
                     # Log error code if available
                     if hasattr(e, "code"):
-                        logger.error(f"Chunker error code: {getattr(e, 'code', 'N/A')}")
+                        logger.debug(f"Chunker error code: {getattr(e, 'code', 'N/A')}")
                     if hasattr(e, "message"):
-                        logger.error(f"Chunker error message: {getattr(e, 'message', 'N/A')}")
+                        logger.debug(f"Chunker error message: {getattr(e, 'message', 'N/A')}")
                 else:
                     logger.error(
                         f"Chunker service error (attempt {attempt}/{retry_attempts}, "

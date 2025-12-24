@@ -431,10 +431,28 @@ class VectorizationWorker:
                                         )
                                         continue
                                 except Exception as e:
-                                    logger.error(
-                                        f"Failed to get embedding for chunk {chunk_id} ({ast_binding}): {e}",
-                                        exc_info=True
+                                    error_type = type(e).__name__
+                                    error_msg = str(e)
+                                    
+                                    # Check if it's a Model RPC server error (infrastructure issue)
+                                    is_model_rpc_error = (
+                                        "Model RPC server" in error_msg or
+                                        "failed after 3 attempts" in error_msg or
+                                        (hasattr(e, "code") and getattr(e, "code") == -32603)
                                     )
+                                    
+                                    if is_model_rpc_error:
+                                        # Model RPC server is down - log as warning (infrastructure issue, not code issue)
+                                        logger.warning(
+                                            f"Model RPC server unavailable for chunk {chunk_id} ({ast_binding}): {error_msg}. "
+                                            f"Chunk will be retried in next cycle. Check Model RPC server status."
+                                        )
+                                    else:
+                                        # Other errors - log as error
+                                        logger.error(
+                                            f"Failed to get embedding for chunk {chunk_id} ({ast_binding}): {error_type}: {error_msg}",
+                                            exc_info=True
+                                        )
                                     batch_errors += 1
                                     continue
                             

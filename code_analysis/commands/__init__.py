@@ -22,6 +22,7 @@ from .get_code_entity_info import GetCodeEntityInfoCommand
 from .list_code_entities import ListCodeEntitiesCommand
 from .get_imports import GetImportsCommand
 from .find_dependencies import FindDependenciesCommand
+from .get_class_hierarchy import GetClassHierarchyCommand
 
 __all__ = [
     "AnalyzeCommand",
@@ -38,4 +39,5 @@ __all__ = [
     "ListCodeEntitiesCommand",
     "GetImportsCommand",
     "FindDependenciesCommand",
+    "GetClassHierarchyCommand",
 ]

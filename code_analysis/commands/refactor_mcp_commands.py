@@ -65,6 +65,11 @@ class SplitClassMCPCommand(Command):
                     "description": "Split configuration (JSON object or string)",
                     "additionalProperties": True,
                 },
+                "dry_run": {
+                    "type": "boolean",
+                    "description": "If true, preview changes without applying them",
+                    "default": False,
+                },
                 "project_id": {
                     "type": "string",
                     "description": "Optional project UUID; if omitted, inferred by root_dir",
@@ -79,6 +84,7 @@ class SplitClassMCPCommand(Command):
         root_dir: str,
         file_path: str,
         config: Any,
+        dry_run: bool = False,
         project_id: Optional[str] = None,
         **kwargs,
     ) -> SuccessResult:
@@ -93,17 +99,42 @@ class SplitClassMCPCommand(Command):
             if isinstance(config, str):
                 config = json.loads(config)
 
-            cmd = InternalRefactorCommand(proj_id)
-            result = await cmd.split_class(str(root_path), file_path, config)
-            db.close()
+            if dry_run:
+                # Preview mode - return preview without making changes
+                from ..core.refactorer import ClassSplitter
+                
+                file_path_obj = Path(file_path)
+                if not file_path_obj.is_absolute():
+                    file_path_obj = root_path / file_path_obj
+                
+                splitter = ClassSplitter(file_path_obj)
+                success, error_msg, preview = splitter.preview_split(config)
+                db.close()
+                
+                if success:
+                    return SuccessResult(data={
+                        "success": True,
+                        "message": "Preview generated successfully",
+                        "preview": preview,
+                        "dry_run": True,
+                    })
+                return ErrorResult(
+                    message=error_msg or "Preview failed",
+                    code="SPLIT_CLASS_PREVIEW_ERROR",
+                )
+            else:
+                # Execute mode - perform actual split
+                cmd = InternalRefactorCommand(proj_id)
+                result = await cmd.split_class(str(root_path), file_path, config)
+                db.close()
 
-            if result.get("success"):
-                return SuccessResult(data=result)
-            return ErrorResult(
-                message=result.get("message", "split_class failed"),
-                code="SPLIT_CLASS_ERROR",
-                details=result,
-            )
+                if result.get("success"):
+                    return SuccessResult(data=result)
+                return ErrorResult(
+                    message=result.get("message", "split_class failed"),
+                    code="SPLIT_CLASS_ERROR",
+                    details=result,
+                )
         except Exception as e:
             logger.exception("split_class failed: %s", e)
             return ErrorResult(message=f"split_class failed: {e}", code="SPLIT_CLASS_ERROR")
@@ -138,6 +169,11 @@ class ExtractSuperclassMCPCommand(Command):
                     "description": "Extraction configuration (JSON object or string)",
                     "additionalProperties": True,
                 },
+                "dry_run": {
+                    "type": "boolean",
+                    "description": "If true, preview changes without applying them",
+                    "default": False,
+                },
                 "project_id": {
                     "type": "string",
                     "description": "Optional project UUID; if omitted, inferred by root_dir",
@@ -152,6 +188,7 @@ class ExtractSuperclassMCPCommand(Command):
         root_dir: str,
         file_path: str,
         config: Any,
+        dry_run: bool = False,
         project_id: Optional[str] = None,
         **kwargs,
     ) -> SuccessResult:
@@ -166,17 +203,42 @@ class ExtractSuperclassMCPCommand(Command):
             if isinstance(config, str):
                 config = json.loads(config)
 
-            cmd = InternalRefactorCommand(proj_id)
-            result = await cmd.extract_superclass(str(root_path), file_path, config)
-            db.close()
+            if dry_run:
+                # Preview mode - return preview without making changes
+                from ..core.refactorer import SuperclassExtractor
+                
+                file_path_obj = Path(file_path)
+                if not file_path_obj.is_absolute():
+                    file_path_obj = root_path / file_path_obj
+                
+                extractor = SuperclassExtractor(file_path_obj)
+                success, error_msg, preview = extractor.preview_extraction(config)
+                db.close()
+                
+                if success:
+                    return SuccessResult(data={
+                        "success": True,
+                        "message": "Preview generated successfully",
+                        "preview": preview,
+                        "dry_run": True,
+                    })
+                return ErrorResult(
+                    message=error_msg or "Preview failed",
+                    code="EXTRACT_SUPERCLASS_PREVIEW_ERROR",
+                )
+            else:
+                # Execute mode - perform actual extraction
+                cmd = InternalRefactorCommand(proj_id)
+                result = await cmd.extract_superclass(str(root_path), file_path, config)
+                db.close()
 
-            if result.get("success"):
-                return SuccessResult(data=result)
-            return ErrorResult(
-                message=result.get("message", "extract_superclass failed"),
-                code="EXTRACT_SUPERCLASS_ERROR",
-                details=result,
-            )
+                if result.get("success"):
+                    return SuccessResult(data=result)
+                return ErrorResult(
+                    message=result.get("message", "extract_superclass failed"),
+                    code="EXTRACT_SUPERCLASS_ERROR",
+                    details=result,
+                )
         except Exception as e:
             logger.exception("extract_superclass failed: %s", e)
             return ErrorResult(message=f"extract_superclass failed: {e}", code="EXTRACT_SUPERCLASS_ERROR")

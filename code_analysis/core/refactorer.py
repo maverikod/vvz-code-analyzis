@@ -254,6 +254,63 @@ class ClassSplitter:
 
         return len(errors) == 0, errors
 
+    def preview_split(self, config: Dict[str, Any]) -> tuple[bool, Optional[str], Optional[str]]:
+        """
+        Preview split without making changes.
+        
+        Args:
+            config: Split configuration
+            
+        Returns:
+            Tuple of (success, error_message, preview_content)
+        """
+        try:
+            # Load file
+            self.load_file()
+
+            src_class_name = config.get("src_class")
+            if not src_class_name:
+                return False, "Source class name not specified in config", None
+
+            # Find source class
+            src_class = self.find_class(src_class_name)
+            if not src_class:
+                return False, f"Class '{src_class_name}' not found in file", None
+
+            # Validate configuration
+            is_valid, errors = self.validate_split_config(src_class, config)
+            if not is_valid:
+                error_msg = format_error_message(
+                    "config_validation",
+                    "; ".join(errors),
+                    self.file_path
+                )
+                return False, error_msg, None
+
+            # Perform split to get preview
+            new_content = self._perform_split(src_class, config)
+            
+            # Format preview with black (in memory)
+            with tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False) as tmp_file:
+                tmp_path = Path(tmp_file.name)
+                tmp_file.write(new_content)
+            
+            try:
+                format_success, _ = format_code_with_black(tmp_path)
+                if format_success:
+                    formatted_content = tmp_path.read_text()
+                else:
+                    formatted_content = new_content
+            finally:
+                tmp_path.unlink()
+            
+            return True, None, formatted_content
+
+        except Exception as e:
+            error_msg = f"Error during preview: {str(e)}"
+            logger.error(error_msg, exc_info=True)
+            return False, error_msg, None
+
     def split_class(self, config: Dict[str, Any]) -> tuple[bool, Optional[str]]:
         """Split class according to configuration."""
         try:
@@ -1170,6 +1227,85 @@ class SuperclassExtractor:
             errors.append(f"Base class '{base_class}' already exists")
 
         return len(errors) == 0, errors
+
+    def preview_extraction(self, config: Dict[str, Any]) -> tuple[bool, Optional[str], Optional[str]]:
+        """
+        Preview extraction without making changes.
+        
+        Args:
+            config: Extraction configuration
+            
+        Returns:
+            Tuple of (success, error_message, preview_content)
+        """
+        try:
+            # Load file
+            self.load_file()
+
+            # Validate configuration
+            is_valid, errors = self.validate_config(config)
+            if not is_valid:
+                error_msg = format_error_message(
+                    "config_validation",
+                    "; ".join(errors),
+                    self.file_path
+                )
+                return False, error_msg, None
+
+            base_class_name = config.get("base_class")
+            child_classes = config.get("child_classes", [])
+
+            # Check for multiple inheritance conflicts
+            conflict_valid, conflict_error = self.check_multiple_inheritance_conflicts(
+                child_classes, base_class_name
+            )
+            if not conflict_valid:
+                return False, conflict_error, None
+
+            # Find all child class nodes
+            child_nodes = []
+            for child_name in child_classes:
+                child_node = self.find_class(child_name)
+                if not child_node:
+                    return False, f"Child class '{child_name}' not found", None
+                child_nodes.append(child_node)
+
+            # Check method compatibility
+            all_methods = set()
+            extract_from = config.get("extract_from", {})
+            for child_config in extract_from.values():
+                all_methods.update(child_config.get("methods", []))
+
+            for method_name in all_methods:
+                is_compatible, error = self.check_method_compatibility(
+                    child_classes, method_name
+                )
+                if not is_compatible:
+                    return False, error, None
+
+            # Perform extraction to get preview
+            new_content = self._perform_extraction(config, child_nodes)
+            
+            # Format preview with black (in memory)
+            with tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False) as tmp_file:
+                tmp_path = Path(tmp_file.name)
+                tmp_file.write(new_content)
+            
+            try:
+                format_success, _ = format_code_with_black(tmp_path)
+                if format_success:
+                    formatted_content = tmp_path.read_text()
+                else:
+                    formatted_content = new_content
+            finally:
+                tmp_path.unlink()
+            
+            return True, None, formatted_content
+
+        except Exception as e:
+            error_msg = f"Error during preview: {str(e)}"
+            logger.error(error_msg, exc_info=True)
+            return False, error_msg, None
 
     def extract_superclass(self, config: Dict[str, Any]) -> tuple[bool, Optional[str]]:
         """Extract common functionality into base class."""

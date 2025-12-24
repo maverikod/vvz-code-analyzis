@@ -111,12 +111,37 @@
       "ca_cert_file": "mtls_certificates/mtls_certificates/ca/ca.crt",
       "crl_file": null,
       "retry_attempts": 3,
-      "retry_delay": 5.0
+      "retry_delay": 5.0,
+      "timeout": 60.0
+    },
+    "embedding": {
+      "enabled": true,
+      "host": "localhost",
+      "port": 8001,
+      "protocol": "mtls",
+      "cert_file": "mtls_certificates/mtls_certificates/client/code-analysis.crt",
+      "key_file": "mtls_certificates/mtls_certificates/client/code-analysis.key",
+      "ca_cert_file": "mtls_certificates/mtls_certificates/ca/ca.crt",
+      "crl_file": null,
+      "retry_attempts": 3,
+      "retry_delay": 5.0,
+      "timeout": 60.0
     },
     "faiss_index_path": "data/faiss_index.bin",
     "vector_dim": 384,
     "min_chunk_length": 30,
     "vectorization_retry_attempts": 3,
-    "vectorization_retry_delay": 10.0
+    "vectorization_retry_delay": 10.0,
+    "worker": {
+      "enabled": true,
+      "poll_interval": 30,
+      "batch_size": 10,
+      "retry_attempts": 3,
+      "retry_delay": 10.0,
+      "watch_dirs": [
+        "/home/vasilyvz/projects/tools/code_analysis"
+      ],
+      "dynamic_watch_file": "data/dynamic_watch_dirs.json"
+    }
   }
 }

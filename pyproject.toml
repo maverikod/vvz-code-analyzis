@@ -6,7 +6,7 @@ build-backend = "setuptools.build_meta"
 name = "code-analysis-tool"
 version = "1.0.3"
 description = "A comprehensive Python code analysis tool that generates code maps and detects issues"
-readme = "README.md"
+readme = "docs/README.md"
 requires-python = ">=3.8"
 license = {text = "MIT"}
 authors = [
@@ -46,6 +46,7 @@ dev = [
 [project.scripts]
 code_analysis = "code_analysis.cli.main:cli"
 code_mapper = "code_analysis.code_mapper:main"  # Legacy
+code-analysis-server = "code_analysis.cli.server_manager_cli:server"
 
 [tool.black]
 line-length = 88

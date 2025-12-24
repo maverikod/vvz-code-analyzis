@@ -8,6 +8,7 @@ email: vasilyvz@gmail.com
 import logging
 import multiprocessing
 import os
+import time
 from pathlib import Path
 from typing import Dict, Any, Optional
 
@@ -78,6 +79,19 @@ class AnalyzeCommand:
         Returns:
             Dictionary with analysis results
         """
+        def _should_analyze(file_path: Path) -> bool:
+            if self.force or not self.database:
+                return True
+            file_mtime = file_path.stat().st_mtime
+            file_rec = self.database.get_file_by_path(str(file_path), self.project_id)
+            if not file_rec:
+                return True  # new file
+            db_mtime = file_rec.get("last_modified")
+            if db_mtime is None:
+                return True
+            # Re-run if mtime differs (not strictly newer, DB might be modified)
+            return file_mtime != db_mtime
+
         if self.progress_tracker:
             self.progress_tracker.set_progress(0)
             self.progress_tracker.set_description("Starting project analysis...")
@@ -136,9 +150,17 @@ class AnalyzeCommand:
         for idx, file_path in enumerate(python_files):
             logger.info(f"📄 Analyzing file {analyzed_count + 1}/{total_files}: {file_path}")
             try:
-                await self.analyzer.analyze_file(file_path, force=self.force)
+                if not _should_analyze(file_path):
+                    logger.info(f"⏭️  Skipping unchanged file: {file_path}")
+                else:
+                    file_size = file_path.stat().st_size
+                    t_start = time.perf_counter()
+                    await self.analyzer.analyze_file(file_path, force=self.force)
+                    elapsed = time.perf_counter() - t_start
+                    logger.info(
+                        f"✅ Analyzed {file_path} | size={file_size} bytes | time={elapsed:.3f}s"
+                    )
                 analyzed_count += 1
-                logger.debug(f"✅ Successfully analyzed: {file_path}")
             except Exception as e:
                 logger.error(f"❌ Error analyzing file {file_path}: {e}", exc_info=True)
                 analyzed_count += 1  # Count even failed files to continue

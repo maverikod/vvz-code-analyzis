@@ -108,97 +108,130 @@ def main() -> None:
         
         import logging
         logger = logging.getLogger(__name__)
+        print("🔍 startup_vectorization_worker called", flush=True)
         logger.info("🔍 startup_vectorization_worker called")
         
-        # Check if code_analysis config section exists
-        code_analysis_config = app_config.get("code_analysis", {})
-        logger.info(f"🔍 code_analysis_config found: {bool(code_analysis_config)}")
-        if not code_analysis_config:
-            logger.warning("⚠️  No code_analysis config found, skipping vectorization worker")
-            return
-        
-        # Check if SVO chunker is configured
-        server_config = ServerConfig(**code_analysis_config)
-        if not server_config.chunker:
-            logger.warning("⚠️  No chunker config found, skipping vectorization worker")
-            return
-        
-        # Get database path from config or use default
-        root_dir = Path.cwd()
-        db_path = root_dir / "data" / "code_analysis.db"
-        
-        # Get project ID (use first project or default)
         try:
-            from code_analysis.core.database import CodeDatabase
-            database = CodeDatabase(db_path)
-            cursor = database.conn.cursor()
-            cursor.execute("SELECT id FROM projects ORDER BY created_at LIMIT 1")
-            row = cursor.fetchone()
-            project_id = row[0] if row else None
-            database.close()
+            # Get config from global config instance
+            from mcp_proxy_adapter.config import get_config
+            cfg = get_config()
+            app_config = getattr(cfg, "config_data", {})
+            if not app_config:
+                # Fallback: try to load from config_path
+                if hasattr(cfg, "config_path") and cfg.config_path:
+                    import json
+                    with open(cfg.config_path, "r", encoding="utf-8") as f:
+                        app_config = json.load(f)
             
-            if not project_id:
-                logger.warning("⚠️  No projects found in database, skipping vectorization worker")
+            print(f"🔍 app_config loaded: {bool(app_config)}, keys: {list(app_config.keys()) if app_config else []}", flush=True)
+            logger.info(f"🔍 app_config loaded: {bool(app_config)}, keys: {list(app_config.keys()) if app_config else []}")
+            
+            # Check if code_analysis config section exists
+            code_analysis_config = app_config.get("code_analysis", {})
+            print(f"🔍 code_analysis_config found: {bool(code_analysis_config)}", flush=True)
+            logger.info(f"🔍 code_analysis_config found: {bool(code_analysis_config)}")
+            if not code_analysis_config:
+                print("⚠️  No code_analysis config found, skipping vectorization worker", flush=True)
+                logger.warning("⚠️  No code_analysis config found, skipping vectorization worker")
                 return
-        except Exception as e:
-            logger.warning(f"⚠️  Failed to get project ID: {e}, skipping vectorization worker")
-            return
-        
-        # Get FAISS index path and vector dimension
-        faiss_index_path = root_dir / "data" / "faiss_index"
-        vector_dim = server_config.vector_dim or 384  # Default dimension, should match chunker model
-        
-        # Initialize FAISS manager and rebuild from database
-        try:
-            from code_analysis.core.svo_client_manager import SVOClientManager
             
-            faiss_manager = FaissIndexManager(
-                index_path=str(faiss_index_path),
-                vector_dim=vector_dim,
-            )
+            # Check if SVO chunker is configured
+            server_config = ServerConfig(**code_analysis_config)
+            if not server_config.chunker:
+                print("⚠️  No chunker config found, skipping vectorization worker", flush=True)
+                logger.warning("⚠️  No chunker config found, skipping vectorization worker")
+                return
             
-            # Initialize SVO client manager for rebuild (in case embeddings need to be regenerated)
-            svo_client_manager = SVOClientManager(server_config)
-            await svo_client_manager.initialize()
+            # Check if worker is enabled
+            worker_config = server_config.worker
+            if worker_config and isinstance(worker_config, dict):
+                if not worker_config.get("enabled", True):
+                    print("ℹ️  Vectorization worker is disabled in config, skipping", flush=True)
+                    logger.info("ℹ️  Vectorization worker is disabled in config, skipping")
+                    return
             
-            # Rebuild FAISS index from database (vectors are stored in database)
-            logger.info("🔄 Rebuilding FAISS index from database...")
-            database = CodeDatabase(db_path)
+            # Get database path from config or use default
+            root_dir = Path.cwd()
+            db_path = root_dir / "data" / "code_analysis.db"
+            
+            # Get project ID (use first project or default)
             try:
-                vectors_count = await faiss_manager.rebuild_from_database(
-                    database, svo_client_manager
-                )
-                logger.info(f"✅ FAISS index rebuilt: {vectors_count} vectors loaded from database")
-            finally:
+                from code_analysis.core.database import CodeDatabase
+                database = CodeDatabase(db_path)
+                cursor = database.conn.cursor()
+                cursor.execute("SELECT id FROM projects ORDER BY created_at LIMIT 1")
+                row = cursor.fetchone()
+                project_id = row[0] if row else None
                 database.close()
-                await svo_client_manager.close()
                 
+                if not project_id:
+                    logger.warning("⚠️  No projects found in database, skipping vectorization worker")
+                    return
+            except Exception as e:
+                logger.warning(f"⚠️  Failed to get project ID: {e}, skipping vectorization worker")
+                return
+            
+            # Get FAISS index path and vector dimension
+            faiss_index_path = root_dir / "data" / "faiss_index"
+            vector_dim = server_config.vector_dim or 384  # Default dimension, should match chunker model
+            
+            # Initialize FAISS manager and rebuild from database
+            try:
+                from code_analysis.core.svo_client_manager import SVOClientManager
+                
+                faiss_manager = FaissIndexManager(
+                    index_path=str(faiss_index_path),
+                    vector_dim=vector_dim,
+                )
+                
+                # Initialize SVO client manager for rebuild (in case embeddings need to be regenerated)
+                svo_client_manager = SVOClientManager(server_config)
+                await svo_client_manager.initialize()
+                
+                # Rebuild FAISS index from database (vectors are stored in database)
+                logger.info("🔄 Rebuilding FAISS index from database...")
+                database = CodeDatabase(db_path)
+                try:
+                    vectors_count = await faiss_manager.rebuild_from_database(
+                        database, svo_client_manager
+                    )
+                    logger.info(f"✅ FAISS index rebuilt: {vectors_count} vectors loaded from database")
+                finally:
+                    database.close()
+                    await svo_client_manager.close()
+                    
+            except Exception as e:
+                logger.warning(f"⚠️  Failed to rebuild FAISS index: {e}", exc_info=True)
+                # Continue anyway - index will be empty but worker can still start
+            
+            # Prepare SVO config
+            svo_config = server_config.model_dump() if hasattr(server_config, 'model_dump') else server_config.dict()
+            
+            # Start worker in separate process
+            print(f"🚀 Starting vectorization worker for project {project_id}", flush=True)
+            logger.info(f"🚀 Starting vectorization worker for project {project_id}")
+            process = multiprocessing.Process(
+                target=run_vectorization_worker,
+                args=(
+                    str(db_path),
+                    project_id,
+                    str(faiss_index_path),
+                    vector_dim,
+                ),
+                kwargs={
+                    "svo_config": svo_config,
+                    "batch_size": 10,
+                    "poll_interval": 30,  # Poll every 30 seconds
+                },
+                daemon=True,  # Daemon process will be killed when parent exits
+            )
+            process.start()
+            print(f"✅ Vectorization worker started with PID {process.pid}", flush=True)
+            logger.info(f"✅ Vectorization worker started with PID {process.pid}")
+            
         except Exception as e:
-            logger.warning(f"⚠️  Failed to rebuild FAISS index: {e}", exc_info=True)
-            # Continue anyway - index will be empty but worker can still start
-        
-        # Prepare SVO config
-        svo_config = server_config.model_dump() if hasattr(server_config, 'model_dump') else server_config.dict()
-        
-        # Start worker in separate process
-        logger.info(f"🚀 Starting vectorization worker for project {project_id}")
-        process = multiprocessing.Process(
-            target=run_vectorization_worker,
-            args=(
-                str(db_path),
-                project_id,
-                str(faiss_index_path),
-                vector_dim,
-            ),
-            kwargs={
-                "svo_config": svo_config,
-                "batch_size": 10,
-                "poll_interval": 30,  # Poll every 30 seconds
-            },
-            daemon=True,  # Daemon process will be killed when parent exits
-        )
-        process.start()
-        logger.info(f"✅ Vectorization worker started with PID {process.pid}")
+            print(f"❌ Failed to start vectorization worker: {e}", flush=True, file=sys.stderr)
+            logger.error(f"❌ Failed to start vectorization worker: {e}", exc_info=True)
     
     # Call startup function directly in background thread (on_event is deprecated)
     import threading

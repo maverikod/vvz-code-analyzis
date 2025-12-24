@@ -63,6 +63,7 @@ class SVOServiceConfig(BaseModel):
 
     enabled: bool = Field(default=False, description="Enable SVO service")
     url: str = Field(default="localhost", description="Service URL or hostname")
+    host: Optional[str] = Field(default=None, description="Alias for url (host)")
     port: int = Field(default=8009, description="Service port")
     protocol: str = Field(default="http", description="Protocol: http, https, or mtls")
     cert_file: Optional[str] = Field(
@@ -82,6 +83,9 @@ class SVOServiceConfig(BaseModel):
     )
     retry_delay: float = Field(
         default=5.0, description="Delay in seconds between retry attempts (default: 5.0)"
+    )
+    timeout: Optional[float] = Field(
+        default=None, description="Optional timeout for service requests (seconds)"
     )
 
     @field_validator("protocol")
@@ -107,6 +111,10 @@ class SVOServiceConfig(BaseModel):
     @model_validator(mode='after')
     def validate_mtls_config(self) -> 'SVOServiceConfig':
         """Validate mTLS configuration after initialization."""
+        # If host provided, use it as url
+        if self.host:
+            object.__setattr__(self, "url", self.host)
+
         if self.protocol == "mtls":
             if not self.cert_file:
                 raise ValueError("cert_file is required when protocol is 'mtls'")
@@ -132,6 +140,9 @@ class ServerConfig(BaseModel):
     chunker: Optional[SVOServiceConfig] = Field(
         default=None, description="Chunker service configuration (chunker handles both chunking and embeddings)"
     )
+    embedding: Optional[SVOServiceConfig] = Field(
+        default=None, description="Embedding service configuration (optional, if separate from chunker)"
+    )
     faiss_index_path: Optional[str] = Field(
         default=None, description="Path to FAISS index file (shared across all projects)"
     )
@@ -146,6 +157,18 @@ class ServerConfig(BaseModel):
     )
     vectorization_retry_delay: float = Field(
         default=10.0, description="Delay in seconds between vectorization retry attempts (default: 10.0)"
+    )
+    worker: Optional[Dict[str, Any]] = Field(
+        default_factory=lambda: {
+            "enabled": True,
+            "poll_interval": 30,
+            "batch_size": 10,
+            "retry_attempts": 3,
+            "retry_delay": 10.0,
+            "watch_dirs": [],
+            "dynamic_watch_file": "data/dynamic_watch_dirs.json",
+        },
+        description="Vectorization worker configuration",
     )
 
     @field_validator("port")

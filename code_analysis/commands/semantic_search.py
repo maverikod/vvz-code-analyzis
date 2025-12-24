@@ -53,6 +53,9 @@ class SemanticSearchCommand:
         k: int = 10,
         max_distance: Optional[float] = None,
         include_ast_node: bool = False,
+        source_type: Optional[str] = None,
+        bm25_min: Optional[float] = None,
+        file_path_substring: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
         """
         Perform semantic search.
@@ -77,6 +80,18 @@ class SemanticSearchCommand:
             - relevance_score: Distance score (lower is better)
             - ast_node: Full AST node JSON (if include_ast_node=True)
         """
+        logger.info(
+            "🔎 semantic_search start",
+            extra={
+                "query_len": len(query) if query else 0,
+                "k": k,
+                "max_distance": max_distance,
+                "source_type": source_type,
+                "bm25_min": bm25_min,
+                "file_path_substring": file_path_substring,
+            },
+        )
+
         if not self.faiss_manager:
             raise RuntimeError("FAISS manager is not available. Semantic search requires FAISS index.")
 
@@ -85,28 +100,64 @@ class SemanticSearchCommand:
 
         # Get embedding for query
         try:
-            # Create dummy chunk for query
-            class QueryChunk:
-                def __init__(self, text):
-                    self.body = text
-                    self.text = text
+            # Prefer dedicated embedding client if available
+            query_embedding = None
+            if getattr(self.svo_client_manager, "_embedding_client", None):
+                logger.debug("Using dedicated embedding client for query embedding")
+                try:
+                    emb_resp = await self.svo_client_manager._embedding_client.cmd(
+                        "embed",
+                        params={"texts": [query], "normalize": True},
+                    )
+                    logger.debug(
+                        "Embedding client response (cmd)",
+                        extra={"keys": list(emb_resp.keys()) if isinstance(emb_resp, dict) else None},
+                    )
+                    # Try to extract embedding via response_parsers
+                    try:
+                        from embed_client.response_parsers import extract_embedding_data
 
-            query_chunks = [QueryChunk(query)]
-            chunks_with_emb = await self.svo_client_manager.get_embeddings(query_chunks)
-            
-            if not chunks_with_emb or len(chunks_with_emb) == 0:
-                logger.warning("Failed to get embedding for query")
-                return []
+                        data = extract_embedding_data(emb_resp)
+                        if data and len(data) > 0:
+                            query_embedding = data[0].get("embedding")
+                    except Exception as parse_err:
+                        logger.error(f"Embedding parse error: {parse_err}", exc_info=True)
+                except Exception as emb_err:
+                    logger.error(f"Embedding client error: {emb_err}", exc_info=True)
 
-            query_embedding = getattr(chunks_with_emb[0], "embedding", None)
             if query_embedding is None:
-                logger.warning("Query chunk has no embedding")
+                logger.debug("Falling back to chunker client for query embedding")
+
+                class QueryChunk:
+                    def __init__(self, text):
+                        self.body = text
+                        self.text = text
+
+                query_chunks = [QueryChunk(query)]
+                chunks_with_emb = await self.svo_client_manager.get_embeddings(query_chunks)
+                logger.debug(
+                    "Chunker embedding fallback response",
+                    extra={
+                        "chunks": len(chunks_with_emb) if chunks_with_emb else 0,
+                        "has_embedding": bool(
+                            chunks_with_emb
+                            and len(chunks_with_emb) > 0
+                            and getattr(chunks_with_emb[0], "embedding", None) is not None
+                        ),
+                    },
+                )
+
+                if chunks_with_emb and len(chunks_with_emb) > 0:
+                    query_embedding = getattr(chunks_with_emb[0], "embedding", None)
+
+            if query_embedding is None:
+                logger.warning("Failed to get embedding for query")
                 return []
 
             query_vector = np.array(query_embedding, dtype="float32")
 
         except Exception as e:
-            logger.error(f"Error getting embedding for query: {e}")
+            logger.error(f"Error getting embedding for query: {e}", exc_info=True)
             return []
 
         # Search in FAISS index
@@ -147,7 +198,8 @@ class SemanticSearchCommand:
                 f.path as file_path,
                 c.name as class_name,
                 func.name as function_name,
-                m.name as method_name
+                m.name as method_name,
+                cc.bm25_score
             FROM code_chunks cc
             JOIN files f ON cc.file_id = f.id
             LEFT JOIN classes c ON cc.class_id = c.id
@@ -181,6 +233,7 @@ class SemanticSearchCommand:
                 "class_name": chunk[12],
                 "function_name": chunk[13],
                 "method_name": chunk[14],
+                "bm25_score": chunk[15],
             }
 
         # Build results in order of relevance
@@ -202,8 +255,20 @@ class SemanticSearchCommand:
                 "method_name": chunk_data["method_name"],
                 "chunk_text": chunk_data["chunk_text"],
                 "source_type": chunk_data["source_type"],
+                "bm25_score": chunk_data.get("bm25_score"),
                 "relevance_score": distance,
             }
+
+            # Optional filters
+            if source_type and chunk_data.get("source_type") != source_type:
+                continue
+            if bm25_min is not None:
+                bm25_val = chunk_data.get("bm25_score")
+                if bm25_val is None or bm25_val < bm25_min:
+                    continue
+            if file_path_substring:
+                if file_path_substring not in (chunk_data.get("file_path") or ""):
+                    continue
 
             # Get AST node name if available
             ast_node_name = None

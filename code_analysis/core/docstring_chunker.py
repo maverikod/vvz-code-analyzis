@@ -48,6 +48,15 @@ class DocstringChunker:
         self.svo_client_manager = svo_client_manager
         self.faiss_manager = faiss_manager
         self.min_chunk_length = min_chunk_length
+        # Binding levels: 0 ok, 1 file, 2 class, 3 method/function, 4 node, 5 line
+        self.binding_levels = {
+            "file": 1,
+            "class": 2,
+            "method": 3,
+            "function": 3,
+            "node": 4,
+            "line": 5,
+        }
 
     def _find_node_context(
         self, node: ast.AST, tree: ast.Module
@@ -465,7 +474,7 @@ class DocstringChunker:
                 # Chunk method group
                 await self._chunk_grouped_items(
                     method_items, f"method {class_name}.{method_name}",
-                    file_path, file_id, project_id
+                    file_path, file_id, project_id, binding_level=self.binding_levels.get("method", 3)
                 )
             else:
                 # Merge with class group
@@ -485,7 +494,7 @@ class DocstringChunker:
                 # Chunk class group
                 await self._chunk_grouped_items(
                     class_items, f"class {class_name}",
-                    file_path, file_id, project_id
+                    file_path, file_id, project_id, binding_level=self.binding_levels.get("class", 2)
                 )
             else:
                 # Merge with file group
@@ -503,7 +512,7 @@ class DocstringChunker:
                 # Chunk file group
                 await self._chunk_grouped_items(
                     file_group, "file",
-                    file_path, file_id, project_id
+                    file_path, file_id, project_id, binding_level=self.binding_levels.get("file", 1)
                 )
             else:
                 # Skip - total length still too short
@@ -519,6 +528,7 @@ class DocstringChunker:
         file_path: Path,
         file_id: int,
         project_id: str,
+        binding_level: int = 0,
     ) -> None:
         """
         Chunk a group of items together.
@@ -542,35 +552,67 @@ class DocstringChunker:
             f"Chunking grouped {group_name} items ({len(items)} items, "
             f"total {total_length} chars) in {file_path}"
         )
+        logger.debug(
+            "Docstring chunk request preview",
+            extra={
+                "file": str(file_path),
+                "group": group_name,
+                "items": len(items),
+                "total_length": total_length,
+                "preview": combined_text[:200],
+            },
+        )
         
+        chunks = None
         try:
             chunks = await self.svo_client_manager.chunk_text(
                 combined_text,
                 type="DocBlock",
             )
-            
-            if not chunks:
-                logger.warning(
-                    f"No chunks returned for grouped {group_name} items in {file_path}"
-                )
-                return
-            
-            logger.info(
-                f"Received {len(chunks)} chunks for grouped {group_name} items in {file_path}"
-            )
-            
-            # Save chunks - need to distribute to original items
-            # For grouped chunks, we'll use the first item's context for all chunks
-            # This is a limitation - chunks from grouped items lose individual context
-            if items:
-                primary_item = items[0]  # Use first item's context
-                await self._save_chunks(
-                    chunks, primary_item, file_path, file_id, project_id
-                )
-            
         except Exception as e:
             logger.warning(
                 f"Failed to chunk grouped {group_name} items in {file_path}: {e}"
+            )
+
+        if not chunks:
+            # Fallback: try chunking at higher level (file-level) to avoid empty result
+            logger.warning(
+                f"No chunks returned for grouped {group_name} items in {file_path}, "
+                "attempting fallback at file level"
+            )
+            try:
+                chunks = await self.svo_client_manager.chunk_text(
+                    combined_text,
+                    type="DocBlock",
+                )
+            except Exception as e:
+                logger.warning(
+                    f"Fallback chunking failed for grouped {group_name} in {file_path}: {e}"
+                )
+                return
+
+        if not chunks:
+            logger.warning(
+                f"No chunks returned for grouped {group_name} items in {file_path} after fallback"
+            )
+            return
+
+        logger.info(
+            f"Received {len(chunks)} chunks for grouped {group_name} items in {file_path}"
+        )
+
+        # Save chunks - need to distribute to original items
+        # For grouped chunks, we'll use the first item's context for all chunks
+        # This is a limitation - chunks from grouped items lose individual context
+        if items:
+            primary_item = items[0]  # Use first item's context
+            await self._save_chunks(
+                chunks,
+                primary_item,
+                file_path,
+                file_id,
+                project_id,
+                binding_level=binding_level or self.binding_levels.get("file", 1),
             )
 
     async def _save_chunks(
@@ -580,6 +622,7 @@ class DocstringChunker:
         file_path: Path,
         file_id: int,
         project_id: str,
+        binding_level: int = 0,
     ) -> None:
         """
         Save chunks to database with embeddings and BM25.
@@ -637,55 +680,39 @@ class DocstringChunker:
             chunk_type = getattr(chunk, "type", "DocBlock") or "DocBlock"
             chunk_ordinal = getattr(chunk, "ordinal", None)
             
-            # Extract embedding (chunker MUST provide it)
-            embedding = getattr(chunk, "embedding", None)
-            if not embedding:
-                logger.error(
-                    f"Chunk {idx+1}/{len(chunks)} has NO embedding from chunker! "
-                    f"Skipping chunk."
-                )
-                continue
-            
+            # Extract embedding if chunker returned it (chunker may return embeddings)
+            embedding = None
             embedding_vector_json = None
             embedding_model = None
             vector_id = None
             
-            try:
-                # Convert embedding to list if it's numpy array
-                if hasattr(embedding, "tolist"):
-                    embedding_list = embedding.tolist()
-                elif isinstance(embedding, (list, tuple)):
-                    embedding_list = list(embedding)
-                else:
-                    embedding_list = embedding
-                
-                embedding_vector_json = json.dumps(embedding_list)
-                embedding_model = getattr(chunk, "embedding_model", None) or getattr(chunk, "model", None)
-                
-                # Add embedding to FAISS immediately
-                if self.faiss_manager:
-                    try:
-                        if not isinstance(embedding, np.ndarray):
-                            embedding_array = np.array(embedding_list, dtype="float32")
-                        else:
-                            embedding_array = np.array(embedding, dtype="float32")
-                        
-                        vector_id = self.faiss_manager.add_vector(embedding_array)
-                        logger.debug(
-                            f"Added embedding to FAISS: vector_id={vector_id}, "
-                            f"dim={embedding_array.shape[0]}"
-                        )
-                    except Exception as e:
-                        logger.error(
-                            f"Failed to add embedding to FAISS for chunk {idx+1}: {e}",
-                            exc_info=True
-                        )
-            except Exception as e:
-                logger.error(
-                    f"Failed to process embedding for chunk {idx+1}: {e}",
-                    exc_info=True
+            # Check if chunk has embedding from chunker
+            if hasattr(chunk, "embedding") and getattr(chunk, "embedding", None) is not None:
+                embedding = getattr(chunk, "embedding")
+                # Convert to JSON string for database storage
+                import json
+                try:
+                    if hasattr(embedding, "tolist"):
+                        embedding_vector_json = json.dumps(embedding.tolist())
+                    elif isinstance(embedding, (list, tuple)):
+                        embedding_vector_json = json.dumps(list(embedding))
+                    else:
+                        embedding_vector_json = json.dumps(embedding)
+                    embedding_model = getattr(chunk, "embedding_model", None)
+                    logger.debug(
+                        f"Chunk {idx+1}/{len(chunks)} has embedding from chunker "
+                        f"(model={embedding_model})"
+                    )
+                except Exception as e:
+                    logger.warning(
+                        f"Failed to serialize embedding for chunk {idx+1}: {e}"
+                    )
+            else:
+                # Embedding will be obtained by vectorization worker
+                logger.debug(
+                    f"Chunk {idx+1}/{len(chunks)} has no embedding from chunker, "
+                    "will be processed by vectorization worker"
                 )
-                continue
             
             # Extract BM25 score
             bm25_score = None
@@ -696,22 +723,23 @@ class DocstringChunker:
             
             # Save chunk to database
             chunk_id = await self.database.add_code_chunk(
-                        file_id=file_id,
-                        project_id=project_id,
-                        chunk_uuid=chunk_uuid,
-                        chunk_type=chunk_type,
-                        chunk_text=chunk_text,
-                        chunk_ordinal=chunk_ordinal,
+                file_id=file_id,
+                project_id=project_id,
+                chunk_uuid=chunk_uuid,
+                chunk_type=chunk_type,
+                chunk_text=chunk_text,
+                chunk_ordinal=chunk_ordinal,
                 vector_id=vector_id,
-                        embedding_model=embedding_model,
+                embedding_model=embedding_model,
                 bm25_score=bm25_score,
                 embedding_vector=embedding_vector_json,
-                        class_id=class_id,
-                        function_id=function_id,
-                        method_id=method_id,
-                        line=item.get("line"),
-                        ast_node_type=item.get("ast_node_type"),
+                class_id=class_id,
+                function_id=function_id,
+                method_id=method_id,
+                line=item.get("line"),
+                ast_node_type=item.get("ast_node_type"),
                 source_type=item.get("type"),
+                binding_level=binding_level,
             )
             
             logger.info(

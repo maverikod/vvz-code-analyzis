@@ -14,6 +14,8 @@ from typing import Optional, List, Any
 from .config import ServerConfig, SVOServiceConfig
 from .chunker_client_wrapper import create_chunker_client
 from svo_client import ChunkerClient
+from types import SimpleNamespace
+from embed_client.async_client import EmbeddingServiceAsyncClient
 
 logger = logging.getLogger(__name__)
 
@@ -35,6 +37,7 @@ class SVOClientManager:
         """
         self.config = config
         self._chunker_client: Optional[ChunkerClient] = None
+        self._embedding_client: Optional[EmbeddingServiceAsyncClient] = None
 
     async def initialize(self) -> None:
         """Initialize chunker client."""
@@ -48,6 +51,40 @@ class SVOClientManager:
             except Exception as e:
                 logger.error(f"Failed to initialize chunker client: {e}")
                 self._chunker_client = None
+        # Initialize embedding client if configured
+        if self.config.embedding and self.config.embedding.enabled:
+            try:
+                # Build base_url with explicit scheme for embedding service
+                emb_url = self.config.embedding.url
+                if "://" in emb_url:
+                    base_url = emb_url
+                else:
+                    scheme = "https" if self.config.embedding.protocol in ("https", "mtls") else "http"
+                    base_url = f"{scheme}://{emb_url}"
+
+                emb_cfg = {
+                    "server": {
+                        "base_url": base_url,
+                        "port": self.config.embedding.port,
+                    },
+                    "ssl": {
+                        "enabled": self.config.embedding.protocol in ("https", "mtls"),
+                        "cert_file": self.config.embedding.cert_file,
+                        "key_file": self.config.embedding.key_file,
+                        "ca_cert_file": self.config.embedding.ca_cert_file,
+                        "check_hostname": False,
+                    },
+                    "client": {"timeout": self.config.embedding.timeout or 30.0},
+                    "auth": {"method": "none"},
+                }
+                self._embedding_client = EmbeddingServiceAsyncClient.from_config_dict(emb_cfg)
+                logger.info(
+                    f"Initialized embedding client: {self.config.embedding.protocol}://"
+                    f"{self.config.embedding.url}:{self.config.embedding.port}"
+                )
+            except Exception as e:
+                logger.error(f"Failed to initialize embedding client: {e}")
+                self._embedding_client = None
 
     async def chunk_text(
         self, text: str, **params
@@ -125,19 +162,21 @@ class SVOClientManager:
                 
                 # Enhanced logging for SVOServerError
                 if error_type == "SVOServerError":
-                    logger.warning(
-                        f"SVO server error chunking text (attempt {attempt}/{retry_attempts}, "
-                        f"length={len(text)}): {error_msg}"
+                    logger.error(
+                        f"Chunker service error (attempt {attempt}/{retry_attempts}, "
+                        f"length={len(text)}): {error_type}: {error_msg}",
+                        exc_info=True
                     )
                     # Log error code if available
                     if hasattr(e, "code"):
-                        logger.debug(f"Error code: {getattr(e, 'code', 'N/A')}")
+                        logger.error(f"Chunker error code: {getattr(e, 'code', 'N/A')}")
                     if hasattr(e, "message"):
-                        logger.debug(f"Error message: {getattr(e, 'message', 'N/A')}")
+                        logger.error(f"Chunker error message: {getattr(e, 'message', 'N/A')}")
                 else:
-                    logger.warning(
-                        f"Error chunking text (attempt {attempt}/{retry_attempts}, "
-                        f"length={len(text)}, type={error_type}): {error_msg}"
+                    logger.error(
+                        f"Chunker service error (attempt {attempt}/{retry_attempts}, "
+                        f"length={len(text)}, type={error_type}): {error_msg}",
+                        exc_info=True
                     )
                 
                 if attempt < retry_attempts:
@@ -145,7 +184,7 @@ class SVOClientManager:
                     await asyncio.sleep(retry_delay)
                 else:
                     logger.error(
-                        f"All retry attempts failed for chunk_text (length={len(text)}, "
+                        f"All retry attempts failed for chunker (length={len(text)}, "
                         f"type={error_type}): {error_msg}",
                         exc_info=True
                     )
@@ -192,12 +231,54 @@ class SVOClientManager:
 
             # Join texts and chunk with chunker service
             # The chunker service chunk_text returns chunks with embeddings, bm25, etc.
+            # CRITICAL: Worker should ONLY use chunker service, not embedding service directly
             combined_text = "\n\n".join(texts)
-            result = await self._chunker_client.chunk_text(combined_text, **params)
             
+            # Ensure type parameter is passed to chunker for proper embedding generation
+            chunker_params = params.copy()
+            if "type" not in chunker_params:
+                chunker_params["type"] = "DocBlock"  # Default type for docstrings
+            
+            try:
+                result = await self._chunker_client.chunk_text(combined_text, **chunker_params)
+            except Exception as chunker_error:
+                error_type = type(chunker_error).__name__
+                error_msg = str(chunker_error)
+                logger.error(
+                    f"Chunker service error when getting embeddings: {error_type}: {error_msg}",
+                    exc_info=True
+                )
+                # Log additional error details if available
+                if hasattr(chunker_error, "code"):
+                    logger.error(f"Chunker error code: {getattr(chunker_error, 'code', 'N/A')}")
+                if hasattr(chunker_error, "message"):
+                    logger.error(f"Chunker error message: {getattr(chunker_error, 'message', 'N/A')}")
+                return None
+            
+            # Chunker should always return embeddings - if not, log warning
+            if result:
+                has_embeddings = any(
+                    getattr(c, "embedding", None) is not None for c in result
+                )
+                if not has_embeddings:
+                    logger.warning(
+                        f"Chunker returned {len(result)} chunks but no embeddings. "
+                        f"This may indicate a configuration issue with the chunker service. "
+                        f"Text length: {len(combined_text)}, params: {chunker_params}"
+                    )
+            elif result is None:
+                logger.warning(
+                    f"Chunker returned None (no chunks). "
+                    f"Text length: {len(combined_text)}, params: {chunker_params}"
+                )
             return result
         except Exception as e:
-            logger.error(f"Error getting embeddings: {e}")
+            error_type = type(e).__name__
+            error_msg = str(e)
+            logger.error(
+                f"Error getting embeddings from chunker: {error_type}: {error_msg}",
+                exc_info=True
+            )
             return None
 
     async def chunk_and_embed(
@@ -243,6 +324,8 @@ class SVOClientManager:
         """Close chunker client connection."""
         if self._chunker_client:
             await self._chunker_client.close()
+        if self._embedding_client:
+            await self._embedding_client._adapter_transport.close()
 
     async def __aenter__(self):
         """Async context manager entry."""

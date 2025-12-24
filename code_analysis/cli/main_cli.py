@@ -57,6 +57,14 @@ logger = logging.getLogger(__name__)
     help="Use SQLite database (default: True)",
 )
 @click.option(
+    "--config",
+    "-c",
+    "config_path",
+    default=None,
+    help="Path to config.json (default: <root-dir>/config.json)",
+    type=click.Path(exists=False, dir_okay=False, path_type=Path),
+)
+@click.option(
     "--force",
     "-f",
     is_flag=True,
@@ -72,6 +80,7 @@ def main(
     comment: str | None,
     verbose: bool,
     use_sqlite: bool,
+    config_path: Path | None,
     force: bool,
 ) -> None:
     """
@@ -99,34 +108,7 @@ def main(
 
         root_dir = root_dir.resolve()
 
-        if use_sqlite:
-            # Use commands layer
-            # Create database in data directory
-            data_dir = root_dir / "data"
-            data_dir.mkdir(parents=True, exist_ok=True)
-            db_path = data_dir / "code_analysis.db"
-            db = CodeDatabase(db_path)
-            try:
-                project_id = db.get_or_create_project(
-                    str(root_dir), name=root_dir.name, comment=comment
-                )
-                analyze_cmd = AnalyzeCommand(
-                    db, project_id, str(root_dir), max_lines, force=force
-                )
-                import asyncio
-
-                result = asyncio.run(analyze_cmd.execute())
-
-                click.echo()
-                click.echo("✅ Analysis completed successfully!")
-                click.echo(f"   Files analyzed: {result['files_analyzed']}")
-                click.echo(f"   Classes: {result['classes']}")
-                click.echo(f"   Functions: {result['functions']}")
-                click.echo(f"   Issues: {result['issues']}")
-                click.echo(f"   Project ID: {result['project_id']}")
-            finally:
-                db.close()
-        else:
+        if not use_sqlite:
             # Legacy YAML mode (if needed)
             from ..code_mapper import CodeMapper
 
@@ -138,6 +120,67 @@ def main(
 
             click.echo()
             click.echo("✅ Analysis completed successfully!")
+            return
+
+        # Use SQLite + SVO clients
+        data_dir = root_dir / "data"
+        data_dir.mkdir(parents=True, exist_ok=True)
+        db_path = data_dir / "code_analysis.db"
+
+        # Load code_analysis config (for chunker/embedding)
+        config_file = config_path or (root_dir / "config.json")
+        if not config_file.exists():
+            raise click.ClickException(f"Config file not found: {config_file}")
+
+        try:
+            import json
+            from ..core.config import ServerConfig
+            from ..core.svo_client_manager import SVOClientManager
+        except Exception as e:
+            raise click.ClickException(f"Failed to import config/client modules: {e}")
+
+        try:
+            with open(config_file, "r", encoding="utf-8") as f:
+                raw_cfg = json.load(f)
+            ca_cfg = raw_cfg.get("code_analysis") or raw_cfg
+            server_cfg = ServerConfig(**ca_cfg)
+        except Exception as e:
+            raise click.ClickException(f"Failed to load config '{config_file}': {e}")
+
+        db = CodeDatabase(db_path)
+        try:
+            project_id = db.get_or_create_project(
+                str(root_dir), name=root_dir.name, comment=comment
+            )
+
+            # Init SVO client manager
+            svo_client_manager = SVOClientManager(server_cfg)
+
+            async def run_analysis():
+                await svo_client_manager.initialize()
+                analyze_cmd = AnalyzeCommand(
+                    db,
+                    project_id,
+                    str(root_dir),
+                    max_lines,
+                    force=force,
+                    svo_client_manager=svo_client_manager,
+                )
+                return await analyze_cmd.execute()
+
+            import asyncio
+
+            result = asyncio.run(run_analysis())
+
+            click.echo()
+            click.echo("✅ Analysis completed successfully!")
+            click.echo(f"   Files analyzed: {result['files_analyzed']}")
+            click.echo(f"   Classes: {result['classes']}")
+            click.echo(f"   Functions: {result['functions']}")
+            click.echo(f"   Issues: {result['issues']}")
+            click.echo(f"   Project ID: {result['project_id']}")
+        finally:
+            db.close()
 
     except Exception as e:
         logger.error(f"Error during analysis: {e}")

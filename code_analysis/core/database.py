@@ -309,6 +309,7 @@ class CodeDatabase:
                 line INTEGER,
                 ast_node_type TEXT,
                 source_type TEXT,  -- 'docstring', 'comment', 'file_docstring'
+                binding_level INTEGER DEFAULT 0, -- 0 ok; 1 file; 2 class; 3 method/function; 4 node; 5 line
                 created_at REAL DEFAULT (julianday('now')),
                 FOREIGN KEY (file_id) REFERENCES files(id) ON DELETE CASCADE,
                 FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE,
@@ -330,6 +331,12 @@ class CodeDatabase:
         try:
             cursor.execute("ALTER TABLE code_chunks ADD COLUMN embedding_vector TEXT")
             logger.info("Added embedding_vector column to code_chunks table")
+        except Exception:
+            pass  # Column already exists
+        
+        try:
+            cursor.execute("ALTER TABLE code_chunks ADD COLUMN binding_level INTEGER DEFAULT 0")
+            logger.info("Added binding_level column to code_chunks table")
         except Exception:
             pass  # Column already exists
 
@@ -1943,6 +1950,7 @@ class CodeDatabase:
         line: Optional[int] = None,
         ast_node_type: Optional[str] = None,
         source_type: Optional[str] = None,
+        binding_level: int = 0,
     ) -> int:
         """
         Add code chunk from semantic chunker with AST node binding.
@@ -1989,7 +1997,8 @@ class CodeDatabase:
                         vector_id = ?, embedding_model = ?,
                         bm25_score = ?, embedding_vector = ?,
                         class_id = ?, function_id = ?, method_id = ?,
-                        line = ?, ast_node_type = ?, source_type = ?
+                        line = ?, ast_node_type = ?, source_type = ?,
+                        binding_level = ?
                     WHERE id = ?
                 """,
                     (
@@ -2006,6 +2015,7 @@ class CodeDatabase:
                         line,
                         ast_node_type,
                         source_type,
+                        binding_level,
                         existing[0],
                     ),
                 )
@@ -2018,8 +2028,8 @@ class CodeDatabase:
                     INSERT INTO code_chunks
                     (file_id, project_id, chunk_uuid, chunk_type, chunk_text,
                      chunk_ordinal, vector_id, embedding_model, bm25_score, embedding_vector,
-                     class_id, function_id, method_id, line, ast_node_type, source_type)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                     class_id, function_id, method_id, line, ast_node_type, source_type, binding_level)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                     (
                         file_id,
@@ -2038,6 +2048,7 @@ class CodeDatabase:
                         line,
                         ast_node_type,
                         source_type,
+                        binding_level,
                     ),
                 )
                 self.conn.commit()

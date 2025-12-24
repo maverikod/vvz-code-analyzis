@@ -7,8 +7,11 @@ email: vasilyvz@gmail.com
 
 from setuptools import setup, find_packages
 
-with open("README.md", "r", encoding="utf-8") as fh:
-    long_description = fh.read()
+try:
+    with open("README.md", "r", encoding="utf-8") as fh:
+        long_description = fh.read()
+except FileNotFoundError:
+    long_description = "A comprehensive Python code analysis tool"
 
 with open("requirements.txt", "r", encoding="utf-8") as fh:
     requirements = [
@@ -47,6 +50,7 @@ setup(
         "console_scripts": [
             "code_analysis=code_analysis.cli.main:cli",
             "code_mapper=code_analysis.code_mapper:main",  # Legacy
+            "code-analysis-server=code_analysis.cli.server_manager_cli:server",
         ],
     },
     include_package_data=True,

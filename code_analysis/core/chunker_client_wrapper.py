@@ -72,15 +72,33 @@ def create_chunker_client(config: SVOServiceConfig) -> ChunkerClient:
     Returns:
         Configured ChunkerClient instance
     """
-    # New ChunkerClient API: host, port, cert, key, ca
+    # New ChunkerClient API (v2.2.0+): host, port, cert, key, ca, timeout
     # ChunkerClient now supports mTLS natively through cert/key/ca parameters
+    # and uses JsonRpcClient internally with proper config resolution
+    # ChunkerClient internally uses ConfigLoader.resolve_config() which creates
+    # config dict in format: {"server": {...}, "ssl": {...}, "auth": {...}}
+    # Then config_to_client_kwargs() converts it to JsonRpcClient kwargs
+    
+    # Extract host from url (remove protocol if present)
+    host = config.url
+    if "://" in host:
+        host = host.split("://", 1)[1]
+    # Remove trailing slash
+    host = host.rstrip("/")
+    
     client_kwargs = {
-        "host": config.url,
+        "host": host,
         "port": config.port,
         "check_hostname": False,  # Disable hostname verification for mTLS
     }
     
-    # Add mTLS certificates if protocol is mtls or https
+    # Add timeout if configured
+    if config.timeout is not None:
+        client_kwargs["timeout"] = float(config.timeout)
+    
+    # Add mTLS certificates only if protocol is explicitly mtls or https
+    # Note: If protocol is "http", do NOT pass certificates even if they are configured,
+    # as this will cause the client to try to use SSL/TLS which the server doesn't support
     if config.protocol in ("https", "mtls"):
         if config.cert_file and config.key_file and config.ca_cert_file:
             # Resolve paths to absolute if relative
@@ -88,18 +106,37 @@ def create_chunker_client(config: SVOServiceConfig) -> ChunkerClient:
             key_file = Path(config.key_file)
             ca_cert_file = Path(config.ca_cert_file)
             
-            if not cert_file.is_absolute():
-                # Assume relative to project root or config file location
-                # For now, use as-is and let ChunkerClient handle it
-                pass
-            
-            client_kwargs["cert"] = str(cert_file.resolve() if cert_file.exists() else config.cert_file)
-            client_kwargs["key"] = str(key_file.resolve() if key_file.exists() else config.key_file)
-            client_kwargs["ca"] = str(ca_cert_file.resolve() if ca_cert_file.exists() else config.ca_cert_file)
-            logger.debug(f"Configuring mTLS: cert={client_kwargs['cert']}, key={client_kwargs['key']}, ca={client_kwargs['ca']}")
+            # Resolve to absolute paths
+            if cert_file.exists():
+                client_kwargs["cert"] = str(cert_file.resolve())
+            else:
+                client_kwargs["cert"] = config.cert_file
+                
+            if key_file.exists():
+                client_kwargs["key"] = str(key_file.resolve())
+            else:
+                client_kwargs["key"] = config.key_file
+                
+            if ca_cert_file.exists():
+                client_kwargs["ca"] = str(ca_cert_file.resolve())
+            else:
+                client_kwargs["ca"] = config.ca_cert_file
+                
+            logger.debug(
+                f"Configuring mTLS: cert={client_kwargs['cert']}, "
+                f"key={client_kwargs['key']}, ca={client_kwargs['ca']}"
+            )
         else:
             logger.warning("mTLS protocol specified but certificates not provided")
+    elif config.protocol == "http":
+        # Explicitly do NOT pass certificates for HTTP protocol
+        # This ensures the client uses HTTP instead of trying to use SSL/TLS
+        logger.debug("Using HTTP protocol (no certificates)")
     
+    # Create client - ChunkerClient will handle config resolution internally
+    # It uses ConfigLoader.resolve_config() which merges CLI/API > env > file config
+    # The cert/key/ca parameters will be used to create SSL config with verify_mode="CERT_REQUIRED"
+    # which will result in protocol="mtls" in config_to_client_kwargs()
     client = ChunkerClient(**client_kwargs)
     
     return client

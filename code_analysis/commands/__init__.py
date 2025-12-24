@@ -17,6 +17,7 @@ from .update_ast import UpdateASTCommand
 from .get_ast import GetASTCommand
 from .search_ast_nodes import SearchASTNodesCommand
 from .ast_statistics import ASTStatisticsCommand
+from .list_project_files import ListProjectFilesCommand
 
 __all__ = [
     "AnalyzeCommand",
@@ -28,4 +29,5 @@ __all__ = [
     "GetASTCommand",
     "SearchASTNodesCommand",
     "ASTStatisticsCommand",
+    "ListProjectFilesCommand",
 ]

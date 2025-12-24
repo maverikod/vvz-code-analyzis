@@ -54,6 +54,69 @@ def format_code_with_black(file_path: Path) -> tuple[bool, Optional[str]]:
         return False, str(e)
 
 
+def format_error_message(error_type: str, error_details: str, file_path: Optional[Path] = None) -> str:
+    """
+    Format error message in a user-friendly way.
+    
+    Args:
+        error_type: Type of error (validation, syntax, completeness, etc.)
+        error_details: Detailed error message
+        file_path: Optional file path for context
+        
+    Returns:
+        Formatted error message
+    """
+    file_info = f" in {file_path.name}" if file_path else ""
+    
+    if error_type == "python_syntax":
+        # Parse syntax error details
+        if "IndentationError" in error_details:
+            if "expected an indented block" in error_details:
+                return (
+                    f"Рефакторинг не выполнен{file_info}: ошибка форматирования кода.\n"
+                    f"Причина: отсутствует отступ после определения функции или класса.\n"
+                    f"Файл восстановлен из резервной копии."
+                )
+            return (
+                f"Рефакторинг не выполнен{file_info}: ошибка отступов в коде.\n"
+                f"Файл восстановлен из резервной копии."
+            )
+        elif "SyntaxError" in error_details:
+            return (
+                f"Рефакторинг не выполнен{file_info}: синтаксическая ошибка в результате.\n"
+                f"Файл восстановлен из резервной копии."
+            )
+        return (
+            f"Рефакторинг не выполнен{file_info}: ошибка валидации Python синтаксиса.\n"
+            f"Детали: {error_details}\n"
+            f"Файл восстановлен из резервной копии."
+        )
+    
+    elif error_type == "config_validation":
+        return (
+            f"Ошибка конфигурации{file_info}:\n"
+            f"{error_details}\n"
+            f"Проверьте, что все свойства и методы указаны в конфигурации."
+        )
+    
+    elif error_type == "completeness":
+        return (
+            f"Рефакторинг не выполнен{file_info}: потеря данных при рефакторинге.\n"
+            f"Детали: {error_details}\n"
+            f"Файл восстановлен из резервной копии."
+        )
+    
+    elif error_type == "docstring":
+        return (
+            f"Рефакторинг не выполнен{file_info}: потеря докстрингов.\n"
+            f"Детали: {error_details}\n"
+            f"Файл восстановлен из резервной копии."
+        )
+    
+    else:
+        return f"Рефакторинг не выполнен{file_info}: {error_details}"
+
+
 class ClassSplitter:
     """Class for splitting classes into smaller components."""
 
@@ -219,7 +282,12 @@ class ClassSplitter:
             # Validate configuration
             is_valid, errors = self.validate_split_config(src_class, config)
             if not is_valid:
-                return False, f"Configuration validation failed: {'; '.join(errors)}"
+                error_msg = format_error_message(
+                    "config_validation",
+                    "; ".join(errors),
+                    self.file_path
+                )
+                return False, error_msg
 
             # Perform split
             new_content = self._perform_split(src_class, config)
@@ -247,16 +315,26 @@ class ClassSplitter:
             if not is_complete:
                 # Restore backup
                 self.restore_backup()
-                return False, f"Completeness validation failed: {completeness_error}"
+                formatted_error = format_error_message(
+                    "completeness",
+                    completeness_error,
+                    self.file_path
+                )
+                return False, formatted_error
 
             # Validate that all docstrings are preserved
             is_docstrings_valid, docstrings_error = self.validate_docstrings(
-                src_class, config
+                src_class, config,
             )
             if not is_docstrings_valid:
                 # Restore backup
                 self.restore_backup()
-                return False, f"Docstring validation failed: {docstrings_error}"
+                formatted_error = format_error_message(
+                    "docstring",
+                    docstrings_error,
+                    self.file_path
+                )
+                return False, formatted_error
 
             # Import validation is optional - dependencies might not be installed
             # Syntax check is more important and already passed
@@ -1105,7 +1183,12 @@ class SuperclassExtractor:
             # Validate configuration
             is_valid, errors = self.validate_config(config)
             if not is_valid:
-                return False, f"Configuration validation failed: {'; '.join(errors)}"
+                error_msg = format_error_message(
+                    "config_validation",
+                    "; ".join(errors),
+                    self.file_path
+                )
+                return False, error_msg
 
             base_class_name = config.get("base_class")
             child_classes = config.get("child_classes", [])
@@ -1158,7 +1241,12 @@ class SuperclassExtractor:
             if not is_valid:
                 # Restore backup
                 self.restore_backup()
-                return False, f"Python validation failed: {error_msg}"
+                formatted_error = format_error_message(
+                    "python_syntax",
+                    error_msg,
+                    self.file_path
+                )
+                return False, formatted_error
 
             # Validate completeness
             is_complete, completeness_error = self.validate_completeness(
@@ -1167,7 +1255,12 @@ class SuperclassExtractor:
             if not is_complete:
                 # Restore backup
                 self.restore_backup()
-                return False, f"Completeness validation failed: {completeness_error}"
+                formatted_error = format_error_message(
+                    "completeness",
+                    completeness_error,
+                    self.file_path
+                )
+                return False, formatted_error
 
             # Validate that all docstrings are preserved
             is_docstrings_valid, docstrings_error = self.validate_docstrings(
@@ -1176,7 +1269,12 @@ class SuperclassExtractor:
             if not is_docstrings_valid:
                 # Restore backup
                 self.restore_backup()
-                return False, f"Docstring validation failed: {docstrings_error}"
+                formatted_error = format_error_message(
+                    "docstring",
+                    docstrings_error,
+                    self.file_path
+                )
+                return False, formatted_error
 
             # Try to import the module (skip if dependencies are missing)
             try:
@@ -1872,7 +1970,12 @@ class ClassMerger:
             # Validate configuration
             is_valid, errors = self.validate_config(config)
             if not is_valid:
-                return False, f"Configuration validation failed: {'; '.join(errors)}"
+                error_msg = format_error_message(
+                    "config_validation",
+                    "; ".join(errors),
+                    self.file_path
+                )
+                return False, error_msg
 
             base_class_name = config.get("base_class")
             source_classes = config.get("source_classes", [])
@@ -1913,7 +2016,12 @@ class ClassMerger:
             if not is_valid:
                 # Restore backup
                 self.restore_backup()
-                return False, f"Python validation failed: {error_msg}"
+                formatted_error = format_error_message(
+                    "python_syntax",
+                    error_msg,
+                    self.file_path
+                )
+                return False, formatted_error
 
             # Validate completeness
             is_complete, completeness_error = self.validate_completeness(
@@ -1922,7 +2030,12 @@ class ClassMerger:
             if not is_complete:
                 # Restore backup
                 self.restore_backup()
-                return False, f"Completeness validation failed: {completeness_error}"
+                formatted_error = format_error_message(
+                    "completeness",
+                    completeness_error,
+                    self.file_path
+                )
+                return False, formatted_error
 
             # Validate that all docstrings are preserved
             is_docstrings_valid, docstrings_error = self.validate_docstrings(
@@ -1931,7 +2044,12 @@ class ClassMerger:
             if not is_docstrings_valid:
                 # Restore backup
                 self.restore_backup()
-                return False, f"Docstring validation failed: {docstrings_error}"
+                formatted_error = format_error_message(
+                    "docstring",
+                    docstrings_error,
+                    self.file_path
+                )
+                return False, formatted_error
 
             # Import validation is optional
             try:

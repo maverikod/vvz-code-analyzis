@@ -12,8 +12,10 @@ import ast
 import shutil
 import subprocess
 import tempfile
+import tokenize
+import io
 from pathlib import Path
-from typing import Dict, List, Any, Optional
+from typing import Dict, List, Any, Optional, Tuple
 import logging
 
 logger = logging.getLogger(__name__)
@@ -22,10 +24,10 @@ logger = logging.getLogger(__name__)
 def format_code_with_black(file_path: Path) -> tuple[bool, Optional[str]]:
     """
     Format Python code using black formatter.
-    
+
     Args:
         file_path: Path to Python file to format
-        
+
     Returns:
         Tuple of (success, error_message)
     """
@@ -54,20 +56,22 @@ def format_code_with_black(file_path: Path) -> tuple[bool, Optional[str]]:
         return False, str(e)
 
 
-def format_error_message(error_type: str, error_details: str, file_path: Optional[Path] = None) -> str:
+def format_error_message(
+    error_type: str, error_details: str, file_path: Optional[Path] = None
+) -> str:
     """
     Format error message in a user-friendly way.
-    
+
     Args:
         error_type: Type of error (validation, syntax, completeness, etc.)
         error_details: Detailed error message
         file_path: Optional file path for context
-        
+
     Returns:
         Formatted error message
     """
     file_info = f" in {file_path.name}" if file_path else ""
-    
+
     if error_type == "python_syntax":
         # Parse syntax error details
         if "IndentationError" in error_details:
@@ -91,34 +95,34 @@ def format_error_message(error_type: str, error_details: str, file_path: Optiona
             f"Детали: {error_details}\n"
             f"Файл восстановлен из резервной копии."
         )
-    
+
     elif error_type == "config_validation":
         return (
             f"Ошибка конфигурации{file_info}:\n"
             f"{error_details}\n"
             f"Проверьте, что все свойства и методы указаны в конфигурации."
         )
-    
+
     elif error_type == "completeness":
         return (
             f"Рефакторинг не выполнен{file_info}: потеря данных при рефакторинге.\n"
             f"Детали: {error_details}\n"
             f"Файл восстановлен из резервной копии."
         )
-    
+
     elif error_type == "docstring":
         return (
             f"Рефакторинг не выполнен{file_info}: потеря докстрингов.\n"
             f"Детали: {error_details}\n"
             f"Файл восстановлен из резервной копии."
         )
-    
+
     else:
         return f"Рефакторинг не выполнен{file_info}: {error_details}"
 
 
-class ClassSplitter:
-    """Class for splitting classes into smaller components."""
+class BaseRefactorer:
+    """Base class with common functionality."""
 
     def __init__(self, file_path: Path) -> None:
         """Initialize class splitter."""
@@ -129,57 +133,170 @@ class ClassSplitter:
         self.original_content: str = ""
         self.tree: Optional[ast.Module] = None
 
+    def _extract_method_code(self, method_node: Any, indent: str) -> str:
+        """
+        Extract method code as string with proper indentation using AST unparse.
+        
+        Comments are preserved as string expressions in AST and converted back
+        to comments in the output. Docstrings are also preserved.
+        
+        Args:
+            method_node: AST node of the method (FunctionDef or AsyncFunctionDef)
+            indent: Base indentation string (e.g., "    " for 4 spaces)
+            
+        Returns:
+            Method code as string with proper indentation
+        """
+        try:
+            # Use ast.unparse() to restore code from AST node
+            # This is more reliable than string manipulation
+            unparsed = ast.unparse(method_node)
+            
+            # Convert comment strings back to comments
+            # Comments in AST are stored as ast.Expr(ast.Constant(value="# comment"))
+            # which unparse converts to '"# comment"' (string literal)
+            # We need to convert them back to # comment
+            lines = unparsed.split("\n")
+            adjusted_lines = []
+            for line in lines:
+                # Check if line is a comment string (starts with quote and contains #)
+                stripped = line.strip()
+                if (stripped.startswith('"') or stripped.startswith("'")) and "#" in stripped:
+                    # Try to extract comment from string literal
+                    # Pattern: '"# comment"' or "'# comment'"
+                    try:
+                        # Remove quotes and convert to comment
+                        if stripped.startswith('"""') or stripped.startswith("'''"):
+                            # Multi-line string, skip for now
+                            adjusted_lines.append(line)
+                        elif stripped.startswith('"') and stripped.endswith('"'):
+                            comment = stripped[1:-1]  # Remove quotes
+                            if comment.startswith("#"):
+                                # Convert to actual comment
+                                line_indent = len(line) - len(line.lstrip())
+                                adjusted_lines.append(" " * line_indent + comment)
+                            else:
+                                adjusted_lines.append(line)
+                        elif stripped.startswith("'") and stripped.endswith("'"):
+                            comment = stripped[1:-1]  # Remove quotes
+                            if comment.startswith("#"):
+                                # Convert to actual comment
+                                line_indent = len(line) - len(line.lstrip())
+                                adjusted_lines.append(" " * line_indent + comment)
+                            else:
+                                adjusted_lines.append(line)
+                        else:
+                            adjusted_lines.append(line)
+                    except Exception:
+                        adjusted_lines.append(line)
+                else:
+                    adjusted_lines.append(line)
+            
+            # Adjust indentation
+            if not adjusted_lines:
+                return ""
+            
+            # Find the base indentation of the first line (usually 0 for top-level)
+            first_line = adjusted_lines[0]
+            base_indent = len(first_line) - len(first_line.lstrip())
+            
+            # Adjust indentation: remove base indent and add target indent
+            final_lines = []
+            for line in adjusted_lines:
+                if line.strip():
+                    # Remove original base indent and add target indent
+                    line_without_base = line[base_indent:] if len(line) > base_indent else line.lstrip()
+                    final_lines.append(indent + line_without_base)
+                else:
+                    # Preserve empty lines
+                    final_lines.append("")
+            
+            result = "\n".join(final_lines)
+            return result if result.strip() else ""
+            
+        except Exception as e:
+            # Fallback to original string-based method if unparse fails
+            logger.warning(f"ast.unparse() failed, falling back to string extraction: {e}")
+            # Get method lines from original content
+            lines = self.original_content.split("\n")
+            method_start_line = method_node.lineno - 1
+
+            # Find method end - use end_lineno if available
+            if hasattr(method_node, "end_lineno") and method_node.end_lineno:
+                method_end = method_node.end_lineno
+            else:
+                # Fallback: find next statement at same or less indentation
+                method_indent = len(lines[method_start_line]) - len(
+                    lines[method_start_line].lstrip()
+                )
+                method_end = method_start_line + 1
+                for i in range(method_start_line + 1, len(lines)):
+                    line = lines[i]
+                    if line.strip() and not line.strip().startswith("#"):
+                        line_indent = len(line) - len(line.lstrip())
+                        if line_indent <= method_indent:
+                            method_end = i
+                            break
+                    method_end = i + 1
+
+            method_lines = lines[method_start_line:method_end]
+
+            # Adjust indentation
+            if method_lines:
+                # Find first non-empty line for base indent
+                original_indent = 0
+                for line in method_lines:
+                    if line.strip():
+                        original_indent = len(line) - len(line.lstrip())
+                        break
+
+                adjusted_lines = []
+                for line in method_lines:
+                    if line.strip():
+                        current_indent = len(line) - len(line.lstrip())
+                        indent_diff = current_indent - original_indent
+                        new_indent = indent + " " * indent_diff
+                        adjusted_lines.append(new_indent + line.lstrip())
+                    else:
+                        adjusted_lines.append("")
+
+                result = "\n".join(adjusted_lines)
+                if result.strip():
+                    return result
+            return ""
+
+    def _find_class_end(self, class_node: ast.ClassDef, lines: List[str]) -> int:
+        """Find the end line of a class definition."""
+        # Find the last line of the class body
+        if class_node.body:
+            last_stmt = class_node.body[-1]
+            # Get the end line of the last statement
+            if hasattr(last_stmt, "end_lineno") and last_stmt.end_lineno:
+                return last_stmt.end_lineno
+            else:
+                # Fallback: find next class/function at same or less indentation
+                class_indent = len(lines[class_node.lineno - 1]) - len(
+                    lines[class_node.lineno - 1].lstrip()
+                )
+                for i in range(last_stmt.lineno, len(lines)):
+                    line = lines[i]
+                    if line.strip() and not line.strip().startswith("#"):
+                        indent = len(line) - len(line.lstrip())
+                        if indent <= class_indent:
+                            return i
+                return len(lines)
+        return class_node.lineno
+
     def create_backup(self) -> Path:
         """Create backup copy of the file."""
         backup_dir = self.file_path.parent / ".code_mapper_backups"
         backup_dir.mkdir(exist_ok=True)
         timestamp = int(Path(self.file_path).stat().st_mtime)
-        backup_path = (
-            backup_dir / f"{self.file_path.stem}_{timestamp}.py.backup"
-        )
+        backup_path = backup_dir / f"{self.file_path.stem}_{timestamp}.py.backup"
         shutil.copy2(self.file_path, backup_path)
         self.backup_path = backup_path
         logger.info(f"Backup created: {backup_path}")
         return backup_path
-
-    def restore_backup(self) -> None:
-        """Restore file from backup."""
-        if self.backup_path and self.backup_path.exists():
-            shutil.copy2(self.backup_path, self.file_path)
-            logger.info(f"File restored from backup: {self.backup_path}")
-
-    def load_file(self) -> None:
-        """Load and parse file content."""
-        with open(self.file_path, "r", encoding="utf-8") as f:
-            self.original_content = f.read()
-        self.tree = ast.parse(
-            self.original_content, filename=str(self.file_path)
-        )
-
-    def find_class(self, class_name: str) -> Optional[ast.ClassDef]:
-        """Find class definition in AST."""
-        if not self.tree:
-            return None
-        for node in ast.walk(self.tree):
-            if isinstance(node, ast.ClassDef) and node.name == class_name:
-                return node
-        return None
-
-    def extract_class_members(self, class_node: ast.ClassDef) -> Dict[str, List[Any]]:
-        """Extract all properties and methods from class."""
-        members: Dict[str, List[Any]] = {
-            "properties": [],
-            "methods": [],
-            "nested_classes": [],
-        }
-
-        for item in class_node.body:
-            if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                members["methods"].append(item)
-            elif isinstance(item, ast.ClassDef):
-                members["nested_classes"].append(item)
-
-        return members
 
     def extract_init_properties(self, class_node: ast.ClassDef) -> List[str]:
         """Extract properties initialized in __init__."""
@@ -205,6 +322,179 @@ class ClassSplitter:
                             ):
                                 properties.append(stmt.target.attr)
         return properties
+
+    def find_class(self, class_name: str) -> Optional[ast.ClassDef]:
+        """Find class definition in AST."""
+        if not self.tree:
+            return None
+        for node in ast.walk(self.tree):
+            if isinstance(node, ast.ClassDef) and node.name == class_name:
+                return node
+        return None
+
+    def _parse_with_comments(self, source: str) -> ast.Module:
+        """
+        Parse Python code and preserve comments as string expressions in AST.
+        
+        Comments are added as ast.Expr(ast.Constant(value="# comment")) nodes
+        before the statements they precede.
+        
+        Args:
+            source: Python source code string
+            
+        Returns:
+            AST module with comments preserved as string expressions
+        """
+        # First, parse normally
+        tree = ast.parse(source, filename=str(self.file_path))
+        
+        # Extract comments using tokenize
+        comments_map: Dict[int, List[Tuple[int, str]]] = {}  # line_number -> [(col, comment)]
+        try:
+            tokens = list(tokenize.generate_tokens(io.StringIO(source).readline))
+            for token in tokens:
+                if token.type == tokenize.COMMENT:
+                    line_num = token.start[0]
+                    col = token.start[1]
+                    comment_text = token.string.strip()
+                    if line_num not in comments_map:
+                        comments_map[line_num] = []
+                    comments_map[line_num].append((col, comment_text))
+        except Exception as e:
+            logger.warning(f"Failed to extract comments: {e}")
+            return tree
+        
+        # Add comments to AST as string expressions
+        def add_comments_to_node(node: ast.AST, parent_body: List[ast.stmt]) -> None:
+            """Recursively add comments to AST nodes."""
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                # Add comments before this node
+                node_line = node.lineno
+                if node_line in comments_map:
+                    # Find position in parent body
+                    try:
+                        node_idx = parent_body.index(node)
+                    except ValueError:
+                        return
+                    
+                    # Add comments before this node
+                    for col, comment_text in sorted(comments_map[node_line], reverse=True):
+                        # Only add if comment is before the node definition
+                        if col < node.col_offset:
+                            comment_node = ast.Expr(ast.Constant(value=comment_text))
+                            comment_node.lineno = node_line
+                            comment_node.col_offset = col
+                            parent_body.insert(node_idx, comment_node)
+                    
+                    # Remove from map to avoid duplicates
+                    del comments_map[node_line]
+                
+                # Process body recursively
+                if hasattr(node, 'body') and isinstance(node.body, list):
+                    for i, child in enumerate(node.body[:]):
+                        add_comments_to_node(child, node.body)
+            
+            elif isinstance(node, ast.stmt):
+                # Add comments before this statement
+                node_line = node.lineno
+                if node_line in comments_map:
+                    try:
+                        node_idx = parent_body.index(node)
+                    except ValueError:
+                        return
+                    
+                    for col, comment_text in sorted(comments_map[node_line], reverse=True):
+                        if col < getattr(node, 'col_offset', 0):
+                            comment_node = ast.Expr(ast.Constant(value=comment_text))
+                            comment_node.lineno = node_line
+                            comment_node.col_offset = col
+                            parent_body.insert(node_idx, comment_node)
+                    
+                    del comments_map[node_line]
+        
+        # Process all nodes in the tree
+        for node in tree.body:
+            add_comments_to_node(node, tree.body)
+        
+        return tree
+
+    def load_file(self) -> None:
+        """Load and parse file content with comments preserved."""
+        with open(self.file_path, "r", encoding="utf-8") as f:
+            self.original_content = f.read()
+        self.tree = self._parse_with_comments(self.original_content)
+
+    def restore_backup(self) -> None:
+        """Restore file from backup."""
+        if self.backup_path and self.backup_path.exists():
+            shutil.copy2(self.backup_path, self.file_path)
+            logger.info(f"File restored from backup: {self.backup_path}")
+
+    def validate_imports(self) -> tuple[bool, Optional[str]]:
+        """Try to import the modified module."""
+        try:
+            # Create temporary file with modified content
+            with tempfile.NamedTemporaryFile(
+                mode="w", suffix=".py", delete=False
+            ) as temp_file:
+                shutil.copy2(self.file_path, temp_file.name)
+
+                # Try to import
+                import sys
+
+                sys.path.insert(0, str(self.file_path.parent))
+                module_name = self.file_path.stem
+                try:
+                    if module_name in sys.modules:
+                        del sys.modules[module_name]
+                    __import__(module_name)
+                    return True, None
+                except ImportError as e:
+                    return False, str(e)
+                finally:
+                    sys.path.remove(str(self.file_path.parent))
+                    if module_name in sys.modules:
+                        del sys.modules[module_name]
+
+        except Exception as e:
+            return False, str(e)
+
+    def validate_python_syntax(self) -> tuple[bool, Optional[str]]:
+        """Validate Python syntax of modified file."""
+        try:
+            result = subprocess.run(
+                ["python", "-m", "py_compile", str(self.file_path)],
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+            if result.returncode != 0:
+                return False, result.stderr
+            return True, None
+        except subprocess.TimeoutExpired:
+            return False, "Syntax validation timeout"
+        except Exception as e:
+            return False, str(e)
+
+
+class ClassSplitter(BaseRefactorer):
+    """Class for splitting classes into smaller components."""
+
+    def extract_class_members(self, class_node: ast.ClassDef) -> Dict[str, List[Any]]:
+        """Extract all properties and methods from class."""
+        members: Dict[str, List[Any]] = {
+            "properties": [],
+            "methods": [],
+            "nested_classes": [],
+        }
+
+        for item in class_node.body:
+            if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                members["methods"].append(item)
+            elif isinstance(item, ast.ClassDef):
+                members["nested_classes"].append(item)
+
+        return members
 
     def validate_split_config(
         self, src_class: ast.ClassDef, config: Dict[str, Any]
@@ -254,13 +544,15 @@ class ClassSplitter:
 
         return len(errors) == 0, errors
 
-    def preview_split(self, config: Dict[str, Any]) -> tuple[bool, Optional[str], Optional[str]]:
+    def preview_split(
+        self, config: Dict[str, Any]
+    ) -> tuple[bool, Optional[str], Optional[str]]:
         """
         Preview split without making changes.
-        
+
         Args:
             config: Split configuration
-            
+
         Returns:
             Tuple of (success, error_message, preview_content)
         """
@@ -281,20 +573,20 @@ class ClassSplitter:
             is_valid, errors = self.validate_split_config(src_class, config)
             if not is_valid:
                 error_msg = format_error_message(
-                    "config_validation",
-                    "; ".join(errors),
-                    self.file_path
+                    "config_validation", "; ".join(errors), self.file_path
                 )
                 return False, error_msg, None
 
             # Perform split to get preview
             new_content = self._perform_split(src_class, config)
-            
+
             # Format preview with black (in memory)
-            with tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False) as tmp_file:
+            with tempfile.NamedTemporaryFile(
+                mode="w", suffix=".py", delete=False
+            ) as tmp_file:
                 tmp_path = Path(tmp_file.name)
                 tmp_file.write(new_content)
-            
+
             try:
                 format_success, _ = format_code_with_black(tmp_path)
                 if format_success:
@@ -303,7 +595,7 @@ class ClassSplitter:
                     formatted_content = new_content
             finally:
                 tmp_path.unlink()
-            
+
             return True, None, formatted_content
 
         except Exception as e:
@@ -340,9 +632,7 @@ class ClassSplitter:
             is_valid, errors = self.validate_split_config(src_class, config)
             if not is_valid:
                 error_msg = format_error_message(
-                    "config_validation",
-                    "; ".join(errors),
-                    self.file_path
+                    "config_validation", "; ".join(errors), self.file_path
                 )
                 return False, error_msg
 
@@ -373,23 +663,20 @@ class ClassSplitter:
                 # Restore backup
                 self.restore_backup()
                 formatted_error = format_error_message(
-                    "completeness",
-                    completeness_error,
-                    self.file_path
+                    "completeness", completeness_error, self.file_path
                 )
                 return False, formatted_error
 
             # Validate that all docstrings are preserved
             is_docstrings_valid, docstrings_error = self.validate_docstrings(
-                src_class, config,
+                src_class,
+                config,
             )
             if not is_docstrings_valid:
                 # Restore backup
                 self.restore_backup()
                 formatted_error = format_error_message(
-                    "docstring",
-                    docstrings_error,
-                    self.file_path
+                    "docstring", docstrings_error, self.file_path
                 )
                 return False, formatted_error
 
@@ -466,28 +753,6 @@ class ClassSplitter:
 
         return "\n".join(result_lines)
 
-    def _find_class_end(self, class_node: ast.ClassDef, lines: List[str]) -> int:
-        """Find the end line of a class definition."""
-        # Find the last line of the class body
-        if class_node.body:
-            last_stmt = class_node.body[-1]
-            # Get the end line of the last statement
-            if hasattr(last_stmt, "end_lineno") and last_stmt.end_lineno:
-                return last_stmt.end_lineno
-            else:
-                # Fallback: find next class/function at same or less indentation
-                class_indent = len(lines[class_node.lineno - 1]) - len(
-                    lines[class_node.lineno - 1].lstrip()
-                )
-                for i in range(last_stmt.lineno, len(lines)):
-                    line = lines[i]
-                    if line.strip() and not line.strip().startswith("#"):
-                        indent = len(line) - len(line.lstrip())
-                        if indent <= class_indent:
-                            return i
-                return len(lines)
-        return class_node.lineno
-
     def _get_indent(self, line: str) -> int:
         """Get indentation level of a line."""
         return len(line) - len(line.lstrip())
@@ -551,79 +816,6 @@ class ClassSplitter:
                 return item
         return None
 
-    def _extract_method_code(self, method_node: Any, indent: str) -> str:
-        """Extract method code as string with proper indentation, including comments."""
-        # Get method lines from original content
-        lines = self.original_content.split("\n")
-        method_start_line = method_node.lineno - 1
-
-        # Find method end - use end_lineno if available,
-        # otherwise find by indentation
-        if hasattr(method_node, "end_lineno") and method_node.end_lineno:
-            method_end = method_node.end_lineno
-        else:
-            # Fallback: find next statement at same or less indentation
-            method_indent = len(lines[method_start_line]) - len(lines[method_start_line].lstrip())
-            method_end = method_start_line + 1
-            for i in range(method_start_line + 1, len(lines)):
-                line = lines[i]
-                if line.strip() and not line.strip().startswith("#"):
-                    line_indent = len(line) - len(line.lstrip())
-                    if line_indent <= method_indent:
-                        method_end = i
-                        break
-                method_end = i + 1
-
-        # Find comments before method (on same or higher indentation level)
-        # Look backwards from method start to find preceding comments
-        method_indent = len(lines[method_start_line]) - len(lines[method_start_line].lstrip())
-        actual_start = method_start_line
-        
-        # Look backwards for comments and empty lines
-        for i in range(method_start_line - 1, -1, -1):
-            line = lines[i]
-            if not line.strip():
-                # Empty line - continue looking
-                continue
-            elif line.strip().startswith("#"):
-                # Comment line - check if it's at same or less indentation
-                comment_indent = len(line) - len(line.lstrip())
-                if comment_indent <= method_indent:
-                    # This comment belongs to the method
-                    actual_start = i
-                else:
-                    # Comment is more indented, might be part of previous method
-                    break
-            else:
-                # Non-comment, non-empty line - stop here
-                break
-
-        method_lines = lines[actual_start:method_end]
-
-        # Adjust indentation
-        if method_lines:
-            # Find first non-empty line for base indent
-            original_indent = 0
-            for line in method_lines:
-                if line.strip():
-                    original_indent = len(line) - len(line.lstrip())
-                    break
-
-            adjusted_lines = []
-            for line in method_lines:
-                if line.strip():
-                    current_indent = len(line) - len(line.lstrip())
-                    indent_diff = current_indent - original_indent
-                    new_indent = indent + " " * indent_diff
-                    adjusted_lines.append(new_indent + line.lstrip())
-                else:
-                    adjusted_lines.append("")
-
-            result = "\n".join(adjusted_lines)
-            if result.strip():
-                return result
-        return ""
-
     def _build_modified_source_class(
         self,
         src_class: ast.ClassDef,
@@ -657,10 +849,12 @@ class ClassSplitter:
         # Initialize property references
         for dst_class_name, props in prop_groups.items():
             # Convert class name to instance variable name (camelCase)
-            instance_name = dst_class_name[0].lower() + dst_class_name[1:] if dst_class_name else dst_class_name.lower()
-            lines.append(
-                f"{init_indent}self.{instance_name} = {dst_class_name}()"
+            instance_name = (
+                dst_class_name[0].lower() + dst_class_name[1:]
+                if dst_class_name
+                else dst_class_name.lower()
             )
+            lines.append(f"{init_indent}self.{instance_name} = {dst_class_name}()")
             init_has_body = True
 
         # Add remaining properties (not in any dst class)
@@ -747,7 +941,11 @@ class ClassSplitter:
 
             args_str = ", ".join(["self"] + args)
             # Convert class name to instance variable name (camelCase)
-            dst_var = dst_class_name[0].lower() + dst_class_name[1:] if dst_class_name else dst_class_name.lower()
+            dst_var = (
+                dst_class_name[0].lower() + dst_class_name[1:]
+                if dst_class_name
+                else dst_class_name.lower()
+            )
 
             # Build call arguments
             call_args = ", ".join(args) if args else ""
@@ -763,52 +961,6 @@ class ClassSplitter:
 
             return "\n".join(wrapper_lines)
         return ""
-
-    def validate_python_syntax(self) -> tuple[bool, Optional[str]]:
-        """Validate Python syntax of modified file."""
-        try:
-            result = subprocess.run(
-                ["python", "-m", "py_compile", str(self.file_path)],
-                capture_output=True,
-                text=True,
-                timeout=10,
-            )
-            if result.returncode != 0:
-                return False, result.stderr
-            return True, None
-        except subprocess.TimeoutExpired:
-            return False, "Syntax validation timeout"
-        except Exception as e:
-            return False, str(e)
-
-    def validate_imports(self) -> tuple[bool, Optional[str]]:
-        """Try to import the modified module."""
-        try:
-            # Create temporary file with modified content
-            with tempfile.NamedTemporaryFile(
-                mode="w", suffix=".py", delete=False
-            ) as temp_file:
-                shutil.copy2(self.file_path, temp_file.name)
-
-                # Try to import
-                import sys
-
-                sys.path.insert(0, str(self.file_path.parent))
-                module_name = self.file_path.stem
-                try:
-                    if module_name in sys.modules:
-                        del sys.modules[module_name]
-                    __import__(module_name)
-                    return True, None
-                except ImportError as e:
-                    return False, str(e)
-                finally:
-                    sys.path.remove(str(self.file_path.parent))
-                    if module_name in sys.modules:
-                        del sys.modules[module_name]
-
-        except Exception as e:
-            return False, str(e)
 
     def validate_completeness(
         self,
@@ -932,7 +1084,7 @@ class ClassSplitter:
 
             # Get source class docstring
             src_class_docstring = ast.get_docstring(src_class)
-            
+
             # Get all method docstrings from source class
             src_method_docstrings = {}
             for item in src_class.body:
@@ -955,10 +1107,13 @@ class ClassSplitter:
                 found_in_dst = False
                 for dst_class_name, dst_class_node in dst_classes.items():
                     dst_docstring = ast.get_docstring(dst_class_node)
-                    if dst_docstring and dst_docstring.strip() == src_class_docstring.strip():
+                    if (
+                        dst_docstring
+                        and dst_docstring.strip() == src_class_docstring.strip()
+                    ):
                         found_in_dst = True
                         break
-                
+
                 if not found_in_dst:
                     return False, (
                         f"Class docstring not found in destination classes. "
@@ -975,13 +1130,13 @@ class ClassSplitter:
                 if method_name in method_mapping:
                     dst_class_name = method_mapping[method_name]
                     dst_class_node = dst_classes.get(dst_class_name)
-                    
+
                     if not dst_class_node:
                         return False, (
                             f"Destination class '{dst_class_name}' not found "
                             f"for method '{method_name}'"
                         )
-                    
+
                     # Find method in destination class
                     method_found = False
                     for item in dst_class_node.body:
@@ -1005,7 +1160,7 @@ class ClassSplitter:
                                 )
                             method_found = True
                             break
-                    
+
                     if not method_found:
                         return False, (
                             f"Method '{method_name}' not found "
@@ -1018,53 +1173,8 @@ class ClassSplitter:
             return False, f"Error during docstring validation: {str(e)}"
 
 
-class SuperclassExtractor:
+class SuperclassExtractor(BaseRefactorer):
     """Class for extracting common functionality into base class."""
-
-    def __init__(self, file_path: Path) -> None:
-        """Initialize superclass extractor."""
-        self.file_path = Path(file_path)
-        if not self.file_path.exists():
-            raise FileNotFoundError(f"File not found: {file_path}")
-        self.backup_path: Optional[Path] = None
-        self.original_content: str = ""
-        self.tree: Optional[ast.Module] = None
-
-    def create_backup(self) -> Path:
-        """Create backup copy of the file."""
-        backup_dir = self.file_path.parent / ".code_mapper_backups"
-        backup_dir.mkdir(exist_ok=True)
-        timestamp = int(Path(self.file_path).stat().st_mtime)
-        backup_path = (
-            backup_dir / f"{self.file_path.stem}_{timestamp}.py.backup"
-        )
-        shutil.copy2(self.file_path, backup_path)
-        self.backup_path = backup_path
-        logger.info(f"Backup created: {backup_path}")
-        return backup_path
-
-    def restore_backup(self) -> None:
-        """Restore file from backup."""
-        if self.backup_path and self.backup_path.exists():
-            shutil.copy2(self.backup_path, self.file_path)
-            logger.info(f"File restored from backup: {self.backup_path}")
-
-    def load_file(self) -> None:
-        """Load and parse file content."""
-        with open(self.file_path, "r", encoding="utf-8") as f:
-            self.original_content = f.read()
-        self.tree = ast.parse(
-            self.original_content, filename=str(self.file_path)
-        )
-
-    def find_class(self, class_name: str) -> Optional[ast.ClassDef]:
-        """Find class definition in AST."""
-        if not self.tree:
-            return None
-        for node in ast.walk(self.tree):
-            if isinstance(node, ast.ClassDef) and node.name == class_name:
-                return node
-        return None
 
     def get_class_bases(self, class_node: ast.ClassDef) -> List[str]:
         """Get list of base class names."""
@@ -1176,31 +1286,6 @@ class SuperclassExtractor:
                 return method_node.returns.id
         return None
 
-    def extract_init_properties(self, class_node: ast.ClassDef) -> List[str]:
-        """Extract properties initialized in __init__."""
-        properties = []
-        for item in class_node.body:
-            if isinstance(item, ast.FunctionDef) and item.name == "__init__":
-                for stmt in item.body:
-                    # Handle regular assignments: self.attr = value
-                    if isinstance(stmt, ast.Assign):
-                        for target in stmt.targets:
-                            if isinstance(target, ast.Attribute):
-                                if (
-                                    isinstance(target.value, ast.Name)
-                                    and target.value.id == "self"
-                                ):
-                                    properties.append(target.attr)
-                    # Handle annotated assignments: self.attr: Type = value
-                    elif isinstance(stmt, ast.AnnAssign):
-                        if isinstance(stmt.target, ast.Attribute):
-                            if (
-                                isinstance(stmt.target.value, ast.Name)
-                                and stmt.target.value.id == "self"
-                            ):
-                                properties.append(stmt.target.attr)
-        return properties
-
     def validate_config(self, config: Dict[str, Any]) -> tuple[bool, List[str]]:
         """Validate extraction configuration."""
         errors = []
@@ -1228,13 +1313,15 @@ class SuperclassExtractor:
 
         return len(errors) == 0, errors
 
-    def preview_extraction(self, config: Dict[str, Any]) -> tuple[bool, Optional[str], Optional[str]]:
+    def preview_extraction(
+        self, config: Dict[str, Any]
+    ) -> tuple[bool, Optional[str], Optional[str]]:
         """
         Preview extraction without making changes.
-        
+
         Args:
             config: Extraction configuration
-            
+
         Returns:
             Tuple of (success, error_message, preview_content)
         """
@@ -1246,9 +1333,7 @@ class SuperclassExtractor:
             is_valid, errors = self.validate_config(config)
             if not is_valid:
                 error_msg = format_error_message(
-                    "config_validation",
-                    "; ".join(errors),
-                    self.file_path
+                    "config_validation", "; ".join(errors), self.file_path
                 )
                 return False, error_msg, None
 
@@ -1285,12 +1370,14 @@ class SuperclassExtractor:
 
             # Perform extraction to get preview
             new_content = self._perform_extraction(config, child_nodes)
-            
+
             # Format preview with black (in memory)
-            with tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False) as tmp_file:
+            with tempfile.NamedTemporaryFile(
+                mode="w", suffix=".py", delete=False
+            ) as tmp_file:
                 tmp_path = Path(tmp_file.name)
                 tmp_file.write(new_content)
-            
+
             try:
                 format_success, _ = format_code_with_black(tmp_path)
                 if format_success:
@@ -1299,7 +1386,7 @@ class SuperclassExtractor:
                     formatted_content = new_content
             finally:
                 tmp_path.unlink()
-            
+
             return True, None, formatted_content
 
         except Exception as e:
@@ -1320,9 +1407,7 @@ class SuperclassExtractor:
             is_valid, errors = self.validate_config(config)
             if not is_valid:
                 error_msg = format_error_message(
-                    "config_validation",
-                    "; ".join(errors),
-                    self.file_path
+                    "config_validation", "; ".join(errors), self.file_path
                 )
                 return False, error_msg
 
@@ -1378,9 +1463,7 @@ class SuperclassExtractor:
                 # Restore backup
                 self.restore_backup()
                 formatted_error = format_error_message(
-                    "python_syntax",
-                    error_msg,
-                    self.file_path
+                    "python_syntax", error_msg, self.file_path
                 )
                 return False, formatted_error
 
@@ -1392,9 +1475,7 @@ class SuperclassExtractor:
                 # Restore backup
                 self.restore_backup()
                 formatted_error = format_error_message(
-                    "completeness",
-                    completeness_error,
-                    self.file_path
+                    "completeness", completeness_error, self.file_path
                 )
                 return False, formatted_error
 
@@ -1406,9 +1487,7 @@ class SuperclassExtractor:
                 # Restore backup
                 self.restore_backup()
                 formatted_error = format_error_message(
-                    "docstring",
-                    docstrings_error,
-                    self.file_path
+                    "docstring", docstrings_error, self.file_path
                 )
                 return False, formatted_error
 
@@ -1479,26 +1558,36 @@ class SuperclassExtractor:
             )
 
             child_updates.append((child_start, child_end, updated_child))
-        
+
         # Apply updates in reverse order
-        for child_start, child_end, updated_child in sorted(child_updates, reverse=True):
-            # Replace in lines
-            updated_lines[child_start:child_end] = [updated_child]
+        for child_start, child_end, updated_child in sorted(
+            child_updates, reverse=True
+        ):
+            # Replace in lines - split string into lines
+            updated_child_lines = updated_child.split("\n")
+            updated_lines[child_start:child_end] = updated_child_lines
 
         # Insert base class before first child class
         first_child_pos = min(class_positions.values())
-        updated_lines.insert(first_child_pos, base_class_code)
+        base_class_lines = base_class_code.split("\n")
+        # Insert lines in correct order (insert in reverse to preserve positions)
+        for line in reversed(base_class_lines):
+            updated_lines.insert(first_child_pos, line)
 
         # Add ABC import if needed and not present
         if abstract_methods and not has_abc_import:
             # Find last import line
             last_import = -1
             for i, line in enumerate(updated_lines):
-                if line.strip().startswith("import ") or line.strip().startswith("from "):
+                if line.strip().startswith("import ") or line.strip().startswith(
+                    "from "
+                ):
                     last_import = i
             # Insert after last import
             if last_import >= 0:
-                updated_lines.insert(last_import + 1, "from abc import ABC, abstractmethod")
+                updated_lines.insert(
+                    last_import + 1, "from abc import ABC, abstractmethod"
+                )
             else:
                 updated_lines.insert(0, "from abc import ABC, abstractmethod")
 
@@ -1571,12 +1660,19 @@ class SuperclassExtractor:
         lines: List[str],
     ) -> str:
         """Update child class to inherit from base and remove extracted members."""
-        child_start = child_node.lineno - 1
-        child_end = self._find_class_end(child_node, lines)
-        child_lines = lines[child_start:child_end]
+        # Use AST node directly instead of parsing strings
+        # This is more reliable for large classes
 
         # Update class definition to inherit from base
-        class_line = child_lines[0]
+        # Get class line from original content
+        class_start_line = child_node.lineno - 1
+        class_line = (
+            lines[class_start_line]
+            if class_start_line < len(lines)
+            else f"class {child_node.name}:"
+        )
+
+        # Update class definition line
         if "(" in class_line:
             # Already has bases, add to them
             class_line = class_line.replace("(", f"({base_class_name}, ")
@@ -1589,226 +1685,43 @@ class SuperclassExtractor:
         extracted_props = set(child_config.get("properties", []))
         extracted_props.update(child_config.get("props", []))
 
-        # Parse to find method boundaries
-        child_tree = ast.parse("\n".join(child_lines))
-        child_ast = child_tree.body[0] if child_tree.body else None
-        
+        # Use child_node directly (it's already an AST node)
+        child_ast = child_node
+
         if not child_ast:
             return class_line + "\n    pass\n"
 
         # Build result by including non-extracted items
         result_lines = [class_line]
-        
+
         # Add docstring if present
         if child_ast.body and isinstance(child_ast.body[0], ast.Expr):
             docstring = ast.get_docstring(child_ast)
             if docstring:
                 result_lines.append(f'    """{docstring}"""')
-        
+
         # Process each body item
         for item in child_ast.body:
             if isinstance(item, ast.Expr):
                 # Docstring already handled
                 continue
             elif isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                if item.name == "__init__":
-                    # Keep __init__ but remove extracted properties
-                    method_code = self._extract_method_code(item, "    ")
-                    if method_code.strip():
-                        # Remove lines with extracted properties
-                        method_lines = method_code.split("\n")
-                        filtered_lines = []
-                        def_line_found = False
-                        for line in method_lines:
-                            if "def __init__" in line:
-                                def_line_found = True
-                                filtered_lines.append(line)
-                                continue
-                            # Check if line assigns extracted property
-                            should_skip = False
-                            if "self." in line and "=" in line:
-                                for prop in extracted_props:
-                                    # Check if this line assigns self.prop
-                                    # Look for pattern: self.prop = ... (with proper spacing)
-                                    stripped = line.strip()
-                                    # Match: self.prop = or self.prop=
-                                    prop_pattern = f"self.{prop}"
-                                    if stripped.startswith(prop_pattern):
-                                        # Check what comes after prop name
-                                        after_prop = stripped[len(prop_pattern):].lstrip()
-                                        if after_prop.startswith("="):
-                                            should_skip = True
-                                            break
-                            if not should_skip:
-                                filtered_lines.append(line)
-                        
-                        # Ensure __init__ has at least pass if empty body
-                        # Check if there's any body after def line
-                        has_body = False
-                        for line in filtered_lines:
-                            if "def __init__" in line:
-                                continue
-                            if line.strip() and not line.strip().startswith('"""'):
-                                has_body = True
-                                break
-                        
-                        if not has_body and def_line_found:
-                            # Add pass after def line
-                            for i, line in enumerate(filtered_lines):
-                                if "def __init__" in line:
-                                    # Calculate proper indent for pass
-                                    def_indent = len(line) - len(line.lstrip())
-                                    pass_indent = " " * (def_indent + 4)
-                                    # Insert pass right after def line
-                                    # Make sure we don't insert in the middle of a multi-line def
-                                    insert_pos = i + 1
-                                    # Skip any docstring or empty lines immediately after def
-                                    while insert_pos < len(filtered_lines) and (
-                                        not filtered_lines[insert_pos].strip() or
-                                        filtered_lines[insert_pos].strip().startswith('"""')
-                                    ):
-                                        insert_pos += 1
-                                    filtered_lines.insert(insert_pos, f"{pass_indent}pass")
-                                    break
-                        
-                        if filtered_lines:
-                            result_lines.append("\n".join(filtered_lines))
-                elif item.name not in extracted_methods:
-                    # Include this method
-                    method_code = self._extract_method_code(item, "    ")
-                    if method_code.strip():
-                        result_lines.append(method_code)
+                # Skip methods that are extracted to base class
+                if item.name in extracted_methods:
+                    continue
+
+                # Include this method (not extracted)
+                method_code = self._extract_method_code(item, "    ")
+                if method_code.strip():
+                    result_lines.append(method_code)
 
         # Ensure class has at least pass if empty
-        if len(result_lines) == 1 or (len(result_lines) == 2 and result_lines[1].strip().startswith('"""')):
+        if len(result_lines) == 1 or (
+            len(result_lines) == 2 and result_lines[1].strip().startswith('"""')
+        ):
             result_lines.append("    pass")
 
         return "\n".join(result_lines)
-
-
-    def _extract_method_code(self, method_node: Any, indent: str) -> str:
-        """Extract method code as string with proper indentation, including comments."""
-        lines = self.original_content.split("\n")
-        method_start_line = method_node.lineno - 1
-
-        # Find method end - use end_lineno if available,
-        # otherwise find by indentation
-        if hasattr(method_node, "end_lineno") and method_node.end_lineno:
-            method_end = method_node.end_lineno
-        else:
-            # Fallback: find next statement at same or less indentation
-            method_indent = len(lines[method_start_line]) - len(lines[method_start_line].lstrip())
-            method_end = method_start_line + 1
-            for i in range(method_start_line + 1, len(lines)):
-                line = lines[i]
-                if line.strip() and not line.strip().startswith("#"):
-                    line_indent = len(line) - len(line.lstrip())
-                    if line_indent <= method_indent:
-                        method_end = i
-                        break
-                method_end = i + 1
-
-        # Find comments before method (on same or higher indentation level)
-        method_indent = len(lines[method_start_line]) - len(lines[method_start_line].lstrip())
-        actual_start = method_start_line
-        
-        # Look backwards for comments and empty lines
-        for i in range(method_start_line - 1, -1, -1):
-            line = lines[i]
-            if not line.strip():
-                # Empty line - continue looking
-                continue
-            elif line.strip().startswith("#"):
-                # Comment line - check if it's at same or less indentation
-                comment_indent = len(line) - len(line.lstrip())
-                if comment_indent <= method_indent:
-                    # This comment belongs to the method
-                    actual_start = i
-                else:
-                    # Comment is more indented, might be part of previous method
-                    break
-            else:
-                # Non-comment, non-empty line - stop here
-                break
-
-        method_lines = lines[actual_start:method_end]
-
-        if method_lines:
-            # Find first non-empty line for base indent
-            original_indent = 0
-            for line in method_lines:
-                if line.strip():
-                    original_indent = len(line) - len(line.lstrip())
-                    break
-
-            adjusted_lines = []
-            for line in method_lines:
-                if line.strip():
-                    current_indent = len(line) - len(line.lstrip())
-                    new_indent = indent + " " * (current_indent - original_indent)
-                    adjusted_lines.append(new_indent + line.lstrip())
-                else:
-                    adjusted_lines.append("")
-            return "\n".join(adjusted_lines)
-        return ""
-
-    def _find_class_end(self, class_node: ast.ClassDef, lines: List[str]) -> int:
-        """Find the end line of a class definition."""
-        if class_node.body:
-            last_stmt = class_node.body[-1]
-            if hasattr(last_stmt, "end_lineno") and last_stmt.end_lineno:
-                return last_stmt.end_lineno
-            else:
-                class_indent = len(lines[class_node.lineno - 1]) - len(
-                    lines[class_node.lineno - 1].lstrip()
-                )
-                for i in range(last_stmt.lineno, len(lines)):
-                    line = lines[i]
-                    if line.strip() and not line.strip().startswith("#"):
-                        indent = len(line) - len(line.lstrip())
-                        if indent <= class_indent:
-                            return i
-                return len(lines)
-        return class_node.lineno
-
-    def validate_python_syntax(self) -> tuple[bool, Optional[str]]:
-        """Validate Python syntax of modified file."""
-        try:
-            result = subprocess.run(
-                ["python", "-m", "py_compile", str(self.file_path)],
-                capture_output=True,
-                text=True,
-                timeout=10,
-            )
-            if result.returncode != 0:
-                return False, result.stderr
-            return True, None
-        except subprocess.TimeoutExpired:
-            return False, "Syntax validation timeout"
-        except Exception as e:
-            return False, str(e)
-
-    def validate_imports(self) -> tuple[bool, Optional[str]]:
-        """Try to import the modified module."""
-        try:
-            import sys
-
-            sys.path.insert(0, str(self.file_path.parent))
-            module_name = self.file_path.stem
-            try:
-                if module_name in sys.modules:
-                    del sys.modules[module_name]
-                __import__(module_name)
-                return True, None
-            except ImportError as e:
-                return False, str(e)
-            finally:
-                sys.path.remove(str(self.file_path.parent))
-                if module_name in sys.modules:
-                    del sys.modules[module_name]
-
-        except Exception as e:
-            return False, str(e)
 
     def validate_completeness(
         self,
@@ -1895,13 +1808,16 @@ class SuperclassExtractor:
                     break
 
             if not base_class:
-                return False, f"Base class '{base_class_name}' not found after extraction"
+                return (
+                    False,
+                    f"Base class '{base_class_name}' not found after extraction",
+                )
 
             # Check child class docstrings are preserved
             for child_node in child_nodes:
                 child_name = child_node.name
                 child_config = extract_from.get(child_name, {})
-                
+
                 # Find child class in new tree
                 new_child_class = None
                 for node in ast.walk(new_tree):
@@ -1910,7 +1826,10 @@ class SuperclassExtractor:
                         break
 
                 if not new_child_class:
-                    return False, f"Child class '{child_name}' not found after extraction"
+                    return (
+                        False,
+                        f"Child class '{child_name}' not found after extraction",
+                    )
 
                 # Check child class docstring
                 original_child_docstring = ast.get_docstring(child_node)
@@ -1930,6 +1849,16 @@ class SuperclassExtractor:
 
                 # Check method docstrings in base class
                 extracted_methods = set(child_config.get("methods", []))
+
+                # Collect all methods that are extracted from multiple classes
+                # Methods extracted from multiple classes use the first child's implementation
+                all_extracted_methods = set()
+                for cfg in extract_from.values():
+                    all_extracted_methods.update(cfg.get("methods", []))
+
+                # Find first child class (used for method extraction in _build_base_class)
+                first_child = child_nodes[0] if child_nodes else None
+
                 for method_name in extracted_methods:
                     # Find method in original child class
                     original_method = None
@@ -1948,7 +1877,9 @@ class SuperclassExtractor:
                             base_method = None
                             for item in base_class.body:
                                 if (
-                                    isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef))
+                                    isinstance(
+                                        item, (ast.FunctionDef, ast.AsyncFunctionDef)
+                                    )
                                     and item.name == method_name
                                 ):
                                     base_method = item
@@ -1967,13 +1898,51 @@ class SuperclassExtractor:
                                     f"in base class '{base_class_name}'. "
                                     f"Expected: {original_method_docstring[:50]}..."
                                 )
-                            if base_method_docstring.strip() != original_method_docstring.strip():
-                                return False, (
-                                    f"Method '{method_name}' docstring mismatch "
-                                    f"in base class '{base_class_name}'. "
-                                    f"Expected: {original_method_docstring[:50]}..., "
-                                    f"Got: {base_method_docstring[:50]}..."
-                                )
+                            # For methods extracted from multiple classes, check against first class
+                            # (which is used in _build_base_class line 1548)
+                            # For methods from single class, check exact match
+                            if first_child and method_name in all_extracted_methods:
+                                # Find method in first child class (source of base class method)
+                                first_child_method = None
+                                for item in first_child.body:
+                                    if (
+                                        isinstance(
+                                            item,
+                                            (ast.FunctionDef, ast.AsyncFunctionDef),
+                                        )
+                                        and item.name == method_name
+                                    ):
+                                        first_child_method = item
+                                        break
+
+                                if first_child_method:
+                                    first_child_docstring = ast.get_docstring(
+                                        first_child_method
+                                    )
+                                    if first_child_docstring:
+                                        # Base class method should match first child's docstring
+                                        if (
+                                            base_method_docstring.strip()
+                                            != first_child_docstring.strip()
+                                        ):
+                                            return False, (
+                                                f"Method '{method_name}' docstring mismatch "
+                                                f"in base class '{base_class_name}'. "
+                                                f"Expected (from first class '{first_child.name}'): {first_child_docstring[:50]}..., "
+                                                f"Got: {base_method_docstring[:50]}..."
+                                            )
+                            else:
+                                # Single class - exact match required
+                                if (
+                                    base_method_docstring.strip()
+                                    != original_method_docstring.strip()
+                                ):
+                                    return False, (
+                                        f"Method '{method_name}' docstring mismatch "
+                                        f"in base class '{base_class_name}'. "
+                                        f"Expected: {original_method_docstring[:50]}..., "
+                                        f"Got: {base_method_docstring[:50]}..."
+                                    )
 
             return True, None
 
@@ -1981,83 +1950,11 @@ class SuperclassExtractor:
             return False, f"Error during docstring validation: {str(e)}"
 
 
-class ClassMerger:
-    """
-    Class for merging multiple classes into a single base class.
+class ClassMerger(BaseRefactorer):
+    """Class for merging multiple classes into a single base class.
 
     This is the inverse operation of extract-superclass - it combines
-    multiple classes into one base class.
-    """
-
-    def __init__(self, file_path: Path) -> None:
-        """Initialize class merger."""
-        self.file_path = Path(file_path)
-        if not self.file_path.exists():
-            raise FileNotFoundError(f"File not found: {file_path}")
-        self.backup_path: Optional[Path] = None
-        self.original_content: str = ""
-        self.tree: Optional[ast.Module] = None
-
-    def create_backup(self) -> Path:
-        """Create backup copy of the file."""
-        backup_dir = self.file_path.parent / ".code_mapper_backups"
-        backup_dir.mkdir(exist_ok=True)
-        timestamp = int(Path(self.file_path).stat().st_mtime)
-        backup_path = (
-            backup_dir / f"{self.file_path.stem}_{timestamp}.py.backup"
-        )
-        shutil.copy2(self.file_path, backup_path)
-        self.backup_path = backup_path
-        logger.info(f"Backup created: {backup_path}")
-        return backup_path
-
-    def restore_backup(self) -> None:
-        """Restore file from backup."""
-        if self.backup_path and self.backup_path.exists():
-            shutil.copy2(self.backup_path, self.file_path)
-            logger.info(f"File restored from backup: {self.backup_path}")
-
-    def load_file(self) -> None:
-        """Load and parse file content."""
-        with open(self.file_path, "r", encoding="utf-8") as f:
-            self.original_content = f.read()
-        self.tree = ast.parse(
-            self.original_content, filename=str(self.file_path)
-        )
-
-    def find_class(self, class_name: str) -> Optional[ast.ClassDef]:
-        """Find class definition in AST."""
-        if not self.tree:
-            return None
-        for node in ast.walk(self.tree):
-            if isinstance(node, ast.ClassDef) and node.name == class_name:
-                return node
-        return None
-
-    def extract_init_properties(self, class_node: ast.ClassDef) -> List[str]:
-        """Extract properties initialized in __init__."""
-        properties = []
-        for item in class_node.body:
-            if isinstance(item, ast.FunctionDef) and item.name == "__init__":
-                for stmt in item.body:
-                    # Handle regular assignments: self.attr = value
-                    if isinstance(stmt, ast.Assign):
-                        for target in stmt.targets:
-                            if isinstance(target, ast.Attribute):
-                                if (
-                                    isinstance(target.value, ast.Name)
-                                    and target.value.id == "self"
-                                ):
-                                    properties.append(target.attr)
-                    # Handle annotated assignments: self.attr: Type = value
-                    elif isinstance(stmt, ast.AnnAssign):
-                        if isinstance(stmt.target, ast.Attribute):
-                            if (
-                                isinstance(stmt.target.value, ast.Name)
-                                and stmt.target.value.id == "self"
-                            ):
-                                properties.append(stmt.target.attr)
-        return properties
+    multiple classes into one base class."""
 
     def validate_config(self, config: Dict[str, Any]) -> tuple[bool, List[str]]:
         """Validate merge configuration."""
@@ -2107,9 +2004,7 @@ class ClassMerger:
             is_valid, errors = self.validate_config(config)
             if not is_valid:
                 error_msg = format_error_message(
-                    "config_validation",
-                    "; ".join(errors),
-                    self.file_path
+                    "config_validation", "; ".join(errors), self.file_path
                 )
                 return False, error_msg
 
@@ -2153,23 +2048,22 @@ class ClassMerger:
                 # Restore backup
                 self.restore_backup()
                 formatted_error = format_error_message(
-                    "python_syntax",
-                    error_msg,
-                    self.file_path
+                    "python_syntax", error_msg, self.file_path
                 )
                 return False, formatted_error
 
             # Validate completeness
             is_complete, completeness_error = self.validate_completeness(
-                base_class_name, source_classes, all_original_props, all_original_methods
+                base_class_name,
+                source_classes,
+                all_original_props,
+                all_original_methods,
             )
             if not is_complete:
                 # Restore backup
                 self.restore_backup()
                 formatted_error = format_error_message(
-                    "completeness",
-                    completeness_error,
-                    self.file_path
+                    "completeness", completeness_error, self.file_path
                 )
                 return False, formatted_error
 
@@ -2181,9 +2075,7 @@ class ClassMerger:
                 # Restore backup
                 self.restore_backup()
                 formatted_error = format_error_message(
-                    "docstring",
-                    docstrings_error,
-                    self.file_path
+                    "docstring", docstrings_error, self.file_path
                 )
                 return False, formatted_error
 
@@ -2252,7 +2144,9 @@ class ClassMerger:
         """Build the merged class code."""
         lines = []
         lines.append(f"class {base_class_name}:")
-        lines.append('    """Merged class combining functionality from multiple classes."""')
+        lines.append(
+            '    """Merged class combining functionality from multiple classes."""'
+        )
         lines.append("")
 
         # Collect all properties
@@ -2286,134 +2180,6 @@ class ClassMerger:
                 lines.append("")
 
         return "\n".join(lines)
-
-    def _extract_method_code(self, method_node: Any, indent: str) -> str:
-        """Extract method code as string with proper indentation, including comments."""
-        lines = self.original_content.split("\n")
-        method_start_line = method_node.lineno - 1
-
-        # Find method end - use end_lineno if available,
-        # otherwise find by indentation
-        if hasattr(method_node, "end_lineno") and method_node.end_lineno:
-            method_end = method_node.end_lineno
-        else:
-            # Fallback: find next statement at same or less indentation
-            method_indent = len(lines[method_start_line]) - len(lines[method_start_line].lstrip())
-            method_end = method_start_line + 1
-            for i in range(method_start_line + 1, len(lines)):
-                line = lines[i]
-                if line.strip() and not line.strip().startswith("#"):
-                    line_indent = len(line) - len(line.lstrip())
-                    if line_indent <= method_indent:
-                        method_end = i
-                        break
-                method_end = i + 1
-
-        # Find comments before method (on same or higher indentation level)
-        method_indent = len(lines[method_start_line]) - len(lines[method_start_line].lstrip())
-        actual_start = method_start_line
-        
-        # Look backwards for comments and empty lines
-        for i in range(method_start_line - 1, -1, -1):
-            line = lines[i]
-            if not line.strip():
-                # Empty line - continue looking
-                continue
-            elif line.strip().startswith("#"):
-                # Comment line - check if it's at same or less indentation
-                comment_indent = len(line) - len(line.lstrip())
-                if comment_indent <= method_indent:
-                    # This comment belongs to the method
-                    actual_start = i
-                else:
-                    # Comment is more indented, might be part of previous method
-                    break
-            else:
-                # Non-comment, non-empty line - stop here
-                break
-
-        method_lines = lines[actual_start:method_end]
-
-        if method_lines:
-            # Find first non-empty line for base indent
-            original_indent = 0
-            for line in method_lines:
-                if line.strip():
-                    original_indent = len(line) - len(line.lstrip())
-                    break
-
-            adjusted_lines = []
-            for line in method_lines:
-                if line.strip():
-                    current_indent = len(line) - len(line.lstrip())
-                    indent_diff = current_indent - original_indent
-                    new_indent = indent + " " * indent_diff
-                    adjusted_lines.append(new_indent + line.lstrip())
-                else:
-                    adjusted_lines.append("")
-
-            result = "\n".join(adjusted_lines)
-            if result.strip():
-                return result
-        return ""
-
-    def _find_class_end(self, class_node: ast.ClassDef, lines: List[str]) -> int:
-        """Find the end line of a class definition."""
-        if class_node.body:
-            last_stmt = class_node.body[-1]
-            if hasattr(last_stmt, "end_lineno") and last_stmt.end_lineno:
-                return last_stmt.end_lineno
-            else:
-                class_indent = len(lines[class_node.lineno - 1]) - len(
-                    lines[class_node.lineno - 1].lstrip()
-                )
-                for i in range(last_stmt.lineno, len(lines)):
-                    line = lines[i]
-                    if line.strip() and not line.strip().startswith("#"):
-                        indent = len(line) - len(line.lstrip())
-                        if indent <= class_indent:
-                            return i
-                return len(lines)
-        return class_node.lineno
-
-    def validate_python_syntax(self) -> tuple[bool, Optional[str]]:
-        """Validate Python syntax of modified file."""
-        try:
-            result = subprocess.run(
-                ["python", "-m", "py_compile", str(self.file_path)],
-                capture_output=True,
-                text=True,
-                timeout=10,
-            )
-            if result.returncode != 0:
-                return False, result.stderr
-            return True, None
-        except subprocess.TimeoutExpired:
-            return False, "Syntax validation timeout"
-        except Exception as e:
-            return False, str(e)
-
-    def validate_imports(self) -> tuple[bool, Optional[str]]:
-        """Try to import the modified module."""
-        try:
-            import sys
-
-            sys.path.insert(0, str(self.file_path.parent))
-            module_name = self.file_path.stem
-            try:
-                if module_name in sys.modules:
-                    del sys.modules[module_name]
-                __import__(module_name)
-                return True, None
-            except ImportError as e:
-                return False, str(e)
-            finally:
-                sys.path.remove(str(self.file_path.parent))
-                if module_name in sys.modules:
-                    del sys.modules[module_name]
-
-        except Exception as e:
-            return False, str(e)
 
     def validate_completeness(
         self,

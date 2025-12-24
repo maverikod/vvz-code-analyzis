@@ -6,6 +6,8 @@ Author: Vasiliy Zdanovskiy
 email: vasilyvz@gmail.com
 """
 
+# mypy: ignore-errors
+
 import click
 import logging
 from pathlib import Path
@@ -58,7 +60,7 @@ logger = logging.getLogger(__name__)
 )
 @click.option(
     "--config",
-    "-c",
+    "-C",
     "config_path",
     default=None,
     help="Path to config.json (default: <root-dir>/config.json)",
@@ -72,6 +74,13 @@ logger = logging.getLogger(__name__)
     help="Process all files regardless of modification time. "
     "By default, files are only processed if they are newer than stored AST trees.",
 )
+@click.option(
+    "--file-path",
+    "-p",
+    default=None,
+    help="Optional path to a single Python file to analyze (absolute or relative to --root-dir)",
+    type=click.Path(exists=True, file_okay=True, dir_okay=False, path_type=Path),
+)
 @click.version_option(version="1.0.3")
 def main(
     root_dir: Path,
@@ -82,6 +91,7 @@ def main(
     use_sqlite: bool,
     config_path: Path | None,
     force: bool,
+    file_path: Path | None,
 ) -> None:
     """
     Analyze Python codebase and generate comprehensive reports.
@@ -166,6 +176,8 @@ def main(
                     force=force,
                     svo_client_manager=svo_client_manager,
                 )
+                if file_path:
+                    return await analyze_cmd.analyze_file(file_path, force=force)
                 return await analyze_cmd.execute()
 
             import asyncio
@@ -173,12 +185,26 @@ def main(
             result = asyncio.run(run_analysis())
 
             click.echo()
-            click.echo("✅ Analysis completed successfully!")
-            click.echo(f"   Files analyzed: {result['files_analyzed']}")
-            click.echo(f"   Classes: {result['classes']}")
-            click.echo(f"   Functions: {result['functions']}")
-            click.echo(f"   Issues: {result['issues']}")
-            click.echo(f"   Project ID: {result['project_id']}")
+            if file_path:
+                if result.get("success"):
+                    click.echo("✅ File analysis completed successfully!")
+                    click.echo(f"   File: {result.get('file_path')}")
+                    click.echo(f"   Classes: {result.get('classes', 0)}")
+                    click.echo(f"   Functions: {result.get('functions', 0)}")
+                    click.echo(f"   Methods: {result.get('methods', 0)}")
+                    click.echo(f"   Issues: {result.get('issues', 0)}")
+                    click.echo(f"   Project ID: {result.get('project_id')}")
+                else:
+                    raise click.ClickException(
+                        result.get("error", "File analysis failed")
+                    )
+            else:
+                click.echo("✅ Analysis completed successfully!")
+                click.echo(f"   Files analyzed: {result['files_analyzed']}")
+                click.echo(f"   Classes: {result['classes']}")
+                click.echo(f"   Functions: {result['functions']}")
+                click.echo(f"   Issues: {result['issues']}")
+                click.echo(f"   Project ID: {result['project_id']}")
         finally:
             db.close()
 

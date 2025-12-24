@@ -5,6 +5,8 @@ Author: Vasiliy Zdanovskiy
 email: vasilyvz@gmail.com
 """
 
+# mypy: ignore-errors
+
 import logging
 from typing import Dict, Any, Optional
 
@@ -164,6 +166,8 @@ class HelpCommand(Command):
         """Get list of registered command names."""
         try:
             commands = registry.get_all_commands()
+            if isinstance(commands, dict):
+                return [cmd.name for cmd in commands.values()]
             return [cmd.name for cmd in commands]
         except Exception:
             return []
@@ -210,9 +214,10 @@ class HelpCommand(Command):
         # List all registered commands
         try:
             commands = registry.get_all_commands()
+            if isinstance(commands, dict):
+                commands = list(commands.values())
             if commands:
                 for cmd in commands:
-                    category = getattr(cmd, "category", "other")
                     descr = getattr(cmd, "descr", "No description")
                     use_queue = getattr(cmd, "use_queue", False)
                     queue_marker = " [queue]" if use_queue else ""

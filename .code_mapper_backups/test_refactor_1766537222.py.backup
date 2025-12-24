@@ -1,0 +1,66 @@
+"""Test file for refactoring operations."""
+
+class LargeClass:
+    """A large class that needs to be split."""
+    def __init__(self):
+        self.classA = ClassA()
+        self.classB = ClassB()
+        self.classC = ClassC()
+    def method1(self):
+        return self.classA.method1()
+    def method2(self):
+        return self.classB.method2()
+    def method3(self):
+        return self.classC.method3()
+class ClassA:
+    """A large class that needs to be split."""
+    def __init__(self):
+        self.prop1 = None
+    def method1(self):
+        """First method."""
+        return "method1"
+class ClassB:
+    """A large class that needs to be split."""
+    def __init__(self):
+        self.prop2 = None
+    def method2(self):
+        """Second method."""
+        return "method2"
+class ClassC:
+    """A large class that needs to be split."""
+    def __init__(self):
+        self.prop3 = None
+    def method3(self):
+        """Third method."""
+        return "method3"
+
+
+class ChildClass1:
+    """First child class."""
+    
+    def __init__(self):
+        self.common_prop = None
+    
+    def common_method(self):
+        """Common method."""
+        return "common1"
+    
+    def specific_method1(self):
+        """Specific to child 1."""
+        return "specific1"
+
+
+class ChildClass2:
+    """Second child class."""
+    
+    def __init__(self):
+        self.common_prop = None
+    
+    def common_method(self):
+        """Common method."""
+        return "common2"
+    
+    def specific_method2(self):
+        """Specific to child 2."""
+        return "specific2"
+

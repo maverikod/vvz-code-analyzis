@@ -1,0 +1,22 @@
+"""Test file for split with formatting."""
+
+class LargeClass:
+    """A large class that needs to be split."""
+    
+    def __init__(self):
+        self.prop1 = None
+        self.prop2 = None
+        self.prop3 = None
+    
+    def method1(self):
+        """First method."""
+        return "method1"
+    
+    def method2(self):
+        """Second method."""
+        return "method2"
+    
+    def method3(self):
+        """Third method."""
+        return "method3"
+

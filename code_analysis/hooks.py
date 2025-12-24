@@ -35,6 +35,7 @@ def register_code_analysis_commands(reg: registry) -> None:
     from .commands.vector_commands import RebuildFaissCommand, RevectorizeCommand
     from .commands.semantic_search_mcp import SemanticSearchMCPCommand
     from .commands.watch_dirs_commands import AddWatchDirCommand, RemoveWatchDirCommand
+    from .commands.refactor_mcp_commands import SplitClassMCPCommand, ExtractSuperclassMCPCommand
 
     # Register commands
     reg.register(AnalyzeProjectCommand, "custom")
@@ -56,6 +57,8 @@ def register_code_analysis_commands(reg: registry) -> None:
     reg.register(SemanticSearchMCPCommand, "custom")
     reg.register(AddWatchDirCommand, "custom")
     reg.register(RemoveWatchDirCommand, "custom")
+    reg.register(SplitClassMCPCommand, "custom")
+    reg.register(ExtractSuperclassMCPCommand, "custom")
 
 
 # Register hook
@@ -69,3 +72,4 @@ register_auto_import_module("code_analysis.commands.ast_mcp_commands")
 register_auto_import_module("code_analysis.commands.vector_commands")
 register_auto_import_module("code_analysis.commands.semantic_search_mcp")
 register_auto_import_module("code_analysis.commands.watch_dirs_commands")
+register_auto_import_module("code_analysis.commands.refactor_mcp_commands")

@@ -18,6 +18,7 @@ from .get_ast import GetASTCommand
 from .search_ast_nodes import SearchASTNodesCommand
 from .ast_statistics import ASTStatisticsCommand
 from .list_project_files import ListProjectFilesCommand
+from .get_code_entity_info import GetCodeEntityInfoCommand
 
 __all__ = [
     "AnalyzeCommand",
@@ -30,4 +31,5 @@ __all__ = [
     "SearchASTNodesCommand",
     "ASTStatisticsCommand",
     "ListProjectFilesCommand",
+    "GetCodeEntityInfoCommand",
 ]

@@ -233,7 +233,7 @@ class FileToPackageSplitter(BaseRefactorer):
                 # In base module, methods are inside the class
                 for item in main_class.body:
                     if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                        if item.name in entities:
+                        if item.name in entities and item.name != "__init__":
                             method_code = self._extract_method_code(item, "    ")
                             class_lines.append(method_code)
                 if class_lines:

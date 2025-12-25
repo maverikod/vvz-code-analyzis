@@ -49,6 +49,12 @@ def register_code_analysis_commands(reg: registry) -> None:
         LintCodeCommand,
         TypeCheckCodeCommand,
     )
+    from .commands.search_mcp_commands import (
+        FulltextSearchMCPCommand,
+        ListClassMethodsMCPCommand,
+        FindClassesMCPCommand,
+    )
+    from .commands.code_mapper_mcp_command import UpdateIndexesMCPCommand
 
     # Register commands
     reg.register(AnalyzeProjectCommand, "custom")
@@ -80,6 +86,10 @@ def register_code_analysis_commands(reg: registry) -> None:
     reg.register(FormatCodeCommand, "custom")
     reg.register(LintCodeCommand, "custom")
     reg.register(TypeCheckCodeCommand, "custom")
+    reg.register(FulltextSearchMCPCommand, "custom")
+    reg.register(ListClassMethodsMCPCommand, "custom")
+    reg.register(FindClassesMCPCommand, "custom")
+    reg.register(UpdateIndexesMCPCommand, "custom")
 
 
 # Register hook
@@ -99,3 +109,5 @@ register_auto_import_module("code_analysis.commands.semantic_search_mcp")
 register_auto_import_module("code_analysis.commands.watch_dirs_commands")
 register_auto_import_module("code_analysis.commands.refactor_mcp_commands")
 register_auto_import_module("code_analysis.commands.code_quality_commands")
+register_auto_import_module("code_analysis.commands.search_mcp_commands")
+register_auto_import_module("code_analysis.commands.code_mapper_mcp_command")

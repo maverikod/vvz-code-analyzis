@@ -298,9 +298,14 @@ class IssueDetector:
         if top_level in self._stdlib_modules:
             return True
 
-        # Try to find the module using importlib
+        # Try to find the module using importlib.
+        #
+        # IMPORTANT: `importlib.util.find_spec("pkg.sub")` may import `pkg` to resolve
+        # submodule search paths, which can cause side effects (e.g. server engine
+        # registration logs) during static analysis. To avoid this, we only check
+        # the top-level package when a dotted path is provided.
         try:
-            spec = importlib.util.find_spec(module_name)
+            spec = importlib.util.find_spec(top_level)
             if spec is not None and spec.origin is not None:
                 return True
         except (ImportError, ValueError, ModuleNotFoundError):

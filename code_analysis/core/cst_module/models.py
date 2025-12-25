@@ -17,6 +17,7 @@ class Selector:
     Selector for statement blocks.
 
     Supported kinds:
+    - module: create module from scratch (new_code becomes entire module body)
     - function: match top-level FunctionDef by name
     - class: match top-level ClassDef by name
     - method: match class method FunctionDef by qualified name "ClassName.method"

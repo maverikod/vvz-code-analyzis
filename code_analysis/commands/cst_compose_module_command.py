@@ -73,6 +73,7 @@ class ComposeCSTModuleCommand(Command):
                                     "kind": {
                                         "type": "string",
                                         "enum": [
+                                            "module",
                                             "function",
                                             "class",
                                             "method",
@@ -153,14 +154,26 @@ class ComposeCSTModuleCommand(Command):
                     details={"file_path": str(target)},
                 )
 
+            # Handle file creation from scratch
             if not target.exists():
-                return ErrorResult(
-                    message="Target file does not exist",
-                    code="FILE_NOT_FOUND",
-                    details={"file_path": str(target)},
+                # Check if we have a "module" selector to create from scratch
+                has_module_selector = any(
+                    op.get("selector", {}).get("kind") == "module" for op in ops
                 )
-
-            old_source = target.read_text(encoding="utf-8")
+                if has_module_selector:
+                    # Create module from scratch
+                    old_source = ""
+                else:
+                    return ErrorResult(
+                        message=(
+                            "Target file does not exist. "
+                            "To create a new file, use selector with kind='module'"
+                        ),
+                        code="FILE_NOT_FOUND",
+                        details={"file_path": str(target)},
+                    )
+            else:
+                old_source = target.read_text(encoding="utf-8")
 
             parsed_ops: list[ReplaceOp] = []
             for op in ops:

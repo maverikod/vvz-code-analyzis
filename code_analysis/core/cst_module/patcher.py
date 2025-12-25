@@ -143,9 +143,32 @@ def apply_replace_ops(source: str, ops: list[ReplaceOp]) -> tuple[str, dict[str,
     """
     Apply replace operations to blocks in `source`.
 
+    If source is empty and there's a "module" selector, create module from scratch.
+
     Returns:
         (new_source, stats)
     """
+    # Handle module creation from scratch
+    for op in ops:
+        if op.selector.kind == "module":
+            # Create module from scratch
+            if not op.new_code.strip():
+                # Empty module
+                new_module = cst.Module(body=[])
+            else:
+                # Parse new_code as complete module
+                new_module = cst.parse_module(op.new_code)
+            # Normalize imports
+            new_module = move_module_imports_to_top(new_module)
+            stats = {
+                "replaced": 0,
+                "removed": 0,
+                "created": 1,
+                "unmatched": [],
+            }
+            return (new_module.code, stats)
+
+    # Normal path: apply replacements to existing source
     module = cst.parse_module(source)
     wrapper = MetadataWrapper(module, unsafe_skip_copy=True)
 
@@ -289,6 +312,7 @@ def apply_replace_ops(source: str, ops: list[ReplaceOp]) -> tuple[str, dict[str,
     stats = {
         "replaced": replaced,
         "removed": removed,
+        "created": 0,
         "unmatched": [
             {
                 "kind": s.kind,

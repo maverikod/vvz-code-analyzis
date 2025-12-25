@@ -44,6 +44,11 @@ def register_code_analysis_commands(reg: registry) -> None:
         ExtractSuperclassMCPCommand,
         SplitFileToPackageMCPCommand,
     )
+    from .commands.code_quality_commands import (
+        FormatCodeCommand,
+        LintCodeCommand,
+        TypeCheckCodeCommand,
+    )
 
     # Register commands
     reg.register(AnalyzeProjectCommand, "custom")
@@ -72,6 +77,9 @@ def register_code_analysis_commands(reg: registry) -> None:
     reg.register(SplitClassMCPCommand, "custom")
     reg.register(ExtractSuperclassMCPCommand, "custom")
     reg.register(SplitFileToPackageMCPCommand, "custom")
+    reg.register(FormatCodeCommand, "custom")
+    reg.register(LintCodeCommand, "custom")
+    reg.register(TypeCheckCodeCommand, "custom")
 
 
 # Register hook
@@ -90,3 +98,4 @@ register_auto_import_module("code_analysis.commands.vector_commands")
 register_auto_import_module("code_analysis.commands.semantic_search_mcp")
 register_auto_import_module("code_analysis.commands.watch_dirs_commands")
 register_auto_import_module("code_analysis.commands.refactor_mcp_commands")
+register_auto_import_module("code_analysis.commands.code_quality_commands")

@@ -35,8 +35,8 @@ def type_check_with_mypy(
         args = [str(file_path)]
         if config_file:
             args.extend(["--config-file", str(config_file)])
-        if ignore_errors:
-            args.append("--ignore-errors")
+        # Note: mypy doesn't support --ignore-errors flag
+        # Instead, we'll just run it and return errors as warnings if ignore_errors=True
 
         # Run mypy
         stdout, stderr, exit_code = api.run(args)
@@ -49,8 +49,13 @@ def type_check_with_mypy(
 
         if exit_code != 0:
             error_msg = f"Found {len(errors)} mypy errors"
-            logger.warning(f"{error_msg} in {file_path}")
-            return (False, error_msg, errors)
+            if ignore_errors:
+                # Treat errors as warnings if ignore_errors=True
+                logger.info(f"{error_msg} in {file_path} (ignored)")
+                return (True, None, errors)
+            else:
+                logger.warning(f"{error_msg} in {file_path}")
+                return (False, error_msg, errors)
         else:
             logger.debug(f"No mypy errors found in {file_path}")
             return (True, None, [])
@@ -77,8 +82,8 @@ def _type_check_with_subprocess(
         cmd = ["mypy", str(file_path)]
         if config_file:
             cmd.extend(["--config-file", str(config_file)])
-        if ignore_errors:
-            cmd.append("--ignore-errors")
+        # Note: mypy doesn't support --ignore-errors flag
+        # We'll handle ignore_errors in the result processing
 
         result = subprocess.run(
             cmd,
@@ -95,8 +100,13 @@ def _type_check_with_subprocess(
 
         if result.returncode != 0:
             error_msg = f"Found {len(errors)} mypy errors"
-            logger.warning(f"{error_msg} in {file_path}")
-            return (False, error_msg, errors)
+            if ignore_errors:
+                # Treat errors as warnings if ignore_errors=True
+                logger.info(f"{error_msg} in {file_path} (ignored)")
+                return (True, None, errors)
+            else:
+                logger.warning(f"{error_msg} in {file_path}")
+                return (False, error_msg, errors)
         else:
             logger.debug(f"No mypy errors found in {file_path}")
             return (True, None, [])

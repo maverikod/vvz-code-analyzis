@@ -148,6 +148,18 @@ class CodeAnalyzer:
                 file_id = self.database.add_file(
                     file_path_str, line_count, last_modified, has_docstring, project_id
                 )
+                # IMPORTANT:
+                # Keep DB consistent on re-analysis by clearing stale per-file data first.
+                # Otherwise removed/renamed methods/classes remain in DB forever.
+                try:
+                    if force or self.database.is_ast_outdated(file_id, last_modified):
+                        self.database.clear_file_data(file_id)
+                except Exception as e:
+                    logger.warning(
+                        "Failed to clear stale file data for %s (continuing): %s",
+                        file_path_str,
+                        e,
+                    )
 
             # Check file size
             if line_count > self.max_lines:
@@ -188,7 +200,7 @@ class CodeAnalyzer:
             if self.database and file_id:
                 logger.debug("   Saving AST tree to database...")
                 ast_saved = await self._save_ast_tree(
-                    tree, file_id, project_id, last_modified, force=False
+                    tree, file_id, project_id, last_modified, force=force
                 )
                 if ast_saved:
                     logger.debug("   ✅ AST tree saved to database")
@@ -200,19 +212,10 @@ class CodeAnalyzer:
                 logger.debug("   Analyzing usages...")
                 self.usage_analyzer.analyze_file(file_path, file_id)
 
-            # Process docstrings and comments: chunk and embed
-            if self.docstring_chunker and file_id and project_id:
-                logger.info("   🔍 Processing docstrings and comments for chunking...")
-                await self.docstring_chunker.process_file(
-                    file_path=file_path,
-                    file_id=file_id,
-                    project_id=project_id,
-                    tree=tree,
-                    file_content=content,
-                )
-                logger.debug("   ✅ Docstring chunking completed")
-            else:
-                logger.debug("   ⏭️  Docstring chunking skipped (chunker not available)")
+            # IMPORTANT:
+            # Chunking/vectorization is handled by the background vectorization worker.
+            # Analyzer must not call external services.
+            logger.debug("   ⏭️  Docstring chunking skipped (handled by worker)")
 
             logger.info(f"✅ File analysis completed: {file_path}")
 

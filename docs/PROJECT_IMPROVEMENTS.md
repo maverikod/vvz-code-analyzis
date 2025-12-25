@@ -17,24 +17,29 @@ Based on comprehensive analysis of the codebase using AST tools, dependency anal
 
 | File | Lines | Status | Impact |
 |------|-------|--------|--------|
-| `code_analysis/core/refactorer.py` | 2560 | 🟡 High | Legacy monolith kept for compatibility; split package exists (`code_analysis/core/refactorer/`) |
+| `code_analysis/core/refactorer.py` | 2604 | 🟢 Done | Split into `code_analysis/core/refactorer_pkg/` package (shim kept for compatibility) |
+| `code_analysis/core/refactorer_pkg/splitter.py` | 912 | 🟢 Done | Split into `code_analysis/core/refactorer_pkg/splitter_pkg/` package |
 | `code_analysis/core/database.py` | 2284 | 🟡 High | Legacy monolith kept for compatibility; split package exists (`code_analysis/core/database/`) |
 | `code_analysis/commands/ast_mcp_commands.py` | 920 | 🟢 Done | Split into `code_analysis/commands/ast/` (this file is now a shim for compatibility) |
-| `code_analysis/core/vectorization_worker.py` | 828 | 🟡 High | Complex worker logic |
-| `code_analysis/core/docstring_chunker.py` | 754 | 🟡 High | Chunking logic mixed with validation |
-| `code_analysis/core/analyzer.py` | 653 | 🟡 High | Core analysis logic |
+| `code_analysis/core/vectorization_worker.py` | 828 | 🟢 Done | Split into `code_analysis/core/vectorization_worker_pkg/` package |
+| `code_analysis/core/docstring_chunker.py` | 754 | 🟢 Done | Split into `code_analysis/core/docstring_chunker_pkg/` package |
+| `code_analysis/core/analyzer.py` | 653 | 🟢 Done | Split into `code_analysis/core/analyzer_pkg/` package |
 
 **Recommendations**:
 
-1. **`refactorer.py` (2560 lines)** - ✅ Split package created:
-   - ✅ `refactorer/base.py` - BaseRefactorer (common functionality)
-   - ✅ `refactorer/splitter.py` - ClassSplitter (still >400 lines; needs further splitting)
-   - ✅ `refactorer/extractor.py` - SuperclassExtractor (still >400 lines; needs further splitting)
-   - ✅ `refactorer/merger.py` - ClassMerger
-   - ✅ `refactorer/validators.py` - Validation logic
-   - ✅ `refactorer/formatters.py` - Formatting utilities
-   - ✅ `refactorer/package_splitter.py` - FileToPackageSplitter
-   - ✅ `refactorer/__init__.py` - Public API
+1. **`refactorer.py` (2604 lines)** - ✅ Split package created:
+   - ✅ `refactorer_pkg/base.py` - BaseRefactorer (371 lines)
+   - ✅ `refactorer_pkg/splitter_pkg/` - ClassSplitter split into package:
+     - ✅ `splitter_pkg/base.py` - API methods (147 lines)
+     - ✅ `splitter_pkg/ast_builder.py` - AST building (159 lines)
+     - ✅ `splitter_pkg/utils.py` - Utilities (49 lines)
+     - ✅ `splitter_pkg/executor.py` - Execution logic (45 lines)
+     - ✅ `splitter_pkg/validation.py` - Validation (135 lines)
+   - ✅ `refactorer_pkg/extractor.py` - SuperclassExtractor (239 lines)
+   - ✅ `refactorer_pkg/merger.py` - ClassMerger (227 lines)
+   - ✅ `refactorer_pkg/utils.py` - Formatting utilities (76 lines)
+   - ✅ `refactorer_pkg/__init__.py` - Public API
+   - ✅ `refactorer/package_splitter.py` - FileToPackageSplitter (in legacy package)
    - ⬜ Remove legacy monolith `code_analysis/core/refactorer.py` after testing (compat kept for now)
 
 2. **`database.py` (2284 lines)** - ✅ Split package created:
@@ -52,19 +57,38 @@ Based on comprehensive analysis of the codebase using AST tools, dependency anal
    - ✅ `database/__init__.py` - Public API (CodeDatabase facade)
    - ⬜ Remove legacy monolith `code_analysis/core/database.py` after testing (compat kept for now)
 
-3. **`ast_mcp_commands.py` (920 lines)** - Split into:
-   - `commands/ast/__init__.py` - Public API
-   - `commands/ast/get_ast.py` - GetASTMCPCommand
-   - `commands/ast/search_nodes.py` - SearchASTNodesMCPCommand
-   - `commands/ast/statistics.py` - ASTStatisticsMCPCommand
-   - `commands/ast/list_files.py` - ListProjectFilesMCPCommand
-   - `commands/ast/entity_info.py` - GetCodeEntityInfoMCPCommand
-   - `commands/ast/list_entities.py` - ListCodeEntitiesMCPCommand
-   - `commands/ast/imports.py` - GetImportsMCPCommand
-   - `commands/ast/dependencies.py` - FindDependenciesMCPCommand
-   - `commands/ast/hierarchy.py` - GetClassHierarchyMCPCommand
-   - `commands/ast/usages.py` - FindUsagesMCPCommand
-   - `commands/ast/graph.py` - ExportGraphMCPCommand
+3. **`ast_mcp_commands.py` (920 lines)** - ✅ Split into:
+   - ✅ `commands/ast/__init__.py` - Public API
+   - ✅ `commands/ast/get_ast.py` - GetASTMCPCommand
+   - ✅ `commands/ast/search_nodes.py` - SearchASTNodesMCPCommand
+   - ✅ `commands/ast/statistics.py` - ASTStatisticsMCPCommand
+   - ✅ `commands/ast/list_files.py` - ListProjectFilesMCPCommand
+   - ✅ `commands/ast/entity_info.py` - GetCodeEntityInfoMCPCommand
+   - ✅ `commands/ast/list_entities.py` - ListCodeEntitiesMCPCommand
+   - ✅ `commands/ast/imports.py` - GetImportsMCPCommand
+   - ✅ `commands/ast/dependencies.py` - FindDependenciesMCPCommand
+   - ✅ `commands/ast/hierarchy.py` - GetClassHierarchyMCPCommand
+   - ✅ `commands/ast/usages.py` - FindUsagesMCPCommand
+   - ✅ `commands/ast/graph.py` - ExportGraphMCPCommand
+
+4. **`analyzer.py` (653 lines)** - ✅ Split into `analyzer_pkg/`:
+   - ✅ `analyzer_pkg/base.py` - CodeAnalyzer core
+   - ✅ `analyzer_pkg/ast_analysis.py` - AST analysis methods
+   - ✅ `analyzer_pkg/imports.py` - Import analysis
+   - ✅ `analyzer_pkg/checks.py` - Code checks
+
+5. **`docstring_chunker.py` (754 lines)** - ✅ Split into `docstring_chunker_pkg/`:
+   - ✅ `docstring_chunker_pkg/base.py` - DocstringChunker core
+   - ✅ `docstring_chunker_pkg/extract.py` - Extraction logic
+   - ✅ `docstring_chunker_pkg/processing.py` - Processing logic
+   - ✅ `docstring_chunker_pkg/storage.py` - Storage operations
+
+6. **`vectorization_worker.py` (828 lines)** - ✅ Split into `vectorization_worker_pkg/`:
+   - ✅ `vectorization_worker_pkg/base.py` - VectorizationWorker core
+   - ✅ `vectorization_worker_pkg/watch_dirs.py` - Watch directory logic
+   - ✅ `vectorization_worker_pkg/processing.py` - Processing logic
+   - ✅ `vectorization_worker_pkg/chunking.py` - Chunking logic
+   - ✅ `vectorization_worker_pkg/runner.py` - Runner function
 
 ### 1.2 Duplicate Imports
 
@@ -239,13 +263,36 @@ class RefactoringError(CodeAnalysisError):
 - Add structured logging
 - Implement log rotation
 
+### 5.4 Code Quality Tools Integration
+
+**Status**: ✅ Implemented
+
+**Implementation**:
+- ✅ Created `code_analysis/core/code_quality/` module
+- ✅ `formatter.py` - Uses black as library with subprocess fallback
+- ✅ `linter.py` - Uses flake8 as library with subprocess fallback
+- ✅ `type_checker.py` - Uses mypy as library with subprocess fallback
+- ✅ All functions have graceful fallback to subprocess if libraries unavailable
+- ✅ Updated existing code to use new module instead of direct subprocess calls
+
+**Benefits**:
+- Better error handling and reporting
+- Improved performance (no subprocess overhead when libraries available)
+- Consistent API across all quality tools
+- Easier to extend with additional tools
+
 ## Implementation Priority
 
 ### Phase 1 (Immediate - 1-2 weeks)
 1. ✅ Fix duplicate imports in `refactorer.py` (single top-level `import sys`)
-2. ✅ Split `refactorer.py` into smaller modules (package exists; monolith pending removal after tests)
-3. ✅ Split `database.py` into smaller modules (package exists; monolith pending removal after tests)
-4. ✅ Create base classes for refactoring tools (BaseRefactorer exists in package)
+2. ✅ Split `refactorer.py` into smaller modules (`refactorer_pkg/` package created)
+3. ✅ Split `refactorer_pkg/splitter.py` into smaller modules (`splitter_pkg/` package created)
+4. ✅ Split `analyzer.py` into smaller modules (`analyzer_pkg/` package created)
+5. ✅ Split `docstring_chunker.py` into smaller modules (`docstring_chunker_pkg/` package created)
+6. ✅ Split `vectorization_worker.py` into smaller modules (`vectorization_worker_pkg/` package created)
+7. ✅ Split `database.py` into smaller modules (package exists; monolith pending removal after tests)
+8. ✅ Create base classes for refactoring tools (BaseRefactorer exists in package)
+9. ✅ Create `code_quality` module for using black/flake8/mypy as libraries
 
 ### Phase 2 (Short-term - 2-4 weeks)
 1. ✅ Split `ast_mcp_commands.py` into separate files (see `code_analysis/commands/ast/`; shim kept for compatibility)

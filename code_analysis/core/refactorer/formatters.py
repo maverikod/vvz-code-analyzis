@@ -5,47 +5,13 @@ Author: Vasiliy Zdanovskiy
 email: vasilyvz@gmail.com
 """
 
-import subprocess
 from pathlib import Path
 from typing import Optional
 import logging
 
+from ..code_quality import format_code_with_black
+
 logger = logging.getLogger(__name__)
-
-
-def format_code_with_black(file_path: Path) -> tuple[bool, Optional[str]]:
-    """
-    Format Python code using black formatter.
-
-    Args:
-        file_path: Path to Python file to format
-
-    Returns:
-        Tuple of (success, error_message)
-    """
-    try:
-        result = subprocess.run(
-            ["black", "--quiet", str(file_path)],
-            capture_output=True,
-            text=True,
-            timeout=10,
-        )
-        if result.returncode == 0:
-            logger.info(f"Code formatted successfully with black: {file_path}")
-            return (True, None)
-        else:
-            error_msg = result.stderr or result.stdout or "Unknown error"
-            logger.warning(f"Black formatting failed: {error_msg}")
-            return (False, error_msg)
-    except subprocess.TimeoutExpired:
-        logger.warning("Black formatting timed out")
-        return (False, "Formatting timed out")
-    except FileNotFoundError:
-        logger.warning("Black formatter not found, skipping formatting")
-        return (False, "Black formatter not installed")
-    except Exception as e:
-        logger.warning(f"Error during formatting: {e}")
-        return (False, str(e))
 
 
 def format_error_message(

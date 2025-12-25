@@ -97,7 +97,7 @@ class CodeMapper:
     async def _analyze_files(self, files: list[Path]) -> None:
         """Run async file analysis sequentially."""
         for file_path in files:
-            await self.analyzer.analyze_file(file_path)
+            await self.analyzer.analyze_file_async(file_path)
 
 
 def main() -> None:

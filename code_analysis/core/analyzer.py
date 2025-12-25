@@ -90,7 +90,26 @@ class CodeAnalyzer:
             "invalid_imports": [],
         }
 
-    async def analyze_file(self, file_path: Path, force: bool = False) -> None:
+    def analyze_file(self, file_path: Path, force: bool = False) -> None:
+        """
+        Analyze a single Python file (synchronous API).
+
+        This method exists for backward compatibility with older code and tests.
+        In async contexts, use `await analyze_file_async(...)`.
+        """
+        import asyncio
+
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            asyncio.run(self.analyze_file_async(file_path, force=force))
+            return
+        raise RuntimeError(
+            "CodeAnalyzer.analyze_file() cannot be used inside a running event loop. "
+            "Use `await analyze_file_async(...)`."
+        )
+
+    async def analyze_file_async(self, file_path: Path, force: bool = False) -> None:
         """
         Analyze a single Python file.
 

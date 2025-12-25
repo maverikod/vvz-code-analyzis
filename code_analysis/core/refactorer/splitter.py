@@ -20,6 +20,50 @@ logger = logging.getLogger(__name__)
 class ClassSplitter(BaseRefactorer):
     """Class for splitting classes into smaller components."""
 
+    def _build_new_class_code(
+        self,
+        dst_class_name: str,
+        src_class: ast.ClassDef,
+        dst_config: Dict[str, Any],
+        base_indent: int = 0,
+    ) -> str:
+        """
+        Build destination class as source code string.
+
+        This path is used to preserve original formatting and comments by slicing
+        method bodies from the original source.
+        """
+        class_indent = " " * base_indent
+        indent = class_indent + "    "
+        lines: list[str] = [f"{class_indent}class {dst_class_name}:"]
+
+        docstring = ast.get_docstring(src_class)
+        if docstring:
+            lines.append(f'{indent}"""{docstring}"""')
+
+        props = dst_config.get("props", []) or []
+        if props:
+            lines.append(f"{indent}def __init__(self):")
+            init_indent = indent + "    "
+            for prop in props:
+                lines.append(f"{init_indent}self.{prop} = None")
+
+        methods = dst_config.get("methods", []) or []
+        for method_name in methods:
+            method_node = self._find_method_in_class(src_class, method_name)
+            if not method_node:
+                logger.warning(
+                    f"Method {method_name} not found in source class for destination class {dst_class_name}"
+                )
+                continue
+            method_code = self._extract_method_code(method_node, indent)
+            if method_code.strip():
+                lines.append(method_code)
+
+        if len(lines) == 1:
+            lines.append(f"{indent}pass")
+        return "\n".join(lines)
+
     def _build_new_class(
         self,
         dst_class_name: str,
@@ -170,7 +214,11 @@ class ClassSplitter(BaseRefactorer):
             return (False, f"Error during split: {str(e)}")
 
     def _perform_split(self, src_class: ast.ClassDef, config: Dict[str, Any]) -> str:
-        """Perform the actual class splitting using AST."""
+        """
+        Perform the actual class splitting using source slicing.
+
+        We intentionally avoid `ast.unparse` here because it drops comments.
+        """
         if not self.tree:
             raise ValueError("AST tree not loaded")
         dst_classes = config.get("dst_classes", {})
@@ -181,30 +229,38 @@ class ClassSplitter(BaseRefactorer):
                 method_mapping[method] = dst_class_name
             for prop in dst_config.get("props", []):
                 prop_mapping[prop] = dst_class_name
-        src_class_idx = None
-        for i, node in enumerate(self.tree.body):
-            if isinstance(node, ast.ClassDef) and node.name == src_class.name:
-                src_class_idx = i
-                break
-        if src_class_idx is None:
-            raise ValueError(f"Source class {src_class.name} not found in module body")
-        new_class_nodes = []
-        for dst_class_name, dst_config in dst_classes.items():
-            new_class_node = self._build_new_class_ast(
-                dst_class_name, src_class, dst_config
-            )
-            new_class_nodes.append(new_class_node)
-        modified_src_class_node = self._build_modified_source_class_ast(
-            src_class, method_mapping, prop_mapping, dst_classes
+        if not hasattr(src_class, "lineno"):
+            raise ValueError("Source class has no source location information")
+        lines = self.original_content.split("\n")
+        start = src_class.lineno - 1
+        end = (
+            src_class.end_lineno
+            if hasattr(src_class, "end_lineno") and src_class.end_lineno
+            else self._find_class_end(src_class, lines)
         )
-        new_module_body = []
-        new_module_body.extend(self.tree.body[:src_class_idx])
-        new_module_body.append(modified_src_class_node)
-        new_module_body.extend(new_class_nodes)
-        new_module_body.extend(self.tree.body[src_class_idx + 1 :])
-        new_module = ast.Module(body=new_module_body, type_ignores=[])
-        new_module = ast.fix_missing_locations(new_module)
-        return ast.unparse(new_module)
+        before = "\n".join(lines[:start]).rstrip("\n")
+        after = "\n".join(lines[end:]).lstrip("\n")
+
+        modified_src = self._build_modified_source_class(
+            src_class, method_mapping, prop_mapping, dst_classes, base_indent=0
+        )
+        new_classes: list[str] = []
+        for dst_class_name, dst_config in dst_classes.items():
+            new_classes.append(
+                self._build_new_class_code(
+                    dst_class_name, src_class, dst_config, base_indent=0
+                )
+            )
+
+        parts: list[str] = []
+        if before.strip():
+            parts.append(before)
+        parts.append(modified_src)
+        parts.extend(new_classes)
+        if after.strip():
+            parts.append(after)
+
+        return "\n\n".join(parts).rstrip() + "\n"
 
     def _get_indent(self, line: str) -> int:
         """Get indentation level of a line."""

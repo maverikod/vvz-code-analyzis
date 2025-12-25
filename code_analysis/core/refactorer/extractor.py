@@ -152,6 +152,155 @@ class SuperclassExtractor(BaseRefactorer):
 
         return validate_config_func(config, self.find_class)
 
+    def validate_completeness(
+        self, base_class_name: str, child_classes: List[str], config: Dict[str, Any]
+    ) -> tuple[bool, Optional[str]]:
+        """Validate that all members are present after extraction."""
+        from .validators import (
+            validate_completeness_extraction as validate_completeness_func,
+        )
+
+        return validate_completeness_func(
+            self.file_path,
+            base_class_name,
+            child_classes,
+            config,
+            self.extract_init_properties,
+        )
+
+    def validate_docstrings(
+        self, child_nodes: List[ast.ClassDef], config: Dict[str, Any]
+    ) -> tuple[bool, Optional[str]]:
+        """
+        Validate that all docstrings are preserved in base and child classes.
+
+        Args:
+            child_nodes: Original child class AST nodes
+            config: Extraction configuration
+
+        Returns:
+            Tuple of (is_valid, error_message)
+        """
+        try:
+            with open(self.file_path, "r", encoding="utf-8") as f:
+                new_content = f.read()
+            new_tree = ast.parse(new_content, filename=str(self.file_path))
+            base_class_name = config.get("base_class")
+            extract_from = config.get("extract_from", {})
+            base_class = None
+            for node in ast.walk(new_tree):
+                if isinstance(node, ast.ClassDef) and node.name == base_class_name:
+                    base_class = node
+                    break
+            if not base_class:
+                return (
+                    False,
+                    f"Base class '{base_class_name}' not found after extraction",
+                )
+            for child_node in child_nodes:
+                child_name = child_node.name
+                child_config = extract_from.get(child_name, {})
+                new_child_class = None
+                for node in ast.walk(new_tree):
+                    if isinstance(node, ast.ClassDef) and node.name == child_name:
+                        new_child_class = node
+                        break
+                if not new_child_class:
+                    return (
+                        False,
+                        f"Child class '{child_name}' not found after extraction",
+                    )
+                original_child_docstring = ast.get_docstring(child_node)
+                if original_child_docstring:
+                    new_child_docstring = ast.get_docstring(new_child_class)
+                    if not new_child_docstring:
+                        return (
+                            False,
+                            f"Child class '{child_name}' docstring missing. Expected: {original_child_docstring[:50]}...",
+                        )
+                    if new_child_docstring.strip() != original_child_docstring.strip():
+                        return (
+                            False,
+                            f"Child class '{child_name}' docstring mismatch. Expected: {original_child_docstring[:50]}..., Got: {new_child_docstring[:50]}...",
+                        )
+                extracted_methods = set(child_config.get("methods", []))
+                all_extracted_methods = set()
+                for cfg in extract_from.values():
+                    all_extracted_methods.update(cfg.get("methods", []))
+                first_child = child_nodes[0] if child_nodes else None
+                for method_name in extracted_methods:
+                    original_method = None
+                    for item in child_node.body:
+                        if (
+                            isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef))
+                            and item.name == method_name
+                        ):
+                            original_method = item
+                            break
+                    if original_method:
+                        original_method_docstring = ast.get_docstring(original_method)
+                        if original_method_docstring:
+                            base_method = None
+                            for item in base_class.body:
+                                if (
+                                    isinstance(
+                                        item, (ast.FunctionDef, ast.AsyncFunctionDef)
+                                    )
+                                    and item.name == method_name
+                                ):
+                                    base_method = item
+                                    break
+                            if not base_method:
+                                return (
+                                    False,
+                                    f"Method '{method_name}' not found in base class '{base_class_name}' after extraction",
+                                )
+                            base_method_docstring = ast.get_docstring(base_method)
+                            if not base_method_docstring:
+                                return (
+                                    False,
+                                    f"Method '{method_name}' docstring missing in base class '{base_class_name}'. Expected: {original_method_docstring[:50]}...",
+                                )
+                            if (
+                                method_name in all_extracted_methods
+                                and first_child
+                                and first_child is not child_node
+                            ):
+                                first_child_method = None
+                                for item in first_child.body:
+                                    if (
+                                        isinstance(
+                                            item,
+                                            (ast.FunctionDef, ast.AsyncFunctionDef),
+                                        )
+                                        and item.name == method_name
+                                    ):
+                                        first_child_method = item
+                                        break
+                                if first_child_method:
+                                    first_child_docstring = ast.get_docstring(
+                                        first_child_method
+                                    )
+                                    if first_child_docstring and (
+                                        base_method_docstring.strip()
+                                        != first_child_docstring.strip()
+                                    ):
+                                        return (
+                                            False,
+                                            f"Method '{method_name}' docstring mismatch in base class '{base_class_name}'. Expected (from first class '{first_child.name}'): {first_child_docstring[:50]}..., Got: {base_method_docstring[:50]}...",
+                                        )
+                            elif (
+                                base_method_docstring.strip()
+                                != original_method_docstring.strip()
+                            ):
+                                return (
+                                    False,
+                                    f"Method '{method_name}' docstring mismatch in base class '{base_class_name}'. Expected: {original_method_docstring[:50]}..., Got: {base_method_docstring[:50]}...",
+                                )
+            return (True, None)
+        except Exception as e:
+            return (False, f"Error during docstring validation: {str(e)}")
+
     def preview_extraction(
         self, config: Dict[str, Any]
     ) -> tuple[bool, Optional[str], Optional[str]]:
@@ -296,83 +445,120 @@ class SuperclassExtractor(BaseRefactorer):
     def _perform_extraction(
         self, config: Dict[str, Any], child_nodes: List[ast.ClassDef]
     ) -> str:
-        """Perform the actual superclass extraction using AST."""
+        """
+        Perform the actual superclass extraction using source slicing.
+
+        We intentionally avoid `ast.unparse` for the module rewrite because it drops
+        comments from extracted methods.
+        """
         if not self.tree:
             raise ValueError("AST tree not loaded")
         base_class_name = config.get("base_class")
         extract_from = config.get("extract_from", {})
-        abstract_methods = config.get("abstract_methods", [])
-        has_abc_import = False
-        for node in ast.walk(self.tree):
-            if isinstance(node, ast.ImportFrom) and node.module == "abc":
-                has_abc_import = True
-                break
-            if isinstance(node, ast.Import):
-                for alias in node.names:
-                    if alias.name == "abc":
-                        has_abc_import = True
-                        break
-        base_class_node = self._build_base_class_ast(
-            base_class_name, child_nodes, extract_from, abstract_methods
+        abstract_methods = config.get("abstract_methods", []) or []
+        module_lines = self.original_content.split("\n")
+
+        start = min(c.lineno for c in child_nodes) - 1 if child_nodes else 0
+        end = (
+            max(
+                (
+                    c.end_lineno
+                    if hasattr(c, "end_lineno") and c.end_lineno
+                    else self._find_class_end(c, module_lines)
+                )
+                for c in child_nodes
+            )
+            if child_nodes
+            else 0
         )
-        child_indices: Dict[str, int] = {}
-        for i, node in enumerate(self.tree.body):
-            if isinstance(node, ast.ClassDef):
-                for child_node in child_nodes:
-                    if node.name == child_node.name:
-                        child_indices[child_node.name] = i
+
+        before = "\n".join(module_lines[:start]).rstrip("\n")
+        after = "\n".join(module_lines[end:]).lstrip("\n")
+
+        base_indent = 0
+        class_indent = " " * base_indent
+        indent = class_indent + "    "
+
+        abc_import_line = "from abc import ABC, abstractmethod"
+        if abstract_methods:
+            if abc_import_line not in before and "import abc" not in before:
+                header_lines = before.split("\n") if before else []
+                insert_at = 0
+                for i, line in enumerate(header_lines):
+                    if line.startswith("import ") or line.startswith("from "):
+                        insert_at = i + 1
+                header_lines.insert(insert_at, abc_import_line)
+                before = "\n".join(header_lines).rstrip("\n")
+
+        base_decl = (
+            f"{class_indent}class {base_class_name}(ABC):"
+            if abstract_methods
+            else f"{class_indent}class {base_class_name}:"
+        )
+        base_lines: list[str] = [base_decl]
+        base_lines.append(f'{indent}"""Base class with common functionality."""')
+
+        all_props: set[str] = set()
+        for child_config in extract_from.values():
+            all_props.update(child_config.get("properties", []))
+            all_props.update(child_config.get("props", []))
+        if all_props:
+            base_lines.append(f"{indent}def __init__(self):")
+            init_indent = indent + "    "
+            for prop in sorted(all_props):
+                base_lines.append(f"{init_indent}self.{prop} = None")
+
+        all_methods: set[str] = set()
+        for child_config in extract_from.values():
+            all_methods.update(child_config.get("methods", []))
+
+        for method_name in sorted(all_methods):
+            method_node = None
+            for child in child_nodes:
+                method_node = self._find_method_in_class(child, method_name)
+                if method_node:
+                    break
+            if not method_node:
+                continue
+            if method_name in abstract_methods:
+                base_lines.append(f"{indent}@abstractmethod")
+                extracted = self._extract_method_code(method_node, indent)
+                header = None
+                for line in extracted.splitlines():
+                    stripped = line.lstrip()
+                    if stripped.startswith("def ") or stripped.startswith("async def "):
+                        header = indent + stripped
                         break
-        updated_child_nodes = []
+                if header is None:
+                    header = f"{indent}def {method_name}(self):"
+                base_lines.append(header)
+                base_lines.append(f"{indent}    raise NotImplementedError")
+            else:
+                method_code = self._extract_method_code(method_node, indent)
+                if method_code.strip():
+                    base_lines.append(method_code)
+
+        base_code = "\n".join(base_lines)
+
+        updated_children: list[str] = []
         for child_node in child_nodes:
-            child_name = child_node.name
-            child_config = extract_from.get(child_name, {})
-            updated_child = self._update_child_class_ast(
-                child_node, base_class_name, child_config
+            updated_children.append(
+                f"{class_indent}class {child_node.name}({base_class_name}):"
             )
-            updated_child_nodes.append((child_indices[child_name], updated_child))
-        new_module_body: List[ast.stmt] = []
-        first_child_idx = min(child_indices.values()) if child_indices else 0
-        new_module_body.extend(self.tree.body[:first_child_idx])
-        new_module_body.append(base_class_node)
-        remaining_nodes = []
-        for i, node in enumerate(self.tree.body):
-            if isinstance(node, ast.ClassDef):
-                is_child = False
-                for child_name, child_idx in child_indices.items():
-                    if i == child_idx:
-                        for updated_idx, updated_node in updated_child_nodes:
-                            if updated_idx == i:
-                                new_module_body.append(updated_node)
-                                is_child = True
-                                break
-                        break
-                if not is_child:
-                    remaining_nodes.append((i, node))
-            else:
-                remaining_nodes.append((i, node))
-        remaining_nodes.sort(key=lambda x: x[0])
-        for _, node in remaining_nodes:
-            new_module_body.append(node)
-        if abstract_methods and (not has_abc_import):
-            last_import_idx = -1
-            for i, node in enumerate(new_module_body):
-                if isinstance(node, (ast.Import, ast.ImportFrom)):
-                    last_import_idx = i
-            abc_import = ast.ImportFrom(
-                module="abc",
-                names=[
-                    ast.alias(name="ABC", asname=None),
-                    ast.alias(name="abstractmethod", asname=None),
-                ],
-                level=0,
-            )
-            if last_import_idx >= 0:
-                new_module_body.insert(last_import_idx + 1, abc_import)
-            else:
-                new_module_body.insert(0, abc_import)
-        new_module = ast.Module(body=new_module_body, type_ignores=[])
-        new_module = ast.fix_missing_locations(new_module)
-        return ast.unparse(new_module)
+            child_doc = ast.get_docstring(child_node)
+            if child_doc:
+                updated_children.append(f'{indent}"""{child_doc}"""')
+            updated_children.append(f"{indent}pass")
+
+        new_block = "\n\n".join([base_code] + updated_children)
+
+        parts: list[str] = []
+        if before.strip():
+            parts.append(before)
+        parts.append(new_block)
+        if after.strip():
+            parts.append(after)
+        return "\n\n".join(parts).rstrip() + "\n"
 
     def _build_base_class_ast(
         self,
@@ -526,149 +712,3 @@ def _is_self_assignment_to_any(stmt: ast.stmt, props: set[str]) -> bool:
         ):
             return True
     return False
-
-    def validate_completeness(
-        self, base_class_name: str, child_classes: List[str], config: Dict[str, Any]
-    ) -> tuple[bool, Optional[str]]:
-        """Validate that all members are present after extraction."""
-        from .validators import (
-            validate_completeness_extraction as validate_completeness_func,
-        )
-
-        return validate_completeness_func(
-            self.file_path,
-            base_class_name,
-            child_classes,
-            config,
-            self.extract_init_properties,
-        )
-
-    def validate_docstrings(
-        self, child_nodes: List[ast.ClassDef], config: Dict[str, Any]
-    ) -> tuple[bool, Optional[str]]:
-        """
-        Validate that all docstrings are preserved in base and child classes.
-
-        Args:
-            child_nodes: Original child class AST nodes
-            config: Extraction configuration
-
-        Returns:
-            Tuple of (is_valid, error_message)
-        """
-        try:
-            with open(self.file_path, "r", encoding="utf-8") as f:
-                new_content = f.read()
-            new_tree = ast.parse(new_content, filename=str(self.file_path))
-            base_class_name = config.get("base_class")
-            extract_from = config.get("extract_from", {})
-            base_class = None
-            for node in ast.walk(new_tree):
-                if isinstance(node, ast.ClassDef) and node.name == base_class_name:
-                    base_class = node
-                    break
-            if not base_class:
-                return (
-                    False,
-                    f"Base class '{base_class_name}' not found after extraction",
-                )
-            for child_node in child_nodes:
-                child_name = child_node.name
-                child_config = extract_from.get(child_name, {})
-                new_child_class = None
-                for node in ast.walk(new_tree):
-                    if isinstance(node, ast.ClassDef) and node.name == child_name:
-                        new_child_class = node
-                        break
-                if not new_child_class:
-                    return (
-                        False,
-                        f"Child class '{child_name}' not found after extraction",
-                    )
-                original_child_docstring = ast.get_docstring(child_node)
-                if original_child_docstring:
-                    new_child_docstring = ast.get_docstring(new_child_class)
-                    if not new_child_docstring:
-                        return (
-                            False,
-                            f"Child class '{child_name}' docstring missing. Expected: {original_child_docstring[:50]}...",
-                        )
-                    if new_child_docstring.strip() != original_child_docstring.strip():
-                        return (
-                            False,
-                            f"Child class '{child_name}' docstring mismatch. Expected: {original_child_docstring[:50]}..., Got: {new_child_docstring[:50]}...",
-                        )
-                extracted_methods = set(child_config.get("methods", []))
-                all_extracted_methods = set()
-                for cfg in extract_from.values():
-                    all_extracted_methods.update(cfg.get("methods", []))
-                first_child = child_nodes[0] if child_nodes else None
-                for method_name in extracted_methods:
-                    original_method = None
-                    for item in child_node.body:
-                        if (
-                            isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef))
-                            and item.name == method_name
-                        ):
-                            original_method = item
-                            break
-                    if original_method:
-                        original_method_docstring = ast.get_docstring(original_method)
-                        if original_method_docstring:
-                            base_method = None
-                            for item in base_class.body:
-                                if (
-                                    isinstance(
-                                        item, (ast.FunctionDef, ast.AsyncFunctionDef)
-                                    )
-                                    and item.name == method_name
-                                ):
-                                    base_method = item
-                                    break
-                            if not base_method:
-                                return (
-                                    False,
-                                    f"Method '{method_name}' not found in base class '{base_class_name}'",
-                                )
-                            base_method_docstring = ast.get_docstring(base_method)
-                            if not base_method_docstring:
-                                return (
-                                    False,
-                                    f"Method '{method_name}' docstring missing in base class '{base_class_name}'. Expected: {original_method_docstring[:50]}...",
-                                )
-                            if first_child and method_name in all_extracted_methods:
-                                first_child_method = None
-                                for item in first_child.body:
-                                    if (
-                                        isinstance(
-                                            item,
-                                            (ast.FunctionDef, ast.AsyncFunctionDef),
-                                        )
-                                        and item.name == method_name
-                                    ):
-                                        first_child_method = item
-                                        break
-                                if first_child_method:
-                                    first_child_docstring = ast.get_docstring(
-                                        first_child_method
-                                    )
-                                    if first_child_docstring:
-                                        if (
-                                            base_method_docstring.strip()
-                                            != first_child_docstring.strip()
-                                        ):
-                                            return (
-                                                False,
-                                                f"Method '{method_name}' docstring mismatch in base class '{base_class_name}'. Expected (from first class '{first_child.name}'): {first_child_docstring[:50]}..., Got: {base_method_docstring[:50]}...",
-                                            )
-                            elif (
-                                base_method_docstring.strip()
-                                != original_method_docstring.strip()
-                            ):
-                                return (
-                                    False,
-                                    f"Method '{method_name}' docstring mismatch in base class '{base_class_name}'. Expected: {original_method_docstring[:50]}..., Got: {base_method_docstring[:50]}...",
-                                )
-            return (True, None)
-        except Exception as e:
-            return (False, f"Error during docstring validation: {str(e)}")

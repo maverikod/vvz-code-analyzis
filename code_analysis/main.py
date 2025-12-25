@@ -155,7 +155,6 @@ def main() -> None:
         import logging
 
         logger = logging.getLogger(__name__)
-        print("🔍 startup_vectorization_worker called", flush=True)
         logger.info("🔍 startup_vectorization_worker called")
 
         try:
@@ -172,26 +171,14 @@ def main() -> None:
                     with open(cfg.config_path, "r", encoding="utf-8") as f:
                         app_config = json.load(f)
 
-            print(
-                f"🔍 app_config loaded: {bool(app_config)}, keys: {list(app_config.keys()) if app_config else []}",
-                flush=True,
-            )
             logger.info(
                 f"🔍 app_config loaded: {bool(app_config)}, keys: {list(app_config.keys()) if app_config else []}"
             )
 
             # Check if code_analysis config section exists
             code_analysis_config = app_config.get("code_analysis", {})
-            print(
-                f"🔍 code_analysis_config found: {bool(code_analysis_config)}",
-                flush=True,
-            )
             logger.info(f"🔍 code_analysis_config found: {bool(code_analysis_config)}")
             if not code_analysis_config:
-                print(
-                    "⚠️  No code_analysis config found, skipping vectorization worker",
-                    flush=True,
-                )
                 logger.warning(
                     "⚠️  No code_analysis config found, skipping vectorization worker"
                 )
@@ -200,10 +187,6 @@ def main() -> None:
             # Check if SVO chunker is configured
             server_config = ServerConfig(**code_analysis_config)
             if not server_config.chunker:
-                print(
-                    "⚠️  No chunker config found, skipping vectorization worker",
-                    flush=True,
-                )
                 logger.warning(
                     "⚠️  No chunker config found, skipping vectorization worker"
                 )
@@ -213,10 +196,6 @@ def main() -> None:
             worker_config = server_config.worker
             if worker_config and isinstance(worker_config, dict):
                 if not worker_config.get("enabled", True):
-                    print(
-                        "ℹ️  Vectorization worker is disabled in config, skipping",
-                        flush=True,
-                    )
                     logger.info(
                         "ℹ️  Vectorization worker is disabled in config, skipping"
                     )
@@ -351,11 +330,9 @@ def main() -> None:
                     f"Failed to start vectorization worker: {e}", exc_info=True
                 )
 
-        print("🔍 Starting background thread for vectorization worker", flush=True)
         main_logger.info("🔍 Starting background thread for vectorization worker")
         startup_thread = threading.Thread(target=run_startup, daemon=True)
         startup_thread.start()
-        print(f"🔍 Background thread started: {startup_thread.is_alive()}", flush=True)
         main_logger.info(f"🔍 Background thread started: {startup_thread.is_alive()}")
 
     # Prepare server configuration for ServerEngine

@@ -135,3 +135,7 @@ per-file-ignores = [
     "scripts/*.py:E402",
     "tests/test_invalid_imports.py:E402",
 ]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]

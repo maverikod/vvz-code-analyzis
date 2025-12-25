@@ -163,7 +163,7 @@ class AnalyzeCommand:
                 else:
                     file_size = file_path.stat().st_size
                     t_start = time.perf_counter()
-                    await self.analyzer.analyze_file(file_path, force=self.force)
+                    await self.analyzer.analyze_file_async(file_path, force=self.force)
                     elapsed = time.perf_counter() - t_start
                     logger.info(
                         f"✅ Analyzed {file_path} | size={file_size} bytes | time={elapsed:.3f}s"

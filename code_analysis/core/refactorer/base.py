@@ -42,77 +42,40 @@ class BaseRefactorer:
         Returns:
             Method code as string with proper indentation
         """
-        try:
-            unparsed = ast.unparse(method_node)
-            lines = unparsed.split("\n")
-            adjusted_lines = []
-            for line in lines:
-                stripped = line.strip()
-                if (
-                    stripped.startswith('"') or stripped.startswith("'")
-                ) and "#" in stripped:
-                    try:
-                        if stripped.startswith('"""') or stripped.startswith("'''"):
-                            adjusted_lines.append(line)
-                        elif stripped.startswith('"') and stripped.endswith('"'):
-                            comment = stripped[1:-1]
-                            if comment.startswith("#"):
-                                line_indent = len(line) - len(line.lstrip())
-                                adjusted_lines.append(" " * line_indent + comment)
-                            else:
-                                adjusted_lines.append(line)
-                        elif stripped.startswith("'") and stripped.endswith("'"):
-                            comment = stripped[1:-1]
-                            if comment.startswith("#"):
-                                line_indent = len(line) - len(line.lstrip())
-                                adjusted_lines.append(" " * line_indent + comment)
-                            else:
-                                adjusted_lines.append(line)
-                        else:
-                            adjusted_lines.append(line)
-                    except Exception:
-                        adjusted_lines.append(line)
-                else:
-                    adjusted_lines.append(line)
-            if not adjusted_lines:
-                return ""
-            first_line = adjusted_lines[0]
-            base_indent = len(first_line) - len(first_line.lstrip())
-            final_lines = []
-            for line in adjusted_lines:
-                if line.strip():
-                    line_without_base = (
-                        line[base_indent:] if len(line) > base_indent else line.lstrip()
-                    )
-                    final_lines.append(indent + line_without_base)
-                else:
-                    final_lines.append("")
-            result = "\n".join(final_lines)
-            return result if result.strip() else ""
-        except Exception as e:
-            logger.warning(
-                f"ast.unparse() failed, falling back to string extraction: {e}"
-            )
-            if not hasattr(method_node, "lineno"):
-                # The node was likely synthesized (no source positions). Try to unparse
-                # it after adding missing locations, then indent it for embedding.
-                try:
-                    fixed = ast.fix_missing_locations(method_node)
-                    code = ast.unparse(fixed)
-                    indented_lines: list[str] = []
-                    for line in code.splitlines():
-                        indented_lines.append(indent + line if line.strip() else "")
-                    return "\n".join(indented_lines)
-                except Exception:
-                    return ""
+        # Prefer source slicing when positions are available to preserve comments.
+        if (
+            self.original_content
+            and hasattr(method_node, "lineno")
+            and getattr(method_node, "lineno", None)
+        ):
             lines = self.original_content.split("\n")
             method_start_line = method_node.lineno - 1
+            method_indent = len(lines[method_start_line]) - len(
+                lines[method_start_line].lstrip()
+            )
+
+            # Include comment blocks immediately above the method to preserve
+            # class-level comments that logically belong to the method.
+            j = method_start_line - 1
+            saw_comment = False
+            while j >= 0:
+                s = lines[j].strip()
+                if (
+                    s.startswith("#")
+                    and (len(lines[j]) - len(lines[j].lstrip())) == method_indent
+                ):
+                    method_start_line = j
+                    saw_comment = True
+                    j -= 1
+                    continue
+                if s == "" and saw_comment:
+                    method_start_line = j
+                    j -= 1
+                    continue
+                break
             if hasattr(method_node, "end_lineno") and method_node.end_lineno:
                 method_end = method_node.end_lineno
             else:
-                method_indent = len(lines[method_start_line]) - len(
-                    lines[method_start_line].lstrip()
-                )
                 method_end = method_start_line + 1
                 for i in range(method_start_line + 1, len(lines)):
                     line = lines[i]
@@ -123,25 +86,31 @@ class BaseRefactorer:
                             break
                     method_end = i + 1
             method_lines = lines[method_start_line:method_end]
-            if method_lines:
-                original_indent = 0
-                for line in method_lines:
-                    if line.strip():
-                        original_indent = len(line) - len(line.lstrip())
-                        break
-                adjusted_lines = []
-                for line in method_lines:
-                    if line.strip():
-                        current_indent = len(line) - len(line.lstrip())
-                        indent_diff = current_indent - original_indent
-                        new_indent = indent + " " * indent_diff
-                        adjusted_lines.append(new_indent + line.lstrip())
-                    else:
-                        adjusted_lines.append("")
-                result = "\n".join(adjusted_lines)
-                if result.strip():
-                    return result
+            if not method_lines:
+                return ""
+            base_indent = len(method_lines[0]) - len(method_lines[0].lstrip())
+            adjusted_lines: list[str] = []
+            for line in method_lines:
+                if line.strip():
+                    line_without_base = (
+                        line[base_indent:] if len(line) > base_indent else line.lstrip()
+                    )
+                    adjusted_lines.append(indent + line_without_base)
+                else:
+                    adjusted_lines.append("")
+            result = "\n".join(adjusted_lines)
+            return result if result.strip() else ""
+
+        # Fallback: synthesized nodes or no source positions.
+        try:
+            fixed = ast.fix_missing_locations(method_node)
+            code = ast.unparse(fixed)
+        except Exception as e:
+            logger.warning(f"ast.unparse() failed: {e}")
             return ""
+        return "\n".join(
+            indent + line if line.strip() else "" for line in code.splitlines()
+        )
 
     def _find_class_end(self, class_node: ast.ClassDef, lines: List[str]) -> int:
         """Find the end line of a class definition."""

@@ -114,7 +114,7 @@ class CodeAnalysisAPI:
         Returns:
             List of usage records
         """
-        return await self.search_cmd.find_usages(name, target_type, target_class)
+        return self.search_cmd.find_usages(name, target_type, target_class)
 
     async def full_text_search(
         self, query: str, entity_type: Optional[str] = None, limit: int = 50
@@ -130,7 +130,7 @@ class CodeAnalysisAPI:
         Returns:
             List of matching records
         """
-        return await self.search_cmd.full_text_search(query, entity_type, limit)
+        return self.search_cmd.full_text_search(query, entity_type, limit)
 
     async def search_classes(
         self, pattern: Optional[str] = None
@@ -144,7 +144,7 @@ class CodeAnalysisAPI:
         Returns:
             List of class records
         """
-        return await self.search_cmd.search_classes(pattern)
+        return self.search_cmd.search_classes(pattern)
 
     async def search_methods(
         self, pattern: Optional[str] = None
@@ -158,7 +158,7 @@ class CodeAnalysisAPI:
         Returns:
             List of method records
         """
-        return await self.search_cmd.search_methods(pattern)
+        return self.search_cmd.search_methods(pattern)
 
     async def get_issues(
         self, issue_type: Optional[str] = None

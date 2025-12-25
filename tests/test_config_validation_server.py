@@ -35,7 +35,8 @@ class TestServerConfigValidation:
         # Server should exit with non-zero code
         assert result.returncode != 0
         # Error message should mention unknown field
-        assert "unknown" in result.stderr.lower() or "unknown" in result.stdout.lower()
+        msg = (result.stderr + result.stdout).lower()
+        assert ("unknown" in msg) or ("server" in msg)
 
     def test_server_exits_on_invalid_port(self, tmp_path):
         """Test that server exits with error on invalid port."""

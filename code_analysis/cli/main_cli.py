@@ -128,7 +128,16 @@ def main(
             mapper = CodeMapper(
                 str(root_dir), str(output_dir), max_lines, use_sqlite=False
             )
-            mapper.analyze_directory(str(root_dir))
+            if file_path:
+                fp = file_path
+                if not fp.is_absolute():
+                    fp = root_dir / fp
+                fp = fp.resolve()
+                import asyncio
+
+                asyncio.run(mapper._analyze_files([fp]))
+            else:
+                mapper.analyze_directory(str(root_dir))
             mapper.generate_reports()
 
             click.echo()

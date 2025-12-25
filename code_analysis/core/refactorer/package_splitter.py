@@ -79,8 +79,16 @@ class FileToPackageSplitter(BaseRefactorer):
                 with open(module_path, "w", encoding="utf-8") as f:
                     f.write(module_content)
                 created_modules.append(module_name)
+            main_class_name = None
+            for node in self.tree.body:
+                if isinstance(node, ast.ClassDef):
+                    main_class_name = node.name
+                    break
             init_content = self._build_init_file(
-                created_modules, config.get("package_imports", [])
+                created_modules,
+                config.get("package_imports", []),
+                main_class_name=main_class_name,
+                modules_config=modules_config,
             )
             init_path = self.package_path / "__init__.py"
             with open(init_path, "w", encoding="utf-8") as f:
@@ -94,7 +102,14 @@ class FileToPackageSplitter(BaseRefactorer):
                     return (False, f"Syntax error in {module_file.name}: {error_msg}")
             backup_name = self.file_path.stem + "_original.py.backup"
             backup_file = self.package_path.parent / backup_name
-            shutil.move(str(self.file_path), str(backup_file))
+            shutil.copy2(self.file_path, backup_file)
+
+            shim_content = self._build_shim_file(
+                package_name=package_name, main_class_name=main_class_name
+            )
+            with open(self.file_path, "w", encoding="utf-8") as f:
+                f.write(shim_content)
+            format_code_with_black(self.file_path)
             logger.info(f"File split into package: {self.package_path}")
             return (True, f"File successfully split into package: {self.package_path}")
         except Exception as e:
@@ -264,7 +279,11 @@ class FileToPackageSplitter(BaseRefactorer):
         return "\n".join(lines)
 
     def _build_init_file(
-        self, module_names: List[str], package_imports: List[str]
+        self,
+        module_names: List[str],
+        package_imports: List[str],
+        main_class_name: Optional[str] = None,
+        modules_config: Optional[Dict[str, List[str]]] = None,
     ) -> str:
         """Build __init__.py content."""
         lines = []
@@ -279,9 +298,43 @@ class FileToPackageSplitter(BaseRefactorer):
             lines.append(imp)
         if package_imports:
             lines.append("")
-        for module_name in module_names:
-            lines.append(f"from .{module_name} import *")
+        if main_class_name and modules_config and ("base" in module_names):
+            lines.append(f"from .base import {main_class_name}")
+            lines.append("")
+            for module_name in module_names:
+                if module_name == "base":
+                    continue
+                entities = modules_config.get(module_name, [])
+                entities = [e for e in entities if e != "__init__"]
+                if not entities:
+                    continue
+                lines.append(f"from .{module_name} import {', '.join(entities)}")
+                for name in entities:
+                    lines.append(f"{main_class_name}.{name} = {name}")
+                lines.append("")
+            lines.append(f'__all__ = ["{main_class_name}"]')
+        else:
+            for module_name in module_names:
+                lines.append(f"from .{module_name} import *")
         return "\n".join(lines)
+
+    def _build_shim_file(
+        self, package_name: str, main_class_name: Optional[str]
+    ) -> str:
+        """Build a small shim module to preserve backward-compatible imports."""
+        cls = main_class_name or "MainClass"
+        lines: list[str] = []
+        lines.append('"""')
+        lines.append("Legacy shim module.")
+        lines.append("")
+        lines.append("Author: Vasiliy Zdanovskiy")
+        lines.append("email: vasilyvz@gmail.com")
+        lines.append('"""')
+        lines.append("")
+        lines.append(f"from .{package_name} import {cls}  # noqa: F401")
+        lines.append("")
+        lines.append(f'__all__ = ["{cls}"]')
+        return "\n".join(lines) + "\n"
 
     def _validate_file_syntax(self, file_path: Path) -> tuple[bool, Optional[str]]:
         """Validate Python syntax of a file."""

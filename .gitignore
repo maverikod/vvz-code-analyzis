@@ -150,3 +150,8 @@ MagicMock/
 *.backup
 *.backup_*
 *.py.backup
+
+# Generated code_mapper / CLI reports (written under package dir by default)
+code_analysis/code_map.yaml
+code_analysis/code_issues.yaml
+code_analysis/method_index.yaml

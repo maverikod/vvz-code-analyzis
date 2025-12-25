@@ -80,15 +80,39 @@ class FileToPackageSplitter(BaseRefactorer):
                     f.write(module_content)
                 created_modules.append(module_name)
             main_class_name = None
+            main_class_node: Optional[ast.ClassDef] = None
             for node in self.tree.body:
                 if isinstance(node, ast.ClassDef):
                     main_class_name = node.name
+                    main_class_node = node
                     break
+            bind_method_names: set[str] = set()
+            if main_class_node is not None:
+                for item in main_class_node.body:
+                    if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                        bind_method_names.add(item.name)
+
+            extra_exports: set[str] = set()
+            if bind_method_names and modules_config:
+                for module_name, entities in modules_config.items():
+                    if module_name == "base":
+                        continue
+                    for name in entities:
+                        if name == "__init__":
+                            continue
+                        if name in bind_method_names:
+                            continue
+                        if main_class_name and name == main_class_name:
+                            continue
+                        extra_exports.add(name)
+
             init_content = self._build_init_file(
                 created_modules,
                 config.get("package_imports", []),
                 main_class_name=main_class_name,
                 modules_config=modules_config,
+                bind_names=bind_method_names,
+                extra_exports=sorted(extra_exports),
             )
             init_path = self.package_path / "__init__.py"
             with open(init_path, "w", encoding="utf-8") as f:
@@ -105,7 +129,9 @@ class FileToPackageSplitter(BaseRefactorer):
             shutil.copy2(self.file_path, backup_file)
 
             shim_content = self._build_shim_file(
-                package_name=package_name, main_class_name=main_class_name
+                package_name=package_name,
+                main_class_name=main_class_name,
+                exports=sorted(extra_exports),
             )
             with open(self.file_path, "w", encoding="utf-8") as f:
                 f.write(shim_content)
@@ -284,6 +310,8 @@ class FileToPackageSplitter(BaseRefactorer):
         package_imports: List[str],
         main_class_name: Optional[str] = None,
         modules_config: Optional[Dict[str, List[str]]] = None,
+        bind_names: Optional[set[str]] = None,
+        extra_exports: Optional[List[str]] = None,
     ) -> str:
         """Build __init__.py content."""
         lines = []
@@ -301,6 +329,10 @@ class FileToPackageSplitter(BaseRefactorer):
         if main_class_name and modules_config and ("base" in module_names):
             lines.append(f"from .base import {main_class_name}")
             lines.append("")
+            export_names: list[str] = [main_class_name]
+            if extra_exports:
+                export_names.extend(extra_exports)
+
             for module_name in module_names:
                 if module_name == "base":
                     continue
@@ -310,16 +342,23 @@ class FileToPackageSplitter(BaseRefactorer):
                     continue
                 lines.append(f"from .{module_name} import {', '.join(entities)}")
                 for name in entities:
-                    lines.append(f"{main_class_name}.{name} = {name}")
+                    if bind_names and name in bind_names:
+                        lines.append(f"{main_class_name}.{name} = {name}")
+                    else:
+                        export_names.append(name)
                 lines.append("")
-            lines.append(f'__all__ = ["{main_class_name}"]')
+            unique_exports = sorted(set(export_names), key=str)
+            lines.append(f"__all__ = {unique_exports!r}")
         else:
             for module_name in module_names:
                 lines.append(f"from .{module_name} import *")
         return "\n".join(lines)
 
     def _build_shim_file(
-        self, package_name: str, main_class_name: Optional[str]
+        self,
+        package_name: str,
+        main_class_name: Optional[str],
+        exports: Optional[List[str]] = None,
     ) -> str:
         """Build a small shim module to preserve backward-compatible imports."""
         cls = main_class_name or "MainClass"
@@ -331,9 +370,15 @@ class FileToPackageSplitter(BaseRefactorer):
         lines.append("email: vasilyvz@gmail.com")
         lines.append('"""')
         lines.append("")
-        lines.append(f"from .{package_name} import {cls}  # noqa: F401")
+        export_list: list[str] = [cls]
+        if exports:
+            export_list.extend(exports)
+        unique_exports = sorted(set(export_list), key=str)
+        lines.append(
+            f"from .{package_name} import {', '.join(unique_exports)}  # noqa: F401"
+        )
         lines.append("")
-        lines.append(f'__all__ = ["{cls}"]')
+        lines.append(f"__all__ = {unique_exports!r}")
         return "\n".join(lines) + "\n"
 
     def _validate_file_syntax(self, file_path: Path) -> tuple[bool, Optional[str]]:

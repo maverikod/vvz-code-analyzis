@@ -263,6 +263,52 @@ class AnalyzeCommand:
 
         return result
 
+    async def analyze_file(
+        self, file_path: Path, force: bool = False
+    ) -> Dict[str, Any]:
+        """
+        Analyze a single Python file and update the database.
+
+        This method is used by the MCP command `analyze_file`. It exists separately
+        from `execute()` (project-wide analysis) to avoid `os.walk` and to provide
+        a stable API for the command layer.
+
+        Args:
+            file_path: Absolute path to the Python file
+            force: If True, analyze regardless of modification time checks
+
+        Returns:
+            Result dictionary compatible with MCP command expectations.
+        """
+        try:
+            fp = file_path.resolve()
+            if not fp.exists() or not fp.is_file():
+                return {
+                    "success": False,
+                    "error": f"File not found or not a file: {fp}",
+                    "file_path": str(fp),
+                    "project_id": self.project_id,
+                }
+
+            t_start = time.perf_counter()
+            await self.analyzer.analyze_file_async(fp, force=force)
+            elapsed = time.perf_counter() - t_start
+
+            return {
+                "success": True,
+                "file_path": str(fp),
+                "project_id": self.project_id,
+                "elapsed_sec": elapsed,
+            }
+        except Exception as e:
+            logger.error("Error analyzing file %s: %s", file_path, e, exc_info=True)
+            return {
+                "success": False,
+                "error": str(e),
+                "file_path": str(file_path),
+                "project_id": self.project_id,
+            }
+
     def _start_vectorization_worker(self) -> None:
         """
         Start vectorization worker in separate process.

@@ -1,0 +1,62 @@
+{
+  "package_name": "refactorer_pkg",
+  "modules": {
+    "base": [
+      "__init__",
+      "_extract_method_code",
+      "_find_class_end",
+      "create_backup",
+      "extract_init_properties",
+      "find_class",
+      "_parse_with_comments",
+      "load_file",
+      "restore_backup",
+      "validate_imports",
+      "validate_python_syntax"
+    ],
+    "splitter": [
+      "extract_class_members",
+      "validate_split_config",
+      "preview_split",
+      "split_class",
+      "_perform_split",
+      "_get_indent",
+      "_build_new_class_ast",
+      "_build_modified_source_class_ast",
+      "_find_method_in_class",
+      "_build_modified_source_class",
+      "_create_method_wrapper",
+      "validate_completeness",
+      "validate_docstrings"
+    ],
+    "extractor": [
+      "get_class_bases",
+      "check_multiple_inheritance_conflicts",
+      "check_method_compatibility",
+      "_find_method_in_class",
+      "_get_return_type",
+      "validate_config",
+      "preview_extraction",
+      "extract_superclass",
+      "_perform_extraction",
+      "_build_base_class_ast",
+      "_update_child_class_ast",
+      "validate_completeness",
+      "validate_docstrings"
+    ],
+    "merger": [
+      "validate_config",
+      "merge_classes",
+      "_perform_merge",
+      "_build_merged_class",
+      "validate_completeness",
+      "validate_docstrings"
+    ],
+    "utils": [
+      "format_code_with_black",
+      "format_error_message"
+    ]
+  },
+  "package_imports": []
+}
+

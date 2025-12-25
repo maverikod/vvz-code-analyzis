@@ -239,3 +239,42 @@ def get_files_needing_chunking(
             (project_id, limit),
         )
         return [dict(row) for row in cursor.fetchall()]
+
+
+def mark_file_needs_chunking(self, file_path: str, project_id: str) -> bool:
+    """
+    Mark a file as needing (re-)chunking by deleting its existing chunks.
+
+    The vectorization worker discovers files to chunk via `get_files_needing_chunking()`,
+    which selects files that have docstrings but have **no** rows in `code_chunks`.
+    To request re-chunking after a file change, we delete existing chunks so the file
+    becomes eligible for that query.
+
+    Args:
+        file_path: Absolute file path as stored in DB
+        project_id: Project ID
+
+    Returns:
+        True if file was found and processed, False otherwise.
+    """
+    with self._lock:
+        assert self.conn is not None
+        cursor = self.conn.cursor()
+
+        cursor.execute(
+            "SELECT id FROM files WHERE project_id = ? AND path = ?",
+            (project_id, file_path),
+        )
+        row = cursor.fetchone()
+        if not row:
+            return False
+
+        file_id = row[0]
+        # Delete chunks so worker will re-chunk and re-vectorize in background.
+        cursor.execute("DELETE FROM code_chunks WHERE file_id = ?", (file_id,))
+        cursor.execute(
+            "UPDATE files SET updated_at = julianday('now') WHERE id = ?",
+            (file_id,),
+        )
+        self.conn.commit()
+        return True

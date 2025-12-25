@@ -110,8 +110,6 @@ class AnalyzeProjectCommand(Command):
             SuccessResult with analysis results
         """
         try:
-            from ..core.svo_client_manager import SVOClientManager
-            from ..core.faiss_manager import FaissIndexManager
             from ..core.config import ServerConfig
 
             root_path = Path(root_dir).resolve()
@@ -170,39 +168,12 @@ class AnalyzeProjectCommand(Command):
                     str(root_path), name=root_path.name, comment=comment
                 )
 
-                # Initialize SVO client manager and FAISS manager if configured
+                # IMPORTANT:
+                # Vectorization/chunking must be performed by the background vectorization worker,
+                # not by the analyzer during project analysis. We intentionally do NOT initialize
+                # SVO/FAISS managers here to keep analysis deterministic and fast.
                 svo_client_manager = None
                 faiss_manager = None
-
-                if server_config and server_config.chunker:
-                    try:
-                        # SVOClientManager expects ServerConfig directly
-                        # ServerConfig already has chunker and embedding as SVOServiceConfig
-                        svo_client_manager = SVOClientManager(server_config)
-                        await svo_client_manager.initialize()
-
-                        # Initialize FAISS manager
-                        # Use vector_dim from config if available, otherwise default to 768
-                        vector_dim = server_config.vector_dim or 768
-
-                        # Use faiss_index_path from config if available, otherwise use project-specific path
-                        if server_config.faiss_index_path:
-                            faiss_index_path = Path(server_config.faiss_index_path)
-                        else:
-                            faiss_index_path = root_path / "data" / "faiss_index"
-
-                        faiss_index_path.parent.mkdir(parents=True, exist_ok=True)
-                        faiss_manager = FaissIndexManager(
-                            str(faiss_index_path), vector_dim
-                        )
-                    except Exception as e:
-                        logger.warning(
-                            f"Failed to initialize SVO/FAISS managers: {e}. "
-                            "Continuing without semantic search capabilities."
-                        )
-                        import traceback
-
-                        logger.debug(traceback.format_exc())
 
                 # Get progress tracker from context if available
                 context = kwargs.get("context", {})

@@ -168,6 +168,16 @@ class AnalyzeCommand:
                     logger.info(
                         f"✅ Analyzed {file_path} | size={file_size} bytes | time={elapsed:.3f}s"
                     )
+                    # Vectorization must be handled by the background vectorization worker,
+                    # not during analysis. We only mark the file for (re-)chunking.
+                    try:
+                        self.database.mark_file_needs_chunking(
+                            str(file_path.resolve()), self.project_id
+                        )
+                    except Exception as e:
+                        logger.warning(
+                            "Failed to mark file for chunking (continuing): %s", e
+                        )
                 analyzed_count += 1
             except Exception as e:
                 logger.error(f"❌ Error analyzing file {file_path}: {e}", exc_info=True)
@@ -248,14 +258,12 @@ class AnalyzeCommand:
             self.progress_tracker.set_description(completion_msg)
             self.progress_tracker.log(completion_msg)
 
-        # Start vectorization worker in background process if SVO and FAISS are available
-        if self.analyzer.svo_client_manager and self.analyzer.faiss_manager:
-            if self.progress_tracker:
-                self.progress_tracker.set_description(
-                    "Starting vectorization worker..."
-                )
-                self.progress_tracker.log("Starting vectorization worker in background")
-            self._start_vectorization_worker()
+        # Start vectorization worker in background process if enabled in config.
+        # The analyzer does NOT vectorize; the worker does.
+        if self.progress_tracker:
+            self.progress_tracker.set_description("Starting vectorization worker...")
+            self.progress_tracker.log("Starting vectorization worker in background")
+        self._start_vectorization_worker()
 
         if self.progress_tracker:
             self.progress_tracker.set_progress(100)
@@ -293,6 +301,11 @@ class AnalyzeCommand:
             t_start = time.perf_counter()
             await self.analyzer.analyze_file_async(fp, force=force)
             elapsed = time.perf_counter() - t_start
+            # Mark for background chunking/vectorization (worker will pick it up).
+            try:
+                self.database.mark_file_needs_chunking(str(fp), self.project_id)
+            except Exception as e:
+                logger.warning("Failed to mark file for chunking (continuing): %s", e)
 
             return {
                 "success": True,
@@ -338,20 +351,28 @@ class AnalyzeCommand:
             except Exception as e:
                 logger.warning(f"Failed to get config from adapter for worker: {e}")
 
-            # Get FAISS index path and vector dimension
-            faiss_index_path = None
-            vector_dim = None
-
-            if hasattr(self.analyzer.faiss_manager, "index_path"):
-                faiss_index_path = str(self.analyzer.faiss_manager.index_path)
-            if hasattr(self.analyzer.faiss_manager, "vector_dim"):
-                vector_dim = self.analyzer.faiss_manager.vector_dim
-
-            if not faiss_index_path or not vector_dim:
-                logger.warning(
-                    "FAISS manager missing required attributes, skipping vectorization worker"
+            if not svo_config:
+                logger.info(
+                    "Vectorization worker not started (missing code_analysis config)"
                 )
                 return
+
+            # Build worker inputs from config (not from analyzer runtime objects).
+            server_config_obj = ServerConfig(**svo_config)
+            worker_cfg = getattr(server_config_obj, "worker", None)
+            if worker_cfg is not None and hasattr(worker_cfg, "enabled"):
+                if not bool(worker_cfg.enabled):
+                    logger.info("Vectorization worker disabled in config")
+                    return
+
+            faiss_rel = getattr(server_config_obj, "faiss_index_path", None)
+            vector_dim = int(getattr(server_config_obj, "vector_dim", 768) or 768)
+            if faiss_rel:
+                faiss_index_path = str((self.root_path / str(faiss_rel)).resolve())
+            else:
+                faiss_index_path = str(
+                    (self.root_path / "data" / "faiss_index.bin").resolve()
+                )
 
             # Start worker in separate process
             logger.info("Starting vectorization worker in background process")

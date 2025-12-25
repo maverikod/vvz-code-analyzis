@@ -62,6 +62,14 @@ class AnalyzeFileCommand(Command):
                     "description": "If True, process file regardless of modification time",
                     "default": False,
                 },
+                "enable_chunking": {
+                    "type": "boolean",
+                    "description": (
+                        "If True, also run docstring chunking and vectorization (may be slow). "
+                        "Default is False to keep analyze_file fast and avoid external service timeouts."
+                    ),
+                    "default": False,
+                },
                 "project_id": {
                     "type": "string",
                     "description": "Optional project UUID; if omitted, inferred by root_dir",
@@ -77,6 +85,7 @@ class AnalyzeFileCommand(Command):
         file_path: str,
         max_lines: int = 400,
         force: bool = False,
+        enable_chunking: bool = False,
         project_id: Optional[str] = None,
         **kwargs,
     ) -> SuccessResult:
@@ -94,8 +103,6 @@ class AnalyzeFileCommand(Command):
             SuccessResult with analysis results
         """
         try:
-            from ..core.svo_client_manager import SVOClientManager
-            from ..core.faiss_manager import FaissIndexManager
             from ..core.config import ServerConfig
 
             root_path = Path(root_dir).resolve()
@@ -174,30 +181,13 @@ class AnalyzeFileCommand(Command):
                         str(root_path), name=root_path.name
                     )
 
-                # Initialize SVO client manager and FAISS manager if configured
+                # IMPORTANT:
+                # `analyze_file` must be fast and should not call external services (chunker/embedding).
+                # Chunking + vectorization are handled by the background vectorization worker.
+                # The parameter `enable_chunking` is kept for backward compatibility but is ignored.
+                _ = enable_chunking
                 svo_client_manager = None
                 faiss_manager = None
-
-                if server_config and server_config.chunker:
-                    try:
-                        svo_client_manager = SVOClientManager(server_config)
-                        await svo_client_manager.initialize()
-
-                        vector_dim = server_config.vector_dim or 768
-                        if server_config.faiss_index_path:
-                            faiss_index_path = Path(server_config.faiss_index_path)
-                        else:
-                            faiss_index_path = root_path / "data" / "faiss_index"
-
-                        faiss_index_path.parent.mkdir(parents=True, exist_ok=True)
-                        faiss_manager = FaissIndexManager(
-                            str(faiss_index_path), vector_dim
-                        )
-                    except Exception as e:
-                        logger.warning(
-                            f"Failed to initialize SVO/FAISS managers: {e}. "
-                            "Continuing without semantic search capabilities."
-                        )
 
                 # Get progress tracker from context if available
                 context = kwargs.get("context", {})

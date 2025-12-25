@@ -159,25 +159,21 @@ class FileToPackageSplitter(BaseRefactorer):
         if not self.tree:
             return (False, "File not loaded")
 
-        # Find main class (CodeDatabase or first class)
-        main_class = None
+        # Find all classes and collect their methods
+        file_entities = set()
+        all_classes = []
         for node in self.tree.body:
             if isinstance(node, ast.ClassDef):
-                main_class = node
-                break
+                all_classes.append(node)
+                file_entities.add(node.name)  # Add class name
+                # Extract methods from this class
+                for item in node.body:
+                    if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                        file_entities.add(item.name)
 
-        file_entities = set()
-        if main_class:
-            # Extract methods from main class
-            for item in main_class.body:
-                if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                    file_entities.add(item.name)
-
-        # Always include top-level functions and classes (module exports)
+        # Always include top-level functions (module exports)
         for top in self.tree.body:
-            if isinstance(top, ast.ClassDef):
-                file_entities.add(top.name)
-            elif isinstance(top, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            if isinstance(top, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 file_entities.add(top.name)
 
         missing_entities = all_entities - file_entities

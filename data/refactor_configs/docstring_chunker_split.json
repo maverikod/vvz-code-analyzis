@@ -1,7 +1,7 @@
 {
   "package_name": "docstring_chunker_pkg",
   "modules": {
-    "base": ["DocstringChunker", "__init__"],
+    "base": ["__init__"],
     "extract": ["_find_node_context", "extract_docstrings_and_comments"],
     "processing": ["process_file", "_process_single_item", "_process_short_items_grouped", "_chunk_grouped_items"],
     "storage": ["_save_chunks", "close"]

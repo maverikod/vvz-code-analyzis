@@ -224,7 +224,7 @@ def apply_replace_ops(source: str, ops: list[ReplaceOp]) -> tuple[str, dict[str,
 
         if sel.kind == "node_id" and sel.node_id:
             kind, span_key = _parse_node_id(sel.node_id)
-            if kind == "stmt":
+            if kind in ("stmt", "function", "class", "method"):
                 new_stmts = _parse_snippet_as_module_body(op.new_code)
                 stmt_replacements_by_span[span_key] = new_stmts
                 replaced += 1 if new_stmts else 0
@@ -236,7 +236,7 @@ def apply_replace_ops(source: str, ops: list[ReplaceOp]) -> tuple[str, dict[str,
                 removed += 0 if new_small else 1
             else:
                 raise CSTModulePatchError(
-                    "node_id replacement supports only stmt/smallstmt nodes"
+                    f"node_id replacement supports only stmt/smallstmt/function/class/method nodes, got {kind}"
                 )
             continue
 
@@ -258,7 +258,7 @@ def apply_replace_ops(source: str, ops: list[ReplaceOp]) -> tuple[str, dict[str,
                 )
             m = matches[idx]
             span_key = (m.start_line, m.start_col, m.end_line, m.end_col)
-            if m.kind == "stmt":
+            if m.kind in ("stmt", "function", "class", "method"):
                 new_stmts = _parse_snippet_as_module_body(op.new_code)
                 stmt_replacements_by_span[span_key] = new_stmts
                 replaced += 1 if new_stmts else 0
@@ -270,7 +270,7 @@ def apply_replace_ops(source: str, ops: list[ReplaceOp]) -> tuple[str, dict[str,
                 removed += 0 if new_small else 1
             else:
                 raise CSTModulePatchError(
-                    f"cst_query replacement supports only stmt/smallstmt matches, got {m.kind}"
+                    f"cst_query replacement supports only stmt/smallstmt/function/class/method matches, got {m.kind}"
                 )
             continue
 

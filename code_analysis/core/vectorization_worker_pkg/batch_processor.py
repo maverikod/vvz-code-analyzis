@@ -1,0 +1,314 @@
+"""
+Batch processing helpers for VectorizationWorker.process_chunks.
+
+This module contains the heavy inner loop that takes chunks which already have
+embeddings stored in the DB (or can fetch them from SVO), adds them to FAISS,
+and writes back vector_id.
+
+Author: Vasiliy Zdanovskiy
+email: vasilyvz@gmail.com
+"""
+
+from __future__ import annotations
+
+import json
+import logging
+import time
+from typing import Any, Optional, Tuple
+
+import numpy as np
+
+logger = logging.getLogger(__name__)
+
+
+async def process_embedding_ready_chunks(
+    self,
+    database: Any,
+) -> Tuple[int, int]:
+    """
+    Process chunks that are ready to be added to FAISS (have embeddings or can get them).
+
+    Notes:
+        - This function is designed to be called from VectorizationWorker.process_chunks.
+        - It expects `self` to have `batch_size`, `faiss_manager`, `svo_client_manager`,
+          and `_stop_event`.
+
+    Args:
+        self: VectorizationWorker instance (bound dynamically).
+        database: CodeDatabase instance.
+
+    Returns:
+        Tuple of (batch_processed, batch_errors).
+    """
+    batch_processed = 0
+    batch_errors = 0
+
+    while not self._stop_event.is_set():
+        # Get chunks with embeddings in DB but without vector_id
+        # These are chunks where embedding was saved but FAISS add failed or wasn't done
+        step_start = time.time()
+        logger.debug("[TIMING] Step 2: Starting to get non-vectorized chunks from DB")
+        chunks = await database.get_non_vectorized_chunks(
+            project_id=self.project_id,
+            limit=self.batch_size,
+        )
+        step_duration = time.time() - step_start
+        logger.debug(
+            f"[TIMING] Step 2: Retrieved {len(chunks)} chunks from DB in {step_duration:.3f}s"
+        )
+
+        if not chunks:
+            logger.debug("No chunks needing vector_id assignment in this cycle")
+            break
+
+        logger.info(
+            f"Processing batch of {len(chunks)} chunks that have embeddings but need vector_id"
+        )
+
+        for chunk in chunks:
+            if self._stop_event.is_set():
+                break
+
+            try:
+                chunk_start_time = time.time()
+                chunk_id = chunk["id"]
+                chunk_text = chunk.get("chunk_text", "")
+
+                # Log chunk text (docstring) for debugging
+                chunk_text_preview = (
+                    chunk_text[:200] + "..." if len(chunk_text) > 200 else chunk_text
+                )
+                logger.debug(
+                    f"[CHUNK {chunk_id}] Processing chunk:\n"
+                    f"  Text preview: {chunk_text_preview!r}\n"
+                    f"  Text length: {len(chunk_text)} chars"
+                )
+
+                # Log AST binding information for this chunk
+                ast_info = []
+                if chunk.get("class_id"):
+                    ast_info.append(f"class_id={chunk['class_id']}")
+                if chunk.get("function_id"):
+                    ast_info.append(f"function_id={chunk['function_id']}")
+                if chunk.get("method_id"):
+                    ast_info.append(f"method_id={chunk['method_id']}")
+                if chunk.get("line"):
+                    ast_info.append(f"line={chunk['line']}")
+                if chunk.get("ast_node_type"):
+                    ast_info.append(f"node={chunk['ast_node_type']}")
+                ast_binding = ", ".join(ast_info) if ast_info else "no AST binding"
+                logger.debug(f"[CHUNK {chunk_id}] AST binding: {ast_binding}")
+
+                # Check if chunk has embedding_vector in database
+                db_check_start = time.time()
+                with database._lock:
+                    cursor = database.conn.cursor()
+                    cursor.execute(
+                        "SELECT embedding_vector, embedding_model FROM code_chunks WHERE id = ?",
+                        (chunk_id,),
+                    )
+                    row = cursor.fetchone()
+                db_check_duration = time.time() - db_check_start
+                logger.debug(
+                    f"[TIMING] [CHUNK {chunk_id}] DB check took {db_check_duration:.3f}s"
+                )
+
+                embedding_array: Optional[np.ndarray] = None
+                embedding_model: Optional[str] = None
+
+                if row and row[0]:  # embedding_vector exists
+                    # Load embedding from database
+                    load_start = time.time()
+                    try:
+                        embedding_list = json.loads(row[0])
+                        embedding_array = np.array(embedding_list, dtype="float32")
+                        embedding_model = row[1]
+                        load_duration = time.time() - load_start
+                        logger.debug(
+                            f"[TIMING] [CHUNK {chunk_id}] Loaded embedding from DB in {load_duration:.3f}s "
+                            f"(dim={len(embedding_array)}, model={embedding_model}, {ast_binding})"
+                        )
+                    except Exception as e:
+                        logger.warning(
+                            f"Failed to parse embedding from DB for chunk {chunk_id} "
+                            f"({ast_binding}): {e}"
+                        )
+
+                # If no embedding in DB, try to get it from SVO service
+                if embedding_array is None and self.svo_client_manager:
+                    logger.info(
+                        f"Chunk {chunk_id} has no embedding in DB ({ast_binding}), "
+                        "requesting from SVO service..."
+                    )
+                    try:
+                        if not chunk_text:
+                            logger.warning(f"Chunk {chunk_id} has no text, skipping")
+                            continue
+
+                        logger.debug(
+                            f"[CHUNK {chunk_id}] Requesting embedding from SVO service for text:\n"
+                            f"  {chunk_text_preview!r}"
+                        )
+
+                        # Create dummy chunk object for embedding API
+                        class DummyChunk:
+                            def __init__(self, text: str):
+                                self.body = text
+                                self.text = text
+
+                        dummy_chunk = DummyChunk(chunk_text)
+                        embedding_request_start = time.time()
+                        # Pass type parameter to chunker - it should return embeddings
+                        chunk_type = chunk.get("chunk_type", "DocBlock")
+                        chunks_with_emb = await self.svo_client_manager.get_embeddings(
+                            [dummy_chunk], type=chunk_type
+                        )
+                        embedding_request_duration = (
+                            time.time() - embedding_request_start
+                        )
+                        logger.debug(
+                            f"[TIMING] [CHUNK {chunk_id}] SVO embedding request took {embedding_request_duration:.3f}s"
+                        )
+
+                        if chunks_with_emb and len(chunks_with_emb) > 0:
+                            embedding = getattr(chunks_with_emb[0], "embedding", None)
+                            embedding_model = getattr(
+                                chunks_with_emb[0], "embedding_model", None
+                            )
+
+                            if embedding:
+                                embedding_array = np.array(embedding, dtype="float32")
+                                logger.debug(
+                                    f"[CHUNK {chunk_id}] Received embedding: dim={len(embedding_array)}, "
+                                    f"model={embedding_model}"
+                                )
+
+                                # Save to DB for future use
+                                save_start = time.time()
+                                embedding_json = json.dumps(
+                                    embedding.tolist()
+                                    if hasattr(embedding, "tolist")
+                                    else embedding
+                                )
+                                with database._lock:
+                                    cursor = database.conn.cursor()
+                                    cursor.execute(
+                                        "UPDATE code_chunks SET embedding_vector = ?, embedding_model = ? WHERE id = ?",
+                                        (
+                                            embedding_json,
+                                            embedding_model,
+                                            chunk_id,
+                                        ),
+                                    )
+                                    database.conn.commit()
+                                save_duration = time.time() - save_start
+                                logger.debug(
+                                    f"[TIMING] [CHUNK {chunk_id}] Saved embedding to DB in {save_duration:.3f}s"
+                                )
+                                logger.info(
+                                    f"✅ Obtained and saved embedding for chunk {chunk_id} "
+                                    f"({ast_binding})"
+                                )
+                            else:
+                                logger.warning(
+                                    f"Chunk {chunk_id} embedding request returned no embedding, "
+                                    "skipping (use dedicated command to process empty chunks)"
+                                )
+                                continue
+                        else:
+                            logger.warning(
+                                f"Chunk {chunk_id} embedding request returned empty result, "
+                                "skipping (use dedicated command to process empty chunks)"
+                            )
+                            continue
+                    except Exception as e:
+                        error_type = type(e).__name__
+                        error_msg = str(e)
+
+                        # Check if it's a Model RPC server error (infrastructure issue)
+                        is_model_rpc_error = (
+                            "Model RPC server" in error_msg
+                            or "failed after 3 attempts" in error_msg
+                            or (hasattr(e, "code") and getattr(e, "code") == -32603)
+                        )
+
+                        if is_model_rpc_error:
+                            # Infrastructure issue, not code issue
+                            logger.warning(
+                                f"Model RPC server unavailable for chunk {chunk_id} ({ast_binding}): {error_msg}. "
+                                f"Chunk will be retried in next cycle. Check Model RPC server status."
+                            )
+                        else:
+                            logger.error(
+                                f"Failed to get embedding for chunk {chunk_id} ({ast_binding}): {error_type}: {error_msg}",
+                                exc_info=True,
+                            )
+                        batch_errors += 1
+                        continue
+
+                # Skip chunks without embeddings - they should be processed via dedicated command
+                if embedding_array is None:
+                    logger.debug(
+                        f"Chunk {chunk_id} has no embedding ({ast_binding}), skipping "
+                        "(use dedicated command to process empty chunks)"
+                    )
+                    continue
+
+                # Add to FAISS index
+                logger.debug(
+                    f"[CHUNK {chunk_id}] Adding embedding to FAISS index "
+                    f"(dim={len(embedding_array)}, model={embedding_model})"
+                )
+                faiss_add_start = time.time()
+                vector_id = self.faiss_manager.add_vector(embedding_array)
+                faiss_add_duration = time.time() - faiss_add_start
+                logger.debug(
+                    f"[TIMING] [CHUNK {chunk_id}] FAISS add_vector took {faiss_add_duration:.3f}s, "
+                    f"assigned vector_id={vector_id}"
+                )
+
+                # Update database with vector_id (AST bindings are preserved)
+                db_update_start = time.time()
+                await database.update_chunk_vector_id(
+                    chunk_id, vector_id, embedding_model
+                )
+                db_update_duration = time.time() - db_update_start
+                logger.debug(
+                    f"[TIMING] [CHUNK {chunk_id}] Database update_chunk_vector_id took {db_update_duration:.3f}s"
+                )
+
+                chunk_total_duration = time.time() - chunk_start_time
+                batch_processed += 1
+                logger.info(
+                    f"✅ Vectorized chunk {chunk_id} → vector_id={vector_id} "
+                    f"({ast_binding}) in {chunk_total_duration:.3f}s"
+                )
+                logger.debug(
+                    f"[TIMING] [CHUNK {chunk_id}] Total processing time: {chunk_total_duration:.3f}s"
+                )
+
+            except Exception as e:
+                logger.error(
+                    f"Error processing chunk {chunk.get('id')}: {e}, "
+                    "will retry in next cycle",
+                    exc_info=True,
+                )
+                batch_errors += 1
+                continue
+
+        # Save FAISS index after batch
+        if batch_processed > 0:
+            faiss_save_start = time.time()
+            try:
+                logger.debug(
+                    f"[TIMING] Saving FAISS index after processing {batch_processed} chunks"
+                )
+                self.faiss_manager.save_index()
+                faiss_save_duration = time.time() - faiss_save_start
+                logger.debug(
+                    f"[TIMING] FAISS index save took {faiss_save_duration:.3f}s"
+                )
+            except Exception as e:
+                logger.error(f"Error saving FAISS index: {e}")
+
+    return batch_processed, batch_errors

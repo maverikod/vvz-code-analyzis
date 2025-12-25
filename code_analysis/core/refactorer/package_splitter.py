@@ -168,18 +168,17 @@ class FileToPackageSplitter(BaseRefactorer):
 
         file_entities = set()
         if main_class:
-            # Extract methods from class
+            # Extract methods from main class
             for item in main_class.body:
                 if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)):
                     file_entities.add(item.name)
-        else:
-            # Fallback: extract top-level functions and classes
-            for node in ast.walk(self.tree):
-                if isinstance(node, ast.ClassDef):
-                    file_entities.add(node.name)
-                elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                    if node.name not in ("__init__", "__new__", "__del__"):
-                        file_entities.add(node.name)
+
+        # Always include top-level functions and classes (module exports)
+        for top in self.tree.body:
+            if isinstance(top, ast.ClassDef):
+                file_entities.add(top.name)
+            elif isinstance(top, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                file_entities.add(top.name)
 
         missing_entities = all_entities - file_entities
         if missing_entities:

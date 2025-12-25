@@ -1,0 +1,16 @@
+{
+  "package_name": "vectorization_worker_pkg",
+  "modules": {
+    "base": ["__init__", "stop"],
+    "watch_dirs": ["_refresh_config", "_enqueue_watch_dirs"],
+    "processing": ["process_chunks"],
+    "chunking": [
+      "_request_chunking_for_files",
+      "_chunk_missing_docstring_files",
+      "_log_missing_docstring_files"
+    ],
+    "runner": ["run_vectorization_worker"]
+  },
+  "package_imports": []
+}
+

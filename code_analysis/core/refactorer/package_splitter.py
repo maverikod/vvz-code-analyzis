@@ -217,30 +217,46 @@ class FileToPackageSplitter(BaseRefactorer):
         if not self.tree:
             return "\n".join(lines)
 
-        # First, find the main class (CodeDatabase)
-        main_class = None
-        for node in self.tree.body:
-            if isinstance(node, ast.ClassDef):
-                main_class = node
-                break
+        # Find the class that contains methods from entities list
+        # For "base" module, use first class; for others, find class with matching methods
+        target_class = None
+        if module_name == "base":
+            # For base module, use first class
+            for node in self.tree.body:
+                if isinstance(node, ast.ClassDef):
+                    target_class = node
+                    break
+        else:
+            # For other modules, find class that contains at least one method from entities
+            for node in self.tree.body:
+                if isinstance(node, ast.ClassDef):
+                    class_methods = {
+                        item.name
+                        for item in node.body
+                        if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef))
+                    }
+                    # Check if this class has any methods from entities list
+                    if class_methods.intersection(set(entities)):
+                        target_class = node
+                        break
 
-        if main_class:
+        if target_class:
             # Build class with only selected methods
             class_lines = []
 
             # Only add class definition in base module
             if module_name == "base":
-                class_lines.append(f"class {main_class.name}:")
-                docstring = ast.get_docstring(main_class)
+                class_lines.append(f"class {target_class.name}:")
+                docstring = ast.get_docstring(target_class)
                 if docstring:
                     class_lines.append(f'    """{docstring}"""')
                 else:
-                    class_lines.append(f'    """{main_class.name} class."""')
+                    class_lines.append(f'    """{target_class.name} class."""')
                 class_lines.append("")
 
             # Add __init__ only in base module
             if module_name == "base" and "__init__" in entities:
-                for item in main_class.body:
+                for item in target_class.body:
                     if (
                         isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef))
                         and item.name == "__init__"
@@ -252,7 +268,7 @@ class FileToPackageSplitter(BaseRefactorer):
             # Add other methods
             if module_name == "base":
                 # In base module, methods are inside the class
-                for item in main_class.body:
+                for item in target_class.body:
                     if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)):
                         if item.name in entities and item.name != "__init__":
                             method_code = self._extract_method_code(item, "    ")
@@ -262,7 +278,7 @@ class FileToPackageSplitter(BaseRefactorer):
             else:
                 # In other modules, methods are defined as module-level functions
                 # They will be added to the class in __init__.py
-                for item in main_class.body:
+                for item in target_class.body:
                     if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)):
                         if item.name in entities:
                             # Extract as function - convert method to function

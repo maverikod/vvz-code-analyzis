@@ -10,7 +10,6 @@ email: vasilyvz@gmail.com
 
 import json
 import logging
-from pathlib import Path
 from typing import Dict, List, Any, Optional
 import numpy as np
 
@@ -22,7 +21,7 @@ logger = logging.getLogger(__name__)
 class SemanticSearchCommand:
     """
     Command for semantic search using vector embeddings.
-    
+
     Searches code by semantic similarity and returns AST nodes with context.
     """
 
@@ -93,10 +92,14 @@ class SemanticSearchCommand:
         )
 
         if not self.faiss_manager:
-            raise RuntimeError("FAISS manager is not available. Semantic search requires FAISS index.")
+            raise RuntimeError(
+                "FAISS manager is not available. Semantic search requires FAISS index."
+            )
 
         if not self.svo_client_manager:
-            raise RuntimeError("SVO client manager is not available. Semantic search requires embedding service.")
+            raise RuntimeError(
+                "SVO client manager is not available. Semantic search requires embedding service."
+            )
 
         # Get embedding for query
         try:
@@ -111,7 +114,13 @@ class SemanticSearchCommand:
                     )
                     logger.debug(
                         "Embedding client response (cmd)",
-                        extra={"keys": list(emb_resp.keys()) if isinstance(emb_resp, dict) else None},
+                        extra={
+                            "keys": (
+                                list(emb_resp.keys())
+                                if isinstance(emb_resp, dict)
+                                else None
+                            )
+                        },
                     )
                     # Try to extract embedding via response_parsers
                     try:
@@ -121,7 +130,9 @@ class SemanticSearchCommand:
                         if data and len(data) > 0:
                             query_embedding = data[0].get("embedding")
                     except Exception as parse_err:
-                        logger.error(f"Embedding parse error: {parse_err}", exc_info=True)
+                        logger.error(
+                            f"Embedding parse error: {parse_err}", exc_info=True
+                        )
                 except Exception as emb_err:
                     logger.error(f"Embedding client error: {emb_err}", exc_info=True)
 
@@ -134,7 +145,9 @@ class SemanticSearchCommand:
                         self.text = text
 
                 query_chunks = [QueryChunk(query)]
-                chunks_with_emb = await self.svo_client_manager.get_embeddings(query_chunks)
+                chunks_with_emb = await self.svo_client_manager.get_embeddings(
+                    query_chunks
+                )
                 logger.debug(
                     "Chunker embedding fallback response",
                     extra={
@@ -142,7 +155,8 @@ class SemanticSearchCommand:
                         "has_embedding": bool(
                             chunks_with_emb
                             and len(chunks_with_emb) > 0
-                            and getattr(chunks_with_emb[0], "embedding", None) is not None
+                            and getattr(chunks_with_emb[0], "embedding", None)
+                            is not None
                         ),
                     },
                 )
@@ -162,7 +176,9 @@ class SemanticSearchCommand:
 
         # Search in FAISS index
         try:
-            distances, vector_ids = self.faiss_manager.search(query_vector, k=k * 2)  # Get more to filter
+            distances, vector_ids = self.faiss_manager.search(
+                query_vector, k=k * 2
+            )  # Get more to filter
         except Exception as e:
             logger.error(f"Error searching FAISS index: {e}")
             return []
@@ -172,18 +188,20 @@ class SemanticSearchCommand:
 
         # Filter by max_distance if specified
         if max_distance is not None:
-            filtered_indices = [i for i, dist in enumerate(distances) if dist <= max_distance]
+            filtered_indices = [
+                i for i, dist in enumerate(distances) if dist <= max_distance
+            ]
             vector_ids = vector_ids[filtered_indices]
             distances = distances[filtered_indices]
 
         # Get chunks from database by vector_ids
         assert self.database.conn is not None
         cursor = self.database.conn.cursor()
-        
+
         # Build query to get chunks with all context
         placeholders = ",".join("?" * len(vector_ids))
         query_sql = f"""
-            SELECT 
+            SELECT
                 cc.id,
                 cc.file_id,
                 cc.project_id,
@@ -209,7 +227,7 @@ class SemanticSearchCommand:
             AND cc.project_id = ?
             ORDER BY cc.vector_id
         """
-        
+
         cursor.execute(query_sql, [int(vid) for vid in vector_ids] + [self.project_id])
         chunks = cursor.fetchall()
 
@@ -278,7 +296,7 @@ class SemanticSearchCommand:
                 ast_node_name = chunk_data["method_name"]
             elif chunk_data["function_name"]:
                 ast_node_name = chunk_data["function_name"]
-            
+
             if ast_node_name:
                 result["ast_node_name"] = ast_node_name
 
@@ -345,4 +363,3 @@ class SemanticSearchCommand:
                             return found
 
         return None
-

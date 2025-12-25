@@ -6,8 +6,6 @@ email: vasilyvz@gmail.com
 """
 
 import ast
-import pytest
-from pathlib import Path
 from unittest.mock import Mock
 
 from code_analysis.core.usage_analyzer import UsageAnalyzer, UsageVisitor
@@ -20,13 +18,13 @@ class TestUsageAnalyzerCoverage:
         """Test collecting async method definitions."""
         test_file = tmp_path / "test.py"
         test_file.write_text(
-            '''class MyClass:
+            """class MyClass:
     async def async_method(self):
         pass
     
     def sync_method(self):
         pass
-'''
+"""
         )
 
         analyzer = UsageAnalyzer()
@@ -53,7 +51,10 @@ class TestUsageAnalyzerCoverage:
                 attr="method",
                 ctx=ast.Load(),
             ),
-            args=[ast.Name(id="arg1", ctx=ast.Load()), ast.Name(id="arg2", ctx=ast.Load())],
+            args=[
+                ast.Name(id="arg1", ctx=ast.Load()),
+                ast.Name(id="arg2", ctx=ast.Load()),
+            ],
             keywords=[],
             lineno=5,
         )
@@ -100,7 +101,7 @@ class TestUsageAnalyzerCoverage:
         """Test analyzing file with complex code."""
         test_file = tmp_path / "test.py"
         test_file.write_text(
-            '''class MyClass:
+            """class MyClass:
     def __init__(self):
         self.prop1 = 1
         self.prop2: int = 2
@@ -112,7 +113,7 @@ class TestUsageAnalyzerCoverage:
     
     def method2(self):
         pass
-'''
+"""
         )
 
         db = Mock()
@@ -178,14 +179,14 @@ class TestUsageAnalyzerCoverage:
         """Test collecting definitions from multiple classes."""
         test_file = tmp_path / "test.py"
         test_file.write_text(
-            '''class ClassA:
+            """class ClassA:
     def method_a(self):
         pass
 
 class ClassB:
     def method_b(self):
         pass
-'''
+"""
         )
 
         analyzer = UsageAnalyzer()
@@ -243,9 +244,11 @@ class ClassB:
         """Test getting context when parent is function."""
         db = Mock()
         visitor = UsageVisitor(db, 1, {}, {})
-        
+
         # Create a function node with parent attribute
-        func_node = ast.FunctionDef(name="test_func", args=ast.arguments(), body=[], lineno=1)
+        func_node = ast.FunctionDef(
+            name="test_func", args=ast.arguments(), body=[], lineno=1
+        )
         call_node = ast.Call(
             func=ast.Name(id="func", ctx=ast.Load()),
             args=[],
@@ -254,7 +257,7 @@ class ClassB:
         )
         # Manually set parent (in real AST this would be set by parent visitor)
         call_node.parent = func_node
-        
+
         context = visitor._get_context(call_node)
         # Should return function name
         assert context == "test_func()"
@@ -263,7 +266,7 @@ class ClassB:
         """Test getting context when parent is class."""
         db = Mock()
         visitor = UsageVisitor(db, 1, {}, {})
-        
+
         class_node = ast.ClassDef(name="TestClass", body=[], lineno=1, col_offset=0)
         call_node = ast.Call(
             func=ast.Name(id="func", ctx=ast.Load()),
@@ -272,7 +275,7 @@ class ClassB:
             lineno=2,
         )
         call_node.parent = class_node
-        
+
         context = visitor._get_context(call_node)
         assert context == "TestClass"
 
@@ -280,14 +283,14 @@ class ClassB:
         """Test getting context when no parent."""
         db = Mock()
         visitor = UsageVisitor(db, 1, {}, {})
-        
+
         call_node = ast.Call(
             func=ast.Name(id="func", ctx=ast.Load()),
             args=[],
             keywords=[],
             lineno=2,
         )
-        
+
         context = visitor._get_context(call_node)
         assert context is None
 
@@ -295,11 +298,11 @@ class ClassB:
         """Test getting context when exception occurs."""
         db = Mock()
         visitor = UsageVisitor(db, 1, {}, {})
-        
+
         # Create node that will cause exception
         class BadNode(ast.AST):
             pass
-        
+
         bad_node = BadNode()
         context = visitor._get_context(bad_node)
         # Should return None on exception

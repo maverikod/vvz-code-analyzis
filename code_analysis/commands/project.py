@@ -19,7 +19,9 @@ logger = logging.getLogger(__name__)
 class ProjectCommand:
     """Commands for managing projects (using database, not config file)."""
 
-    def __init__(self, config_path: Optional[Path] = None, db_path: Optional[Path] = None):
+    def __init__(
+        self, config_path: Optional[Path] = None, db_path: Optional[Path] = None
+    ):
         """
         Initialize project command.
 
@@ -126,7 +128,9 @@ class ProjectCommand:
             # Projects are stored in database, not config
             # Check if project exists in any database (we'd need to search all databases)
             # For now, just log that we're removing from database
-            logger.info(f"Removed project: {project_id} (projects are stored in database)")
+            logger.info(
+                f"Removed project: {project_id} (projects are stored in database)"
+            )
 
             return {
                 "success": True,
@@ -192,7 +196,7 @@ class ProjectCommand:
                             "success": False,
                             "message": f"Project database not found for path: {path}",
                         }
-                
+
                 try:
                     # Update project in database
                     db_project_id = db.get_or_create_project(

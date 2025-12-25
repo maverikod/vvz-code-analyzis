@@ -93,6 +93,12 @@ The tool detects various code quality issues:
 - Invalid imports
 - Imports in the middle of files
 
+## CST-based module composition (logical blocks)
+
+If you want to refactor by **logical blocks** (preserving comments, moving imports to the top,
+validating via `compile()`), see `docs/CST_TOOLS.md`, `docs/CST_QUERY.md` and MCP commands
+`compose_cst_module` / `query_cst`.
+
 ## Code Refactoring
 
 ### Class Splitting

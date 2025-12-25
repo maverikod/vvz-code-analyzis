@@ -12,7 +12,10 @@ import logging
 import threading
 from pathlib import Path
 from typing import List, Optional, Dict, Any, Tuple
+
 import numpy as np
+
+from .database import CodeDatabase
 
 try:
     import faiss
@@ -25,7 +28,7 @@ logger = logging.getLogger(__name__)
 class FaissIndexManager:
     """
     Manages FAISS index for vector similarity search.
-    
+
     Responsibilities:
     - Create and maintain FAISS index
     - Add/remove vectors from index
@@ -80,7 +83,9 @@ class FaissIndexManager:
             self.index = faiss.IndexFlatL2(self.vector_dim)
 
         self._next_vector_id = 0
-        logger.info(f"Created new FAISS index: {self.index_path}, dim={self.vector_dim}")
+        logger.info(
+            f"Created new FAISS index: {self.index_path}, dim={self.vector_dim}"
+        )
 
     def _load_index(self) -> None:
         """Load FAISS index from disk."""
@@ -142,7 +147,9 @@ class FaissIndexManager:
                     # Need to add padding vectors
                     padding_needed = vector_id - self.index.ntotal + 1
                     # Add zero vectors as padding
-                    padding = np.zeros((padding_needed, self.vector_dim), dtype="float32")
+                    padding = np.zeros(
+                        (padding_needed, self.vector_dim), dtype="float32"
+                    )
                     self.index.add(padding)
                     self._next_vector_id = vector_id + 1
                 # Replace vector at specific position
@@ -176,7 +183,9 @@ class FaissIndexManager:
         # FAISS doesn't support direct vector removal
         # We'll track removed IDs and skip them during search
         # Actual cleanup will happen on next rebuild from database
-        logger.debug(f"Marked {len(vector_ids)} vectors for removal (will be cleaned on rebuild)")
+        logger.debug(
+            f"Marked {len(vector_ids)} vectors for removal (will be cleaned on rebuild)"
+        )
 
     def search(
         self, query_vector: np.ndarray, k: int = 10
@@ -236,7 +245,7 @@ class FaissIndexManager:
         return None
 
     async def rebuild_from_database(
-        self, database: "CodeDatabase", svo_client_manager: Optional[Any] = None
+        self, database: CodeDatabase, svo_client_manager: Optional[Any] = None
     ) -> int:
         """
         Rebuild FAISS index from database.
@@ -269,25 +278,28 @@ class FaissIndexManager:
             vector_id = chunk.get("vector_id")
             embedding_vector_json = chunk.get("embedding_vector")
             chunk_text = chunk.get("chunk_text", "")
-            embedding_model = chunk.get("embedding_model")
+            chunk.get("embedding_model")
 
             if vector_id is None:
                 continue
 
             # Try to get embedding from database first (embedding_vector column)
             embedding_array = None
-            
+
             if embedding_vector_json:
                 try:
                     import json
+
                     embedding_list = json.loads(embedding_vector_json)
                     embedding_array = np.array(embedding_list, dtype="float32")
-                    logger.debug(f"Loaded embedding from database for chunk {chunk.get('id')}")
+                    logger.debug(
+                        f"Loaded embedding from database for chunk {chunk.get('id')}"
+                    )
                 except Exception as e:
                     logger.warning(
                         f"Failed to parse embedding_vector from database for chunk {chunk.get('id')}: {e}"
                     )
-            
+
             # If embedding not in database, try to get from SVO service
             if embedding_array is None and svo_client_manager:
                 logger.debug(
@@ -302,7 +314,9 @@ class FaissIndexManager:
                             self.text = text
 
                     dummy_chunks = [DummyChunk(chunk_text)]
-                    chunks_with_emb = await svo_client_manager.get_embeddings(dummy_chunks)
+                    chunks_with_emb = await svo_client_manager.get_embeddings(
+                        dummy_chunks
+                    )
                     if chunks_with_emb and len(chunks_with_emb) > 0:
                         embedding = getattr(chunks_with_emb[0], "embedding", None)
                         if embedding is not None:
@@ -310,6 +324,7 @@ class FaissIndexManager:
                             # Save embedding to database for future use
                             try:
                                 import json
+
                                 embedding_json = json.dumps(embedding.tolist())
                                 with database._lock:
                                     cursor = database.conn.cursor()
@@ -322,9 +337,13 @@ class FaissIndexManager:
                                         (embedding_json, chunk.get("id")),
                                     )
                                     database.conn.commit()
-                                logger.debug(f"Saved embedding to database for chunk {chunk.get('id')}")
+                                logger.debug(
+                                    f"Saved embedding to database for chunk {chunk.get('id')}"
+                                )
                             except Exception as e:
-                                logger.warning(f"Failed to save embedding to database: {e}")
+                                logger.warning(
+                                    f"Failed to save embedding to database: {e}"
+                                )
                         else:
                             missing_embeddings += 1
                     else:
@@ -341,7 +360,7 @@ class FaissIndexManager:
                     f"Skipping chunk {chunk.get('id')}: no embedding in database and no SVO client"
                 )
                 continue
-            
+
             # Add vector to FAISS index
             if embedding_array is not None:
                 try:
@@ -391,4 +410,3 @@ class FaissIndexManager:
         if self.index is not None:
             self.save_index()
             self.index = None
-

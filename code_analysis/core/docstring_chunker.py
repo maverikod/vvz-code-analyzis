@@ -9,10 +9,8 @@ email: vasilyvz@gmail.com
 """
 
 import ast
-import json
 import logging
 import uuid
-import numpy as np
 from pathlib import Path
 from typing import List, Dict, Any, Optional, Tuple, TYPE_CHECKING
 
@@ -98,7 +96,9 @@ class DocstringChunker:
                                 ):
                                     class_id = parent.name
                                     # Check if it's a method
-                                    if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                                    if isinstance(
+                                        node, (ast.FunctionDef, ast.AsyncFunctionDef)
+                                    ):
                                         method_id = node.name
                                     break
 
@@ -129,21 +129,27 @@ class DocstringChunker:
         # Extract file-level docstring
         file_docstring = ast.get_docstring(tree)
         if file_docstring:
-            items.append({
-                "type": "file_docstring",
-                "text": file_docstring,
-                "line": 1,
-                "ast_node_type": "Module",
-                "entity_type": "file",
-                "entity_name": None,
-                "class_name": None,
-                "function_name": None,
-                "method_name": None,
-            })
+            items.append(
+                {
+                    "type": "file_docstring",
+                    "text": file_docstring,
+                    "line": 1,
+                    "ast_node_type": "Module",
+                    "entity_type": "file",
+                    "entity_name": None,
+                    "class_name": None,
+                    "function_name": None,
+                    "method_name": None,
+                }
+            )
 
         # Extract docstrings and comments from all nodes with context
         # Use recursive visitor to maintain parent context
-        def visit_node(node: ast.AST, parent_class: Optional[str] = None, parent_function: Optional[str] = None):
+        def visit_node(
+            node: ast.AST,
+            parent_class: Optional[str] = None,
+            parent_function: Optional[str] = None,
+        ):
             """Recursively visit AST nodes with parent context."""
             node_type = type(node).__name__
 
@@ -151,7 +157,9 @@ class DocstringChunker:
             # ast.get_docstring() works only for Module, ClassDef, FunctionDef, AsyncFunctionDef
             # In Python 3.12+, it raises ValueError for nodes that can't have docstrings
             docstring = None
-            if isinstance(node, (ast.Module, ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)):
+            if isinstance(
+                node, (ast.Module, ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)
+            ):
                 try:
                     docstring = ast.get_docstring(node)
                 except (ValueError, TypeError, AttributeError):
@@ -159,7 +167,7 @@ class DocstringChunker:
                     # In Python 3.12+, ValueError is raised: "'Expr' can't have docstrings"
                     # This is expected for nodes that don't support docstrings
                     docstring = None
-            
+
             if docstring:
                 class_name = None
                 function_name = None
@@ -187,23 +195,27 @@ class DocstringChunker:
                         function_name = node.name
                     # Recursively visit function body
                     for child in node.body:
-                        visit_node(child, parent_class=parent_class, parent_function=node.name)
+                        visit_node(
+                            child, parent_class=parent_class, parent_function=node.name
+                        )
                 else:
                     # Module docstring (already handled above)
                     return
 
-                items.append({
-                    "type": "docstring",
-                    "text": docstring,
-                    "line": getattr(node, "lineno", None),
-                    "ast_node_type": node_type,
-                    "entity_type": entity_type,
-                    "entity_name": entity_name,
-                    "class_name": class_name,
-                    "function_name": function_name,
-                    "method_name": method_name,
-                    "node": node,  # Keep reference for later ID resolution
-                })
+                items.append(
+                    {
+                        "type": "docstring",
+                        "text": docstring,
+                        "line": getattr(node, "lineno", None),
+                        "ast_node_type": node_type,
+                        "entity_type": entity_type,
+                        "entity_name": entity_name,
+                        "class_name": class_name,
+                        "function_name": function_name,
+                        "method_name": method_name,
+                        "node": node,  # Keep reference for later ID resolution
+                    }
+                )
             else:
                 # Not a docstring node, but may have children
                 if isinstance(node, ast.ClassDef):
@@ -211,18 +223,28 @@ class DocstringChunker:
                         visit_node(child, parent_class=node.name, parent_function=None)
                 elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
                     for child in node.body:
-                        visit_node(child, parent_class=parent_class, parent_function=node.name)
+                        visit_node(
+                            child, parent_class=parent_class, parent_function=node.name
+                        )
                 elif hasattr(node, "body") and isinstance(node.body, list):
                     # Other nodes with body (e.g., If, For, While, etc.)
                     for child in node.body:
-                        visit_node(child, parent_class=parent_class, parent_function=parent_function)
-        
+                        visit_node(
+                            child,
+                            parent_class=parent_class,
+                            parent_function=parent_function,
+                        )
+
         # Start visiting from module body
         for node in tree.body:
             visit_node(node)
 
         # Extract comments with proper context binding
-        def visit_node_for_comments(node: ast.AST, parent_class: Optional[str] = None, parent_function: Optional[str] = None):
+        def visit_node_for_comments(
+            node: ast.AST,
+            parent_class: Optional[str] = None,
+            parent_function: Optional[str] = None,
+        ):
             """Recursively visit AST nodes to extract comments with parent context."""
             if hasattr(node, "lineno"):
                 node_line = node.lineno - 1
@@ -231,7 +253,7 @@ class DocstringChunker:
                     # Check for inline comment
                     if "#" in line:
                         comment_start = line.find("#")
-                        comment_text = line[comment_start + 1:].strip()
+                        comment_text = line[comment_start + 1 :].strip()
                         if comment_text:
                             # Use parent context from recursive traversal
                             class_name = parent_class
@@ -241,7 +263,9 @@ class DocstringChunker:
 
                             # Determine entity type based on context
                             if parent_class:
-                                if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                                if isinstance(
+                                    node, (ast.FunctionDef, ast.AsyncFunctionDef)
+                                ):
                                     entity_type = "method_comment"
                                     method_name = node.name
                                 else:
@@ -251,30 +275,40 @@ class DocstringChunker:
                             else:
                                 entity_type = "comment"
 
-                            items.append({
-                                "type": "comment",
-                                "text": comment_text,
-                                "line": node.lineno,
-                                "ast_node_type": type(node).__name__,
-                                "entity_type": entity_type,
-                                "entity_name": None,
-                                "class_name": class_name,
-                                "function_name": function_name,
-                                "method_name": method_name,
-                                "node": node,
-                            })
+                            items.append(
+                                {
+                                    "type": "comment",
+                                    "text": comment_text,
+                                    "line": node.lineno,
+                                    "ast_node_type": type(node).__name__,
+                                    "entity_type": entity_type,
+                                    "entity_name": None,
+                                    "class_name": class_name,
+                                    "function_name": function_name,
+                                    "method_name": method_name,
+                                    "node": node,
+                                }
+                            )
 
             # Recursively visit children with updated context
             if isinstance(node, ast.ClassDef):
                 for child in node.body:
-                    visit_node_for_comments(child, parent_class=node.name, parent_function=None)
+                    visit_node_for_comments(
+                        child, parent_class=node.name, parent_function=None
+                    )
             elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 for child in node.body:
-                    visit_node_for_comments(child, parent_class=parent_class, parent_function=node.name)
+                    visit_node_for_comments(
+                        child, parent_class=parent_class, parent_function=node.name
+                    )
             elif hasattr(node, "body") and isinstance(node.body, list):
                 for child in node.body:
-                    visit_node_for_comments(child, parent_class=parent_class, parent_function=parent_function)
-        
+                    visit_node_for_comments(
+                        child,
+                        parent_class=parent_class,
+                        parent_function=parent_function,
+                    )
+
         # Start visiting from module body for comments
         for node in tree.body:
             visit_node_for_comments(node)
@@ -311,15 +345,15 @@ class DocstringChunker:
 
         # Get min_chunk_length from config if available
         min_length = self.min_chunk_length
-        if self.svo_client_manager and hasattr(self.svo_client_manager, 'config'):
+        if self.svo_client_manager and hasattr(self.svo_client_manager, "config"):
             server_config = self.svo_client_manager.config
-            if server_config and hasattr(server_config, 'min_chunk_length'):
+            if server_config and hasattr(server_config, "min_chunk_length"):
                 min_length = server_config.min_chunk_length
 
         # Separate items into long (>= min_length) and short (< min_length)
         long_items = []
         short_items = []
-        
+
         for item in items:
             text = item.get("text", "").strip()
             if not text:
@@ -328,7 +362,7 @@ class DocstringChunker:
                 long_items.append(item)
             else:
                 short_items.append(item)
-        
+
         logger.info(
             f"File {file_path}: {len(long_items)} long items (>= {min_length} chars), "
             f"{len(short_items)} short items (< {min_length} chars)"
@@ -336,9 +370,7 @@ class DocstringChunker:
 
         # Process long items separately (each one individually)
         for item in long_items:
-            await self._process_single_item(
-                item, file_path, file_id, project_id
-            )
+            await self._process_single_item(item, file_path, file_id, project_id)
 
         # Group short items by level and process
         if short_items:
@@ -371,11 +403,11 @@ class DocstringChunker:
                 f"Chunking {item['type']} at line {item.get('line')} in {file_path}: "
                 f"text length={len(text)}, preview: {text[:100]}..."
             )
-            
+
             if not self.svo_client_manager:
                 logger.error("SVO client manager is not available, skipping chunking")
                 return
-            
+
             logger.info(
                 f"🔍 Requesting chunking for {item['type']} at line {item.get('line')} "
                 f"in {file_path}, text length={len(text)}"
@@ -395,16 +427,14 @@ class DocstringChunker:
                     f"in {file_path}, text length={len(text)}"
                 )
                 return
-            
+
             logger.info(
                 f"✅ Received {len(chunks)} chunks for {item['type']} at line {item.get('line')} "
                 f"in {file_path}, text length={len(text)}"
             )
 
             # Resolve entity IDs and save chunks
-            await self._save_chunks(
-                chunks, item, file_path, file_id, project_id
-            )
+            await self._save_chunks(chunks, item, file_path, file_id, project_id)
 
         except Exception as e:
             logger.warning(
@@ -437,19 +467,21 @@ class DocstringChunker:
             min_length: Minimum length for chunking
         """
         # Group by method level: (class_name, method_name)
-        method_groups: Dict[Tuple[Optional[str], Optional[str]], List[Dict[str, Any]]] = {}
-        
+        method_groups: Dict[
+            Tuple[Optional[str], Optional[str]], List[Dict[str, Any]]
+        ] = {}
+
         # Group by class level: (class_name, None)
         class_groups: Dict[Optional[str], List[Dict[str, Any]]] = {}
-        
+
         # File level: all items
         file_group: List[Dict[str, Any]] = []
 
         for item in short_items:
             class_name = item.get("class_name")
             method_name = item.get("method_name")
-            function_name = item.get("function_name")
-            
+            item.get("function_name")
+
             # Determine grouping key
             if class_name and method_name:
                 # Method level
@@ -469,12 +501,16 @@ class DocstringChunker:
         # Process method groups
         for (class_name, method_name), method_items in method_groups.items():
             total_length = sum(len(item.get("text", "")) for item in method_items)
-            
+
             if total_length >= min_length:
                 # Chunk method group
                 await self._chunk_grouped_items(
-                    method_items, f"method {class_name}.{method_name}",
-                    file_path, file_id, project_id, binding_level=self.binding_levels.get("method", 3)
+                    method_items,
+                    f"method {class_name}.{method_name}",
+                    file_path,
+                    file_id,
+                    project_id,
+                    binding_level=self.binding_levels.get("method", 3),
                 )
             else:
                 # Merge with class group
@@ -489,12 +525,16 @@ class DocstringChunker:
         # Process class groups
         for class_name, class_items in class_groups.items():
             total_length = sum(len(item.get("text", "")) for item in class_items)
-            
+
             if total_length >= min_length:
                 # Chunk class group
                 await self._chunk_grouped_items(
-                    class_items, f"class {class_name}",
-                    file_path, file_id, project_id, binding_level=self.binding_levels.get("class", 2)
+                    class_items,
+                    f"class {class_name}",
+                    file_path,
+                    file_id,
+                    project_id,
+                    binding_level=self.binding_levels.get("class", 2),
                 )
             else:
                 # Merge with file group
@@ -507,12 +547,16 @@ class DocstringChunker:
         # Process file group
         if file_group:
             total_length = sum(len(item.get("text", "")) for item in file_group)
-            
+
             if total_length >= min_length:
                 # Chunk file group
                 await self._chunk_grouped_items(
-                    file_group, "file",
-                    file_path, file_id, project_id, binding_level=self.binding_levels.get("file", 1)
+                    file_group,
+                    "file",
+                    file_path,
+                    file_id,
+                    project_id,
+                    binding_level=self.binding_levels.get("file", 1),
                 )
             else:
                 # Skip - total length still too short
@@ -541,13 +585,17 @@ class DocstringChunker:
             project_id: Project ID
         """
         # Combine texts with separator
-        texts = [item.get("text", "").strip() for item in items if item.get("text", "").strip()]
+        texts = [
+            item.get("text", "").strip()
+            for item in items
+            if item.get("text", "").strip()
+        ]
         if not texts:
             return
-        
+
         combined_text = "\n\n".join(texts)
         total_length = len(combined_text)
-        
+
         logger.info(
             f"Chunking grouped {group_name} items ({len(items)} items, "
             f"total {total_length} chars) in {file_path}"
@@ -562,7 +610,7 @@ class DocstringChunker:
                 "preview": combined_text[:200],
             },
         )
-        
+
         chunks = None
         try:
             chunks = await self.svo_client_manager.chunk_text(
@@ -679,18 +727,22 @@ class DocstringChunker:
             chunk_text = getattr(chunk, "body", "") or getattr(chunk, "text", "")
             chunk_type = getattr(chunk, "type", "DocBlock") or "DocBlock"
             chunk_ordinal = getattr(chunk, "ordinal", None)
-            
+
             # Extract embedding if chunker returned it (chunker may return embeddings)
             embedding = None
             embedding_vector_json = None
             embedding_model = None
             vector_id = None
-            
+
             # Check if chunk has embedding from chunker
-            if hasattr(chunk, "embedding") and getattr(chunk, "embedding", None) is not None:
+            if (
+                hasattr(chunk, "embedding")
+                and getattr(chunk, "embedding", None) is not None
+            ):
                 embedding = getattr(chunk, "embedding")
                 # Convert to JSON string for database storage
                 import json
+
                 try:
                     if hasattr(embedding, "tolist"):
                         embedding_vector_json = json.dumps(embedding.tolist())
@@ -713,14 +765,14 @@ class DocstringChunker:
                     f"Chunk {idx+1}/{len(chunks)} has no embedding from chunker, "
                     "will be processed by vectorization worker"
                 )
-            
+
             # Extract BM25 score
             bm25_score = None
             if hasattr(chunk, "bm25"):
                 bm25_score = getattr(chunk, "bm25", None)
             elif hasattr(chunk, "bm25_score"):
                 bm25_score = getattr(chunk, "bm25_score", None)
-            
+
             # Save chunk to database
             chunk_id = await self.database.add_code_chunk(
                 file_id=file_id,
@@ -741,7 +793,7 @@ class DocstringChunker:
                 source_type=item.get("type"),
                 binding_level=binding_level,
             )
-            
+
             logger.info(
                 f"Saved chunk {idx+1}/{len(chunks)} to database: id={chunk_id}, "
                 f"vector_id={vector_id}, has_embedding={embedding_vector_json is not None}, "

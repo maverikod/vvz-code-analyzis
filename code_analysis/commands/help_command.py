@@ -209,6 +209,12 @@ class HelpCommand(Command):
         lines.append("       - Extract common functionality into base classes")
         lines.append("       - Merge related classes")
         lines.append("")
+        lines.append("    5. CST-based refactoring (LibCST)")
+        lines.append("       - query_cst: find nodes by selectors (CSTQuery)")
+        lines.append(
+            "       - compose_cst_module: replace logical blocks and validate via compile()"
+        )
+        lines.append("")
         lines.append("AVAILABLE COMMANDS:")
 
         # List all registered commands

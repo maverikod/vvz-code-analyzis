@@ -9,7 +9,6 @@ email: vasilyvz@gmail.com
 import asyncio
 import json
 import ssl
-import sys
 from pathlib import Path
 
 import httpx
@@ -24,23 +23,23 @@ CA_CERT = CERT_DIR / "ca" / "ca.crt"
 def create_ssl_context() -> ssl.SSLContext:
     """Create SSL context for mTLS client connections."""
     ssl_context = ssl.create_default_context(ssl.Purpose.SERVER_AUTH)
-    
+
     if CA_CERT.exists():
         ssl_context.load_verify_locations(str(CA_CERT))
     else:
         ssl_context.check_hostname = False
         ssl_context.verify_mode = ssl.CERT_NONE
-    
+
     if CLIENT_CERT.exists() and CLIENT_KEY.exists():
         ssl_context.load_cert_chain(str(CLIENT_CERT), str(CLIENT_KEY))
-    
+
     return ssl_context
 
 
 async def get_openapi_schema():
     """Get OpenAPI schema from server."""
     ssl_context = create_ssl_context()
-    
+
     async with httpx.AsyncClient(verify=ssl_context, timeout=30.0) as client:
         try:
             response = await client.get(f"{SERVER_URL}/openapi.json")
@@ -55,10 +54,10 @@ async def get_openapi_schema():
         except Exception as e:
             print(f"Error: {e}")
             import traceback
+
             traceback.print_exc()
             return None
 
 
 if __name__ == "__main__":
     asyncio.run(get_openapi_schema())
-

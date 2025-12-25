@@ -68,7 +68,15 @@ class TestFindUsagesCommand:
         runner = CliRunner()
         root_dir = test_db.parent
         result = runner.invoke(
-            search, ["find-usages", "--root-dir", str(root_dir), "--db-path", str(test_db), "test_method"]
+            search,
+            [
+                "find-usages",
+                "--root-dir",
+                str(root_dir),
+                "--db-path",
+                str(test_db),
+                "test_method",
+            ],
         )
 
         assert result.exit_code == 0
@@ -145,7 +153,15 @@ class TestFindUsagesCommand:
         runner = CliRunner()
         root_dir = test_db.parent
         result = runner.invoke(
-            search, ["find-usages", "--root-dir", str(root_dir), "--db-path", str(test_db), "nonexistent"]
+            search,
+            [
+                "find-usages",
+                "--root-dir",
+                str(root_dir),
+                "--db-path",
+                str(test_db),
+                "nonexistent",
+            ],
         )
 
         assert result.exit_code == 0
@@ -175,7 +191,15 @@ class TestFulltextCommand:
         runner = CliRunner()
         root_dir = test_db.parent
         result = runner.invoke(
-            search, ["fulltext", "--root-dir", str(root_dir), "--db-path", str(test_db), "test"]
+            search,
+            [
+                "fulltext",
+                "--root-dir",
+                str(root_dir),
+                "--db-path",
+                str(test_db),
+                "test",
+            ],
         )
 
         assert result.exit_code == 0
@@ -249,7 +273,14 @@ class TestFulltextCommand:
         root_dir = test_db.parent
         result = runner.invoke(
             search,
-            ["fulltext", "--root-dir", str(root_dir), "--db-path", str(test_db), "nonexistent_query_xyz123"],
+            [
+                "fulltext",
+                "--root-dir",
+                str(root_dir),
+                "--db-path",
+                str(test_db),
+                "nonexistent_query_xyz123",
+            ],
         )
 
         assert result.exit_code == 0
@@ -265,7 +296,15 @@ class TestClassMethodsCommand:
         # Need to provide root-dir
         root_dir = test_db.parent
         result = runner.invoke(
-            search, ["class-methods", "--root-dir", str(root_dir), "--db-path", str(test_db), "TestClass"]
+            search,
+            [
+                "class-methods",
+                "--root-dir",
+                str(root_dir),
+                "--db-path",
+                str(test_db),
+                "TestClass",
+            ],
         )
 
         assert result.exit_code == 0
@@ -298,7 +337,15 @@ class TestClassMethodsCommand:
         runner = CliRunner()
         root_dir = test_db.parent
         result = runner.invoke(
-            search, ["class-methods", "--root-dir", str(root_dir), "--db-path", str(test_db), "NonexistentClass"]
+            search,
+            [
+                "class-methods",
+                "--root-dir",
+                str(root_dir),
+                "--db-path",
+                str(test_db),
+                "NonexistentClass",
+            ],
         )
 
         assert result.exit_code == 0
@@ -313,7 +360,15 @@ class TestFindClassesCommand:
         runner = CliRunner()
         root_dir = test_db.parent
         result = runner.invoke(
-            search, ["find-classes", "--root-dir", str(root_dir), "--db-path", str(test_db), "Test"]
+            search,
+            [
+                "find-classes",
+                "--root-dir",
+                str(root_dir),
+                "--db-path",
+                str(test_db),
+                "Test",
+            ],
         )
 
         assert result.exit_code == 0
@@ -346,7 +401,15 @@ class TestFindClassesCommand:
         runner = CliRunner()
         root_dir = test_db.parent
         result = runner.invoke(
-            search, ["find-classes", "--root-dir", str(root_dir), "--db-path", str(test_db), "Nonexistent"]
+            search,
+            [
+                "find-classes",
+                "--root-dir",
+                str(root_dir),
+                "--db-path",
+                str(test_db),
+                "Nonexistent",
+            ],
         )
 
         assert result.exit_code == 0

@@ -24,9 +24,13 @@ logger = logging.getLogger(__name__)
 
 def _load_server_config() -> ServerConfig:
     adapter_config = get_adapter_config()
-    adapter_config_data = getattr(adapter_config, "config_data", {}) if adapter_config else {}
+    adapter_config_data = (
+        getattr(adapter_config, "config_data", {}) if adapter_config else {}
+    )
     code_analysis_config = adapter_config_data.get("code_analysis", {})
-    return ServerConfig(**code_analysis_config) if code_analysis_config else ServerConfig()
+    return (
+        ServerConfig(**code_analysis_config) if code_analysis_config else ServerConfig()
+    )
 
 
 class SemanticSearchMCPCommand(Command):
@@ -112,11 +116,15 @@ class SemanticSearchMCPCommand(Command):
                 str(root_path), name=root_path.name
             )
             if not proj_id:
-                return ErrorResult(message="Project not found", code="PROJECT_NOT_FOUND")
+                return ErrorResult(
+                    message="Project not found", code="PROJECT_NOT_FOUND"
+                )
 
             server_config = _load_server_config()
             if not server_config.vector_dim:
-                return ErrorResult(message="vector_dim not configured", code="INVALID_CONFIG")
+                return ErrorResult(
+                    message="vector_dim not configured", code="INVALID_CONFIG"
+                )
 
             svo_client_manager = SVOClientManager(server_config)
             await svo_client_manager.initialize()
@@ -151,5 +159,6 @@ class SemanticSearchMCPCommand(Command):
             return SuccessResult(data={"results": results, "count": len(results)})
         except Exception as e:
             logger.exception("Semantic search failed: %s", e)
-            return ErrorResult(message=f"Semantic search failed: {e}", code="SEMANTIC_SEARCH_ERROR")
-
+            return ErrorResult(
+                message=f"Semantic search failed: {e}", code="SEMANTIC_SEARCH_ERROR"
+            )

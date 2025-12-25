@@ -11,10 +11,9 @@ email: vasilyvz@gmail.com
 import logging
 from typing import Optional, List, Any
 
-from .config import ServerConfig, SVOServiceConfig
+from .config import ServerConfig
 from .chunker_client_wrapper import create_chunker_client
 from svo_client import ChunkerClient
-from types import SimpleNamespace
 from embed_client.async_client import EmbeddingServiceAsyncClient
 
 logger = logging.getLogger(__name__)
@@ -59,7 +58,11 @@ class SVOClientManager:
                 if "://" in emb_url:
                     base_url = emb_url
                 else:
-                    scheme = "https" if self.config.embedding.protocol in ("https", "mtls") else "http"
+                    scheme = (
+                        "https"
+                        if self.config.embedding.protocol in ("https", "mtls")
+                        else "http"
+                    )
                     base_url = f"{scheme}://{emb_url}"
 
                 emb_cfg = {
@@ -77,7 +80,9 @@ class SVOClientManager:
                     "client": {"timeout": self.config.embedding.timeout or 30.0},
                     "auth": {"method": "none"},
                 }
-                self._embedding_client = EmbeddingServiceAsyncClient.from_config_dict(emb_cfg)
+                self._embedding_client = EmbeddingServiceAsyncClient.from_config_dict(
+                    emb_cfg
+                )
                 logger.info(
                     f"Initialized embedding client: {self.config.embedding.protocol}://"
                     f"{self.config.embedding.url}:{self.config.embedding.port}"
@@ -86,9 +91,7 @@ class SVOClientManager:
                 logger.error(f"Failed to initialize embedding client: {e}")
                 self._embedding_client = None
 
-    async def chunk_text(
-        self, text: str, **params
-    ) -> Optional[List[Any]]:
+    async def chunk_text(self, text: str, **params) -> Optional[List[Any]]:
         """
         Chunk text using the chunker service with retry logic.
 
@@ -100,7 +103,7 @@ class SVOClientManager:
             List of chunks or None if chunker is not available or all retries failed
         """
         import asyncio
-        
+
         if not self._chunker_client:
             logger.warning("Chunker client is not available")
             return None
@@ -112,7 +115,6 @@ class SVOClientManager:
             retry_attempts = self.config.chunker.retry_attempts
             retry_delay = self.config.chunker.retry_delay
 
-        last_error = None
         for attempt in range(1, retry_attempts + 1):
             try:
                 logger.info(
@@ -138,8 +140,14 @@ class SVOClientManager:
                     # Log details about first chunk if available
                     if len(result) > 0:
                         first_chunk = result[0]
-                        has_emb = hasattr(first_chunk, "embedding") and getattr(first_chunk, "embedding", None) is not None
-                        has_bm25 = hasattr(first_chunk, "bm25") and getattr(first_chunk, "bm25", None) is not None
+                        has_emb = (
+                            hasattr(first_chunk, "embedding")
+                            and getattr(first_chunk, "embedding", None) is not None
+                        )
+                        has_bm25 = (
+                            hasattr(first_chunk, "bm25")
+                            and getattr(first_chunk, "bm25", None) is not None
+                        )
                         logger.debug(
                             f"First chunk: has_embedding={has_emb}, has_bm25={has_bm25}, "
                             f"type={getattr(first_chunk, 'type', 'N/A')}"
@@ -156,22 +164,23 @@ class SVOClientManager:
                     else:
                         return None
             except Exception as e:
-                last_error = e
                 error_type = type(e).__name__
                 error_msg = str(e)
-                
+
                 # Enhanced logging for SVOServerError
                 if error_type == "SVOServerError":
                     # Check if it's a Model RPC server error (infrastructure issue)
                     is_model_rpc_error = (
-                        "Model RPC server" in error_msg or
-                        "failed after 3 attempts" in error_msg or
-                        (hasattr(e, "code") and getattr(e, "code") == -32603)
+                        "Model RPC server" in error_msg
+                        or "failed after 3 attempts" in error_msg
+                        or (hasattr(e, "code") and getattr(e, "code") == -32603)
                     )
-                    
+
                     if is_model_rpc_error:
                         # Model RPC server is down - use warning level (infrastructure issue)
-                        log_level = logger.warning if attempt < retry_attempts else logger.error
+                        log_level = (
+                            logger.warning if attempt < retry_attempts else logger.error
+                        )
                         log_level(
                             f"Model RPC server unavailable (attempt {attempt}/{retry_attempts}, "
                             f"length={len(text)}): {error_msg}. "
@@ -182,21 +191,23 @@ class SVOClientManager:
                         logger.error(
                             f"Chunker service error (attempt {attempt}/{retry_attempts}, "
                             f"length={len(text)}): {error_type}: {error_msg}",
-                            exc_info=True
+                            exc_info=True,
                         )
-                    
+
                     # Log error code if available
                     if hasattr(e, "code"):
                         logger.debug(f"Chunker error code: {getattr(e, 'code', 'N/A')}")
                     if hasattr(e, "message"):
-                        logger.debug(f"Chunker error message: {getattr(e, 'message', 'N/A')}")
+                        logger.debug(
+                            f"Chunker error message: {getattr(e, 'message', 'N/A')}"
+                        )
                 else:
                     logger.error(
                         f"Chunker service error (attempt {attempt}/{retry_attempts}, "
                         f"length={len(text)}, type={error_type}): {error_msg}",
-                        exc_info=True
+                        exc_info=True,
                     )
-                
+
                 if attempt < retry_attempts:
                     logger.info(f"Retrying in {retry_delay}s...")
                     await asyncio.sleep(retry_delay)
@@ -204,14 +215,12 @@ class SVOClientManager:
                     logger.error(
                         f"All retry attempts failed for chunker (length={len(text)}, "
                         f"type={error_type}): {error_msg}",
-                        exc_info=True
+                        exc_info=True,
                     )
-        
+
         return None
 
-    async def get_embeddings(
-        self, chunks: List[Any], **params
-    ) -> Optional[List[Any]]:
+    async def get_embeddings(self, chunks: List[Any], **params) -> Optional[List[Any]]:
         """
         Get embeddings for chunks using chunker service.
 
@@ -251,28 +260,34 @@ class SVOClientManager:
             # The chunker service chunk_text returns chunks with embeddings, bm25, etc.
             # CRITICAL: Worker should ONLY use chunker service, not embedding service directly
             combined_text = "\n\n".join(texts)
-            
+
             # Ensure type parameter is passed to chunker for proper embedding generation
             chunker_params = params.copy()
             if "type" not in chunker_params:
                 chunker_params["type"] = "DocBlock"  # Default type for docstrings
-            
+
             try:
-                result = await self._chunker_client.chunk_text(combined_text, **chunker_params)
+                result = await self._chunker_client.chunk_text(
+                    combined_text, **chunker_params
+                )
             except Exception as chunker_error:
                 error_type = type(chunker_error).__name__
                 error_msg = str(chunker_error)
                 logger.error(
                     f"Chunker service error when getting embeddings: {error_type}: {error_msg}",
-                    exc_info=True
+                    exc_info=True,
                 )
                 # Log additional error details if available
                 if hasattr(chunker_error, "code"):
-                    logger.error(f"Chunker error code: {getattr(chunker_error, 'code', 'N/A')}")
+                    logger.error(
+                        f"Chunker error code: {getattr(chunker_error, 'code', 'N/A')}"
+                    )
                 if hasattr(chunker_error, "message"):
-                    logger.error(f"Chunker error message: {getattr(chunker_error, 'message', 'N/A')}")
+                    logger.error(
+                        f"Chunker error message: {getattr(chunker_error, 'message', 'N/A')}"
+                    )
                 return None
-            
+
             # Chunker should always return embeddings - if not, log warning
             if result:
                 has_embeddings = any(
@@ -295,13 +310,11 @@ class SVOClientManager:
             error_msg = str(e)
             logger.error(
                 f"Error getting embeddings from chunker: {error_type}: {error_msg}",
-                exc_info=True
+                exc_info=True,
             )
             return None
 
-    async def chunk_and_embed(
-        self, text: str, **chunk_params
-    ) -> Optional[List[Any]]:
+    async def chunk_and_embed(self, text: str, **chunk_params) -> Optional[List[Any]]:
         """
         Chunk text and get embeddings in one call.
 
@@ -353,4 +366,3 @@ class SVOClientManager:
     async def __aexit__(self, exc_type, exc_val, exc_tb):
         """Async context manager exit."""
         await self.close()
-

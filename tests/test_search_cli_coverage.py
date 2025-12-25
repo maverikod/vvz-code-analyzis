@@ -6,7 +6,6 @@ email: vasilyvz@gmail.com
 """
 
 import pytest
-import json
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from click.testing import CliRunner
@@ -180,16 +179,18 @@ class TestSearchCliCoverage:
     def test_class_methods_with_multiple_methods(self, test_db_with_data):
         """Test class-methods with multiple methods."""
         db_path, tmpdir = test_db_with_data
-        
+
         # Add another method
         db = CodeDatabase(db_path)
         project_id = db.get_or_create_project(str(tmpdir))
-        file_id = db.get_file_id("test.py", project_id)
+        db.get_file_id("test.py", project_id)
         classes = db.search_classes(None, project_id)
         class_id = classes[0]["id"] if classes else None
-        
+
         if class_id:
-            db.add_method(class_id, "another_method", 25, ["self"], "Another", False, False, False)
+            db.add_method(
+                class_id, "another_method", 25, ["self"], "Another", False, False, False
+            )
         db.close()
 
         runner = CliRunner()

@@ -37,21 +37,22 @@ class ServerControl:
             log_file: Path to log file (default: from config or logs/mcp_server.log)
         """
         self.config_path = Path(config_path).resolve()
-        
+
         # Load config to get log path from adapter config
         # Priority: Arguments > Environment variables > Adapter Config > Default
         import os
-        
+
         # Try to load adapter config to get log_dir
         adapter_log_dir = None
         try:
             from mcp_proxy_adapter.core.config.simple_config import SimpleConfig
+
             simple_config = SimpleConfig(str(self.config_path))
             model = simple_config.load()
             adapter_log_dir = getattr(model.server, "log_dir", None)
         except Exception:
             pass
-        
+
         # Determine log file: Argument > ENV > Adapter Config > Default
         if not log_file:
             env_log = os.getenv("CODE_ANALYSIS_LOG")
@@ -63,7 +64,7 @@ class ServerControl:
                 log_file = str(log_dir_path / "mcp_server.log")
             else:
                 log_file = None
-        
+
         # Default PID file location
         if pid_file:
             self.pid_file = Path(pid_file).resolve()
@@ -82,7 +83,7 @@ class ServerControl:
                 data_dir = self.config_path.parent / "data"
                 data_dir.mkdir(parents=True, exist_ok=True)
                 self.pid_file = data_dir / "mcp_server.pid"
-        
+
         # Default log file location
         if log_file:
             self.log_file = Path(log_file).resolve()
@@ -139,7 +140,7 @@ class ServerControl:
         """Get process information."""
         if not self._is_process_running(pid):
             return None
-        
+
         try:
             # Try to get process info from /proc (Linux)
             proc_path = Path(f"/proc/{pid}")
@@ -155,7 +156,7 @@ class ServerControl:
                     }
         except Exception:
             pass
-        
+
         return {"pid": pid, "running": True}
 
     def start(self) -> Dict[str, Any]:
@@ -193,7 +194,7 @@ class ServerControl:
             log_dir = self.log_file.parent
             log_dir.mkdir(parents=True, exist_ok=True)
             log_handle = open(self.log_file, "a")
-            
+
             process = subprocess.Popen(
                 cmd,
                 stdout=log_handle,
@@ -204,7 +205,7 @@ class ServerControl:
 
             # Wait a bit to check if process started successfully
             time.sleep(0.5)
-            
+
             if process.poll() is not None:
                 # Process exited immediately
                 log_handle.close()
@@ -214,7 +215,7 @@ class ServerControl:
                 }
 
             self._write_pid(process.pid)
-            
+
             logger.info(f"Server started with PID: {process.pid}")
             return {
                 "success": True,
@@ -364,4 +365,3 @@ class ServerControl:
             Dictionary with status information
         """
         return self.restart()
-

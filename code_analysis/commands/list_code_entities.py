@@ -8,7 +8,7 @@ email: vasilyvz@gmail.com
 import json
 import logging
 from pathlib import Path
-from typing import Any, Dict, List, Optional, TYPE_CHECKING
+from typing import Any, Dict, Optional, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from ..core.database import CodeDatabase  # noqa: F401
@@ -23,7 +23,9 @@ class ListCodeEntitiesCommand:
         self,
         database: "CodeDatabase",
         project_id: str,
-        entity_type: Optional[str] = None,  # "class", "function", "method", or None for all
+        entity_type: Optional[
+            str
+        ] = None,  # "class", "function", "method", or None for all
         file_path: Optional[str] = None,
         limit: Optional[int] = None,
         offset: int = 0,
@@ -121,15 +123,17 @@ class ListCodeEntitiesCommand:
         classes = []
         for row in rows:
             bases = json.loads(row["bases"]) if row["bases"] else []
-            classes.append({
-                "id": row["id"],
-                "name": row["name"],
-                "line": row["line"],
-                "docstring": row["docstring"],
-                "bases": bases,
-                "file_id": row["file_id"],
-                "file_path": row["file_path"],
-            })
+            classes.append(
+                {
+                    "id": row["id"],
+                    "name": row["name"],
+                    "line": row["line"],
+                    "docstring": row["docstring"],
+                    "bases": bases,
+                    "file_id": row["file_id"],
+                    "file_path": row["file_path"],
+                }
+            )
 
         # Get total count
         count_query = "SELECT COUNT(*) as total FROM classes c JOIN files f ON c.file_id = f.id WHERE f.project_id = ?"
@@ -210,15 +214,17 @@ class ListCodeEntitiesCommand:
         functions = []
         for row in rows:
             args = json.loads(row["args"]) if row["args"] else []
-            functions.append({
-                "id": row["id"],
-                "name": row["name"],
-                "line": row["line"],
-                "args": args,
-                "docstring": row["docstring"],
-                "file_id": row["file_id"],
-                "file_path": row["file_path"],
-            })
+            functions.append(
+                {
+                    "id": row["id"],
+                    "name": row["name"],
+                    "line": row["line"],
+                    "args": args,
+                    "docstring": row["docstring"],
+                    "file_id": row["file_id"],
+                    "file_path": row["file_path"],
+                }
+            )
 
         # Get total count
         count_query = "SELECT COUNT(*) as total FROM functions func JOIN files f ON func.file_id = f.id WHERE f.project_id = ?"
@@ -302,21 +308,23 @@ class ListCodeEntitiesCommand:
         methods = []
         for row in rows:
             args = json.loads(row["args"]) if row["args"] else []
-            methods.append({
-                "id": row["id"],
-                "name": row["name"],
-                "line": row["line"],
-                "args": args,
-                "docstring": row["docstring"],
-                "is_abstract": bool(row["is_abstract"]),
-                "has_pass": bool(row["has_pass"]),
-                "has_not_implemented": bool(row["has_not_implemented"]),
-                "class_id": row["class_id"],
-                "class_name": row["class_name"],
-                "class_line": row["class_line"],
-                "file_id": row["file_id"],
-                "file_path": row["file_path"],
-            })
+            methods.append(
+                {
+                    "id": row["id"],
+                    "name": row["name"],
+                    "line": row["line"],
+                    "args": args,
+                    "docstring": row["docstring"],
+                    "is_abstract": bool(row["is_abstract"]),
+                    "has_pass": bool(row["has_pass"]),
+                    "has_not_implemented": bool(row["has_not_implemented"]),
+                    "class_id": row["class_id"],
+                    "class_name": row["class_name"],
+                    "class_line": row["class_line"],
+                    "file_id": row["file_id"],
+                    "file_path": row["file_path"],
+                }
+            )
 
         # Get total count
         count_query = """
@@ -363,7 +371,9 @@ class ListCodeEntitiesCommand:
         functions_result = await self._list_functions()
         methods_result = await self._list_methods()
 
-        if not all(r.get("success") for r in [classes_result, functions_result, methods_result]):
+        if not all(
+            r.get("success") for r in [classes_result, functions_result, methods_result]
+        ):
             return {
                 "success": False,
                 "message": "Error listing some entities",
@@ -386,4 +396,3 @@ class ListCodeEntitiesCommand:
                 "methods": methods_result["entities"],
             },
         }
-

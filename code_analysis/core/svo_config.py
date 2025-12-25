@@ -53,9 +53,7 @@ class SVOServiceConfig(BaseModel):
     host: str = Field(default="localhost", description="Service host")
     port: int = Field(..., description="Service port")
     protocol: str = Field(default="https", description="Protocol (http/https)")
-    mtls: Optional[MTLSConfig] = Field(
-        default=None, description="mTLS configuration"
-    )
+    mtls: Optional[MTLSConfig] = Field(default=None, description="mTLS configuration")
     timeout: float = Field(default=60.0, description="Request timeout in seconds")
 
     @field_validator("port")
@@ -235,4 +233,3 @@ def load_svo_config(config_path: Path) -> SVOClientConfig:
     )
 
     return SVOClientConfig(chunker=chunker_config, embedding=embedding_config)
-

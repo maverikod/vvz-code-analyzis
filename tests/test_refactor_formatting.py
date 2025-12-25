@@ -6,11 +6,13 @@ email: vasilyvz@gmail.com
 """
 
 import ast
-import tempfile
-from pathlib import Path
 import pytest
 
-from code_analysis.core.refactorer import ClassSplitter, SuperclassExtractor, format_code_with_black
+from code_analysis.core.refactorer import (
+    ClassSplitter,
+    SuperclassExtractor,
+    format_code_with_black,
+)
 
 
 class TestRefactorFormatting:
@@ -20,12 +22,12 @@ class TestRefactorFormatting:
         """Test that black formatting works correctly."""
         test_file = tmp_path / "test.py"
         test_file.write_text(
-            '''class Test:
+            """class Test:
     def method1(self):
         return "test"
     def method2(self):
         return "test2"
-'''
+"""
         )
 
         success, error = format_code_with_black(test_file)
@@ -82,7 +84,7 @@ class TestRefactorFormatting:
         """Test that extract_superclass formats the result with black."""
         test_file = tmp_path / "test.py"
         test_file.write_text(
-            '''class Child1:
+            """class Child1:
     def __init__(self):
         self.prop1 = None
     def common_method(self):
@@ -97,7 +99,7 @@ class Child2:
         return "child2"
     def specific_method2(self):
         return "specific2"
-'''
+"""
         )
 
         config = {
@@ -131,7 +133,7 @@ class Child2:
         """Test that refactoring continues even if formatting fails."""
         test_file = tmp_path / "test.py"
         test_file.write_text(
-            '''class LargeClass:
+            """class LargeClass:
     def __init__(self):
         self.prop1 = None
         self.prop2 = None
@@ -139,7 +141,7 @@ class Child2:
         return "method1"
     def method2(self):
         return "method2"
-'''
+"""
         )
 
         # Mock black to fail
@@ -163,4 +165,3 @@ class Child2:
 
         # Should still succeed even if formatting fails
         assert success, f"Split should succeed even if formatting fails: {message}"
-

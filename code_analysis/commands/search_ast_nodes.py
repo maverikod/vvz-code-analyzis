@@ -44,7 +44,11 @@ class SearchASTNodesCommand:
         self.limit = limit
 
     def _search_nodes_recursive(
-        self, node: Dict[str, Any], node_type: Optional[str], results: List[Dict[str, Any]], path: str = ""
+        self,
+        node: Dict[str, Any],
+        node_type: Optional[str],
+        results: List[Dict[str, Any]],
+        path: str = "",
     ) -> None:
         """
         Recursively search for nodes in AST dictionary.
@@ -72,7 +76,7 @@ class SearchASTNodesCommand:
                 node_info["lineno"] = node["lineno"]
             if "col_offset" in node:
                 node_info["col_offset"] = node["col_offset"]
-            
+
             # Add node-specific fields
             if current_type == "ClassDef":
                 if "bases" in node:
@@ -82,9 +86,9 @@ class SearchASTNodesCommand:
                     args = node["args"]
                     if isinstance(args, dict) and "args" in args:
                         node_info["args"] = [arg.get("arg", "") for arg in args["args"]]
-            
+
             results.append(node_info)
-            
+
             if len(results) >= self.limit:
                 return
 
@@ -160,25 +164,27 @@ class SearchASTNodesCommand:
 
                 try:
                     ast_json = ast_record["ast_json"]
-                    ast_dict = json.loads(ast_json) if isinstance(ast_json, str) else ast_json
-                    
+                    ast_dict = (
+                        json.loads(ast_json) if isinstance(ast_json, str) else ast_json
+                    )
+
                     # Get file path for context
                     file_record = self.database.get_file_by_id(file_id)
                     file_path = file_record["path"] if file_record else None
-                    
+
                     # Search nodes
                     file_results = []
                     self._search_nodes_recursive(ast_dict, self.node_type, file_results)
-                    
+
                     # Add file context to results
                     for result in file_results:
                         result["file_id"] = file_id
                         result["file_path"] = file_path
                         all_results.append(result)
-                    
+
                     if len(all_results) >= self.limit:
                         break
-                        
+
                 except (json.JSONDecodeError, KeyError) as e:
                     logger.debug(f"Error parsing AST for file_id={file_id}: {e}")
                     continue
@@ -186,7 +192,7 @@ class SearchASTNodesCommand:
             return {
                 "success": True,
                 "message": f"Found {len(all_results)} nodes",
-                "results": all_results[:self.limit],
+                "results": all_results[: self.limit],
                 "count": len(all_results),
                 "node_type": self.node_type,
                 "limit": self.limit,
@@ -199,4 +205,3 @@ class SearchASTNodesCommand:
                 "message": f"Error searching AST nodes: {e}",
                 "error": str(e),
             }
-

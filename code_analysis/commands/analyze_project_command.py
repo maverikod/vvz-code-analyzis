@@ -5,7 +5,6 @@ Author: Vasiliy Zdanovskiy
 email: vasilyvz@gmail.com
 """
 
-import inspect
 import logging
 from pathlib import Path
 from typing import Dict, Any, Optional
@@ -29,7 +28,7 @@ logger = logging.getLogger(__name__)
 class AnalyzeProjectCommand(Command):
     """
     Command for analyzing Python projects via queue.
-    
+
     CRITICAL: This command MUST execute via queue (use_queue=True).
     Analysis is a long-running operation that can take minutes or hours
     depending on project size. Queue execution ensures:
@@ -37,7 +36,7 @@ class AnalyzeProjectCommand(Command):
     - Progress tracking
     - Job status monitoring
     - Proper resource management
-    
+
     DO NOT set use_queue=False for this command.
     """
 
@@ -49,7 +48,9 @@ class AnalyzeProjectCommand(Command):
     email = "vasilyvz@gmail.com"
     # CRITICAL: This command MUST execute via queue
     # Analysis is a long-running operation that requires queue execution
-    use_queue = True  # REQUIRED: Enable automatic queue execution for long-running operation
+    use_queue = (
+        True  # REQUIRED: Enable automatic queue execution for long-running operation
+    )
 
     @classmethod
     def get_schema(cls) -> Dict[str, Any]:
@@ -111,7 +112,7 @@ class AnalyzeProjectCommand(Command):
         try:
             from ..core.svo_client_manager import SVOClientManager
             from ..core.faiss_manager import FaissIndexManager
-            from ..core.config import ServerConfig, SVOServiceConfig
+            from ..core.config import ServerConfig
 
             root_path = Path(root_dir).resolve()
             if not root_path.exists() or not root_path.is_dir():
@@ -124,11 +125,11 @@ class AnalyzeProjectCommand(Command):
             # Adapter config is set up in main.py and available globally
             adapter_config = get_adapter_config()
             adapter_config_data = getattr(adapter_config, "config_data", {})
-            
+
             # Extract code-analysis specific configuration from adapter config
             # Look for code_analysis section in adapter config, or use defaults
             code_analysis_config = adapter_config_data.get("code_analysis", {})
-            
+
             # Build ServerConfig from adapter config or use defaults
             server_config = None
             if code_analysis_config:
@@ -136,12 +137,16 @@ class AnalyzeProjectCommand(Command):
                     # Try to build ServerConfig from code_analysis section
                     server_config = ServerConfig(**code_analysis_config)
                 except Exception as e:
-                    logger.warning(f"Failed to parse code_analysis config from adapter: {e}")
+                    logger.warning(
+                        f"Failed to parse code_analysis config from adapter: {e}"
+                    )
                     server_config = None
-            
+
             if not server_config:
                 # Create minimal default configuration
-                logger.info("No code_analysis configuration found in adapter config, using defaults")
+                logger.info(
+                    "No code_analysis configuration found in adapter config, using defaults"
+                )
                 server_config = ServerConfig(
                     host="0.0.0.0",
                     port=15000,

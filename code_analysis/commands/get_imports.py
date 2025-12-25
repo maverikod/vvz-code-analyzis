@@ -7,7 +7,7 @@ email: vasilyvz@gmail.com
 
 import logging
 from pathlib import Path
-from typing import Any, Dict, List, Optional, TYPE_CHECKING
+from typing import Any, Dict, Optional, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from ..core.database import CodeDatabase  # noqa: F401
@@ -108,15 +108,17 @@ class GetImportsCommand:
 
             imports = []
             for row in rows:
-                imports.append({
-                    "id": row["id"],
-                    "name": row["name"],
-                    "module": row["module"],
-                    "import_type": row["import_type"],
-                    "line": row["line"],
-                    "file_id": row["file_id"],
-                    "file_path": row["file_path"],
-                })
+                imports.append(
+                    {
+                        "id": row["id"],
+                        "name": row["name"],
+                        "module": row["module"],
+                        "import_type": row["import_type"],
+                        "line": row["line"],
+                        "file_id": row["file_id"],
+                        "file_path": row["file_path"],
+                    }
+                )
 
             # Get total count
             count_query = """
@@ -189,4 +191,3 @@ class GetImportsCommand:
                 "message": f"Error getting imports: {e}",
                 "error": str(e),
             }
-

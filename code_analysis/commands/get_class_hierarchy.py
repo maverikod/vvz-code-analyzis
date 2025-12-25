@@ -103,7 +103,7 @@ class GetClassHierarchyCommand:
             for class_name, class_info in class_map.items():
                 if not class_info["bases"]:
                     root_classes.append(class_name)
-            
+
             # Second pass: add children to base classes
             for class_name, class_info in class_map.items():
                 for base in class_info["bases"]:
@@ -196,14 +196,20 @@ class GetClassHierarchyCommand:
         children = []
         for child_name in class_info["children"]:
             if child_name in class_map:
-                child_visited = visited.copy()  # Include current class to prevent cycles
-                child_tree = self._build_class_tree(child_name, class_map, child_visited)
+                child_visited = (
+                    visited.copy()
+                )  # Include current class to prevent cycles
+                child_tree = self._build_class_tree(
+                    child_name, class_map, child_visited
+                )
                 children.append(child_tree)
 
         # Build bases trees - use visited to prevent infinite loops up
         bases = []
         for base_name in class_info["bases"]:
-            base_visited = visited.copy()  # Continue with current visited to prevent loops
+            base_visited = (
+                visited.copy()
+            )  # Continue with current visited to prevent loops
             base_tree = self._build_class_tree(base_name, class_map, base_visited)
             bases.append(base_tree)
 
@@ -215,4 +221,3 @@ class GetClassHierarchyCommand:
             "bases": bases,
             "children": children,
         }
-

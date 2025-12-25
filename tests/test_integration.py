@@ -6,10 +6,12 @@ email: vasilyvz@gmail.com
 """
 
 import ast
-import pytest
-from pathlib import Path
 
-from code_analysis.core.refactorer import ClassSplitter, SuperclassExtractor, ClassMerger
+from code_analysis.core.refactorer import (
+    ClassSplitter,
+    SuperclassExtractor,
+    ClassMerger,
+)
 
 
 class TestRefactoringIntegration:
@@ -44,17 +46,14 @@ class TestRefactoringIntegration:
             "dst_classes": {
                 "LargeClassA": {
                     "props": ["prop1"],
-                    "methods": ["method1", "method2"]  # method1 in both
+                    "methods": ["method1", "method2"],  # method1 in both
                 },
                 "LargeClassB": {
                     "props": ["prop2"],
-                    "methods": ["method1", "method3"]  # method1 in both
+                    "methods": ["method1", "method3"],  # method1 in both
                 },
-                "LargeClassC": {
-                    "props": ["prop3"],
-                    "methods": []
-                }
-            }
+                "LargeClassC": {"props": ["prop3"], "methods": []},
+            },
         }
 
         splitter = ClassSplitter(test_file)
@@ -70,13 +69,13 @@ class TestRefactoringIntegration:
             "extract_from": {
                 "LargeClassA": {
                     "properties": ["prop1"],
-                    "methods": ["method1"]  # method1 exists in both
+                    "methods": ["method1"],  # method1 exists in both
                 },
                 "LargeClassB": {
                     "properties": ["prop2"],
-                    "methods": ["method1"]  # method1 exists in both
-                }
-            }
+                    "methods": ["method1"],  # method1 exists in both
+                },
+            },
         }
 
         extractor = SuperclassExtractor(test_file)
@@ -86,21 +85,27 @@ class TestRefactoringIntegration:
         # Verify final state
         content = test_file.read_text()
         tree = ast.parse(content)
-        classes = {node.name: node for node in ast.walk(tree) if isinstance(node, ast.ClassDef)}
+        classes = {
+            node.name: node for node in ast.walk(tree) if isinstance(node, ast.ClassDef)
+        }
 
         assert "BaseLarge" in classes
         assert "LargeClassA" in classes
         assert "LargeClassB" in classes
 
         # Check inheritance
-        class_a_bases = [base.id for base in classes["LargeClassA"].bases if isinstance(base, ast.Name)]
+        class_a_bases = [
+            base.id
+            for base in classes["LargeClassA"].bases
+            if isinstance(base, ast.Name)
+        ]
         assert "BaseLarge" in class_a_bases
 
     def test_extract_then_merge_workflow(self, tmp_path):
         """Test extracting superclass then merging classes."""
         test_file = tmp_path / "test.py"
         test_file.write_text(
-            '''class Child1:
+            """class Child1:
     def __init__(self):
         self.prop1 = 1
     
@@ -113,7 +118,7 @@ class Child2:
     
     def method1(self):
         return 1
-'''
+"""
         )
 
         # Step 1: Extract superclass
@@ -122,15 +127,9 @@ class Child2:
             "child_classes": ["Child1", "Child2"],
             "abstract_methods": [],
             "extract_from": {
-                "Child1": {
-                    "properties": ["prop1"],
-                    "methods": ["method1"]
-                },
-                "Child2": {
-                    "properties": ["prop1"],
-                    "methods": ["method1"]
-                }
-            }
+                "Child1": {"properties": ["prop1"], "methods": ["method1"]},
+                "Child2": {"properties": ["prop1"], "methods": ["method1"]},
+            },
         }
 
         extractor = SuperclassExtractor(test_file)
@@ -140,10 +139,7 @@ class Child2:
         # Step 2: Merge Child1 and Child2 (now they inherit from Base)
         # Note: This is a complex scenario - merging classes that inherit
         # We'll test merging the base and one child
-        merge_config = {
-            "base_class": "Merged",
-            "source_classes": ["Base", "Child1"]
-        }
+        merge_config = {"base_class": "Merged", "source_classes": ["Base", "Child1"]}
 
         merger = ClassMerger(test_file)
         success, message = merger.merge_classes(merge_config)
@@ -156,7 +152,7 @@ class Child2:
         """Test performing multiple splits on different classes in same file."""
         test_file = tmp_path / "test.py"
         test_file.write_text(
-            '''class Class1:
+            """class Class1:
     def __init__(self):
         self.prop1 = 1
     
@@ -169,18 +165,13 @@ class Class2:
     
     def method2(self):
         return 2
-'''
+"""
         )
 
         # Split Class1
         config1 = {
             "src_class": "Class1",
-            "dst_classes": {
-                "Class1A": {
-                    "props": ["prop1"],
-                    "methods": ["method1"]
-                }
-            }
+            "dst_classes": {"Class1A": {"props": ["prop1"], "methods": ["method1"]}},
         }
 
         splitter = ClassSplitter(test_file)
@@ -190,12 +181,7 @@ class Class2:
         # Split Class2
         config2 = {
             "src_class": "Class2",
-            "dst_classes": {
-                "Class2A": {
-                    "props": ["prop2"],
-                    "methods": ["method2"]
-                }
-            }
+            "dst_classes": {"Class2A": {"props": ["prop2"], "methods": ["method2"]}},
         }
 
         splitter2 = ClassSplitter(test_file)
@@ -205,7 +191,9 @@ class Class2:
         # Verify both splits worked
         content = test_file.read_text()
         tree = ast.parse(content)
-        classes = {node.name: node for node in ast.walk(tree) if isinstance(node, ast.ClassDef)}
+        classes = {
+            node.name: node for node in ast.walk(tree) if isinstance(node, ast.ClassDef)
+        }
 
         assert "Class1" in classes
         assert "Class1A" in classes
@@ -215,35 +203,30 @@ class Class2:
     def test_rollback_on_error(self, tmp_path):
         """Test that rollback works when validation fails."""
         test_file = tmp_path / "test.py"
-        original_content = '''class RollbackTest:
+        original_content = """class RollbackTest:
     def __init__(self):
         self.x = 1
     
     def method(self):
         return 1
-'''
+"""
         test_file.write_text(original_content)
 
         # Create a config that will cause completeness validation to fail
         # by manually corrupting the file after split
         config = {
             "src_class": "RollbackTest",
-            "dst_classes": {
-                "RollbackTestA": {
-                    "props": ["x"],
-                    "methods": ["method"]
-                }
-            }
+            "dst_classes": {"RollbackTestA": {"props": ["x"], "methods": ["method"]}},
         }
 
         splitter = ClassSplitter(test_file)
         splitter.create_backup()
         splitter.load_file()
         src_class = splitter.find_class("RollbackTest")
-        
+
         # Perform split
         new_content = splitter._perform_split(src_class, config)
-        
+
         # Corrupt content to cause validation failure
         corrupted = new_content + "\n    invalid syntax !!!"
         test_file.write_text(corrupted)
@@ -278,4 +261,6 @@ class Class2:
         # Backups should exist and have different content
         assert backup1.exists()
         assert backup2.exists()
-        assert backup1_content != backup2_content, "Backups should have different content"
+        assert (
+            backup1_content != backup2_content
+        ), "Backups should have different content"

@@ -9,7 +9,6 @@ email: vasilyvz@gmail.com
 """
 
 import logging
-import asyncio
 
 logger = logging.getLogger(__name__)
 
@@ -21,7 +20,7 @@ _patch_applied = False
 def patch_command_execution_job():
     """
     Patch CommandExecutionJob to support progress tracking.
-    
+
     This function modifies CommandExecutionJob.run() to create a ProgressTracker
     and pass it through context before executing the command.
     """
@@ -83,4 +82,3 @@ def patch_command_execution_job():
 
 # Auto-patch on import
 patch_command_execution_job()
-

@@ -5,8 +5,6 @@ Author: Vasiliy Zdanovskiy
 email: vasilyvz@gmail.com
 """
 
-import pytest
-import sqlite3
 from pathlib import Path
 from tempfile import TemporaryDirectory
 

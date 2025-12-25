@@ -7,7 +7,6 @@ email: vasilyvz@gmail.com
 
 import click
 import logging
-import os
 from pathlib import Path
 from typing import Optional
 
@@ -29,7 +28,7 @@ logger = logging.getLogger(__name__)
 def server(ctx: click.Context, config: Optional[Path]) -> None:
     """MCP server management commands (systemd-style)."""
     ctx.ensure_object(dict)
-    
+
     # Find config file if not specified
     if config is None:
         default_paths = [
@@ -41,11 +40,11 @@ def server(ctx: click.Context, config: Optional[Path]) -> None:
             if path.exists():
                 config = path
                 break
-        
+
         if config is None:
             # Use system-wide as default if creating new config
             config = Path("/etc/code_analysis/config.json")
-    
+
     ctx.obj["config_path"] = config
     ctx.obj["control"] = ServerControl(config)
 
@@ -147,23 +146,24 @@ def reload(ctx: click.Context) -> None:
 def validate(ctx: click.Context) -> None:
     """Validate server configuration file (adapter config)."""
     config_path: Path = ctx.obj["config_path"]
-    
+
     try:
         from mcp_proxy_adapter.core.config.simple_config import SimpleConfig
+
         simple_config = SimpleConfig(str(config_path))
         model = simple_config.load()
-        
+
         click.echo(f"✅ Configuration is valid: {config_path}")
         click.echo(f"   Host: {model.server.host}")
         click.echo(f"   Port: {model.server.port}")
         if hasattr(model.server, "log_dir") and model.server.log_dir:
             click.echo(f"   Log dir: {model.server.log_dir}")
-        click.echo("\n   Note: Use 'python -m code_analysis.cli.config_cli generate' to generate adapter config")
+        click.echo(
+            "\n   Note: Use 'python -m code_analysis.cli.config_cli generate' to generate adapter config"
+        )
     except Exception as e:
         click.echo(f"❌ Configuration validation failed: {str(e)}", err=True)
         raise click.Abort()
-
-
 
 
 if __name__ == "__main__":

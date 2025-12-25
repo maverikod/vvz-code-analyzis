@@ -46,15 +46,18 @@ class CodeAnalyzer:
         self.svo_client_manager = svo_client_manager
         self.faiss_manager = faiss_manager
         self.usage_analyzer = UsageAnalyzer(database) if database else None
-        
+
         # Initialize docstring chunker if SVO client manager provided
         self.docstring_chunker = None
         if database and svo_client_manager:
             from .docstring_chunker import DocstringChunker
+
             # Get min_chunk_length from config if available
             min_chunk_length = 30  # default
-            if hasattr(svo_client_manager, 'config') and svo_client_manager.config:
-                min_chunk_length = getattr(svo_client_manager.config, 'min_chunk_length', 30)
+            if hasattr(svo_client_manager, "config") and svo_client_manager.config:
+                min_chunk_length = getattr(
+                    svo_client_manager.config, "min_chunk_length", 30
+                )
             self.docstring_chunker = DocstringChunker(
                 database=database,
                 svo_client_manager=svo_client_manager,
@@ -101,13 +104,17 @@ class CodeAnalyzer:
             file_stat = file_path.stat()
             last_modified = file_stat.st_mtime
 
-            logger.debug(f"   File size: {file_stat.st_size} bytes, mtime: {last_modified}")
+            logger.debug(
+                f"   File size: {file_stat.st_size} bytes, mtime: {last_modified}"
+            )
             with open(file_path, "r", encoding="utf-8") as f:
                 content = f.read()
 
-            logger.debug(f"   Content length: {len(content)} chars, lines: {len(content.splitlines())}")
+            logger.debug(
+                f"   Content length: {len(content)} chars, lines: {len(content.splitlines())}"
+            )
             tree = ast.parse(content)
-            logger.debug(f"   AST parsed successfully")
+            logger.debug("   AST parsed successfully")
 
             # Check file size
             lines = content.split("\n")
@@ -157,27 +164,29 @@ class CodeAnalyzer:
                     )
 
             # Analyze AST
-            logger.debug(f"   Analyzing AST structure...")
+            logger.debug("   Analyzing AST structure...")
             self._analyze_ast(tree, file_path, file_id)
-            logger.debug(f"   AST analysis completed")
+            logger.debug("   AST analysis completed")
 
             # Save AST tree to database
             if self.database and file_id:
-                logger.debug(f"   Saving AST tree to database...")
-                ast_saved = await self._save_ast_tree(tree, file_id, project_id, last_modified, force=False)
+                logger.debug("   Saving AST tree to database...")
+                ast_saved = await self._save_ast_tree(
+                    tree, file_id, project_id, last_modified, force=False
+                )
                 if ast_saved:
-                    logger.debug(f"   ✅ AST tree saved to database")
+                    logger.debug("   ✅ AST tree saved to database")
                 else:
-                    logger.debug(f"   ⏭️  AST tree skipped (up to date)")
+                    logger.debug("   ⏭️  AST tree skipped (up to date)")
 
             # Analyze usages (method calls, attribute accesses)
             if self.usage_analyzer and file_id:
-                logger.debug(f"   Analyzing usages...")
+                logger.debug("   Analyzing usages...")
                 self.usage_analyzer.analyze_file(file_path, file_id)
 
             # Process docstrings and comments: chunk and embed
             if self.docstring_chunker and file_id and project_id:
-                logger.info(f"   🔍 Processing docstrings and comments for chunking...")
+                logger.info("   🔍 Processing docstrings and comments for chunking...")
                 await self.docstring_chunker.process_file(
                     file_path=file_path,
                     file_id=file_id,
@@ -185,10 +194,10 @@ class CodeAnalyzer:
                     tree=tree,
                     file_content=content,
                 )
-                logger.debug(f"   ✅ Docstring chunking completed")
+                logger.debug("   ✅ Docstring chunking completed")
             else:
-                logger.debug(f"   ⏭️  Docstring chunking skipped (chunker not available)")
-            
+                logger.debug("   ⏭️  Docstring chunking skipped (chunker not available)")
+
             logger.info(f"✅ File analysis completed: {file_path}")
 
         except (OSError, IOError, ValueError, SyntaxError, UnicodeDecodeError) as e:
@@ -256,12 +265,13 @@ class CodeAnalyzer:
             class_id = self.database.add_class(
                 file_id, class_name, node.lineno, docstring, bases
             )
-            
+
             # Save class content for full-text search
             try:
-                class_code = ast.get_source_segment(
-                    self._get_file_content(file_path), node
-                ) or ""
+                class_code = (
+                    ast.get_source_segment(self._get_file_content(file_path), node)
+                    or ""
+                )
                 self.database.add_code_content(
                     file_id=file_id,
                     entity_type="class",
@@ -321,12 +331,13 @@ class CodeAnalyzer:
             function_id = self.database.add_function(
                 file_id, node.name, node.lineno, args, docstring
             )
-            
+
             # Save function content for full-text search
             try:
-                function_code = ast.get_source_segment(
-                    self._get_file_content(file_path), node
-                ) or ""
+                function_code = (
+                    ast.get_source_segment(self._get_file_content(file_path), node)
+                    or ""
+                )
                 self.database.add_code_content(
                     file_id=file_id,
                     entity_type="function",
@@ -388,12 +399,13 @@ class CodeAnalyzer:
                 has_pass,
                 has_not_implemented,
             )
-            
+
             # Save method content for full-text search
             try:
-                method_code = ast.get_source_segment(
-                    self._get_file_content(file_path), node
-                ) or ""
+                method_code = (
+                    ast.get_source_segment(self._get_file_content(file_path), node)
+                    or ""
+                )
                 file_id = self.database.get_file_id(str(file_path))
                 if file_id:
                     self.database.add_code_content(
@@ -551,7 +563,7 @@ class CodeAnalyzer:
         """Get file content for AST source segment extraction."""
         if not hasattr(self, "_file_content_cache"):
             self._file_content_cache = {}
-        
+
         file_path_str = str(file_path)
         if file_path_str not in self._file_content_cache:
             try:
@@ -559,7 +571,7 @@ class CodeAnalyzer:
                     self._file_content_cache[file_path_str] = f.read()
             except Exception:
                 self._file_content_cache[file_path_str] = ""
-        
+
         return self._file_content_cache[file_path_str]
 
     async def _save_ast_tree(

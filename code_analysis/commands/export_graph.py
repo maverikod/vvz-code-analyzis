@@ -103,11 +103,13 @@ class ExportGraphCommand:
             target_module = imp["module"] or imp["name"]
             nodes.add(source_file)
             nodes.add(target_module)
-            edges.append({
-                "from": source_file,
-                "to": target_module,
-                "label": imp["name"],
-            })
+            edges.append(
+                {
+                    "from": source_file,
+                    "to": target_module,
+                    "label": imp["name"],
+                }
+            )
 
         if self.limit and len(nodes) > self.limit:
             # Limit nodes (keep most connected)
@@ -116,10 +118,16 @@ class ExportGraphCommand:
                 node_counts[edge["from"]] = node_counts.get(edge["from"], 0) + 1
                 node_counts[edge["to"]] = node_counts.get(edge["to"], 0) + 1
 
-            top_nodes = sorted(node_counts.items(), key=lambda x: x[1], reverse=True)[:self.limit]
+            top_nodes = sorted(node_counts.items(), key=lambda x: x[1], reverse=True)[
+                : self.limit
+            ]
             top_node_set = {node for node, _ in top_nodes}
             nodes = nodes & top_node_set
-            edges = [e for e in edges if e["from"] in top_node_set and e["to"] in top_node_set]
+            edges = [
+                e
+                for e in edges
+                if e["from"] in top_node_set and e["to"] in top_node_set
+            ]
 
         if self.format == "dot":
             dot_content = self._generate_dot(nodes, edges, "Module Dependencies")
@@ -178,13 +186,19 @@ class ExportGraphCommand:
                 else:
                     base_name = str(base)
                 # Skip if base is not a valid identifier
-                if base_name and not base_name.startswith("<") and not base_name.startswith("{"):
+                if (
+                    base_name
+                    and not base_name.startswith("<")
+                    and not base_name.startswith("{")
+                ):
                     nodes.add(base_name)
-                    edges.append({
-                        "from": base_name,
-                        "to": class_name,
-                        "label": "inherits",
-                    })
+                    edges.append(
+                        {
+                            "from": base_name,
+                            "to": class_name,
+                            "label": "inherits",
+                        }
+                    )
 
         if self.limit and len(nodes) > self.limit:
             # Limit to most connected nodes
@@ -193,10 +207,16 @@ class ExportGraphCommand:
                 node_counts[edge["from"]] = node_counts.get(edge["from"], 0) + 1
                 node_counts[edge["to"]] = node_counts.get(edge["to"], 0) + 1
 
-            top_nodes = sorted(node_counts.items(), key=lambda x: x[1], reverse=True)[:self.limit]
+            top_nodes = sorted(node_counts.items(), key=lambda x: x[1], reverse=True)[
+                : self.limit
+            ]
             top_node_set = {node for node, _ in top_nodes}
             nodes = nodes & top_node_set
-            edges = [e for e in edges if e["from"] in top_node_set and e["to"] in top_node_set]
+            edges = [
+                e
+                for e in edges
+                if e["from"] in top_node_set and e["to"] in top_node_set
+            ]
 
         if self.format == "dot":
             dot_content = self._generate_dot(nodes, edges, "Class Hierarchy")
@@ -248,11 +268,13 @@ class ExportGraphCommand:
                 target = f"{usage['target_class']}.{target}"
             nodes.add(source_file)
             nodes.add(target)
-            edges.append({
-                "from": source_file,
-                "to": target,
-                "label": "calls",
-            })
+            edges.append(
+                {
+                    "from": source_file,
+                    "to": target,
+                    "label": "calls",
+                }
+            )
 
         if self.limit and len(nodes) > self.limit:
             node_counts: Dict[str, int] = {}
@@ -260,10 +282,16 @@ class ExportGraphCommand:
                 node_counts[edge["from"]] = node_counts.get(edge["from"], 0) + 1
                 node_counts[edge["to"]] = node_counts.get(edge["to"], 0) + 1
 
-            top_nodes = sorted(node_counts.items(), key=lambda x: x[1], reverse=True)[:self.limit]
+            top_nodes = sorted(node_counts.items(), key=lambda x: x[1], reverse=True)[
+                : self.limit
+            ]
             top_node_set = {node for node, _ in top_nodes}
             nodes = nodes & top_node_set
-            edges = [e for e in edges if e["from"] in top_node_set and e["to"] in top_node_set]
+            edges = [
+                e
+                for e in edges
+                if e["from"] in top_node_set and e["to"] in top_node_set
+            ]
 
         if self.format == "dot":
             dot_content = self._generate_dot(nodes, edges, "Call Graph")
@@ -284,31 +312,32 @@ class ExportGraphCommand:
                 },
             }
 
-    def _generate_dot(self, nodes: Set[str], edges: List[Dict[str, str]], title: str) -> str:
+    def _generate_dot(
+        self, nodes: Set[str], edges: List[Dict[str, str]], title: str
+    ) -> str:
         """Generate Graphviz DOT format."""
         lines = [f'digraph "{title}" {{']
-        lines.append('  rankdir=LR;')
-        lines.append('  node [shape=box];')
-        lines.append('')
+        lines.append("  rankdir=LR;")
+        lines.append("  node [shape=box];")
+        lines.append("")
 
         # Add nodes
         for node in sorted(nodes):
             # Escape special characters for DOT
-            node_escaped = node.replace('"', '\\"').replace('\n', ' ')
+            node_escaped = node.replace('"', '\\"').replace("\n", " ")
             lines.append(f'  "{node_escaped}";')
 
-        lines.append('')
+        lines.append("")
 
         # Add edges
         for edge in edges:
-            from_node = edge["from"].replace('"', '\\"').replace('\n', ' ')
-            to_node = edge["to"].replace('"', '\\"').replace('\n', ' ')
-            label = edge.get("label", "").replace('"', '\\"').replace('\n', ' ')
+            from_node = edge["from"].replace('"', '\\"').replace("\n", " ")
+            to_node = edge["to"].replace('"', '\\"').replace("\n", " ")
+            label = edge.get("label", "").replace('"', '\\"').replace("\n", " ")
             if label:
                 lines.append(f'  "{from_node}" -> "{to_node}" [label="{label}"];')
             else:
                 lines.append(f'  "{from_node}" -> "{to_node}";')
 
-        lines.append('}')
-        return '\n'.join(lines)
-
+        lines.append("}")
+        return "\n".join(lines)

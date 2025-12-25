@@ -5,9 +5,6 @@ Author: Vasiliy Zdanovskiy
 email: vasilyvz@gmail.com
 """
 
-import ast
-import json
-import tempfile
 from pathlib import Path
 import pytest
 
@@ -47,21 +44,18 @@ class TestClassSplitterNegative:
         """Test error when properties are missing from config."""
         test_file = tmp_path / "test.py"
         test_file.write_text(
-            '''class Test:
+            """class Test:
     def __init__(self):
         self.prop1 = 1
         self.prop2 = 2
-'''
+"""
         )
 
         config = {
             "src_class": "Test",
             "dst_classes": {
-                "TestA": {
-                    "props": ["prop1"],  # prop2 missing
-                    "methods": []
-                }
-            }
+                "TestA": {"props": ["prop1"], "methods": []}  # prop2 missing
+            },
         }
 
         splitter = ClassSplitter(test_file)
@@ -70,29 +64,28 @@ class TestClassSplitterNegative:
         is_valid, errors = splitter.validate_split_config(src_class, config)
 
         assert not is_valid
-        assert any("missing" in error.lower() and "prop" in error.lower() for error in errors)
+        assert any(
+            "missing" in error.lower() and "prop" in error.lower() for error in errors
+        )
 
     def test_split_class_missing_methods(self, tmp_path):
         """Test error when methods are missing from config."""
         test_file = tmp_path / "test.py"
         test_file.write_text(
-            '''class Test:
+            """class Test:
     def method1(self):
         pass
     
     def method2(self):
         pass
-'''
+"""
         )
 
         config = {
             "src_class": "Test",
             "dst_classes": {
-                "TestA": {
-                    "props": [],
-                    "methods": ["method1"]  # method2 missing
-                }
-            }
+                "TestA": {"props": [], "methods": ["method1"]}  # method2 missing
+            },
         }
 
         splitter = ClassSplitter(test_file)
@@ -101,26 +94,25 @@ class TestClassSplitterNegative:
         is_valid, errors = splitter.validate_split_config(src_class, config)
 
         assert not is_valid
-        assert any("missing" in error.lower() and "method" in error.lower() for error in errors)
+        assert any(
+            "missing" in error.lower() and "method" in error.lower() for error in errors
+        )
 
     def test_split_class_extra_properties(self, tmp_path):
         """Test error when config has properties not in class."""
         test_file = tmp_path / "test.py"
         test_file.write_text(
-            '''class Test:
+            """class Test:
     def __init__(self):
         self.prop1 = 1
-'''
+"""
         )
 
         config = {
             "src_class": "Test",
             "dst_classes": {
-                "TestA": {
-                    "props": ["prop1", "nonexistent_prop"],
-                    "methods": []
-                }
-            }
+                "TestA": {"props": ["prop1", "nonexistent_prop"], "methods": []}
+            },
         }
 
         splitter = ClassSplitter(test_file)
@@ -129,26 +121,25 @@ class TestClassSplitterNegative:
         is_valid, errors = splitter.validate_split_config(src_class, config)
 
         assert not is_valid
-        assert any("extra" in error.lower() and "prop" in error.lower() for error in errors)
+        assert any(
+            "extra" in error.lower() and "prop" in error.lower() for error in errors
+        )
 
     def test_split_class_extra_methods(self, tmp_path):
         """Test error when config has methods not in class."""
         test_file = tmp_path / "test.py"
         test_file.write_text(
-            '''class Test:
+            """class Test:
     def method1(self):
         pass
-'''
+"""
         )
 
         config = {
             "src_class": "Test",
             "dst_classes": {
-                "TestA": {
-                    "props": [],
-                    "methods": ["method1", "nonexistent_method"]
-                }
-            }
+                "TestA": {"props": [], "methods": ["method1", "nonexistent_method"]}
+            },
         }
 
         splitter = ClassSplitter(test_file)
@@ -157,40 +148,37 @@ class TestClassSplitterNegative:
         is_valid, errors = splitter.validate_split_config(src_class, config)
 
         assert not is_valid
-        assert any("extra" in error.lower() and "method" in error.lower() for error in errors)
+        assert any(
+            "extra" in error.lower() and "method" in error.lower() for error in errors
+        )
 
     def test_split_class_invalid_syntax_rollback(self, tmp_path):
         """Test that invalid syntax causes rollback."""
         test_file = tmp_path / "test.py"
-        original_content = '''class Test:
+        original_content = """class Test:
     def __init__(self):
         self.x = 1
     
     def method1(self):
         return 1
-'''
+"""
         test_file.write_text(original_content)
 
         # Create a config that might cause issues
         # We'll manually corrupt the file after split to test rollback
         config = {
             "src_class": "Test",
-            "dst_classes": {
-                "TestA": {
-                    "props": [],
-                    "methods": ["method1"]
-                }
-            }
+            "dst_classes": {"TestA": {"props": [], "methods": ["method1"]}},
         }
 
         splitter = ClassSplitter(test_file)
         splitter.create_backup()
         splitter.load_file()
         src_class = splitter.find_class("Test")
-        
+
         # Perform split
         new_content = splitter._perform_split(src_class, config)
-        
+
         # Corrupt the content to cause syntax error
         corrupted_content = new_content + "\n    invalid syntax here !!!"
         test_file.write_text(corrupted_content)
@@ -207,6 +195,6 @@ class TestClassSplitterNegative:
     def test_split_class_file_not_found(self):
         """Test error when file doesn't exist."""
         non_existent = Path("/nonexistent/path/test.py")
-        
+
         with pytest.raises(FileNotFoundError):
             ClassSplitter(non_existent)

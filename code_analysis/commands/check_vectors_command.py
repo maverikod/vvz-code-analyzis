@@ -24,7 +24,7 @@ logger = logging.getLogger(__name__)
 class CheckVectorsCommand(Command):
     """
     Command to check vector statistics in database.
-    
+
     Provides comprehensive statistics about code chunks and their vectorization status:
     - Total number of chunks in database
     - Number of chunks with vector_id (vectorized)
@@ -32,7 +32,7 @@ class CheckVectorsCommand(Command):
     - Number of chunks pending vectorization (vector_id IS NULL)
     - Vectorization percentage
     - Sample chunks with vector data
-    
+
     This command is useful for:
     - Monitoring vectorization progress
     - Diagnosing vectorization issues
@@ -126,7 +126,7 @@ class CheckVectorsCommand(Command):
         try:
             # Get database path from config or context
             db_path = None
-            
+
             # Try to get from adapter config
             try:
                 config = get_adapter_config()
@@ -139,7 +139,7 @@ class CheckVectorsCommand(Command):
                         db_path = Path(code_analysis_config["db_path"])
             except Exception as e:
                 logger.debug(f"Could not get database path from config: {e}")
-            
+
             # Try to get from root_dir parameter or context
             if not db_path:
                 if root_dir:
@@ -148,17 +148,24 @@ class CheckVectorsCommand(Command):
                     context = kwargs.get("context", {})
                     root_dir_from_context = context.get("root_dir")
                     if root_dir_from_context:
-                        db_path = Path(root_dir_from_context) / "data" / "code_analysis.db"
-            
+                        db_path = (
+                            Path(root_dir_from_context) / "data" / "code_analysis.db"
+                        )
+
             # Try to get from project_id - find project in database
             if not db_path and project_id:
                 # Try common database locations
-                import os
+
                 current_dir = Path.cwd()
                 possible_paths = [
                     current_dir / "data" / "code_analysis.db",
                     current_dir.parent / "data" / "code_analysis.db",
-                    Path.home() / "projects" / "tools" / "code_analysis" / "data" / "code_analysis.db",
+                    Path.home()
+                    / "projects"
+                    / "tools"
+                    / "code_analysis"
+                    / "data"
+                    / "code_analysis.db",
                 ]
                 for path in possible_paths:
                     if path.exists():
@@ -168,7 +175,10 @@ class CheckVectorsCommand(Command):
                             try:
                                 assert test_db.conn is not None
                                 cursor = test_db.conn.cursor()
-                                cursor.execute("SELECT id FROM projects WHERE id = ?", (project_id,))
+                                cursor.execute(
+                                    "SELECT id FROM projects WHERE id = ?",
+                                    (project_id,),
+                                )
                                 if cursor.fetchone():
                                     db_path = path
                                     test_db.close()
@@ -177,7 +187,7 @@ class CheckVectorsCommand(Command):
                                 test_db.close()
                         except Exception:
                             continue
-            
+
             if not db_path:
                 return ErrorResult(
                     message=(
@@ -195,7 +205,7 @@ class CheckVectorsCommand(Command):
                 )
 
             database = CodeDatabase(db_path)
-            
+
             try:
                 assert database.conn is not None
                 cursor = database.conn.cursor()
@@ -265,16 +275,29 @@ class CheckVectorsCommand(Command):
                 # Build sample data
                 sample_data = []
                 for sample in samples:
-                    chunk_id, chunk_type, chunk_text, vector_id, embedding_model, source_type = sample
-                    preview = chunk_text[:100] + "..." if chunk_text and len(chunk_text) > 100 else (chunk_text or "")
-                    sample_data.append({
-                        "id": chunk_id,
-                        "chunk_type": chunk_type,
-                        "vector_id": vector_id,
-                        "embedding_model": embedding_model,
-                        "source_type": source_type,
-                        "text_preview": preview,
-                    })
+                    (
+                        chunk_id,
+                        chunk_type,
+                        chunk_text,
+                        vector_id,
+                        embedding_model,
+                        source_type,
+                    ) = sample
+                    preview = (
+                        chunk_text[:100] + "..."
+                        if chunk_text and len(chunk_text) > 100
+                        else (chunk_text or "")
+                    )
+                    sample_data.append(
+                        {
+                            "id": chunk_id,
+                            "chunk_type": chunk_type,
+                            "vector_id": vector_id,
+                            "embedding_model": embedding_model,
+                            "source_type": source_type,
+                            "text_preview": preview,
+                        }
+                    )
 
                 result = {
                     "total_chunks": total_chunks,
@@ -282,7 +305,9 @@ class CheckVectorsCommand(Command):
                     "chunks_with_model": chunks_with_model,
                     "chunks_pending_vectorization": chunks_pending,
                     "vectorization_percentage": (
-                        round((chunks_with_vector / total_chunks * 100), 2) if total_chunks > 0 else 0
+                        round((chunks_with_vector / total_chunks * 100), 2)
+                        if total_chunks > 0
+                        else 0
                     ),
                     "sample_chunks": sample_data,
                 }
@@ -302,4 +327,3 @@ class CheckVectorsCommand(Command):
                 code="CHECK_VECTORS_ERROR",
                 details={"error": str(e)},
             )
-

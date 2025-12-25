@@ -50,7 +50,7 @@ class ProjectDir(BaseModel):
 
 class SVOServiceConfig(BaseModel):
     """Configuration for SVO service integration.
-    
+
     Each service (chunker, embedding) has its own configuration block with:
     - url: Service URL/hostname
     - port: Service port
@@ -63,7 +63,7 @@ class SVOServiceConfig(BaseModel):
 
     enabled: bool = Field(default=False, description="Enable SVO service")
     url: str = Field(default="localhost", description="Service URL or hostname")
-    host: Optional[str] = Field(default=None, description="Alias for url (host)")
+    host: str = Field(default="localhost", description="Alias for url (host)")
     port: int = Field(default=8009, description="Service port")
     protocol: str = Field(default="http", description="Protocol: http, https, or mtls")
     cert_file: Optional[str] = Field(
@@ -82,7 +82,8 @@ class SVOServiceConfig(BaseModel):
         default=3, description="Number of retry attempts on failure (default: 3)"
     )
     retry_delay: float = Field(
-        default=5.0, description="Delay in seconds between retry attempts (default: 5.0)"
+        default=5.0,
+        description="Delay in seconds between retry attempts (default: 5.0)",
     )
     timeout: Optional[float] = Field(
         default=None, description="Optional timeout for service requests (seconds)"
@@ -108,8 +109,8 @@ class SVOServiceConfig(BaseModel):
             raise ValueError(f"Certificate file does not exist: {v}")
         return str(path.resolve())
 
-    @model_validator(mode='after')
-    def validate_mtls_config(self) -> 'SVOServiceConfig':
+    @model_validator(mode="after")
+    def validate_mtls_config(self) -> "SVOServiceConfig":
         """Validate mTLS configuration after initialization."""
         # If host provided, use it as url
         if self.host:
@@ -138,25 +139,32 @@ class ServerConfig(BaseModel):
         default_factory=list, description="Project directories"
     )
     chunker: Optional[SVOServiceConfig] = Field(
-        default=None, description="Chunker service configuration (chunker handles both chunking and embeddings)"
+        default=None,
+        description="Chunker service configuration (chunker handles both chunking and embeddings)",
     )
     embedding: Optional[SVOServiceConfig] = Field(
-        default=None, description="Embedding service configuration (optional, if separate from chunker)"
+        default=None,
+        description="Embedding service configuration (optional, if separate from chunker)",
     )
     faiss_index_path: Optional[str] = Field(
-        default=None, description="Path to FAISS index file (shared across all projects)"
+        default=None,
+        description="Path to FAISS index file (shared across all projects)",
     )
     vector_dim: Optional[int] = Field(
-        default=None, description="Vector dimension for embeddings (required if using FAISS)"
+        default=None,
+        description="Vector dimension for embeddings (required if using FAISS)",
     )
     min_chunk_length: int = Field(
-        default=30, description="Minimum text length for chunking (default: 30). Shorter texts are grouped by level."
+        default=30,
+        description="Minimum text length for chunking (default: 30). Shorter texts are grouped by level.",
     )
     vectorization_retry_attempts: int = Field(
-        default=3, description="Number of retry attempts for vectorization on failure (default: 3)"
+        default=3,
+        description="Number of retry attempts for vectorization on failure (default: 3)",
     )
     vectorization_retry_delay: float = Field(
-        default=10.0, description="Delay in seconds between vectorization retry attempts (default: 10.0)"
+        default=10.0,
+        description="Delay in seconds between vectorization retry attempts (default: 10.0)",
     )
     worker: Optional[Dict[str, Any]] = Field(
         default_factory=lambda: {
@@ -237,6 +245,8 @@ def generate_config(
     dirs: Optional[List[Dict[str, str]]] = None,
     chunker_host: str = "localhost",
     chunker_port: int = 8009,
+    embedding_host: str = "localhost",
+    embedding_port: int = 8010,
     mtls_certificates: Optional[Dict[str, str]] = None,
 ) -> Dict[str, Any]:
     """
@@ -286,20 +296,41 @@ def generate_config(
         config["db_path"] = str(db_path_obj.resolve())
 
     # Add SVO service configurations
+    cert_file = None
+    key_file = None
+    ca_cert_file = None
+    crl_file = None
     if mtls_certificates:
-        # Determine protocol based on presence of certificates
-        protocol = "mtls" if mtls_certificates.get("cert_file") else "https"
-        
-        config["chunker"] = {
-            "enabled": True,
-            "url": chunker_host,
-            "port": chunker_port,
-            "protocol": protocol,
-            "cert_file": mtls_certificates.get("cert_file"),
-            "key_file": mtls_certificates.get("key_file"),
-            "ca_cert_file": mtls_certificates.get("ca_cert_file"),
-            "crl_file": mtls_certificates.get("crl_file"),
-        }
+        # Support multiple key styles used across the project/tests.
+        cert_file = mtls_certificates.get("cert_file") or mtls_certificates.get("cert")
+        key_file = mtls_certificates.get("key_file") or mtls_certificates.get("key")
+        ca_cert_file = mtls_certificates.get("ca_cert_file") or mtls_certificates.get(
+            "ca_cert"
+        )
+        crl_file = mtls_certificates.get("crl_file") or mtls_certificates.get("crl")
+
+    protocol = "mtls" if (cert_file and key_file) else "https"
+
+    config["chunker"] = {
+        "enabled": True,
+        "host": chunker_host,
+        "port": chunker_port,
+        "protocol": protocol,
+        "cert_file": cert_file,
+        "key_file": key_file,
+        "ca_cert_file": ca_cert_file,
+        "crl_file": crl_file,
+    }
+    config["embedding"] = {
+        "enabled": True,
+        "host": embedding_host,
+        "port": embedding_port,
+        "protocol": protocol,
+        "cert_file": cert_file,
+        "key_file": key_file,
+        "ca_cert_file": ca_cert_file,
+        "crl_file": crl_file,
+    }
 
     return config
 

@@ -64,12 +64,14 @@ def _no_invalid_imports(issues):
 
 
 def _create_issue_detector():
-    return IssueDetector({
-        "any_type_usage": [],
-        "generic_exception_usage": [],
-        "imports_in_middle": [],
-        "invalid_imports": [],
-    })
+    return IssueDetector(
+        {
+            "any_type_usage": [],
+            "generic_exception_usage": [],
+            "imports_in_middle": [],
+            "invalid_imports": [],
+        }
+    )
 
 
 def _run_method_detector(source):
@@ -287,7 +289,4 @@ def test_check_imports_in_middle_records_issue():
     detector = _create_issue_detector()
     detector.check_imports_in_middle("sample.py", 42)
 
-    assert detector.issues["imports_in_middle"] == [
-        {"file": "sample.py", "line": 42}
-    ]
-
+    assert detector.issues["imports_in_middle"] == [{"file": "sample.py", "line": 42}]

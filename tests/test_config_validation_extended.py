@@ -10,14 +10,10 @@ Tests cover:
 
 import json
 import pytest
-import tempfile
 import uuid
-from pathlib import Path
 
 from code_analysis.core.config import (
     ServerConfig,
-    ProjectDir,
-    SVOServiceConfig,
     generate_config,
     save_config,
     load_config,
@@ -33,10 +29,10 @@ class TestConfigManagerExtended:
         config_file = tmp_path / "config.json"
         project_path = tmp_path / "project"
         project_path.mkdir()
-        
+
         manager = ConfigManager(config_file)
         project_id = manager.add_project("test", str(project_path))
-        
+
         assert project_id is not None
         config = manager.read()
         assert len(config.dirs) == 1
@@ -48,10 +44,12 @@ class TestConfigManagerExtended:
         project_path = tmp_path / "project"
         project_path.mkdir()
         custom_id = str(uuid.uuid4())
-        
+
         manager = ConfigManager(config_file)
-        project_id = manager.add_project("test", str(project_path), project_id=custom_id)
-        
+        project_id = manager.add_project(
+            "test", str(project_path), project_id=custom_id
+        )
+
         assert project_id == custom_id
         project = manager.get_project(custom_id)
         assert project is not None
@@ -62,10 +60,10 @@ class TestConfigManagerExtended:
         config_file = tmp_path / "config.json"
         project_path = tmp_path / "project"
         project_path.mkdir()
-        
+
         manager = ConfigManager(config_file)
         manager.add_project("test", str(project_path))
-        
+
         with pytest.raises(ValueError, match="already exists"):
             manager.add_project("test", str(project_path))
 
@@ -75,10 +73,10 @@ class TestConfigManagerExtended:
         project_path = tmp_path / "project"
         project_path.mkdir()
         project_id = str(uuid.uuid4())
-        
+
         manager = ConfigManager(config_file)
         manager.add_project("test1", str(project_path), project_id=project_id)
-        
+
         with pytest.raises(ValueError, match="already exists"):
             manager.add_project("test2", str(project_path), project_id=project_id)
 
@@ -86,7 +84,7 @@ class TestConfigManagerExtended:
         """Test add_project with invalid path."""
         config_file = tmp_path / "config.json"
         nonexistent = tmp_path / "nonexistent"
-        
+
         manager = ConfigManager(config_file)
         with pytest.raises(ValueError, match="Path does not exist"):
             manager.add_project("test", str(nonexistent))
@@ -94,7 +92,7 @@ class TestConfigManagerExtended:
     def test_add_project_relative_path(self, tmp_path):
         """Test add_project with relative path."""
         config_file = tmp_path / "config.json"
-        
+
         manager = ConfigManager(config_file)
         with pytest.raises(ValueError, match="Path must be absolute"):
             manager.add_project("test", "relative/path")
@@ -104,7 +102,7 @@ class TestConfigManagerExtended:
         config_file = tmp_path / "config.json"
         project_path = tmp_path / "project"
         project_path.mkdir()
-        
+
         manager = ConfigManager(config_file)
         with pytest.raises(ValueError, match="Invalid UUID"):
             manager.add_project("test", str(project_path), project_id="not-a-uuid")
@@ -114,13 +112,13 @@ class TestConfigManagerExtended:
         config_file = tmp_path / "config.json"
         project_path = tmp_path / "project"
         project_path.mkdir()
-        
+
         manager = ConfigManager(config_file)
         project_id = manager.add_project("test", str(project_path))
-        
+
         result = manager.remove_project(project_id)
         assert result is True
-        
+
         config = manager.read()
         assert len(config.dirs) == 0
 
@@ -128,7 +126,7 @@ class TestConfigManagerExtended:
         """Test remove_project with nonexistent project."""
         config_file = tmp_path / "config.json"
         config_file.write_text('{"host": "127.0.0.1", "port": 15000, "dirs": []}')
-        
+
         manager = ConfigManager(config_file)
         result = manager.remove_project(str(uuid.uuid4()))
         assert result is False
@@ -136,7 +134,7 @@ class TestConfigManagerExtended:
     def test_remove_project_invalid_uuid(self, tmp_path):
         """Test remove_project with invalid UUID."""
         config_file = tmp_path / "config.json"
-        
+
         manager = ConfigManager(config_file)
         with pytest.raises(ValueError, match="Invalid UUID"):
             manager.remove_project("not-a-uuid")
@@ -144,7 +142,7 @@ class TestConfigManagerExtended:
     def test_remove_project_no_config_file(self, tmp_path):
         """Test remove_project when config file doesn't exist."""
         config_file = tmp_path / "nonexistent.json"
-        
+
         manager = ConfigManager(config_file)
         result = manager.remove_project(str(uuid.uuid4()))
         assert result is False
@@ -156,13 +154,13 @@ class TestConfigManagerExtended:
         project_path.mkdir()
         new_path = tmp_path / "new_project"
         new_path.mkdir()
-        
+
         manager = ConfigManager(config_file)
         project_id = manager.add_project("test", str(project_path))
-        
+
         result = manager.update_project(project_id, name="updated", path=str(new_path))
         assert result is True
-        
+
         project = manager.get_project(project_id)
         assert project.name == "updated"
         assert project.path == str(new_path.resolve())
@@ -172,13 +170,13 @@ class TestConfigManagerExtended:
         config_file = tmp_path / "config.json"
         project_path = tmp_path / "project"
         project_path.mkdir()
-        
+
         manager = ConfigManager(config_file)
         project_id = manager.add_project("test", str(project_path))
-        
+
         result = manager.update_project(project_id, name="updated")
         assert result is True
-        
+
         project = manager.get_project(project_id)
         assert project.name == "updated"
         assert project.path == str(project_path.resolve())  # Path unchanged
@@ -190,13 +188,13 @@ class TestConfigManagerExtended:
         project_path.mkdir()
         new_path = tmp_path / "new_project"
         new_path.mkdir()
-        
+
         manager = ConfigManager(config_file)
         project_id = manager.add_project("test", str(project_path))
-        
+
         result = manager.update_project(project_id, path=str(new_path))
         assert result is True
-        
+
         project = manager.get_project(project_id)
         assert project.name == "test"  # Name unchanged
         assert project.path == str(new_path.resolve())
@@ -205,7 +203,7 @@ class TestConfigManagerExtended:
         """Test update_project with nonexistent project."""
         config_file = tmp_path / "config.json"
         config_file.write_text('{"host": "127.0.0.1", "port": 15000, "dirs": []}')
-        
+
         manager = ConfigManager(config_file)
         result = manager.update_project(str(uuid.uuid4()), name="test")
         assert result is False
@@ -217,11 +215,11 @@ class TestConfigManagerExtended:
         project_path1.mkdir()
         project_path2 = tmp_path / "project2"
         project_path2.mkdir()
-        
+
         manager = ConfigManager(config_file)
-        project_id1 = manager.add_project("project1", str(project_path1))
+        manager.add_project("project1", str(project_path1))
         project_id2 = manager.add_project("project2", str(project_path2))
-        
+
         with pytest.raises(ValueError, match="already exists"):
             manager.update_project(project_id2, name="project1")
 
@@ -230,10 +228,10 @@ class TestConfigManagerExtended:
         config_file = tmp_path / "config.json"
         project_path = tmp_path / "project"
         project_path.mkdir()
-        
+
         manager = ConfigManager(config_file)
         project_id = manager.add_project("test", str(project_path))
-        
+
         with pytest.raises(ValueError, match="Path does not exist"):
             manager.update_project(project_id, path=str(tmp_path / "nonexistent"))
 
@@ -242,17 +240,17 @@ class TestConfigManagerExtended:
         config_file = tmp_path / "config.json"
         project_path = tmp_path / "project"
         project_path.mkdir()
-        
+
         manager = ConfigManager(config_file)
         project_id = manager.add_project("test", str(project_path))
-        
+
         with pytest.raises(ValueError, match="Path must be absolute"):
             manager.update_project(project_id, path="relative/path")
 
     def test_update_project_invalid_uuid(self, tmp_path):
         """Test update_project with invalid UUID."""
         config_file = tmp_path / "config.json"
-        
+
         manager = ConfigManager(config_file)
         with pytest.raises(ValueError, match="Invalid UUID"):
             manager.update_project("not-a-uuid", name="test")
@@ -260,7 +258,7 @@ class TestConfigManagerExtended:
     def test_update_project_no_config_file(self, tmp_path):
         """Test update_project when config file doesn't exist."""
         config_file = tmp_path / "nonexistent.json"
-        
+
         manager = ConfigManager(config_file)
         result = manager.update_project(str(uuid.uuid4()), name="test")
         assert result is False
@@ -271,7 +269,7 @@ class TestConfigManagerExtended:
         project_path = tmp_path / "project"
         project_path.mkdir()
         project_id = str(uuid.uuid4())
-        
+
         config_data = {
             "host": "127.0.0.1",
             "port": 15000,
@@ -284,12 +282,12 @@ class TestConfigManagerExtended:
             ],
         }
         config_file.write_text(json.dumps(config_data))
-        
+
         manager = ConfigManager(config_file)
         project = manager.get_project(project_id)
         assert project is not None
         assert project.name == "test"
-        
+
         # Test with invalid UUID
         project = manager.get_project("invalid")
         assert project is None
@@ -298,7 +296,7 @@ class TestConfigManagerExtended:
         """Test get_project with nonexistent project ID."""
         config_file = tmp_path / "config.json"
         config_file.write_text('{"host": "127.0.0.1", "port": 15000, "dirs": []}')
-        
+
         manager = ConfigManager(config_file)
         project = manager.get_project(str(uuid.uuid4()))
         assert project is None
@@ -306,7 +304,7 @@ class TestConfigManagerExtended:
     def test_get_project_no_config_file(self, tmp_path):
         """Test get_project when config file doesn't exist."""
         config_file = tmp_path / "nonexistent.json"
-        
+
         manager = ConfigManager(config_file)
         project = manager.get_project(str(uuid.uuid4()))
         assert project is None
@@ -318,11 +316,11 @@ class TestConfigManagerExtended:
         project_path1.mkdir()
         project_path2 = tmp_path / "project2"
         project_path2.mkdir()
-        
+
         manager = ConfigManager(config_file)
         manager.add_project("project1", str(project_path1))
         manager.add_project("project2", str(project_path2))
-        
+
         projects = manager.list_projects()
         assert len(projects) == 2
         names = [p.name for p in projects]
@@ -333,7 +331,7 @@ class TestConfigManagerExtended:
         """Test list_projects with empty config."""
         config_file = tmp_path / "config.json"
         config_file.write_text('{"host": "127.0.0.1", "port": 15000, "dirs": []}')
-        
+
         manager = ConfigManager(config_file)
         projects = manager.list_projects()
         assert len(projects) == 0
@@ -341,7 +339,7 @@ class TestConfigManagerExtended:
     def test_list_projects_no_config_file(self, tmp_path):
         """Test list_projects when config file doesn't exist."""
         config_file = tmp_path / "nonexistent.json"
-        
+
         manager = ConfigManager(config_file)
         projects = manager.list_projects()
         assert len(projects) == 0
@@ -350,11 +348,10 @@ class TestConfigManagerExtended:
         """Test write method."""
         config_file = tmp_path / "config.json"
         manager = ConfigManager(config_file)
-        
-        from code_analysis.core.config import ServerConfig
+
         config = ServerConfig(host="127.0.0.1", port=8080)
         manager.write(config)
-        
+
         assert config_file.exists()
         read_config = manager.read()
         assert read_config.host == "127.0.0.1"
@@ -364,11 +361,11 @@ class TestConfigManagerExtended:
         """Test that read caches config."""
         config_file = tmp_path / "config.json"
         config_file.write_text('{"host": "127.0.0.1", "port": 15000}')
-        
+
         manager = ConfigManager(config_file)
         config1 = manager.read()
         config2 = manager.read()
-        
+
         # Should have same values (may not be same object due to validation)
         assert config1.host == config2.host
         assert config1.port == config2.port
@@ -379,11 +376,10 @@ class TestConfigManagerExtended:
         """Test that write clears cache."""
         config_file = tmp_path / "config.json"
         manager = ConfigManager(config_file)
-        
-        from code_analysis.core.config import ServerConfig
+
         config1 = ServerConfig(host="127.0.0.1", port=15000)
         manager.write(config1)
-        
+
         # Read should get new config
         config2 = manager.read()
         assert config2.host == "127.0.0.1"
@@ -396,13 +392,13 @@ class TestGenerateConfigExtended:
         """Test generate_config with project directories."""
         project_path = tmp_path / "project"
         project_path.mkdir()
-        
+
         config = generate_config(
             host="127.0.0.1",
             port=8080,
             dirs=[{"name": "test", "path": str(project_path)}],
         )
-        
+
         assert config["host"] == "127.0.0.1"
         assert config["port"] == 8080
         assert len(config["dirs"]) == 1
@@ -413,12 +409,12 @@ class TestGenerateConfigExtended:
         """Test generate_config with log and db paths."""
         log_path = tmp_path / "log.txt"
         db_path = tmp_path / "db.db"
-        
+
         config = generate_config(
             log=str(log_path),
             db_path=str(db_path),
         )
-        
+
         assert config["log"] == str(log_path.resolve())
         assert config["db_path"] == str(db_path.resolve())
         assert log_path.parent.exists()
@@ -436,7 +432,7 @@ class TestGenerateConfigExtended:
                 "key": "/path/to/key.pem",
             },
         )
-        
+
         assert "chunker" in config
         assert "embedding" in config
         assert config["chunker"]["enabled"] is True
@@ -449,7 +445,7 @@ class TestGenerateConfigExtended:
     def test_generate_config_nonexistent_path(self, tmp_path):
         """Test generate_config with nonexistent project path."""
         nonexistent = tmp_path / "nonexistent"
-        
+
         with pytest.raises(ValueError, match="Path does not exist"):
             generate_config(dirs=[{"name": "test", "path": str(nonexistent)}])
 
@@ -457,7 +453,7 @@ class TestGenerateConfigExtended:
         """Test generate_config with file instead of directory."""
         test_file = tmp_path / "test.txt"
         test_file.write_text("test")
-        
+
         with pytest.raises(ValueError, match="not a directory"):
             generate_config(dirs=[{"name": "test", "path": str(test_file)}])
 
@@ -467,14 +463,14 @@ class TestGenerateConfigExtended:
         project_path1.mkdir()
         project_path2 = tmp_path / "project2"
         project_path2.mkdir()
-        
+
         config = generate_config(
             dirs=[
                 {"name": "project1", "path": str(project_path1)},
                 {"name": "project2", "path": str(project_path2)},
             ],
         )
-        
+
         assert len(config["dirs"]) == 2
         assert config["dirs"][0]["name"] == "project1"
         assert config["dirs"][1]["name"] == "project2"
@@ -483,11 +479,11 @@ class TestGenerateConfigExtended:
         """Test generate_config with dir without explicit name."""
         project_path = tmp_path / "my_project"
         project_path.mkdir()
-        
+
         config = generate_config(
             dirs=[{"path": str(project_path)}],
         )
-        
+
         assert len(config["dirs"]) == 1
         assert config["dirs"][0]["name"] == "my_project"  # Should use directory name
 
@@ -500,7 +496,7 @@ class TestValidateConfigExtended:
         project_path = tmp_path / "project"
         project_path.mkdir()
         project_id = str(uuid.uuid4())
-        
+
         config_data = {
             "host": "127.0.0.1",
             "port": 15000,
@@ -509,7 +505,7 @@ class TestValidateConfigExtended:
                 {"id": project_id, "name": "test2", "path": str(project_path)},
             ],
         }
-        
+
         with pytest.raises(ValueError, match="Duplicate project IDs"):
             validate_config(config_data)
 
@@ -517,7 +513,7 @@ class TestValidateConfigExtended:
         """Test validate_config function with duplicate names."""
         project_path = tmp_path / "project"
         project_path.mkdir()
-        
+
         config_data = {
             "host": "127.0.0.1",
             "port": 15000,
@@ -526,7 +522,7 @@ class TestValidateConfigExtended:
                 {"id": str(uuid.uuid4()), "name": "test", "path": str(project_path)},
             ],
         }
-        
+
         with pytest.raises(ValueError, match="Duplicate project names"):
             validate_config(config_data)
 
@@ -537,7 +533,7 @@ class TestValidateConfigExtended:
             "port": 15000,
             "unknown_field": "value",
         }
-        
+
         with pytest.raises(ValueError, match="unknown"):
             validate_config(config_data)
 
@@ -547,7 +543,7 @@ class TestValidateConfigExtended:
             "host": "127.0.0.1",
             "port": 70000,
         }
-        
+
         with pytest.raises(ValueError):
             validate_config(config_data)
 
@@ -558,10 +554,10 @@ class TestSaveLoadConfig:
     def test_save_config(self, tmp_path):
         """Test save_config function."""
         config_file = tmp_path / "config.json"
-        
+
         config = {"host": "127.0.0.1", "port": 15000}
         save_config(config, config_file)
-        
+
         assert config_file.exists()
         data = json.loads(config_file.read_text())
         assert data["host"] == "127.0.0.1"
@@ -569,17 +565,16 @@ class TestSaveLoadConfig:
     def test_save_config_creates_parent_dir(self, tmp_path):
         """Test save_config creates parent directory."""
         config_file = tmp_path / "nested" / "config.json"
-        
+
         config = {"host": "127.0.0.1", "port": 15000}
         save_config(config, config_file)
-        
+
         assert config_file.exists()
         assert config_file.parent.exists()
 
     def test_load_config_nonexistent_file(self, tmp_path):
         """Test load_config with nonexistent file."""
         config_file = tmp_path / "nonexistent.json"
-        
+
         with pytest.raises(ValueError, match="not found"):
             load_config(config_file)
-

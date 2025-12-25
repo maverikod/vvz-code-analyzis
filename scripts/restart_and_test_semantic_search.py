@@ -29,27 +29,27 @@ def restart_server() -> bool:
         True if restart was successful, False otherwise
     """
     print("🔄 Restarting MCP server...")
-    
+
     control = ServerControl(CONFIG_PATH)
-    
+
     # Check status first
     status = control.status()
     print(f"Current status: {status.get('message', 'Unknown')}")
-    
+
     # Restart
     result = control.restart()
-    
+
     if result.get("success"):
         print(f"✅ {result.get('message', 'Server restarted')}")
         if "pid" in result:
             print(f"   PID: {result['pid']}")
         if "log_file" in result:
             print(f"   Log: {result['log_file']}")
-        
+
         # Wait a bit for server to fully start
         print("⏳ Waiting for server to start...")
         time.sleep(3)
-        
+
         # Verify server is running
         status = control.status()
         if status.get("running"):
@@ -69,21 +69,22 @@ def main():
     print("RESTART SERVER AND TEST SEMANTIC SEARCH")
     print("=" * 80)
     print()
-    
+
     # Restart server
     if not restart_server():
         print("\n❌ Server restart failed. Cannot proceed with testing.")
         sys.exit(1)
-    
+
     print()
     print("=" * 80)
     print("Now run the semantic search test:")
     print("=" * 80)
     print()
-    print("python scripts/test_semantic_search_real_server.py --query 'code analysis' --k 3")
+    print(
+        "python scripts/test_semantic_search_real_server.py --query 'code analysis' --k 3"
+    )
     print()
 
 
 if __name__ == "__main__":
     main()
-

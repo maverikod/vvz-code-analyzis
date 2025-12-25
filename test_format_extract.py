@@ -1,12 +1,13 @@
 """Test file for extract with formatting."""
 
+
 class Child1:
     def __init__(self):
         self.prop1 = None
-    
+
     def common_method(self):
         return "child1"
-    
+
     def specific_method1(self):
         return "specific1"
 
@@ -14,10 +15,9 @@ class Child1:
 class Child2:
     def __init__(self):
         self.prop1 = None
-    
+
     def common_method(self):
         return "child2"
-    
+
     def specific_method2(self):
         return "specific2"
-

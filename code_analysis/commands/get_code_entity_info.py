@@ -8,7 +8,7 @@ email: vasilyvz@gmail.com
 import json
 import logging
 from pathlib import Path
-from typing import Any, Dict, List, Optional, TYPE_CHECKING
+from typing import Any, Dict, Optional, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from ..core.database import CodeDatabase  # noqa: F401
@@ -142,16 +142,18 @@ class GetCodeEntityInfoCommand:
         methods = []
         for m_row in method_rows:
             args = json.loads(m_row["args"]) if m_row["args"] else []
-            methods.append({
-                "id": m_row["id"],
-                "name": m_row["name"],
-                "line": m_row["line"],
-                "args": args,
-                "docstring": m_row["docstring"],
-                "is_abstract": bool(m_row["is_abstract"]),
-                "has_pass": bool(m_row["has_pass"]),
-                "has_not_implemented": bool(m_row["has_not_implemented"]),
-            })
+            methods.append(
+                {
+                    "id": m_row["id"],
+                    "name": m_row["name"],
+                    "line": m_row["line"],
+                    "args": args,
+                    "docstring": m_row["docstring"],
+                    "is_abstract": bool(m_row["is_abstract"]),
+                    "has_pass": bool(m_row["has_pass"]),
+                    "has_not_implemented": bool(m_row["has_not_implemented"]),
+                }
+            )
 
         # Get AST node if available
         ast_node = None
@@ -159,8 +161,12 @@ class GetCodeEntityInfoCommand:
         if ast_record:
             try:
                 ast_json = ast_record["ast_json"]
-                ast_dict = json.loads(ast_json) if isinstance(ast_json, str) else ast_json
-                ast_node = self._find_class_node(ast_dict, self.entity_name, row["line"])
+                ast_dict = (
+                    json.loads(ast_json) if isinstance(ast_json, str) else ast_json
+                )
+                ast_node = self._find_class_node(
+                    ast_dict, self.entity_name, row["line"]
+                )
             except Exception as e:
                 logger.debug(f"Error parsing AST for class: {e}")
 
@@ -254,8 +260,12 @@ class GetCodeEntityInfoCommand:
         if ast_record:
             try:
                 ast_json = ast_record["ast_json"]
-                ast_dict = json.loads(ast_json) if isinstance(ast_json, str) else ast_json
-                ast_node = self._find_function_node(ast_dict, self.entity_name, row["line"])
+                ast_dict = (
+                    json.loads(ast_json) if isinstance(ast_json, str) else ast_json
+                )
+                ast_node = self._find_function_node(
+                    ast_dict, self.entity_name, row["line"]
+                )
             except Exception as e:
                 logger.debug(f"Error parsing AST for function: {e}")
 
@@ -350,8 +360,12 @@ class GetCodeEntityInfoCommand:
         if ast_record:
             try:
                 ast_json = ast_record["ast_json"]
-                ast_dict = json.loads(ast_json) if isinstance(ast_json, str) else ast_json
-                ast_node = self._find_method_node(ast_dict, row["class_name"], self.entity_name, row["line"])
+                ast_dict = (
+                    json.loads(ast_json) if isinstance(ast_json, str) else ast_json
+                )
+                ast_node = self._find_method_node(
+                    ast_dict, row["class_name"], self.entity_name, row["line"]
+                )
             except Exception as e:
                 logger.debug(f"Error parsing AST for method: {e}")
 
@@ -391,11 +405,15 @@ class GetCodeEntityInfoCommand:
             "ast_node": ast_node,
         }
 
-    def _find_class_node(self, ast_dict: Dict[str, Any], class_name: str, line: int) -> Optional[Dict[str, Any]]:
+    def _find_class_node(
+        self, ast_dict: Dict[str, Any], class_name: str, line: int
+    ) -> Optional[Dict[str, Any]]:
         """Find class node in AST by name and line."""
         return self._find_node_recursive(ast_dict, "ClassDef", class_name, line)
 
-    def _find_function_node(self, ast_dict: Dict[str, Any], func_name: str, line: int) -> Optional[Dict[str, Any]]:
+    def _find_function_node(
+        self, ast_dict: Dict[str, Any], func_name: str, line: int
+    ) -> Optional[Dict[str, Any]]:
         """Find function node in AST by name and line."""
         return self._find_node_recursive(ast_dict, "FunctionDef", func_name, line)
 
@@ -419,7 +437,11 @@ class GetCodeEntityInfoCommand:
             return None
 
         if node.get("_type") == node_type:
-            node_name = node.get("name", {}).get("id") if isinstance(node.get("name"), dict) else node.get("name")
+            node_name = (
+                node.get("name", {}).get("id")
+                if isinstance(node.get("name"), dict)
+                else node.get("name")
+            )
             node_line = node.get("lineno")
             if node_name == name and (line is None or node_line == line):
                 return node
@@ -440,4 +462,3 @@ class GetCodeEntityInfoCommand:
                             return result
 
         return None
-

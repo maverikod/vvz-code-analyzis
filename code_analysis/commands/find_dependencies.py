@@ -6,7 +6,6 @@ email: vasilyvz@gmail.com
 """
 
 import logging
-from pathlib import Path
 from typing import Any, Dict, List, Optional, TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -23,7 +22,9 @@ class FindDependenciesCommand:
         database: "CodeDatabase",
         project_id: str,
         entity_name: str,
-        entity_type: Optional[str] = None,  # "class", "function", "method", "module", or None for all
+        entity_type: Optional[
+            str
+        ] = None,  # "class", "function", "method", "module", or None for all
         target_class: Optional[str] = None,  # For methods, filter by class
         limit: Optional[int] = None,
         offset: int = 0,
@@ -57,17 +58,17 @@ class FindDependenciesCommand:
         """
         try:
             results = []
-            
+
             # Search in usages table (for methods, properties, classes)
             if self.entity_type in (None, "method", "function", "class"):
                 usage_results = await self._find_in_usages()
                 results.extend(usage_results)
-            
+
             # Search in imports table (for modules)
             if self.entity_type in (None, "module"):
                 import_results = await self._find_in_imports()
                 results.extend(import_results)
-            
+
             # Remove duplicates and sort
             seen = set()
             unique_results = []
@@ -76,16 +77,16 @@ class FindDependenciesCommand:
                 if key not in seen:
                     seen.add(key)
                     unique_results.append(result)
-            
+
             unique_results.sort(key=lambda x: (x["file_path"], x["line"]))
-            
+
             # Apply pagination
             total = len(unique_results)
             if self.limit:
                 unique_results = unique_results[self.offset : self.offset + self.limit]
             elif self.offset:
-                unique_results = unique_results[self.offset:]
-            
+                unique_results = unique_results[self.offset :]
+
             # Group by file
             file_groups = {}
             for result in unique_results:
@@ -96,13 +97,15 @@ class FindDependenciesCommand:
                         "file_id": result.get("file_id"),
                         "usages": [],
                     }
-                file_groups[file_path]["usages"].append({
-                    "line": result["line"],
-                    "source": result["source"],
-                    "usage_type": result.get("usage_type"),
-                    "context": result.get("context"),
-                })
-            
+                file_groups[file_path]["usages"].append(
+                    {
+                        "line": result["line"],
+                        "source": result["source"],
+                        "usage_type": result.get("usage_type"),
+                        "context": result.get("context"),
+                    }
+                )
+
             return {
                 "success": True,
                 "message": f"Found {len(unique_results)} dependencies for '{self.entity_name}'",
@@ -154,16 +157,18 @@ class FindDependenciesCommand:
 
         results = []
         for row in rows:
-            results.append({
-                "file_id": row["file_id"],
-                "file_path": row["file_path"],
-                "line": row["line"],
-                "source": "usage",
-                "usage_type": row["usage_type"],
-                "target_type": row["target_type"],
-                "target_class": row["target_class"],
-                "context": row["context"],
-            })
+            results.append(
+                {
+                    "file_id": row["file_id"],
+                    "file_path": row["file_path"],
+                    "line": row["line"],
+                    "source": "usage",
+                    "usage_type": row["usage_type"],
+                    "target_type": row["target_type"],
+                    "target_class": row["target_class"],
+                    "context": row["context"],
+                }
+            )
 
         return results
 
@@ -193,15 +198,16 @@ class FindDependenciesCommand:
 
         results = []
         for row in rows:
-            results.append({
-                "file_id": row["file_id"],
-                "file_path": row["file_path"],
-                "line": row["line"],
-                "source": "import",
-                "import_type": row["import_type"],
-                "name": row["name"],
-                "module": row["module"],
-            })
+            results.append(
+                {
+                    "file_id": row["file_id"],
+                    "file_path": row["file_path"],
+                    "line": row["line"],
+                    "source": "import",
+                    "import_type": row["import_type"],
+                    "name": row["name"],
+                    "module": row["module"],
+                }
+            )
 
         return results
-

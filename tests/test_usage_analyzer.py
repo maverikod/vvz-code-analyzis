@@ -6,9 +6,7 @@ email: vasilyvz@gmail.com
 """
 
 import ast
-import pytest
-from pathlib import Path
-from unittest.mock import Mock, MagicMock
+from unittest.mock import Mock
 
 from code_analysis.core.usage_analyzer import UsageAnalyzer, UsageVisitor
 
@@ -33,13 +31,13 @@ class TestUsageAnalyzer:
         """Test collecting method definitions."""
         test_file = tmp_path / "test.py"
         test_file.write_text(
-            '''class MyClass:
+            """class MyClass:
     def method1(self):
         pass
     
     def method2(self):
         pass
-'''
+"""
         )
 
         analyzer = UsageAnalyzer()
@@ -56,11 +54,11 @@ class TestUsageAnalyzer:
         """Test collecting property definitions."""
         test_file = tmp_path / "test.py"
         test_file.write_text(
-            '''class MyClass:
+            """class MyClass:
     def __init__(self):
         self.prop1 = 1
         self.prop2 = 2
-'''
+"""
         )
 
         analyzer = UsageAnalyzer()
@@ -77,11 +75,11 @@ class TestUsageAnalyzer:
         """Test collecting annotated property definitions."""
         test_file = tmp_path / "test.py"
         test_file.write_text(
-            '''class MyClass:
+            """class MyClass:
     def __init__(self):
         self.prop1: int = 1
         self.prop2: str = "test"
-'''
+"""
         )
 
         analyzer = UsageAnalyzer()
@@ -98,9 +96,9 @@ class TestUsageAnalyzer:
         """Test collecting definitions from empty class."""
         test_file = tmp_path / "test.py"
         test_file.write_text(
-            '''class EmptyClass:
+            """class EmptyClass:
     pass
-'''
+"""
         )
 
         analyzer = UsageAnalyzer()
@@ -117,11 +115,11 @@ class TestUsageAnalyzer:
         """Test analyzing file for method calls."""
         test_file = tmp_path / "test.py"
         test_file.write_text(
-            '''class MyClass:
+            """class MyClass:
     def method1(self):
         self.method2()
         return self.method3()
-'''
+"""
         )
 
         db = Mock()
@@ -137,14 +135,14 @@ class TestUsageAnalyzer:
         """Test analyzing file for attribute access."""
         test_file = tmp_path / "test.py"
         test_file.write_text(
-            '''class MyClass:
+            """class MyClass:
     def __init__(self):
         self.prop1 = 1
     
     def method(self):
         value = self.prop1
         return value
-'''
+"""
         )
 
         db = Mock()
@@ -160,10 +158,10 @@ class TestUsageAnalyzer:
         """Test analyzing file without file_id."""
         test_file = tmp_path / "test.py"
         test_file.write_text(
-            '''class MyClass:
+            """class MyClass:
     def method(self):
         pass
-'''
+"""
         )
 
         db = Mock()
@@ -210,7 +208,7 @@ class TestUsageVisitor:
         """Test visiting nested class definitions."""
         db = Mock()
         visitor = UsageVisitor(db, 1, {}, {})
-        
+
         # Create nested structure
         inner = ast.ClassDef(name="Inner", body=[], lineno=2, col_offset=0)
         outer = ast.ClassDef(name="Outer", body=[inner], lineno=1, col_offset=0)
@@ -336,14 +334,14 @@ class TestUsageVisitor:
         """Test getting context for usage."""
         db = Mock()
         visitor = UsageVisitor(db, 1, {}, {})
-        
+
         node = ast.Call(
             func=ast.Name(id="func", ctx=ast.Load()),
             args=[],
             keywords=[],
             lineno=5,
         )
-        
+
         # Context might be None if parent not set
         context = visitor._get_context(node)
         # Should not raise
@@ -353,10 +351,10 @@ class TestUsageVisitor:
         """Test handling database errors gracefully."""
         test_file = tmp_path / "test.py"
         test_file.write_text(
-            '''class MyClass:
+            """class MyClass:
     def method(self):
         self.method()
-'''
+"""
         )
 
         db = Mock()

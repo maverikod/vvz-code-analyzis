@@ -65,7 +65,7 @@ class ChunkerDiagnostics:
                 client_kwargs["cert"] = str(Path(self.cert_file).resolve())
                 client_kwargs["key"] = str(Path(self.key_file).resolve())
                 client_kwargs["ca"] = str(Path(self.ca_cert_file).resolve())
-                print(f"✅ Using mTLS certificates:")
+                print("✅ Using mTLS certificates:")
                 print(f"   Cert: {client_kwargs['cert']}")
                 print(f"   Key: {client_kwargs['key']}")
                 print(f"   CA: {client_kwargs['ca']}")
@@ -93,7 +93,7 @@ class ChunkerDiagnostics:
         try:
             print(f"Calling health() on {self.host}:{self.port}...")
             result = await self.client.health()
-            print(f"✅ Health check succeeded")
+            print("✅ Health check succeeded")
             print(f"Response type: {type(result)}")
             print(f"Response: {json.dumps(result, indent=2, default=str)}")
             return True
@@ -145,20 +145,20 @@ class ChunkerDiagnostics:
         }
 
         try:
-            print(f"\nCalling chunk_text()...")
+            print("\nCalling chunk_text()...")
             print(f"Client type: {type(self.client)}")
-            print(f"Client attributes: {[attr for attr in dir(self.client) if not attr.startswith('_')]}")
-            
+            print(
+                f"Client attributes: {[attr for attr in dir(self.client) if not attr.startswith('_')]}"
+            )
+
             # Try to get more info about the request
-            if hasattr(self.client, '_client'):
+            if hasattr(self.client, "_client"):
                 print(f"Internal client: {type(self.client._client)}")
-            
+
             result = await self.client.chunk_text(text, **params)
 
             result_info["result_type"] = str(type(result))
-            result_info["result_length"] = (
-                len(result) if result is not None else None
-            )
+            result_info["result_length"] = len(result) if result is not None else None
 
             if result is None:
                 result_info["error"] = "Result is None"
@@ -187,7 +187,9 @@ class ChunkerDiagnostics:
                                     chunk_info[attr] = {
                                         "present": True,
                                         "length": len(value),
-                                        "preview": value[:5] if len(value) > 5 else value,
+                                        "preview": (
+                                            value[:5] if len(value) > 5 else value
+                                        ),
                                     }
                                 else:
                                     chunk_info[attr] = {
@@ -204,7 +206,7 @@ class ChunkerDiagnostics:
                         "first_chunk": chunk_info,
                     }
 
-                    print(f"\nFirst chunk analysis:")
+                    print("\nFirst chunk analysis:")
                     print(f"  Type: {chunk_info['type']}")
                     for attr, info in chunk_info.items():
                         if attr not in ["type", "attributes"]:
@@ -307,7 +309,9 @@ class ChunkerDiagnostics:
         print("\n" + "=" * 80)
         print("SUMMARY")
         print("=" * 80)
-        print(f"Health check: {'✅ PASSED' if results['health_check'] else '❌ FAILED'}")
+        print(
+            f"Health check: {'✅ PASSED' if results['health_check'] else '❌ FAILED'}"
+        )
         successful = sum(1 for t in results["chunking_tests"] if t.get("success"))
         total = len(results["chunking_tests"])
         print(f"Chunking tests: {successful}/{total} successful")
@@ -332,9 +336,7 @@ async def main():
     parser = argparse.ArgumentParser(
         description="Diagnose chunker server empty result issue"
     )
-    parser.add_argument(
-        "--host", default="localhost", help="Chunker server host"
-    )
+    parser.add_argument("--host", default="localhost", help="Chunker server host")
     parser.add_argument("--port", type=int, default=8009, help="Chunker server port")
     parser.add_argument("--cert", help="Path to client certificate")
     parser.add_argument("--key", help="Path to client private key")
@@ -404,4 +406,3 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
-

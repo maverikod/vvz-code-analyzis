@@ -5,27 +5,28 @@ Author: Vasiliy Zdanovskiy
 email: vasilyvz@gmail.com
 """
 
-import ast
-import pytest
-from pathlib import Path
-
-from code_analysis.core.refactorer import ClassSplitter, SuperclassExtractor, ClassMerger
+from code_analysis.core.refactorer import (
+    ClassSplitter,
+    SuperclassExtractor,
+    ClassMerger,
+)
 
 
 class TestEdgeCasesPart1:
     """Edge case tests to increase coverage."""
+
     def test_splitter_extract_class_members_nested_classes(self, tmp_path):
         """Test extract_class_members with nested classes."""
         test_file = tmp_path / "test.py"
         test_file.write_text(
-            '''class Outer:
+            """class Outer:
     class Inner:
         def method(self):
             pass
 
     def outer_method(self):
         pass
-    '''
+    """
         )
 
         splitter = ClassSplitter(test_file)
@@ -35,6 +36,7 @@ class TestEdgeCasesPart1:
 
         assert "nested_classes" in members
         assert len(members["nested_classes"]) > 0
+
     def test_splitter_find_class_end_no_body(self, tmp_path):
         """Test _find_class_end for class with no body."""
         test_file = tmp_path / "test.py"
@@ -47,14 +49,15 @@ class TestEdgeCasesPart1:
         end_line = splitter._find_class_end(class_node, lines)
 
         assert end_line > class_node.lineno
+
     def test_splitter_build_new_class_no_docstring_no_props(self, tmp_path):
         """Test _build_new_class without docstring and properties."""
         test_file = tmp_path / "test.py"
         test_file.write_text(
-            '''class Source:
+            """class Source:
     def method(self):
         return 1
-    '''
+    """
         )
 
         splitter = ClassSplitter(test_file)
@@ -66,11 +69,12 @@ class TestEdgeCasesPart1:
 
         assert "class NewClass:" in new_class
         assert "def method" in new_class
+
     def test_splitter_build_modified_source_class_all_moved(self, tmp_path):
         """Test _build_modified_source_class when all methods are moved."""
         test_file = tmp_path / "test.py"
         test_file.write_text(
-            '''class Source:
+            """class Source:
     def __init__(self):
         self.prop1 = 1
 
@@ -79,7 +83,7 @@ class TestEdgeCasesPart1:
 
     def method2(self):
         return 2
-    '''
+    """
         )
 
         splitter = ClassSplitter(test_file)
@@ -90,7 +94,7 @@ class TestEdgeCasesPart1:
         prop_mapping = {"prop1": "Dst1"}
         dst_classes = {
             "Dst1": {"props": ["prop1"], "methods": ["method1"]},
-            "Dst2": {"props": [], "methods": ["method2"]}
+            "Dst2": {"props": [], "methods": ["method2"]},
         }
 
         modified = splitter._build_modified_source_class(
@@ -100,15 +104,16 @@ class TestEdgeCasesPart1:
         assert "class Source:" in modified
         assert "self.dst1" in modified.lower()
         assert "self.dst2" in modified.lower()
+
     def test_extractor_get_class_bases_qualified(self, tmp_path):
         """Test get_class_bases with qualified base names."""
         test_file = tmp_path / "test.py"
         test_file.write_text(
-            '''from abc import ABC
+            """from abc import ABC
 
 class Child(ABC):
     pass
-'''
+"""
         )
 
         extractor = SuperclassExtractor(test_file)
@@ -117,17 +122,18 @@ class Child(ABC):
         bases = extractor.get_class_bases(class_node)
 
         assert "ABC" in bases
+
     def test_extractor_get_return_type_with_annotation(self, tmp_path):
         """Test _get_return_type with return type annotation."""
         test_file = tmp_path / "test.py"
         test_file.write_text(
-            '''class Test:
+            """class Test:
     def method(self) -> str:
         return "test"
 
     def method2(self) -> int:
         return 1
-    '''
+    """
         )
 
         extractor = SuperclassExtractor(test_file)
@@ -143,14 +149,15 @@ class Child(ABC):
         if method2:
             return_type2 = extractor._get_return_type(method2)
             assert return_type2 == "int"
+
     def test_extractor_get_return_type_no_annotation(self, tmp_path):
         """Test _get_return_type without return type annotation."""
         test_file = tmp_path / "test.py"
         test_file.write_text(
-            '''class Test:
+            """class Test:
     def method(self):
         return "test"
-    '''
+    """
         )
 
         extractor = SuperclassExtractor(test_file)
@@ -161,16 +168,17 @@ class Child(ABC):
         if method:
             return_type = extractor._get_return_type(method)
             assert return_type is None
+
     def test_extractor_check_method_compatibility_no_methods(self, tmp_path):
         """Test check_method_compatibility when method doesn't exist."""
         test_file = tmp_path / "test.py"
         test_file.write_text(
-            '''class A:
+            """class A:
     pass
 
 class B:
     pass
-'''
+"""
         )
 
         extractor = SuperclassExtractor(test_file)
@@ -181,18 +189,19 @@ class B:
         )
 
         assert is_compatible  # No conflict if method doesn't exist
+
     def test_extractor_check_method_compatibility_incompatible_returns(self, tmp_path):
         """Test check_method_compatibility with incompatible return types."""
         test_file = tmp_path / "test.py"
         test_file.write_text(
-            '''class A:
+            """class A:
     def method(self) -> str:
         return "a"
 
 class B:
     def method(self) -> int:
         return 1
-'''
+"""
         )
 
         extractor = SuperclassExtractor(test_file)
@@ -204,20 +213,23 @@ class B:
 
         assert not is_compatible
         assert "incompatible" in error.lower() or "return" in error.lower()
+
+
 class TestEdgeCasesPart2:
     """Edge case tests to increase coverage."""
+
     def test_extractor_build_base_class_with_abc_import(self, tmp_path):
         """Test _build_base_class when ABC import is needed."""
         test_file = tmp_path / "test.py"
         test_file.write_text(
-            '''class Child1:
+            """class Child1:
     def method(self):
         return 1
 
 class Child2:
     def method(self):
         return 2
-'''
+"""
         )
 
         extractor = SuperclassExtractor(test_file)
@@ -226,24 +238,27 @@ class Child2:
 
         extract_from = {
             "Child1": {"properties": [], "methods": ["method"]},
-            "Child2": {"properties": [], "methods": ["method"]}
+            "Child2": {"properties": [], "methods": ["method"]},
         }
 
-        base_code = extractor._build_base_class("Base", child_nodes, extract_from, ["method"])
+        base_code = extractor._build_base_class(
+            "Base", child_nodes, extract_from, ["method"]
+        )
         assert "class Base(ABC):" in base_code
         assert "@abstractmethod" in base_code
+
     def test_extractor_perform_extraction_with_abc_import(self, tmp_path):
         """Test _perform_extraction when ABC import needs to be added."""
         test_file = tmp_path / "test.py"
         test_file.write_text(
-            '''class Child1:
+            """class Child1:
     def method(self):
         return 1
 
 class Child2:
     def method(self):
         return 2
-'''
+"""
         )
 
         extractor = SuperclassExtractor(test_file)
@@ -256,18 +271,19 @@ class Child2:
             "abstract_methods": ["method"],
             "extract_from": {
                 "Child1": {"properties": [], "methods": ["method"]},
-                "Child2": {"properties": [], "methods": ["method"]}
-            }
+                "Child2": {"properties": [], "methods": ["method"]},
+            },
         }
 
         new_content = extractor._perform_extraction(config, child_nodes)
         assert "from abc import ABC, abstractmethod" in new_content
         assert "class Base(ABC):" in new_content
+
     def test_merger_build_merged_class_with_filter(self, tmp_path):
         """Test _build_merged_class with method and property filters."""
         test_file = tmp_path / "test.py"
         test_file.write_text(
-            '''class A:
+            """class A:
     def __init__(self):
         self.prop1 = 1
         self.prop2 = 2
@@ -284,7 +300,7 @@ class B:
 
     def method3(self):
         return 3
-'''
+"""
         )
 
         merger = ClassMerger(test_file)
@@ -300,6 +316,7 @@ class B:
         assert "def method3" in merged_code
         assert "self.prop1" in merged_code
         assert "self.prop3" in merged_code
+
     def test_splitter_validate_completeness_missing_dst_class(self, tmp_path):
         """Test validate_completeness when destination class is missing."""
         test_file = tmp_path / "test.py"
@@ -310,9 +327,7 @@ class B:
 
         config = {
             "src_class": "Test",
-            "dst_classes": {
-                "DstClass": {"props": [], "methods": []}
-            }
+            "dst_classes": {"DstClass": {"props": [], "methods": []}},
         }
 
         # Write content without DstClass
@@ -327,16 +342,17 @@ class B:
 
         # Should still pass if no members to check
         assert isinstance(is_complete, bool)
+
     def test_splitter_validate_imports_success(self, tmp_path):
         """Test validate_imports with valid imports."""
         test_file = tmp_path / "test.py"
         test_file.write_text(
-            '''import sys
+            """import sys
 from pathlib import Path
 
 class Test:
     pass
-'''
+"""
         )
 
         splitter = ClassSplitter(test_file)
@@ -345,6 +361,7 @@ class Test:
 
         # Should either succeed or fail gracefully
         assert isinstance(is_valid, bool)
+
     def test_extractor_validate_completeness_missing_props(self, tmp_path):
         """Test validate_completeness when properties are missing."""
         test_file = tmp_path / "test.py"
@@ -353,18 +370,13 @@ class Test:
         extractor = SuperclassExtractor(test_file)
         extractor.create_backup()
 
-        config = {
-            "extract_from": {
-                "Child1": {"properties": ["prop1"], "methods": []}
-            }
-        }
+        config = {"extract_from": {"Child1": {"properties": ["prop1"], "methods": []}}}
 
-        is_complete, error = extractor.validate_completeness(
-            "Base", ["Child1"], config
-        )
+        is_complete, error = extractor.validate_completeness("Base", ["Child1"], config)
 
         assert not is_complete
         assert "not found" in error.lower() or "missing" in error.lower()
+
     def test_merger_validate_completeness_missing_methods(self, tmp_path):
         """Test validate_completeness when methods are missing after merge."""
         test_file = tmp_path / "test.py"
@@ -382,14 +394,15 @@ class Test:
 
         assert not is_complete
         assert "missing" in error.lower()
+
     def test_splitter_extract_method_code_empty_method(self, tmp_path):
         """Test _extract_method_code for empty method."""
         test_file = tmp_path / "test.py"
         test_file.write_text(
-            '''class Test:
+            """class Test:
     def empty_method(self):
         pass
-    '''
+    """
         )
 
         splitter = ClassSplitter(test_file)
@@ -400,17 +413,18 @@ class Test:
         if method:
             code = splitter._extract_method_code(method, "    ")
             assert "def empty_method" in code
+
     def test_extractor_update_child_class_empty_after_removal(self, tmp_path):
         """Test _update_child_class when all properties are removed from __init__."""
         test_file = tmp_path / "test.py"
         test_file.write_text(
-            '''class Child:
+            """class Child:
     def __init__(self):
         self.prop1 = 1
 
     def method(self):
         return 1
-    '''
+    """
         )
 
         extractor = SuperclassExtractor(test_file)
@@ -425,4 +439,3 @@ class Test:
         assert "def __init__" in updated
         # Should have pass or remaining content
         assert "pass" in updated or "method" in updated
-

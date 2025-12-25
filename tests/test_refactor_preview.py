@@ -6,8 +6,6 @@ email: vasilyvz@gmail.com
 """
 
 import ast
-import tempfile
-from pathlib import Path
 import pytest
 
 from code_analysis.core.refactorer import ClassSplitter, SuperclassExtractor
@@ -19,7 +17,7 @@ class TestRefactorPreview:
     def test_preview_split_class(self, tmp_path):
         """Test that preview_split returns preview without making changes."""
         test_file = tmp_path / "test.py"
-        original_content = '''class LargeClass:
+        original_content = """class LargeClass:
     def __init__(self):
         self.prop1 = None
         self.prop2 = None
@@ -27,7 +25,7 @@ class TestRefactorPreview:
         return "method1"
     def method2(self):
         return "method2"
-'''
+"""
         test_file.write_text(original_content)
 
         config = {
@@ -59,7 +57,7 @@ class TestRefactorPreview:
     def test_preview_extract_superclass(self, tmp_path):
         """Test that preview_extraction returns preview without making changes."""
         test_file = tmp_path / "test.py"
-        original_content = '''class Child1:
+        original_content = """class Child1:
     def __init__(self):
         self.prop1 = None
     def common_method(self):
@@ -74,7 +72,7 @@ class Child2:
         return "child2"
     def specific_method2(self):
         return "specific2"
-'''
+"""
         test_file.write_text(original_content)
 
         config = {
@@ -109,7 +107,7 @@ class Child2:
         """Test that preview_split returns error for invalid config."""
         test_file = tmp_path / "test.py"
         test_file.write_text(
-            '''class LargeClass:
+            """class LargeClass:
     def __init__(self):
         self.prop1 = None
         self.prop2 = None
@@ -117,7 +115,7 @@ class Child2:
         return "method1"
     def method2(self):
         return "method2"
-'''
+"""
         )
 
         # Incomplete config
@@ -134,5 +132,7 @@ class Child2:
         assert not success
         assert error_msg is not None
         assert preview is None
-        assert "ошибка конфигурации" in error_msg.lower() or "Ошибка конфигурации" in error_msg
-
+        assert (
+            "ошибка конфигурации" in error_msg.lower()
+            or "Ошибка конфигурации" in error_msg
+        )

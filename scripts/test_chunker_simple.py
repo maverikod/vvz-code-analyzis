@@ -21,22 +21,22 @@ async def test_simple():
     print("=" * 80)
     print("SIMPLE CHUNKER TEST")
     print("=" * 80)
-    
+
     # Use same certificates as in diagnose script
     cert_file = "mtls_certificates/mtls_certificates/client/code-analysis.crt"
     key_file = "mtls_certificates/mtls_certificates/client/code-analysis.key"
     ca_file = "mtls_certificates/mtls_certificates/ca/ca.crt"
-    
+
     # Resolve to absolute paths
     cert_path = Path(cert_file).resolve()
     key_path = Path(key_file).resolve()
     ca_path = Path(ca_file).resolve()
-    
-    print(f"\nCertificates:")
+
+    print("\nCertificates:")
     print(f"  Cert: {cert_path} (exists: {cert_path.exists()})")
     print(f"  Key: {key_path} (exists: {key_path.exists()})")
     print(f"  CA: {ca_path} (exists: {ca_path.exists()})")
-    
+
     client = ChunkerClient(
         host="localhost",
         port=8009,
@@ -46,21 +46,21 @@ async def test_simple():
         check_hostname=False,
         timeout=60.0,
     )
-    
+
     try:
         # Test health first
         print("\n1. Testing health check...")
         health = await client.health()
         print(f"✅ Health check: {health.get('success', False)}")
-        
+
         # Test with simple text
         print("\n2. Testing chunk_text with simple text...")
         test_text = "Register server with MCP Proxy."
         print(f"   Text: {test_text}")
         print(f"   Length: {len(test_text)}")
-        
+
         result = await client.chunk_text(test_text, type="DocBlock")
-        
+
         if result:
             print(f"✅ Success! Received {len(result)} chunks")
             if len(result) > 0:
@@ -72,10 +72,11 @@ async def test_simple():
                     print(f"   First chunk text: {first.text[:100]}")
         else:
             print("❌ Result is None")
-            
+
     except Exception as e:
         print(f"❌ Error: {e}")
         import traceback
+
         traceback.print_exc()
     finally:
         await client.close()
@@ -83,4 +84,3 @@ async def test_simple():
 
 if __name__ == "__main__":
     asyncio.run(test_simple())
-

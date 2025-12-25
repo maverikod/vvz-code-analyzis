@@ -143,3 +143,10 @@ docs/_build/
 mtls_certificates/
 
 MagicMock/
+
+# Code mapper / refactorer backup artifacts (should never be committed)
+.code_mapper_backups/
+**/.code_mapper_backups/
+*.backup
+*.backup_*
+*.py.backup

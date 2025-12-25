@@ -47,9 +47,7 @@ def main():
         print(f"Total chunks: {total_chunks}")
 
         # Chunks with vector_id
-        cursor.execute(
-            "SELECT COUNT(*) FROM code_chunks WHERE vector_id IS NOT NULL"
-        )
+        cursor.execute("SELECT COUNT(*) FROM code_chunks WHERE vector_id IS NOT NULL")
         chunks_with_vector = cursor.fetchone()[0]
         print(f"Chunks with vector_id: {chunks_with_vector}")
 
@@ -70,12 +68,20 @@ def main():
         )
         samples = cursor.fetchall()
         print()
-        print(f"Sample chunks (first 5):")
-        for i, (chunk_id, chunk_type, chunk_text, vector_id, embedding_model) in enumerate(samples, 1):
+        print("Sample chunks (first 5):")
+        for i, (
+            chunk_id,
+            chunk_type,
+            chunk_text,
+            vector_id,
+            embedding_model,
+        ) in enumerate(samples, 1):
             print(f"  {i}. ID={chunk_id}, Type={chunk_type}")
             print(f"     Vector ID: {vector_id}, Model: {embedding_model}")
             if chunk_text:
-                preview = chunk_text[:100] + "..." if len(chunk_text) > 100 else chunk_text
+                preview = (
+                    chunk_text[:100] + "..." if len(chunk_text) > 100 else chunk_text
+                )
                 print(f"     Text: {preview}")
             print()
 
@@ -97,8 +103,7 @@ def main():
                 if index_path.exists():
                     print(f"FAISS index: {index_path}")
                     manager = FaissIndexManager(
-                        index_path=index_path,
-                        vector_dim=config.vector_dim
+                        index_path=index_path, vector_dim=config.vector_dim
                     )
                     stats = manager.get_stats()
                     print(f"  Vectors in index: {stats.get('vector_count', 0)}")
@@ -118,4 +123,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

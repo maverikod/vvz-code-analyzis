@@ -69,9 +69,7 @@ def get_db_docstring_counts(db_path: Path) -> Tuple[int, int]:
     conn.row_factory = sqlite3.Row
     cur = conn.cursor()
 
-    cur.execute(
-        "SELECT COUNT(*) FROM code_chunks WHERE source_type LIKE '%docstring%'"
-    )
+    cur.execute("SELECT COUNT(*) FROM code_chunks WHERE source_type LIKE '%docstring%'")
     total = cur.fetchone()[0]
 
     cur.execute(
@@ -115,4 +113,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

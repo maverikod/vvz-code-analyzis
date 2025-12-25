@@ -8,7 +8,7 @@ email: vasilyvz@gmail.com
 import json
 import logging
 from pathlib import Path
-from typing import Any, Dict, List, Optional, TYPE_CHECKING
+from typing import Any, Dict, Optional, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from ..core.database import CodeDatabase  # noqa: F401
@@ -37,7 +37,9 @@ class ASTStatisticsCommand:
         self.project_id = project_id
         self.file_path = Path(file_path) if file_path else None
 
-    def _calculate_statistics(self, node: Dict[str, Any], stats: Dict[str, Any], depth: int = 0) -> None:
+    def _calculate_statistics(
+        self, node: Dict[str, Any], stats: Dict[str, Any], depth: int = 0
+    ) -> None:
         """
         Recursively calculate statistics for AST node.
 
@@ -54,7 +56,7 @@ class ASTStatisticsCommand:
             # Count node types
             stats["node_types"][node_type] = stats["node_types"].get(node_type, 0) + 1
             stats["total_nodes"] += 1
-            
+
             # Track max depth
             if depth > stats["max_depth"]:
                 stats["max_depth"] = depth
@@ -111,15 +113,17 @@ class ASTStatisticsCommand:
 
                 try:
                     ast_json = ast_record["ast_json"]
-                    ast_dict = json.loads(ast_json) if isinstance(ast_json, str) else ast_json
-                    
+                    ast_dict = (
+                        json.loads(ast_json) if isinstance(ast_json, str) else ast_json
+                    )
+
                     stats = {
                         "total_nodes": 0,
                         "max_depth": 0,
                         "node_types": {},
                     }
                     self._calculate_statistics(ast_dict, stats)
-                    
+
                     return {
                         "success": True,
                         "message": f"AST statistics for {self.file_path}",
@@ -160,33 +164,39 @@ class ASTStatisticsCommand:
                 for row in rows:
                     file_id, file_path, ast_json = row
                     project_stats["total_files"] += 1
-                    
+
                     try:
-                        ast_dict = json.loads(ast_json) if isinstance(ast_json, str) else ast_json
+                        ast_dict = (
+                            json.loads(ast_json)
+                            if isinstance(ast_json, str)
+                            else ast_json
+                        )
                         project_stats["files_with_ast"] += 1
-                        
+
                         file_stats = {
                             "total_nodes": 0,
                             "max_depth": 0,
                             "node_types": {},
                         }
                         self._calculate_statistics(ast_dict, file_stats)
-                        
+
                         # Aggregate to project stats
                         project_stats["total_nodes"] += file_stats["total_nodes"]
                         if file_stats["max_depth"] > project_stats["max_depth"]:
                             project_stats["max_depth"] = file_stats["max_depth"]
-                        
+
                         for node_type, count in file_stats["node_types"].items():
                             project_stats["node_types"][node_type] = (
                                 project_stats["node_types"].get(node_type, 0) + count
                             )
-                        
-                        project_stats["file_statistics"].append({
-                            "file_id": file_id,
-                            "file_path": file_path,
-                            "statistics": file_stats,
-                        })
+
+                        project_stats["file_statistics"].append(
+                            {
+                                "file_id": file_id,
+                                "file_path": file_path,
+                                "statistics": file_stats,
+                            }
+                        )
                     except (json.JSONDecodeError, KeyError) as e:
                         logger.debug(f"Error parsing AST for file_id={file_id}: {e}")
                         continue
@@ -205,4 +215,3 @@ class ASTStatisticsCommand:
                 "message": f"Error calculating AST statistics: {e}",
                 "error": str(e),
             }
-

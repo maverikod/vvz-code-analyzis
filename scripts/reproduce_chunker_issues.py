@@ -15,15 +15,9 @@ import asyncio
 import json
 import sys
 from pathlib import Path
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, Optional
 
 from svo_client import ChunkerClient
-from svo_client.errors import (
-    SVOServerError,
-    SVOConnectionError,
-    SVOTimeoutError,
-    SVOChunkingIntegrityError,
-)
 
 
 class ChunkerTester:
@@ -92,7 +86,9 @@ class ChunkerTester:
 
                     print(f"✅ mTLS configured: cert={client_kwargs['cert']}")
                 else:
-                    print("⚠️  mTLS protocol but certificates not provided, falling back to HTTP")
+                    print(
+                        "⚠️  mTLS protocol but certificates not provided, falling back to HTTP"
+                    )
             else:
                 print("✅ Using HTTP protocol (no certificates)")
 
@@ -102,7 +98,9 @@ class ChunkerTester:
                 client_kwargs["timeout"] = float(timeout)
 
             self.client = ChunkerClient(**client_kwargs)
-            print(f"✅ ChunkerClient created: {client_kwargs['host']}:{client_kwargs['port']}")
+            print(
+                f"✅ ChunkerClient created: {client_kwargs['host']}:{client_kwargs['port']}"
+            )
 
         except Exception as e:
             print(f"❌ Failed to create client: {e}")
@@ -118,7 +116,11 @@ class ChunkerTester:
             return True
         except Exception as e:
             print(f"❌ Health check failed: {e}")
-            self.results["health"] = {"status": "error", "error": str(e), "type": type(e).__name__}
+            self.results["health"] = {
+                "status": "error",
+                "error": str(e),
+                "type": type(e).__name__,
+            }
             return False
 
     async def test_chunking_short(self) -> bool:
@@ -129,9 +131,16 @@ class ChunkerTester:
             result = await self.client.chunk_text(text, type="DocBlock")
             if result and len(result) > 0:
                 chunk = result[0]
-                has_emb = hasattr(chunk, "embedding") and getattr(chunk, "embedding", None) is not None
-                has_bm25 = hasattr(chunk, "bm25") and getattr(chunk, "bm25", None) is not None
-                print(f"✅ Short text chunked: {len(result)} chunks, has_embedding={has_emb}, has_bm25={has_bm25}")
+                has_emb = (
+                    hasattr(chunk, "embedding")
+                    and getattr(chunk, "embedding", None) is not None
+                )
+                has_bm25 = (
+                    hasattr(chunk, "bm25") and getattr(chunk, "bm25", None) is not None
+                )
+                print(
+                    f"✅ Short text chunked: {len(result)} chunks, has_embedding={has_emb}, has_bm25={has_bm25}"
+                )
                 self.results["chunking_short"] = {
                     "status": "ok",
                     "chunks": len(result),
@@ -140,12 +149,19 @@ class ChunkerTester:
                 }
                 return True
             else:
-                print(f"❌ Short text returned empty result")
-                self.results["chunking_short"] = {"status": "error", "error": "empty_result"}
+                print("❌ Short text returned empty result")
+                self.results["chunking_short"] = {
+                    "status": "error",
+                    "error": "empty_result",
+                }
                 return False
         except Exception as e:
             print(f"❌ Short text chunking failed: {e}")
-            self.results["chunking_short"] = {"status": "error", "error": str(e), "type": type(e).__name__}
+            self.results["chunking_short"] = {
+                "status": "error",
+                "error": str(e),
+                "type": type(e).__name__,
+            }
             return False
 
     async def test_chunking_medium(self) -> bool:
@@ -156,9 +172,16 @@ class ChunkerTester:
             result = await self.client.chunk_text(text, type="DocBlock")
             if result and len(result) > 0:
                 chunk = result[0]
-                has_emb = hasattr(chunk, "embedding") and getattr(chunk, "embedding", None) is not None
-                has_bm25 = hasattr(chunk, "bm25") and getattr(chunk, "bm25", None) is not None
-                print(f"✅ Medium text chunked: {len(result)} chunks, has_embedding={has_emb}, has_bm25={has_bm25}")
+                has_emb = (
+                    hasattr(chunk, "embedding")
+                    and getattr(chunk, "embedding", None) is not None
+                )
+                has_bm25 = (
+                    hasattr(chunk, "bm25") and getattr(chunk, "bm25", None) is not None
+                )
+                print(
+                    f"✅ Medium text chunked: {len(result)} chunks, has_embedding={has_emb}, has_bm25={has_bm25}"
+                )
                 self.results["chunking_medium"] = {
                     "status": "ok",
                     "chunks": len(result),
@@ -167,12 +190,19 @@ class ChunkerTester:
                 }
                 return True
             else:
-                print(f"❌ Medium text returned empty result")
-                self.results["chunking_medium"] = {"status": "error", "error": "empty_result"}
+                print("❌ Medium text returned empty result")
+                self.results["chunking_medium"] = {
+                    "status": "error",
+                    "error": "empty_result",
+                }
                 return False
         except Exception as e:
             print(f"❌ Medium text chunking failed: {e}")
-            self.results["chunking_medium"] = {"status": "error", "error": str(e), "type": type(e).__name__}
+            self.results["chunking_medium"] = {
+                "status": "error",
+                "error": str(e),
+                "type": type(e).__name__,
+            }
             return False
 
     async def test_chunking_long(self) -> bool:
@@ -195,9 +225,20 @@ The analysis process includes:
         try:
             result = await self.client.chunk_text(text, type="DocBlock")
             if result and len(result) > 0:
-                chunks_with_emb = sum(1 for c in result if hasattr(c, "embedding") and getattr(c, "embedding", None) is not None)
-                chunks_with_bm25 = sum(1 for c in result if hasattr(c, "bm25") and getattr(c, "bm25", None) is not None)
-                print(f"✅ Long text chunked: {len(result)} chunks, {chunks_with_emb} with embeddings, {chunks_with_bm25} with bm25")
+                chunks_with_emb = sum(
+                    1
+                    for c in result
+                    if hasattr(c, "embedding")
+                    and getattr(c, "embedding", None) is not None
+                )
+                chunks_with_bm25 = sum(
+                    1
+                    for c in result
+                    if hasattr(c, "bm25") and getattr(c, "bm25", None) is not None
+                )
+                print(
+                    f"✅ Long text chunked: {len(result)} chunks, {chunks_with_emb} with embeddings, {chunks_with_bm25} with bm25"
+                )
                 self.results["chunking_long"] = {
                     "status": "ok",
                     "chunks": len(result),
@@ -206,12 +247,19 @@ The analysis process includes:
                 }
                 return True
             else:
-                print(f"❌ Long text returned empty result")
-                self.results["chunking_long"] = {"status": "error", "error": "empty_result"}
+                print("❌ Long text returned empty result")
+                self.results["chunking_long"] = {
+                    "status": "error",
+                    "error": "empty_result",
+                }
                 return False
         except Exception as e:
             print(f"❌ Long text chunking failed: {e}")
-            self.results["chunking_long"] = {"status": "error", "error": str(e), "type": type(e).__name__}
+            self.results["chunking_long"] = {
+                "status": "error",
+                "error": str(e),
+                "type": type(e).__name__,
+            }
             return False
 
     async def test_embeddings(self) -> bool:
@@ -234,9 +282,13 @@ The analysis process includes:
                 else:
                     chunks_without_emb.append(chunk)
 
-            print(f"✅ Embeddings test: {len(chunks_with_emb)}/{len(result)} chunks have embeddings")
+            print(
+                f"✅ Embeddings test: {len(chunks_with_emb)}/{len(result)} chunks have embeddings"
+            )
             if chunks_without_emb:
-                print(f"⚠️  {len(chunks_without_emb)} chunks without embeddings (empty chunks)")
+                print(
+                    f"⚠️  {len(chunks_without_emb)} chunks without embeddings (empty chunks)"
+                )
 
             self.results["embeddings"] = {
                 "status": "ok",
@@ -247,7 +299,11 @@ The analysis process includes:
             return len(chunks_with_emb) > 0
         except Exception as e:
             print(f"❌ Embeddings test failed: {e}")
-            self.results["embeddings"] = {"status": "error", "error": str(e), "type": type(e).__name__}
+            self.results["embeddings"] = {
+                "status": "error",
+                "error": str(e),
+                "type": type(e).__name__,
+            }
             return False
 
     async def test_empty_chunks(self) -> bool:
@@ -274,7 +330,9 @@ The analysis process includes:
             except Exception as e:
                 print(f"⚠️  Error processing sample '{text}': {e}")
 
-        print(f"✅ Empty chunks test: {empty_count}/{total_count} chunks without embeddings")
+        print(
+            f"✅ Empty chunks test: {empty_count}/{total_count} chunks without embeddings"
+        )
         self.results["empty_chunks"] = {
             "status": "ok",
             "total_chunks": total_count,
@@ -318,8 +376,16 @@ The analysis process includes:
         print("Test Summary")
         print("=" * 60)
 
-        passed = sum(1 for r in self.results.values() if isinstance(r, dict) and r.get("status") == "ok")
-        failed = sum(1 for r in self.results.values() if isinstance(r, dict) and r.get("status") == "error")
+        passed = sum(
+            1
+            for r in self.results.values()
+            if isinstance(r, dict) and r.get("status") == "ok"
+        )
+        failed = sum(
+            1
+            for r in self.results.values()
+            if isinstance(r, dict) and r.get("status") == "error"
+        )
         total = len([r for r in self.results.values() if isinstance(r, dict)])
 
         print(f"Total tests: {total}")
@@ -348,4 +414,3 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
-

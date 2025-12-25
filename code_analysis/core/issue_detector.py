@@ -260,9 +260,7 @@ class IssueDetector:
         elif node.level > 0:
             # Relative import with module name
             # (e.g., "from .module import something")
-            if not self._is_valid_relative_import(
-                node.level, node.module, file_path
-            ):
+            if not self._is_valid_relative_import(node.level, node.module, file_path):
                 for alias in node.names:
                     self.issues["invalid_imports"].append(
                         {

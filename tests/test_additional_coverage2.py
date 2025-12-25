@@ -5,11 +5,11 @@ Author: Vasiliy Zdanovskiy
 email: vasilyvz@gmail.com
 """
 
-import ast
-import pytest
-from pathlib import Path
-
-from code_analysis.core.refactorer import ClassSplitter, SuperclassExtractor, ClassMerger
+from code_analysis.core.refactorer import (
+    ClassSplitter,
+    SuperclassExtractor,
+    ClassMerger,
+)
 
 
 class TestAdditionalCoverage2:
@@ -22,14 +22,14 @@ class TestAdditionalCoverage2:
 
         merger = ClassMerger(test_file)
         merger.create_backup()
-        
+
         # Write content without merged class
         test_file.write_text("class Other: pass")
-        
+
         is_complete, error = merger.validate_completeness(
             "Merged", ["Source1"], set(), set()
         )
-        
+
         assert not is_complete
         assert "not found" in error.lower()
 
@@ -72,25 +72,25 @@ class TestAdditionalCoverage2:
         """Test _build_base_class with no properties."""
         test_file = tmp_path / "test.py"
         test_file.write_text(
-            '''class Child1:
+            """class Child1:
     def method(self):
         return 1
 
 class Child2:
     def method(self):
         return 2
-'''
+"""
         )
 
         extractor = SuperclassExtractor(test_file)
         extractor.load_file()
         child_nodes = [extractor.find_class("Child1"), extractor.find_class("Child2")]
-        
+
         extract_from = {
             "Child1": {"properties": [], "methods": ["method"]},
-            "Child2": {"properties": [], "methods": ["method"]}
+            "Child2": {"properties": [], "methods": ["method"]},
         }
-        
+
         base_code = extractor._build_base_class("Base", child_nodes, extract_from, [])
         assert "class Base" in base_code
         assert "def method" in base_code
@@ -99,26 +99,28 @@ class Child2:
         """Test _build_base_class with abstract methods."""
         test_file = tmp_path / "test.py"
         test_file.write_text(
-            '''class Child1:
+            """class Child1:
     def method(self):
         return 1
 
 class Child2:
     def method(self):
         return 2
-'''
+"""
         )
 
         extractor = SuperclassExtractor(test_file)
         extractor.load_file()
         child_nodes = [extractor.find_class("Child1"), extractor.find_class("Child2")]
-        
+
         extract_from = {
             "Child1": {"properties": [], "methods": ["method"]},
-            "Child2": {"properties": [], "methods": ["method"]}
+            "Child2": {"properties": [], "methods": ["method"]},
         }
-        
-        base_code = extractor._build_base_class("Base", child_nodes, extract_from, ["method"])
+
+        base_code = extractor._build_base_class(
+            "Base", child_nodes, extract_from, ["method"]
+        )
         assert "class Base(ABC):" in base_code
         assert "@abstractmethod" in base_code
         assert "def method" in base_code
@@ -127,18 +129,18 @@ class Child2:
         """Test _build_merged_class with empty classes."""
         test_file = tmp_path / "test.py"
         test_file.write_text(
-            '''class A:
+            """class A:
     pass
 
 class B:
     pass
-'''
+"""
         )
 
         merger = ClassMerger(test_file)
         merger.load_file()
         source_nodes = [merger.find_class("A"), merger.find_class("B")]
-        
+
         merged_code = merger._build_merged_class("Merged", source_nodes, [], [])
         assert "class Merged:" in merged_code
 
@@ -146,22 +148,22 @@ class B:
         """Test _extract_method_code when end_lineno is not available."""
         test_file = tmp_path / "test.py"
         test_file.write_text(
-            '''class Test:
+            """class Test:
     def method(self):
         return 1
-'''
+"""
         )
 
         splitter = ClassSplitter(test_file)
         splitter.load_file()
         class_node = splitter.find_class("Test")
         method = splitter._find_method_in_class(class_node, "method")
-        
+
         if method:
             # Manually remove end_lineno if it exists
             if hasattr(method, "end_lineno"):
                 delattr(method, "end_lineno")
-            
+
             code = splitter._extract_method_code(method, "    ")
             assert "def method" in code
 
@@ -169,15 +171,15 @@ class B:
         """Test _create_method_wrapper for async methods."""
         test_file = tmp_path / "test.py"
         test_file.write_text(
-            '''class Test:
+            """class Test:
     async def async_method(self, arg1):
         return arg1
-'''
+"""
         )
 
         splitter = ClassSplitter(test_file)
         splitter.load_file()
-        
+
         wrapper = splitter._create_method_wrapper("async_method", "DstClass", "    ")
         assert "async def async_method" in wrapper
         assert "self.dstclass.async_method" in wrapper.lower()
@@ -186,19 +188,19 @@ class B:
         """Test _build_new_class without docstring."""
         test_file = tmp_path / "test.py"
         test_file.write_text(
-            '''class Test:
+            """class Test:
     def method(self):
         return 1
-'''
+"""
         )
 
         splitter = ClassSplitter(test_file)
         splitter.load_file()
         class_node = splitter.find_class("Test")
-        
+
         config = {"props": [], "methods": ["method"]}
         new_class = splitter._build_new_class("NewClass", class_node, config, 0)
-        
+
         assert "class NewClass:" in new_class
         assert "def method" in new_class
 
@@ -206,26 +208,26 @@ class B:
         """Test _build_modified_source_class with all methods moved."""
         test_file = tmp_path / "test.py"
         test_file.write_text(
-            '''class Test:
+            """class Test:
     def __init__(self):
         self.prop1 = 1
     
     def method1(self):
         return 1
-'''
+"""
         )
 
         splitter = ClassSplitter(test_file)
         splitter.load_file()
         class_node = splitter.find_class("Test")
-        
+
         method_mapping = {"method1": "DstClass"}
         prop_mapping = {"prop1": "DstClass"}
         dst_classes = {"DstClass": {"props": ["prop1"], "methods": ["method1"]}}
-        
+
         modified = splitter._build_modified_source_class(
             class_node, method_mapping, prop_mapping, dst_classes, 0
         )
-        
+
         assert "class Test:" in modified
         assert "self.dstclass" in modified.lower()

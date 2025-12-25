@@ -7,13 +7,17 @@ email: vasilyvz@gmail.com
 
 import ast
 import pytest
-from pathlib import Path
 
-from code_analysis.core.refactorer import ClassSplitter, SuperclassExtractor, ClassMerger
+from code_analysis.core.refactorer import (
+    ClassSplitter,
+    SuperclassExtractor,
+    ClassMerger,
+)
 
 
 class TestCodeIntegrityPart1:
     """Tests for ensuring code integrity after refactoring operations."""
+
     def test_split_integrity_all_methods_preserved(self, tmp_path):
         """Test that all methods are preserved after class splitting."""
         test_file = tmp_path / "test.py"
@@ -71,13 +75,13 @@ class TestCodeIntegrityPart1:
             "dst_classes": {
                 "IntegrityTestA": {
                     "props": ["prop1", "prop2"],
-                    "methods": ["method1", "method2"]
+                    "methods": ["method1", "method2"],
                 },
                 "IntegrityTestB": {
                     "props": ["prop3"],
-                    "methods": ["method3", "method4", "method5"]
-                }
-            }
+                    "methods": ["method3", "method4", "method5"],
+                },
+            },
         }
 
         splitter = ClassSplitter(test_file)
@@ -109,20 +113,23 @@ class TestCodeIntegrityPart1:
                         all_new_methods.add(item.name)
 
         # All original properties must be present
-        assert original_props.issubset(all_new_props), \
-            f"Missing properties: {original_props - all_new_props}"
+        assert original_props.issubset(
+            all_new_props
+        ), f"Missing properties: {original_props - all_new_props}"
 
         # All original methods must be present
         special_methods = {"__init__"}
         regular_original = original_methods - special_methods
         regular_new = all_new_methods - special_methods
-        assert regular_original.issubset(regular_new), \
-            f"Missing methods: {regular_original - regular_new}"
+        assert regular_original.issubset(
+            regular_new
+        ), f"Missing methods: {regular_original - regular_new}"
+
     def test_extract_integrity_all_members_in_base(self, tmp_path):
         """Test that all extracted members are in base class."""
         test_file = tmp_path / "test.py"
         test_file.write_text(
-            '''class Child1:
+            """class Child1:
     def __init__(self):
         self.prop1 = 1
         self.prop2 = 2
@@ -143,7 +150,7 @@ class Child2:
 
     def method2(self):
         return 2  # method2 must be in both for extraction
-'''
+"""
         )
 
         config = {
@@ -153,13 +160,13 @@ class Child2:
             "extract_from": {
                 "Child1": {
                     "properties": ["prop1", "prop2"],
-                    "methods": ["method1", "method2"]
+                    "methods": ["method1", "method2"],
                 },
                 "Child2": {
                     "properties": ["prop1", "prop3"],
-                    "methods": ["method1", "method2"]  # Only methods in both classes
-                }
-            }
+                    "methods": ["method1", "method2"],  # Only methods in both classes
+                },
+            },
         }
 
         extractor = SuperclassExtractor(test_file)
@@ -198,17 +205,20 @@ class Child2:
 
         # All extracted properties should be in base
         expected_props = {"prop1", "prop2", "prop3"}
-        assert expected_props.issubset(base_props), \
-            f"Missing properties in base: {expected_props - base_props}"
+        assert expected_props.issubset(
+            base_props
+        ), f"Missing properties in base: {expected_props - base_props}"
 
         # All extracted methods should be in base (only methods in both classes)
         expected_methods = {"method1", "method2"}
-        assert expected_methods.issubset(base_methods), \
-            f"Missing methods in base: {expected_methods - base_methods}"
+        assert expected_methods.issubset(
+            base_methods
+        ), f"Missing methods in base: {expected_methods - base_methods}"
+
     def test_merge_integrity_all_members_preserved(self, tmp_path):
         """Test that all members are preserved after merging."""
         test_file = tmp_path / "test.py"
-        original_content = '''class Source1:
+        original_content = """class Source1:
     def __init__(self):
         self.prop1 = 1
         self.prop2 = 2
@@ -229,7 +239,7 @@ class Source2:
 
     def method4(self):
         return 4
-'''
+"""
         test_file.write_text(original_content)
 
         # Collect original members
@@ -253,10 +263,7 @@ class Source2:
                     elif isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)):
                         all_original_methods.add(item.name)
 
-        config = {
-            "base_class": "Merged",
-            "source_classes": ["Source1", "Source2"]
-        }
+        config = {"base_class": "Merged", "source_classes": ["Source1", "Source2"]}
 
         merger = ClassMerger(test_file)
         success, message = merger.merge_classes(config)
@@ -293,17 +300,22 @@ class Source2:
                 merged_methods.add(item.name)
 
         # All original properties must be present
-        assert all_original_props.issubset(merged_props), \
-            f"Missing properties: {all_original_props - merged_props}"
+        assert all_original_props.issubset(
+            merged_props
+        ), f"Missing properties: {all_original_props - merged_props}"
 
         # All original methods must be present
         special_methods = {"__init__"}
         regular_original = all_original_methods - special_methods
         regular_merged = merged_methods - special_methods
-        assert regular_original.issubset(regular_merged), \
-            f"Missing methods: {regular_original - regular_merged}"
+        assert regular_original.issubset(
+            regular_merged
+        ), f"Missing methods: {regular_original - regular_merged}"
+
+
 class TestCodeIntegrityPart2:
     """Tests for ensuring code integrity after refactoring operations."""
+
     def test_integrity_with_complex_class(self, tmp_path):
         """Test integrity with complex class having many members."""
         test_file = tmp_path / "test.py"
@@ -369,17 +381,14 @@ class TestCodeIntegrityPart2:
             "dst_classes": {
                 "ComplexClassA": {
                     "props": ["prop1", "prop2"],
-                    "methods": ["method1", "method2", "async_method1"]
+                    "methods": ["method1", "method2", "async_method1"],
                 },
                 "ComplexClassB": {
                     "props": ["prop3", "prop4"],
-                    "methods": ["method3", "method4", "async_method2"]
+                    "methods": ["method3", "method4", "async_method2"],
                 },
-                "ComplexClassC": {
-                    "props": ["prop5"],
-                    "methods": ["method5"]
-                }
-            }
+                "ComplexClassC": {"props": ["prop5"], "methods": ["method5"]},
+            },
         }
 
         splitter = ClassSplitter(test_file)
@@ -411,35 +420,33 @@ class TestCodeIntegrityPart2:
                         all_new_methods.add(item.name)
 
         # Verify completeness
-        assert original_props.issubset(all_new_props), \
-            f"Missing properties: {original_props - all_new_props}"
+        assert original_props.issubset(
+            all_new_props
+        ), f"Missing properties: {original_props - all_new_props}"
 
         special_methods = {"__init__"}
         regular_original = original_methods - special_methods
         regular_new = all_new_methods - special_methods
-        assert regular_original.issubset(regular_new), \
-            f"Missing methods: {regular_original - regular_new}"
+        assert regular_original.issubset(
+            regular_new
+        ), f"Missing methods: {regular_original - regular_new}"
+
     def test_integrity_syntax_validation(self, tmp_path):
         """Test that syntax validation works after refactoring."""
         test_file = tmp_path / "test.py"
         test_file.write_text(
-            '''class SyntaxTest:
+            """class SyntaxTest:
     def __init__(self):
         self.x = 1
 
     def method(self):
         return 1
-    '''
+    """
         )
 
         config = {
             "src_class": "SyntaxTest",
-            "dst_classes": {
-                "SyntaxTestA": {
-                    "props": ["x"],
-                    "methods": ["method"]
-                }
-            }
+            "dst_classes": {"SyntaxTestA": {"props": ["x"], "methods": ["method"]}},
         }
 
         splitter = ClassSplitter(test_file)

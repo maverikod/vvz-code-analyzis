@@ -1,5 +1,7 @@
 # Project Analysis and Improvement Recommendations
 
+<!-- markdownlint-disable MD009 MD012 MD022 MD031 MD032 MD034 MD060 -->
+
 Author: Vasiliy Zdanovskiy
 email: vasilyvz@gmail.com
 
@@ -15,37 +17,40 @@ Based on comprehensive analysis of the codebase using AST tools, dependency anal
 
 | File | Lines | Status | Impact |
 |------|-------|--------|--------|
-| `code_analysis/core/refactorer.py` | 2560 | 🔴 Critical | Hard to maintain, test, and understand |
-| `code_analysis/core/database.py` | 2284 | 🔴 Critical | Monolithic database operations |
-| `code_analysis/commands/ast_mcp_commands.py` | 920 | 🟡 High | Multiple responsibilities |
+| `code_analysis/core/refactorer.py` | 2560 | 🟡 High | Legacy monolith kept for compatibility; split package exists (`code_analysis/core/refactorer/`) |
+| `code_analysis/core/database.py` | 2284 | 🟡 High | Legacy monolith kept for compatibility; split package exists (`code_analysis/core/database/`) |
+| `code_analysis/commands/ast_mcp_commands.py` | 920 | 🟢 Done | Split into `code_analysis/commands/ast/` (this file is now a shim for compatibility) |
 | `code_analysis/core/vectorization_worker.py` | 828 | 🟡 High | Complex worker logic |
 | `code_analysis/core/docstring_chunker.py` | 754 | 🟡 High | Chunking logic mixed with validation |
 | `code_analysis/core/analyzer.py` | 653 | 🟡 High | Core analysis logic |
 
 **Recommendations**:
 
-1. **`refactorer.py` (2560 lines)** - Split into:
-   - `refactorer/base.py` - Base class with common functionality (backup, file operations, validation)
-   - `refactorer/splitter.py` - ClassSplitter (extract ~800 lines)
-   - `refactorer/extractor.py` - SuperclassExtractor (extract ~700 lines)
-   - `refactorer/merger.py` - ClassMerger (extract ~400 lines)
-   - `refactorer/validators.py` - Validation logic (extract ~300 lines)
-   - `refactorer/formatters.py` - Formatting utilities (extract ~100 lines)
-   - `refactorer/__init__.py` - Public API
+1. **`refactorer.py` (2560 lines)** - ✅ Split package created:
+   - ✅ `refactorer/base.py` - BaseRefactorer (common functionality)
+   - ✅ `refactorer/splitter.py` - ClassSplitter (still >400 lines; needs further splitting)
+   - ✅ `refactorer/extractor.py` - SuperclassExtractor (still >400 lines; needs further splitting)
+   - ✅ `refactorer/merger.py` - ClassMerger
+   - ✅ `refactorer/validators.py` - Validation logic
+   - ✅ `refactorer/formatters.py` - Formatting utilities
+   - ✅ `refactorer/package_splitter.py` - FileToPackageSplitter
+   - ✅ `refactorer/__init__.py` - Public API
+   - ⬜ Remove legacy monolith `code_analysis/core/refactorer.py` after testing (compat kept for now)
 
-2. **`database.py` (2284 lines)** - Split into:
-   - `database/base.py` - Connection management, schema creation
-   - `database/projects.py` - Project operations (~200 lines)
-   - `database/files.py` - File operations (~300 lines)
-   - `database/classes.py` - Class operations (~300 lines)
-   - `database/methods.py` - Method operations (~300 lines)
-   - `database/functions.py` - Function operations (~200 lines)
-   - `database/imports.py` - Import operations (~200 lines)
-   - `database/issues.py` - Issue operations (~200 lines)
-   - `database/dependencies.py` - Dependency operations (~200 lines)
-   - `database/usages.py` - Usage operations (~200 lines)
-   - `database/ast.py` - AST operations (~200 lines)
-   - `database/__init__.py` - Public API with CodeDatabase facade
+2. **`database.py` (2284 lines)** - ✅ Split package created:
+   - ✅ `database/base.py` - Connection management / schema via driver abstraction
+   - ✅ `database/projects.py` - Project operations
+   - ✅ `database/files.py` - File operations
+   - ✅ `database/classes.py` - Class operations
+   - ✅ `database/methods.py` - Method operations
+   - ✅ `database/functions.py` - Function operations
+   - ✅ `database/imports.py` - Import operations
+   - ✅ `database/issues.py` - Issue operations
+   - ✅ `database/usages.py` - Usage operations
+   - ✅ `database/ast.py` - AST operations
+   - ✅ `database/chunks.py` / `database/content.py` / `database/statistics.py`
+   - ✅ `database/__init__.py` - Public API (CodeDatabase facade)
+   - ⬜ Remove legacy monolith `code_analysis/core/database.py` after testing (compat kept for now)
 
 3. **`ast_mcp_commands.py` (920 lines)** - Split into:
    - `commands/ast/__init__.py` - Public API
@@ -63,11 +68,11 @@ Based on comprehensive analysis of the codebase using AST tools, dependency anal
 
 ### 1.2 Duplicate Imports
 
-**Problem**: `refactorer.py` has three separate `import sys` statements on lines 619, 1515, and 2095.
+**Problem**: `refactorer.py` had three separate `import sys` statements on lines 619, 1515, and 2095.
 
 **Recommendation**: Consolidate all imports at the top of the file. This is a code smell indicating the file was created by merging multiple files.
 
-**Action**: Move all `sys` imports to the top with other imports.
+**Action**: ✅ Consolidated to a single top-level `import sys` (monolith kept for compatibility until tests).
 
 ### 1.3 Lack of Base Classes
 
@@ -237,13 +242,13 @@ class RefactoringError(CodeAnalysisError):
 ## Implementation Priority
 
 ### Phase 1 (Immediate - 1-2 weeks)
-1. ⬜ Fix duplicate imports in `refactorer.py`
-2. ⬜ Split `refactorer.py` into smaller modules
-3. ⬜ Split `database.py` into smaller modules
-4. ⬜ Create base classes for refactoring tools
+1. ✅ Fix duplicate imports in `refactorer.py` (single top-level `import sys`)
+2. ✅ Split `refactorer.py` into smaller modules (package exists; monolith pending removal after tests)
+3. ✅ Split `database.py` into smaller modules (package exists; monolith pending removal after tests)
+4. ✅ Create base classes for refactoring tools (BaseRefactorer exists in package)
 
 ### Phase 2 (Short-term - 2-4 weeks)
-1. Split `ast_mcp_commands.py` into separate files
+1. ✅ Split `ast_mcp_commands.py` into separate files (see `code_analysis/commands/ast/`; shim kept for compatibility)
 2. Create base classes for MCP commands
 3. Standardize error handling
 4. Improve type hints coverage

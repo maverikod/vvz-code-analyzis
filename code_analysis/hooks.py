@@ -20,6 +20,9 @@ def register_code_analysis_commands(reg: registry) -> None:
     from .commands.analyze_file_command import AnalyzeFileCommand
     from .commands.help_command import HelpCommand
     from .commands.check_vectors_command import CheckVectorsCommand
+    from .commands.cst_compose_module_command import ComposeCSTModuleCommand
+    from .commands.list_cst_blocks_command import ListCSTBlocksCommand
+    from .commands.query_cst_command import QueryCSTCommand
     from .commands.ast_mcp_commands import (
         GetASTMCPCommand,
         SearchASTNodesMCPCommand,
@@ -47,6 +50,9 @@ def register_code_analysis_commands(reg: registry) -> None:
     reg.register(AnalyzeFileCommand, "custom")
     reg.register(HelpCommand, "custom")
     reg.register(CheckVectorsCommand, "custom")
+    reg.register(ComposeCSTModuleCommand, "custom")
+    reg.register(ListCSTBlocksCommand, "custom")
+    reg.register(QueryCSTCommand, "custom")
     reg.register(GetASTMCPCommand, "custom")
     reg.register(SearchASTNodesMCPCommand, "custom")
     reg.register(ASTStatisticsMCPCommand, "custom")
@@ -76,6 +82,9 @@ register_auto_import_module("code_analysis.commands.analyze_project_command")
 register_auto_import_module("code_analysis.commands.analyze_file_command")
 register_auto_import_module("code_analysis.commands.help_command")
 register_auto_import_module("code_analysis.commands.check_vectors_command")
+register_auto_import_module("code_analysis.commands.cst_compose_module_command")
+register_auto_import_module("code_analysis.commands.list_cst_blocks_command")
+register_auto_import_module("code_analysis.commands.query_cst_command")
 register_auto_import_module("code_analysis.commands.ast_mcp_commands")
 register_auto_import_module("code_analysis.commands.vector_commands")
 register_auto_import_module("code_analysis.commands.semantic_search_mcp")

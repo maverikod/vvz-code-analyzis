@@ -7,10 +7,9 @@ Author: Vasiliy Zdanovskiy
 email: vasilyvz@gmail.com
 """
 
-import json
 import uuid
 from pathlib import Path
-from typing import Optional, Dict, Any
+from typing import Optional
 
 
 class CodeAnalysisConfigGenerator:
@@ -75,11 +74,13 @@ class CodeAnalysisConfigGenerator:
         import os
         import socket
         import subprocess
-        
+
         # Get host IP address in smart-assistant Docker network
         # Priority: Environment variable > Docker network gateway > Host IP
-        docker_host_ip = os.getenv("DOCKER_HOST_IP") or os.getenv("SMART_ASSISTANT_HOST_IP")
-        
+        docker_host_ip = os.getenv("DOCKER_HOST_IP") or os.getenv(
+            "SMART_ASSISTANT_HOST_IP"
+        )
+
         if not docker_host_ip:
             # Try to get gateway IP from smart-assistant network
             # Gateway IP is the host IP address in Docker network
@@ -88,10 +89,11 @@ class CodeAnalysisConfigGenerator:
                     ["docker", "network", "inspect", "smart-assistant"],
                     capture_output=True,
                     text=True,
-                    timeout=3
+                    timeout=3,
                 )
                 if result.returncode == 0:
                     import json
+
                     network_info = json.loads(result.stdout)
                     if network_info and len(network_info) > 0:
                         ipam = network_info[0].get("IPAM", {})
@@ -102,7 +104,7 @@ class CodeAnalysisConfigGenerator:
                                 docker_host_ip = gateway
             except Exception:
                 pass
-        
+
         if not docker_host_ip:
             # Fallback: try to get host IP address
             try:
@@ -114,16 +116,13 @@ class CodeAnalysisConfigGenerator:
                 # Fallback: try to get from hostname -I
                 try:
                     result = subprocess.run(
-                        ["hostname", "-I"],
-                        capture_output=True,
-                        text=True,
-                        timeout=2
+                        ["hostname", "-I"], capture_output=True, text=True, timeout=2
                     )
                     if result.returncode == 0 and result.stdout.strip():
                         docker_host_ip = result.stdout.strip().split()[0]
                 except Exception:
                     pass
-        
+
         # Default to 0.0.0.0 if we can't determine host IP
         # This allows server to listen on all interfaces
         server_host_val = server_host or "0.0.0.0"
@@ -162,7 +161,9 @@ class CodeAnalysisConfigGenerator:
             "port": server_port_val,
             "protocol": protocol,
             "servername": server_servername,
-            "advertised_host": server_advertised_host if server_advertised_host else server_servername,
+            "advertised_host": (
+                server_advertised_host if server_advertised_host else server_servername
+            ),
             "debug": False,
             "log_level": "INFO",
             "ssl": server_ssl,

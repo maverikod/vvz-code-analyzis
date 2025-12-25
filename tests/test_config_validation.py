@@ -14,7 +14,6 @@ Target coverage: 90%+
 
 import json
 import pytest
-import tempfile
 import uuid
 from pathlib import Path
 
@@ -35,7 +34,7 @@ class TestProjectDirValidation:
         """Test valid project directory."""
         project_path = tmp_path / "test_project"
         project_path.mkdir()
-        
+
         project = ProjectDir(
             id=str(uuid.uuid4()),
             name="test_project",
@@ -48,7 +47,7 @@ class TestProjectDirValidation:
         """Test invalid UUID format."""
         project_path = tmp_path / "test_project"
         project_path.mkdir()
-        
+
         with pytest.raises(ValueError, match="Invalid UUID4"):
             ProjectDir(
                 id="not-a-uuid",
@@ -60,7 +59,7 @@ class TestProjectDirValidation:
         """Test non-UUID4 UUID."""
         project_path = tmp_path / "test_project"
         project_path.mkdir()
-        
+
         # Test with clearly invalid UUID format
         with pytest.raises(ValueError, match="Invalid UUID4|invalid uuid"):
             ProjectDir(
@@ -81,7 +80,7 @@ class TestProjectDirValidation:
     def test_nonexistent_path(self, tmp_path):
         """Test nonexistent path rejection."""
         nonexistent = tmp_path / "nonexistent"
-        
+
         with pytest.raises(ValueError, match="Path does not exist"):
             ProjectDir(
                 id=str(uuid.uuid4()),
@@ -93,7 +92,7 @@ class TestProjectDirValidation:
         """Test file path rejection."""
         test_file = tmp_path / "test.txt"
         test_file.write_text("test")
-        
+
         with pytest.raises(ValueError, match="Path must be a directory"):
             ProjectDir(
                 id=str(uuid.uuid4()),
@@ -105,7 +104,7 @@ class TestProjectDirValidation:
         """Test unknown field rejection."""
         project_path = tmp_path / "test_project"
         project_path.mkdir()
-        
+
         with pytest.raises(ValueError, match="extra fields not permitted|unknown"):
             ProjectDir(
                 id=str(uuid.uuid4()),
@@ -131,7 +130,7 @@ class TestServerConfigValidation:
         project_path.mkdir()
         log_path = tmp_path / "log.txt"
         db_path = tmp_path / "db.db"
-        
+
         config = ServerConfig(
             host="127.0.0.1",
             port=8080,
@@ -198,7 +197,7 @@ class TestServerConfigValidation:
         project_path = tmp_path / "project"
         project_path.mkdir()
         project_id = str(uuid.uuid4())
-        
+
         # Duplicates are checked in validate_config function, not in ServerConfig
         config = ServerConfig(
             dirs=[
@@ -207,7 +206,7 @@ class TestServerConfigValidation:
             ]
         )
         # Validate using validate_config function
-        from code_analysis.core.config_manager import validate_config
+
         with pytest.raises(ValueError, match="Duplicate project IDs"):
             validate_config(config.model_dump())
 
@@ -215,7 +214,7 @@ class TestServerConfigValidation:
         """Test duplicate project names rejection."""
         project_path = tmp_path / "project"
         project_path.mkdir()
-        
+
         # Duplicates are checked in validate_config function, not in ServerConfig
         config = ServerConfig(
             dirs=[
@@ -224,7 +223,7 @@ class TestServerConfigValidation:
             ]
         )
         # Validate using validate_config function
-        from code_analysis.core.config_manager import validate_config
+
         with pytest.raises(ValueError, match="Duplicate project names"):
             validate_config(config.model_dump())
 
@@ -267,7 +266,7 @@ class TestConfigFileValidation:
         config_file = tmp_path / "config.json"
         project_path = tmp_path / "project"
         project_path.mkdir()
-        
+
         config_data = {
             "host": "127.0.0.1",
             "port": 15000,
@@ -280,7 +279,7 @@ class TestConfigFileValidation:
             ],
         }
         config_file.write_text(json.dumps(config_data))
-        
+
         is_valid, error, config = validate_config_file(config_file)
         assert is_valid
         assert error is None
@@ -291,7 +290,7 @@ class TestConfigFileValidation:
         """Test invalid JSON file."""
         config_file = tmp_path / "config.json"
         config_file.write_text("{ invalid json }")
-        
+
         is_valid, error, config = validate_config_file(config_file)
         assert not is_valid
         assert error is not None
@@ -301,7 +300,7 @@ class TestConfigFileValidation:
     def test_nonexistent_file(self, tmp_path):
         """Test nonexistent configuration file."""
         config_file = tmp_path / "nonexistent.json"
-        
+
         is_valid, error, config = validate_config_file(config_file)
         assert not is_valid
         assert "not found" in error.lower()
@@ -316,7 +315,7 @@ class TestConfigFileValidation:
             "unknown_field": "value",
         }
         config_file.write_text(json.dumps(config_data))
-        
+
         is_valid, error, config = validate_config_file(config_file)
         assert not is_valid
         assert "unknown" in error.lower() or "extra fields" in error.lower()
@@ -330,7 +329,7 @@ class TestConfigFileValidation:
             "port": 70000,  # Invalid port
         }
         config_file.write_text(json.dumps(config_data))
-        
+
         is_valid, error, config = validate_config_file(config_file)
         assert not is_valid
         assert "port" in error.lower()
@@ -341,7 +340,7 @@ class TestConfigFileValidation:
         config_file = tmp_path / "config.json"
         project_path = tmp_path / "project"
         project_path.mkdir()
-        
+
         config_data = {
             "host": "127.0.0.1",
             "port": 15000,
@@ -354,7 +353,7 @@ class TestConfigFileValidation:
             ],
         }
         config_file.write_text(json.dumps(config_data))
-        
+
         is_valid, error, config = validate_config_file(config_file)
         assert not is_valid
         assert "uuid" in error.lower()
@@ -364,7 +363,7 @@ class TestConfigFileValidation:
         """Test empty configuration file."""
         config_file = tmp_path / "config.json"
         config_file.write_text("")
-        
+
         # Empty file should return default config
         is_valid, error, config = validate_config_file(config_file)
         # This depends on implementation - might be valid with defaults
@@ -375,7 +374,7 @@ class TestConfigFileValidation:
         config_file = tmp_path / "config.json"
         config_data = {}
         config_file.write_text(json.dumps(config_data))
-        
+
         is_valid, error, config = validate_config_file(config_file)
         assert is_valid
         assert config is not None
@@ -391,7 +390,7 @@ class TestConfigManager:
         config_file = tmp_path / "config.json"
         project_path = tmp_path / "project"
         project_path.mkdir()
-        
+
         config_data = {
             "host": "127.0.0.1",
             "port": 15000,
@@ -404,7 +403,7 @@ class TestConfigManager:
             ],
         }
         config_file.write_text(json.dumps(config_data))
-        
+
         manager = ConfigManager(config_file)
         config = manager.read()
         assert config.host == "127.0.0.1"
@@ -414,7 +413,7 @@ class TestConfigManager:
         """Test reading nonexistent configuration."""
         config_file = tmp_path / "nonexistent.json"
         manager = ConfigManager(config_file)
-        
+
         with pytest.raises(FileNotFoundError):
             manager.read()
 
@@ -422,7 +421,7 @@ class TestConfigManager:
         """Test reading invalid configuration."""
         config_file = tmp_path / "config.json"
         config_file.write_text('{"host": "127.0.0.1", "port": 70000}')
-        
+
         manager = ConfigManager(config_file)
         with pytest.raises(ValueError):
             manager.read()
@@ -430,8 +429,10 @@ class TestConfigManager:
     def test_read_config_with_unknown_field(self, tmp_path):
         """Test reading config with unknown field."""
         config_file = tmp_path / "config.json"
-        config_file.write_text('{"host": "127.0.0.1", "port": 15000, "unknown": "value"}')
-        
+        config_file.write_text(
+            '{"host": "127.0.0.1", "port": 15000, "unknown": "value"}'
+        )
+
         manager = ConfigManager(config_file)
         with pytest.raises(ValueError, match="unknown"):
             manager.read()
@@ -440,11 +441,12 @@ class TestConfigManager:
         """Test writing configuration."""
         config_file = tmp_path / "config.json"
         manager = ConfigManager(config_file)
-        
+
         from code_analysis.core.config import ServerConfig
+
         config = ServerConfig(host="127.0.0.1", port=8080)
         manager.write(config)
-        
+
         assert config_file.exists()
         data = json.loads(config_file.read_text())
         assert data["host"] == "127.0.0.1"
@@ -454,10 +456,10 @@ class TestConfigManager:
         """Test validate_config_file with valid config."""
         config_file = tmp_path / "config.json"
         config_file.write_text('{"host": "127.0.0.1", "port": 15000}')
-        
+
         manager = ConfigManager(config_file)
         is_valid, error, config = manager.validate_config_file()
-        
+
         assert is_valid
         assert error is None
         assert config is not None
@@ -466,10 +468,10 @@ class TestConfigManager:
         """Test validate_config_file with invalid config."""
         config_file = tmp_path / "config.json"
         config_file.write_text('{"host": "127.0.0.1", "port": 70000}')
-        
+
         manager = ConfigManager(config_file)
         is_valid, error, config = manager.validate_config_file()
-        
+
         assert not is_valid
         assert error is not None
         assert config is None
@@ -477,11 +479,13 @@ class TestConfigManager:
     def test_validate_config_file_unknown_field(self, tmp_path):
         """Test validate_config_file with unknown field."""
         config_file = tmp_path / "config.json"
-        config_file.write_text('{"host": "127.0.0.1", "port": 15000, "unknown": "value"}')
-        
+        config_file.write_text(
+            '{"host": "127.0.0.1", "port": 15000, "unknown": "value"}'
+        )
+
         manager = ConfigManager(config_file)
         is_valid, error, config = manager.validate_config_file()
-        
+
         assert not is_valid
         assert "unknown" in error.lower()
         assert config is None
@@ -490,13 +494,13 @@ class TestConfigManager:
         """Test generate_config reading from environment variables."""
         config_file = tmp_path / "config.json"
         manager = ConfigManager(config_file)
-        
+
         monkeypatch.setenv("CODE_ANALYSIS_HOST", "0.0.0.0")
         monkeypatch.setenv("CODE_ANALYSIS_PORT", "15001")
         monkeypatch.setenv("CODE_ANALYSIS_DB_PATH", "/tmp/test.db")
-        
+
         config = manager.generate_config(overwrite=True)
-        
+
         assert config.host == "0.0.0.0"
         assert config.port == 15001
         assert config.db_path == "/tmp/test.db"
@@ -505,12 +509,12 @@ class TestConfigManager:
         """Test CLI arguments override environment variables."""
         config_file = tmp_path / "config.json"
         manager = ConfigManager(config_file)
-        
+
         monkeypatch.setenv("CODE_ANALYSIS_HOST", "0.0.0.0")
         monkeypatch.setenv("CODE_ANALYSIS_PORT", "15001")
-        
+
         config = manager.generate_config(host="127.0.0.1", port=15002, overwrite=True)
-        
+
         assert config.host == "127.0.0.1"  # CLI overrides ENV
         assert config.port == 15002  # CLI overrides ENV
 
@@ -549,7 +553,7 @@ class TestSVOServiceConfig:
         key_file.write_text("test key")
         ca_file = tmp_path / "ca.pem"
         ca_file.write_text("test ca")
-        
+
         config = SVOServiceConfig(
             enabled=True,
             protocol="mtls",
@@ -570,7 +574,7 @@ class TestLoadConfig:
         """Test loading valid configuration."""
         config_file = tmp_path / "config.json"
         config_file.write_text('{"host": "127.0.0.1", "port": 15000}')
-        
+
         config = load_config(config_file)
         assert config.host == "127.0.0.1"
         assert config.port == 15000
@@ -579,15 +583,17 @@ class TestLoadConfig:
         """Test loading invalid configuration."""
         config_file = tmp_path / "config.json"
         config_file.write_text('{"host": "127.0.0.1", "port": 70000}')
-        
+
         with pytest.raises(ValueError):
             load_config(config_file)
 
     def test_load_config_with_unknown_field(self, tmp_path):
         """Test loading config with unknown field."""
         config_file = tmp_path / "config.json"
-        config_file.write_text('{"host": "127.0.0.1", "port": 15000, "unknown": "value"}')
-        
+        config_file.write_text(
+            '{"host": "127.0.0.1", "port": 15000, "unknown": "value"}'
+        )
+
         with pytest.raises(ValueError, match="unknown"):
             load_config(config_file)
 
@@ -599,11 +605,15 @@ class TestEdgeCases:
         """Test multiple projects with same path (should be allowed)."""
         project_path = tmp_path / "project"
         project_path.mkdir()
-        
+
         config = ServerConfig(
             dirs=[
-                ProjectDir(id=str(uuid.uuid4()), name="project1", path=str(project_path)),
-                ProjectDir(id=str(uuid.uuid4()), name="project2", path=str(project_path)),
+                ProjectDir(
+                    id=str(uuid.uuid4()), name="project1", path=str(project_path)
+                ),
+                ProjectDir(
+                    id=str(uuid.uuid4()), name="project2", path=str(project_path)
+                ),
             ]
         )
         assert len(config.dirs) == 2
@@ -612,7 +622,7 @@ class TestEdgeCases:
         """Test empty project name (should be allowed by schema)."""
         project_path = tmp_path / "project"
         project_path.mkdir()
-        
+
         # Empty name might be allowed, depends on validation
         project = ProjectDir(
             id=str(uuid.uuid4()),
@@ -628,7 +638,7 @@ class TestEdgeCases:
         for i in range(10):
             deep_path = deep_path / f"level_{i}"
         deep_path.mkdir(parents=True)
-        
+
         project = ProjectDir(
             id=str(uuid.uuid4()),
             name="test",
@@ -640,11 +650,10 @@ class TestEdgeCases:
         """Test special characters in project name."""
         project_path = tmp_path / "project"
         project_path.mkdir()
-        
+
         project = ProjectDir(
             id=str(uuid.uuid4()),
             name="test-project_123 (v1.0)",
             path=str(project_path),
         )
         assert "test-project_123 (v1.0)" in project.name
-

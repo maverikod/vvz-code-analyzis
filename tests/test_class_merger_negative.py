@@ -5,7 +5,6 @@ Author: Vasiliy Zdanovskiy
 email: vasilyvz@gmail.com
 """
 
-import ast
 import pytest
 from pathlib import Path
 
@@ -34,10 +33,7 @@ class TestClassMergerNegative:
         test_file = tmp_path / "test.py"
         test_file.write_text("class Test: pass")
 
-        config = {
-            "base_class": "Merged",
-            "source_classes": []
-        }
+        config = {"base_class": "Merged", "source_classes": []}
 
         merger = ClassMerger(test_file)
         merger.load_file()
@@ -50,18 +46,15 @@ class TestClassMergerNegative:
         """Test error when base class already exists."""
         test_file = tmp_path / "test.py"
         test_file.write_text(
-            '''class Merged:
+            """class Merged:
     pass
 
 class Source:
     pass
-'''
+"""
         )
 
-        config = {
-            "base_class": "Merged",
-            "source_classes": ["Source"]
-        }
+        config = {"base_class": "Merged", "source_classes": ["Source"]}
 
         merger = ClassMerger(test_file)
         merger.load_file()
@@ -75,10 +68,7 @@ class Source:
         test_file = tmp_path / "test.py"
         test_file.write_text("class Test: pass")
 
-        config = {
-            "base_class": "Merged",
-            "source_classes": ["NonExistent"]
-        }
+        config = {"base_class": "Merged", "source_classes": ["NonExistent"]}
 
         merger = ClassMerger(test_file)
         success, message = merger.merge_classes(config)
@@ -89,36 +79,33 @@ class Source:
     def test_merge_classes_file_not_found(self):
         """Test error when file doesn't exist."""
         non_existent = Path("/nonexistent/path/test.py")
-        
+
         with pytest.raises(FileNotFoundError):
             ClassMerger(non_existent)
 
     def test_merge_classes_invalid_syntax_rollback(self, tmp_path):
         """Test that invalid syntax causes rollback."""
         test_file = tmp_path / "test.py"
-        original_content = '''class A:
+        original_content = """class A:
     def method(self):
         return 1
 
 class B:
     def method(self):
         return 2
-'''
+"""
         test_file.write_text(original_content)
 
-        config = {
-            "base_class": "Merged",
-            "source_classes": ["A", "B"]
-        }
+        config = {"base_class": "Merged", "source_classes": ["A", "B"]}
 
         merger = ClassMerger(test_file)
         merger.create_backup()
-        
+
         # Manually corrupt after merge to test rollback
         merger.load_file()
         source_nodes = [merger.find_class("A"), merger.find_class("B")]
         new_content = merger._perform_merge(config, source_nodes)
-        
+
         # Corrupt content
         corrupted_content = new_content + "\n    invalid syntax !!!"
         test_file.write_text(corrupted_content)

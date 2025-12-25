@@ -113,4 +113,3 @@ class RemoveWatchDirCommand(Command):
             _save_dynamic_watch_file(dyn_path, data)
 
         return SuccessResult({"watch_dirs": watch_dirs})
-

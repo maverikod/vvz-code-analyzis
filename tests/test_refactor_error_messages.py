@@ -5,9 +5,7 @@ Author: Vasiliy Zdanovskiy
 email: vasilyvz@gmail.com
 """
 
-import tempfile
 from pathlib import Path
-import pytest
 
 from code_analysis.core.refactorer import ClassSplitter, format_error_message
 
@@ -20,9 +18,9 @@ class TestRefactorErrorMessages:
         error = format_error_message(
             "python_syntax",
             "IndentationError: expected an indented block after function definition on line 19 (test.py, line 22)",
-            Path("test.py")
+            Path("test.py"),
         )
-        
+
         assert "Рефакторинг не выполнен" in error
         assert "test.py" in error
         assert "Файл восстановлен" in error
@@ -33,9 +31,9 @@ class TestRefactorErrorMessages:
         error = format_error_message(
             "config_validation",
             "Missing properties in split config: {'prop3'}; Missing methods in split config: {'method3'}",
-            Path("test.py")
+            Path("test.py"),
         )
-        
+
         assert "Ошибка конфигурации" in error
         assert "test.py" in error
         assert "проверьте" in error.lower() or "проверьте" in error
@@ -45,9 +43,9 @@ class TestRefactorErrorMessages:
         error = format_error_message(
             "completeness",
             "Missing property 'prop1' in class 'ClassA'",
-            Path("test.py")
+            Path("test.py"),
         )
-        
+
         assert "Рефакторинг не выполнен" in error
         assert "потеря данных" in error
         assert "Файл восстановлен" in error
@@ -56,7 +54,7 @@ class TestRefactorErrorMessages:
         """Test that split_class returns improved error message for config validation."""
         test_file = tmp_path / "test.py"
         test_file.write_text(
-            '''class LargeClass:
+            """class LargeClass:
     def __init__(self):
         self.prop1 = None
         self.prop2 = None
@@ -67,7 +65,7 @@ class TestRefactorErrorMessages:
         return "method2"
     def method3(self):
         return "method3"
-'''
+"""
         )
 
         # Incomplete config - missing prop3 and method3
@@ -83,6 +81,7 @@ class TestRefactorErrorMessages:
         success, message = splitter.split_class(config)
 
         assert not success
-        assert "Ошибка конфигурации" in message or "ошибка конфигурации" in message.lower()
+        assert (
+            "Ошибка конфигурации" in message or "ошибка конфигурации" in message.lower()
+        )
         assert "проверьте" in message.lower() or "проверьте" in message
-

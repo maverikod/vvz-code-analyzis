@@ -17,7 +17,7 @@ logger = logging.getLogger(__name__)
 class ProgressTracker:
     """
     Progress tracker for queue jobs.
-    
+
     This class provides methods to update job progress, description, and status
     when a command is executed via queue. It is passed through context and
     allows commands to report their progress without direct access to the job object.
@@ -131,5 +131,3 @@ def get_progress_tracker_from_context(context: dict) -> Optional[ProgressTracker
     if not context:
         return None
     return context.get("progress_tracker")
-
-

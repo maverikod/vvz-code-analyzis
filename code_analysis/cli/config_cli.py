@@ -51,7 +51,9 @@ def config():
 )
 @click.option("--registration-cert-file", help="Registration certificate file path")
 @click.option("--registration-key-file", help="Registration key file path")
-@click.option("--registration-ca-cert-file", help="Registration CA certificate file path")
+@click.option(
+    "--registration-ca-cert-file", help="Registration CA certificate file path"
+)
 @click.option(
     "--registration-server-id",
     help="Server ID for registration (default: code-analysis-server)",
@@ -150,10 +152,8 @@ def validate(config_file: Path) -> None:
         is_valid, error_message, config_data = validator.validate_file(str(config_file))
 
         if is_valid:
-            summary = validator.get_validation_summary()
-            warnings = [
-                r for r in validator.validation_results if r.level == "warning"
-            ]
+            validator.get_validation_summary()
+            warnings = [r for r in validator.validation_results if r.level == "warning"]
             if warnings:
                 click.echo("✅ Validation passed with warnings:")
                 for warn in warnings:
@@ -167,9 +167,7 @@ def validate(config_file: Path) -> None:
                 click.echo("✅ Validation OK")
         else:
             click.echo("❌ Validation failed:")
-            errors = [
-                r for r in validator.validation_results if r.level == "error"
-            ]
+            errors = [r for r in validator.validation_results if r.level == "error"]
             for err in errors:
                 section_info = (
                     f" ({err.section}" + (f".{err.key}" if err.key else "") + ")"
@@ -177,9 +175,7 @@ def validate(config_file: Path) -> None:
                     else ""
                 )
                 click.echo(f"   - {err.message}{section_info}")
-            warnings = [
-                r for r in validator.validation_results if r.level == "warning"
-            ]
+            warnings = [r for r in validator.validation_results if r.level == "warning"]
             if warnings:
                 click.echo("\n⚠️  Warnings:")
                 for warn in warnings:

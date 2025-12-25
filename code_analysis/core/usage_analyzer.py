@@ -9,7 +9,7 @@ email: vasilyvz@gmail.com
 
 import ast
 from pathlib import Path
-from typing import Dict, List, Any, Optional, Set, TYPE_CHECKING
+from typing import Dict, Optional, Set, TYPE_CHECKING
 import logging
 
 if TYPE_CHECKING:
@@ -142,7 +142,9 @@ class UsageVisitor(ast.NodeVisitor):
                 if var_name == "self" and self.current_class:
                     target_class = self.current_class
                 # Check if method exists in known classes
-                elif method_name in self.class_methods.get(self.current_class or "", set()):
+                elif method_name in self.class_methods.get(
+                    self.current_class or "", set()
+                ):
                     target_class = self.current_class
             elif isinstance(node.func.value, ast.Attribute):
                 # Chained: obj.attr.method()

@@ -5,8 +5,6 @@ Author: Vasiliy Zdanovskiy
 email: vasilyvz@gmail.com
 """
 
-import asyncio
-import json
 import logging
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -26,9 +24,13 @@ logger = logging.getLogger(__name__)
 
 def _load_server_config() -> ServerConfig:
     adapter_config = get_adapter_config()
-    adapter_config_data = getattr(adapter_config, "config_data", {}) if adapter_config else {}
+    adapter_config_data = (
+        getattr(adapter_config, "config_data", {}) if adapter_config else {}
+    )
     code_analysis_config = adapter_config_data.get("code_analysis", {})
-    return ServerConfig(**code_analysis_config) if code_analysis_config else ServerConfig()
+    return (
+        ServerConfig(**code_analysis_config) if code_analysis_config else ServerConfig()
+    )
 
 
 def _open_database(root_dir: Path) -> CodeDatabase:
@@ -67,18 +69,26 @@ class RebuildFaissCommand(Command):
             "additionalProperties": False,
         }
 
-    async def execute(self, root_dir: str, project_id: Optional[str] = None, **kwargs) -> SuccessResult:
+    async def execute(
+        self, root_dir: str, project_id: Optional[str] = None, **kwargs
+    ) -> SuccessResult:
         try:
             root_path = Path(root_dir).resolve()
             db = _open_database(root_path)
 
-            proj_id = project_id or db.get_or_create_project(str(root_path), name=root_path.name)
+            proj_id = project_id or db.get_or_create_project(
+                str(root_path), name=root_path.name
+            )
             if not proj_id:
-                return ErrorResult(message="Project not found", code="PROJECT_NOT_FOUND")
+                return ErrorResult(
+                    message="Project not found", code="PROJECT_NOT_FOUND"
+                )
 
             server_config = _load_server_config()
             if not server_config.vector_dim:
-                return ErrorResult(message="vector_dim not configured", code="INVALID_CONFIG")
+                return ErrorResult(
+                    message="vector_dim not configured", code="INVALID_CONFIG"
+                )
 
             svo_client_manager = SVOClientManager(server_config)
             await svo_client_manager.initialize()
@@ -91,7 +101,9 @@ class RebuildFaissCommand(Command):
             faiss_path.parent.mkdir(parents=True, exist_ok=True)
             faiss_manager = FaissIndexManager(str(faiss_path), server_config.vector_dim)
 
-            vectors_count = await faiss_manager.rebuild_from_database(db, svo_client_manager)
+            vectors_count = await faiss_manager.rebuild_from_database(
+                db, svo_client_manager
+            )
 
             await svo_client_manager.close()
             db.close()
@@ -107,7 +119,9 @@ class RebuildFaissCommand(Command):
             )
         except Exception as e:
             logger.exception("Failed to rebuild FAISS: %s", e)
-            return ErrorResult(message=f"Failed to rebuild FAISS: {e}", code="REBUILD_FAISS_ERROR")
+            return ErrorResult(
+                message=f"Failed to rebuild FAISS: {e}", code="REBUILD_FAISS_ERROR"
+            )
 
 
 class RevectorizeCommand(Command):
@@ -154,13 +168,19 @@ class RevectorizeCommand(Command):
         try:
             root_path = Path(root_dir).resolve()
             db = _open_database(root_path)
-            proj_id = project_id or db.get_or_create_project(str(root_path), name=root_path.name)
+            proj_id = project_id or db.get_or_create_project(
+                str(root_path), name=root_path.name
+            )
             if not proj_id:
-                return ErrorResult(message="Project not found", code="PROJECT_NOT_FOUND")
+                return ErrorResult(
+                    message="Project not found", code="PROJECT_NOT_FOUND"
+                )
 
             server_config = _load_server_config()
             if not server_config.vector_dim:
-                return ErrorResult(message="vector_dim not configured", code="INVALID_CONFIG")
+                return ErrorResult(
+                    message="vector_dim not configured", code="INVALID_CONFIG"
+                )
 
             svo_client_manager = SVOClientManager(server_config)
             await svo_client_manager.initialize()
@@ -212,7 +232,13 @@ class RevectorizeCommand(Command):
                     # ensure file entry exists
                     file_rec = db.get_file_by_path(str(file_path), proj_id)
                     if not file_rec:
-                        file_id = db.add_file(str(file_path), len(content.splitlines()), file_path.stat().st_mtime, True, proj_id)
+                        file_id = db.add_file(
+                            str(file_path),
+                            len(content.splitlines()),
+                            file_path.stat().st_mtime,
+                            True,
+                            proj_id,
+                        )
                     else:
                         file_id = file_rec["id"]
 
@@ -226,7 +252,9 @@ class RevectorizeCommand(Command):
                     processed += 1
                 except Exception as e:
                     errors += 1
-                    logger.error(f"Revectorize failed for {file_path}: {e}", exc_info=True)
+                    logger.error(
+                        f"Revectorize failed for {file_path}: {e}", exc_info=True
+                    )
 
             await svo_client_manager.close()
             db.close()
@@ -240,5 +268,6 @@ class RevectorizeCommand(Command):
             )
         except Exception as e:
             logger.exception("Revectorize command failed: %s", e)
-            return ErrorResult(message=f"Revectorize failed: {e}", code="REVECTORIZE_ERROR")
-
+            return ErrorResult(
+                message=f"Revectorize failed: {e}", code="REVECTORIZE_ERROR"
+            )

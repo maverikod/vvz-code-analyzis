@@ -5,11 +5,11 @@ Author: Vasiliy Zdanovskiy
 email: vasilyvz@gmail.com
 """
 
-import ast
-import pytest
-from pathlib import Path
-
-from code_analysis.core.refactorer import ClassSplitter, SuperclassExtractor, ClassMerger
+from code_analysis.core.refactorer import (
+    ClassSplitter,
+    SuperclassExtractor,
+    ClassMerger,
+)
 
 
 class TestAdditionalCoverage:
@@ -19,13 +19,13 @@ class TestAdditionalCoverage:
         """Test extract_class_members method."""
         test_file = tmp_path / "test.py"
         test_file.write_text(
-            '''class Test:
+            """class Test:
     def method(self):
         pass
     
     class Nested:
         pass
-'''
+"""
         )
 
         splitter = ClassSplitter(test_file)
@@ -41,13 +41,13 @@ class TestAdditionalCoverage:
         """Test _find_class_end method."""
         test_file = tmp_path / "test.py"
         test_file.write_text(
-            '''class Test:
+            """class Test:
     def method(self):
         pass
 
 class Other:
     pass
-'''
+"""
         )
 
         splitter = ClassSplitter(test_file)
@@ -70,11 +70,11 @@ class Other:
         """Test validate_imports with missing dependencies."""
         test_file = tmp_path / "test.py"
         test_file.write_text(
-            '''import nonexistent_module
+            """import nonexistent_module
 
 class Test:
     pass
-'''
+"""
         )
 
         splitter = ClassSplitter(test_file)
@@ -87,9 +87,9 @@ class Test:
         """Test get_class_bases method."""
         test_file = tmp_path / "test.py"
         test_file.write_text(
-            '''class Child(Base1, Base2):
+            """class Child(Base1, Base2):
     pass
-'''
+"""
         )
 
         extractor = SuperclassExtractor(test_file)
@@ -104,17 +104,17 @@ class Test:
         """Test _get_return_type method."""
         test_file = tmp_path / "test.py"
         test_file.write_text(
-            '''class Test:
+            """class Test:
     def method(self) -> str:
         return "test"
-'''
+"""
         )
 
         extractor = SuperclassExtractor(test_file)
         extractor.load_file()
         class_node = extractor.find_class("Test")
         method = extractor._find_method_in_class(class_node, "method")
-        
+
         if method:
             return_type = extractor._get_return_type(method)
             assert return_type == "str"
@@ -123,10 +123,10 @@ class Test:
         """Test _find_class_end in extractor."""
         test_file = tmp_path / "test.py"
         test_file.write_text(
-            '''class Test:
+            """class Test:
     def method(self):
         pass
-'''
+"""
         )
 
         extractor = SuperclassExtractor(test_file)
@@ -141,11 +141,11 @@ class Test:
         """Test extract_init_properties in merger."""
         test_file = tmp_path / "test.py"
         test_file.write_text(
-            '''class Test:
+            """class Test:
     def __init__(self):
         self.prop1 = 1
         self.prop2 = 2
-'''
+"""
         )
 
         merger = ClassMerger(test_file)
@@ -160,10 +160,10 @@ class Test:
         """Test _find_class_end in merger."""
         test_file = tmp_path / "test.py"
         test_file.write_text(
-            '''class Test:
+            """class Test:
     def method(self):
         pass
-'''
+"""
         )
 
         merger = ClassMerger(test_file)
@@ -182,18 +182,18 @@ class Test:
         splitter = ClassSplitter(test_file)
         splitter.create_backup()
         splitter.load_file()
-        
+
         config = {"src_class": "Test", "dst_classes": {}}
         original_props = set()
         original_methods = set()
-        
+
         # Manually write invalid content
         test_file.write_text("class Other: pass")
-        
+
         is_complete, error = splitter.validate_completeness(
             "Test", config, original_props, original_methods
         )
-        
+
         assert not is_complete
         assert "not found" in error.lower()
 
@@ -204,14 +204,11 @@ class Test:
 
         extractor = SuperclassExtractor(test_file)
         extractor.create_backup()
-        
+
         # Write content without base class
         test_file.write_text("class Other: pass")
-        
-        is_complete, error = extractor.validate_completeness(
-            "Base", ["Child1"], {}
-        )
-        
+
+        is_complete, error = extractor.validate_completeness("Base", ["Child1"], {})
+
         assert not is_complete
         assert "not found" in error.lower()
-

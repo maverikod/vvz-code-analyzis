@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Dict, Any, Optional
 
 from ..core import CodeAnalyzer, CodeDatabase, IssueDetector
-from ..core.progress_tracker import get_progress_tracker_from_context, ProgressTracker
+from ..core.progress_tracker import ProgressTracker
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -79,6 +79,7 @@ class AnalyzeCommand:
         Returns:
             Dictionary with analysis results
         """
+
         def _should_analyze(file_path: Path) -> bool:
             if self.force or not self.database:
                 return True
@@ -104,7 +105,9 @@ class AnalyzeCommand:
         if self.progress_tracker:
             self.progress_tracker.set_progress(5)
             self.progress_tracker.set_description("Checking for missing files...")
-            self.progress_tracker.log(f"Checking for missing files in project: {self.project_id}")
+            self.progress_tracker.log(
+                f"Checking for missing files in project: {self.project_id}"
+            )
 
         logger.info(f"Checking for missing files in project: {self.project_id}")
         removal_result = await self.database.remove_missing_files(
@@ -114,8 +117,11 @@ class AnalyzeCommand:
             msg = (
                 f"Removed {removal_result['removed_count']} missing files: "
                 f"{', '.join(removal_result['removed_files'][:5])}"
-                + (f" and {len(removal_result['removed_files']) - 5} more" 
-                   if len(removal_result['removed_files']) > 5 else "")
+                + (
+                    f" and {len(removal_result['removed_files']) - 5} more"
+                    if len(removal_result["removed_files"]) > 5
+                    else ""
+                )
             )
             logger.info(msg)
             if self.progress_tracker:
@@ -148,7 +154,9 @@ class AnalyzeCommand:
         # Analyze files with progress updates
         analyzed_count = 0
         for idx, file_path in enumerate(python_files):
-            logger.info(f"📄 Analyzing file {analyzed_count + 1}/{total_files}: {file_path}")
+            logger.info(
+                f"📄 Analyzing file {analyzed_count + 1}/{total_files}: {file_path}"
+            )
             try:
                 if not _should_analyze(file_path):
                     logger.info(f"⏭️  Skipping unchanged file: {file_path}")
@@ -178,7 +186,9 @@ class AnalyzeCommand:
                     self.progress_tracker.log(
                         f"Analyzed {analyzed_count}/{total_files} files: {file_path}"
                     )
-                    logger.info(f"📊 Progress: {analyzed_count}/{total_files} files analyzed ({file_progress}%)")
+                    logger.info(
+                        f"📊 Progress: {analyzed_count}/{total_files} files analyzed ({file_progress}%)"
+                    )
 
         # Get statistics from database for this project
         if self.progress_tracker:
@@ -187,12 +197,12 @@ class AnalyzeCommand:
 
         assert self.database.conn is not None
         cursor = self.database.conn.cursor()
-        
+
         cursor.execute(
             "SELECT COUNT(*) FROM files WHERE project_id = ?", (self.project_id,)
         )
         files_count = cursor.fetchone()[0]
-        
+
         cursor.execute(
             """
             SELECT COUNT(*) FROM classes c
@@ -202,7 +212,7 @@ class AnalyzeCommand:
             (self.project_id,),
         )
         classes_count = cursor.fetchone()[0]
-        
+
         cursor.execute(
             """
             SELECT COUNT(*) FROM functions func
@@ -212,7 +222,7 @@ class AnalyzeCommand:
             (self.project_id,),
         )
         functions_count = cursor.fetchone()[0]
-        
+
         cursor.execute(
             "SELECT COUNT(*) FROM issues WHERE project_id = ?", (self.project_id,)
         )
@@ -241,7 +251,9 @@ class AnalyzeCommand:
         # Start vectorization worker in background process if SVO and FAISS are available
         if self.analyzer.svo_client_manager and self.analyzer.faiss_manager:
             if self.progress_tracker:
-                self.progress_tracker.set_description("Starting vectorization worker...")
+                self.progress_tracker.set_description(
+                    "Starting vectorization worker..."
+                )
                 self.progress_tracker.log("Starting vectorization worker in background")
             self._start_vectorization_worker()
 
@@ -254,42 +266,47 @@ class AnalyzeCommand:
     def _start_vectorization_worker(self) -> None:
         """
         Start vectorization worker in separate process.
-        
+
         Worker will process chunks that don't have vector_id yet.
         """
         try:
             from ..core.vectorization_worker import run_vectorization_worker
             from ..core.config import ServerConfig
-            
+
             # Get configuration from adapter for worker
             svo_config = None
             try:
                 from mcp_proxy_adapter.config import get_config as get_adapter_config
+
                 adapter_config = get_adapter_config()
                 adapter_config_data = getattr(adapter_config, "config_data", {})
                 code_analysis_config = adapter_config_data.get("code_analysis", {})
-                
+
                 if code_analysis_config:
                     server_config = ServerConfig(**code_analysis_config)
-                    svo_config = server_config.model_dump() if hasattr(server_config, 'model_dump') else server_config.dict()
+                    svo_config = (
+                        server_config.model_dump()
+                        if hasattr(server_config, "model_dump")
+                        else server_config.dict()
+                    )
             except Exception as e:
                 logger.warning(f"Failed to get config from adapter for worker: {e}")
-            
+
             # Get FAISS index path and vector dimension
             faiss_index_path = None
             vector_dim = None
-            
-            if hasattr(self.analyzer.faiss_manager, 'index_path'):
+
+            if hasattr(self.analyzer.faiss_manager, "index_path"):
                 faiss_index_path = str(self.analyzer.faiss_manager.index_path)
-            if hasattr(self.analyzer.faiss_manager, 'vector_dim'):
+            if hasattr(self.analyzer.faiss_manager, "vector_dim"):
                 vector_dim = self.analyzer.faiss_manager.vector_dim
-            
+
             if not faiss_index_path or not vector_dim:
                 logger.warning(
                     "FAISS manager missing required attributes, skipping vectorization worker"
                 )
                 return
-            
+
             # Start worker in separate process
             logger.info("Starting vectorization worker in background process")
             process = multiprocessing.Process(
@@ -309,6 +326,6 @@ class AnalyzeCommand:
             process.daemon = True  # Daemon process will be killed when parent exits
             process.start()
             logger.info(f"Vectorization worker started with PID {process.pid}")
-            
+
         except Exception as e:
             logger.error(f"Failed to start vectorization worker: {e}", exc_info=True)

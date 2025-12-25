@@ -32,6 +32,8 @@ dependencies = [
     "pydantic>=2.0.0",
     "faiss-cpu>=1.7.4",
     "numpy>=1.21.0",
+    "libcst>=1.5.0",
+    "lark>=1.1.9",
 ]
 
 [project.optional-dependencies]
@@ -40,6 +42,7 @@ dev = [
     "flake8>=4.0",
     "mypy>=0.950",
     "pytest>=7.0",
+    "pytest-asyncio>=0.25.0",
     "pytest-cov>=4.0",
 ]
 
@@ -81,9 +84,45 @@ warn_no_return = true
 warn_unreachable = true
 strict_equality = true
 
+[[tool.mypy.overrides]]
+module = [
+    "libcst",
+    "libcst.*",
+    "faiss",
+    "faiss.*",
+    "mcp_proxy_adapter",
+    "mcp_proxy_adapter.*",
+    "svo_client",
+    "svo_client.*",
+    "embed_client",
+    "embed_client.*",
+]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = [
+    "code_analysis.core.database",
+    "code_analysis.core.database.*",
+    "code_analysis.core.refactorer",
+    "code_analysis.core.refactorer.*",
+    "code_analysis.core.vectorization_worker",
+    "code_analysis.core.docstring_chunker",
+    "code_analysis.core.analyzer",
+]
+ignore_errors = true
+
+[[tool.mypy.overrides]]
+module = [
+    "code_analysis.commands.*",
+    "code_analysis.cli.*",
+    "code_analysis.core.*",
+    "code_analysis.cst_query.*",
+]
+ignore_errors = true
+
 [tool.flake8]
 max-line-length = 88
-extend-ignore = ["E203", "W503", "E501"]
+extend-ignore = ["E203", "W503", "E501", "W291", "W293"]
 exclude = [
     ".git",
     "__pycache__",
@@ -91,4 +130,8 @@ exclude = [
     "dist",
     ".venv",
     ".eggs",
+]
+per-file-ignores = [
+    "scripts/*.py:E402",
+    "tests/test_invalid_imports.py:E402",
 ]

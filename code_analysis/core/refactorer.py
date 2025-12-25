@@ -4,6 +4,11 @@ Code refactoring module for class splitting.
 This module provides functionality to split large classes into smaller ones
 with safety checks and rollback capabilities.
 
+NOTE:
+    A split implementation exists under `code_analysis/core/refactorer/` (package).
+    This monolithic module is kept temporarily for compatibility until the
+    migration is verified by tests.
+
 Author: Vasiliy Zdanovskiy
 email: vasilyvz@gmail.com
 """
@@ -14,6 +19,7 @@ import subprocess
 import tempfile
 import tokenize
 import io
+import sys
 from pathlib import Path
 from typing import Dict, List, Any, Optional, Tuple
 import logging
@@ -136,14 +142,14 @@ class BaseRefactorer:
     def _extract_method_code(self, method_node: Any, indent: str) -> str:
         """
         Extract method code as string with proper indentation using AST unparse.
-        
+
         Comments are preserved as string expressions in AST and converted back
         to comments in the output. Docstrings are also preserved.
-        
+
         Args:
             method_node: AST node of the method (FunctionDef or AsyncFunctionDef)
             indent: Base indentation string (e.g., "    " for 4 spaces)
-            
+
         Returns:
             Method code as string with proper indentation
         """
@@ -151,7 +157,7 @@ class BaseRefactorer:
             # Use ast.unparse() to restore code from AST node
             # This is more reliable than string manipulation
             unparsed = ast.unparse(method_node)
-            
+
             # Convert comment strings back to comments
             # Comments in AST are stored as ast.Expr(ast.Constant(value="# comment"))
             # which unparse converts to '"# comment"' (string literal)
@@ -161,7 +167,9 @@ class BaseRefactorer:
             for line in lines:
                 # Check if line is a comment string (starts with quote and contains #)
                 stripped = line.strip()
-                if (stripped.startswith('"') or stripped.startswith("'")) and "#" in stripped:
+                if (
+                    stripped.startswith('"') or stripped.startswith("'")
+                ) and "#" in stripped:
                     # Try to extract comment from string literal
                     # Pattern: '"# comment"' or "'# comment'"
                     try:
@@ -191,32 +199,36 @@ class BaseRefactorer:
                         adjusted_lines.append(line)
                 else:
                     adjusted_lines.append(line)
-            
+
             # Adjust indentation
             if not adjusted_lines:
                 return ""
-            
+
             # Find the base indentation of the first line (usually 0 for top-level)
             first_line = adjusted_lines[0]
             base_indent = len(first_line) - len(first_line.lstrip())
-            
+
             # Adjust indentation: remove base indent and add target indent
             final_lines = []
             for line in adjusted_lines:
                 if line.strip():
                     # Remove original base indent and add target indent
-                    line_without_base = line[base_indent:] if len(line) > base_indent else line.lstrip()
+                    line_without_base = (
+                        line[base_indent:] if len(line) > base_indent else line.lstrip()
+                    )
                     final_lines.append(indent + line_without_base)
                 else:
                     # Preserve empty lines
                     final_lines.append("")
-            
+
             result = "\n".join(final_lines)
             return result if result.strip() else ""
-            
+
         except Exception as e:
             # Fallback to original string-based method if unparse fails
-            logger.warning(f"ast.unparse() failed, falling back to string extraction: {e}")
+            logger.warning(
+                f"ast.unparse() failed, falling back to string extraction: {e}"
+            )
             # Get method lines from original content
             lines = self.original_content.split("\n")
             method_start_line = method_node.lineno - 1
@@ -335,21 +347,23 @@ class BaseRefactorer:
     def _parse_with_comments(self, source: str) -> ast.Module:
         """
         Parse Python code and preserve comments as string expressions in AST.
-        
+
         Comments are added as ast.Expr(ast.Constant(value="# comment")) nodes
         before the statements they precede.
-        
+
         Args:
             source: Python source code string
-            
+
         Returns:
             AST module with comments preserved as string expressions
         """
         # First, parse normally
         tree = ast.parse(source, filename=str(self.file_path))
-        
+
         # Extract comments using tokenize
-        comments_map: Dict[int, List[Tuple[int, str]]] = {}  # line_number -> [(col, comment)]
+        comments_map: Dict[int, List[Tuple[int, str]]] = (
+            {}
+        )  # line_number -> [(col, comment)]
         try:
             tokens = list(tokenize.generate_tokens(io.StringIO(source).readline))
             for token in tokens:
@@ -363,7 +377,7 @@ class BaseRefactorer:
         except Exception as e:
             logger.warning(f"Failed to extract comments: {e}")
             return tree
-        
+
         # Add comments to AST as string expressions
         def add_comments_to_node(node: ast.AST, parent_body: List[ast.stmt]) -> None:
             """Recursively add comments to AST nodes."""
@@ -376,24 +390,26 @@ class BaseRefactorer:
                         node_idx = parent_body.index(node)
                     except ValueError:
                         return
-                    
+
                     # Add comments before this node
-                    for col, comment_text in sorted(comments_map[node_line], reverse=True):
+                    for col, comment_text in sorted(
+                        comments_map[node_line], reverse=True
+                    ):
                         # Only add if comment is before the node definition
                         if col < node.col_offset:
                             comment_node = ast.Expr(ast.Constant(value=comment_text))
                             comment_node.lineno = node_line
                             comment_node.col_offset = col
                             parent_body.insert(node_idx, comment_node)
-                    
+
                     # Remove from map to avoid duplicates
                     del comments_map[node_line]
-                
+
                 # Process body recursively
-                if hasattr(node, 'body') and isinstance(node.body, list):
+                if hasattr(node, "body") and isinstance(node.body, list):
                     for i, child in enumerate(node.body[:]):
                         add_comments_to_node(child, node.body)
-            
+
             elif isinstance(node, ast.stmt):
                 # Add comments before this statement
                 node_line = node.lineno
@@ -402,20 +418,22 @@ class BaseRefactorer:
                         node_idx = parent_body.index(node)
                     except ValueError:
                         return
-                    
-                    for col, comment_text in sorted(comments_map[node_line], reverse=True):
-                        if col < getattr(node, 'col_offset', 0):
+
+                    for col, comment_text in sorted(
+                        comments_map[node_line], reverse=True
+                    ):
+                        if col < getattr(node, "col_offset", 0):
                             comment_node = ast.Expr(ast.Constant(value=comment_text))
                             comment_node.lineno = node_line
                             comment_node.col_offset = col
                             parent_body.insert(node_idx, comment_node)
-                    
+
                     del comments_map[node_line]
-        
+
         # Process all nodes in the tree
         for node in tree.body:
             add_comments_to_node(node, tree.body)
-        
+
         return tree
 
     def load_file(self) -> None:
@@ -440,8 +458,6 @@ class BaseRefactorer:
                 shutil.copy2(self.file_path, temp_file.name)
 
                 # Try to import
-                import sys
-
                 sys.path.insert(0, str(self.file_path.parent))
                 module_name = self.file_path.stem
                 try:
@@ -721,7 +737,7 @@ class ClassSplitter(BaseRefactorer):
             if isinstance(node, ast.ClassDef) and node.name == src_class.name:
                 src_class_idx = i
                 break
-        
+
         if src_class_idx is None:
             raise ValueError(f"Source class {src_class.name} not found in module body")
 
@@ -752,7 +768,7 @@ class ClassSplitter(BaseRefactorer):
         # Add new classes
         new_module_body.extend(new_class_nodes)
         # Add nodes after source class
-        new_module_body.extend(self.tree.body[src_class_idx + 1:])
+        new_module_body.extend(self.tree.body[src_class_idx + 1 :])
 
         # Create new module and unparse
         new_module = ast.Module(body=new_module_body, type_ignores=[])
@@ -797,7 +813,7 @@ class ClassSplitter(BaseRefactorer):
                     value=ast.Constant(value=None),
                 )
                 init_body.append(assign)
-            
+
             # Create __init__ method
             init_method = ast.FunctionDef(
                 name="__init__",
@@ -820,6 +836,7 @@ class ClassSplitter(BaseRefactorer):
             if method_node:
                 # Deep copy method node to avoid modifying original
                 import copy
+
                 new_method = copy.deepcopy(method_node)
                 class_body.append(new_method)
             else:
@@ -847,38 +864,38 @@ class ClassSplitter(BaseRefactorer):
     ) -> ast.ClassDef:
         """Build modified source class AST node with wrappers and property references."""
         import copy
-        
+
         # Deep copy source class to avoid modifying original
         modified_class = copy.deepcopy(src_class)
-        
+
         # Get all methods and properties
         all_methods = set()
         for item in modified_class.body:
             if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 all_methods.add(item.name)
-        
+
         moved_methods = set(method_mapping.keys())
-        remaining_methods = all_methods - moved_methods
-        
+        all_methods - moved_methods
+
         # Build new class body
         new_body: List[ast.stmt] = []
-        
+
         # Add docstring if present
         if modified_class.body and isinstance(modified_class.body[0], ast.Expr):
             docstring = ast.get_docstring(modified_class)
             if docstring:
                 new_body.append(ast.Expr(ast.Constant(value=docstring)))
-        
+
         # Build __init__ with property references
         init_body: List[ast.stmt] = []
-        
+
         # Group properties by destination class
         prop_groups: Dict[str, List[str]] = {}
         for prop, dst_class in prop_mapping.items():
             if dst_class not in prop_groups:
                 prop_groups[dst_class] = []
             prop_groups[dst_class].append(prop)
-        
+
         # Initialize property references: self.instanceName = ClassName()
         for dst_class_name, props in prop_groups.items():
             instance_name = (
@@ -899,12 +916,12 @@ class ClassSplitter(BaseRefactorer):
             )
             assign = ast.Assign(targets=[target], value=value)
             init_body.append(assign)
-        
+
         # Add remaining properties from original __init__
         all_props = set(self.extract_init_properties(src_class))
         moved_props = set(prop_mapping.keys())
         remaining_props = all_props - moved_props
-        
+
         # Find original __init__ to extract remaining property initializations
         original_init = self._find_method_in_class(src_class, "__init__")
         if original_init:
@@ -928,7 +945,7 @@ class ClassSplitter(BaseRefactorer):
                         and stmt.target.attr in remaining_props
                     ):
                         init_body.append(copy.deepcopy(stmt))
-        
+
         # Create __init__ method
         if init_body:
             init_method = ast.FunctionDef(
@@ -945,7 +962,7 @@ class ClassSplitter(BaseRefactorer):
                 returns=None,
             )
             new_body.append(init_method)
-        
+
         # Add wrapper methods for moved methods
         for method_name, dst_class_name in method_mapping.items():
             original_method = self._find_method_in_class(src_class, method_name)
@@ -956,14 +973,14 @@ class ClassSplitter(BaseRefactorer):
                     if dst_class_name
                     else dst_class_name.lower()
                 )
-                
+
                 # Build call: self.dstVar.method_name(*args, **kwargs)
                 call_args = []
                 if isinstance(original_method, (ast.FunctionDef, ast.AsyncFunctionDef)):
                     # Extract method arguments (skip self)
                     for arg in original_method.args.args[1:]:  # Skip self
                         call_args.append(ast.Name(id=arg.arg, ctx=ast.Load()))
-                
+
                 call = ast.Call(
                     func=ast.Attribute(
                         value=ast.Attribute(
@@ -977,28 +994,31 @@ class ClassSplitter(BaseRefactorer):
                     args=call_args,
                     keywords=[],
                 )
-                
+
                 # Create wrapper method
                 wrapper_method = ast.FunctionDef(
                     name=method_name,
                     args=original_method.args,
-                    body=[ast.Return(value=call)] if call_args else [ast.Expr(value=call)],
+                    body=(
+                        [ast.Return(value=call)]
+                        if call_args
+                        else [ast.Expr(value=call)]
+                    ),
                     decorator_list=copy.deepcopy(original_method.decorator_list),
                     returns=copy.deepcopy(original_method.returns),
                 )
                 new_body.append(wrapper_method)
-        
+
         # Add remaining methods (not moved)
         for item in modified_class.body:
             if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 if item.name not in moved_methods and item.name != "__init__":
                     new_body.append(item)
-        
+
         # Update class body
         modified_class.body = new_body if new_body else [ast.Pass()]
-        
-        return modified_class
 
+        return modified_class
 
     def _find_method_in_class(
         self, class_node: ast.ClassDef, method_name: str
@@ -1626,7 +1646,7 @@ class SuperclassExtractor(BaseRefactorer):
                 child_nodes.append(child_node)
 
             # Check method compatibility
-            abstract_methods = config.get("abstract_methods", [])
+            config.get("abstract_methods", [])
 
             # Check all methods that will be extracted
             all_methods = set()
@@ -1752,16 +1772,16 @@ class SuperclassExtractor(BaseRefactorer):
 
         # Reconstruct module body
         new_module_body: List[ast.stmt] = []
-        
+
         # Find first child class position
         first_child_idx = min(child_indices.values()) if child_indices else 0
-        
+
         # Add nodes before first child class
         new_module_body.extend(self.tree.body[:first_child_idx])
-        
+
         # Add base class
         new_module_body.append(base_class_node)
-        
+
         # Add updated child classes and other nodes
         # Sort by original index to maintain order
         remaining_nodes = []
@@ -1782,7 +1802,7 @@ class SuperclassExtractor(BaseRefactorer):
                     remaining_nodes.append((i, node))
             else:
                 remaining_nodes.append((i, node))
-        
+
         # Add remaining nodes in order
         remaining_nodes.sort(key=lambda x: x[0])
         for _, node in remaining_nodes:
@@ -1795,7 +1815,7 @@ class SuperclassExtractor(BaseRefactorer):
             for i, node in enumerate(new_module_body):
                 if isinstance(node, (ast.Import, ast.ImportFrom)):
                     last_import_idx = i
-            
+
             # Create import node
             abc_import = ast.ImportFrom(
                 module="abc",
@@ -1805,7 +1825,7 @@ class SuperclassExtractor(BaseRefactorer):
                 ],
                 level=0,
             )
-            
+
             if last_import_idx >= 0:
                 new_module_body.insert(last_import_idx + 1, abc_import)
             else:
@@ -1824,17 +1844,19 @@ class SuperclassExtractor(BaseRefactorer):
     ) -> ast.ClassDef:
         """Build the base class as AST node."""
         import copy
-        
+
         # Check if ABC import is needed
         needs_abc = bool(abstract_methods)
-        
+
         # Build class body
         class_body: List[ast.stmt] = []
-        
+
         # Add docstring
-        docstring_node = ast.Expr(ast.Constant(value="Base class with common functionality."))
+        docstring_node = ast.Expr(
+            ast.Constant(value="Base class with common functionality.")
+        )
         class_body.append(docstring_node)
-        
+
         # Add properties
         all_props = set()
         for child_config in extract_from.values():
@@ -1856,7 +1878,7 @@ class SuperclassExtractor(BaseRefactorer):
                     value=ast.Constant(value=None),
                 )
                 init_body.append(assign)
-            
+
             # Create __init__ method
             init_method = ast.FunctionDef(
                 name="__init__",
@@ -1885,12 +1907,10 @@ class SuperclassExtractor(BaseRefactorer):
             if method_node:
                 if method_name in abstract_methods:
                     # Create abstract method
-                    import copy
                     abstract_method = copy.deepcopy(method_node)
                     # Add @abstractmethod decorator
                     abstract_method.decorator_list.insert(
-                        0,
-                        ast.Name(id="abstractmethod", ctx=ast.Load())
+                        0, ast.Name(id="abstractmethod", ctx=ast.Load())
                     )
                     # Replace body with raise NotImplementedError
                     abstract_method.body = [
@@ -1913,7 +1933,7 @@ class SuperclassExtractor(BaseRefactorer):
         bases = []
         if needs_abc:
             bases.append(ast.Name(id="ABC", ctx=ast.Load()))
-        
+
         base_class = ast.ClassDef(
             name=base_class_name,
             bases=bases,
@@ -1931,16 +1951,16 @@ class SuperclassExtractor(BaseRefactorer):
     ) -> ast.ClassDef:
         """Update child class AST node to inherit from base and remove extracted members."""
         import copy
-        
+
         # Deep copy child node to avoid modifying original
         updated_class = copy.deepcopy(child_node)
-        
+
         # Remove extracted methods and properties
         extracted_methods = set(child_config.get("methods", []))
         # Support both "properties" and "props" keys
         extracted_props = set(child_config.get("properties", []))
         extracted_props.update(child_config.get("props", []))
-        
+
         # Update class bases to include base class
         base_name_node = ast.Name(id=base_class_name, ctx=ast.Load())
         if updated_class.bases:
@@ -1948,16 +1968,16 @@ class SuperclassExtractor(BaseRefactorer):
             updated_class.bases.insert(0, base_name_node)
         else:
             updated_class.bases = [base_name_node]
-        
+
         # Build new class body with non-extracted items
         new_body: List[ast.stmt] = []
-        
+
         # Add docstring if present
         if updated_class.body and isinstance(updated_class.body[0], ast.Expr):
             docstring = ast.get_docstring(updated_class)
             if docstring:
                 new_body.append(ast.Expr(ast.Constant(value=docstring)))
-        
+
         # Process each body item
         for item in updated_class.body:
             if isinstance(item, ast.Expr):
@@ -1967,17 +1987,17 @@ class SuperclassExtractor(BaseRefactorer):
                 # Skip methods that are extracted to base class
                 if item.name in extracted_methods:
                     continue
-                
+
                 # Include this method (not extracted)
                 new_body.append(item)
             else:
                 # Include other statements (assignments, etc.)
                 new_body.append(item)
-        
+
         # Ensure class has at least pass if empty
         if not new_body or (len(new_body) == 1 and isinstance(new_body[0], ast.Expr)):
             new_body.append(ast.Pass())
-        
+
         updated_class.body = new_body
         return updated_class
 

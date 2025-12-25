@@ -4,6 +4,11 @@ Database module for code mapper.
 This module provides SQLite database functionality for storing
 and querying code analysis data.
 
+NOTE:
+    A split implementation exists under `code_analysis/core/database/` (package).
+    This monolithic module is kept temporarily for compatibility until the
+    migration is verified by tests.
+
 Author: Vasiliy Zdanovskiy
 email: vasilyvz@gmail.com
 """
@@ -35,10 +40,21 @@ class CodeDatabase:
     def _connect(self) -> None:
         """Establish database connection."""
         with self._lock:
-            self.conn = sqlite3.connect(str(self.db_path))
+            # Reduce probability of "database is locked" under concurrent readers/writers.
+            # - timeout: wait a bit for locks instead of failing fast
+            # - WAL: allows concurrent reads during writes
+            self.conn = sqlite3.connect(
+                str(self.db_path),
+                timeout=30,
+                check_same_thread=False,
+            )
             self.conn.row_factory = sqlite3.Row
             # Enable foreign keys
             self.conn.execute("PRAGMA foreign_keys = ON")
+            # Best-effort pragmas (safe defaults for a local SQLite file)
+            self.conn.execute("PRAGMA journal_mode = WAL")
+            self.conn.execute("PRAGMA synchronous = NORMAL")
+            self.conn.execute("PRAGMA busy_timeout = 5000")
 
     def _create_schema(self) -> None:
         """Create database schema if it doesn't exist."""
@@ -320,22 +336,24 @@ class CodeDatabase:
             )
         """
         )
-        
+
         # Add bm25_score and embedding_vector columns if they don't exist (migration)
         try:
             cursor.execute("ALTER TABLE code_chunks ADD COLUMN bm25_score REAL")
             logger.info("Added bm25_score column to code_chunks table")
         except Exception:
             pass  # Column already exists
-        
+
         try:
             cursor.execute("ALTER TABLE code_chunks ADD COLUMN embedding_vector TEXT")
             logger.info("Added embedding_vector column to code_chunks table")
         except Exception:
             pass  # Column already exists
-        
+
         try:
-            cursor.execute("ALTER TABLE code_chunks ADD COLUMN binding_level INTEGER DEFAULT 0")
+            cursor.execute(
+                "ALTER TABLE code_chunks ADD COLUMN binding_level INTEGER DEFAULT 0"
+            )
             logger.info("Added binding_level column to code_chunks table")
         except Exception:
             pass  # Column already exists
@@ -344,7 +362,7 @@ class CodeDatabase:
 
         # Migrate existing database if needed (before creating indexes)
         self._migrate_to_uuid_projects()
-        
+
         # Migrate schema (add missing columns, etc.)
         self._migrate_schema()
 
@@ -508,12 +526,12 @@ class CodeDatabase:
     def _migrate_schema(self) -> None:
         """
         Migrate database schema - add missing columns, update structure.
-        
+
         This method is called on every database initialization to ensure
         the schema is up to date with the latest version.
         """
         cursor = self.conn.cursor()
-        
+
         # Check and migrate issues table - add project_id if missing
         cursor.execute("PRAGMA table_info(issues)")
         issues_columns = {row[1]: row[2] for row in cursor.fetchall()}
@@ -521,7 +539,7 @@ class CodeDatabase:
             try:
                 logger.info("Migrating issues table: adding project_id column")
                 cursor.execute("ALTER TABLE issues ADD COLUMN project_id TEXT")
-                
+
                 # Update existing issues with project_id from files
                 cursor.execute(
                     """
@@ -534,16 +552,16 @@ class CodeDatabase:
                     WHERE file_id IS NOT NULL
                     """
                 )
-                
+
                 # Add foreign key constraint if possible
                 # Note: SQLite doesn't support adding FK constraints to existing tables
                 # They are only enforced on new inserts
-                
+
                 self.conn.commit()
                 logger.info("Migration completed: issues table now has project_id")
             except sqlite3.OperationalError as e:
                 logger.warning(f"Migration issue (may already exist): {e}")
-        
+
         # Add index for project_id in issues if it doesn't exist
         cursor.execute(
             "SELECT name FROM sqlite_master WHERE type='index' AND name='idx_issues_project'"
@@ -560,7 +578,7 @@ class CodeDatabase:
         # Migrate code_chunks table - add context binding columns if missing
         cursor.execute("PRAGMA table_info(code_chunks)")
         chunks_columns = {row[1]: row[2] for row in cursor.fetchall()}
-        
+
         new_columns = {
             "class_id": "INTEGER",
             "function_id": "INTEGER",
@@ -569,15 +587,21 @@ class CodeDatabase:
             "ast_node_type": "TEXT",
             "source_type": "TEXT",
         }
-        
+
         for col_name, col_type in new_columns.items():
             if col_name not in chunks_columns:
                 try:
-                    logger.info(f"Migrating code_chunks table: adding {col_name} column")
-                    cursor.execute(f"ALTER TABLE code_chunks ADD COLUMN {col_name} {col_type}")
+                    logger.info(
+                        f"Migrating code_chunks table: adding {col_name} column"
+                    )
+                    cursor.execute(
+                        f"ALTER TABLE code_chunks ADD COLUMN {col_name} {col_type}"
+                    )
                     self.conn.commit()
                 except sqlite3.OperationalError as e:
-                    logger.warning(f"Could not add column {col_name} to code_chunks: {e}")
+                    logger.warning(
+                        f"Could not add column {col_name} to code_chunks: {e}"
+                    )
 
     def get_or_create_project(
         self, root_path: str, name: Optional[str] = None, comment: Optional[str] = None
@@ -650,9 +674,7 @@ class CodeDatabase:
             return dict(row)
         return None
 
-    def get_file_by_path(
-        self, path: str, project_id: str
-    ) -> Optional[Dict[str, Any]]:
+    def get_file_by_path(self, path: str, project_id: str) -> Optional[Dict[str, Any]]:
         """
         Get file record by path and project ID.
 
@@ -855,21 +877,19 @@ class CodeDatabase:
     ) -> int:
         """
         Add issue record. Returns issue_id.
-        
+
         If project_id is not provided, it will be retrieved from file_id.
         """
         assert self.conn is not None
         cursor = self.conn.cursor()
-        
+
         # Get project_id from file_id if not provided
         if project_id is None and file_id is not None:
-            cursor.execute(
-                "SELECT project_id FROM files WHERE id = ?", (file_id,)
-            )
+            cursor.execute("SELECT project_id FROM files WHERE id = ?", (file_id,))
             result = cursor.fetchone()
             if result:
                 project_id = result[0]
-        
+
         metadata_json = json.dumps(metadata) if metadata else None
         cursor.execute(
             """
@@ -910,7 +930,7 @@ class CodeDatabase:
         - AST trees
         - code chunks
         - vector index entries
-        
+
         NOTE: When FAISS is implemented, this method should:
         1. Get all vector_ids from code_chunks for this file_id
         2. Remove these vectors from FAISS index
@@ -975,11 +995,11 @@ class CodeDatabase:
             "SELECT vector_id FROM code_chunks WHERE file_id = ? AND vector_id IS NOT NULL",
             (file_id,),
         )
-        vector_ids = [row[0] for row in cursor.fetchall()]
-        
+        [row[0] for row in cursor.fetchall()]
+
         # Delete chunks from database
         cursor.execute("DELETE FROM code_chunks WHERE file_id = ?", (file_id,))
-        
+
         # NOTE: vector_ids are collected but not removed from FAISS here
         # FAISS doesn't support direct removal. Vectors will be cleaned up
         # on next rebuild_from_database call (on server restart).
@@ -1105,8 +1125,8 @@ class CodeDatabase:
         if file_ids:
             cursor.execute(
                 f"""
-                DELETE FROM dependencies 
-                WHERE source_file_id IN ({placeholders}) 
+                DELETE FROM dependencies
+                WHERE source_file_id IN ({placeholders})
                 OR target_file_id IN ({placeholders})
             """,
                 file_ids + file_ids,
@@ -1131,9 +1151,7 @@ class CodeDatabase:
             )
 
         # Delete vector index entries for this project
-        cursor.execute(
-            "DELETE FROM vector_index WHERE project_id = ?", (project_id,)
-        )
+        cursor.execute("DELETE FROM vector_index WHERE project_id = ?", (project_id,))
 
         # Delete files
         cursor.execute("DELETE FROM files WHERE project_id = ?", (project_id,))
@@ -1164,16 +1182,20 @@ class CodeDatabase:
         # Convert rows to dictionaries manually
         result = []
         for row in rows:
-            result.append({
-                "id": row[0],
-                "path": row[1],
-                "lines": row[2],
-                "last_modified": row[3],
-                "has_docstring": row[4],
-            })
+            result.append(
+                {
+                    "id": row[0],
+                    "path": row[1],
+                    "lines": row[2],
+                    "last_modified": row[3],
+                    "has_docstring": row[4],
+                }
+            )
         return result
 
-    async def remove_missing_files(self, project_id: str, root_path: Path) -> Dict[str, Any]:
+    async def remove_missing_files(
+        self, project_id: str, root_path: Path
+    ) -> Dict[str, Any]:
         """
         Remove files from database that no longer exist on disk.
 
@@ -1196,18 +1218,20 @@ class CodeDatabase:
 
         for file_record in files:
             file_path = Path(file_record["path"])
-            
+
             # Check if file exists on disk
             if not file_path.exists():
                 file_id = file_record["id"]
-                logger.info(f"File not found on disk, removing from database: {file_path}")
-                
+                logger.info(
+                    f"File not found on disk, removing from database: {file_path}"
+                )
+
                 # Use clear_file_data to remove all related data
                 self.clear_file_data(file_id)
-                
+
                 # Delete the file record itself
                 cursor.execute("DELETE FROM files WHERE id = ?", (file_id,))
-                
+
                 removed_files.append(str(file_path))
                 removed_count += 1
 
@@ -1894,7 +1918,14 @@ class CodeDatabase:
                 (project_id, entity_type, entity_id, vector_id, vector_dim, embedding_model)
                 VALUES (?, ?, ?, ?, ?, ?)
             """,
-                (project_id, entity_type, entity_id, vector_id, vector_dim, embedding_model),
+                (
+                    project_id,
+                    entity_type,
+                    entity_id,
+                    vector_id,
+                    vector_dim,
+                    embedding_model,
+                ),
             )
             self.conn.commit()
             result = cursor.lastrowid
@@ -2092,30 +2123,30 @@ class CodeDatabase:
 
         cursor.execute(query, params)
         return [dict(row) for row in cursor.fetchall()]
-    
+
     def get_all_chunks_for_faiss_rebuild(self) -> List[Dict[str, Any]]:
         """
         Get all code chunks with embeddings for FAISS index rebuild.
-        
+
         Returns chunks that have vector_id and embedding_model.
         Used on server startup to rebuild FAISS index from database.
-        
+
         NOTE: This method should be called when FaissIndexManager initializes.
         It will:
         1. Get all chunks with vector_id and embedding_model
         2. For each chunk, get embedding from SVO service (if not cached)
         3. Add to FAISS index with corresponding vector_id
-        
+
         Returns:
             List of chunk records with vector_id and embedding_model
         """
         with self._lock:
             assert self.conn is not None
             cursor = self.conn.cursor()
-            
+
             cursor.execute(
                 """
-                SELECT id, file_id, project_id, chunk_uuid, chunk_text, 
+                SELECT id, file_id, project_id, chunk_uuid, chunk_text,
                        vector_id, embedding_model, chunk_type, embedding_vector
                 FROM code_chunks
                 WHERE vector_id IS NOT NULL AND embedding_model IS NOT NULL
@@ -2131,20 +2162,20 @@ class CodeDatabase:
     ) -> List[Dict[str, Any]]:
         """
         Get code chunks that are not yet vectorized (vector_id IS NULL).
-        
+
         Uses index idx_code_chunks_not_vectorized for fast lookup.
-        
+
         Args:
             project_id: Filter by project ID (optional)
             limit: Maximum number of chunks to return
-            
+
         Returns:
             List of chunk records without vector_id
         """
         with self._lock:
             assert self.conn is not None
             cursor = self.conn.cursor()
-            
+
             if project_id:
                 cursor.execute(
                     """
@@ -2181,10 +2212,10 @@ class CodeDatabase:
     ) -> None:
         """
         Update vector_id for a chunk after vectorization.
-        
+
         After this update, the chunk will automatically be excluded from
         the partial index idx_code_chunks_not_vectorized (WHERE vector_id IS NULL).
-        
+
         Args:
             chunk_id: Chunk ID
             vector_id: FAISS vector index ID
@@ -2218,23 +2249,23 @@ class CodeDatabase:
     ) -> List[Dict[str, Any]]:
         """
         Get files that need chunking (have docstrings but no chunks).
-        
+
         Files are considered needing chunking if:
         - They have docstrings (has_docstring = 1) OR
         - They have classes/functions/methods with docstrings
         - AND they have no chunks in code_chunks table
-        
+
         Args:
             project_id: Project ID
             limit: Maximum number of files to return
-            
+
         Returns:
             List of file records that need chunking
         """
         with self._lock:
             assert self.conn is not None
             cursor = self.conn.cursor()
-            
+
             # Find files with docstrings that have no chunks
             cursor.execute(
                 """
@@ -2266,7 +2297,7 @@ class CodeDatabase:
                 """,
                 (project_id, limit),
             )
-            
+
             return [dict(row) for row in cursor.fetchall()]
 
     def close(self) -> None:

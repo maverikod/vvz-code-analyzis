@@ -8,7 +8,7 @@ email: vasilyvz@gmail.com
 import json
 import logging
 from pathlib import Path
-from typing import Any, Dict, Optional, TYPE_CHECKING
+from typing import Any, Dict, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from ..core.database import CodeDatabase  # noqa: F401
@@ -118,7 +118,9 @@ class GetASTCommand:
             if self.include_json:
                 try:
                     ast_json = ast_record["ast_json"]
-                    result["ast_json"] = json.loads(ast_json) if isinstance(ast_json, str) else ast_json
+                    result["ast_json"] = (
+                        json.loads(ast_json) if isinstance(ast_json, str) else ast_json
+                    )
                 except (json.JSONDecodeError, KeyError) as e:
                     logger.error(f"Error parsing AST JSON: {e}")
                     result["ast_json"] = None
@@ -133,4 +135,3 @@ class GetASTCommand:
                 "message": f"Error retrieving AST: {e}",
                 "error": str(e),
             }
-

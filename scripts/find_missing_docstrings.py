@@ -10,7 +10,7 @@ import ast
 import os
 import sqlite3
 from pathlib import Path
-from typing import Dict, List, Set, Tuple
+from typing import List, Set, Tuple
 
 
 def collect_fs_docstrings(root_dir: Path) -> List[Tuple[str, str]]:
@@ -40,7 +40,9 @@ def collect_fs_docstrings(root_dir: Path) -> List[Tuple[str, str]]:
                 results.append((str(file_path.resolve()), mod_ds.strip()))
 
             for node in ast.walk(tree):
-                if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                if isinstance(
+                    node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)
+                ):
                     ds = ast.get_docstring(node)
                     if ds:
                         results.append((str(file_path.resolve()), ds.strip()))
@@ -120,4 +122,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

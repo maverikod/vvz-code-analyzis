@@ -5,7 +5,6 @@ Author: Vasiliy Zdanovskiy
 email: vasilyvz@gmail.com
 """
 
-import pytest
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
@@ -22,7 +21,7 @@ class TestDatabaseAdditional:
             db = CodeDatabase(db_path)
 
             project_id = db.get_or_create_project(str(tmpdir), name="test_project")
-            file_id = db.add_file("test.py", 100, 1234567890.0, True, project_id)
+            db.add_file("test.py", 100, 1234567890.0, True, project_id)
 
             summary = db.get_file_summary("test.py", project_id)
             assert summary is not None
@@ -52,7 +51,9 @@ class TestDatabaseAdditional:
             project_id = db.get_or_create_project(str(tmpdir), name="test_project")
             file_id = db.add_file("test.py", 100, 1234567890.0, True, project_id)
             class_id = db.add_class(file_id, "TestClass", 10, "Test", [])
-            db.add_method(class_id, "method", 15, ["self"], "Method", False, False, False)
+            db.add_method(
+                class_id, "method", 15, ["self"], "Method", False, False, False
+            )
             db.add_function(file_id, "func", 20, ["arg"], "Function")
             db.add_issue("files_too_large", "Too large", file_id=file_id)
 
@@ -97,10 +98,15 @@ class TestDatabaseAdditional:
 
             # Verify FTS index
             cursor = db.conn.cursor()
-            cursor.execute("SELECT * FROM code_content_fts WHERE rowid = ?", (content_id,))
+            cursor.execute(
+                "SELECT * FROM code_content_fts WHERE rowid = ?", (content_id,)
+            )
             fts_row = cursor.fetchone()
             assert fts_row is not None
-            assert "test" in fts_row["entity_name"].lower() or "test" in fts_row["content"].lower()
+            assert (
+                "test" in fts_row["entity_name"].lower()
+                or "test" in fts_row["content"].lower()
+            )
 
             db.close()
 
@@ -113,11 +119,15 @@ class TestDatabaseAdditional:
             project_id = db.get_or_create_project(str(tmpdir), name="test_project")
             file_id = db.add_file("test.py", 100, 1234567890.0, True, project_id)
             class_id = db.add_class(file_id, "TestClass", 10, "Test", [])
-            method_id = db.add_method(class_id, "method", 15, ["self"], "Method", False, False, False)
+            method_id = db.add_method(
+                class_id, "method", 15, ["self"], "Method", False, False, False
+            )
             function_id = db.add_function(file_id, "func", 20, ["arg"], "Function")
-            
+
             usage_id = db.add_usage(file_id, 25, "method_call", "method", "method")
-            content_id = db.add_code_content(file_id, "method", "method", "def method(): pass")
+            content_id = db.add_code_content(
+                file_id, "method", "method", "def method(): pass"
+            )
             issue_id = db.add_issue("files_too_large", "Too large", file_id=file_id)
 
             # Clear file data

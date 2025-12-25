@@ -5,7 +5,6 @@ Author: Vasiliy Zdanovskiy
 email: vasilyvz@gmail.com
 """
 
-import pytest
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
@@ -143,7 +142,7 @@ class TestDatabaseProjectManagement:
             file_id2 = db.add_file("file2.py", 100, 1234567890.0, True, project_id2)
 
             class_id1 = db.add_class(file_id1, "ClassA", 10, "Class A", [])
-            class_id2 = db.add_class(file_id2, "ClassA", 10, "Class A", [])
+            db.add_class(file_id2, "ClassA", 10, "Class A", [])
 
             # Search in project1
             classes = db.search_classes("ClassA", project_id=project_id1)
@@ -167,8 +166,12 @@ class TestDatabaseProjectManagement:
             class_id1 = db.add_class(file_id1, "ClassA", 10, "Class A", [])
             class_id2 = db.add_class(file_id2, "ClassB", 10, "Class B", [])
 
-            method_id1 = db.add_method(class_id1, "method", 15, ["self"], "Method", False, False, False)
-            method_id2 = db.add_method(class_id2, "method", 15, ["self"], "Method", False, False, False)
+            method_id1 = db.add_method(
+                class_id1, "method", 15, ["self"], "Method", False, False, False
+            )
+            db.add_method(
+                class_id2, "method", 15, ["self"], "Method", False, False, False
+            )
 
             # Search in project1
             methods = db.search_methods("method", project_id=project_id1)
@@ -189,11 +192,17 @@ class TestDatabaseProjectManagement:
             file_id1 = db.add_file("file1.py", 100, 1234567890.0, False, project_id1)
             file_id2 = db.add_file("file2.py", 100, 1234567890.0, False, project_id2)
 
-            db.add_issue("files_without_docstrings", "Missing docstring", file_id=file_id1)
-            db.add_issue("files_without_docstrings", "Missing docstring", file_id=file_id2)
+            db.add_issue(
+                "files_without_docstrings", "Missing docstring", file_id=file_id1
+            )
+            db.add_issue(
+                "files_without_docstrings", "Missing docstring", file_id=file_id2
+            )
 
             # Get issues for project1
-            issues = db.get_issues_by_type("files_without_docstrings", project_id=project_id1)
+            issues = db.get_issues_by_type(
+                "files_without_docstrings", project_id=project_id1
+            )
             assert len(issues) == 1
             assert issues[0]["file_id"] == file_id1
 
@@ -211,8 +220,12 @@ class TestDatabaseProjectManagement:
             file_id1 = db.add_file("file1.py", 100, 1234567890.0, True, project_id1)
             file_id2 = db.add_file("file2.py", 100, 1234567890.0, True, project_id2)
 
-            db.add_code_content(file_id1, "method", "test_method", "def test_method(): pass", "Test")
-            db.add_code_content(file_id2, "method", "test_method", "def test_method(): pass", "Test")
+            db.add_code_content(
+                file_id1, "method", "test_method", "def test_method(): pass", "Test"
+            )
+            db.add_code_content(
+                file_id2, "method", "test_method", "def test_method(): pass", "Test"
+            )
 
             # Search in project1
             results = db.full_text_search("test", project_id1, limit=10)

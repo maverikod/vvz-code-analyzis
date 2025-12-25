@@ -33,7 +33,7 @@ logger = logging.getLogger(__name__)
 class VectorizationWorker:
     """
     Worker for vectorizing code chunks in background process.
-    
+
     Processes chunks that don't have vector_id yet, gets embeddings,
     adds them to FAISS index, and updates database.
     """
@@ -90,6 +90,7 @@ class VectorizationWorker:
             if self.dynamic_watch_file and self.dynamic_watch_file.exists():
                 try:
                     import json
+
                     with open(self.dynamic_watch_file, "r", encoding="utf-8") as df:
                         dyn = json.load(df)
                         for p in dyn.get("watch_dirs", []):
@@ -98,7 +99,9 @@ class VectorizationWorker:
                                 setattr(path_obj, "is_dynamic", True)
                                 dynamic_paths.append(path_obj)
                 except Exception as e:
-                    logger.error(f"Failed to load dynamic watch dirs: {e}", exc_info=True)
+                    logger.error(
+                        f"Failed to load dynamic watch dirs: {e}", exc_info=True
+                    )
 
             if not self.config_path:
                 # Only dynamic paths
@@ -123,9 +126,9 @@ class VectorizationWorker:
             new_watch_paths = [Path(p) for p in new_watch if p]
 
             # Remove non-dynamic paths that are no longer in config; keep dynamic ones
-            current_dynamic = {str(p) for p in self.watch_dirs if getattr(p, "is_dynamic", False)}
-            current_config = {str(p) for p in self.watch_dirs if not getattr(p, "is_dynamic", False)}
-            new_config_set = {str(p) for p in new_watch_paths}
+            {str(p) for p in self.watch_dirs if getattr(p, "is_dynamic", False)}
+            {str(p) for p in self.watch_dirs if not getattr(p, "is_dynamic", False)}
+            {str(p) for p in new_watch_paths}
 
             # Updated list: new config paths (non-dynamic) + existing dynamic
             updated_paths: List[Path] = []
@@ -158,22 +161,30 @@ class VectorizationWorker:
                 for file_path in root_path.rglob("*.py"):
                     file_stat = file_path.stat()
                     file_mtime = file_stat.st_mtime
-                    file_rec = database.get_file_by_path(str(file_path), self.project_id)
+                    file_rec = database.get_file_by_path(
+                        str(file_path), self.project_id
+                    )
                     if not file_rec:
                         # Register file and mark as needing chunking
                         database.add_file(
                             str(file_path),
-                            lines=len(file_path.read_text(encoding="utf-8").splitlines()),
+                            lines=len(
+                                file_path.read_text(encoding="utf-8").splitlines()
+                            ),
                             last_modified=file_mtime,
                             has_docstring=False,
                             project_id=self.project_id,
                         )
-                        database.mark_file_needs_chunking(str(file_path), self.project_id)
+                        database.mark_file_needs_chunking(
+                            str(file_path), self.project_id
+                        )
                         enqueued += 1
                     else:
                         db_mtime = file_rec.get("last_modified")
                         if db_mtime is None or db_mtime != file_mtime:
-                            database.mark_file_needs_chunking(str(file_path), self.project_id)
+                            database.mark_file_needs_chunking(
+                                str(file_path), self.project_id
+                            )
                             enqueued += 1
             except Exception as e:
                 logger.error(f"Error scanning watch_dir {root}: {e}", exc_info=True)
@@ -182,23 +193,23 @@ class VectorizationWorker:
     async def process_chunks(self, poll_interval: int = 30) -> Dict[str, Any]:
         """
         Process non-vectorized chunks in continuous loop with polling interval.
-        
+
         Runs indefinitely, checking for chunks to vectorize at specified intervals.
         Also requests chunking for files that need chunking.
-        
+
         Args:
             poll_interval: Interval in seconds between polling cycles (default: 30)
-        
+
         Returns:
             Dictionary with processing statistics (only when stopped)
         """
         import asyncio
         from .database import CodeDatabase
-        
+
         if not self.svo_client_manager:
             logger.warning("SVO client manager not available, skipping vectorization")
             return {"processed": 0, "errors": 0}
-        
+
         if not self.faiss_manager:
             logger.warning("FAISS manager not available, skipping vectorization")
             return {"processed": 0, "errors": 0}
@@ -214,7 +225,7 @@ class VectorizationWorker:
                 f"Starting continuous vectorization worker for project {self.project_id}, "
                 f"poll interval: {poll_interval}s"
             )
-            
+
             while not self._stop_event.is_set():
                 cycle_count += 1
                 cycle_start_time = time.time()
@@ -226,14 +237,16 @@ class VectorizationWorker:
                     self._refresh_config()
                 except Exception as e:
                     logger.error(f"Error refreshing worker config: {e}", exc_info=True)
-                
+
                 # Step 0: enqueue watch_dirs (filesystem scan)
                 if self.watch_dirs:
                     try:
                         files_enqueued = await self._enqueue_watch_dirs(database)
                         if files_enqueued > 0:
                             cycle_activity = True
-                            logger.info(f"Enqueued {files_enqueued} files from watch_dirs")
+                            logger.info(
+                                f"Enqueued {files_enqueued} files from watch_dirs"
+                            )
                     except Exception as e:
                         logger.error(f"Error enqueuing watch_dirs: {e}", exc_info=True)
 
@@ -243,7 +256,7 @@ class VectorizationWorker:
                         project_id=self.project_id,
                         limit=5,  # Process 5 files per cycle
                     )
-                    
+
                     if files_to_chunk:
                         logger.info(
                             f"Found {len(files_to_chunk)} files needing chunking, "
@@ -255,28 +268,34 @@ class VectorizationWorker:
                         logger.info(f"Requested chunking for {chunked_count} files")
                 except Exception as e:
                     logger.error(f"Error requesting chunking: {e}", exc_info=True)
-                
+
                 # Step 2: Process chunks that have embeddings but no vector_id
-                # NOTE: Automatic processing of empty chunks (chunks without embeddings) 
+                # NOTE: Automatic processing of empty chunks (chunks without embeddings)
                 # has been disabled. Use dedicated command to process them manually.
                 # This step only processes chunks that have embeddings in DB but no vector_id.
                 batch_processed = 0
                 batch_errors = 0
-                
+
                 while not self._stop_event.is_set():
                     # Get chunks with embeddings in DB but without vector_id
                     # These are chunks where embedding was saved but FAISS add failed or wasn't done
                     step_start = time.time()
-                    logger.debug(f"[TIMING] Step 2: Starting to get non-vectorized chunks from DB")
+                    logger.debug(
+                        "[TIMING] Step 2: Starting to get non-vectorized chunks from DB"
+                    )
                     chunks = await database.get_non_vectorized_chunks(
                         project_id=self.project_id,
                         limit=self.batch_size,
                     )
                     step_duration = time.time() - step_start
-                    logger.debug(f"[TIMING] Step 2: Retrieved {len(chunks)} chunks from DB in {step_duration:.3f}s")
+                    logger.debug(
+                        f"[TIMING] Step 2: Retrieved {len(chunks)} chunks from DB in {step_duration:.3f}s"
+                    )
 
                     if not chunks:
-                        logger.debug("No chunks needing vector_id assignment in this cycle")
+                        logger.debug(
+                            "No chunks needing vector_id assignment in this cycle"
+                        )
                         break
 
                     logger.info(
@@ -291,15 +310,19 @@ class VectorizationWorker:
                             chunk_start_time = time.time()
                             chunk_id = chunk["id"]
                             chunk_text = chunk.get("chunk_text", "")
-                            
+
                             # Log chunk text (docstring) for debugging
-                            chunk_text_preview = chunk_text[:200] + "..." if len(chunk_text) > 200 else chunk_text
+                            chunk_text_preview = (
+                                chunk_text[:200] + "..."
+                                if len(chunk_text) > 200
+                                else chunk_text
+                            )
                             logger.debug(
                                 f"[CHUNK {chunk_id}] Processing chunk:\n"
                                 f"  Text preview: {chunk_text_preview!r}\n"
                                 f"  Text length: {len(chunk_text)} chars"
                             )
-                            
+
                             # Log AST binding information for this chunk
                             ast_info = []
                             if chunk.get("class_id"):
@@ -312,31 +335,40 @@ class VectorizationWorker:
                                 ast_info.append(f"line={chunk['line']}")
                             if chunk.get("ast_node_type"):
                                 ast_info.append(f"node={chunk['ast_node_type']}")
-                            ast_binding = ", ".join(ast_info) if ast_info else "no AST binding"
-                            logger.debug(f"[CHUNK {chunk_id}] AST binding: {ast_binding}")
-                            
+                            ast_binding = (
+                                ", ".join(ast_info) if ast_info else "no AST binding"
+                            )
+                            logger.debug(
+                                f"[CHUNK {chunk_id}] AST binding: {ast_binding}"
+                            )
+
                             # Check if chunk has embedding_vector in database
                             db_check_start = time.time()
                             with database._lock:
                                 cursor = database.conn.cursor()
                                 cursor.execute(
                                     "SELECT embedding_vector, embedding_model FROM code_chunks WHERE id = ?",
-                                    (chunk_id,)
+                                    (chunk_id,),
                                 )
                                 row = cursor.fetchone()
                             db_check_duration = time.time() - db_check_start
-                            logger.debug(f"[TIMING] [CHUNK {chunk_id}] DB check took {db_check_duration:.3f}s")
-                            
+                            logger.debug(
+                                f"[TIMING] [CHUNK {chunk_id}] DB check took {db_check_duration:.3f}s"
+                            )
+
                             embedding_array = None
                             embedding_model = None
-                            
+
                             if row and row[0]:  # embedding_vector exists
                                 # Load embedding from database
                                 load_start = time.time()
                                 try:
                                     import json
+
                                     embedding_list = json.loads(row[0])
-                                    embedding_array = np.array(embedding_list, dtype="float32")
+                                    embedding_array = np.array(
+                                        embedding_list, dtype="float32"
+                                    )
                                     embedding_model = row[1]
                                     load_duration = time.time() - load_start
                                     logger.debug(
@@ -348,7 +380,7 @@ class VectorizationWorker:
                                         f"Failed to parse embedding from DB for chunk {chunk_id} "
                                         f"({ast_binding}): {e}"
                                     )
-                            
+
                             # If no embedding in DB, try to get it from SVO service
                             if embedding_array is None and self.svo_client_manager:
                                 logger.info(
@@ -361,12 +393,12 @@ class VectorizationWorker:
                                             f"Chunk {chunk_id} has no text, skipping"
                                         )
                                         continue
-                                    
+
                                     logger.debug(
                                         f"[CHUNK {chunk_id}] Requesting embedding from SVO service for text:\n"
                                         f"  {chunk_text_preview!r}"
                                     )
-                                    
+
                                     # Create dummy chunk object for embedding API
                                     class DummyChunk:
                                         def __init__(self, text):
@@ -377,37 +409,53 @@ class VectorizationWorker:
                                     embedding_request_start = time.time()
                                     # Pass type parameter to chunker - it should return embeddings
                                     chunk_type = chunk.get("chunk_type", "DocBlock")
-                                    chunks_with_emb = await self.svo_client_manager.get_embeddings(
-                                        [dummy_chunk], 
-                                        type=chunk_type
+                                    chunks_with_emb = (
+                                        await self.svo_client_manager.get_embeddings(
+                                            [dummy_chunk], type=chunk_type
+                                        )
                                     )
-                                    embedding_request_duration = time.time() - embedding_request_start
+                                    embedding_request_duration = (
+                                        time.time() - embedding_request_start
+                                    )
                                     logger.debug(
                                         f"[TIMING] [CHUNK {chunk_id}] SVO embedding request took {embedding_request_duration:.3f}s"
                                     )
-                                    
+
                                     if chunks_with_emb and len(chunks_with_emb) > 0:
-                                        embedding = getattr(chunks_with_emb[0], "embedding", None)
-                                        embedding_model = getattr(chunks_with_emb[0], "embedding_model", None)
-                                        
+                                        embedding = getattr(
+                                            chunks_with_emb[0], "embedding", None
+                                        )
+                                        embedding_model = getattr(
+                                            chunks_with_emb[0], "embedding_model", None
+                                        )
+
                                         if embedding:
-                                            embedding_array = np.array(embedding, dtype="float32")
+                                            embedding_array = np.array(
+                                                embedding, dtype="float32"
+                                            )
                                             logger.debug(
                                                 f"[CHUNK {chunk_id}] Received embedding: dim={len(embedding_array)}, "
                                                 f"model={embedding_model}"
                                             )
-                                            
+
                                             # Save to DB for future use
                                             save_start = time.time()
                                             import json
+
                                             embedding_json = json.dumps(
-                                                embedding.tolist() if hasattr(embedding, 'tolist') else embedding
+                                                embedding.tolist()
+                                                if hasattr(embedding, "tolist")
+                                                else embedding
                                             )
                                             with database._lock:
                                                 cursor = database.conn.cursor()
                                                 cursor.execute(
                                                     "UPDATE code_chunks SET embedding_vector = ?, embedding_model = ? WHERE id = ?",
-                                                    (embedding_json, embedding_model, chunk_id)
+                                                    (
+                                                        embedding_json,
+                                                        embedding_model,
+                                                        chunk_id,
+                                                    ),
                                                 )
                                                 database.conn.commit()
                                             save_duration = time.time() - save_start
@@ -433,14 +481,17 @@ class VectorizationWorker:
                                 except Exception as e:
                                     error_type = type(e).__name__
                                     error_msg = str(e)
-                                    
+
                                     # Check if it's a Model RPC server error (infrastructure issue)
                                     is_model_rpc_error = (
-                                        "Model RPC server" in error_msg or
-                                        "failed after 3 attempts" in error_msg or
-                                        (hasattr(e, "code") and getattr(e, "code") == -32603)
+                                        "Model RPC server" in error_msg
+                                        or "failed after 3 attempts" in error_msg
+                                        or (
+                                            hasattr(e, "code")
+                                            and getattr(e, "code") == -32603
+                                        )
                                     )
-                                    
+
                                     if is_model_rpc_error:
                                         # Model RPC server is down - log as warning (infrastructure issue, not code issue)
                                         logger.warning(
@@ -451,11 +502,11 @@ class VectorizationWorker:
                                         # Other errors - log as error
                                         logger.error(
                                             f"Failed to get embedding for chunk {chunk_id} ({ast_binding}): {error_type}: {error_msg}",
-                                            exc_info=True
+                                            exc_info=True,
                                         )
                                     batch_errors += 1
                                     continue
-                            
+
                             # Skip chunks without embeddings - they should be processed via dedicated command
                             if embedding_array is None:
                                 logger.debug(
@@ -510,16 +561,20 @@ class VectorizationWorker:
                     if batch_processed > 0:
                         faiss_save_start = time.time()
                         try:
-                            logger.debug(f"[TIMING] Saving FAISS index after processing {batch_processed} chunks")
+                            logger.debug(
+                                f"[TIMING] Saving FAISS index after processing {batch_processed} chunks"
+                            )
                             self.faiss_manager.save_index()
                             faiss_save_duration = time.time() - faiss_save_start
-                            logger.debug(f"[TIMING] FAISS index save took {faiss_save_duration:.3f}s")
+                            logger.debug(
+                                f"[TIMING] FAISS index save took {faiss_save_duration:.3f}s"
+                            )
                         except Exception as e:
                             logger.error(f"Error saving FAISS index: {e}")
-                
+
                 total_processed += batch_processed
                 total_errors += batch_errors
-                
+
                 cycle_duration = time.time() - cycle_start_time
                 if batch_processed > 0 or batch_errors > 0:
                     logger.info(
@@ -553,7 +608,7 @@ class VectorizationWorker:
                             f"Failed to process files without docstring chunks: {e}",
                             exc_info=True,
                         )
-                
+
                 # Wait for next cycle (with early exit check)
                 if not self._stop_event.is_set():
                     logger.debug(f"Waiting {poll_interval}s before next cycle...")
@@ -569,59 +624,65 @@ class VectorizationWorker:
             f"Vectorization worker stopped: {total_processed} total processed, "
             f"{total_errors} total errors over {cycle_count} cycles"
         )
-        return {"processed": total_processed, "errors": total_errors, "cycles": cycle_count}
-    
+        return {
+            "processed": total_processed,
+            "errors": total_errors,
+            "cycles": cycle_count,
+        }
+
     async def _request_chunking_for_files(
         self, database: "CodeDatabase", files: List[Dict[str, Any]]
     ) -> int:
         """
         Request chunking for files that need it.
-        
+
         Args:
             database: Database instance
             files: List of file records that need chunking
-            
+
         Returns:
             Number of files successfully chunked
         """
         from .docstring_chunker import DocstringChunker
-        
+
         chunker = DocstringChunker(
             database=database,
             svo_client_manager=self.svo_client_manager,
             faiss_manager=self.faiss_manager,
             min_chunk_length=self.min_chunk_length,
         )
-        
+
         chunked_count = 0
-        
+
         for file_record in files:
             if self._stop_event.is_set():
                 break
-                
+
             try:
                 file_id = file_record["id"]
                 file_path = file_record["path"]
                 project_id = file_record["project_id"]
-                
+
                 logger.info(f"Requesting chunking for file {file_path} (id={file_id})")
-                
+
                 # Read file content
                 from pathlib import Path
+
                 try:
                     file_content = Path(file_path).read_text(encoding="utf-8")
                 except Exception as e:
                     logger.warning(f"Failed to read file {file_path}: {e}")
                     continue
-                
+
                 # Parse AST
                 import ast
+
                 try:
                     tree = ast.parse(file_content, filename=file_path)
                 except Exception as e:
                     logger.warning(f"Failed to parse AST for {file_path}: {e}")
                     continue
-                
+
                 # Process file with chunker
                 await chunker.process_file(
                     file_id=file_id,
@@ -630,17 +691,17 @@ class VectorizationWorker:
                     tree=tree,
                     file_content=file_content,
                 )
-                
+
                 chunked_count += 1
                 logger.info(f"Successfully chunked file {file_path}")
-                
+
             except Exception as e:
                 logger.error(
                     f"Error chunking file {file_record.get('path')}: {e}",
                     exc_info=True,
                 )
                 continue
-        
+
         return chunked_count
 
     async def _chunk_missing_docstring_files(
@@ -700,11 +761,15 @@ class VectorizationWorker:
                 processed += 1
                 logger.info(f"Fallback chunked missing-docstring file: {file_path}")
             except Exception as e:
-                logger.warning(f"Failed fallback chunking for {file_path}: {e}", exc_info=True)
+                logger.warning(
+                    f"Failed fallback chunking for {file_path}: {e}", exc_info=True
+                )
 
         return processed
 
-    def _log_missing_docstring_files(self, database: "CodeDatabase", sample: int = 10) -> None:
+    def _log_missing_docstring_files(
+        self, database: "CodeDatabase", sample: int = 10
+    ) -> None:
         """
         Log files that have no docstring chunks in the database.
         """
@@ -751,10 +816,10 @@ def run_vectorization_worker(
 ) -> Dict[str, Any]:
     """
     Run vectorization worker in separate process with continuous polling.
-    
+
     This function is designed to be called from multiprocessing.Process.
     It runs indefinitely, checking for chunks to vectorize at specified intervals.
-    
+
     Args:
         db_path: Path to database file
         project_id: Project ID to process
@@ -763,7 +828,7 @@ def run_vectorization_worker(
         svo_config: SVO client configuration (optional)
         batch_size: Batch size for processing
         poll_interval: Interval in seconds between polling cycles (default: 30)
-        
+
     Returns:
         Dictionary with processing statistics (only when stopped)
     """
@@ -808,13 +873,14 @@ def run_vectorization_worker(
     min_chunk_length = 30  # default
     if svo_config:
         from .config import ServerConfig
+
         try:
             server_config_obj = ServerConfig(**svo_config)
-            if hasattr(server_config_obj, 'vectorization_retry_attempts'):
+            if hasattr(server_config_obj, "vectorization_retry_attempts"):
                 retry_attempts = server_config_obj.vectorization_retry_attempts
-            if hasattr(server_config_obj, 'vectorization_retry_delay'):
+            if hasattr(server_config_obj, "vectorization_retry_delay"):
                 retry_delay = server_config_obj.vectorization_retry_delay
-            if hasattr(server_config_obj, 'min_chunk_length'):
+            if hasattr(server_config_obj, "min_chunk_length"):
                 min_chunk_length = server_config_obj.min_chunk_length
         except Exception:
             pass  # Use defaults

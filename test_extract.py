@@ -1,15 +1,16 @@
 """Test file for extract superclass operation."""
 
+
 class ChildClass1:
     """First child class."""
-    
+
     def __init__(self):
         self.common_prop = None
-    
+
     def common_method(self):
         """Common method."""
         return "common1"
-    
+
     def specific_method1(self):
         """Specific to child 1."""
         return "specific1"
@@ -17,14 +18,14 @@ class ChildClass1:
 
 class ChildClass2:
     """Second child class."""
-    
+
     def __init__(self):
         self.common_prop = None
-    
+
     def common_method(self):
         """Common method."""
         return "common2"
-    
+
     def specific_method2(self):
         """Specific to child 2."""
         return "specific2"

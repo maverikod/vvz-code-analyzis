@@ -196,7 +196,12 @@ class CodeAnalysisConfigValidator:
             return
 
         # Validate required fields when enabled
-        required_fields = ["protocol", "register_url", "unregister_url", "instance_uuid"]
+        required_fields = [
+            "protocol",
+            "register_url",
+            "unregister_url",
+            "instance_uuid",
+        ]
         for field in required_fields:
             if field not in registration or not registration[field]:
                 self.validation_results.append(
@@ -389,9 +394,7 @@ class CodeAnalysisConfigValidator:
                 return True, None, self.config_data
             else:
                 errors = [
-                    r.message
-                    for r in self.validation_results
-                    if r.level == "error"
+                    r.message for r in self.validation_results if r.level == "error"
                 ]
                 return False, "; ".join(errors), None
         except Exception as e:

@@ -87,9 +87,13 @@ class CodeAnalysisAPI:
             Dictionary with analysis results
         """
         analyze_cmd = AnalyzeCommand(
-            self.database, self.project_id, str(self.root_path), self.max_lines, force,
+            self.database,
+            self.project_id,
+            str(self.root_path),
+            self.max_lines,
+            force,
             svo_client_manager=self.svo_client_manager,
-            faiss_manager=self.faiss_manager
+            faiss_manager=self.faiss_manager,
         )
         return await analyze_cmd.execute()
 
@@ -158,7 +162,7 @@ class CodeAnalysisAPI:
 
     async def get_issues(
         self, issue_type: Optional[str] = None
-    ) -> List[Dict[str, Any]]:
+    ) -> Dict[str, Any] | List[Dict[str, Any]]:
         """
         Get issues from database.
 
@@ -166,7 +170,7 @@ class CodeAnalysisAPI:
             issue_type: Filter by issue type (optional)
 
         Returns:
-            List of issue records
+            Dictionary of issues grouped by type, or a list if issue_type is specified
         """
         return await self.issues_cmd.get_issues(issue_type)
 

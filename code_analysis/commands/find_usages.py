@@ -7,7 +7,7 @@ email: vasilyvz@gmail.com
 
 import logging
 from pathlib import Path
-from typing import Any, Dict, List, Optional, TYPE_CHECKING
+from typing import Any, Dict, Optional, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from ..core.database import CodeDatabase  # noqa: F401
@@ -23,7 +23,9 @@ class FindUsagesCommand:
         database: "CodeDatabase",
         project_id: str,
         target_name: str,
-        target_type: Optional[str] = None,  # "method", "property", "class", "function", or None for all
+        target_type: Optional[
+            str
+        ] = None,  # "method", "property", "class", "function", or None for all
         target_class: Optional[str] = None,  # For methods/properties, filter by class
         file_path: Optional[str] = None,  # Filter by file where usage occurs
         limit: Optional[int] = None,
@@ -110,17 +112,19 @@ class FindUsagesCommand:
 
             usages = []
             for row in rows:
-                usages.append({
-                    "id": row["id"],
-                    "file_id": row["file_id"],
-                    "file_path": row["file_path"],
-                    "line": row["line"],
-                    "usage_type": row["usage_type"],
-                    "target_type": row["target_type"],
-                    "target_class": row["target_class"],
-                    "target_name": row["target_name"],
-                    "context": row["context"],
-                })
+                usages.append(
+                    {
+                        "id": row["id"],
+                        "file_id": row["file_id"],
+                        "file_path": row["file_path"],
+                        "line": row["line"],
+                        "usage_type": row["usage_type"],
+                        "target_type": row["target_type"],
+                        "target_class": row["target_class"],
+                        "target_name": row["target_name"],
+                        "context": row["context"],
+                    }
+                )
 
             # Get total count
             count_query = """
@@ -169,13 +173,15 @@ class FindUsagesCommand:
                         "file_id": usage["file_id"],
                         "usages": [],
                     }
-                file_groups[file_path]["usages"].append({
-                    "line": usage["line"],
-                    "usage_type": usage["usage_type"],
-                    "target_type": usage["target_type"],
-                    "target_class": usage["target_class"],
-                    "context": usage["context"],
-                })
+                file_groups[file_path]["usages"].append(
+                    {
+                        "line": usage["line"],
+                        "usage_type": usage["usage_type"],
+                        "target_type": usage["target_type"],
+                        "target_class": usage["target_class"],
+                        "context": usage["context"],
+                    }
+                )
 
             return {
                 "success": True,
@@ -196,4 +202,3 @@ class FindUsagesCommand:
                 "message": f"Error finding usages: {e}",
                 "error": str(e),
             }
-

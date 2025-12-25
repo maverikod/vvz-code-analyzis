@@ -8,9 +8,11 @@ email: vasilyvz@gmail.com
 import ast
 from pathlib import Path
 import logging
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Union
 
 logger = logging.getLogger(__name__)
+
+FunctionNode = Union[ast.FunctionDef, ast.AsyncFunctionDef]
 
 
 def _analyze_ast(
@@ -20,7 +22,7 @@ def _analyze_ast(
     for node in ast.walk(tree):
         if isinstance(node, ast.ClassDef):
             self._analyze_class(node, file_path, file_id)
-        elif isinstance(node, ast.FunctionDef):
+        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
             # Only analyze top-level functions (not methods)
             # Methods are handled in _analyze_class
             # Skip methods here - they will be handled in _analyze_class
@@ -34,7 +36,7 @@ def _analyze_ast(
     for node in tree.body:
         if isinstance(node, ast.ClassDef):
             self._analyze_class(node, file_path, file_id)
-        elif isinstance(node, ast.FunctionDef):
+        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
             self._analyze_function(node, file_path, file_id)
 
 
@@ -101,7 +103,7 @@ def _analyze_class(
 
     # Analyze methods
     for method in node.body:
-        if isinstance(method, ast.FunctionDef):
+        if isinstance(method, (ast.FunctionDef, ast.AsyncFunctionDef)):
             self._analyze_method(method, file_path, class_name, class_id, file_id)
             class_info["methods"].append(method.name)
 
@@ -109,7 +111,7 @@ def _analyze_class(
 
 
 def _analyze_function(
-    self, node: ast.FunctionDef, file_path: Path, file_id: Optional[int] = None
+    self, node: FunctionNode, file_path: Path, file_id: Optional[int] = None
 ) -> None:
     """Analyze function definition."""
     file_path_str = str(file_path)
@@ -171,7 +173,7 @@ def _analyze_function(
 
 def _analyze_method(
     self,
-    node: ast.FunctionDef,
+    node: FunctionNode,
     file_path: Path,
     class_name: str,
     class_id: Optional[int] = None,

@@ -9,9 +9,11 @@ import ast
 import json
 import hashlib
 import logging
-from typing import Any, Dict
+from typing import Any, Dict, Union
 
 logger = logging.getLogger(__name__)
+
+FunctionNode = Union[ast.FunctionDef, ast.AsyncFunctionDef]
 
 
 def _has_file_docstring(self, tree: ast.Module) -> bool:
@@ -27,14 +29,14 @@ def _has_file_docstring(self, tree: ast.Module) -> bool:
     )
 
 
-def _has_pass_statement(self, node: ast.FunctionDef) -> bool:
+def _has_pass_statement(self, node: FunctionNode) -> bool:
     """Check if function has only pass statement."""
     if len(node.body) == 1 and isinstance(node.body[0], ast.Pass):
         return True
     return False
 
 
-def _has_not_implemented_error(self, node: ast.FunctionDef) -> bool:
+def _has_not_implemented_error(self, node: FunctionNode) -> bool:
     """Check if function raises NotImplementedError."""
     for stmt in node.body:
         if isinstance(stmt, ast.Raise):
@@ -47,7 +49,7 @@ def _has_not_implemented_error(self, node: ast.FunctionDef) -> bool:
     return False
 
 
-def _is_abstract_method(self, node: ast.FunctionDef) -> bool:
+def _is_abstract_method(self, node: FunctionNode) -> bool:
     """Check if method is abstract."""
     for decorator in node.decorator_list:
         if isinstance(decorator, ast.Name) and decorator.id == "abstractmethod":

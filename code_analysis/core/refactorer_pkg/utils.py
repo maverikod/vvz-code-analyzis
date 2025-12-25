@@ -9,9 +9,12 @@ from pathlib import Path
 from typing import Optional
 import logging
 
-from ..code_quality import format_code_with_black
+from ..code_quality import format_code_with_black  # noqa: F401
 
 logger = logging.getLogger(__name__)
+
+# Re-export for backward compatibility
+__all__ = ["format_code_with_black", "format_error_message"]
 
 
 def format_error_message(

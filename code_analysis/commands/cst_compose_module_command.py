@@ -98,10 +98,40 @@ class ComposeCSTModuleCommand(Command):
                             },
                             "new_code": {
                                 "type": "string",
-                                "description": "Replacement code snippet (empty string means delete)",
+                                "description": "Replacement code snippet (empty string means delete). For kind='module', this is the first node code.",
+                            },
+                            "file_docstring": {
+                                "type": "string",
+                                "description": "Required when kind='module': file-level docstring",
                             },
                         },
                         "required": ["selector", "new_code"],
+                        "allOf": [
+                            {
+                                "if": {
+                                    "properties": {
+                                        "selector": {
+                                            "properties": {"kind": {"const": "module"}}
+                                        }
+                                    }
+                                },
+                                "then": {
+                                    "required": ["file_docstring", "new_code"],
+                                    "properties": {
+                                        "file_docstring": {
+                                            "type": "string",
+                                            "minLength": 1,
+                                            "description": "File-level docstring (required for module creation)",
+                                        },
+                                        "new_code": {
+                                            "type": "string",
+                                            "minLength": 1,
+                                            "description": "First node code (function or class, required for module creation)",
+                                        },
+                                    },
+                                },
+                            }
+                        ],
                         "additionalProperties": False,
                     },
                 },
@@ -191,7 +221,11 @@ class ComposeCSTModuleCommand(Command):
                     match_index=sel.get("match_index"),
                 )
                 parsed_ops.append(
-                    ReplaceOp(selector=selector, new_code=str(op.get("new_code", "")))
+                    ReplaceOp(
+                        selector=selector,
+                        new_code=str(op.get("new_code", "")),
+                        file_docstring=op.get("file_docstring"),
+                    )
                 )
 
             new_source, stats = apply_replace_ops(old_source, parsed_ops)

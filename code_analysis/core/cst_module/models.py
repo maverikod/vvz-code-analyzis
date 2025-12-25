@@ -45,10 +45,12 @@ class ReplaceOp:
     Replace operation for module-level blocks.
 
     If new_code is empty string, the target block is removed.
+    For kind='module', file_docstring is required.
     """
 
     selector: Selector
     new_code: str
+    file_docstring: Optional[str] = None
 
 
 @dataclass(frozen=True)

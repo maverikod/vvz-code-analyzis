@@ -151,15 +151,46 @@ def apply_replace_ops(source: str, ops: list[ReplaceOp]) -> tuple[str, dict[str,
     # Handle module creation from scratch
     for op in ops:
         if op.selector.kind == "module":
-            # Create module from scratch
-            if not op.new_code.strip():
-                # Empty module
-                new_module = cst.Module(body=[])
-            else:
-                # Parse new_code as complete module
-                new_module = cst.parse_module(op.new_code)
-            # Normalize imports
+            # Validate required parameters
+            if not op.file_docstring or not op.file_docstring.strip():
+                raise CSTModulePatchError(
+                    "file_docstring is required when creating module from scratch"
+                )
+            if not op.new_code or not op.new_code.strip():
+                raise CSTModulePatchError(
+                    "new_code (first node) is required when creating module from scratch"
+                )
+
+            # Parse first node
+            first_node_module = cst.parse_module(op.new_code)
+            if not first_node_module.body:
+                raise CSTModulePatchError(
+                    "new_code must contain at least one node (function or class)"
+                )
+
+            # Create module with docstring and first node
+            # LibCST docstring format: triple-quoted string
+            docstring_value = op.file_docstring.strip()
+            # Ensure it's properly quoted (handle if already has quotes)
+            if not (
+                docstring_value.startswith('"""') or docstring_value.startswith("'''")
+            ):
+                docstring_value = f'"""{docstring_value}"""'
+
+            docstring_stmt = cst.SimpleStatementLine(
+                body=[cst.Expr(value=cst.SimpleString(value=docstring_value))]
+            )
+
+            # Build module body: docstring + first node
+            module_body: list[cst.BaseStatement] = [docstring_stmt]
+            module_body.extend(first_node_module.body)
+
+            # Create module
+            new_module = cst.Module(body=module_body)
+
+            # Normalize imports (will move imports after docstring)
             new_module = move_module_imports_to_top(new_module)
+
             stats = {
                 "replaced": 0,
                 "removed": 0,

@@ -184,6 +184,7 @@ class ServerControl:
             sys.executable,
             "-m",
             "code_analysis.main",
+            "--daemon",
             "--config",
             str(self.config_path),
         ]

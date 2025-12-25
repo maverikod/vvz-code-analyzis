@@ -31,8 +31,8 @@ logger = logging.getLogger(__name__)
 @click.option(
     "--output-dir",
     "-o",
-    default="code_analysis",
-    help="Output directory for reports",
+    default=None,
+    help="Output directory for reports (default: <root-dir>/code_analysis)",
     type=click.Path(path_type=Path),
 )
 @click.option(
@@ -84,7 +84,7 @@ logger = logging.getLogger(__name__)
 @click.version_option(version="1.0.3")
 def main(
     root_dir: Path,
-    output_dir: Path,
+    output_dir: Path | None,
     max_lines: int,
     comment: str | None,
     verbose: bool,
@@ -109,14 +109,17 @@ def main(
         logger.setLevel(logging.DEBUG)
 
     try:
+        root_dir = root_dir.resolve()
+        resolved_output_dir = (output_dir or (root_dir / "code_analysis")).resolve()
+
         click.echo(f"🔍 Analyzing code in: {root_dir.absolute()}")
-        click.echo(f"📁 Output directory: {output_dir.absolute()}")
+        click.echo(f"📁 Output directory: {resolved_output_dir.absolute()}")
         click.echo(f"📏 Max lines per file: {max_lines}")
         if comment:
             click.echo(f"💬 Project comment: {comment}")
         click.echo()
 
-        root_dir = root_dir.resolve()
+        output_dir = resolved_output_dir
 
         if not use_sqlite:
             # Legacy YAML mode (if needed)

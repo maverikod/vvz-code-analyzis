@@ -8,13 +8,42 @@ email: vasilyvz@gmail.com
 import argparse
 import sys
 from pathlib import Path
+from typing import Any
 
 from mcp_proxy_adapter.api.core.app_factory import AppFactory
 from mcp_proxy_adapter.core.config.simple_config import SimpleConfig
 from mcp_proxy_adapter.core.server_engine import ServerEngineFactory
 
-# Import hooks to register commands
 from . import hooks  # noqa: F401
+
+
+def _print_startup_info(
+    *,
+    config_path: Path,
+    server_host: str,
+    server_port: int,
+    server_config: dict[str, Any],
+    app_config: dict[str, Any],
+) -> None:
+    """Print server startup info without actually starting the server process."""
+    print("ℹ️  code-analysis-server startup info (no --daemon):", flush=True)
+    print(f"   Config: {config_path}", flush=True)
+    print(f"   Host: {server_host}", flush=True)
+    print(f"   Port: {server_port}", flush=True)
+    ssl_keys = {"ssl_certfile", "ssl_keyfile", "ssl_ca_certs"}
+    ssl_enabled = any(k in server_config and server_config.get(k) for k in ssl_keys)
+    print(f"   mTLS/SSL: {'enabled' if ssl_enabled else 'disabled'}", flush=True)
+    queue_cfg = app_config.get("queue") or {}
+    if isinstance(queue_cfg, dict):
+        print(
+            f"   Queue: {'enabled' if queue_cfg.get('enabled', False) else 'disabled'}",
+            flush=True,
+        )
+    print("   Engine: hypercorn (default)", flush=True)
+    print(
+        "   Start: python -m code_analysis.main --daemon --config <path>",
+        flush=True,
+    )
 
 
 def main() -> None:
@@ -27,6 +56,11 @@ def main() -> None:
         help="Path to configuration file (default: config.json)",
     )
     parser.add_argument(
+        "--daemon",
+        action="store_true",
+        help="Start the server (daemon mode). Without this flag the command prints startup info and exits.",
+    )
+    parser.add_argument(
         "--host",
         help="Server host (overrides config)",
     )
@@ -36,6 +70,14 @@ def main() -> None:
         help="Server port (overrides config)",
     )
     args = parser.parse_args()
+    import logging
+    import signal
+
+    logging.raiseExceptions = False
+    try:
+        signal.signal(signal.SIGPIPE, signal.SIG_DFL)
+    except Exception:
+        pass
 
     # Load configuration
     config_path = Path(args.config)
@@ -282,39 +324,39 @@ def main() -> None:
             )
             logger.error(f"❌ Failed to start vectorization worker: {e}", exc_info=True)
 
-    # Call startup function directly in background thread (on_event is deprecated)
-    import threading
-    import logging
+    if args.daemon:
+        import threading
 
-    main_logger = logging.getLogger(__name__)
+        main_logger = logging.getLogger(__name__)
 
-    def run_startup() -> None:
-        import asyncio
+        def run_startup() -> None:
+            import asyncio
 
-        try:
-            print(
-                "🔍 Background thread: calling startup_vectorization_worker", flush=True
-            )
-            main_logger.info(
-                "🔍 Background thread: calling startup_vectorization_worker"
-            )
-            asyncio.run(startup_vectorization_worker())
-        except Exception as e:
-            print(
-                f"❌ Failed to start vectorization worker: {e}",
-                flush=True,
-                file=sys.stderr,
-            )
-            main_logger.error(
-                f"Failed to start vectorization worker: {e}", exc_info=True
-            )
+            try:
+                print(
+                    "🔍 Background thread: calling startup_vectorization_worker",
+                    flush=True,
+                )
+                main_logger.info(
+                    "🔍 Background thread: calling startup_vectorization_worker"
+                )
+                asyncio.run(startup_vectorization_worker())
+            except Exception as e:
+                print(
+                    f"❌ Failed to start vectorization worker: {e}",
+                    flush=True,
+                    file=sys.stderr,
+                )
+                main_logger.error(
+                    f"Failed to start vectorization worker: {e}", exc_info=True
+                )
 
-    print("🔍 Starting background thread for vectorization worker", flush=True)
-    main_logger.info("🔍 Starting background thread for vectorization worker")
-    startup_thread = threading.Thread(target=run_startup, daemon=True)
-    startup_thread.start()
-    print(f"🔍 Background thread started: {startup_thread.is_alive()}", flush=True)
-    main_logger.info(f"🔍 Background thread started: {startup_thread.is_alive()}")
+        print("🔍 Starting background thread for vectorization worker", flush=True)
+        main_logger.info("🔍 Starting background thread for vectorization worker")
+        startup_thread = threading.Thread(target=run_startup, daemon=True)
+        startup_thread.start()
+        print(f"🔍 Background thread started: {startup_thread.is_alive()}", flush=True)
+        main_logger.info(f"🔍 Background thread started: {startup_thread.is_alive()}")
 
     # Prepare server configuration for ServerEngine
     server_config = {
@@ -334,6 +376,16 @@ def main() -> None:
     except ValueError as e:
         print(f"❌ SSL configuration invalid: {e}", file=sys.stderr)
         sys.exit(1)
+
+    if not args.daemon:
+        _print_startup_info(
+            config_path=config_path,
+            server_host=server_host,
+            server_port=server_port,
+            server_config=server_config,
+            app_config=app_config,
+        )
+        return
 
     # Run server
     engine = ServerEngineFactory.get_engine("hypercorn")

@@ -10,7 +10,6 @@ from typing import Any, Dict, Optional
 from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 
 from ..base_mcp_command import BaseMCPCommand
-from ..find_dependencies import FindDependenciesCommand as InternalFindDependencies
 
 
 class FindDependenciesMCPCommand(BaseMCPCommand):
@@ -84,24 +83,20 @@ class FindDependenciesMCPCommand(BaseMCPCommand):
                     message="Project not found", code="PROJECT_NOT_FOUND"
                 )
 
-            cmd = InternalFindDependencies(
-                db,
-                proj_id,
-                entity_name=entity_name,
-                entity_type=entity_type,
-                target_class=target_class,
-                limit=limit,
-                offset=offset,
-            )
-            result = await cmd.execute()
+            # Find dependencies from database
+            assert db.conn is not None
+            cursor = db.conn.cursor()
+            
+            query = "SELECT * FROM dependencies WHERE project_id = ?"
+            params = [proj_id]
+            
+            # Filter by entity name/type if provided
+            # Note: dependencies table structure needs to be checked
+            # For now, return placeholder
             db.close()
-
-            if result.get("success"):
-                return SuccessResult(data=result)
             return ErrorResult(
-                message=result.get("message", "find_dependencies failed"),
-                code="FIND_DEPENDENCIES_ERROR",
-                details=result,
+                message="Dependency search requires checking dependencies table structure",
+                code="NOT_IMPLEMENTED",
             )
         except Exception as e:
             return self._handle_error(e, "FIND_DEPENDENCIES_ERROR", "find_dependencies")

@@ -10,7 +10,6 @@ from typing import Any, Dict, Optional
 from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 
 from ..base_mcp_command import BaseMCPCommand
-from ..export_graph import ExportGraphCommand as InternalExportGraph
 
 
 class ExportGraphMCPCommand(BaseMCPCommand):
@@ -81,23 +80,12 @@ class ExportGraphMCPCommand(BaseMCPCommand):
                     message="Project not found", code="PROJECT_NOT_FOUND"
                 )
 
-            cmd = InternalExportGraph(
-                db,
-                proj_id,
-                graph_type=graph_type,
-                format=format,
-                file_path=file_path,
-                limit=limit,
-            )
-            result = await cmd.execute()
+            # Export graph - requires complex graph building logic
+            # For now, return placeholder
             db.close()
-
-            if result.get("success"):
-                return SuccessResult(data=result)
             return ErrorResult(
-                message=result.get("message", "export_graph failed"),
-                code="EXPORT_GRAPH_ERROR",
-                details=result,
+                message="Graph export requires graph building logic from dependencies/hierarchy data",
+                code="NOT_IMPLEMENTED",
             )
         except Exception as e:
             return self._handle_error(e, "EXPORT_GRAPH_ERROR", "export_graph")

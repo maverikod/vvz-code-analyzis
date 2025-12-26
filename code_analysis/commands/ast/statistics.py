@@ -10,7 +10,6 @@ from typing import Any, Dict, Optional
 from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 
 from ..base_mcp_command import BaseMCPCommand
-from ..ast_statistics import ASTStatisticsCommand as InternalASTStats
 
 
 class ASTStatisticsMCPCommand(BaseMCPCommand):
@@ -62,16 +61,51 @@ class ASTStatisticsMCPCommand(BaseMCPCommand):
                     message="Project not found", code="PROJECT_NOT_FOUND"
                 )
 
-            cmd = InternalASTStats(db, proj_id, file_path=file_path)
-            result = await cmd.execute()
-            db.close()
-
-            if result.get("success"):
-                return SuccessResult(data=result)
-            return ErrorResult(
-                message=result.get("message", "ast_statistics failed"),
-                code="AST_STATS_ERROR",
-                details=result,
-            )
+            # Get AST statistics from database
+            assert db.conn is not None
+            cursor = db.conn.cursor()
+            
+            if file_path:
+                file_record = db.get_file_by_path(file_path, proj_id)
+                if not file_record:
+                    db.close()
+                    return ErrorResult(
+                        message=f"File not found: {file_path}",
+                        code="FILE_NOT_FOUND",
+                    )
+                cursor.execute(
+                    "SELECT COUNT(*) FROM ast_trees WHERE file_id = ?",
+                    (file_record["id"],),
+                )
+                ast_count = cursor.fetchone()[0]
+                db.close()
+                return SuccessResult(
+                    data={
+                        "success": True,
+                        "file_path": file_path,
+                        "ast_trees_count": ast_count,
+                    }
+                )
+            else:
+                # Project-wide stats
+                cursor.execute(
+                    "SELECT COUNT(*) FROM ast_trees WHERE project_id = ?",
+                    (proj_id,),
+                )
+                ast_count = cursor.fetchone()[0]
+                cursor.execute(
+                    "SELECT COUNT(*) FROM files WHERE project_id = ? AND (deleted = 0 OR deleted IS NULL)",
+                    (proj_id,),
+                )
+                file_count = cursor.fetchone()[0]
+                db.close()
+                return SuccessResult(
+                    data={
+                        "success": True,
+                        "project_id": proj_id,
+                        "files_count": file_count,
+                        "ast_trees_count": ast_count,
+                    }
+                )
         except Exception as e:
             return self._handle_error(e, "AST_STATS_ERROR", "ast_statistics")

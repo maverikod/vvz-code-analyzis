@@ -10,7 +10,6 @@ from typing import Any, Dict, Optional
 from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 
 from ..base_mcp_command import BaseMCPCommand
-from ..list_code_entities import ListCodeEntitiesCommand as InternalListEntities
 
 
 class ListCodeEntitiesMCPCommand(BaseMCPCommand):
@@ -79,23 +78,71 @@ class ListCodeEntitiesMCPCommand(BaseMCPCommand):
                     message="Project not found", code="PROJECT_NOT_FOUND"
                 )
 
-            cmd = InternalListEntities(
-                db,
-                proj_id,
-                entity_type=entity_type,
-                file_path=file_path,
-                limit=limit,
-                offset=offset,
-            )
-            result = await cmd.execute()
+            # List entities from database
+            assert db.conn is not None
+            cursor = db.conn.cursor()
+            
+            entities = []
+            
+            if not entity_type or entity_type == "class":
+                query = "SELECT c.*, f.path as file_path FROM classes c JOIN files f ON c.file_id = f.id WHERE f.project_id = ?"
+                params = [proj_id]
+                if file_path:
+                    file_record = db.get_file_by_path(file_path, proj_id)
+                    if file_record:
+                        query += " AND c.file_id = ?"
+                        params.append(file_record["id"])
+                query += " ORDER BY f.path, c.line"
+                if limit:
+                    query += f" LIMIT {limit}"
+                if offset:
+                    query += f" OFFSET {offset}"
+                cursor.execute(query, params)
+                for row in cursor.fetchall():
+                    entities.append({"type": "class", **dict(row)})
+            
+            if not entity_type or entity_type == "function":
+                query = "SELECT func.*, f.path as file_path FROM functions func JOIN files f ON func.file_id = f.id WHERE f.project_id = ?"
+                params = [proj_id]
+                if file_path:
+                    file_record = db.get_file_by_path(file_path, proj_id)
+                    if file_record:
+                        query += " AND func.file_id = ?"
+                        params.append(file_record["id"])
+                query += " ORDER BY f.path, func.line"
+                if limit:
+                    query += f" LIMIT {limit}"
+                if offset:
+                    query += f" OFFSET {offset}"
+                cursor.execute(query, params)
+                for row in cursor.fetchall():
+                    entities.append({"type": "function", **dict(row)})
+            
+            if not entity_type or entity_type == "method":
+                query = "SELECT m.*, c.name as class_name, f.path as file_path FROM methods m JOIN classes c ON m.class_id = c.id JOIN files f ON c.file_id = f.id WHERE f.project_id = ?"
+                params = [proj_id]
+                if file_path:
+                    file_record = db.get_file_by_path(file_path, proj_id)
+                    if file_record:
+                        query += " AND c.file_id = ?"
+                        params.append(file_record["id"])
+                query += " ORDER BY f.path, m.line"
+                if limit:
+                    query += f" LIMIT {limit}"
+                if offset:
+                    query += f" OFFSET {offset}"
+                cursor.execute(query, params)
+                for row in cursor.fetchall():
+                    entities.append({"type": "method", **dict(row)})
+            
             db.close()
-
-            if result.get("success"):
-                return SuccessResult(data=result)
-            return ErrorResult(
-                message=result.get("message", "list_code_entities failed"),
-                code="LIST_ENTITIES_ERROR",
-                details=result,
+            
+            return SuccessResult(
+                data={
+                    "success": True,
+                    "entities": entities,
+                    "count": len(entities),
+                }
             )
         except Exception as e:
             return self._handle_error(e, "LIST_ENTITIES_ERROR", "list_code_entities")

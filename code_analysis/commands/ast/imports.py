@@ -83,24 +83,51 @@ class GetImportsMCPCommand(BaseMCPCommand):
                     message="Project not found", code="PROJECT_NOT_FOUND"
                 )
 
-            cmd = InternalGetImports(
-                db,
-                proj_id,
-                file_path=file_path,
-                import_type=import_type,
-                module_name=module_name,
-                limit=limit,
-                offset=offset,
-            )
-            result = await cmd.execute()
+            # Get imports from database
+            assert db.conn is not None
+            cursor = db.conn.cursor()
+            
+            query = "SELECT * FROM imports WHERE file_id IN (SELECT id FROM files WHERE project_id = ?)"
+            params = [proj_id]
+            
+            if file_path:
+                file_record = db.get_file_by_path(file_path, proj_id)
+                if not file_record:
+                    db.close()
+                    return ErrorResult(
+                        message=f"File not found: {file_path}",
+                        code="FILE_NOT_FOUND",
+                    )
+                query = "SELECT * FROM imports WHERE file_id = ?"
+                params = [file_record["id"]]
+            
+            if import_type:
+                query += " AND import_type = ?"
+                params.append(import_type)
+            
+            if module_name:
+                query += " AND module LIKE ?"
+                params.append(f"%{module_name}%")
+            
+            query += " ORDER BY file_id, line"
+            
+            if limit:
+                query += f" LIMIT {limit}"
+            if offset:
+                query += f" OFFSET {offset}"
+            
+            cursor.execute(query, params)
+            rows = cursor.fetchall()
+            
+            imports = [dict(row) for row in rows]
             db.close()
-
-            if result.get("success"):
-                return SuccessResult(data=result)
-            return ErrorResult(
-                message=result.get("message", "get_imports failed"),
-                code="GET_IMPORTS_ERROR",
-                details=result,
+            
+            return SuccessResult(
+                data={
+                    "success": True,
+                    "imports": imports,
+                    "count": len(imports),
+                }
             )
         except Exception as e:
             return self._handle_error(e, "GET_IMPORTS_ERROR", "get_imports")

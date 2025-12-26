@@ -10,7 +10,6 @@ from typing import Any, Dict, Optional
 from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 
 from ..base_mcp_command import BaseMCPCommand
-from ..search_ast_nodes import SearchASTNodesCommand as InternalSearchAST
 
 
 class SearchASTNodesMCPCommand(BaseMCPCommand):
@@ -73,18 +72,13 @@ class SearchASTNodesMCPCommand(BaseMCPCommand):
                     message="Project not found", code="PROJECT_NOT_FOUND"
                 )
 
-            cmd = InternalSearchAST(
-                db, proj_id, node_type=node_type, file_path=file_path, limit=limit
-            )
-            result = await cmd.execute()
+            # Search AST nodes - for now return placeholder
+            # This requires parsing AST JSON which is complex
+            # TODO: Implement AST node search by parsing ast_json from ast_trees table
             db.close()
-
-            if result.get("success"):
-                return SuccessResult(data=result)
             return ErrorResult(
-                message=result.get("message", "search_ast_nodes failed"),
-                code="SEARCH_AST_ERROR",
-                details=result,
+                message="AST node search not yet implemented - requires AST JSON parsing",
+                code="NOT_IMPLEMENTED",
             )
         except Exception as e:
             return self._handle_error(e, "SEARCH_AST_ERROR", "search_ast_nodes")

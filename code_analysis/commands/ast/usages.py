@@ -10,7 +10,6 @@ from typing import Any, Dict, Optional
 from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 
 from ..base_mcp_command import BaseMCPCommand
-from ..find_usages import FindUsagesCommand as InternalFindUsages
 
 
 class FindUsagesMCPCommand(BaseMCPCommand):
@@ -89,25 +88,54 @@ class FindUsagesMCPCommand(BaseMCPCommand):
                     message="Project not found", code="PROJECT_NOT_FOUND"
                 )
 
-            cmd = InternalFindUsages(
-                db,
-                proj_id,
-                target_name=target_name,
-                target_type=target_type,
-                target_class=target_class,
-                file_path=file_path,
-                limit=limit,
-                offset=offset,
-            )
-            result = await cmd.execute()
+            # Find usages from database
+            assert db.conn is not None
+            cursor = db.conn.cursor()
+            
+            query = "SELECT * FROM usages WHERE file_id IN (SELECT id FROM files WHERE project_id = ?)"
+            params = [proj_id]
+            
+            if target_name:
+                query += " AND target_name = ?"
+                params.append(target_name)
+            
+            if target_type:
+                query += " AND target_type = ?"
+                params.append(target_type)
+            
+            if target_class:
+                query += " AND target_class = ?"
+                params.append(target_class)
+            
+            if file_path:
+                file_record = db.get_file_by_path(file_path, proj_id)
+                if file_record:
+                    query = "SELECT * FROM usages WHERE file_id = ?"
+                    params = [file_record["id"]]
+                    if target_name:
+                        query += " AND target_name = ?"
+                        params.append(target_name)
+            
+            query += " ORDER BY file_id, line"
+            
+            if limit:
+                query += f" LIMIT {limit}"
+            if offset:
+                query += f" OFFSET {offset}"
+            
+            cursor.execute(query, params)
+            rows = cursor.fetchall()
+            
+            usages = [dict(row) for row in rows]
             db.close()
-
-            if result.get("success"):
-                return SuccessResult(data=result)
-            return ErrorResult(
-                message=result.get("message", "find_usages failed"),
-                code="FIND_USAGES_ERROR",
-                details=result,
+            
+            return SuccessResult(
+                data={
+                    "success": True,
+                    "target_name": target_name,
+                    "usages": usages,
+                    "count": len(usages),
+                }
             )
         except Exception as e:
             return self._handle_error(e, "FIND_USAGES_ERROR", "find_usages")

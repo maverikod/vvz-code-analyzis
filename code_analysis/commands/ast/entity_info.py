@@ -10,7 +10,6 @@ from typing import Any, Dict, Optional
 from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 
 from ..base_mcp_command import BaseMCPCommand
-from ..get_code_entity_info import GetCodeEntityInfoCommand as InternalGetEntityInfo
 
 
 class GetCodeEntityInfoMCPCommand(BaseMCPCommand):
@@ -78,18 +77,71 @@ class GetCodeEntityInfoMCPCommand(BaseMCPCommand):
                     message="Project not found", code="PROJECT_NOT_FOUND"
                 )
 
-            cmd = InternalGetEntityInfo(
-                db, proj_id, entity_type, entity_name, file_path=file_path, line=line
-            )
-            result = await cmd.execute()
+            # Get entity info from database
+            assert db.conn is not None
+            cursor = db.conn.cursor()
+            
+            query = None
+            params = []
+            
+            if entity_type == "class":
+                query = "SELECT c.*, f.path as file_path FROM classes c JOIN files f ON c.file_id = f.id WHERE c.name = ? AND f.project_id = ?"
+                params = [entity_name, proj_id]
+                if file_path:
+                    file_record = db.get_file_by_path(file_path, proj_id)
+                    if file_record:
+                        query += " AND c.file_id = ?"
+                        params.append(file_record["id"])
+                if line:
+                    query += " AND c.line = ?"
+                    params.append(line)
+            elif entity_type == "function":
+                query = "SELECT func.*, f.path as file_path FROM functions func JOIN files f ON func.file_id = f.id WHERE func.name = ? AND f.project_id = ?"
+                params = [entity_name, proj_id]
+                if file_path:
+                    file_record = db.get_file_by_path(file_path, proj_id)
+                    if file_record:
+                        query += " AND func.file_id = ?"
+                        params.append(file_record["id"])
+                if line:
+                    query += " AND func.line = ?"
+                    params.append(line)
+            elif entity_type == "method":
+                query = "SELECT m.*, c.name as class_name, f.path as file_path FROM methods m JOIN classes c ON m.class_id = c.id JOIN files f ON c.file_id = f.id WHERE m.name = ? AND f.project_id = ?"
+                params = [entity_name, proj_id]
+                if file_path:
+                    file_record = db.get_file_by_path(file_path, proj_id)
+                    if file_record:
+                        query += " AND c.file_id = ?"
+                        params.append(file_record["id"])
+                if line:
+                    query += " AND m.line = ?"
+                    params.append(line)
+            else:
+                db.close()
+                return ErrorResult(
+                    message=f"Unknown entity type: {entity_type}",
+                    code="INVALID_ENTITY_TYPE",
+                )
+            
+            cursor.execute(query, params)
+            rows = cursor.fetchall()
             db.close()
-
-            if result.get("success"):
-                return SuccessResult(data=result)
+            
+            if rows:
+                entities = [dict(row) for row in rows]
+                return SuccessResult(
+                    data={
+                        "success": True,
+                        "entity_type": entity_type,
+                        "entity_name": entity_name,
+                        "entities": entities,
+                        "count": len(entities),
+                    }
+                )
             return ErrorResult(
-                message=result.get("message", "get_code_entity_info failed"),
-                code="GET_ENTITY_INFO_ERROR",
-                details=result,
+                message=f"Entity not found: {entity_type} {entity_name}",
+                code="ENTITY_NOT_FOUND",
             )
         except Exception as e:
             return self._handle_error(

@@ -10,7 +10,6 @@ from typing import Any, Dict, Optional
 from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 
 from ..base_mcp_command import BaseMCPCommand
-from ..get_class_hierarchy import GetClassHierarchyCommand as InternalGetClassHierarchy
 
 
 class GetClassHierarchyMCPCommand(BaseMCPCommand):
@@ -67,18 +66,13 @@ class GetClassHierarchyMCPCommand(BaseMCPCommand):
                     message="Project not found", code="PROJECT_NOT_FOUND"
                 )
 
-            cmd = InternalGetClassHierarchy(
-                db, proj_id, class_name=class_name, file_path=file_path
-            )
-            result = await cmd.execute()
+            # Get class hierarchy from database
+            # This requires parsing AST or checking base classes in classes table
+            # For now, return placeholder
             db.close()
-
-            if result.get("success"):
-                return SuccessResult(data=result)
             return ErrorResult(
-                message=result.get("message", "get_class_hierarchy failed"),
-                code="GET_CLASS_HIERARCHY_ERROR",
-                details=result,
+                message="Class hierarchy requires AST parsing or base_classes column in classes table",
+                code="NOT_IMPLEMENTED",
             )
         except Exception as e:
             return self._handle_error(

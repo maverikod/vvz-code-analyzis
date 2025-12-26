@@ -34,10 +34,10 @@ def get_file_by_path(
             (path, project_id),
         )
     else:
-        cursor.execute(
+    cursor.execute(
             "SELECT * FROM files WHERE path = ? AND project_id = ? AND (deleted = 0 OR deleted IS NULL)",
             (path, project_id),
-        )
+    )
     row = cursor.fetchone()
     if row:
         return dict(row)
@@ -87,10 +87,10 @@ def get_file_id(
             (path, project_id),
         )
     else:
-        cursor.execute(
+    cursor.execute(
             "SELECT id FROM files WHERE path = ? AND project_id = ? AND (deleted = 0 OR deleted IS NULL)",
             (path, project_id),
-        )
+    )
     row = cursor.fetchone()
     return row[0] if row else None
 

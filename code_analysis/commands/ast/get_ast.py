@@ -10,7 +10,6 @@ from typing import Any, Dict, Optional
 from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 
 from ..base_mcp_command import BaseMCPCommand
-from ..get_ast import GetASTCommand as InternalGetAST
 
 
 class GetASTMCPCommand(BaseMCPCommand):
@@ -68,16 +67,32 @@ class GetASTMCPCommand(BaseMCPCommand):
                     message="Project not found", code="PROJECT_NOT_FOUND"
                 )
 
-            cmd = InternalGetAST(db, proj_id, file_path, include_json=include_json)
-            result = await cmd.execute()
+            # Get file_id first
+            file_record = db.get_file_by_path(file_path, proj_id)
+            if not file_record:
+                db.close()
+                return ErrorResult(
+                    message=f"File not found: {file_path}",
+                    code="FILE_NOT_FOUND",
+                )
+
+            # Get AST from database
+            ast_data = await db.get_ast_tree(file_record["id"])
             db.close()
 
-            if result.get("success"):
+            if ast_data:
+                result = {
+                    "success": True,
+                    "file_path": file_path,
+                    "file_id": file_record["id"],
+                }
+                if include_json and ast_data.get("ast_json"):
+                    import json
+                    result["ast"] = json.loads(ast_data["ast_json"])
                 return SuccessResult(data=result)
             return ErrorResult(
-                message=result.get("message", "AST retrieval failed"),
-                code="GET_AST_ERROR",
-                details=result,
+                message="AST not found for file",
+                code="AST_NOT_FOUND",
             )
         except Exception as e:
             return self._handle_error(e, "GET_AST_ERROR", "get_ast")

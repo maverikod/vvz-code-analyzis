@@ -10,7 +10,6 @@ from typing import Any, Dict, Optional
 from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 
 from ..base_mcp_command import BaseMCPCommand
-from ..list_project_files import ListProjectFilesCommand as InternalListFiles
 
 
 class ListProjectFilesMCPCommand(BaseMCPCommand):
@@ -75,18 +74,29 @@ class ListProjectFilesMCPCommand(BaseMCPCommand):
                     message="Project not found", code="PROJECT_NOT_FOUND"
                 )
 
-            cmd = InternalListFiles(
-                db, proj_id, file_pattern=file_pattern, limit=limit, offset=offset
-            )
-            result = await cmd.execute()
+            # Get files from database
+            files = db.get_project_files(proj_id, include_deleted=False)
+            
+            # Apply file_pattern filter if provided
+            if file_pattern:
+                import fnmatch
+                files = [f for f in files if fnmatch.fnmatch(f["path"], file_pattern)]
+            
+            # Apply pagination
+            total = len(files)
+            if offset > 0 or limit:
+                files = files[offset : offset + limit if limit else None]
+            
             db.close()
-
-            if result.get("success"):
-                return SuccessResult(data=result)
-            return ErrorResult(
-                message=result.get("message", "list_project_files failed"),
-                code="LIST_FILES_ERROR",
-                details=result,
+            
+            return SuccessResult(
+                data={
+                    "success": True,
+                    "files": files,
+                    "count": len(files),
+                    "total": total,
+                    "offset": offset,
+                }
             )
         except Exception as e:
             return self._handle_error(e, "LIST_FILES_ERROR", "list_project_files")

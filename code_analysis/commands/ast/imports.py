@@ -10,7 +10,6 @@ from typing import Any, Dict, Optional
 from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 
 from ..base_mcp_command import BaseMCPCommand
-from ..get_imports import GetImportsCommand as InternalGetImports
 
 
 class GetImportsMCPCommand(BaseMCPCommand):

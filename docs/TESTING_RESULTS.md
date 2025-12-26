@@ -360,9 +360,9 @@ email: vasilyvz@gmail.com
 - **Ошибки**: -
 
 ### 11.2 health
-- **Статус**: ⏳ Ожидает выполнения
-- **Время**: -
-- **Результат**: -
+- **Статус**: ✅ Успешно (MCP + curl)
+- **Время**: ~0.3s
+- **Результат**: Сервер работает, 50 команд зарегистрировано (curl: /health работает)
 - **Ошибки**: -
 
 ---
@@ -374,6 +374,6 @@ email: vasilyvz@gmail.com
 - **Успешно**: 15
 - **Частично (ошибки БД)**: 9
 - **Не найдено**: 7 (list_cst_blocks, compose_cst_module, analyze_project, update_indexes, semantic_search, get_ast, list_project_files, get_imports)
-- **Протестировано (curl)**: 0 (API endpoint не найден - требуется проверка)
+- **Протестировано (curl)**: 1 (health endpoint работает, но команды через MCP Proxy)
 - **Пропущено**: 24
 

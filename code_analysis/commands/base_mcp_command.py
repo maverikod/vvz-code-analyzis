@@ -97,39 +97,45 @@ class BaseMCPCommand(Command):
                 if needs_analysis:
                     logger.info(f"Running automatic project analysis for {root_path}")
                     # Import here to avoid circular imports
-                    from .analyze_project_command import AnalyzeProjectCommand
-
-                    # Run analysis synchronously (this is a blocking operation)
-                    # We need to run it in the current context
-                    import asyncio
-
                     try:
-                        # Try to get running event loop
-                        loop = asyncio.get_event_loop()
-                    except RuntimeError:
-                        # No event loop, create new one
-                        loop = asyncio.new_event_loop()
-                        asyncio.set_event_loop(loop)
+                        from .code_mapper_mcp_command import UpdateIndexesMCPCommand
 
-                    # Create command instance and run
-                    cmd = AnalyzeProjectCommand()
-                    # Run analysis with default parameters
-                    result = loop.run_until_complete(
-                        cmd.execute(
-                            root_dir=str(root_path),
-                            max_lines=400,
-                            force=False,
+                        # Run analysis synchronously (this is a blocking operation)
+                        # We need to run it in the current context
+                        import asyncio
+
+                        try:
+                            # Try to get running event loop
+                            loop = asyncio.get_event_loop()
+                        except RuntimeError:
+                            # No event loop, create new one
+                            loop = asyncio.new_event_loop()
+                            asyncio.set_event_loop(loop)
+
+                        # Create command instance and run
+                        cmd = UpdateIndexesMCPCommand()
+                        # Run analysis with default parameters
+                        result = loop.run_until_complete(
+                            cmd.execute(
+                                root_dir=str(root_path),
+                                max_lines=400,
+                            )
                         )
-                    )
 
-                    if not result.success:
+                        if not result.success:
+                            logger.warning(
+                                f"Automatic analysis completed with warnings: {result.message}"
+                            )
+                        else:
+                            logger.info(
+                                f"Automatic analysis completed successfully: "
+                                f"{result.data.get('files_analyzed', 0) if result.data else 0} files analyzed"
+                            )
+                    except ImportError as e:
                         logger.warning(
-                            f"Automatic analysis completed with warnings: {result.message}"
-                        )
-                    else:
-                        logger.info(
-                            f"Automatic analysis completed successfully: "
-                            f"{result.data.get('files_analyzed', 0)} files analyzed"
+                            f"Cannot import UpdateIndexesMCPCommand for auto-analysis: {e}. "
+                            f"Database will be created but not populated. "
+                            f"Run 'update_indexes' command manually."
                         )
 
             return db

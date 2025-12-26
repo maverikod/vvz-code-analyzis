@@ -42,6 +42,7 @@ _MODULES = [
     issues,
     usages,
     ast,
+    cst,
     chunks,
     content,
     statistics,

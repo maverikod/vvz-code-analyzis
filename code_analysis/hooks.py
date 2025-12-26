@@ -99,6 +99,13 @@ def register_code_analysis_commands(reg: registry) -> None:
         pass
 
     try:
+        from .commands.code_mapper_mcp_command import UpdateIndexesMCPCommand
+
+        reg.register(UpdateIndexesMCPCommand, "custom")
+    except ImportError:
+        pass
+
+    try:
         from .commands.vector_commands import RebuildFaissCommand, RevectorizeCommand
 
         reg.register(RebuildFaissCommand, "custom")
@@ -180,13 +187,33 @@ def register_code_analysis_commands(reg: registry) -> None:
         logger = logging.getLogger(__name__)
         logger.error(f"Failed to register search commands: {e}", exc_info=True)
 
-    # Code mapper command (may have dependencies)
+    # Code mapper commands (may have dependencies)
     try:
         from .commands.code_mapper_mcp_command import UpdateIndexesMCPCommand
 
         reg.register(UpdateIndexesMCPCommand, "custom")
     except ImportError:
         pass
+
+    try:
+        from .commands.code_mapper_mcp_commands import (
+            ListLongFilesMCPCommand,
+            ListErrorsByCategoryMCPCommand,
+        )
+
+        reg.register(ListLongFilesMCPCommand, "custom")
+        reg.register(ListErrorsByCategoryMCPCommand, "custom")
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.info(f"✅ Registered code_mapper commands: list_long_files, list_errors_by_category")
+    except ImportError as e:
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.warning(f"Failed to import code_mapper commands: {e}")
+    except Exception as e:
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.error(f"Failed to register code_mapper commands: {e}", exc_info=True)
 
     # Backup commands (exist)
     from .commands.backup_mcp_commands import (

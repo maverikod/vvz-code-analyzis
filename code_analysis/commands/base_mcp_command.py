@@ -99,36 +99,39 @@ class BaseMCPCommand(Command):
                     # Import here to avoid circular imports
                     try:
                         from .code_mapper_mcp_command import UpdateIndexesMCPCommand
+                    except ImportError:
+                        logger.warning("UpdateIndexesMCPCommand not available, skipping auto-analysis")
+                        return database
 
-                        # Run analysis synchronously (this is a blocking operation)
-                        # We need to run it in the current context
-                        import asyncio
+                    # Run analysis synchronously (this is a blocking operation)
+                    # We need to run it in the current context
+                    import asyncio
 
-                        try:
-                            # Try to get running event loop
-                            loop = asyncio.get_event_loop()
-                        except RuntimeError:
-                            # No event loop, create new one
-                            loop = asyncio.new_event_loop()
-                            asyncio.set_event_loop(loop)
+                    try:
+                        # Try to get running event loop
+                        loop = asyncio.get_event_loop()
+                    except RuntimeError:
+                        # No event loop, create new one
+                        loop = asyncio.new_event_loop()
+                        asyncio.set_event_loop(loop)
 
-                        # Create command instance and run
+                    # Create command instance and run
                         cmd = UpdateIndexesMCPCommand()
-                        # Run analysis with default parameters
-                        result = loop.run_until_complete(
-                            cmd.execute(
-                                root_dir=str(root_path),
-                                max_lines=400,
-                            )
+                    # Run analysis with default parameters
+                    result = loop.run_until_complete(
+                        cmd.execute(
+                            root_dir=str(root_path),
+                            max_lines=400,
                         )
+                    )
 
-                        if not result.success:
-                            logger.warning(
-                                f"Automatic analysis completed with warnings: {result.message}"
-                            )
-                        else:
-                            logger.info(
-                                f"Automatic analysis completed successfully: "
+                    if not result.success:
+                        logger.warning(
+                            f"Automatic analysis completed with warnings: {result.message}"
+                        )
+                    else:
+                        logger.info(
+                            f"Automatic analysis completed successfully: "
                                 f"{result.data.get('files_analyzed', 0) if result.data else 0} files analyzed"
                             )
                     except ImportError as e:

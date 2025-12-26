@@ -54,6 +54,41 @@ class ReplaceOp:
 
 
 @dataclass(frozen=True)
+class InsertOp:
+    """
+    Insert operation for adding new nodes.
+
+    Inserts new_code before or after the node matched by selector.
+    If selector is None or empty, inserts at the end of module/class/function body.
+    """
+
+    selector: Optional[Selector]
+    new_code: str
+    position: str = "after"  # "before" or "after" or "end"
+    file_docstring: Optional[str] = None
+
+
+@dataclass(frozen=True)
+class CreateOp:
+    """
+    Create operation for creating new nodes.
+
+    Creates a new node from new_code at the specified position.
+    Position can be:
+    - "end_of_module": at the end of module body
+    - "after_selector": after the node matched by selector
+    - "before_selector": before the node matched by selector
+    - "end_of_class": at the end of class body (requires selector pointing to class)
+    - "end_of_function": at the end of function body (requires selector pointing to function)
+    """
+
+    selector: Optional[Selector]
+    new_code: str
+    position: str = "end_of_module"  # "end_of_module", "after_selector", "before_selector", "end_of_class", "end_of_function"
+    file_docstring: Optional[str] = None
+
+
+@dataclass(frozen=True)
 class BlockInfo:
     """Index entry for replaceable statement blocks."""
 

@@ -64,13 +64,13 @@ class FormatCodeCommand(Command):
             path = Path(file_path)
             if not path.exists():
                 return ErrorResult(
-                    error_code="FILE_NOT_FOUND",
+                    code="FILE_NOT_FOUND",
                     message=f"File not found: {file_path}",
                 )
 
             if not path.is_file():
                 return ErrorResult(
-                    error_code="NOT_A_FILE",
+                    code="NOT_A_FILE",
                     message=f"Path is not a file: {file_path}",
                 )
 
@@ -86,14 +86,14 @@ class FormatCodeCommand(Command):
                 )
             else:
                 return ErrorResult(
-                    error_code="FORMATTING_FAILED",
+                    code="FORMATTING_FAILED",
                     message=error or "Formatting failed",
                 )
 
         except Exception as e:
             logger.exception(f"Error formatting code: {e}")
             return ErrorResult(
-                error_code="INTERNAL_ERROR",
+                code="INTERNAL_ERROR",
                 message=f"Internal error: {str(e)}",
             )
 
@@ -147,13 +147,13 @@ class LintCodeCommand(Command):
             path = Path(file_path)
             if not path.exists():
                 return ErrorResult(
-                    error_code="FILE_NOT_FOUND",
+                    code="FILE_NOT_FOUND",
                     message=f"File not found: {file_path}",
                 )
 
             if not path.is_file():
                 return ErrorResult(
-                    error_code="NOT_A_FILE",
+                    code="NOT_A_FILE",
                     message=f"Path is not a file: {file_path}",
                 )
 
@@ -172,7 +172,7 @@ class LintCodeCommand(Command):
         except Exception as e:
             logger.exception(f"Error linting code: {e}")
             return ErrorResult(
-                error_code="INTERNAL_ERROR",
+                code="INTERNAL_ERROR",
                 message=f"Internal error: {str(e)}",
             )
 
@@ -235,20 +235,20 @@ class TypeCheckCodeCommand(Command):
             path = Path(file_path)
             if not path.exists():
                 return ErrorResult(
-                    error_code="FILE_NOT_FOUND",
+                    code="FILE_NOT_FOUND",
                     message=f"File not found: {file_path}",
                 )
 
             if not path.is_file():
                 return ErrorResult(
-                    error_code="NOT_A_FILE",
+                    code="NOT_A_FILE",
                     message=f"Path is not a file: {file_path}",
                 )
 
             config_path = Path(config_file) if config_file else None
             if config_file and not config_path.exists():
                 return ErrorResult(
-                    error_code="CONFIG_NOT_FOUND",
+                    code="CONFIG_NOT_FOUND",
                     message=f"Config file not found: {config_file}",
                 )
 
@@ -269,6 +269,6 @@ class TypeCheckCodeCommand(Command):
         except Exception as e:
             logger.exception(f"Error type checking code: {e}")
             return ErrorResult(
-                error_code="INTERNAL_ERROR",
+                code="INTERNAL_ERROR",
                 message=f"Internal error: {str(e)}",
             )

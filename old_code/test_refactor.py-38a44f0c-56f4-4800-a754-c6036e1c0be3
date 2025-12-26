@@ -1,8 +1,0 @@
-
-class LargeClass:
-    def method_a(self):
-        pass
-    def method_b(self):
-        pass
-    def method_c(self):
-        pass

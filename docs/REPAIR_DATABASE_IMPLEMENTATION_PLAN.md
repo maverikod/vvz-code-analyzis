@@ -92,8 +92,11 @@
 
 - [x] **5.2** Перезапустить сервер для регистрации команд
   - Восстановлен hooks.py с регистрацией новых команд
+  - Восстановлены недостающие модули (main.py, command_execution_job_patch.py, code_quality, database, db_driver, exceptions, progress_tracker)
   - Остановлен старый сервер
   - Запущен новый сервер
+  - Проверена регистрация всех команд через MCP Proxy
+  - ✅ Все команды repair доступны: repair_database, start_repair_worker, stop_repair_worker, repair_worker_status
   - Статус: ✅ Выполнено
 
 - [x] **5.3** Создать тестовый скрипт для test_data

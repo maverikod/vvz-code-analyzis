@@ -9,9 +9,11 @@ email: vasilyvz@gmail.com
 """
 
 from .errors import CSTModulePatchError
-from .models import BlockInfo, ReplaceOp, Selector
+from .models import BlockInfo, ReplaceOp, InsertOp, CreateOp, Selector
 from .blocks import list_cst_blocks
 from .patcher import apply_replace_ops
+from .patcher_insert import apply_insert_ops
+from .patcher_create import apply_create_ops
 from .docstring_validator import validate_module_docstrings, DocstringValidationError
 from .utils import (
     compile_module,
@@ -25,9 +27,13 @@ __all__ = [
     "DocstringValidationError",
     "Selector",
     "ReplaceOp",
+    "InsertOp",
+    "CreateOp",
     "BlockInfo",
     "list_cst_blocks",
     "apply_replace_ops",
+    "apply_insert_ops",
+    "apply_create_ops",
     "validate_module_docstrings",
     "move_module_imports_to_top",
     "compile_module",

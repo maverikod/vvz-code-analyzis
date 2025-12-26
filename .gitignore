@@ -158,3 +158,14 @@ MagicMock/
 code_analysis/code_map.yaml
 code_analysis/code_issues.yaml
 code_analysis/method_index.yaml
+
+# Test data (should not be committed)
+test_data/
+
+# Old code backups
+old_code/
+
+# Temporary files
+extract_*.json
+test_*.py
+!tests/**/*.py

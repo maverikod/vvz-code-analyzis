@@ -48,7 +48,6 @@ class FulltextSearchMCPCommand(BaseMCPCommand):
                 "limit": {
                     "type": "integer",
                     "description": "Maximum number of results",
-                    "default": 20,
                 },
                 "project_id": {
                     "type": "string",

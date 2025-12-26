@@ -1,4 +1,0 @@
-
-class MyClass:
-    def method1(self):
-        pass

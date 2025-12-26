@@ -357,6 +357,25 @@ class CodeDatabase:
                 self._commit()
             except Exception:
                 pass  # Column might already exist
+
+        # Create CST trees table for source code storage
+        self._execute(
+            """
+                CREATE TABLE IF NOT EXISTS cst_trees (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    file_id INTEGER NOT NULL,
+                    project_id TEXT NOT NULL,
+                    cst_code TEXT NOT NULL,
+                    cst_hash TEXT NOT NULL,
+                    file_mtime REAL NOT NULL,
+                    created_at REAL DEFAULT (julianday('now')),
+                    updated_at REAL DEFAULT (julianday('now')),
+                    FOREIGN KEY (file_id) REFERENCES files(id) ON DELETE CASCADE,
+                    FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE,
+                    UNIQUE(file_id, cst_hash)
+                )
+            """
+        )
         self._execute(
             """
                 CREATE TABLE IF NOT EXISTS vector_index (

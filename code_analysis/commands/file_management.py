@@ -616,7 +616,7 @@ class RepairDatabaseCommand:
         self, file_id: int, file_path: str, file_record: Dict[str, Any]
     ) -> bool:
         """
-        Restore file from CST nodes.
+        Restore file from CST (source code stored in database).
 
         Args:
             file_id: File ID
@@ -627,29 +627,36 @@ class RepairDatabaseCommand:
             True if file was restored, False otherwise
         """
         try:
-            # Get AST tree from database
-            with self.database._lock:
-                cursor = self.database.conn.cursor()
-                cursor.execute(
-                    "SELECT tree_json FROM ast_trees WHERE file_id = ?", (file_id,)
-                )
-                row = cursor.fetchone()
-                if not row:
-                    logger.warning(f"No AST tree found for file {file_id}")
-                    return False
-
-                # TODO: Restore file content from AST tree
-                # This requires converting AST back to source code
-                # For now, we'll mark the file as needing analysis
-                # The file will be re-analyzed and restored during next analysis cycle
-
-                logger.info(
-                    f"AST tree found for {file_path}, but full restoration from AST not yet implemented"
-                )
+            # Get CST tree (source code) from database
+            cst_data = await self.database.get_cst_tree(file_id)
+            if not cst_data:
+                logger.warning(f"No CST tree (source code) found for file {file_id}")
                 return False
 
+            cst_code = cst_data.get("cst_code")
+            if not cst_code:
+                logger.warning(f"CST tree has no source code for file {file_id}")
+                return False
+
+            # Determine target path
+            if file_record.get("deleted"):
+                # File is marked as deleted - restore to version directory
+                version_path = Path(self.version_dir) / file_record.get("version_dir", "") / file_path
+                version_path.parent.mkdir(parents=True, exist_ok=True)
+                target_path = version_path
+            else:
+                # File should be in project directory
+                target_path = self.root_dir / file_path
+
+            # Restore file content
+            target_path.parent.mkdir(parents=True, exist_ok=True)
+            target_path.write_text(cst_code, encoding="utf-8")
+            
+            logger.info(f"Restored file {file_path} from CST to {target_path}")
+            return True
+
         except Exception as e:
-            logger.error(f"Error restoring file from CST: {e}")
+            logger.error(f"Error restoring file from CST: {e}", exc_info=True)
             return False
 
     async def _stop_all_workers(self) -> Dict[str, Any]:

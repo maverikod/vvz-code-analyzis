@@ -118,6 +118,10 @@ class UpdateIndexesMCPCommand(BaseMCPCommand):
                 asyncio.set_event_loop(loop)
             loop.run_until_complete(database.save_ast_tree(file_id, project_id, ast_json, ast_hash, file_mtime, overwrite=True))
 
+            # Save CST (source code) for file restoration
+            cst_hash = hashlib.sha256(file_content.encode()).hexdigest()
+            loop.run_until_complete(database.save_cst_tree(file_id, project_id, file_content, cst_hash, file_mtime, overwrite=True))
+
             # Extract and save classes, functions, methods, imports
             classes_added = 0
             functions_added = 0

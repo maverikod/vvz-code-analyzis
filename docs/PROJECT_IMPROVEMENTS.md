@@ -40,7 +40,7 @@ Based on comprehensive analysis of the codebase using AST tools, dependency anal
    - ✅ `refactorer_pkg/utils.py` - Formatting utilities (76 lines)
    - ✅ `refactorer_pkg/__init__.py` - Public API
    - ✅ `refactorer/package_splitter.py` - FileToPackageSplitter (in legacy package)
-   - ⬜ Remove legacy monolith `code_analysis/core/refactorer.py` after testing (compat kept for now)
+   - ✅ Removed legacy monolith `code_analysis/core/refactorer.py` (backed up to `old_code/`)
 
 2. **`database.py` (2284 lines)** - ✅ Split package created:
    - ✅ `database/base.py` - Connection management / schema via driver abstraction
@@ -55,7 +55,7 @@ Based on comprehensive analysis of the codebase using AST tools, dependency anal
    - ✅ `database/ast.py` - AST operations
    - ✅ `database/chunks.py` / `database/content.py` / `database/statistics.py`
    - ✅ `database/__init__.py` - Public API (CodeDatabase facade)
-   - ⬜ Remove legacy monolith `code_analysis/core/database.py` after testing (compat kept for now)
+   - ⬜ Remove legacy monolith `code_analysis/core/database.py` after testing (compat kept for now - NOT a shim, still in active use)
 
 3. **`ast_mcp_commands.py` (920 lines)** - ✅ Split into:
    - ✅ `commands/ast/__init__.py` - Public API
@@ -296,8 +296,37 @@ class RefactoringError(CodeAnalysisError):
 
 ### Phase 2 (Short-term - 2-4 weeks)
 1. ✅ Split `ast_mcp_commands.py` into separate files (see `code_analysis/commands/ast/`; shim kept for compatibility)
-2. Create base classes for MCP commands
-3. Standardize error handling
+2. ✅ Create base classes for MCP commands
+   - ✅ Created `BaseMCPCommand` in `code_analysis/commands/base_mcp_command.py`
+   - ✅ Provides common methods: `_open_database`, `_get_project_id`, `_validate_root_dir`, `_validate_file_path`, `_handle_error`
+   - ✅ Updated refactoring commands to use `BaseMCPCommand`
+   - ✅ Updated search commands to use `BaseMCPCommand`
+   - ✅ Updated all AST commands (12 commands) in `ast/` to use `BaseMCPCommand`
+   - ✅ Updated analyze commands to use `BaseMCPCommand`
+   - ✅ Updated vector commands (`RebuildFaissCommand`, `RevectorizeCommand`) to use `BaseMCPCommand`
+   - ✅ Updated `UpdateIndexesMCPCommand` to use `BaseMCPCommand`
+   - ✅ Updated `CheckVectorsCommand` to use `BaseMCPCommand`
+   - ✅ Updated `SemanticSearchMCPCommand` to use `BaseMCPCommand`
+   - ✅ Updated `ComposeCSTModuleCommand` to use `BaseMCPCommand`
+   - ✅ Removed duplicate helper functions from `ast/_common.py` (functions now in `BaseMCPCommand`)
+   - ✅ Deleted `ast/_common.py` file (no longer needed)
+   - ✅ Removed old shim files (backed up to `old_code/`):
+     - ✅ `refactorer.py` → `old_code/refactorer.py.YYYY-MM-DDThh-mm-ss`
+     - ✅ `analyzer.py` → `old_code/analyzer.py.YYYY-MM-DDThh-mm-ss`
+     - ✅ `docstring_chunker.py` → `old_code/docstring_chunker.py.YYYY-MM-DDThh-mm-ss`
+     - ✅ `vectorization_worker.py` → `old_code/vectorization_worker.py.YYYY-MM-DDThh-mm-ss`
+   - ✅ Updated all imports to use new packages directly (`analyzer_pkg`, `docstring_chunker_pkg`, `vectorization_worker_pkg`)
+   - ✅ Created `old_code/` directory for backup copies with timestamp format: `FileName.Extension.YYYY-MM-DDThh-mm-ss`
+3. ✅ Standardize error handling
+   - ✅ Created exception hierarchy in `code_analysis/core/exceptions.py`:
+     - `CodeAnalysisError` (base)
+     - `ValidationError`
+     - `RefactoringError`
+     - `DatabaseError`
+     - `AnalysisError`
+     - `ConfigurationError`
+   - ✅ Implemented `_handle_error` method in `BaseMCPCommand` for consistent error handling
+   - ✅ All commands now use standardized error handling
 4. Improve type hints coverage
 
 ### Phase 3 (Medium-term - 1-2 months)

@@ -12,6 +12,7 @@ from .errors import CSTModulePatchError
 from .models import BlockInfo, ReplaceOp, Selector
 from .blocks import list_cst_blocks
 from .patcher import apply_replace_ops
+from .docstring_validator import validate_module_docstrings, DocstringValidationError
 from .utils import (
     compile_module,
     move_module_imports_to_top,
@@ -21,11 +22,13 @@ from .utils import (
 
 __all__ = [
     "CSTModulePatchError",
+    "DocstringValidationError",
     "Selector",
     "ReplaceOp",
     "BlockInfo",
     "list_cst_blocks",
     "apply_replace_ops",
+    "validate_module_docstrings",
     "move_module_imports_to_top",
     "compile_module",
     "unified_diff",

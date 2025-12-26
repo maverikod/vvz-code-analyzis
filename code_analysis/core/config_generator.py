@@ -282,6 +282,74 @@ class CodeAnalysisConfigGenerator:
             "chk_hostname": False,
         }
 
+        # Code analysis configuration
+        code_analysis_config = {
+            "host": server_host_val,
+            "port": server_port_val,
+            "log": f"{server_log_dir or './logs'}/code_analysis.log",
+            "db_path": "data/code_analysis.db",
+            "dirs": [],
+            "chunker": {
+                "enabled": True,
+                "url": "localhost",
+                "port": 8009,
+                "protocol": protocol,
+                "cert_file": server_cert_file
+                or "mtls_certificates/mtls_certificates/client/code-analysis.crt",
+                "key_file": server_key_file
+                or "mtls_certificates/mtls_certificates/client/code-analysis.key",
+                "ca_cert_file": server_ca_cert_file
+                or "mtls_certificates/mtls_certificates/ca/ca.crt",
+                "crl_file": None,
+                "retry_attempts": 3,
+                "retry_delay": 5.0,
+                "timeout": 60.0,
+            },
+            "embedding": {
+                "enabled": True,
+                "host": "localhost",
+                "port": 8001,
+                "protocol": protocol,
+                "cert_file": server_cert_file
+                or "mtls_certificates/mtls_certificates/client/code-analysis.crt",
+                "key_file": server_key_file
+                or "mtls_certificates/mtls_certificates/client/code-analysis.key",
+                "ca_cert_file": server_ca_cert_file
+                or "mtls_certificates/mtls_certificates/ca/ca.crt",
+                "crl_file": None,
+                "retry_attempts": 3,
+                "retry_delay": 5.0,
+                "timeout": 60.0,
+            },
+            "faiss_index_path": "data/faiss_index.bin",
+            "vector_dim": 384,
+            "min_chunk_length": 30,
+            "vectorization_retry_attempts": 3,
+            "vectorization_retry_delay": 10.0,
+            "worker": {
+                "enabled": True,
+                "poll_interval": 30,
+                "batch_size": 10,
+                "retry_attempts": 3,
+                "retry_delay": 10.0,
+                "watch_dirs": [],
+                "dynamic_watch_file": "data/dynamic_watch_dirs.json",
+                "log_path": "logs/vectorization_worker.log",
+                "circuit_breaker": {
+                    "failure_threshold": 5,
+                    "recovery_timeout": 60.0,
+                    "success_threshold": 2,
+                    "initial_backoff": 5.0,
+                    "max_backoff": 300.0,
+                    "backoff_multiplier": 2.0,
+                },
+                "batch_processor": {
+                    "max_empty_iterations": 3,
+                    "empty_delay": 5.0,
+                },
+            },
+        }
+
         # Complete configuration
         config = {
             "server": server_config,
@@ -291,11 +359,14 @@ class CodeAnalysisConfigGenerator:
             "auth": auth_config,
             "queue_manager": queue_manager_config,
             "transport": transport_config,
+            "code_analysis": code_analysis_config,
         }
 
         # Save configuration
         out_path_obj = Path(out_path)
         out_path_obj.parent.mkdir(parents=True, exist_ok=True)
+        import json
+
         with open(out_path_obj, "w", encoding="utf-8") as f:
             json.dump(config, f, indent=2, ensure_ascii=False)
 

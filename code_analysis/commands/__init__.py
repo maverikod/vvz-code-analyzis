@@ -1,47 +1,26 @@
 """
-Commands layer for code analysis.
+Commands package for code analysis server.
 
-This module provides command implementations separated from interfaces.
-Commands can be used by both CLI and MCP interfaces.
+This package contains all MCP command implementations.
+Commands are automatically discovered by mcp-proxy-adapter when modules are imported.
 
 Author: Vasiliy Zdanovskiy
 email: vasilyvz@gmail.com
 """
 
-from .analyze import AnalyzeCommand
-from .search import SearchCommand
-from .refactor import RefactorCommand
-from .issues import IssuesCommand
-from .project import ProjectCommand
-from .update_ast import UpdateASTCommand
-from .get_ast import GetASTCommand
-from .search_ast_nodes import SearchASTNodesCommand
-from .ast_statistics import ASTStatisticsCommand
-from .list_project_files import ListProjectFilesCommand
-from .get_code_entity_info import GetCodeEntityInfoCommand
-from .list_code_entities import ListCodeEntitiesCommand
-from .get_imports import GetImportsCommand
-from .find_dependencies import FindDependenciesCommand
-from .get_class_hierarchy import GetClassHierarchyCommand
-from .find_usages import FindUsagesCommand
-from .export_graph import ExportGraphCommand
+# Import new command modules to ensure they are discovered by mcp-proxy-adapter
+# Commands are auto-discovered when their modules are imported
+# Only import new modules that we know work correctly
 
-__all__ = [
-    "AnalyzeCommand",
-    "SearchCommand",
-    "RefactorCommand",
-    "IssuesCommand",
-    "ProjectCommand",
-    "UpdateASTCommand",
-    "GetASTCommand",
-    "SearchASTNodesCommand",
-    "ASTStatisticsCommand",
-    "ListProjectFilesCommand",
-    "GetCodeEntityInfoCommand",
-    "ListCodeEntitiesCommand",
-    "GetImportsCommand",
-    "FindDependenciesCommand",
-    "GetClassHierarchyCommand",
-    "FindUsagesCommand",
-    "ExportGraphCommand",
-]
+# File management commands
+from . import file_management_mcp_commands  # noqa: F401
+
+# Log viewer commands
+from . import log_viewer_mcp_commands  # noqa: F401
+
+# Worker status commands
+from . import worker_status_mcp_commands  # noqa: F401
+
+# Note: Other command modules (backup_mcp_commands, search_mcp_commands, etc.)
+# are already working and don't need explicit import here.
+# mcp-proxy-adapter will discover them automatically when the server starts.

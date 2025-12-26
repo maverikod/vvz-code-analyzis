@@ -31,7 +31,7 @@ async def _request_chunking_for_files(
     Returns:
         Number of files successfully chunked
     """
-    from ..docstring_chunker import DocstringChunker
+    from ..docstring_chunker_pkg import DocstringChunker
 
     chunker = DocstringChunker(
         database=database,
@@ -53,8 +53,16 @@ async def _request_chunking_for_files(
 
             logger.info(f"Requesting chunking for file {file_path} (id={file_id})")
 
+            # Check if file exists on disk before attempting to read
+            file_path_obj = Path(file_path)
+            if not file_path_obj.exists():
+                logger.debug(
+                    f"Skipping missing file (may have been split/refactored): {file_path}"
+                )
+                continue
+
             try:
-                file_content = Path(file_path).read_text(encoding="utf-8")
+                file_content = file_path_obj.read_text(encoding="utf-8")
             except Exception as e:
                 logger.warning(f"Failed to read file {file_path}: {e}")
                 continue
@@ -93,8 +101,13 @@ async def _chunk_missing_docstring_files(
 ) -> int:
     """
     Chunk files that currently have no docstring chunks in DB (fallback pass).
+    
+    **Important**: Only processes files that:
+    - Are not marked as deleted
+    - Actually exist on disk
+    - Have no docstring chunks yet
     """
-    from ..docstring_chunker import DocstringChunker
+    from ..docstring_chunker_pkg import DocstringChunker
 
     assert database.conn is not None
     cursor = database.conn.cursor()
@@ -105,6 +118,7 @@ async def _chunk_missing_docstring_files(
         LEFT JOIN code_chunks c
           ON f.id = c.file_id AND c.source_type LIKE '%docstring%'
         WHERE f.project_id = ?
+        AND (f.deleted = 0 OR f.deleted IS NULL)
         GROUP BY f.id, f.path, f.project_id
         HAVING COUNT(c.id) = 0
         LIMIT ?
@@ -130,8 +144,16 @@ async def _chunk_missing_docstring_files(
         file_path = row[1]
         project_id = row[2]
 
+        # Check if file exists on disk before attempting to process
+        file_path_obj = Path(file_path)
+        if not file_path_obj.exists():
+            logger.debug(
+                f"Skipping missing file (may have been split/refactored): {file_path}"
+            )
+            continue
+
         try:
-            content = Path(file_path).read_text(encoding="utf-8")
+            content = file_path_obj.read_text(encoding="utf-8")
             tree = ast.parse(content, filename=file_path)
             await chunker.process_file(
                 file_id=file_id,
@@ -155,6 +177,8 @@ def _log_missing_docstring_files(
 ) -> None:
     """
     Log files that have no docstring chunks in the database.
+    
+    **Important**: Only logs files that are not marked as deleted.
     """
     try:
         assert database.conn is not None
@@ -166,6 +190,7 @@ def _log_missing_docstring_files(
             LEFT JOIN code_chunks c
               ON f.id = c.file_id AND c.source_type LIKE '%docstring%'
             WHERE f.project_id = ?
+            AND (f.deleted = 0 OR f.deleted IS NULL)
             GROUP BY f.id, f.path
             HAVING COUNT(c.id) = 0
             LIMIT ?
@@ -175,8 +200,16 @@ def _log_missing_docstring_files(
         rows = cursor.fetchall()
         if rows:
             paths = [row[0] for row in rows]
-            logger.warning(
-                f"⚠️  Files with no docstring chunks in DB (sample {len(paths)}/{sample}): {paths}"
-            )
+            # Filter out paths that don't exist on disk (may have been split/refactored)
+            existing_paths = [p for p in paths if Path(p).exists()]
+            if existing_paths:
+                logger.warning(
+                    f"⚠️  Files with no docstring chunks in DB (sample {len(existing_paths)}/{sample}): {existing_paths}"
+                )
+            if len(existing_paths) < len(paths):
+                missing_count = len(paths) - len(existing_paths)
+                logger.debug(
+                    f"Skipped {missing_count} missing file(s) in log (may have been split/refactored)"
+                )
     except Exception as e:
         logger.warning(f"Failed to log missing docstring files: {e}", exc_info=True)

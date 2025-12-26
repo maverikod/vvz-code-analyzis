@@ -1,0 +1,8 @@
+
+class Child1:
+    def common_method(self):
+        pass
+
+class Child2:
+    def common_method(self):
+        pass

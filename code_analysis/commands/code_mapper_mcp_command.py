@@ -7,18 +7,17 @@ email: vasilyvz@gmail.com
 
 import asyncio
 import logging
-from pathlib import Path
 from typing import Any, Dict, Optional
 
-from mcp_proxy_adapter.commands.base import Command
 from mcp_proxy_adapter.commands.result import SuccessResult, ErrorResult
 
+from .base_mcp_command import BaseMCPCommand
 from ..code_mapper import CodeMapper
 
 logger = logging.getLogger(__name__)
 
 
-class UpdateIndexesMCPCommand(Command):
+class UpdateIndexesMCPCommand(BaseMCPCommand):
     """Update code indexes using code_mapper (analyze project and generate reports)."""
 
     name = "update_indexes"
@@ -74,17 +73,14 @@ class UpdateIndexesMCPCommand(Command):
             SuccessResult with update results or ErrorResult on failure
         """
         try:
-            root_path = Path(root_dir).resolve()
-            if not root_path.exists() or not root_path.is_dir():
-                return ErrorResult(
-                    message=f"Root directory does not exist or is not a directory: {root_dir}",
-                    code="INVALID_PATH",
-                )
+            root_path = self._validate_root_dir(root_dir)
 
             # Default output_dir to code_analysis subdirectory
             if not output_dir:
                 output_dir = str(root_path / "code_analysis")
             else:
+                from pathlib import Path
+
                 output_dir = str(Path(output_dir).resolve())
 
             # Run code_mapper in executor to avoid blocking
@@ -100,7 +96,7 @@ class UpdateIndexesMCPCommand(Command):
                 return mapper
 
             loop = asyncio.get_event_loop()
-            mapper = await loop.run_in_executor(None, run_code_mapper)
+            await loop.run_in_executor(None, run_code_mapper)
 
             return SuccessResult(
                 data={
@@ -112,9 +108,4 @@ class UpdateIndexesMCPCommand(Command):
             )
 
         except Exception as e:
-            logger.exception(f"Error updating indexes: {e}")
-            return ErrorResult(
-                message=f"Failed to update indexes: {str(e)}",
-                code="INDEX_UPDATE_ERROR",
-                details={"error": str(e)},
-            )
+            return self._handle_error(e, "INDEX_UPDATE_ERROR", "update_indexes")

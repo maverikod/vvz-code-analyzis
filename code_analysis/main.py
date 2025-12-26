@@ -118,6 +118,150 @@ def main() -> None:
             if key not in app_config:
                 app_config[key] = value
 
+    # Validate configuration if starting in daemon mode
+    if args.daemon:
+        from code_analysis.core.config_validator import CodeAnalysisConfigValidator
+
+        validator = CodeAnalysisConfigValidator()
+        try:
+            validation_results = validator.validate_config(full_config)
+            summary = validator.get_validation_summary()
+
+            if not summary["is_valid"]:
+                # Log errors
+                errors = [
+                    r for r in validation_results if r.level == "error"
+                ]
+                warnings = [
+                    r for r in validation_results if r.level == "warning"
+                ]
+
+                # Setup logging to write to stderr and log file
+                import logging
+
+                log_dir = Path(app_config.get("server", {}).get("log_dir", "./logs"))
+                log_dir.mkdir(parents=True, exist_ok=True)
+                log_file = log_dir / "mcp_server.log"
+
+                # Configure logging
+                logging.basicConfig(
+                    level=logging.ERROR,
+                    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+                    handlers=[
+                        logging.FileHandler(log_file, encoding="utf-8"),
+                        logging.StreamHandler(sys.stderr),
+                    ],
+                )
+                logger = logging.getLogger(__name__)
+
+                logger.error("❌ Configuration validation failed:")
+                for error in errors:
+                    section_info = (
+                        f" ({error.section}"
+                        + (f".{error.key}" if error.key else "")
+                        + ")"
+                        if error.section
+                        else ""
+                    )
+                    error_msg = f"   - {error.message}{section_info}"
+                    if error.suggestion:
+                        error_msg += f" - {error.suggestion}"
+                    logger.error(error_msg)
+
+                if warnings:
+                    logger.warning("⚠️  Warnings:")
+                    for warning in warnings:
+                        section_info = (
+                            f" ({warning.section}"
+                            + (f".{warning.key}" if warning.key else "")
+                            + ")"
+                            if warning.section
+                            else ""
+                        )
+                        warning_msg = f"   - {warning.message}{section_info}"
+                        if warning.suggestion:
+                            warning_msg += f" - {warning.suggestion}"
+                        logger.warning(warning_msg)
+
+                # Print to stderr as well
+                print("❌ Configuration validation failed:", file=sys.stderr)
+                for error in errors:
+                    section_info = (
+                        f" ({error.section}"
+                        + (f".{error.key}" if error.key else "")
+                        + ")"
+                        if error.section
+                        else ""
+                    )
+                    print(f"   - {error.message}{section_info}", file=sys.stderr)
+                    if error.suggestion:
+                        print(f"     Suggestion: {error.suggestion}", file=sys.stderr)
+
+                print(
+                    f"\n   Log file: {log_file}",
+                    file=sys.stderr,
+                )
+                print(
+                    "   Fix configuration errors and try again.",
+                    file=sys.stderr,
+                )
+                sys.exit(1)
+
+            # Log warnings if any (but don't stop server)
+            warnings = [r for r in validation_results if r.level == "warning"]
+            if warnings:
+                import logging
+
+                log_dir = Path(app_config.get("server", {}).get("log_dir", "./logs"))
+                log_dir.mkdir(parents=True, exist_ok=True)
+                log_file = log_dir / "mcp_server.log"
+
+                logging.basicConfig(
+                    level=logging.WARNING,
+                    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+                    handlers=[
+                        logging.FileHandler(log_file, encoding="utf-8"),
+                    ],
+                )
+                logger = logging.getLogger(__name__)
+
+                logger.warning("⚠️  Configuration validation warnings:")
+                for warning in warnings:
+                    section_info = (
+                        f" ({warning.section}"
+                        + (f".{warning.key}" if warning.key else "")
+                        + ")"
+                        if warning.section
+                        else ""
+                    )
+                    warning_msg = f"   - {warning.message}{section_info}"
+                    if warning.suggestion:
+                        warning_msg += f" - {warning.suggestion}"
+                    logger.warning(warning_msg)
+
+        except Exception as e:
+            print(
+                f"❌ Failed to validate configuration: {e}",
+                file=sys.stderr,
+            )
+            import logging
+
+            log_dir = Path(app_config.get("server", {}).get("log_dir", "./logs"))
+            log_dir.mkdir(parents=True, exist_ok=True)
+            log_file = log_dir / "mcp_server.log"
+
+            logging.basicConfig(
+                level=logging.ERROR,
+                format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+                handlers=[
+                    logging.FileHandler(log_file, encoding="utf-8"),
+                    logging.StreamHandler(sys.stderr),
+                ],
+            )
+            logger = logging.getLogger(__name__)
+            logger.error(f"Failed to validate configuration: {e}", exc_info=True)
+            sys.exit(1)
+
     # Update global configuration instance used by adapter internals
     from mcp_proxy_adapter.config import get_config
 
@@ -148,7 +292,7 @@ def main() -> None:
         """Start vectorization worker in background process on server startup."""
         import multiprocessing
         from pathlib import Path
-        from code_analysis.core.vectorization_worker import run_vectorization_worker
+        from code_analysis.core.vectorization_worker_pkg import run_vectorization_worker
         from code_analysis.core.config import ServerConfig
         from code_analysis.core.faiss_manager import FaissIndexManager
 
@@ -271,11 +415,23 @@ def main() -> None:
                 else server_config.dict()
             )
 
+            # Get worker config parameters
+            worker_config = server_config.worker
+            batch_size = 10  # default
+            poll_interval = 30  # default
+            worker_log_path = None  # default
+            if worker_config and isinstance(worker_config, dict):
+                batch_size = worker_config.get("batch_size", 10)
+                poll_interval = worker_config.get("poll_interval", 30)
+                worker_log_path = worker_config.get("log_path")
+
             # Start worker in separate process
             print(
                 f"🚀 Starting vectorization worker for project {project_id}", flush=True
             )
             logger.info(f"🚀 Starting vectorization worker for project {project_id}")
+            if worker_log_path:
+                logger.info(f"📝 Worker log file: {worker_log_path}")
             process = multiprocessing.Process(
                 target=run_vectorization_worker,
                 args=(
@@ -286,8 +442,9 @@ def main() -> None:
                 ),
                 kwargs={
                     "svo_config": svo_config,
-                    "batch_size": 10,
-                    "poll_interval": 30,  # Poll every 30 seconds
+                    "batch_size": batch_size,
+                    "poll_interval": poll_interval,
+                    "worker_log_path": worker_log_path,
                 },
                 daemon=True,  # Daemon process will be killed when parent exits
             )
@@ -302,6 +459,148 @@ def main() -> None:
                 file=sys.stderr,
             )
             logger.error(f"❌ Failed to start vectorization worker: {e}", exc_info=True)
+
+    # Start file watcher worker on startup
+    async def startup_file_watcher_worker() -> None:
+        """Start file watcher worker in background process on server startup."""
+        import multiprocessing
+        from pathlib import Path
+        from code_analysis.core.file_watcher_pkg import run_file_watcher_worker
+        from code_analysis.core.config import ServerConfig
+
+        import logging
+
+        logger = logging.getLogger(__name__)
+        logger.info("🔍 startup_file_watcher_worker called")
+
+        try:
+            # Get config from global config instance
+            from mcp_proxy_adapter.config import get_config
+
+            cfg = get_config()
+            app_config = getattr(cfg, "config_data", {})
+            if not app_config:
+                # Fallback: try to load from config_path
+                if hasattr(cfg, "config_path") and cfg.config_path:
+                    import json
+
+                    with open(cfg.config_path, "r", encoding="utf-8") as f:
+                        app_config = json.load(f)
+
+            logger.info(
+                f"🔍 app_config loaded: {bool(app_config)}, keys: {list(app_config.keys()) if app_config else []}"
+            )
+
+            # Check if code_analysis config section exists
+            code_analysis_config = app_config.get("code_analysis", {})
+            logger.info(f"🔍 code_analysis_config found: {bool(code_analysis_config)}")
+            if not code_analysis_config:
+                logger.warning(
+                    "⚠️  No code_analysis config found, skipping file watcher worker"
+                )
+                return
+
+            # Check if file watcher is enabled
+            server_config = ServerConfig(**code_analysis_config)
+            file_watcher_config = server_config.file_watcher
+            if not file_watcher_config or not isinstance(file_watcher_config, dict):
+                logger.info("ℹ️  No file_watcher config found, skipping file watcher worker")
+                return
+
+            if not file_watcher_config.get("enabled", True):
+                logger.info(
+                    "ℹ️  File watcher worker is disabled in config, skipping"
+                )
+                return
+
+            # Get watch_dirs from worker config (same as vectorization worker)
+            worker_config = server_config.worker
+            watch_dirs = []
+            if worker_config and isinstance(worker_config, dict):
+                watch_dirs = worker_config.get("watch_dirs", [])
+            
+            if not watch_dirs:
+                logger.warning(
+                    "⚠️  No watch_dirs configured, skipping file watcher worker"
+                )
+                return
+
+            # Get database path from config or use default
+            root_dir = Path.cwd()
+            db_path = root_dir / "data" / "code_analysis.db"
+
+            # Get project ID (use first project or default)
+            try:
+                from code_analysis.core.database import CodeDatabase
+
+                database = CodeDatabase(db_path)
+                cursor = database.conn.cursor()
+                cursor.execute("SELECT id FROM projects ORDER BY created_at LIMIT 1")
+                row = cursor.fetchone()
+                project_id = row[0] if row else None
+                database.close()
+
+                if not project_id:
+                    logger.warning(
+                        "⚠️  No projects found in database, skipping file watcher worker"
+                    )
+                    return
+            except Exception as e:
+                logger.warning(
+                    f"⚠️  Failed to get project ID: {e}, skipping file watcher worker"
+                )
+                return
+
+            # Get file watcher config parameters
+            scan_interval = file_watcher_config.get("scan_interval", 60)
+            lock_file_name = file_watcher_config.get("lock_file_name", ".file_watcher.lock")
+            version_dir = file_watcher_config.get("version_dir", "data/versions")
+            worker_log_path = file_watcher_config.get("log_path")
+            ignore_patterns = file_watcher_config.get("ignore_patterns", [])
+
+            # Get project root (use first watch_dir or None)
+            project_root = None
+            if watch_dirs:
+                try:
+                    project_root = str(Path(watch_dirs[0]).resolve())
+                except Exception:
+                    pass
+
+            # Start worker in separate process
+            print(
+                f"🚀 Starting file watcher worker for project {project_id}", flush=True
+            )
+            logger.info(f"🚀 Starting file watcher worker for project {project_id}")
+            if worker_log_path:
+                logger.info(f"📝 Worker log file: {worker_log_path}")
+            process = multiprocessing.Process(
+                target=run_file_watcher_worker,
+                args=(
+                    str(db_path),
+                    project_id,
+                    watch_dirs,
+                ),
+                kwargs={
+                    "scan_interval": scan_interval,
+                    "lock_file_name": lock_file_name,
+                    "version_dir": version_dir,
+                    "worker_log_path": worker_log_path,
+                    "project_root": project_root,
+                    "ignore_patterns": ignore_patterns,
+                },
+                daemon=True,  # Daemon process will be killed when parent exits
+            )
+            process.start()
+            print(f"✅ File watcher worker started with PID {process.pid}", flush=True)
+            logger.info(f"✅ File watcher worker started with PID {process.pid}")
+
+        except Exception as e:
+            print(
+                f"❌ Failed to start file watcher worker: {e}",
+                flush=True,
+                file=sys.stderr,
+            )
+            logger.error(f"❌ Failed to start file watcher worker: {e}", exc_info=True)
 
     if args.daemon:
         import threading
@@ -334,6 +633,33 @@ def main() -> None:
         startup_thread = threading.Thread(target=run_startup, daemon=True)
         startup_thread.start()
         main_logger.info(f"🔍 Background thread started: {startup_thread.is_alive()}")
+
+        def run_file_watcher_startup() -> None:
+            import asyncio
+
+            try:
+                print(
+                    "🔍 Background thread: calling startup_file_watcher_worker",
+                    flush=True,
+                )
+                main_logger.info(
+                    "🔍 Background thread: calling startup_file_watcher_worker"
+                )
+                asyncio.run(startup_file_watcher_worker())
+            except Exception as e:
+                print(
+                    f"❌ Failed to start file watcher worker: {e}",
+                    flush=True,
+                    file=sys.stderr,
+                )
+                main_logger.error(
+                    f"Failed to start file watcher worker: {e}", exc_info=True
+                )
+
+        main_logger.info("🔍 Starting background thread for file watcher worker")
+        file_watcher_thread = threading.Thread(target=run_file_watcher_startup, daemon=True)
+        file_watcher_thread.start()
+        main_logger.info(f"🔍 File watcher background thread started: {file_watcher_thread.is_alive()}")
 
     # Prepare server configuration for ServerEngine
     server_config = {

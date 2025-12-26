@@ -1,55 +1,35 @@
 """
-Search commands implementation.
+Search command implementation.
+
+Provides search functionality for code analysis.
 
 Author: Vasiliy Zdanovskiy
 email: vasilyvz@gmail.com
 """
 
 import logging
-from typing import Dict, List, Any, Optional
-
-from ..core import CodeDatabase
+from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 
 
 class SearchCommand:
-    """Commands for searching code."""
+    """
+    Command for searching code content, classes, and methods.
 
-    def __init__(self, database: CodeDatabase, project_id: str):
+    Wraps CodeDatabase search methods for easier use.
+    """
+
+    def __init__(self, database: Any, project_id: str):
         """
         Initialize search command.
 
         Args:
-            database: Database instance
-            project_id: Project UUID
+            database: CodeDatabase instance
+            project_id: Project ID to filter by
         """
         self.database = database
         self.project_id = project_id
-
-    def find_usages(
-        self,
-        name: str,
-        target_type: Optional[str] = None,
-        target_class: Optional[str] = None,
-    ) -> List[Dict[str, Any]]:
-        """
-        Find all usages of a method or property.
-
-        Args:
-            name: Name of method/property to find
-            target_type: Filter by type (method, property, function)
-            target_class: Filter by class name
-
-        Returns:
-            List of usage records
-        """
-        logger.info(f"Searching for usages of '{name}' in project {self.project_id}")
-        usages = self.database.find_usages(
-            name, self.project_id, target_type, target_class
-        )
-        logger.info(f"Found {len(usages)} usages")
-        return usages
 
     def full_text_search(
         self, query: str, entity_type: Optional[str] = None, limit: int = 20
@@ -59,53 +39,41 @@ class SearchCommand:
 
         Args:
             query: Search query text
-            entity_type: Filter by entity type (class, method, function)
+            entity_type: Optional filter by entity type
             limit: Maximum number of results
 
         Returns:
-            List of matching records
+            List of matching records with file paths
         """
-        logger.info(
-            f"Performing full-text search for '{query}' in project {self.project_id}"
+        return self.database.full_text_search(
+            query, self.project_id, entity_type=entity_type, limit=limit
         )
-        results = self.database.full_text_search(
-            query, self.project_id, entity_type, limit
-        )
-        logger.info(f"Found {len(results)} results")
-        return results
 
     def search_classes(self, pattern: Optional[str] = None) -> List[Dict[str, Any]]:
         """
         Search classes by name pattern.
 
         Args:
-            pattern: Name pattern to search (optional)
+            pattern: Optional name pattern to search
 
         Returns:
-            List of class records
+            List of matching classes
         """
-        logger.info(
-            f"Searching classes in project {self.project_id}"
-            + (f" with pattern '{pattern}'" if pattern else "")
-        )
-        classes = self.database.search_classes(pattern, self.project_id)
-        logger.info(f"Found {len(classes)} classes")
-        return classes
+        return self.database.search_classes(name_pattern=pattern, project_id=self.project_id)
 
-    def search_methods(self, pattern: Optional[str] = None) -> List[Dict[str, Any]]:
+    def search_methods(
+        self, class_name: Optional[str] = None
+    ) -> List[Dict[str, Any]]:
         """
-        Search methods by name pattern.
+        Search methods, optionally filtered by class name.
 
         Args:
-            pattern: Name pattern to search (optional)
+            class_name: Optional class name to filter by
 
         Returns:
-            List of method records
+            List of matching methods
         """
-        logger.info(
-            f"Searching methods in project {self.project_id}"
-            + (f" with pattern '{pattern}'" if pattern else "")
+        return self.database.search_methods(
+            name_pattern=None, class_name=class_name, project_id=self.project_id
         )
-        methods = self.database.search_methods(pattern, self.project_id)
-        logger.info(f"Found {len(methods)} methods")
-        return methods
+

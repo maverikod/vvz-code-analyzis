@@ -58,7 +58,7 @@ async def process_chunks(self, poll_interval: int = 30) -> Dict[str, Any]:
         while not self._stop_event.is_set():
             cycle_count += 1
             cycle_start_time = time.time()
-            logger.debug(f"[CYCLE #{cycle_count}] Starting vectorization cycle")
+            logger.info(f"[CYCLE #{cycle_count}] Starting vectorization cycle")
             cycle_activity = False
 
             # Refresh config to sync watch_dirs without restart
@@ -78,23 +78,36 @@ async def process_chunks(self, poll_interval: int = 30) -> Dict[str, Any]:
                     logger.error(f"Error enqueuing watch_dirs: {e}", exc_info=True)
 
             # Step 1: Request chunking for files that need it
-            try:
-                files_to_chunk = database.get_files_needing_chunking(
-                    project_id=self.project_id,
-                    limit=5,  # Process 5 files per cycle
-                )
+            # Skip chunking requests if circuit breaker is open
+            if self.svo_client_manager:
+                circuit_state = self.svo_client_manager.get_circuit_state()
+                if circuit_state == "open":
+                    backoff_delay = self.svo_client_manager.get_backoff_delay()
+                    logger.debug(
+                        f"Skipping chunking requests - circuit breaker is OPEN "
+                        f"(backoff: {backoff_delay:.1f}s)"
+                    )
+                else:
+                    try:
+                        files_to_chunk = database.get_files_needing_chunking(
+                            project_id=self.project_id,
+                            limit=5,  # Process 5 files per cycle
+                        )
 
-                if files_to_chunk:
-                    logger.info(
-                        f"Found {len(files_to_chunk)} files needing chunking, "
-                        "requesting chunking..."
-                    )
-                    chunked_count = await self._request_chunking_for_files(
-                        database, files_to_chunk
-                    )
-                    logger.info(f"Requested chunking for {chunked_count} files")
-            except Exception as e:
-                logger.error(f"Error requesting chunking: {e}", exc_info=True)
+                        if files_to_chunk:
+                            logger.info(
+                                f"Found {len(files_to_chunk)} files needing chunking, "
+                                "requesting chunking..."
+                            )
+                            chunked_count = await self._request_chunking_for_files(
+                                database, files_to_chunk
+                            )
+                            logger.info(f"Requested chunking for {chunked_count} files")
+                    except Exception as e:
+                        logger.error(f"Error requesting chunking: {e}", exc_info=True)
+            else:
+                # No SVO client manager, skip chunking
+                logger.debug("SVO client manager not available, skipping chunking requests")
 
             # Step 2: Assign vector_id in FAISS for chunks that already have embeddings.
             batch_processed, batch_errors = await process_embedding_ready_chunks(
@@ -116,31 +129,57 @@ async def process_chunks(self, poll_interval: int = 30) -> Dict[str, Any]:
                 if batch_processed > 0:
                     cycle_activity = True
             else:
-                logger.debug(
+                logger.info(
                     f"[CYCLE #{cycle_count}] No chunks processed in {cycle_duration:.3f}s"
                 )
 
             # Step 3: Fallback — try to chunk files that have no docstring chunks at all
+            # Skip fallback chunking if circuit breaker is open
             if not cycle_activity:
-                try:
-                    missing_chunked = await self._chunk_missing_docstring_files(
-                        database, limit=3
-                    )
-                    if missing_chunked > 0:
-                        cycle_activity = True
-                        logger.info(
-                            f"Requested chunking for {missing_chunked} files without docstring chunks (fallback)"
+                if self.svo_client_manager:
+                    circuit_state = self.svo_client_manager.get_circuit_state()
+                    if circuit_state == "open":
+                        logger.debug(
+                            "Skipping fallback chunking - circuit breaker is OPEN"
                         )
-                except Exception as e:
-                    logger.warning(
-                        f"Failed to process files without docstring chunks: {e}",
-                        exc_info=True,
-                    )
+                    else:
+                        try:
+                            missing_chunked = await self._chunk_missing_docstring_files(
+                                database, limit=3
+                            )
+                            if missing_chunked > 0:
+                                cycle_activity = True
+                                logger.info(
+                                    f"Requested chunking for {missing_chunked} files without docstring chunks (fallback)"
+                                )
+                        except Exception as e:
+                            logger.warning(
+                                f"Failed to process files without docstring chunks: {e}",
+                                exc_info=True,
+                            )
+                else:
+                    logger.debug("SVO client manager not available, skipping fallback chunking")
 
             # Wait for next cycle (with early exit check)
+            # Increase poll interval if services are unavailable (circuit breaker)
+            actual_poll_interval = poll_interval
+            if self.svo_client_manager:
+                circuit_state = self.svo_client_manager.get_circuit_state()
+                if circuit_state == "open":
+                    backoff_delay = self.svo_client_manager.get_backoff_delay()
+                    # Use backoff delay if it's longer than poll_interval
+                    if backoff_delay > poll_interval:
+                        actual_poll_interval = int(backoff_delay)
+                        logger.debug(
+                            f"Circuit breaker is OPEN, increasing poll interval "
+                            f"to {actual_poll_interval}s (backoff: {backoff_delay:.1f}s)"
+                        )
+
             if not self._stop_event.is_set():
-                logger.debug(f"Waiting {poll_interval}s before next cycle...")
-                for _ in range(poll_interval):
+                logger.debug(
+                    f"Waiting {actual_poll_interval}s before next cycle..."
+                )
+                for _ in range(actual_poll_interval):
                     if self._stop_event.is_set():
                         break
                     await asyncio.sleep(1)

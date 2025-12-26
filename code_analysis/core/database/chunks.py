@@ -196,6 +196,7 @@ async def get_code_chunks(
     file_id: Optional[int] = None,
     project_id: Optional[str] = None,
     limit: int = 100,
+    include_deleted: bool = False,
 ) -> List[Dict[str, Any]]:
     """
     Get code chunks.
@@ -204,19 +205,27 @@ async def get_code_chunks(
         file_id: Filter by file ID (optional)
         project_id: Filter by project ID (optional)
         limit: Maximum results
+        include_deleted: If True, include chunks from deleted files (default: False)
 
     Returns:
         List of chunk records
     """
     assert self.conn is not None
     cursor = self.conn.cursor()
-    query = "SELECT * FROM code_chunks WHERE 1=1"
+    if include_deleted:
+        query = "SELECT * FROM code_chunks WHERE 1=1"
+    else:
+        query = """
+            SELECT cc.* FROM code_chunks cc
+            JOIN files f ON cc.file_id = f.id
+            WHERE (f.deleted = 0 OR f.deleted IS NULL)
+        """
     params = []
     if file_id:
-        query += " AND file_id = ?"
+        query += " AND cc.file_id = ?" if not include_deleted else " AND file_id = ?"
         params.append(file_id)
     if project_id:
-        query += " AND project_id = ?"
+        query += " AND cc.project_id = ?" if not include_deleted else " AND project_id = ?"
         params.append(project_id)
     query += " ORDER BY chunk_ordinal, id LIMIT ?"
     params.append(limit)
@@ -257,24 +266,26 @@ async def get_non_vectorized_chunks(
 
     Uses index idx_code_chunks_not_vectorized for fast lookup.
 
+    **Important**: Always excludes chunks from deleted files (deleted=1).
+
     Args:
         project_id: Filter by project ID (optional)
         limit: Maximum number of chunks to return
 
     Returns:
-        List of chunk records without vector_id
+        List of chunk records without vector_id (only from non-deleted files)
     """
     with self._lock:
         assert self.conn is not None
         cursor = self.conn.cursor()
         if project_id:
             cursor.execute(
-                "\n                    SELECT id, file_id, project_id, chunk_uuid, chunk_text,\n                           chunk_type, chunk_ordinal, embedding_model,\n                           class_id, function_id, method_id, line, ast_node_type, source_type\n                    FROM code_chunks\n                    WHERE vector_id IS NULL AND project_id = ?\n                    ORDER BY id\n                    LIMIT ?\n                    ",
+                "\n                    SELECT cc.id, cc.file_id, cc.project_id, cc.chunk_uuid, cc.chunk_text,\n                           cc.chunk_type, cc.chunk_ordinal, cc.embedding_model,\n                           cc.class_id, cc.function_id, cc.method_id, cc.line, cc.ast_node_type, cc.source_type\n                    FROM code_chunks cc\n                    JOIN files f ON cc.file_id = f.id\n                    WHERE cc.vector_id IS NULL AND cc.project_id = ?\n                    AND (f.deleted = 0 OR f.deleted IS NULL)\n                    ORDER BY (cc.embedding_vector IS NOT NULL) DESC, cc.id\n                    LIMIT ?\n                    ",
                 (project_id, limit),
             )
         else:
             cursor.execute(
-                "\n                    SELECT id, file_id, project_id, chunk_uuid, chunk_text,\n                           chunk_type, chunk_ordinal, embedding_model,\n                           class_id, function_id, method_id, line, ast_node_type, source_type\n                    FROM code_chunks\n                    WHERE vector_id IS NULL\n                    ORDER BY id\n                    LIMIT ?\n                    ",
+                "\n                    SELECT cc.id, cc.file_id, cc.project_id, cc.chunk_uuid, cc.chunk_text,\n                           cc.chunk_type, cc.chunk_ordinal, cc.embedding_model,\n                           cc.class_id, cc.function_id, cc.method_id, cc.line, cc.ast_node_type, cc.source_type\n                    FROM code_chunks cc\n                    JOIN files f ON cc.file_id = f.id\n                    WHERE cc.vector_id IS NULL\n                    AND (f.deleted = 0 OR f.deleted IS NULL)\n                    ORDER BY (cc.embedding_vector IS NOT NULL) DESC, cc.id\n                    LIMIT ?\n                    ",
                 (limit,),
             )
         return [dict(row) for row in cursor.fetchall()]

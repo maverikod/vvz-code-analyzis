@@ -175,8 +175,45 @@ class ServerConfig(BaseModel):
             "retry_delay": 10.0,
             "watch_dirs": [],
             "dynamic_watch_file": "data/dynamic_watch_dirs.json",
+            "log_path": "logs/vectorization_worker.log",
+            "log_rotation": {
+                "max_bytes": 10485760,  # 10 MB
+                "backup_count": 5,
+            },
+            "circuit_breaker": {
+                "failure_threshold": 5,
+                "recovery_timeout": 60.0,
+                "success_threshold": 2,
+                "initial_backoff": 5.0,
+                "max_backoff": 300.0,
+                "backoff_multiplier": 2.0,
+            },
+            "batch_processor": {
+                "max_empty_iterations": 3,
+                "empty_delay": 5.0,
+            },
         },
         description="Vectorization worker configuration",
+    )
+    file_watcher: Optional[Dict[str, Any]] = Field(
+        default_factory=lambda: {
+            "enabled": True,
+            "scan_interval": 60,
+            "lock_file_name": ".file_watcher.lock",
+            "log_path": "logs/file_watcher.log",
+            "log_rotation": {
+                "max_bytes": 10485760,  # 10 MB
+                "backup_count": 5,
+            },
+            "version_dir": "data/versions",
+            "max_scan_duration": 300,
+            "ignore_patterns": [
+                "**/__pycache__/**",
+                "**/.git/**",
+                "**/node_modules/**",
+            ],
+        },
+        description="File watcher worker configuration",
     )
 
     @field_validator("port")

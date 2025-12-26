@@ -47,7 +47,7 @@ class CodeAnalyzer:
         # Initialize docstring chunker if SVO client manager provided
         self.docstring_chunker = None
         if database and svo_client_manager:
-            from ..docstring_chunker import DocstringChunker
+            from ..docstring_chunker_pkg import DocstringChunker
 
             # Get min_chunk_length from config if available
             min_chunk_length = 30  # default

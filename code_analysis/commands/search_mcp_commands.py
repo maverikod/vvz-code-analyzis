@@ -6,40 +6,17 @@ email: vasilyvz@gmail.com
 """
 
 import logging
-from pathlib import Path
-from typing import Any, Dict, Optional, List
+from typing import Any, Dict, Optional
 
-from mcp_proxy_adapter.commands.base import Command
 from mcp_proxy_adapter.commands.result import SuccessResult, ErrorResult
 
-from ..core import CodeDatabase
+from .base_mcp_command import BaseMCPCommand
 from .search import SearchCommand
 
 logger = logging.getLogger(__name__)
 
 
-def _open_database(root_dir: str) -> CodeDatabase:
-    """Open database for project."""
-    root_path = Path(root_dir).resolve()
-    data_dir = root_path / "data"
-    data_dir.mkdir(parents=True, exist_ok=True)
-    db_path = data_dir / "code_analysis.db"
-    return CodeDatabase(db_path)
-
-
-def _get_project_id(
-    db: CodeDatabase, root_path: Path, project_id: Optional[str]
-) -> Optional[str]:
-    """Get or create project ID."""
-    if project_id:
-        project = db.get_project(project_id)
-        if not project:
-            return None
-        return project_id
-    return db.get_or_create_project(str(root_path), name=root_path.name)
-
-
-class FulltextSearchMCPCommand(Command):
+class FulltextSearchMCPCommand(BaseMCPCommand):
     """Perform full-text search in code content and docstrings."""
 
     name = "fulltext_search"
@@ -105,16 +82,12 @@ class FulltextSearchMCPCommand(Command):
             SuccessResult with search results or ErrorResult on failure
         """
         try:
-            root_path = Path(root_dir).resolve()
-            if not root_path.exists() or not root_path.is_dir():
-                return ErrorResult(
-                    message=f"Root directory does not exist or is not a directory: {root_dir}",
-                    code="INVALID_PATH",
-                )
-
-            database = _open_database(root_dir)
+            root_path = self._validate_root_dir(root_dir)
+            database = self._open_database(root_dir)
             try:
-                actual_project_id = _get_project_id(database, root_path, project_id)
+                actual_project_id = self._get_project_id(
+                    database, root_path, project_id
+                )
                 if not actual_project_id:
                     return ErrorResult(
                         message=(
@@ -141,15 +114,10 @@ class FulltextSearchMCPCommand(Command):
                 database.close()
 
         except Exception as e:
-            logger.exception(f"Error during full-text search: {e}")
-            return ErrorResult(
-                message=f"Full-text search failed: {str(e)}",
-                code="SEARCH_ERROR",
-                details={"error": str(e)},
-            )
+            return self._handle_error(e, "SEARCH_ERROR", "fulltext_search")
 
 
-class ListClassMethodsMCPCommand(Command):
+class ListClassMethodsMCPCommand(BaseMCPCommand):
     """List all methods of a class."""
 
     name = "list_class_methods"
@@ -202,16 +170,12 @@ class ListClassMethodsMCPCommand(Command):
             SuccessResult with methods list or ErrorResult on failure
         """
         try:
-            root_path = Path(root_dir).resolve()
-            if not root_path.exists() or not root_path.is_dir():
-                return ErrorResult(
-                    message=f"Root directory does not exist or is not a directory: {root_dir}",
-                    code="INVALID_PATH",
-                )
-
-            database = _open_database(root_dir)
+            root_path = self._validate_root_dir(root_dir)
+            database = self._open_database(root_dir)
             try:
-                actual_project_id = _get_project_id(database, root_path, project_id)
+                actual_project_id = self._get_project_id(
+                    database, root_path, project_id
+                )
                 if not actual_project_id:
                     return ErrorResult(
                         message=(
@@ -237,15 +201,10 @@ class ListClassMethodsMCPCommand(Command):
                 database.close()
 
         except Exception as e:
-            logger.exception(f"Error listing class methods: {e}")
-            return ErrorResult(
-                message=f"Failed to list class methods: {str(e)}",
-                code="SEARCH_ERROR",
-                details={"error": str(e)},
-            )
+            return self._handle_error(e, "SEARCH_ERROR", "list_class_methods")
 
 
-class FindClassesMCPCommand(Command):
+class FindClassesMCPCommand(BaseMCPCommand):
     """Find classes by name pattern."""
 
     name = "find_classes"
@@ -298,16 +257,12 @@ class FindClassesMCPCommand(Command):
             SuccessResult with classes list or ErrorResult on failure
         """
         try:
-            root_path = Path(root_dir).resolve()
-            if not root_path.exists() or not root_path.is_dir():
-                return ErrorResult(
-                    message=f"Root directory does not exist or is not a directory: {root_dir}",
-                    code="INVALID_PATH",
-                )
-
-            database = _open_database(root_dir)
+            root_path = self._validate_root_dir(root_dir)
+            database = self._open_database(root_dir)
             try:
-                actual_project_id = _get_project_id(database, root_path, project_id)
+                actual_project_id = self._get_project_id(
+                    database, root_path, project_id
+                )
                 if not actual_project_id:
                     return ErrorResult(
                         message=(
@@ -332,9 +287,4 @@ class FindClassesMCPCommand(Command):
                 database.close()
 
         except Exception as e:
-            logger.exception(f"Error finding classes: {e}")
-            return ErrorResult(
-                message=f"Failed to find classes: {str(e)}",
-                code="SEARCH_ERROR",
-                details={"error": str(e)},
-            )
+            return self._handle_error(e, "SEARCH_ERROR", "find_classes")

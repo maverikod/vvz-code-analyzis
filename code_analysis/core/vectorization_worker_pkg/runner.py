@@ -9,12 +9,71 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from typing import Any, Dict, Optional
 
 from .base import VectorizationWorker
 
 logger = logging.getLogger(__name__)
+
+
+def _setup_worker_logging(
+    log_path: Optional[str] = None,
+    max_bytes: int = 10485760,  # 10 MB default
+    backup_count: int = 5,
+) -> None:
+    """
+    Setup logging for vectorization worker to separate log file with rotation.
+
+    Args:
+        log_path: Path to worker log file (optional)
+        max_bytes: Maximum log file size in bytes before rotation (default: 10 MB)
+        backup_count: Number of backup log files to keep (default: 5)
+    """
+    if log_path:
+        log_file = Path(log_path)
+        log_file.parent.mkdir(parents=True, exist_ok=True)
+
+        # Configure root logger for worker process
+        root_logger = logging.getLogger()
+        root_logger.setLevel(logging.DEBUG)
+
+        # Remove existing handlers
+        for handler in root_logger.handlers[:]:
+            root_logger.removeHandler(handler)
+
+        # Rotating file handler for worker log
+        file_handler = RotatingFileHandler(
+            log_file,
+            encoding="utf-8",
+            mode="a",
+            maxBytes=max_bytes,
+            backupCount=backup_count,
+        )
+        file_handler.setLevel(logging.DEBUG)
+        file_formatter = logging.Formatter(
+            "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+        )
+        file_handler.setFormatter(file_formatter)
+        root_logger.addHandler(file_handler)
+
+        # Also log to stderr for visibility
+        console_handler = logging.StreamHandler()
+        console_handler.setLevel(logging.INFO)
+        console_formatter = logging.Formatter(
+            "%(asctime)s - %(levelname)s - %(message)s"
+        )
+        console_handler.setFormatter(console_formatter)
+        root_logger.addHandler(console_handler)
+
+        logger.info(f"Worker logging configured: {log_file}")
+    else:
+        # Default logging if no path specified
+        logging.basicConfig(
+            level=logging.INFO,
+            format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+        )
 
 
 def run_vectorization_worker(
@@ -27,6 +86,9 @@ def run_vectorization_worker(
     poll_interval: int = 30,
     retry_attempts: int = 3,
     retry_delay: float = 10.0,
+    worker_log_path: Optional[str] = None,
+    log_max_bytes: int = 10485760,  # 10 MB default
+    log_backup_count: int = 5,
 ) -> Dict[str, Any]:
     """
     Run vectorization worker in separate process with continuous polling.
@@ -42,6 +104,9 @@ def run_vectorization_worker(
         svo_config: SVO client configuration (optional)
         batch_size: Batch size for processing
         poll_interval: Interval in seconds between polling cycles (default: 30)
+        worker_log_path: Path to worker log file (optional)
+        log_max_bytes: Maximum log file size in bytes before rotation (default: 10 MB)
+        log_backup_count: Number of backup log files to keep (default: 5)
 
     Returns:
         Dictionary with processing statistics (only when stopped)
@@ -49,6 +114,9 @@ def run_vectorization_worker(
     from ..config import ServerConfig
     from ..faiss_manager import FaissIndexManager
     from ..svo_client_manager import SVOClientManager
+
+    # Setup worker logging first
+    _setup_worker_logging(worker_log_path, log_max_bytes, log_backup_count)
 
     logger.info(
         f"Starting continuous vectorization worker for project {project_id}, "
@@ -78,8 +146,10 @@ def run_vectorization_worker(
             asyncio.run(svo_client_manager.close())
         return {"processed": 0, "errors": 1}
 
-    # Get retry config and min_chunk_length from svo_config if available
+    # Get retry config, min_chunk_length, and batch_processor config from svo_config if available
     min_chunk_length = 30  # default
+    max_empty_iterations = 3  # default
+    empty_delay = 5.0  # default
     if svo_config:
         try:
             server_config_obj = ServerConfig(**svo_config)
@@ -89,6 +159,23 @@ def run_vectorization_worker(
                 retry_delay = server_config_obj.vectorization_retry_delay
             if hasattr(server_config_obj, "min_chunk_length"):
                 min_chunk_length = server_config_obj.min_chunk_length
+            # Get batch_processor config and log_path from worker config
+            if hasattr(server_config_obj, "worker") and server_config_obj.worker:
+                worker_config = server_config_obj.worker
+                if isinstance(worker_config, dict):
+                    batch_processor_config = worker_config.get("batch_processor", {})
+                    max_empty_iterations = batch_processor_config.get(
+                        "max_empty_iterations", 3
+                    )
+                    empty_delay = batch_processor_config.get("empty_delay", 5.0)
+                    # Get worker log path
+                    if worker_log_path is None:
+                        worker_log_path = worker_config.get("log_path")
+                    # Get log rotation config
+                    log_rotation_config = worker_config.get("log_rotation", {})
+                    if log_rotation_config:
+                        log_max_bytes = log_rotation_config.get("max_bytes", 10485760)
+                        log_backup_count = log_rotation_config.get("backup_count", 5)
         except Exception:
             pass  # Use defaults
 
@@ -102,6 +189,8 @@ def run_vectorization_worker(
         retry_attempts=retry_attempts,
         retry_delay=retry_delay,
         min_chunk_length=min_chunk_length,
+        max_empty_iterations=max_empty_iterations,
+        empty_delay=empty_delay,
     )
 
     try:

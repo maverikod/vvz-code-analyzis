@@ -35,6 +35,8 @@ class VectorizationWorker:
         watch_dirs: Optional[List[Path]] = None,
         config_path: Optional[Path] = None,
         dynamic_watch_file: Optional[Path] = None,
+        max_empty_iterations: int = 3,
+        empty_delay: float = 5.0,
     ):
         """
         Initialize vectorization worker.
@@ -48,6 +50,8 @@ class VectorizationWorker:
             retry_attempts: Number of retry attempts for vectorization (default: 3)
             retry_delay: Delay in seconds between retry attempts (default: 10.0)
             min_chunk_length: Minimum text length for chunking (default: 30)
+            max_empty_iterations: Max consecutive empty iterations before adding delay (default: 3)
+            empty_delay: Delay in seconds when no chunks available (default: 5.0)
         """
         self.db_path = db_path
         self.project_id = project_id
@@ -57,6 +61,8 @@ class VectorizationWorker:
         self.retry_attempts = retry_attempts
         self.retry_delay = retry_delay
         self.min_chunk_length = min_chunk_length
+        self.max_empty_iterations = max_empty_iterations
+        self.empty_delay = empty_delay
         # watch_dirs is stored as list of Path; each entry may have attribute is_dynamic
         self.watch_dirs: List[Path] = []
         for p in watch_dirs or []:

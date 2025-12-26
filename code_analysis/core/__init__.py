@@ -8,7 +8,7 @@ Author: Vasiliy Zdanovskiy
 email: vasilyvz@gmail.com
 """
 
-from .analyzer import CodeAnalyzer
+from .analyzer_pkg import CodeAnalyzer
 from .database import CodeDatabase
 from .issue_detector import IssueDetector
 from .usage_analyzer import UsageAnalyzer

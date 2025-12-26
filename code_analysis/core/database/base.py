@@ -168,6 +168,9 @@ class CodeDatabase:
                     lines INTEGER,
                     last_modified REAL,
                     has_docstring BOOLEAN,
+                    deleted BOOLEAN DEFAULT 0,
+                    original_path TEXT,
+                    version_dir TEXT,
                     created_at REAL DEFAULT (julianday('now')),
                     updated_at REAL DEFAULT (julianday('now')),
                     FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE,
@@ -175,6 +178,16 @@ class CodeDatabase:
                 )
             """
         )
+        # Create partial index for deleted files (only indexes deleted=1)
+        try:
+            self._execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_files_deleted 
+                ON files(deleted) WHERE deleted = 1
+                """
+            )
+        except Exception:
+            pass  # Index might already exist
         self._execute(
             """
                 CREATE TABLE IF NOT EXISTS classes (
@@ -443,6 +456,7 @@ class CodeDatabase:
             "CREATE INDEX IF NOT EXISTS idx_code_chunks_uuid ON code_chunks(chunk_uuid)",
             "CREATE INDEX IF NOT EXISTS idx_code_chunks_vector ON code_chunks(vector_id)",
             "CREATE INDEX IF NOT EXISTS idx_code_chunks_not_vectorized ON code_chunks(project_id, id) WHERE vector_id IS NULL",
+            "CREATE INDEX IF NOT EXISTS idx_files_deleted ON files(deleted) WHERE deleted = 1",
         ]
         for index_sql in indexes:
             self._execute(index_sql)
@@ -604,6 +618,48 @@ class CodeDatabase:
                     logger.warning(
                         f"Could not add column {col_name} to code_chunks: {e}"
                     )
+        
+        # Migration: Add deleted, original_path, version_dir columns to files table if they don't exist
+        files_table_info = self._get_table_info("files")
+        files_columns = {col["name"]: col["type"] for col in files_table_info}
+        
+        if "deleted" not in files_columns:
+            try:
+                logger.info("Migrating files table: adding deleted column")
+                self._execute("ALTER TABLE files ADD COLUMN deleted BOOLEAN DEFAULT 0")
+                self._commit()
+            except Exception as e:
+                logger.warning(f"Could not add deleted column to files: {e}")
+        
+        if "original_path" not in files_columns:
+            try:
+                logger.info("Migrating files table: adding original_path column")
+                self._execute("ALTER TABLE files ADD COLUMN original_path TEXT")
+                self._commit()
+            except Exception as e:
+                logger.warning(f"Could not add original_path column to files: {e}")
+        
+        if "version_dir" not in files_columns:
+            try:
+                logger.info("Migrating files table: adding version_dir column")
+                self._execute("ALTER TABLE files ADD COLUMN version_dir TEXT")
+                self._commit()
+            except Exception as e:
+                logger.warning(f"Could not add version_dir column to files: {e}")
+        
+        # Create index after adding deleted column
+        if "deleted" in files_columns or "deleted" not in files_columns:
+            try:
+                self._execute(
+                    """
+                    CREATE INDEX IF NOT EXISTS idx_files_deleted 
+                    ON files(deleted) WHERE deleted = 1
+                    """
+                )
+                self._commit()
+                logger.info("Created index idx_files_deleted")
+            except Exception as e:
+                logger.warning(f"Could not create index idx_files_deleted: {e}")
 
     def close(self) -> None:
         """Close database connection."""

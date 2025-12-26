@@ -11,6 +11,7 @@ email: vasilyvz@gmail.com
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import time
@@ -42,23 +43,41 @@ async def process_embedding_ready_chunks(
     """
     batch_processed = 0
     batch_errors = 0
+    empty_iterations = 0
+    # Get max_empty_iterations and empty_delay from worker config
+    max_empty_iterations = getattr(self, "max_empty_iterations", 3)
+    empty_delay = getattr(self, "empty_delay", 5.0)
 
     while not self._stop_event.is_set():
         # Get chunks with embeddings in DB but without vector_id
         # These are chunks where embedding was saved but FAISS add failed or wasn't done
         step_start = time.time()
-        logger.debug("[TIMING] Step 2: Starting to get non-vectorized chunks from DB")
+        logger.info("[TIMING] Step 2: Starting to get non-vectorized chunks from DB")
         chunks = await database.get_non_vectorized_chunks(
             project_id=self.project_id,
             limit=self.batch_size,
         )
         step_duration = time.time() - step_start
-        logger.debug(
+        logger.info(
             f"[TIMING] Step 2: Retrieved {len(chunks)} chunks from DB in {step_duration:.3f}s"
         )
 
         if not chunks:
-            logger.debug("No chunks needing vector_id assignment in this cycle")
+            empty_iterations += 1
+            if empty_iterations >= max_empty_iterations:
+                # Add delay to prevent busy-wait when no chunks available
+                logger.info(
+                    f"No chunks available after {empty_iterations} iterations, "
+                    f"adding delay of {empty_delay}s to prevent CPU spinning"
+                )
+                # Wait before next check to reduce CPU load
+                delay_seconds = int(empty_delay)
+                for _ in range(delay_seconds):
+                    if self._stop_event.is_set():
+                        break
+                    await asyncio.sleep(1)
+            else:
+                logger.info(f"No chunks needing vector_id assignment in this cycle (iteration {empty_iterations}/{max_empty_iterations})")
             break
 
         logger.info(
@@ -286,6 +305,8 @@ async def process_embedding_ready_chunks(
                 logger.debug(
                     f"[TIMING] [CHUNK {chunk_id}] Total processing time: {chunk_total_duration:.3f}s"
                 )
+                # Reset empty iterations counter when we successfully process a chunk
+                empty_iterations = 0
 
             except Exception as e:
                 logger.error(

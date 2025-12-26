@@ -151,14 +151,14 @@ def apply_replace_ops(source: str, ops: list[ReplaceOp]) -> tuple[str, dict[str,
     # Handle module creation from scratch
     for op in ops:
         if op.selector.kind == "module":
-            # Validate required parameters
+            # Validate required parameters - both must be present and non-empty
             if not op.file_docstring or not op.file_docstring.strip():
                 raise CSTModulePatchError(
-                    "file_docstring is required when creating module from scratch"
+                    "file_docstring is required and must not be empty when creating module from scratch"
                 )
             if not op.new_code or not op.new_code.strip():
                 raise CSTModulePatchError(
-                    "new_code (first node) is required when creating module from scratch"
+                    "new_code (first node) is required and must not be empty when creating module from scratch"
                 )
 
             # Parse first node

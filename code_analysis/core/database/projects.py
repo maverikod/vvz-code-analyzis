@@ -163,22 +163,31 @@ async def clear_project_data(self, project_id: str) -> None:
     logger.info(f"Cleared all data and removed project {project_id}")
 
 
-def get_project_files(self, project_id: str) -> List[Dict[str, Any]]:
+def get_project_files(
+    self, project_id: str, include_deleted: bool = False
+) -> List[Dict[str, Any]]:
     """
     Get all files for a project.
 
     Args:
         project_id: Project ID (UUID4 string)
+        include_deleted: If True, include files marked as deleted (default: False)
 
     Returns:
         List of file records as dictionaries
     """
     assert self.conn is not None
     cursor = self.conn.cursor()
-    cursor.execute(
-        "SELECT id, path, lines, last_modified, has_docstring FROM files WHERE project_id = ?",
-        (project_id,),
-    )
+    if include_deleted:
+        cursor.execute(
+            "SELECT id, path, lines, last_modified, has_docstring, deleted FROM files WHERE project_id = ?",
+            (project_id,),
+        )
+    else:
+        cursor.execute(
+            "SELECT id, path, lines, last_modified, has_docstring, deleted FROM files WHERE project_id = ? AND (deleted = 0 OR deleted IS NULL)",
+            (project_id,),
+        )
     rows = cursor.fetchall()
     result = []
     for row in rows:
@@ -189,6 +198,7 @@ def get_project_files(self, project_id: str) -> List[Dict[str, Any]]:
                 "lines": row[2],
                 "last_modified": row[3],
                 "has_docstring": row[4],
+                "deleted": row[5] if len(row) > 5 else 0,
             }
         )
     return result

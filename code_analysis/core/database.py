@@ -86,6 +86,9 @@ class CodeDatabase:
                 lines INTEGER,
                 last_modified REAL,
                 has_docstring BOOLEAN,
+                deleted BOOLEAN DEFAULT 0,
+                original_path TEXT,
+                version_dir TEXT,
                 created_at REAL DEFAULT (julianday('now')),
                 updated_at REAL DEFAULT (julianday('now')),
                 FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE,
@@ -93,6 +96,16 @@ class CodeDatabase:
             )
         """
         )
+        # Create partial index for deleted files (only indexes deleted=1)
+        try:
+            cursor.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_files_deleted 
+                ON files(deleted) WHERE deleted = 1
+                """
+            )
+        except Exception:
+            pass  # Index might already exist
 
         # Classes table
         cursor.execute(
@@ -410,6 +423,8 @@ class CodeDatabase:
             "CREATE INDEX IF NOT EXISTS idx_code_chunks_vector ON code_chunks(vector_id)",
             # Index for finding non-vectorized chunks (where vector_id IS NULL)
             "CREATE INDEX IF NOT EXISTS idx_code_chunks_not_vectorized ON code_chunks(project_id, id) WHERE vector_id IS NULL",
+            # Index for deleted files (partial index, only indexes deleted=1)
+            "CREATE INDEX IF NOT EXISTS idx_files_deleted ON files(deleted) WHERE deleted = 1",
         ]
 
         for index_sql in indexes:
@@ -602,6 +617,47 @@ class CodeDatabase:
                     logger.warning(
                         f"Could not add column {col_name} to code_chunks: {e}"
                     )
+        
+        # Migration: Add deleted, original_path, version_dir columns to files table if they don't exist
+        cursor.execute("PRAGMA table_info(files)")
+        files_columns = {row[1]: row[2] for row in cursor.fetchall()}
+        
+        if "deleted" not in files_columns:
+            try:
+                logger.info("Migrating files table: adding deleted column")
+                cursor.execute("ALTER TABLE files ADD COLUMN deleted BOOLEAN DEFAULT 0")
+                self.conn.commit()
+            except sqlite3.OperationalError as e:
+                logger.warning(f"Could not add deleted column to files: {e}")
+        
+        if "original_path" not in files_columns:
+            try:
+                logger.info("Migrating files table: adding original_path column")
+                cursor.execute("ALTER TABLE files ADD COLUMN original_path TEXT")
+                self.conn.commit()
+            except sqlite3.OperationalError as e:
+                logger.warning(f"Could not add original_path column to files: {e}")
+        
+        if "version_dir" not in files_columns:
+            try:
+                logger.info("Migrating files table: adding version_dir column")
+                cursor.execute("ALTER TABLE files ADD COLUMN version_dir TEXT")
+                self.conn.commit()
+            except sqlite3.OperationalError as e:
+                logger.warning(f"Could not add version_dir column to files: {e}")
+        
+        # Create index after adding deleted column
+        try:
+            cursor.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_files_deleted 
+                ON files(deleted) WHERE deleted = 1
+                """
+            )
+            self.conn.commit()
+            logger.info("Created index idx_files_deleted")
+        except sqlite3.OperationalError as e:
+            logger.warning(f"Could not create index idx_files_deleted: {e}")
 
     def get_or_create_project(
         self, root_path: str, name: Optional[str] = None, comment: Optional[str] = None
@@ -2184,7 +2240,7 @@ class CodeDatabase:
                            class_id, function_id, method_id, line, ast_node_type, source_type
                     FROM code_chunks
                     WHERE vector_id IS NULL AND project_id = ?
-                    ORDER BY id
+                    ORDER BY (embedding_vector IS NOT NULL) DESC, id
                     LIMIT ?
                     """,
                     (project_id, limit),
@@ -2197,7 +2253,7 @@ class CodeDatabase:
                            class_id, function_id, method_id, line, ast_node_type, source_type
                     FROM code_chunks
                     WHERE vector_id IS NULL
-                    ORDER BY id
+                    ORDER BY (embedding_vector IS NOT NULL) DESC, id
                     LIMIT ?
                     """,
                     (limit,),

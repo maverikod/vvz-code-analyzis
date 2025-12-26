@@ -64,6 +64,11 @@ extend-exclude = '''
   | \.mypy_cache
   | \.tox
   | \.venv
+  | venv
+  | env
+  | ENV
+  | env\.bak
+  | venv\.bak
   | build
   | dist
 )/
@@ -83,6 +88,13 @@ warn_unused_ignores = true
 warn_no_return = true
 warn_unreachable = true
 strict_equality = true
+exclude = [
+    "^(\\.venv|venv|env|ENV|env\\.bak|venv\\.bak)/",
+    "^build/",
+    "^dist/",
+    "^\\.git/",
+    "^\\.eggs/",
+]
 
 [[tool.mypy.overrides]]
 module = [
@@ -129,6 +141,11 @@ exclude = [
     "build",
     "dist",
     ".venv",
+    "venv",
+    "env",
+    "ENV",
+    "env.bak",
+    "venv.bak",
     ".eggs",
 ]
 per-file-ignores = [

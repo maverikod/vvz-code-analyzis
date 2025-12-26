@@ -103,6 +103,7 @@ class CodeAnalysisConfigValidator:
         self._validate_server_section()
         self._validate_registration_section()
         self._validate_queue_manager_section()
+        self._validate_code_analysis_section()
         self._validate_file_existence()
         self._validate_protocol_consistency()
         self._validate_uuid_format()
@@ -264,6 +265,158 @@ class CodeAnalysisConfigValidator:
                     suggestion="Set completed_job_retention_seconds to 0 or higher",
                 )
             )
+
+    def _validate_code_analysis_section(self) -> None:
+        """Validate code_analysis section."""
+        code_analysis = self.config_data.get("code_analysis", {})
+        if not code_analysis:
+            return
+
+        # Validate worker section
+        worker = code_analysis.get("worker")
+        if worker and isinstance(worker, dict):
+            # Validate poll_interval
+            poll_interval = worker.get("poll_interval")
+            if poll_interval is not None and poll_interval < 1:
+                self.validation_results.append(
+                    ValidationResult(
+                        level="error",
+                        message="code_analysis.worker.poll_interval must be at least 1",
+                        section="code_analysis",
+                        key="worker.poll_interval",
+                        suggestion="Set poll_interval to 1 or higher",
+                    )
+                )
+
+            # Validate batch_size
+            batch_size = worker.get("batch_size")
+            if batch_size is not None and batch_size < 1:
+                self.validation_results.append(
+                    ValidationResult(
+                        level="error",
+                        message="code_analysis.worker.batch_size must be at least 1",
+                        section="code_analysis",
+                        key="worker.batch_size",
+                        suggestion="Set batch_size to 1 or higher",
+                    )
+                )
+
+            # Validate circuit_breaker section
+            circuit_breaker = worker.get("circuit_breaker")
+            if circuit_breaker and isinstance(circuit_breaker, dict):
+                failure_threshold = circuit_breaker.get("failure_threshold")
+                if failure_threshold is not None and failure_threshold < 1:
+                    self.validation_results.append(
+                        ValidationResult(
+                            level="error",
+                            message="code_analysis.worker.circuit_breaker.failure_threshold must be at least 1",
+                            section="code_analysis",
+                            key="worker.circuit_breaker.failure_threshold",
+                            suggestion="Set failure_threshold to 1 or higher",
+                        )
+                    )
+
+                recovery_timeout = circuit_breaker.get("recovery_timeout")
+                if recovery_timeout is not None and recovery_timeout <= 0:
+                    self.validation_results.append(
+                        ValidationResult(
+                            level="error",
+                            message="code_analysis.worker.circuit_breaker.recovery_timeout must be > 0",
+                            section="code_analysis",
+                            key="worker.circuit_breaker.recovery_timeout",
+                            suggestion="Set recovery_timeout to a positive value",
+                        )
+                    )
+
+                success_threshold = circuit_breaker.get("success_threshold")
+                if success_threshold is not None and success_threshold < 1:
+                    self.validation_results.append(
+                        ValidationResult(
+                            level="error",
+                            message="code_analysis.worker.circuit_breaker.success_threshold must be at least 1",
+                            section="code_analysis",
+                            key="worker.circuit_breaker.success_threshold",
+                            suggestion="Set success_threshold to 1 or higher",
+                        )
+                    )
+
+                initial_backoff = circuit_breaker.get("initial_backoff")
+                if initial_backoff is not None and initial_backoff < 0:
+                    self.validation_results.append(
+                        ValidationResult(
+                            level="error",
+                            message="code_analysis.worker.circuit_breaker.initial_backoff must be >= 0",
+                            section="code_analysis",
+                            key="worker.circuit_breaker.initial_backoff",
+                            suggestion="Set initial_backoff to 0 or higher",
+                        )
+                    )
+
+                max_backoff = circuit_breaker.get("max_backoff")
+                if max_backoff is not None and max_backoff < 0:
+                    self.validation_results.append(
+                        ValidationResult(
+                            level="error",
+                            message="code_analysis.worker.circuit_breaker.max_backoff must be >= 0",
+                            section="code_analysis",
+                            key="worker.circuit_breaker.max_backoff",
+                            suggestion="Set max_backoff to 0 or higher",
+                        )
+                    )
+
+                if (
+                    initial_backoff is not None
+                    and max_backoff is not None
+                    and max_backoff < initial_backoff
+                ):
+                    self.validation_results.append(
+                        ValidationResult(
+                            level="error",
+                            message="code_analysis.worker.circuit_breaker.max_backoff must be >= initial_backoff",
+                            section="code_analysis",
+                            key="worker.circuit_breaker.max_backoff",
+                            suggestion="Set max_backoff to be at least equal to initial_backoff",
+                        )
+                    )
+
+                backoff_multiplier = circuit_breaker.get("backoff_multiplier")
+                if backoff_multiplier is not None and backoff_multiplier < 1:
+                    self.validation_results.append(
+                        ValidationResult(
+                            level="error",
+                            message="code_analysis.worker.circuit_breaker.backoff_multiplier must be >= 1",
+                            section="code_analysis",
+                            key="worker.circuit_breaker.backoff_multiplier",
+                            suggestion="Set backoff_multiplier to 1 or higher",
+                        )
+                    )
+
+            # Validate batch_processor section
+            batch_processor = worker.get("batch_processor")
+            if batch_processor and isinstance(batch_processor, dict):
+                max_empty_iterations = batch_processor.get("max_empty_iterations")
+                if max_empty_iterations is not None and max_empty_iterations < 1:
+                    self.validation_results.append(
+                        ValidationResult(
+                            level="error",
+                            message="code_analysis.worker.batch_processor.max_empty_iterations must be at least 1",
+                            section="code_analysis",
+                            key="worker.batch_processor.max_empty_iterations",
+                            suggestion="Set max_empty_iterations to 1 or higher",
+                        )
+                    )
+
+                empty_delay = batch_processor.get("empty_delay")
+                if empty_delay is not None and empty_delay < 0:
+                    self.validation_results.append(
+                        ValidationResult(
+                            level="error",
+                            message="code_analysis.worker.batch_processor.empty_delay must be >= 0",
+                            section="code_analysis",
+                            key="worker.batch_processor.empty_delay",
+                            suggestion="Set empty_delay to 0 or higher",
+                        )
+                    )
 
     def _validate_file_existence(self) -> None:
         """Validate that referenced files exist."""

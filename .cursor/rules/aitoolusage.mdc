@@ -1,0 +1,590 @@
+---
+alwaysApply: true
+---
+# AI Tool Usage Rules
+
+**Author**: Vasiliy Zdanovskiy  
+**Email**: vasilyvz@gmail.com
+
+## Overview
+
+This document defines rules for AI models on how to use the code analysis and refactoring tools in this project. These rules ensure efficient, safe, and correct usage of the available tools.
+
+## 1. Tool Priority Rules
+
+### 1.1 Primary Interface: MCP (Multi-Command Protocol)
+
+**CRITICAL**: Always use MCP commands as the primary interface. CLI is only a fallback when MCP is unavailable.
+
+**Priority Order**:
+1. ✅ **MCP Commands** (via `mcp_MCP-Proxy-2_call_server`) - PRIMARY
+2. ⚠️ **CLI** (via `run_terminal_cmd`) - FALLBACK ONLY
+
+**Rationale**:
+- MCP provides structured, validated input/output
+- MCP commands are tested and maintained
+- CLI is for human users, not AI automation
+
+**Example**:
+```python
+# ✅ CORRECT: Use MCP
+mcp_MCP-Proxy-2_call_server(
+    server_id="code-analysis-server",
+    command="analyze_file",
+    params={"root_dir": "/path", "file_path": "file.py"}
+)
+
+# ❌ WRONG: Using CLI directly
+run_terminal_cmd("code_analysis analyze --file-path file.py")
+```
+
+### 1.2 Server Management
+
+**Rule**: Server management (start/stop/restart) should be done via CLI, not MCP.
+
+**When to restart server**:
+- After any code changes in `code_analysis/` package
+- After adding new MCP commands
+- After modifying command implementations
+- When server errors occur
+
+**Command**:
+```bash
+cd /home/vasilyvz/projects/tools/code_analysis && \
+source .venv/bin/activate && \
+python -m code_analysis.cli.server_manager_cli --config config.json restart
+```
+
+## 2. Code Writing vs CST Manipulation
+
+### 2.1 When to Write Code Directly
+
+**Use direct code writing for**:
+- ✅ Creating new files/modules from scratch
+- ✅ Prototyping and experimentation
+- ✅ Simple additions (new functions, classes)
+- ✅ Test files and utilities
+- ✅ Code that will be auto-formatted anyway
+
+**Example**:
+```python
+# ✅ CORRECT: Creating new module
+compose_cst_module(
+    selector={"kind": "module"},
+    file_docstring="New module",
+    new_code="class MyClass:\n    def method(self): pass"
+)
+```
+
+### 2.2 When to Use CST
+
+**Use CST manipulation for**:
+- ✅ Modifying existing code
+- ✅ Replacing methods/functions in existing files
+- ✅ Refactoring operations
+- ✅ When preserving comments/formatting is critical
+- ✅ Precise block replacements using selectors
+
+**Example**:
+```python
+# ✅ CORRECT: Replacing existing method
+compose_cst_module(
+    selector={"kind": "method", "name": "MyClass.old_method"},
+    new_code="def old_method(self, param: int) -> str:\n    return str(param)"
+)
+```
+
+### 2.3 Hybrid Approach
+
+**Best Practice**: Use hybrid approach based on context:
+1. **New code** → Write directly
+2. **Existing code** → Use CST with selectors
+3. **Complex refactoring** → Use specialized commands (`split_class`, `split_file_to_package`)
+
+### 2.4 File Splitting Rules
+
+**CRITICAL**: When splitting large files, **ALWAYS** use MCP proxy and splitting tools.
+
+**Rule**: 
+- ✅ **MUST** use MCP commands (`split_file_to_package`, `split_class`) via `mcp_MCP-Proxy-2_call_server`
+- ❌ **NEVER** manually split files by creating new files directly
+- ✅ This allows parallel testing of the code during refactoring
+
+**Rationale**:
+- MCP splitting tools preserve code structure and relationships
+- Automatic testing during refactoring process
+- Better code quality and consistency
+- Maintains imports and dependencies correctly
+
+**Example**:
+```python
+# ✅ CORRECT: Use MCP splitting command
+mcp_MCP-Proxy-2_call_server(
+    server_id="code-analysis-server",
+    command="split_file_to_package",
+    params={
+        "root_dir": "/path",
+        "file_path": "large_file.py",
+        "config_path": "data/refactor_configs/split_config.json"
+    }
+)
+
+# ❌ WRONG: Manual file splitting
+write("new_file.py", "...")  # Don't do this for splitting!
+```
+
+## 3. Code Validation Rules
+
+### 3.1 Automatic Validation
+
+**Rule**: `compose_cst_module` automatically validates:
+- ✅ Syntax (compilation check)
+- ✅ Docstrings (file, class, method)
+- ✅ Type hints (parameters, return types)
+- ✅ Parameter documentation in docstrings
+- ✅ Attribute documentation in class docstrings
+
+**Action**: No manual validation needed - it's automatic.
+
+### 3.2 Manual Code Quality Checks
+
+**When to use**:
+- Before committing code
+- After major refactoring
+- When debugging issues
+
+**Commands**:
+```python
+# Format code
+mcp_MCP-Proxy-2_call_server(
+    server_id="code-analysis-server",
+    command="format_code",
+    params={"file_path": "file.py"}
+)
+
+# Lint code
+mcp_MCP-Proxy-2_call_server(
+    server_id="code-analysis-server",
+    command="lint_code",
+    params={"file_path": "file.py"}
+)
+
+# Type check
+mcp_MCP-Proxy-2_call_server(
+    server_id="code-analysis-server",
+    command="type_check_code",
+    params={"file_path": "file.py"}
+)
+```
+
+## 4. File Organization Rules
+
+### 4.1 Directory Structure
+
+**CRITICAL**: Follow project file organization standards:
+
+- 📁 `docs/` - ALL documentation (.md files)
+- 📁 `scripts/` - Utility scripts (NOT pytest tests)
+- 📁 `logs/` - Server logs
+- 📁 `data/` - Database files, data files
+- 📁 `tests/` - Pytest tests only
+- 📁 `code_analysis/` - Source code only
+
+**Rule**: When creating files, place them in the correct directory immediately.
+
+### 4.2 File Size Limits
+
+**Rule**: Files must not exceed 400 lines.
+
+**Action**: If a file exceeds 400 lines:
+1. **MUST** use MCP splitting tools (`split_file_to_package`, `split_class`)
+2. Split into package structure via MCP commands
+3. **NEVER** manually split by creating new files directly
+
+**Why MCP splitting?**
+- Allows parallel testing during refactoring
+- Preserves code structure and relationships
+- Maintains imports and dependencies correctly
+
+**Check**:
+```bash
+wc -l code_analysis/**/*.py
+```
+
+**Split via MCP**:
+```python
+mcp_MCP-Proxy-2_call_server(
+    server_id="code-analysis-server",
+    command="split_file_to_package",
+    params={
+        "root_dir": "/path",
+        "file_path": "large_file.py",
+        "config_path": "data/refactor_configs/split_config.json"
+    }
+)
+```
+
+## 5. Code Analysis Workflow
+
+### 5.1 Before Making Changes
+
+**Always**:
+1. ✅ Check if functionality already exists using `code_mapper` indexes
+2. ✅ Search existing code using `fulltext_search` or `semantic_search`
+3. ✅ Check file size with `wc -l`
+4. ✅ Review related code using `get_code_entity_info`
+
+**Commands**:
+```python
+# Search for existing functionality
+mcp_MCP-Proxy-2_call_server(
+    server_id="code-analysis-server",
+    command="fulltext_search",
+    params={"root_dir": "/path", "query": "functionality_name"}
+)
+
+# Get entity information
+mcp_MCP-Proxy-2_call_server(
+    server_id="code-analysis-server",
+    command="get_code_entity_info",
+    params={"root_dir": "/path", "entity_type": "class", "entity_name": "ClassName"}
+)
+```
+
+### 5.2 After Making Changes
+
+**Always**:
+1. ✅ Run `black` (automatic via `format_code`)
+2. ✅ Run `flake8` (automatic via `lint_code`)
+3. ✅ Run `mypy` (automatic via `type_check_code`)
+4. ✅ Update `code_mapper` indexes
+5. ✅ Restart server if code changed
+
+**Commands**:
+```python
+# Update indexes
+mcp_MCP-Proxy-2_call_server(
+    server_id="code-analysis-server",
+    command="update_indexes",
+    params={"root_dir": "/path"}
+)
+```
+
+## 6. Available MCP Commands
+
+### 6.1 Analysis Commands
+
+- `analyze_project` - Analyze entire project
+- `analyze_file` - Analyze single file
+- `get_code_entity_info` - Get detailed entity information
+- `list_code_entities` - List entities by type
+
+### 6.2 Search Commands
+
+- `fulltext_search` - Full-text search in code
+- `semantic_search` - Semantic search using embeddings
+- `find_classes` - Find classes by pattern
+- `list_class_methods` - List methods of a class
+- `find_usages` - Find usages of entity
+
+### 6.3 AST Commands
+
+- `get_ast` - Get AST for file
+- `search_ast_nodes` - Search AST nodes
+- `ast_statistics` - Get AST statistics
+- `list_project_files` - List project files
+
+### 6.4 Refactoring Commands
+
+- `split_class` - Split class into multiple classes
+- `extract_superclass` - Extract base class
+- `split_file_to_package` - Split file into package
+- `compose_cst_module` - Apply CST-based patches
+
+### 6.5 CST Commands
+
+- `list_cst_blocks` - List logical blocks with stable IDs
+- `query_cst` - Query using CSTQuery selectors
+- `compose_cst_module` - Apply CST patches
+
+### 6.6 Code Quality Commands
+
+- `format_code` - Format with black
+- `lint_code` - Lint with flake8
+- `type_check_code` - Type check with mypy
+
+### 6.7 Utility Commands
+
+- `update_indexes` - Update code_mapper indexes
+- `get_imports` - Get imports
+- `find_dependencies` - Find dependencies
+- `get_class_hierarchy` - Get class hierarchy
+
+## 7. Error Handling Rules
+
+### 7.1 When Errors Occur
+
+**Rule**: Always investigate and fix errors immediately.
+
+**Process**:
+1. ✅ Read error message carefully
+2. ✅ Check server logs (`logs/mcp_server.log`)
+3. ✅ Verify file syntax
+4. ✅ Check imports and dependencies
+5. ✅ Restart server if needed
+6. ✅ Fix the issue before continuing
+
+**Never**:
+- ❌ Ignore errors
+- ❌ Skip validation
+- ❌ Continue with broken code
+
+### 7.2 Common Error Patterns
+
+**Docstring Validation Errors**:
+- Missing file-level docstring
+- Missing class docstring
+- Missing method docstring
+- Missing parameter descriptions
+- Missing attribute descriptions
+- Missing type hints
+
+**Solution**: Add required docstrings and type hints.
+
+**Compilation Errors**:
+- Syntax errors in new code
+- Import errors
+- Type errors
+
+**Solution**: Fix syntax/imports, run type checker.
+
+## 8. Code Writing Standards
+
+### 8.1 Docstring Requirements
+
+**CRITICAL**: All code must have proper docstrings:
+
+1. **File-level docstring** (required):
+   ```python
+   """
+   Module description.
+   
+   Author: Vasiliy Zdanovskiy
+   email: vasilyvz@gmail.com
+   """
+   ```
+
+2. **Class docstring** (required):
+   ```python
+   class MyClass:
+       """
+       Class description.
+       
+       Attributes:
+           attr1: Description of attr1
+           attr2: Description of attr2
+       """
+   ```
+
+3. **Method docstring** (required):
+   ```python
+   def method(self, param1: int, param2: str) -> bool:
+       """
+       Method description.
+       
+       Args:
+           param1: Description of param1
+           param2: Description of param2
+       
+       Returns:
+           Description of return value
+       """
+   ```
+
+### 8.2 Type Hints
+
+**Rule**: All functions/methods must have:
+- ✅ Type hints for all parameters (except `self`/`cls`)
+- ✅ Return type hint (except `__init__`)
+
+**Example**:
+```python
+# ✅ CORRECT
+def process_data(data: dict[str, Any], count: int) -> list[str]:
+    ...
+
+# ❌ WRONG
+def process_data(data, count):
+    ...
+```
+
+### 8.3 Import Organization
+
+**Rule**: Imports are automatically normalized by `compose_cst_module`.
+
+**Manual organization**:
+1. Standard library imports
+2. Third-party imports
+3. Local imports
+
+## 9. Workflow Examples
+
+### 9.1 Creating New Module
+
+```python
+# 1. Create module with compose_cst_module
+mcp_MCP-Proxy-2_call_server(
+    server_id="code-analysis-server",
+    command="compose_cst_module",
+    params={
+        "root_dir": "/path",
+        "file_path": "new_module.py",
+        "ops": [{
+            "selector": {"kind": "module"},
+            "file_docstring": "New module description",
+            "new_code": "class NewClass:\n    \"\"\"Class description.\"\"\"\n    pass"
+        }],
+        "apply": True
+    }
+)
+
+# 2. Validate
+mcp_MCP-Proxy-2_call_server(
+    server_id="code-analysis-server",
+    command="format_code",
+    params={"file_path": "new_module.py"}
+)
+
+# 3. Update indexes
+mcp_MCP-Proxy-2_call_server(
+    server_id="code-analysis-server",
+    command="update_indexes",
+    params={"root_dir": "/path"}
+)
+```
+
+### 9.2 Modifying Existing Code
+
+```python
+# 1. List blocks to find what to modify
+mcp_MCP-Proxy-2_call_server(
+    server_id="code-analysis-server",
+    command="list_cst_blocks",
+    params={"root_dir": "/path", "file_path": "file.py"}
+)
+
+# 2. Modify using CST
+mcp_MCP-Proxy-2_call_server(
+    server_id="code-analysis-server",
+    command="compose_cst_module",
+    params={
+        "root_dir": "/path",
+        "file_path": "file.py",
+        "ops": [{
+            "selector": {"kind": "method", "name": "MyClass.method"},
+            "new_code": "def method(self, param: int) -> str:\n    \"\"\"...\"\"\"\n    return str(param)"
+        }],
+        "apply": True
+    }
+)
+
+# 3. Restart server
+run_terminal_cmd("cd /path && source .venv/bin/activate && python -m code_analysis.cli.server_manager_cli --config config.json restart")
+```
+
+### 9.3 Refactoring Large File
+
+**CRITICAL**: Always use MCP splitting tools, never split manually!
+
+```python
+# 1. Check file size
+run_terminal_cmd("wc -l code_analysis/core/large_file.py")
+
+# 2. Analyze structure
+mcp_MCP-Proxy-2_call_server(
+    server_id="code-analysis-server",
+    command="list_cst_blocks",
+    params={"root_dir": "/path", "file_path": "large_file.py"}
+)
+
+# 3. Split file using MCP command (REQUIRED - allows parallel testing)
+mcp_MCP-Proxy-2_call_server(
+    server_id="code-analysis-server",
+    command="split_file_to_package",
+    params={
+        "root_dir": "/path",
+        "file_path": "large_file.py",
+        "config_path": "data/refactor_configs/split_config.json"
+    }
+)
+
+# 4. Update indexes
+mcp_MCP-Proxy-2_call_server(
+    server_id="code-analysis-server",
+    command="update_indexes",
+    params={"root_dir": "/path"}
+)
+```
+
+**Why MCP splitting?**
+- ✅ Preserves code structure and relationships
+- ✅ Automatic testing during refactoring
+- ✅ Maintains imports and dependencies
+- ✅ Better code quality and consistency
+- ❌ Manual splitting breaks these guarantees
+
+## 10. Best Practices Summary
+
+### 10.1 Always Do
+
+- ✅ Use MCP commands as primary interface
+- ✅ Validate code before committing
+- ✅ Follow file organization standards
+- ✅ Keep files under 400 lines
+- ✅ Add proper docstrings and type hints
+- ✅ Restart server after code changes
+- ✅ Update indexes after changes
+- ✅ Use CST for existing code modifications
+- ✅ Write code directly for new modules
+
+### 10.2 Never Do
+
+- ❌ Use CLI when MCP is available
+- ❌ Skip validation
+- ❌ Ignore errors
+- ❌ Create files in wrong directories
+- ❌ Exceed 400 lines per file
+- ❌ Skip docstrings
+- ❌ Skip type hints
+- ❌ Continue with broken code
+- ❌ **Manually split large files** (always use MCP splitting tools)
+
+## 11. Quick Reference
+
+### 11.1 Command Priority
+
+1. **MCP** → `mcp_MCP-Proxy-2_call_server`
+2. **CLI** → `run_terminal_cmd` (fallback only)
+
+### 11.2 Code Creation
+
+- **New code** → Write directly
+- **Existing code** → Use CST
+
+### 11.3 Validation
+
+- **Automatic** → `compose_cst_module` validates automatically
+- **Manual** → `format_code`, `lint_code`, `type_check_code`
+
+### 11.4 After Changes
+
+1. Format code
+2. Lint code
+3. Type check
+4. Update indexes
+5. Restart server
+
+---
+
+**Remember**: This project is a tool for AI. The goal is not just writing code, but creating a tool that works primarily through MCP. CLI is just a fallback option.
+

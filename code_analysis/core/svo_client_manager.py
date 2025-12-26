@@ -8,11 +8,13 @@ Author: Vasiliy Zdanovskiy
 email: vasilyvz@gmail.com
 """
 
+import asyncio
 import logging
 from typing import Optional, List, Any
 
 from .config import ServerConfig
 from .chunker_client_wrapper import create_chunker_client
+from .circuit_breaker import CircuitBreaker, CircuitState
 from svo_client import ChunkerClient
 from embed_client.async_client import EmbeddingServiceAsyncClient
 
@@ -37,6 +39,22 @@ class SVOClientManager:
         self.config = config
         self._chunker_client: Optional[ChunkerClient] = None
         self._embedding_client: Optional[EmbeddingServiceAsyncClient] = None
+        
+        # Get circuit breaker config from worker config or use defaults
+        circuit_breaker_config = {}
+        if config.worker and isinstance(config.worker, dict):
+            circuit_breaker_config = config.worker.get("circuit_breaker", {})
+        
+        # Circuit breaker for chunker service
+        self._chunker_circuit = CircuitBreaker(
+            failure_threshold=circuit_breaker_config.get("failure_threshold", 5),
+            recovery_timeout=circuit_breaker_config.get("recovery_timeout", 60.0),
+            success_threshold=circuit_breaker_config.get("success_threshold", 2),
+            initial_backoff=circuit_breaker_config.get("initial_backoff", 5.0),
+            max_backoff=circuit_breaker_config.get("max_backoff", 300.0),
+            backoff_multiplier=circuit_breaker_config.get("backoff_multiplier", 2.0),
+        )
+        self._chunker_circuit.set_service_name("chunker")
 
     async def initialize(self) -> None:
         """Initialize chunker client."""
@@ -93,7 +111,7 @@ class SVOClientManager:
 
     async def chunk_text(self, text: str, **params) -> Optional[List[Any]]:
         """
-        Chunk text using the chunker service with retry logic.
+        Chunk text using the chunker service with retry logic and circuit breaker.
 
         Args:
             text: Text to chunk
@@ -102,10 +120,17 @@ class SVOClientManager:
         Returns:
             List of chunks or None if chunker is not available or all retries failed
         """
-        import asyncio
-
         if not self._chunker_client:
             logger.warning("Chunker client is not available")
+            return None
+
+        # Check circuit breaker before attempting
+        if not self._chunker_circuit.should_attempt():
+            backoff_delay = self._chunker_circuit.get_backoff_delay()
+            logger.debug(
+                f"Circuit breaker is OPEN for chunker service, "
+                f"skipping request (backoff: {backoff_delay:.1f}s)"
+            )
             return None
 
         # Get retry configuration from server config
@@ -133,6 +158,8 @@ class SVOClientManager:
                     f"type={type(result)}, length={len(result) if result else 0}"
                 )
                 if result:
+                    # Record success in circuit breaker
+                    self._chunker_circuit.record_success()
                     logger.info(
                         f"Chunk_text succeeded (attempt {attempt}): received {len(result)} chunks, "
                         f"text_length={len(text)}"
@@ -176,6 +203,9 @@ class SVOClientManager:
                         or (hasattr(e, "code") and getattr(e, "code") == -32603)
                     )
 
+                    # Record failure in circuit breaker
+                    self._chunker_circuit.record_failure()
+
                     if is_model_rpc_error:
                         # Model RPC server is down - use warning level (infrastructure issue)
                         log_level = (
@@ -208,6 +238,9 @@ class SVOClientManager:
                         exc_info=True,
                     )
 
+                # Record failure in circuit breaker
+                self._chunker_circuit.record_failure()
+
                 if attempt < retry_attempts:
                     logger.info(f"Retrying in {retry_delay}s...")
                     await asyncio.sleep(retry_delay)
@@ -236,6 +269,15 @@ class SVOClientManager:
         """
         if not self._chunker_client:
             logger.warning("Chunker client is not available")
+            return None
+
+        # Check circuit breaker before attempting
+        if not self._chunker_circuit.should_attempt():
+            backoff_delay = self._chunker_circuit.get_backoff_delay()
+            logger.debug(
+                f"Circuit breaker is OPEN for chunker service, "
+                f"skipping embedding request (backoff: {backoff_delay:.1f}s)"
+            )
             return None
 
         try:
@@ -270,7 +312,12 @@ class SVOClientManager:
                 result = await self._chunker_client.chunk_text(
                     combined_text, **chunker_params
                 )
+                # Record success if we got a result
+                if result:
+                    self._chunker_circuit.record_success()
             except Exception as chunker_error:
+                # Record failure in circuit breaker
+                self._chunker_circuit.record_failure()
                 error_type = type(chunker_error).__name__
                 error_msg = str(chunker_error)
                 logger.error(
@@ -339,17 +386,38 @@ class SVOClientManager:
             Dictionary with health status
         """
         result = {
-            "chunker": {"available": False, "error": None},
+            "chunker": {"available": False, "error": None, "circuit_state": None},
         }
 
         if self._chunker_client:
             try:
                 await self._chunker_client.health()
                 result["chunker"]["available"] = True
+                self._chunker_circuit.record_success()
             except Exception as e:
                 result["chunker"]["error"] = str(e)
+                self._chunker_circuit.record_failure()
 
+        result["chunker"]["circuit_state"] = self._chunker_circuit.get_state().value
         return result
+
+    def get_circuit_state(self) -> str:
+        """
+        Get current circuit breaker state.
+
+        Returns:
+            Circuit state as string
+        """
+        return self._chunker_circuit.get_state().value
+
+    def get_backoff_delay(self) -> float:
+        """
+        Get current backoff delay.
+
+        Returns:
+            Backoff delay in seconds
+        """
+        return self._chunker_circuit.get_backoff_delay()
 
     async def close(self) -> None:
         """Close chunker client connection."""

@@ -14,7 +14,7 @@ import subprocess
 import sys
 import time
 from pathlib import Path
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
 
 logger = logging.getLogger(__name__)
 
@@ -159,6 +159,152 @@ class ServerControl:
 
         return {"pid": pid, "running": True}
 
+    def _find_worker_processes(self) -> List[Dict[str, Any]]:
+        """
+        Find all worker processes (vectorization and file watcher).
+
+        Returns:
+            List of process info dictionaries with 'pid' and 'cmd' keys
+        """
+        workers = []
+        try:
+            import psutil
+
+            for proc in psutil.process_iter(["pid", "name", "cmdline", "create_time"]):
+                try:
+                    cmdline = " ".join(proc.info["cmdline"] or [])
+                    # Check for vectorization worker
+                    if "run_vectorization_worker" in cmdline or (
+                        "vectorization" in cmdline.lower()
+                        and "worker" in cmdline.lower()
+                        and "code_analysis" in cmdline
+                    ):
+                        workers.append(
+                            {
+                                "pid": proc.info["pid"],
+                                "cmd": cmdline,
+                                "type": "vectorization",
+                            }
+                        )
+                    # Check for file watcher worker
+                    elif "run_file_watcher_worker" in cmdline or (
+                        "file_watcher" in cmdline.lower()
+                        and "worker" in cmdline.lower()
+                        and "code_analysis" in cmdline
+                    ):
+                        workers.append(
+                            {
+                                "pid": proc.info["pid"],
+                                "cmd": cmdline,
+                                "type": "file_watcher",
+                            }
+                        )
+                except (psutil.NoSuchProcess, psutil.AccessDenied):
+                    continue
+        except ImportError:
+            # Fallback: use /proc if psutil not available
+            logger.warning("psutil not available, using /proc fallback for worker detection")
+            try:
+                proc_dir = Path("/proc")
+                if proc_dir.exists():
+                    for pid_dir in proc_dir.iterdir():
+                        if not pid_dir.name.isdigit():
+                            continue
+                        try:
+                            pid = int(pid_dir.name)
+                            cmdline_path = pid_dir / "cmdline"
+                            if cmdline_path.exists():
+                                with open(cmdline_path, "r") as f:
+                                    cmd = f.read().replace("\x00", " ").strip()
+                                if "run_vectorization_worker" in cmd or (
+                                    "vectorization" in cmd.lower()
+                                    and "worker" in cmd.lower()
+                                    and "code_analysis" in cmd
+                                ):
+                                    workers.append(
+                                        {"pid": pid, "cmd": cmd, "type": "vectorization"}
+                                    )
+                                elif "run_file_watcher_worker" in cmd or (
+                                    "file_watcher" in cmd.lower()
+                                    and "worker" in cmd.lower()
+                                    and "code_analysis" in cmd
+                                ):
+                                    workers.append(
+                                        {"pid": pid, "cmd": cmd, "type": "file_watcher"}
+                                    )
+                        except (ValueError, IOError, PermissionError):
+                            continue
+            except Exception as e:
+                logger.warning(f"Failed to scan /proc for workers: {e}")
+        except Exception as e:
+            logger.warning(f"Error finding worker processes: {e}")
+
+        return workers
+
+    def _kill_worker_processes(self, timeout: int = 5) -> Dict[str, Any]:
+        """
+        Force kill all worker processes (vectorization and file watcher).
+
+        Args:
+            timeout: Timeout in seconds before force kill
+
+        Returns:
+            Dictionary with kill results
+        """
+        workers = self._find_worker_processes()
+        if not workers:
+            return {
+                "success": True,
+                "message": "No worker processes found",
+                "killed": [],
+            }
+
+        killed = []
+        failed = []
+
+        for worker in workers:
+            pid = worker["pid"]
+            worker_type = worker.get("type", "unknown")
+            try:
+                if not self._is_process_running(pid):
+                    continue
+
+                # Try graceful shutdown first
+                os.kill(pid, signal.SIGTERM)
+                logger.info(f"Sent SIGTERM to {worker_type} worker (PID: {pid})")
+
+                # Wait for process to terminate
+                terminated = False
+                for _ in range(timeout):
+                    if not self._is_process_running(pid):
+                        terminated = True
+                        break
+                    time.sleep(0.5)
+
+                # Force kill if still running
+                if not terminated and self._is_process_running(pid):
+                    os.kill(pid, signal.SIGKILL)
+                    logger.warning(f"Force killed {worker_type} worker (PID: {pid})")
+                    time.sleep(0.2)
+
+                if not self._is_process_running(pid):
+                    killed.append({"pid": pid, "type": worker_type})
+                else:
+                    failed.append({"pid": pid, "type": worker_type, "error": "Still running"})
+            except ProcessLookupError:
+                # Process already gone
+                killed.append({"pid": pid, "type": worker_type})
+            except Exception as e:
+                logger.error(f"Failed to kill {worker_type} worker (PID: {pid}): {e}")
+                failed.append({"pid": pid, "type": worker_type, "error": str(e)})
+
+        return {
+            "success": len(failed) == 0,
+            "message": f"Killed {len(killed)} worker(s), {len(failed)} failed",
+            "killed": killed,
+            "failed": failed,
+        }
+
     def start(self) -> Dict[str, Any]:
         """
         Start MCP server.
@@ -233,7 +379,7 @@ class ServerControl:
 
     def stop(self, timeout: int = 10) -> Dict[str, Any]:
         """
-        Stop MCP server.
+        Stop MCP server and all worker processes.
 
         Args:
             timeout: Timeout in seconds before force kill
@@ -243,23 +389,37 @@ class ServerControl:
         """
         pid = self._read_pid()
         if not pid:
+            # Even if server PID not found, try to kill workers
+            worker_result = self._kill_worker_processes(timeout=5)
             return {
                 "success": False,
                 "message": "Server is not running (no PID file found)",
+                "workers_killed": worker_result,
             }
 
         if not self._is_process_running(pid):
-            # Stale PID file
+            # Stale PID file, but try to kill workers
             self._remove_pid()
+            worker_result = self._kill_worker_processes(timeout=5)
             return {
                 "success": False,
                 "message": "Server is not running (stale PID file)",
+                "workers_killed": worker_result,
             }
 
-        # Try graceful shutdown
+        # First, kill all worker processes
+        logger.info("Stopping worker processes...")
+        worker_result = self._kill_worker_processes(timeout=5)
+        if worker_result["killed"]:
+            logger.info(
+                f"Killed {len(worker_result['killed'])} worker process(es): "
+                f"{[w['type'] for w in worker_result['killed']]}"
+            )
+
+        # Then stop the main server process
         try:
             os.kill(pid, signal.SIGTERM)
-            logger.info(f"Sent SIGTERM to process {pid}")
+            logger.info(f"Sent SIGTERM to server process {pid}")
 
             # Wait for process to terminate
             for _ in range(timeout):
@@ -269,19 +429,21 @@ class ServerControl:
                         "success": True,
                         "message": "Server stopped successfully",
                         "pid": pid,
+                        "workers_killed": worker_result,
                     }
                 time.sleep(1)
 
             # Force kill if still running
             if self._is_process_running(pid):
                 os.kill(pid, signal.SIGKILL)
-                logger.warning(f"Force killed process {pid}")
+                logger.warning(f"Force killed server process {pid}")
                 time.sleep(0.5)
                 self._remove_pid()
                 return {
                     "success": True,
                     "message": "Server force stopped",
                     "pid": pid,
+                    "workers_killed": worker_result,
                 }
         except ProcessLookupError:
             # Process already gone
@@ -289,12 +451,14 @@ class ServerControl:
             return {
                 "success": True,
                 "message": "Server was not running",
+                "workers_killed": worker_result,
             }
         except Exception as e:
             logger.error(f"Failed to stop server: {e}")
             return {
                 "success": False,
                 "message": f"Failed to stop server: {str(e)}",
+                "workers_killed": worker_result,
             }
 
     def restart(self) -> Dict[str, Any]:

@@ -10,6 +10,7 @@ email: vasilyvz@gmail.com
 # split into `code_analysis/commands/ast/` to keep files under the 400-line
 # limit. Import paths used by hooks and external integrations remain stable.
 
+from .ast import (
     ASTStatisticsMCPCommand,
     ExportGraphMCPCommand,
     FindDependenciesMCPCommand,

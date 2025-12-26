@@ -98,9 +98,7 @@ class SemanticSearchMCPCommand(BaseMCPCommand):
                         code="PROJECT_NOT_FOUND",
                     )
 
-                # Get config for FAISS and SVO
-                from ..core.config import ServerConfig
-
+                # Get config for FAISS
                 config_path = root_path / "config.json"
                 if not config_path.exists():
                     return ErrorResult(
@@ -124,37 +122,29 @@ class SemanticSearchMCPCommand(BaseMCPCommand):
                 if not Path(faiss_index_path).is_absolute():
                     faiss_index_path = str(root_path / faiss_index_path)
 
-                # Create server config for SVO client manager
-                server_config = ServerConfig(**code_analysis_config)
-
-                # Initialize SVO client manager
-                from ..core.svo_client_manager import SVOClientManager
-
-                svo_client_manager = SVOClientManager(server_config)
-                await svo_client_manager.initialize()
-
-                try:
-                    # Create search command
-                    search_cmd = SemanticSearchCommand(
-                        database=database,
-                        project_id=actual_project_id,
-                        faiss_index_path=faiss_index_path,
-                        vector_dim=vector_dim,
-                        svo_client_manager=svo_client_manager,
+                # Initialize FAISS manager
+                faiss_manager = FaissIndexManager(
+                    index_path=faiss_index_path,
+                    vector_dim=vector_dim,
+                )
+                
+                # Load index if exists
+                if Path(faiss_index_path).exists():
+                    faiss_manager._load_index()
+                else:
+                    return ErrorResult(
+                        message="FAISS index not found. Run update_indexes first.",
+                        code="FAISS_INDEX_NOT_FOUND",
                     )
-
-                    # Perform search
-                    results = await search_cmd.search(query, k=k, min_score=min_score)
-
-                    return SuccessResult(
-                        data={
-                            "query": query,
-                            "results": results,
-                            "count": len(results),
-                        }
-                    )
-                finally:
-                    await svo_client_manager.close()
+                
+                # Get embedding for query
+                # TODO: Use embedding service to get query vector
+                # For now, return placeholder
+                return ErrorResult(
+                    message="Semantic search requires embedding service integration",
+                    code="NOT_IMPLEMENTED",
+                    details={"faiss_index_path": faiss_index_path, "vector_dim": vector_dim}
+                )
 
             finally:
                 database.close()

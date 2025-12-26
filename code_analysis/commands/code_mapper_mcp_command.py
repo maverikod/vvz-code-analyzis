@@ -76,6 +76,9 @@ class UpdateIndexesMCPCommand(BaseMCPCommand):
     ) -> Dict[str, Any]:
         """Analyze a single Python file and add to database."""
         try:
+            # Ensure both paths are absolute and resolved
+            file_path = file_path.resolve()
+            root_path = root_path.resolve()
             rel_path = str(file_path.relative_to(root_path))
             file_stat = file_path.stat()
             file_mtime = file_stat.st_mtime

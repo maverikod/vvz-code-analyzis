@@ -12,7 +12,9 @@ from typing import Any, Dict, Optional
 from mcp_proxy_adapter.commands.result import SuccessResult, ErrorResult
 
 from .base_mcp_command import BaseMCPCommand
-from ..code_mapper import CodeMapper
+from ..core.database import CodeDatabase
+from pathlib import Path
+import os
 
 logger = logging.getLogger(__name__)
 

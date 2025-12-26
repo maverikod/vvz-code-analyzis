@@ -34,7 +34,7 @@ def get_file_by_path(
             (path, project_id),
         )
     else:
-    cursor.execute(
+        cursor.execute(
             "SELECT * FROM files WHERE path = ? AND project_id = ? AND (deleted = 0 OR deleted IS NULL)",
             (path, project_id),
     )
@@ -87,7 +87,7 @@ def get_file_id(
             (path, project_id),
         )
     else:
-    cursor.execute(
+        cursor.execute(
             "SELECT id FROM files WHERE path = ? AND project_id = ? AND (deleted = 0 OR deleted IS NULL)",
             (path, project_id),
     )

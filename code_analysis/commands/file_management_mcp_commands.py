@@ -15,6 +15,7 @@ from .file_management import (
     CleanupDeletedFilesCommand,
     UnmarkDeletedFileCommand,
     CollapseVersionsCommand,
+    RepairDatabaseCommand,
 )
 
 logger = logging.getLogger(__name__)
@@ -298,3 +299,101 @@ class CollapseVersionsMCPCommand(BaseMCPCommand):
 
         except Exception as e:
             return self._handle_error(e, "COLLAPSE_ERROR", "collapse_versions")
+
+
+class RepairDatabaseMCPCommand(BaseMCPCommand):
+    """Repair database integrity - restore correct file status based on actual file presence."""
+
+    name = "repair_database"
+    version = "1.0.0"
+    descr = "Repair database integrity - restore correct file status based on actual file presence in project and versions"
+    category = "file_management"
+    author = "Vasiliy Zdanovskiy"
+    email = "vasilyvz@gmail.com"
+    use_queue = False
+
+    @classmethod
+    def get_schema(cls) -> Dict[str, Any]:
+        """Get JSON schema for command parameters."""
+        return {
+            "type": "object",
+            "properties": {
+                "root_dir": {
+                    "type": "string",
+                    "description": "Root directory of the project (contains data/code_analysis.db)",
+                },
+                "project_id": {
+                    "type": "string",
+                    "description": "Optional project UUID; if omitted, inferred by root_dir",
+                },
+                "version_dir": {
+                    "type": "string",
+                    "description": "Version directory for deleted files (default: data/versions)",
+                    "default": "data/versions",
+                },
+                "dry_run": {
+                    "type": "boolean",
+                    "description": "If True, only show what would be repaired",
+                    "default": False,
+                },
+            },
+            "required": ["root_dir"],
+            "additionalProperties": False,
+        }
+
+    async def execute(
+        self,
+        root_dir: str,
+        project_id: Optional[str] = None,
+        version_dir: str = "data/versions",
+        dry_run: bool = False,
+        **kwargs,
+    ) -> SuccessResult | ErrorResult:
+        """
+        Execute repair database command.
+
+        Args:
+            root_dir: Root directory of the project
+            project_id: Optional project UUID
+            version_dir: Version directory for deleted files
+            dry_run: If True, only show what would be repaired
+
+        Returns:
+            SuccessResult with repair statistics or ErrorResult on failure
+        """
+        try:
+            from pathlib import Path
+
+            root_path = self._validate_root_dir(root_dir)
+            database = self._open_database(root_dir, auto_analyze=False)
+
+            actual_project_id = self._get_project_id(database, root_path, project_id)
+            if not actual_project_id:
+                return ErrorResult(
+                    message=(
+                        f"Project not found: {project_id}"
+                        if project_id
+                        else "Failed to get or create project"
+                    ),
+                    code="PROJECT_NOT_FOUND",
+                )
+
+            # Resolve version_dir path
+            if not Path(version_dir).is_absolute():
+                version_dir = str(root_path / version_dir)
+
+            try:
+                command = RepairDatabaseCommand(
+                    database=database,
+                    project_id=actual_project_id,
+                    root_dir=root_path,
+                    version_dir=version_dir,
+                    dry_run=dry_run,
+                )
+                result = await command.execute()
+                return SuccessResult(data=result)
+            finally:
+                database.close()
+
+        except Exception as e:
+            return self._handle_error(e, "REPAIR_DATABASE_ERROR", "repair_database")

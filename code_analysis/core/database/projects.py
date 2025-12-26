@@ -186,8 +186,8 @@ def get_project_files(
     else:
         cursor.execute(
             "SELECT id, path, lines, last_modified, has_docstring, deleted FROM files WHERE project_id = ? AND (deleted = 0 OR deleted IS NULL)",
-            (project_id,),
-        )
+        (project_id,),
+    )
     rows = cursor.fetchall()
     result = []
     for row in rows:

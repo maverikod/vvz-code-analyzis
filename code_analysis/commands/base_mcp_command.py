@@ -116,7 +116,7 @@ class BaseMCPCommand(Command):
                         asyncio.set_event_loop(loop)
 
                     # Create command instance and run
-                        cmd = UpdateIndexesMCPCommand()
+                    cmd = UpdateIndexesMCPCommand()
                     # Run analysis with default parameters
                     result = loop.run_until_complete(
                         cmd.execute(
@@ -132,13 +132,7 @@ class BaseMCPCommand(Command):
                     else:
                         logger.info(
                             f"Automatic analysis completed successfully: "
-                                f"{result.data.get('files_analyzed', 0) if result.data else 0} files analyzed"
-                            )
-                    except ImportError as e:
-                        logger.warning(
-                            f"Cannot import UpdateIndexesMCPCommand for auto-analysis: {e}. "
-                            f"Database will be created but not populated. "
-                            f"Run 'update_indexes' command manually."
+                            f"{result.data.get('files_analyzed', 0) if result.data else 0} files analyzed"
                         )
 
             return db

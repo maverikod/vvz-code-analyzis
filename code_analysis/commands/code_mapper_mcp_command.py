@@ -206,7 +206,7 @@ class UpdateIndexesMCPCommand(BaseMCPCommand):
 
         except Exception as e:
             logger.error(f"Error analyzing {file_path}: {e}", exc_info=True)
-            return {"file": str(file_path), "status": "error", "error": str(e)}
+            return {"file": str(file_path), "status": "error", "error": str(e), "error_type": type(e).__name__}
 
     async def execute(
         self,

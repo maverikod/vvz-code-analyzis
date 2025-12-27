@@ -44,29 +44,48 @@ def add_method(
 
 
 def search_methods(
-    self, name_pattern: Optional[str] = None, project_id: Optional[str] = None
+    self,
+    name_pattern: Optional[str] = None,
+    class_name: Optional[str] = None,
+    project_id: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
-    """Search methods by name pattern."""
+    """
+    Search methods by name pattern and/or class name.
+
+    Args:
+        name_pattern: Optional name pattern to search
+        class_name: Optional class name to filter by
+        project_id: Optional project ID to filter by
+
+    Returns:
+        List of matching methods
+    """
     assert self.conn is not None
     cursor = self.conn.cursor()
+
+    # Build query with filters
+    query = """
+        SELECT m.*, c.name as class_name, f.path as file_path
+        FROM methods m
+        JOIN classes c ON m.class_id = c.id
+        JOIN files f ON c.file_id = f.id
+        WHERE 1=1
+    """
+    params = []
+
     if name_pattern:
-        if project_id:
-            cursor.execute(
-                "\n                    SELECT m.*, c.name as class_name, f.path as file_path\n                    FROM methods m\n                    JOIN classes c ON m.class_id = c.id\n                    JOIN files f ON c.file_id = f.id\n                    WHERE m.name LIKE ? AND f.project_id = ?\n                    ORDER BY c.name, m.name, m.line\n                ",
-                (f"%{name_pattern}%", project_id),
-            )
-        else:
-            cursor.execute(
-                "\n                    SELECT m.*, c.name as class_name, f.path as file_path\n                    FROM methods m\n                    JOIN classes c ON m.class_id = c.id\n                    JOIN files f ON c.file_id = f.id\n                    WHERE m.name LIKE ?\n                    ORDER BY c.name, m.name, m.line\n                ",
-                (f"%{name_pattern}%",),
-            )
-    elif project_id:
-        cursor.execute(
-            "\n                    SELECT m.*, c.name as class_name, f.path as file_path\n                    FROM methods m\n                    JOIN classes c ON m.class_id = c.id\n                    JOIN files f ON c.file_id = f.id\n                    WHERE f.project_id = ?\n                    ORDER BY c.name, m.name, m.line\n                ",
-            (project_id,),
-        )
-    else:
-        cursor.execute(
-            "\n                    SELECT m.*, c.name as class_name, f.path as file_path\n                    FROM methods m\n                    JOIN classes c ON m.class_id = c.id\n                    JOIN files f ON c.file_id = f.id\n                    ORDER BY c.name, m.name, m.line\n                "
-        )
+        query += " AND m.name LIKE ?"
+        params.append(f"%{name_pattern}%")
+
+    if class_name:
+        query += " AND c.name = ?"
+        params.append(class_name)
+
+    if project_id:
+        query += " AND f.project_id = ?"
+        params.append(project_id)
+
+    query += " ORDER BY c.name, m.name, m.line"
+
+    cursor.execute(query, params)
     return [dict(row) for row in cursor.fetchall()]

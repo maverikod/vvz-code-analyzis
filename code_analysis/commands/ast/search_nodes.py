@@ -77,9 +77,9 @@ class SearchASTNodesMCPCommand(BaseMCPCommand):
             # For more complex searches, would need to parse AST JSON
             assert db.conn is not None
             cursor = db.conn.cursor()
-            
+
             results = []
-            
+
             # Map node types to database tables
             if not node_type or node_type in ("ClassDef", "class"):
                 # Search classes
@@ -90,9 +90,10 @@ class SearchASTNodesMCPCommand(BaseMCPCommand):
                     WHERE f.project_id = ?
                 """
                 params = [proj_id]
-                
+
                 if file_path:
                     from pathlib import Path
+
                     file_path_obj = Path(file_path)
                     root_path = Path(root_dir).resolve()
                     if file_path_obj.is_absolute():
@@ -103,36 +104,39 @@ class SearchASTNodesMCPCommand(BaseMCPCommand):
                             pass
                     else:
                         file_path = str(file_path_obj)
-                    
+
                     file_record = db.get_file_by_path(file_path, proj_id)
                     if not file_record:
                         cursor.execute(
                             "SELECT id FROM files WHERE project_id = ? AND path LIKE ?",
-                            (proj_id, f"%{file_path}")
+                            (proj_id, f"%{file_path}"),
                         )
                         row = cursor.fetchone()
                         if row:
                             file_record = {"id": row[0]}
-                    
+
                     if file_record:
                         query += " AND c.file_id = ?"
                         params.append(file_record["id"])
-                
+
                 query += " ORDER BY f.path, c.line"
                 if limit:
                     query += f" LIMIT {limit}"
-                
+
                 cursor.execute(query, params)
                 rows = cursor.fetchall()
                 for row in rows:
-                    results.append({
-                        "node_type": "ClassDef",
-                        "name": row["name"],
-                        "file_path": row["file_path"],
-                        "line": row["line"],
-                        "docstring": row.get("docstring"),
-                    })
-            
+                    row_dict = dict(row)
+                    results.append(
+                        {
+                            "node_type": "ClassDef",
+                            "name": row_dict["name"],
+                            "file_path": row_dict["file_path"],
+                            "line": row_dict["line"],
+                            "docstring": row_dict.get("docstring"),
+                        }
+                    )
+
             if not node_type or node_type in ("FunctionDef", "function"):
                 # Search functions
                 query = """
@@ -142,9 +146,10 @@ class SearchASTNodesMCPCommand(BaseMCPCommand):
                     WHERE f.project_id = ?
                 """
                 params = [proj_id]
-                
+
                 if file_path:
                     from pathlib import Path
+
                     file_path_obj = Path(file_path)
                     root_path = Path(root_dir).resolve()
                     if file_path_obj.is_absolute():
@@ -155,36 +160,39 @@ class SearchASTNodesMCPCommand(BaseMCPCommand):
                             pass
                     else:
                         file_path = str(file_path_obj)
-                    
+
                     file_record = db.get_file_by_path(file_path, proj_id)
                     if not file_record:
                         cursor.execute(
                             "SELECT id FROM files WHERE project_id = ? AND path LIKE ?",
-                            (proj_id, f"%{file_path}")
+                            (proj_id, f"%{file_path}"),
                         )
                         row = cursor.fetchone()
                         if row:
                             file_record = {"id": row[0]}
-                    
+
                     if file_record:
                         query += " AND func.file_id = ?"
                         params.append(file_record["id"])
-                
+
                 query += " ORDER BY f.path, func.line"
                 if limit:
                     query += f" LIMIT {limit}"
-                
+
                 cursor.execute(query, params)
                 rows = cursor.fetchall()
                 for row in rows:
-                    results.append({
-                        "node_type": "FunctionDef",
-                        "name": row["name"],
-                        "file_path": row["file_path"],
-                        "line": row["line"],
-                        "docstring": row.get("docstring"),
-                    })
-            
+                    row_dict = dict(row)
+                    results.append(
+                        {
+                            "node_type": "FunctionDef",
+                            "name": row_dict["name"],
+                            "file_path": row_dict["file_path"],
+                            "line": row_dict["line"],
+                            "docstring": row_dict.get("docstring"),
+                        }
+                    )
+
             if not node_type or node_type in ("method"):
                 # Search methods
                 query = """
@@ -195,9 +203,10 @@ class SearchASTNodesMCPCommand(BaseMCPCommand):
                     WHERE f.project_id = ?
                 """
                 params = [proj_id]
-                
+
                 if file_path:
                     from pathlib import Path
+
                     file_path_obj = Path(file_path)
                     root_path = Path(root_dir).resolve()
                     if file_path_obj.is_absolute():
@@ -208,39 +217,42 @@ class SearchASTNodesMCPCommand(BaseMCPCommand):
                             pass
                     else:
                         file_path = str(file_path_obj)
-                    
+
                     file_record = db.get_file_by_path(file_path, proj_id)
                     if not file_record:
                         cursor.execute(
                             "SELECT id FROM files WHERE project_id = ? AND path LIKE ?",
-                            (proj_id, f"%{file_path}")
+                            (proj_id, f"%{file_path}"),
                         )
                         row = cursor.fetchone()
                         if row:
                             file_record = {"id": row[0]}
-                    
+
                     if file_record:
                         query += " AND f.id = ?"
                         params.append(file_record["id"])
-                
+
                 query += " ORDER BY f.path, m.line"
                 if limit:
                     query += f" LIMIT {limit}"
-                
+
                 cursor.execute(query, params)
                 rows = cursor.fetchall()
                 for row in rows:
-                    results.append({
-                        "node_type": "FunctionDef",
-                        "name": row["name"],
-                        "class_name": row.get("class_name"),
-                        "file_path": row["file_path"],
-                        "line": row["line"],
-                        "docstring": row.get("docstring"),
-                    })
-            
+                    row_dict = dict(row)
+                    results.append(
+                        {
+                            "node_type": "FunctionDef",
+                            "name": row_dict["name"],
+                            "class_name": row_dict.get("class_name"),
+                            "file_path": row_dict["file_path"],
+                            "line": row_dict["line"],
+                            "docstring": row_dict.get("docstring"),
+                        }
+                    )
+
             db.close()
-            
+
             return SuccessResult(
                 data={
                     "success": True,

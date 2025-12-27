@@ -263,7 +263,14 @@ class UpdateIndexesMCPCommand(BaseMCPCommand):
             }
 
         except Exception as e:
-            logger.error(f"Error analyzing {file_path}: {e}", exc_info=True)
+            error_msg = f"Error analyzing {file_path}: {e}"
+            logger.error(error_msg, exc_info=True)
+            # Print to stderr for visibility in job logs
+            import sys
+            print(f"ERROR: {error_msg}", file=sys.stderr, flush=True)
+            print(f"ERROR_TYPE: {type(e).__name__}", file=sys.stderr, flush=True)
+            import traceback
+            traceback.print_exc(file=sys.stderr)
             return {"file": str(file_path), "status": "error", "error": str(e), "error_type": type(e).__name__}
 
     async def execute(

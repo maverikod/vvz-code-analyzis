@@ -108,6 +108,22 @@ class RepairWorkerManager:
                 logger.info(
                     f"Repair worker started successfully (PID: {process.pid})"
                 )
+                
+                # Register worker in WorkerManager
+                try:
+                    from ..core.worker_manager import get_worker_manager
+                    worker_manager = get_worker_manager()
+                    worker_manager.register_worker(
+                        "repair",
+                        {
+                            "pid": process.pid,
+                            "process": process,
+                            "name": f"repair_{self.project_id}",
+                        }
+                    )
+                except Exception as e:
+                    logger.warning(f"Failed to register repair worker in WorkerManager: {e}")
+                
                 return {
                     "success": True,
                     "message": f"Repair worker started (PID: {process.pid})",

@@ -38,7 +38,9 @@ class SQLiteDriver(BaseDatabaseDriver):
         self.db_path = Path(config["path"]).resolve()
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
 
-        self.conn = sqlite3.connect(str(self.db_path))
+        # Allow connection to be used from different threads
+        # Thread safety is ensured by locks in CodeDatabase
+        self.conn = sqlite3.connect(str(self.db_path), check_same_thread=False)
         self.conn.row_factory = sqlite3.Row
         # Enable foreign keys
         self.conn.execute("PRAGMA foreign_keys = ON")

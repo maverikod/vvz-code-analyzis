@@ -129,12 +129,8 @@ def main() -> None:
 
             if not summary["is_valid"]:
                 # Log errors
-                errors = [
-                    r for r in validation_results if r.level == "error"
-                ]
-                warnings = [
-                    r for r in validation_results if r.level == "warning"
-                ]
+                errors = [r for r in validation_results if r.level == "error"]
+                warnings = [r for r in validation_results if r.level == "warning"]
 
                 # Setup logging to write to stderr and log file
                 import logging
@@ -282,6 +278,48 @@ def main() -> None:
         app_config=app_config,
         config_path=str(config_path),
     )
+
+    # Initialize worker manager
+    from code_analysis.core.worker_manager import get_worker_manager
+
+    worker_manager = get_worker_manager()
+
+    # Store worker manager in app state for shutdown
+    app.state.worker_manager = worker_manager
+
+    # Register shutdown handlers for worker cleanup
+    import atexit
+    import signal
+    import logging
+
+    main_logger = logging.getLogger(__name__)
+
+    def cleanup_workers():
+        """Cleanup all workers on server exit."""
+        try:
+            main_logger.info("🛑 Server shutdown: stopping all workers")
+            shutdown_result = worker_manager.stop_all_workers(timeout=30.0)
+            if shutdown_result.get("total_failed", 0) > 0:
+                main_logger.warning(
+                    f"⚠️  Some workers failed to stop: {shutdown_result.get('message')}"
+                )
+            else:
+                main_logger.info(
+                    f"✅ All workers stopped: {shutdown_result.get('message')}"
+                )
+        except Exception as e:
+            main_logger.error(f"❌ Error stopping workers: {e}", exc_info=True)
+
+    def signal_handler(signum, frame):
+        """Handle shutdown signals."""
+        main_logger.info(f"Received signal {signum}, stopping all workers...")
+        cleanup_workers()
+        sys.exit(0)
+
+    # Register handlers
+    atexit.register(cleanup_workers)
+    signal.signal(signal.SIGTERM, signal_handler)
+    signal.signal(signal.SIGINT, signal_handler)
 
     # Commands are automatically registered via hooks
     # Queue manager is automatically initialized if enabled in config
@@ -452,6 +490,16 @@ def main() -> None:
             print(f"✅ Vectorization worker started with PID {process.pid}", flush=True)
             logger.info(f"✅ Vectorization worker started with PID {process.pid}")
 
+            # Register worker in WorkerManager
+            worker_manager.register_worker(
+                "vectorization",
+                {
+                    "pid": process.pid,
+                    "process": process,
+                    "name": f"vectorization_{project_id}",
+                },
+            )
+
         except Exception as e:
             print(
                 f"❌ Failed to start vectorization worker: {e}",
@@ -504,13 +552,13 @@ def main() -> None:
             server_config = ServerConfig(**code_analysis_config)
             file_watcher_config = server_config.file_watcher
             if not file_watcher_config or not isinstance(file_watcher_config, dict):
-                logger.info("ℹ️  No file_watcher config found, skipping file watcher worker")
+                logger.info(
+                    "ℹ️  No file_watcher config found, skipping file watcher worker"
+                )
                 return
 
             if not file_watcher_config.get("enabled", True):
-                logger.info(
-                    "ℹ️  File watcher worker is disabled in config, skipping"
-                )
+                logger.info("ℹ️  File watcher worker is disabled in config, skipping")
                 return
 
             # Get watch_dirs from worker config (same as vectorization worker)
@@ -518,7 +566,7 @@ def main() -> None:
             watch_dirs = []
             if worker_config and isinstance(worker_config, dict):
                 watch_dirs = worker_config.get("watch_dirs", [])
-            
+
             if not watch_dirs:
                 logger.warning(
                     "⚠️  No watch_dirs configured, skipping file watcher worker"
@@ -553,7 +601,9 @@ def main() -> None:
 
             # Get file watcher config parameters
             scan_interval = file_watcher_config.get("scan_interval", 60)
-            lock_file_name = file_watcher_config.get("lock_file_name", ".file_watcher.lock")
+            lock_file_name = file_watcher_config.get(
+                "lock_file_name", ".file_watcher.lock"
+            )
             version_dir = file_watcher_config.get("version_dir", "data/versions")
             worker_log_path = file_watcher_config.get("log_path")
             ignore_patterns = file_watcher_config.get("ignore_patterns", [])
@@ -593,6 +643,16 @@ def main() -> None:
             process.start()
             print(f"✅ File watcher worker started with PID {process.pid}", flush=True)
             logger.info(f"✅ File watcher worker started with PID {process.pid}")
+
+            # Register worker in WorkerManager
+            worker_manager.register_worker(
+                "file_watcher",
+                {
+                    "pid": process.pid,
+                    "process": process,
+                    "name": f"file_watcher_{project_id}",
+                },
+            )
 
         except Exception as e:
             print(
@@ -657,9 +717,13 @@ def main() -> None:
                 )
 
         main_logger.info("🔍 Starting background thread for file watcher worker")
-        file_watcher_thread = threading.Thread(target=run_file_watcher_startup, daemon=True)
+        file_watcher_thread = threading.Thread(
+            target=run_file_watcher_startup, daemon=True
+        )
         file_watcher_thread.start()
-        main_logger.info(f"🔍 File watcher background thread started: {file_watcher_thread.is_alive()}")
+        main_logger.info(
+            f"🔍 File watcher background thread started: {file_watcher_thread.is_alive()}"
+        )
 
     # Prepare server configuration for ServerEngine
     server_config = {

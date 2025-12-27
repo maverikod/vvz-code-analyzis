@@ -116,23 +116,29 @@ class UpdateIndexesMCPCommand(BaseMCPCommand):
                 if file_record.get("last_modified") != file_mtime:
                     try:
                         has_docstring = bool(self._extract_docstring(ast.parse(file_content)))
-                        database.add_file(
-                            rel_path, lines, file_mtime, has_docstring, project_id
-                        )
                     except SyntaxError:
-                        # If file has syntax error, still update basic info
-                        database.add_file(
-                            rel_path, lines, file_mtime, False, project_id
-                        )
+                        has_docstring = False
+                    database.add_file(
+                        rel_path, lines, file_mtime, has_docstring, project_id
+                    )
+                    # Re-get file_id after update (INSERT OR REPLACE may not return correct lastrowid)
+                    updated_record = database.get_file_by_path(rel_path, project_id)
+                    if updated_record:
+                        file_id = updated_record["id"]
             else:
                 # Add new file
                 try:
                     has_docstring = bool(self._extract_docstring(ast.parse(file_content)))
                 except SyntaxError:
                     has_docstring = False
-                file_id = database.add_file(
+                database.add_file(
                     rel_path, lines, file_mtime, has_docstring, project_id
                 )
+                # Get file_id after insert
+                file_record = database.get_file_by_path(rel_path, project_id)
+                if not file_record:
+                    return {"file": rel_path, "status": "error", "error": "Failed to create file record", "error_type": "DatabaseError"}
+                file_id = file_record["id"]
 
             # Parse AST
             try:
@@ -306,9 +312,29 @@ class UpdateIndexesMCPCommand(BaseMCPCommand):
                 # Process files
                 def process_files():
                     results = []
-                    for file_path in python_files:
+                    error_samples = []  # Collect first 5 error samples for debugging
+                    for idx, file_path in enumerate(python_files):
                         result = self._analyze_file(database, file_path, project_id, root_path)
                         results.append(result)
+                        
+                        # Collect error samples for debugging
+                        if result.get("status") == "error" and len(error_samples) < 5:
+                            error_samples.append({
+                                "file": result.get("file", str(file_path)),
+                                "error": result.get("error", "Unknown error"),
+                                "error_type": result.get("error_type", "Unknown")
+                            })
+                        
+                        # Log progress every 100 files
+                        if (idx + 1) % 100 == 0:
+                            logger.info(f"Processed {idx + 1}/{len(python_files)} files...")
+                    
+                    # Log error samples
+                    if error_samples:
+                        logger.warning(f"Sample errors (first {len(error_samples)}):")
+                        for sample in error_samples:
+                            logger.warning(f"  {sample['file']}: {sample['error_type']} - {sample['error']}")
+                    
                     return results
 
                 # Run in executor to avoid blocking

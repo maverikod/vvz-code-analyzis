@@ -59,6 +59,8 @@ class GetASTMCPCommand(BaseMCPCommand):
         **kwargs,
     ) -> SuccessResult:
         try:
+            from pathlib import Path
+            
             root_path = self._validate_root_dir(root_dir)
             db = self._open_database(root_dir)
             proj_id = self._get_project_id(db, root_path, project_id)
@@ -67,8 +69,62 @@ class GetASTMCPCommand(BaseMCPCommand):
                     message="Project not found", code="PROJECT_NOT_FOUND"
                 )
 
-            # Get file_id first
+            # Normalize file path: convert absolute to relative if needed
+            file_path_obj = Path(file_path)
+            if file_path_obj.is_absolute():
+                try:
+                    # Try to make relative to root_dir
+                    normalized_path = file_path_obj.relative_to(root_path)
+                    file_path = str(normalized_path)
+                except ValueError:
+                    # File is outside root_dir, use absolute path as-is
+                    pass
+            else:
+                # Already relative, use as-is
+                file_path = str(file_path_obj)
+
+            # Get file_id first - try multiple path formats
+            file_record = None
+            
+            # Try 1: exact path match
             file_record = db.get_file_by_path(file_path, proj_id)
+            
+            # Try 2: if not found, try with versioned path pattern
+            if not file_record:
+                # Files in DB may be stored with versioned paths like:
+                # data/versions/{uuid}/code_analysis/main.py
+                # Try searching by path ending
+                assert db.conn is not None
+                cursor = db.conn.cursor()
+                # Search for files where path ends with the requested path
+                cursor.execute(
+                    "SELECT * FROM files WHERE project_id = ? AND path LIKE ?",
+                    (proj_id, f"%{file_path}")
+                )
+                row = cursor.fetchone()
+                if row:
+                    file_record = dict(row)
+            
+            # Try 3: search by filename if path contains /
+            if not file_record and "/" in file_path:
+                filename = file_path.split("/")[-1]
+                assert db.conn is not None
+                cursor = db.conn.cursor()
+                cursor.execute(
+                    "SELECT * FROM files WHERE project_id = ? AND path LIKE ?",
+                    (proj_id, f"%{filename}")
+                )
+                rows = cursor.fetchall()
+                # If multiple matches, prefer the one that matches the path structure
+                for row in rows:
+                    path_str = dict(row)["path"]
+                    if file_path in path_str or path_str.endswith(file_path):
+                        file_record = dict(row)
+                        break
+                # If still no match, use first result
+                if not file_record and rows:
+                    file_record = dict(rows[0])
+            
             if not file_record:
                 db.close()
                 return ErrorResult(

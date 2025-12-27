@@ -186,8 +186,8 @@ class ListClassMethodsMCPCommand(BaseMCPCommand):
                     )
 
                 search_cmd = SearchCommand(database, actual_project_id)
-                all_methods = search_cmd.search_methods(None)
-                methods = [m for m in all_methods if m.get("class_name") == class_name]
+                # Pass class_name directly to search_methods
+                methods = search_cmd.search_methods(class_name=class_name)
 
                 return SuccessResult(
                     data={

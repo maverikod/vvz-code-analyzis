@@ -79,10 +79,33 @@ class UpdateIndexesMCPCommand(BaseMCPCommand):
             # Ensure both paths are absolute and resolved
             file_path = file_path.resolve()
             root_path = root_path.resolve()
-            rel_path = str(file_path.relative_to(root_path))
-            file_stat = file_path.stat()
-            file_mtime = file_stat.st_mtime
-            file_content = file_path.read_text(encoding="utf-8")
+            
+            # Calculate relative path, handling files outside root_path
+            try:
+                rel_path = str(file_path.relative_to(root_path))
+            except ValueError:
+                # File is outside root_path, use absolute path
+                logger.warning(f"File {file_path} is outside root {root_path}, using absolute path")
+                rel_path = str(file_path)
+            
+            # Check if file exists and is readable
+            if not file_path.exists():
+                return {"file": rel_path, "status": "error", "error": "File does not exist", "error_type": "FileNotFoundError"}
+            
+            try:
+                file_stat = file_path.stat()
+                file_mtime = file_stat.st_mtime
+            except OSError as e:
+                return {"file": rel_path, "status": "error", "error": f"Cannot stat file: {e}", "error_type": type(e).__name__}
+            
+            # Read file content
+            try:
+                file_content = file_path.read_text(encoding="utf-8")
+            except UnicodeDecodeError as e:
+                return {"file": rel_path, "status": "error", "error": f"Unicode decode error: {e}", "error_type": "UnicodeDecodeError"}
+            except Exception as e:
+                return {"file": rel_path, "status": "error", "error": f"Cannot read file: {e}", "error_type": type(e).__name__}
+            
             lines = len(file_content.splitlines())
 
             # Check if file already exists
@@ -91,12 +114,22 @@ class UpdateIndexesMCPCommand(BaseMCPCommand):
                 file_id = file_record["id"]
                 # Update file if modified
                 if file_record.get("last_modified") != file_mtime:
-                    database.add_file(
-                        rel_path, lines, file_mtime, bool(self._extract_docstring(ast.parse(file_content))), project_id
-                    )
+                    try:
+                        has_docstring = bool(self._extract_docstring(ast.parse(file_content)))
+                        database.add_file(
+                            rel_path, lines, file_mtime, has_docstring, project_id
+                        )
+                    except SyntaxError:
+                        # If file has syntax error, still update basic info
+                        database.add_file(
+                            rel_path, lines, file_mtime, False, project_id
+                        )
             else:
                 # Add new file
-                has_docstring = bool(self._extract_docstring(ast.parse(file_content)))
+                try:
+                    has_docstring = bool(self._extract_docstring(ast.parse(file_content)))
+                except SyntaxError:
+                    has_docstring = False
                 file_id = database.add_file(
                     rel_path, lines, file_mtime, has_docstring, project_id
                 )
@@ -108,22 +141,38 @@ class UpdateIndexesMCPCommand(BaseMCPCommand):
                 logger.warning(f"Syntax error in {rel_path}: {e}")
                 return {"file": rel_path, "status": "syntax_error", "error": str(e)}
 
-            # Save AST (synchronously using existing connection)
+            # Save AST (methods are marked async but are actually synchronous)
             ast_json = json.dumps(ast.dump(tree))
             import hashlib
             ast_hash = hashlib.sha256(ast_json.encode()).hexdigest()
-            # Use synchronous save - create a wrapper if needed
-            import asyncio
+            
+            # Call async method synchronously - create new event loop in executor thread
             try:
-                loop = asyncio.get_event_loop()
-            except RuntimeError:
+                import asyncio
+                # In executor thread, there's no running loop, so we can create a new one
                 loop = asyncio.new_event_loop()
                 asyncio.set_event_loop(loop)
-            loop.run_until_complete(database.save_ast_tree(file_id, project_id, ast_json, ast_hash, file_mtime, overwrite=True))
+                try:
+                    loop.run_until_complete(database.save_ast_tree(file_id, project_id, ast_json, ast_hash, file_mtime, overwrite=True))
+                finally:
+                    loop.close()
+            except Exception as e:
+                logger.error(f"Error saving AST for {rel_path}: {e}", exc_info=True)
+                return {"file": rel_path, "status": "error", "error": f"Failed to save AST: {e}", "error_type": type(e).__name__}
 
             # Save CST (source code) for file restoration
             cst_hash = hashlib.sha256(file_content.encode()).hexdigest()
-            loop.run_until_complete(database.save_cst_tree(file_id, project_id, file_content, cst_hash, file_mtime, overwrite=True))
+            try:
+                import asyncio
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                try:
+                    loop.run_until_complete(database.save_cst_tree(file_id, project_id, file_content, cst_hash, file_mtime, overwrite=True))
+                finally:
+                    loop.close()
+            except Exception as e:
+                logger.error(f"Error saving CST for {rel_path}: {e}", exc_info=True)
+                return {"file": rel_path, "status": "error", "error": f"Failed to save CST: {e}", "error_type": type(e).__name__}
 
             # Extract and save classes, functions, methods, imports
             classes_added = 0

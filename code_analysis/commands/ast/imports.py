@@ -91,7 +91,53 @@ class GetImportsMCPCommand(BaseMCPCommand):
             params = [proj_id]
             
             if file_path:
+                from pathlib import Path
+                
+                # Normalize file path
+                file_path_obj = Path(file_path)
+                root_path = Path(root_dir).resolve()
+                if file_path_obj.is_absolute():
+                    try:
+                        normalized_path = file_path_obj.relative_to(root_path)
+                        file_path = str(normalized_path)
+                    except ValueError:
+                        pass
+                else:
+                    file_path = str(file_path_obj)
+                
+                # Try multiple path formats
                 file_record = db.get_file_by_path(file_path, proj_id)
+                
+                # Try versioned path pattern
+                if not file_record:
+                    assert db.conn is not None
+                    cursor = db.conn.cursor()
+                    cursor.execute(
+                        "SELECT * FROM files WHERE project_id = ? AND path LIKE ?",
+                        (proj_id, f"%{file_path}")
+                    )
+                    row = cursor.fetchone()
+                    if row:
+                        file_record = dict(row)
+                
+                # Try by filename
+                if not file_record and "/" in file_path:
+                    filename = file_path.split("/")[-1]
+                    assert db.conn is not None
+                    cursor = db.conn.cursor()
+                    cursor.execute(
+                        "SELECT * FROM files WHERE project_id = ? AND path LIKE ?",
+                        (proj_id, f"%{filename}")
+                    )
+                    rows = cursor.fetchall()
+                    for row in rows:
+                        path_str = dict(row)["path"]
+                        if file_path in path_str or path_str.endswith(file_path):
+                            file_record = dict(row)
+                            break
+                    if not file_record and rows:
+                        file_record = dict(rows[0])
+                
                 if not file_record:
                     db.close()
                     return ErrorResult(

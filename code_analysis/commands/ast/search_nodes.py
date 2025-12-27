@@ -72,13 +72,182 @@ class SearchASTNodesMCPCommand(BaseMCPCommand):
                     message="Project not found", code="PROJECT_NOT_FOUND"
                 )
 
-            # Search AST nodes - for now return placeholder
-            # This requires parsing AST JSON which is complex
-            # TODO: Implement AST node search by parsing ast_json from ast_trees table
+            # Search AST nodes by type
+            # We can search in classes, functions, methods tables
+            # For more complex searches, would need to parse AST JSON
+            assert db.conn is not None
+            cursor = db.conn.cursor()
+            
+            results = []
+            
+            # Map node types to database tables
+            if not node_type or node_type in ("ClassDef", "class"):
+                # Search classes
+                query = """
+                    SELECT c.*, f.path as file_path
+                    FROM classes c
+                    JOIN files f ON c.file_id = f.id
+                    WHERE f.project_id = ?
+                """
+                params = [proj_id]
+                
+                if file_path:
+                    from pathlib import Path
+                    file_path_obj = Path(file_path)
+                    root_path = Path(root_dir).resolve()
+                    if file_path_obj.is_absolute():
+                        try:
+                            normalized_path = file_path_obj.relative_to(root_path)
+                            file_path = str(normalized_path)
+                        except ValueError:
+                            pass
+                    else:
+                        file_path = str(file_path_obj)
+                    
+                    file_record = db.get_file_by_path(file_path, proj_id)
+                    if not file_record:
+                        cursor.execute(
+                            "SELECT id FROM files WHERE project_id = ? AND path LIKE ?",
+                            (proj_id, f"%{file_path}")
+                        )
+                        row = cursor.fetchone()
+                        if row:
+                            file_record = {"id": row[0]}
+                    
+                    if file_record:
+                        query += " AND c.file_id = ?"
+                        params.append(file_record["id"])
+                
+                query += " ORDER BY f.path, c.line"
+                if limit:
+                    query += f" LIMIT {limit}"
+                
+                cursor.execute(query, params)
+                rows = cursor.fetchall()
+                for row in rows:
+                    results.append({
+                        "node_type": "ClassDef",
+                        "name": row["name"],
+                        "file_path": row["file_path"],
+                        "line": row["line"],
+                        "docstring": row.get("docstring"),
+                    })
+            
+            if not node_type or node_type in ("FunctionDef", "function"):
+                # Search functions
+                query = """
+                    SELECT func.*, f.path as file_path
+                    FROM functions func
+                    JOIN files f ON func.file_id = f.id
+                    WHERE f.project_id = ?
+                """
+                params = [proj_id]
+                
+                if file_path:
+                    from pathlib import Path
+                    file_path_obj = Path(file_path)
+                    root_path = Path(root_dir).resolve()
+                    if file_path_obj.is_absolute():
+                        try:
+                            normalized_path = file_path_obj.relative_to(root_path)
+                            file_path = str(normalized_path)
+                        except ValueError:
+                            pass
+                    else:
+                        file_path = str(file_path_obj)
+                    
+                    file_record = db.get_file_by_path(file_path, proj_id)
+                    if not file_record:
+                        cursor.execute(
+                            "SELECT id FROM files WHERE project_id = ? AND path LIKE ?",
+                            (proj_id, f"%{file_path}")
+                        )
+                        row = cursor.fetchone()
+                        if row:
+                            file_record = {"id": row[0]}
+                    
+                    if file_record:
+                        query += " AND func.file_id = ?"
+                        params.append(file_record["id"])
+                
+                query += " ORDER BY f.path, func.line"
+                if limit:
+                    query += f" LIMIT {limit}"
+                
+                cursor.execute(query, params)
+                rows = cursor.fetchall()
+                for row in rows:
+                    results.append({
+                        "node_type": "FunctionDef",
+                        "name": row["name"],
+                        "file_path": row["file_path"],
+                        "line": row["line"],
+                        "docstring": row.get("docstring"),
+                    })
+            
+            if not node_type or node_type in ("method"):
+                # Search methods
+                query = """
+                    SELECT m.*, c.name as class_name, f.path as file_path
+                    FROM methods m
+                    JOIN classes c ON m.class_id = c.id
+                    JOIN files f ON c.file_id = f.id
+                    WHERE f.project_id = ?
+                """
+                params = [proj_id]
+                
+                if file_path:
+                    from pathlib import Path
+                    file_path_obj = Path(file_path)
+                    root_path = Path(root_dir).resolve()
+                    if file_path_obj.is_absolute():
+                        try:
+                            normalized_path = file_path_obj.relative_to(root_path)
+                            file_path = str(normalized_path)
+                        except ValueError:
+                            pass
+                    else:
+                        file_path = str(file_path_obj)
+                    
+                    file_record = db.get_file_by_path(file_path, proj_id)
+                    if not file_record:
+                        cursor.execute(
+                            "SELECT id FROM files WHERE project_id = ? AND path LIKE ?",
+                            (proj_id, f"%{file_path}")
+                        )
+                        row = cursor.fetchone()
+                        if row:
+                            file_record = {"id": row[0]}
+                    
+                    if file_record:
+                        query += " AND f.id = ?"
+                        params.append(file_record["id"])
+                
+                query += " ORDER BY f.path, m.line"
+                if limit:
+                    query += f" LIMIT {limit}"
+                
+                cursor.execute(query, params)
+                rows = cursor.fetchall()
+                for row in rows:
+                    results.append({
+                        "node_type": "FunctionDef",
+                        "name": row["name"],
+                        "class_name": row.get("class_name"),
+                        "file_path": row["file_path"],
+                        "line": row["line"],
+                        "docstring": row.get("docstring"),
+                    })
+            
             db.close()
-            return ErrorResult(
-                message="AST node search not yet implemented - requires AST JSON parsing",
-                code="NOT_IMPLEMENTED",
+            
+            return SuccessResult(
+                data={
+                    "success": True,
+                    "node_type": node_type,
+                    "nodes": results,
+                    "count": len(results),
+                }
             )
         except Exception as e:
             return self._handle_error(e, "SEARCH_AST_ERROR", "search_ast_nodes")

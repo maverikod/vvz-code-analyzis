@@ -14,6 +14,7 @@ email: vasilyvz@gmail.com
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from typing import Any, Optional
 
@@ -22,6 +23,8 @@ from libcst.metadata import MetadataWrapper, ParentNodeProvider, PositionProvide
 
 from .ast import Combinator, Predicate, PredicateOp, PseudoKind, Query, SelectorStep
 from .parser import parse_selector
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -131,8 +134,14 @@ def _build_index(
         pos = positions.get(node)
         if pos is None:
             # Some nodes may not carry positions; skip them.
-            pass
-        else:
+            return
+        try:
+            # Safely access position attributes
+            start_line = pos.start.line if hasattr(pos, 'start') and hasattr(pos.start, 'line') else 1
+            start_col = pos.start.column if hasattr(pos, 'start') and hasattr(pos.start, 'column') else 0
+            end_line = pos.end.line if hasattr(pos, 'end') and hasattr(pos.end, 'line') else 1
+            end_col = pos.end.column if hasattr(pos, 'end') and hasattr(pos.end, 'column') else 0
+            
             name = _node_name(node)
             kind = _node_kind(node, class_stack=class_stack)
             qual = _node_qualname(node, class_stack=class_stack, func_stack=func_stack)
@@ -144,12 +153,16 @@ def _build_index(
                     kind=kind,
                     name=name,
                     qualname=qual,
-                    start_line=pos.start.line,
-                    start_col=pos.start.column,
-                    end_line=pos.end.line,
-                    end_col=pos.end.column,
+                    start_line=start_line,
+                    start_col=start_col,
+                    end_line=end_line,
+                    end_col=end_col,
                 )
             )
+        except (AttributeError, TypeError) as e:
+            # Skip nodes with invalid positions
+            logger.debug(f"Skipping node with invalid position: {e}")
+            return
 
         entered_class = False
         entered_func = False

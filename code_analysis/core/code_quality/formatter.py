@@ -31,11 +31,13 @@ def format_code_with_black(file_path: Path) -> Tuple[bool, Optional[str]]:
 
         # Format using black
         try:
-            # Use black's format_file_contents for better file handling
-            formatted_content, changed = black.format_file_contents(
-                content, fast=False, mode=black.FileMode()
+            # Use black's format_str for more stable API
+            # format_str returns just the formatted string
+            formatted_content = black.format_str(
+                content, mode=black.FileMode()
             )
-            if not changed:
+            # Check if content changed
+            if formatted_content == content:
                 # File already formatted
                 logger.debug(f"File already formatted: {file_path}")
                 return (True, None)

@@ -287,42 +287,9 @@ def main() -> None:
     # Store worker manager in app state for shutdown
     app.state.worker_manager = worker_manager
 
-    # Register shutdown handlers for worker cleanup
-    import atexit
-    import signal
-    import logging
-
-    main_logger = logging.getLogger(__name__)
-
-    def cleanup_workers():
-        """Cleanup all workers on server exit."""
-        try:
-            main_logger.info("🛑 Server shutdown: stopping all workers")
-            shutdown_result = worker_manager.stop_all_workers(timeout=30.0)
-            if shutdown_result.get("total_failed", 0) > 0:
-                main_logger.warning(
-                    f"⚠️  Some workers failed to stop: {shutdown_result.get('message')}"
-                )
-            else:
-                main_logger.info(
-                    f"✅ All workers stopped: {shutdown_result.get('message')}"
-                )
-        except Exception as e:
-            main_logger.error(f"❌ Error stopping workers: {e}", exc_info=True)
-
-    def signal_handler(signum, frame):
-        """Handle shutdown signals."""
-        main_logger.info(f"Received signal {signum}, stopping all workers...")
-        cleanup_workers()
-        sys.exit(0)
-
-    # Register handlers
-    atexit.register(cleanup_workers)
-    signal.signal(signal.SIGTERM, signal_handler)
-    signal.signal(signal.SIGINT, signal_handler)
-
     # Commands are automatically registered via hooks
     # Queue manager is automatically initialized if enabled in config
+    # Registration happens automatically via AppFactory if auto_on_startup is enabled
 
     # Start vectorization worker on startup
     # Note: on_event("startup") is deprecated, so we'll call this from lifespan
@@ -753,6 +720,40 @@ def main() -> None:
             app_config=app_config,
         )
         return
+
+    # Register shutdown handlers for worker cleanup (before server starts)
+    import atexit
+    import signal
+    import logging
+
+    main_logger = logging.getLogger(__name__)
+
+    def cleanup_workers():
+        """Cleanup all workers on server exit."""
+        try:
+            main_logger.info("🛑 Server shutdown: stopping all workers")
+            shutdown_result = worker_manager.stop_all_workers(timeout=30.0)
+            if shutdown_result.get("total_failed", 0) > 0:
+                main_logger.warning(
+                    f"⚠️  Some workers failed to stop: {shutdown_result.get('message')}"
+                )
+            else:
+                main_logger.info(
+                    f"✅ All workers stopped: {shutdown_result.get('message')}"
+                )
+        except Exception as e:
+            main_logger.error(f"❌ Error stopping workers: {e}", exc_info=True)
+
+    def signal_handler(signum, frame):
+        """Handle shutdown signals."""
+        main_logger.info(f"Received signal {signum}, stopping all workers...")
+        cleanup_workers()
+        sys.exit(0)
+
+    # Register handlers (before server starts, after app creation)
+    atexit.register(cleanup_workers)
+    signal.signal(signal.SIGTERM, signal_handler)
+    signal.signal(signal.SIGINT, signal_handler)
 
     # Run server
     engine = ServerEngineFactory.get_engine("hypercorn")

@@ -128,7 +128,7 @@ class FindUsagesMCPCommand(BaseMCPCommand):
             
             usages = [dict(row) for row in rows]
             db.close()
-            
+
             return SuccessResult(
                 data={
                     "success": True,

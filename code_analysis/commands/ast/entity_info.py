@@ -127,7 +127,7 @@ class GetCodeEntityInfoMCPCommand(BaseMCPCommand):
             cursor.execute(query, params)
             rows = cursor.fetchall()
             db.close()
-            
+
             if rows:
                 entities = [dict(row) for row in rows]
                 return SuccessResult(

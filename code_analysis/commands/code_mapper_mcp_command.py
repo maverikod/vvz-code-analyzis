@@ -276,9 +276,9 @@ class UpdateIndexesMCPCommand(BaseMCPCommand):
                 total_methods = sum(r.get("methods", 0) for r in results)
                 total_imports = sum(r.get("imports", 0) for r in results)
 
-            return SuccessResult(
-                data={
-                    "root_dir": str(root_path),
+                return SuccessResult(
+                    data={
+                        "root_dir": str(root_path),
                         "project_id": project_id,
                         "files_processed": successful,
                         "files_total": total,

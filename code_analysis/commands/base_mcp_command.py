@@ -27,7 +27,42 @@ class BaseMCPCommand(Command):
     - Project ID resolution
     - Standardized error handling
     - Common validation methods
+
+    Notes:
+        This base class also includes a SQLite physical integrity check.
+        If the database file is corrupted (e.g. "database disk image is malformed"),
+        it is backed up and recreated automatically.
     """
+
+    @staticmethod
+    def _ensure_database_integrity(db_path: Path) -> Dict[str, Any]:
+        """
+        Ensure SQLite physical integrity for a database file.
+
+        If the database is corrupted, this method will:
+        - create backup copies of the DB file (+ WAL/SHM/JOURNAL if present);
+        - remove the corrupted DB file (+ sidecars);
+        - allow subsequent initialization to recreate schema.
+
+        Args:
+            db_path: Path to SQLite database file.
+
+        Returns:
+            Dict with keys:
+                ok: True if database is OK or was successfully recreated.
+                repaired: True if recreation was performed.
+                message: Human-readable summary.
+                backup_paths: List of created backup file paths.
+        """
+        from ..core.db_integrity import ensure_sqlite_integrity_or_recreate
+
+        result = ensure_sqlite_integrity_or_recreate(db_path, backup_dir=db_path.parent)
+        return {
+            "ok": result.ok,
+            "repaired": result.repaired,
+            "message": result.message,
+            "backup_paths": list(result.backup_paths),
+        }
 
     @staticmethod
     def _open_database(root_dir: str, auto_analyze: bool = True) -> CodeDatabase:
@@ -53,6 +88,15 @@ class BaseMCPCommand(Command):
             data_dir.mkdir(parents=True, exist_ok=True)
             db_path = data_dir / "code_analysis.db"
 
+            integrity = BaseMCPCommand._ensure_database_integrity(db_path)
+            if integrity.get("repaired"):
+                logger.warning(
+                    "SQLite corruption detected for %s; recreated. %s. Backups=%s",
+                    db_path,
+                    integrity.get("message"),
+                    integrity.get("backup_paths"),
+                )
+
             # Create database if it doesn't exist
             db_exists = db_path.exists()
             db = CodeDatabase(db_path)
@@ -66,9 +110,7 @@ class BaseMCPCommand(Command):
                     )
                     needs_analysis = True
                 else:
-                    # Check if database has any data
                     try:
-                        # Check if there are any projects
                         assert db.conn is not None
                         cursor = db.conn.cursor()
                         cursor.execute("SELECT COUNT(*) FROM projects")
@@ -80,7 +122,6 @@ class BaseMCPCommand(Command):
                             )
                             needs_analysis = True
                         else:
-                            # Check if any project has files
                             cursor.execute("SELECT COUNT(*) FROM files")
                             file_count = cursor.fetchone()[0]
                             if file_count == 0:
@@ -96,34 +137,29 @@ class BaseMCPCommand(Command):
 
                 if needs_analysis:
                     logger.info(f"Running automatic project analysis for {root_path}")
-                    # Import here to avoid circular imports
                     try:
                         from .code_mapper_mcp_command import UpdateIndexesMCPCommand
                     except ImportError:
-                        logger.warning("UpdateIndexesMCPCommand not available, skipping auto-analysis")
+                        logger.warning(
+                            "UpdateIndexesMCPCommand not available, skipping auto-analysis"
+                        )
                         return db
 
-                    # Run analysis asynchronously if we're in async context
-                    # Otherwise skip auto-analysis to avoid event loop conflicts
                     import asyncio
-                    
+
                     try:
-                        # Check if we're in an async context
-                        loop = asyncio.get_running_loop()
-                        # If we're in async context, skip auto-analysis here
-                        # It will be triggered on first command execution
-                        logger.info("Skipping auto-analysis in async context, will be triggered on first command")
+                        asyncio.get_running_loop()
+                        logger.info(
+                            "Skipping auto-analysis in async context, will be triggered on first command"
+                        )
                     except RuntimeError:
-                        # No running loop, we can run synchronously
                         try:
                             loop = asyncio.get_event_loop()
                         except RuntimeError:
                             loop = asyncio.new_event_loop()
                             asyncio.set_event_loop(loop)
 
-                        # Create command instance and run
                         cmd = UpdateIndexesMCPCommand()
-                        # Run analysis with default parameters
                         result = loop.run_until_complete(
                             cmd.execute(
                                 root_dir=str(root_path),
@@ -137,8 +173,12 @@ class BaseMCPCommand(Command):
                             )
                         else:
                             logger.info(
-                                f"Automatic analysis completed successfully: "
-                                f"{result.data.get('files_analyzed', 0) if result.data else 0} files analyzed"
+                                "Automatic analysis completed successfully: %s files processed",
+                                (
+                                    result.data.get("files_processed", 0)
+                                    if result.data
+                                    else 0
+                                ),
                             )
 
             return db
@@ -173,7 +213,6 @@ class BaseMCPCommand(Command):
             if project_id:
                 project = db.get_project(project_id)
                 return project_id if project else None
-            # Fallback: get or create by root_dir
             return db.get_or_create_project(str(root_path), name=root_path.name)
         except Exception as e:
             raise DatabaseError(
@@ -265,12 +304,13 @@ class BaseMCPCommand(Command):
             ) from e
 
     def _handle_error(
-        self, error: Exception, error_code: str, operation: str = None
+        self: "BaseMCPCommand", error: Exception, error_code: str, operation: str = None
     ) -> ErrorResult:
         """
         Handle exception and convert to ErrorResult.
 
         Args:
+            self: Command instance.
             error: Exception that occurred
             error_code: Error code for the result
             operation: Optional operation name for logging
@@ -281,7 +321,6 @@ class BaseMCPCommand(Command):
         operation_str = f" ({operation})" if operation else ""
         logger.exception(f"Command failed{operation_str}: {error}")
 
-        # Extract details from CodeAnalysisError if available
         if isinstance(error, CodeAnalysisError):
             details = error.details.copy()
             details["error_type"] = type(error).__name__
@@ -296,7 +335,6 @@ class BaseMCPCommand(Command):
                 details=details,
             )
 
-        # Generic exception handling
         return ErrorResult(
             message=str(error),
             code=error_code,
@@ -304,9 +342,12 @@ class BaseMCPCommand(Command):
         )
 
     @classmethod
-    def _get_base_schema_properties(cls) -> Dict[str, Any]:
+    def _get_base_schema_properties(cls: type["BaseMCPCommand"]) -> Dict[str, Any]:
         """
         Get base schema properties common to most commands.
+
+        Args:
+            cls: Command class.
 
         Returns:
             Dictionary with common schema properties

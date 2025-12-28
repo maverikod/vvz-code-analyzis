@@ -43,16 +43,52 @@ def _type_check_with_subprocess(
     config_file: Optional[Path] = None,
     ignore_errors: bool = False,
 ) -> Tuple[bool, Optional[str], List[str]]:
-    """Fallback to subprocess if mypy library is not available."""
+    """
+    Run mypy in a subprocess with sanitized environment.
+
+    Notes:
+        When a mypy config is provided and points to this repository (i.e. the
+        config lives next to the `code_analysis/` package), we run mypy against
+        the whole package (`-p code_analysis`) instead of a single file.
+
+        This avoids common mypy pitfalls for single-file checks:
+        - duplicated module discovery (same file as top-level and package module);
+        - relative-import resolution failures.
+
+    Args:
+        file_path: Path to Python file to type check.
+        config_file: Optional path to mypy config file.
+        ignore_errors: If True, treat errors as warnings.
+
+    Returns:
+        Tuple of (success, error_message, list_of_errors).
+    """
     import os
     import subprocess
 
     try:
-        cmd = ["mypy", str(file_path)]
+        cmd: list[str]
+        cwd: Optional[str] = None
+
         if config_file:
-            cmd.extend(["--config-file", str(config_file)])
-        # Note: mypy doesn't support --ignore-errors flag
-        # We'll handle ignore_errors in the result processing
+            project_root = config_file.parent.resolve()
+            package_root = project_root / "code_analysis"
+
+            if package_root.exists() and package_root.is_dir():
+                # Package-aware run for this repo.
+                cmd = [
+                    "mypy",
+                    "--config-file",
+                    str(config_file),
+                    "-p",
+                    "code_analysis",
+                ]
+                cwd = str(project_root)
+            else:
+                # Fallback: file-only run.
+                cmd = ["mypy", str(file_path), "--config-file", str(config_file)]
+        else:
+            cmd = ["mypy", str(file_path)]
 
         env = os.environ.copy()
         env.pop("PYTHONPATH", None)
@@ -63,9 +99,10 @@ def _type_check_with_subprocess(
             text=True,
             timeout=60,
             env=env,
+            cwd=cwd,
         )
 
-        errors = []
+        errors: List[str] = []
         if result.stdout:
             errors.extend([line for line in result.stdout.split("\n") if line.strip()])
         if result.stderr:
@@ -74,15 +111,13 @@ def _type_check_with_subprocess(
         if result.returncode != 0:
             error_msg = f"Found {len(errors)} mypy errors"
             if ignore_errors:
-                # Treat errors as warnings if ignore_errors=True
                 logger.info(f"{error_msg} in {file_path} (ignored)")
                 return (True, None, errors)
-            else:
-                logger.warning(f"{error_msg} in {file_path}")
-                return (False, error_msg, errors)
-        else:
-            logger.debug(f"No mypy errors found in {file_path}")
-            return (True, None, [])
+            logger.warning(f"{error_msg} in {file_path}")
+            return (False, error_msg, errors)
+
+        logger.debug(f"No mypy errors found in {file_path}")
+        return (True, None, [])
 
     except subprocess.TimeoutExpired:
         logger.warning("Mypy type checking timed out")

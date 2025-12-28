@@ -71,18 +71,18 @@ def register_code_analysis_commands(reg: registry) -> None:
 
     try:
         from .commands.ast_mcp_commands import (
-        GetASTMCPCommand,
-        SearchASTNodesMCPCommand,
-        ASTStatisticsMCPCommand,
-        ListProjectFilesMCPCommand,
-        GetCodeEntityInfoMCPCommand,
-        ListCodeEntitiesMCPCommand,
-        GetImportsMCPCommand,
-        FindDependenciesMCPCommand,
-        GetClassHierarchyMCPCommand,
-        FindUsagesMCPCommand,
-        ExportGraphMCPCommand,
-    )
+            GetASTMCPCommand,
+            SearchASTNodesMCPCommand,
+            ASTStatisticsMCPCommand,
+            ListProjectFilesMCPCommand,
+            GetCodeEntityInfoMCPCommand,
+            ListCodeEntitiesMCPCommand,
+            GetImportsMCPCommand,
+            FindDependenciesMCPCommand,
+            GetClassHierarchyMCPCommand,
+            FindUsagesMCPCommand,
+            ExportGraphMCPCommand,
+        )
 
         reg.register(GetASTMCPCommand, "custom")
         reg.register(SearchASTNodesMCPCommand, "custom")
@@ -118,14 +118,17 @@ def register_code_analysis_commands(reg: registry) -> None:
 
         reg.register(SemanticSearchMCPCommand, "custom")
         import logging
+
         logger = logging.getLogger(__name__)
-        logger.info(f"✅ Registered semantic_search command")
+        logger.info("✅ Registered semantic_search command")
     except ImportError as e:
         import logging
+
         logger = logging.getLogger(__name__)
         logger.warning(f"Failed to import semantic_search command: {e}")
     except Exception as e:
         import logging
+
         logger = logging.getLogger(__name__)
         logger.error(f"Failed to register semantic_search command: {e}", exc_info=True)
 
@@ -176,14 +179,19 @@ def register_code_analysis_commands(reg: registry) -> None:
         reg.register(ListClassMethodsMCPCommand, "custom")
         reg.register(FindClassesMCPCommand, "custom")
         import logging
+
         logger = logging.getLogger(__name__)
-        logger.info(f"✅ Registered search commands: fulltext_search, list_class_methods, find_classes")
+        logger.info(
+            "✅ Registered search commands: fulltext_search, list_class_methods, find_classes"
+        )
     except ImportError as e:
         import logging
+
         logger = logging.getLogger(__name__)
         logger.warning(f"Failed to import search commands: {e}")
     except Exception as e:
         import logging
+
         logger = logging.getLogger(__name__)
         logger.error(f"Failed to register search commands: {e}", exc_info=True)
 
@@ -204,14 +212,19 @@ def register_code_analysis_commands(reg: registry) -> None:
         reg.register(ListLongFilesMCPCommand, "custom")
         reg.register(ListErrorsByCategoryMCPCommand, "custom")
         import logging
+
         logger = logging.getLogger(__name__)
-        logger.info(f"✅ Registered code_mapper commands: list_long_files, list_errors_by_category")
+        logger.info(
+            "✅ Registered code_mapper commands: list_long_files, list_errors_by_category"
+        )
     except ImportError as e:
         import logging
+
         logger = logging.getLogger(__name__)
         logger.warning(f"Failed to import code_mapper commands: {e}")
     except Exception as e:
         import logging
+
         logger = logging.getLogger(__name__)
         logger.error(f"Failed to register code_mapper commands: {e}", exc_info=True)
 
@@ -244,14 +257,17 @@ def register_code_analysis_commands(reg: registry) -> None:
         reg.register(CollapseVersionsMCPCommand, "custom")
         reg.register(RepairDatabaseMCPCommand, "custom")
         import logging
+
         logger = logging.getLogger(__name__)
-        logger.info(f"✅ Registered repair_database command")
+        logger.info("✅ Registered repair_database command")
     except ImportError as e:
         import logging
+
         logger = logging.getLogger(__name__)
         logger.warning(f"Failed to import file management commands: {e}")
     except Exception as e:
         import logging
+
         logger = logging.getLogger(__name__)
         logger.error(f"Failed to register file management commands: {e}", exc_info=True)
 
@@ -285,16 +301,49 @@ def register_code_analysis_commands(reg: registry) -> None:
         reg.register(StopRepairWorkerMCPCommand, "custom")
         reg.register(RepairWorkerStatusMCPCommand, "custom")
         import logging
+
         logger = logging.getLogger(__name__)
-        logger.info(f"✅ Registered repair worker commands: start_repair_worker, stop_repair_worker, repair_worker_status")
+        logger.info(
+            "✅ Registered repair worker commands: start_repair_worker, stop_repair_worker, repair_worker_status"
+        )
     except ImportError as e:
         import logging
+
         logger = logging.getLogger(__name__)
         logger.warning(f"Failed to import repair worker commands: {e}")
     except Exception as e:
         import logging
+
         logger = logging.getLogger(__name__)
         logger.error(f"Failed to register repair worker commands: {e}", exc_info=True)
+
+    # Worker management commands (start/stop file_watcher/vectorization)
+    try:
+        from .commands.worker_management_mcp_commands import (
+            StartWorkerMCPCommand,
+            StopWorkerMCPCommand,
+        )
+
+        reg.register(StartWorkerMCPCommand, "custom")
+        reg.register(StopWorkerMCPCommand, "custom")
+        import logging
+
+        logger = logging.getLogger(__name__)
+        logger.info(
+            "✅ Registered worker management commands: start_worker, stop_worker"
+        )
+    except ImportError as e:
+        import logging
+
+        logger = logging.getLogger(__name__)
+        logger.warning(f"Failed to import worker management commands: {e}")
+    except Exception as e:
+        import logging
+
+        logger = logging.getLogger(__name__)
+        logger.error(
+            f"Failed to register worker management commands: {e}", exc_info=True
+        )
 
 
 # Register hook
@@ -321,4 +370,4 @@ register_auto_import_module("code_analysis.commands.file_management_mcp_commands
 register_auto_import_module("code_analysis.commands.log_viewer_mcp_commands")
 register_auto_import_module("code_analysis.commands.worker_status_mcp_commands")
 register_auto_import_module("code_analysis.commands.repair_worker_mcp_commands")
-
+register_auto_import_module("code_analysis.commands.worker_management_mcp_commands")

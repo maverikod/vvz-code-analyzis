@@ -54,19 +54,12 @@ class CodeDatabase:
             # Backward compatibility: use SQLite driver
             driver_type = "sqlite"
             # IMPORTANT:
-            # Default to sqlite_proxy to ensure ALL DB reads/writes are serialized
-            # through the sqlite_queue worker (single-writer model).
+            # Use the direct sqlite driver by default for server stability.
+            # Proxy-based access must be explicitly enabled via driver_config
+            # (`{"type": "sqlite", "config": {"use_proxy": True, ...}}`) where needed.
             resolved = Path(db_path).resolve()
-            driver_cfg = {
-                "path": str(resolved),
-                "use_proxy": True,
-                "worker_config": {
-                    # Keep registry next to db to avoid cross-project conflicts.
-                    "registry_path": str(resolved.parent / "queuemgr_registry.jsonl"),
-                    "command_timeout": 30.0,
-                },
-            }
-            self.db_path = Path(db_path).resolve()
+            driver_cfg = {"path": str(resolved)}
+            self.db_path = resolved
         else:
             raise ValueError("Either db_path or driver_config must be provided")
 

@@ -104,6 +104,10 @@
     "log": "logs/code_analysis.log",
     "db_path": "data/code_analysis.db",
     "dirs": [],
+    "db_access": {
+      "worker_only": true,
+      "driver": "sqlite_proxy"
+    },
     "chunker": {
       "enabled": true,
       "url": "localhost",

@@ -9,6 +9,12 @@ email: vasilyvz@gmail.com
 - **Rule 2**: Only the **database driver** may talk to the DB worker (IPC/queue/RPC).
 - **Rule 3**: **All** DB calls in the codebase must go through the **driver API** only (no `db.conn`, no `cursor = ...`).
 - **Rule 4**: Errors must be **logged** with enough context and be **handled** consistently (typed errors, safe fallbacks, no silent failures).
+- **Rule 5 (Extensibility)**:
+  - All database drivers **must be subclasses** of the shared abstract base class `BaseDatabaseDriver`
+    (`code_analysis/core/db_driver/base.py`) and implement its **abstract method set**.
+  - All higher-level code (server commands, workers, database facade) must depend on the **base type**
+    (`BaseDatabaseDriver`) in signatures/attributes where applicable, so that other databases can be
+    plugged in transparently later (PostgreSQL, DuckDB, etc.) without changing call sites.
 
 ### Current state (baseline)
 

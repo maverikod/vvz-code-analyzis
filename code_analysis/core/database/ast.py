@@ -32,7 +32,7 @@ def is_ast_outdated(self, file_id: int, file_mtime: float) -> bool:
     return file_mtime > db_mtime
 
 
-async def save_ast_tree(
+def save_ast_tree(
     self,
     file_id: int,
     project_id: str,
@@ -85,7 +85,7 @@ async def save_ast_tree(
     return result
 
 
-async def overwrite_ast_tree(
+def overwrite_ast_tree(
     self, file_id: int, project_id: str, ast_json: str, ast_hash: str, file_mtime: float
 ) -> int:
     """
@@ -101,9 +101,7 @@ async def overwrite_ast_tree(
     Returns:
         AST tree ID
     """
-    return await self.save_ast_tree(
-        file_id, project_id, ast_json, ast_hash, file_mtime, overwrite=True
-    )
+    return self.save_ast_tree(file_id, project_id, ast_json, ast_hash, file_mtime, overwrite=True)
 
 
 async def get_ast_tree(self, file_id: int) -> Optional[Dict[str, Any]]:

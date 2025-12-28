@@ -169,3 +169,5 @@ old_code/
 extract_*.json
 test_*.py
 !tests/**/*.py
+.file_watcher.lock
+.code-analysis-server.pid

@@ -45,6 +45,7 @@ class SQLiteDriverProxy(BaseDatabaseDriver):
         self._queue_initialized: bool = False
         self.command_timeout: float = 30.0
         self.registry_path: str = "data/queuemgr_registry.jsonl"
+        self._lastrowid: Optional[int] = None
 
     def connect(self, config: Dict[str, Any]) -> None:
         """
@@ -321,9 +322,17 @@ class SQLiteDriverProxy(BaseDatabaseDriver):
 
     def execute(self, sql: str, params: Optional[Tuple[Any, ...]] = None) -> None:
         """Execute SQL statement."""
-        self._run_async(
+        result = self._run_async(
             self._execute_operation("execute", sql=sql, params=params)
         )
+        # Best-effort: store lastrowid from last execute. SQLiteDatabaseJob returns
+        # {"lastrowid": ..., "rowcount": ...} for execute.
+        try:
+            if isinstance(result, dict) and "lastrowid" in result:
+                val = result.get("lastrowid")
+                self._lastrowid = int(val) if val is not None else None
+        except Exception:
+            self._lastrowid = None
 
     def fetchone(
         self, sql: str, params: Optional[Tuple[Any, ...]] = None
@@ -344,15 +353,17 @@ class SQLiteDriverProxy(BaseDatabaseDriver):
 
     def commit(self) -> None:
         """Commit current transaction."""
-        self._run_async(self._execute_operation("commit"))
+        # No-op: sqlite worker auto-commits each execute().
+        return None
 
     def rollback(self) -> None:
         """Rollback current transaction."""
-        self._run_async(self._execute_operation("rollback"))
+        # No-op: sqlite worker auto-commits each execute().
+        return None
 
     def lastrowid(self) -> Optional[int]:
         """Get last inserted row ID."""
-        return self._run_async(self._execute_operation("lastrowid"))
+        return self._lastrowid
 
     def create_schema(self, schema_sql: List[str]) -> None:
         """
@@ -364,7 +375,7 @@ class SQLiteDriverProxy(BaseDatabaseDriver):
         # Execute each statement sequentially
         for sql in schema_sql:
             self.execute(sql)
-        self.commit()
+        # No explicit commit needed: worker auto-commits execute().
 
     def get_table_info(self, table_name: str) -> List[Dict[str, Any]]:
         """Get information about table columns."""

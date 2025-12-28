@@ -29,25 +29,41 @@ class FulltextSearchMCPCommand(BaseMCPCommand):
 
     @classmethod
     def get_schema(cls) -> Dict[str, Any]:
-        """Get JSON schema for command parameters."""
+        """Get JSON schema for command parameters.
+
+        Notes:
+            This schema is used by MCP Proxy for request validation and tool routing.
+
+        Returns:
+            JSON schema dict.
+        """
         return {
             "type": "object",
+            "description": (
+                "Perform full-text search over indexed code content (FTS5) for a project. "
+                "Requires a built database (run update_indexes/restore_database first)."
+            ),
             "properties": {
                 "root_dir": {
                     "type": "string",
                     "description": "Root directory of the project (contains data/code_analysis.db)",
+                    "examples": ["/abs/path/to/project"],
                 },
                 "query": {
                     "type": "string",
                     "description": "Search query text",
+                    "examples": ["structure analysis", "def solve", "MyClass"],
                 },
                 "entity_type": {
                     "type": "string",
                     "description": "Filter by entity type (class, method, function)",
+                    "examples": ["class"],
                 },
                 "limit": {
                     "type": "integer",
                     "description": "Maximum number of results",
+                    "default": 20,
+                    "examples": [5, 20, 100],
                 },
                 "project_id": {
                     "type": "string",
@@ -56,6 +72,19 @@ class FulltextSearchMCPCommand(BaseMCPCommand):
             },
             "required": ["root_dir", "query"],
             "additionalProperties": False,
+            "examples": [
+                {
+                    "root_dir": "/abs/path/to/project",
+                    "query": "structure analysis",
+                    "limit": 5,
+                },
+                {
+                    "root_dir": "/abs/path/to/project",
+                    "query": "MyClass",
+                    "entity_type": "class",
+                    "limit": 20,
+                },
+            ],
         }
 
     async def execute(

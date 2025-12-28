@@ -42,7 +42,7 @@ def is_cst_outdated(self, file_id: int, file_mtime: float) -> bool:
     return file_mtime > db_mtime
 
 
-async def save_cst_tree(
+def save_cst_tree(
     self,
     file_id: int,
     project_id: str,
@@ -109,7 +109,7 @@ async def save_cst_tree(
     return result
 
 
-async def overwrite_cst_tree(
+def overwrite_cst_tree(
     self, file_id: int, project_id: str, cst_code: str, cst_hash: str, file_mtime: float
 ) -> int:
     """
@@ -125,9 +125,7 @@ async def overwrite_cst_tree(
     Returns:
         CST tree ID
     """
-    return await self.save_cst_tree(
-        file_id, project_id, cst_code, cst_hash, file_mtime, overwrite=True
-    )
+    return self.save_cst_tree(file_id, project_id, cst_code, cst_hash, file_mtime, overwrite=True)
 
 
 async def get_cst_tree(self, file_id: int) -> Optional[Dict[str, Any]]:

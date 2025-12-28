@@ -64,7 +64,9 @@ def check_sqlite_integrity(
     Notes:
         - Uses `PRAGMA quick_check(1)` first, then falls back to `integrity_check`
           if needed.
-        - Any sqlite3.DatabaseError is treated as corruption.
+        - Most sqlite3.DatabaseError cases are treated as corruption.
+        - IMPORTANT: transient lock/busy errors (e.g. during indexing) are NOT
+          treated as corruption. They should not trigger safe-mode markers.
 
     Args:
         db_path: Path to SQLite file.
@@ -106,6 +108,14 @@ def check_sqlite_integrity(
         finally:
             conn.close()
     except sqlite3.DatabaseError as e:
+        msg = str(e).lower()
+        # Transient errors under concurrent access (not corruption).
+        if "database is locked" in msg or "database is busy" in msg or "locked" in msg:
+            return SQLiteRepairResult(
+                ok=True,
+                repaired=False,
+                message=f"sqlite3.DatabaseError (transient, ignored): {e}",
+            )
         return SQLiteRepairResult(
             ok=False, repaired=False, message=f"sqlite3.DatabaseError: {e}"
         )

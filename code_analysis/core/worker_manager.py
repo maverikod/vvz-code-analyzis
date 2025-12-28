@@ -11,16 +11,9 @@ email: vasilyvz@gmail.com
 
 import asyncio
 import logging
-import os
-import signal
 import threading
 import time
-from pathlib import Path
-from typing import Any, Dict, List, Optional, TYPE_CHECKING
-
-if TYPE_CHECKING:
-    import multiprocessing
-    from queuemgr.async_simple_api import AsyncQueueSystem
+from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -235,13 +228,78 @@ class WorkerManager:
 
                     elif process:
                         # Multiprocessing process
-                        if process.is_alive():
+                        # NOTE:
+                        # In some cases (e.g. queue worker / forked process) we can have a
+                        # multiprocessing.Process object created in a different parent PID.
+                        # Calling process.is_alive()/terminate() then raises:
+                        #   AssertionError: can only test a child process
+                        # In that case, fall back to PID-based termination via psutil.
+                        try:
+                            is_alive = process.is_alive()
+                        except AssertionError:
+                            is_alive = None
+
+                        if is_alive is None:
+                            # Fall back to PID-based termination if we have PID.
+                            if pid:
+                                try:
+                                    import psutil
+
+                                    proc = psutil.Process(pid)
+                                    if proc.is_running():
+                                        proc.terminate()
+                                        try:
+                                            proc.wait(timeout=timeout)
+                                        except Exception:
+                                            proc.kill()
+                                    logger.info(
+                                        f"Stopped {worker_type} process via PID fallback: {name} (PID: {pid})"
+                                    )
+                                    result["stopped"] += 1
+                                except Exception as e:
+                                    error_msg = f"Failed to stop {worker_type} process via PID fallback {name} (PID: {pid}): {e}"
+                                    logger.error(error_msg)
+                                    result["errors"].append(error_msg)
+                                    result["failed"] += 1
+                            else:
+                                error_msg = f"Cannot stop {worker_type} process {name}: Process handle is not valid in this PID and PID is missing"
+                                logger.error(error_msg)
+                                result["errors"].append(error_msg)
+                                result["failed"] += 1
+
+                        elif is_alive:
                             try:
                                 # Try using process.terminate() first (standard library)
                                 process.terminate()
                                 process.join(timeout=timeout)
 
-                                if process.is_alive():
+                                try:
+                                    still_alive = process.is_alive()
+                                except AssertionError:
+                                    still_alive = None
+
+                                if still_alive is None:
+                                    # Parent mismatch surfaced after terminate/join. Use PID fallback.
+                                    if pid:
+                                        import psutil
+
+                                        proc = psutil.Process(pid)
+                                        if proc.is_running():
+                                            proc.terminate()
+                                            try:
+                                                proc.wait(timeout=timeout)
+                                            except Exception:
+                                                proc.kill()
+                                        logger.warning(
+                                            f"Stopped {worker_type} process via PID fallback after parent mismatch: {name} (PID: {pid})"
+                                        )
+                                        result["stopped"] += 1
+                                    else:
+                                        raise RuntimeError(
+                                            "Cannot stop process: parent mismatch and PID missing"
+                                        )
+
+                                elif still_alive:
                                     # Force kill if still alive
                                     process.kill()
                                     process.join(timeout=1.0)
@@ -249,9 +307,20 @@ class WorkerManager:
                                         f"Force killed {worker_type} process: {name} (PID: {pid})"
                                     )
 
-                                if not process.is_alive():
+                                try:
+                                    is_alive_after = process.is_alive()
+                                except AssertionError:
+                                    is_alive_after = None
+
+                                if is_alive_after is False:
                                     logger.info(
                                         f"Stopped {worker_type} process: {name} (PID: {pid})"
+                                    )
+                                    result["stopped"] += 1
+                                elif is_alive_after is None:
+                                    # Treat as stopped: we no longer have a valid parent handle here.
+                                    logger.info(
+                                        f"Stopped {worker_type} process (parent handle invalid in this PID): {name} (PID: {pid})"
                                     )
                                     result["stopped"] += 1
                                 else:

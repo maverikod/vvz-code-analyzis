@@ -94,6 +94,12 @@ class SQLiteDatabaseJob(QueueJobBase):
             conn.row_factory = sqlite3.Row
             # Enable foreign keys
             conn.execute("PRAGMA foreign_keys = ON")
+            # Use WAL for better concurrency characteristics (single-writer model still applies).
+            try:
+                conn.execute("PRAGMA journal_mode = WAL")
+            except Exception:
+                # Best-effort: WAL may be unavailable on some filesystems.
+                pass
         except Exception as e:
             error_msg = f"Failed to connect to database: {e}"
             logger.error(f"SQLiteDatabaseJob {self.job_id}: {error_msg}")
@@ -115,7 +121,14 @@ class SQLiteDatabaseJob(QueueJobBase):
                     cursor.execute(self.sql, self.query_params)
                 else:
                     cursor.execute(self.sql)
-                result = None
+                # IMPORTANT:
+                # This worker runs each operation in its own short-lived connection.
+                # We must commit here, otherwise close() would roll back writes.
+                conn.commit()
+                result = {
+                    "lastrowid": cursor.lastrowid,
+                    "rowcount": cursor.rowcount,
+                }
 
             elif self.operation == "fetchone":
                 if not self.sql:
@@ -145,16 +158,16 @@ class SQLiteDatabaseJob(QueueJobBase):
                 result = [dict(zip(row.keys(), row)) for row in rows]
 
             elif self.operation == "commit":
-                conn.commit()
+                # No-op: execute() auto-commits in this worker model.
                 result = None
 
             elif self.operation == "rollback":
-                conn.rollback()
+                # No-op: execute() auto-commits in this worker model.
                 result = None
 
             elif self.operation == "lastrowid":
-                cursor = conn.cursor()
-                result = cursor.lastrowid
+                # Not supported with per-operation connections.
+                result = None
 
             elif self.operation == "get_table_info":
                 if not self.table_name:

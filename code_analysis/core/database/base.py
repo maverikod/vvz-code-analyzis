@@ -12,6 +12,7 @@ import logging
 import threading
 
 from ..db_driver import create_driver
+from .driver_compat import DriverBackedConnection
 
 logger = logging.getLogger(__name__)
 
@@ -52,7 +53,19 @@ class CodeDatabase:
         elif db_path:
             # Backward compatibility: use SQLite driver
             driver_type = "sqlite"
-            driver_cfg = {"path": str(Path(db_path).resolve())}
+            # IMPORTANT:
+            # Default to sqlite_proxy to ensure ALL DB reads/writes are serialized
+            # through the sqlite_queue worker (single-writer model).
+            resolved = Path(db_path).resolve()
+            driver_cfg = {
+                "path": str(resolved),
+                "use_proxy": True,
+                "worker_config": {
+                    # Keep registry next to db to avoid cross-project conflicts.
+                    "registry_path": str(resolved.parent / "queuemgr_registry.jsonl"),
+                    "command_timeout": 30.0,
+                },
+            }
             self.db_path = Path(db_path).resolve()
         else:
             raise ValueError("Either db_path or driver_config must be provided")
@@ -64,12 +77,14 @@ class CodeDatabase:
             logger.error(f"Failed to load database driver '{driver_type}': {e}")
             raise
 
-        # Temporary: expose driver connection for backward compatibility during migration
-        # TODO: Remove after migrating all methods in other modules to use driver interface
-        if hasattr(self.driver, "conn"):
-            self.conn = self.driver.conn
+        # Backward compatibility:
+        # Many legacy modules expect `self.conn.cursor().execute(...)`.
+        # For proxy drivers, expose a lightweight driver-backed connection shim.
+        driver_conn = getattr(self.driver, "conn", None)
+        if driver_conn is not None:
+            self.conn = driver_conn
         else:
-            self.conn = None
+            self.conn = DriverBackedConnection(self.driver)
 
         # Use lock only if driver is not thread-safe
         if not self.driver.is_thread_safe:

@@ -301,17 +301,43 @@ class RepairSQLiteDatabaseMCPCommand(BaseMCPCommand):
         """
         try:
             from ..core.db_integrity import (
+                check_sqlite_integrity,
                 clear_corruption_marker,
                 ensure_sqlite_integrity_or_recreate,
+                read_corruption_marker,
             )
             from ..core.worker_manager import get_worker_manager
 
             if not force:
+                # Non-destructive mode: allow clearing marker when DB is healthy.
+                # This is useful when a marker was created due to transient errors
+                # (e.g. "database is locked") or after manual recovery.
+                root_path = self._validate_root_dir(root_dir)
+                db_path = (root_path / "data" / "code_analysis.db").resolve()
+
+                marker = read_corruption_marker(db_path)
+                if marker is not None:
+                    integrity = check_sqlite_integrity(db_path)
+                    if integrity.ok:
+                        marker_cleared = clear_corruption_marker(db_path)
+                        return SuccessResult(
+                            data={
+                                "root_dir": str(root_path),
+                                "db_path": str(db_path),
+                                "mode": "marker_clear_only",
+                                "integrity_ok": True,
+                                "integrity_message": integrity.message,
+                                "marker_cleared": marker_cleared,
+                                "next_step": "Re-run the blocked command (marker cleared)",
+                            }
+                        )
+
                 return ErrorResult(
                     code="CONFIRM_REQUIRED",
                     message=(
                         "This operation is destructive (recreates SQLite DB). "
-                        "Re-run with force=true to proceed."
+                        "Re-run with force=true to proceed. "
+                        "If you only need to clear a marker, ensure DB integrity is OK and retry with force=false."
                     ),
                 )
 

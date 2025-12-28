@@ -240,21 +240,16 @@ class UpdateIndexesMCPCommand(BaseMCPCommand):
             ast_hash = hashlib.sha256(ast_json.encode()).hexdigest()
 
             try:
-                loop = asyncio.new_event_loop()
-                asyncio.set_event_loop(loop)
-                try:
-                    loop.run_until_complete(
-                        database.save_ast_tree(
-                            file_id,
-                            project_id,
-                            ast_json,
-                            ast_hash,
-                            file_mtime,
-                            overwrite=True,
-                        )
-                    )
-                finally:
-                    loop.close()
+                # NOTE: save_ast_tree is intentionally synchronous. We must not create
+                # nested event loops inside queue workers / async contexts.
+                database.save_ast_tree(
+                    file_id,
+                    project_id,
+                    ast_json,
+                    ast_hash,
+                    file_mtime,
+                    overwrite=True,
+                )
             except Exception as e:
                 logger.error(f"Error saving AST for {rel_path}: {e}", exc_info=True)
                 return {
@@ -266,21 +261,16 @@ class UpdateIndexesMCPCommand(BaseMCPCommand):
 
             cst_hash = hashlib.sha256(file_content.encode()).hexdigest()
             try:
-                loop = asyncio.new_event_loop()
-                asyncio.set_event_loop(loop)
-                try:
-                    loop.run_until_complete(
-                        database.save_cst_tree(
-                            file_id,
-                            project_id,
-                            file_content,
-                            cst_hash,
-                            file_mtime,
-                            overwrite=True,
-                        )
-                    )
-                finally:
-                    loop.close()
+                # NOTE: save_cst_tree is intentionally synchronous. We must not create
+                # nested event loops inside queue workers / async contexts.
+                database.save_cst_tree(
+                    file_id,
+                    project_id,
+                    file_content,
+                    cst_hash,
+                    file_mtime,
+                    overwrite=True,
+                )
             except Exception as e:
                 logger.error(f"Error saving CST for {rel_path}: {e}", exc_info=True)
                 return {
@@ -296,6 +286,30 @@ class UpdateIndexesMCPCommand(BaseMCPCommand):
             imports_added = 0
 
             class_nodes: dict[ast.ClassDef, int] = {}
+
+            # Add module-level content to full-text search (entire file content).
+            # This provides a guaranteed baseline for `fulltext_search` even if
+            # per-entity extraction is partial.
+            try:
+                module_docstring = ast.get_docstring(tree)
+            except Exception:
+                module_docstring = None
+            try:
+                database.add_code_content(
+                    file_id=file_id,
+                    entity_type="file",
+                    entity_name=str(rel_path),
+                    content=file_content,
+                    docstring=module_docstring,
+                    entity_id=file_id,
+                )
+            except Exception as e:
+                logger.warning(
+                    "Failed to add file content to FTS for %s: %s",
+                    rel_path,
+                    e,
+                    exc_info=True,
+                )
 
             for node in ast.walk(tree):
                 if isinstance(node, ast.ClassDef):
@@ -315,11 +329,31 @@ class UpdateIndexesMCPCommand(BaseMCPCommand):
                     classes_added += 1
                     class_nodes[node] = class_id
 
+                    # Store class content for full-text search.
+                    try:
+                        class_src = ast.get_source_segment(file_content, node)
+                        database.add_code_content(
+                            file_id=file_id,
+                            entity_type="class",
+                            entity_name=node.name,
+                            content=class_src or "",
+                            docstring=docstring,
+                            entity_id=class_id,
+                        )
+                    except Exception as e:
+                        logger.debug(
+                            "Failed to add class content to FTS (%s.%s): %s",
+                            rel_path,
+                            node.name,
+                            e,
+                            exc_info=True,
+                        )
+
                     for item in node.body:
                         if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)):
                             method_docstring = self._extract_docstring(item)
                             method_args = self._extract_args(item)
-                            database.add_method(
+                            method_id = database.add_method(
                                 class_id,
                                 item.name,
                                 item.lineno,
@@ -327,6 +361,27 @@ class UpdateIndexesMCPCommand(BaseMCPCommand):
                                 method_docstring,
                             )
                             methods_added += 1
+
+                            # Store method content for full-text search.
+                            try:
+                                method_src = ast.get_source_segment(file_content, item)
+                                database.add_code_content(
+                                    file_id=file_id,
+                                    entity_type="method",
+                                    entity_name=f"{node.name}.{item.name}",
+                                    content=method_src or "",
+                                    docstring=method_docstring,
+                                    entity_id=method_id,
+                                )
+                            except Exception as e:
+                                logger.debug(
+                                    "Failed to add method content to FTS (%s.%s.%s): %s",
+                                    rel_path,
+                                    node.name,
+                                    item.name,
+                                    e,
+                                    exc_info=True,
+                                )
 
             for node in ast.walk(tree):
                 if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
@@ -346,10 +401,30 @@ class UpdateIndexesMCPCommand(BaseMCPCommand):
                     if not is_method:
                         docstring = self._extract_docstring(node)
                         args = self._extract_args(node)
-                        database.add_function(
+                        function_id = database.add_function(
                             file_id, node.name, node.lineno, args, docstring
                         )
                         functions_added += 1
+
+                        # Store function content for full-text search.
+                        try:
+                            func_src = ast.get_source_segment(file_content, node)
+                            database.add_code_content(
+                                file_id=file_id,
+                                entity_type="function",
+                                entity_name=node.name,
+                                content=func_src or "",
+                                docstring=docstring,
+                                entity_id=function_id,
+                            )
+                        except Exception as e:
+                            logger.debug(
+                                "Failed to add function content to FTS (%s.%s): %s",
+                                rel_path,
+                                node.name,
+                                e,
+                                exc_info=True,
+                            )
 
             for node in ast.walk(tree):
                 if isinstance(node, ast.Import):

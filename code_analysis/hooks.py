@@ -382,6 +382,28 @@ def register_code_analysis_commands(reg: registry) -> None:
             f"Failed to register database_integrity commands: {e}", exc_info=True
         )
 
+    # Database restore command (backup + recreate + sequential indexing from config)
+    try:
+        from .commands.database_restore_mcp_commands import (
+            RestoreDatabaseFromConfigMCPCommand,
+        )
+
+        reg.register(RestoreDatabaseFromConfigMCPCommand, "custom")
+        import logging
+
+        logger = logging.getLogger(__name__)
+        logger.info("✅ Registered restore_database command")
+    except ImportError as e:
+        import logging
+
+        logger = logging.getLogger(__name__)
+        logger.warning(f"Failed to import restore_database command: {e}")
+    except Exception as e:
+        import logging
+
+        logger = logging.getLogger(__name__)
+        logger.error(f"Failed to register restore_database command: {e}", exc_info=True)
+
 
 # Register hook
 register_custom_commands_hook(register_code_analysis_commands)
@@ -409,3 +431,4 @@ register_auto_import_module("code_analysis.commands.worker_status_mcp_commands")
 register_auto_import_module("code_analysis.commands.repair_worker_mcp_commands")
 register_auto_import_module("code_analysis.commands.worker_management_mcp_commands")
 register_auto_import_module("code_analysis.commands.database_integrity_mcp_commands")
+register_auto_import_module("code_analysis.commands.database_restore_mcp_commands")

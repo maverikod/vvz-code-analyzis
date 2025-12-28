@@ -170,6 +170,7 @@ class BaseMCPCommand(Command):
                             "get_database_corruption_status",
                             "backup_database",
                             "repair_sqlite_database",
+                            "restore_database",
                             "list_backup_files",
                             "list_backup_versions",
                             "restore_backup_file",

@@ -49,14 +49,18 @@ def _extract_restore_dirs_from_config(cfg: dict[str, Any]) -> list[str]:
     )
     dirs = code_cfg.get("dirs")
     if isinstance(dirs, list) and all(isinstance(x, str) for x in dirs):
-        return [x for x in dirs if x]
+        non_empty_dirs = [x for x in dirs if x]
+        if non_empty_dirs:
+            return non_empty_dirs
 
     worker_cfg = (
         code_cfg.get("worker") if isinstance(code_cfg.get("worker"), dict) else {}
     )
     watch_dirs = worker_cfg.get("watch_dirs")
     if isinstance(watch_dirs, list) and all(isinstance(x, str) for x in watch_dirs):
-        return [x for x in watch_dirs if x]
+        non_empty_watch_dirs = [x for x in watch_dirs if x]
+        if non_empty_watch_dirs:
+            return non_empty_watch_dirs
 
     return []
 

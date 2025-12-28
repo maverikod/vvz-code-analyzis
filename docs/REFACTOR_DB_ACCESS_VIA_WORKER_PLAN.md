@@ -9,6 +9,17 @@ email: vasilyvz@gmail.com
 - **Rule 2**: Only the **database driver** may talk to the DB worker (IPC/queue/RPC).
 - **Rule 3**: **All** DB calls in the codebase must go through the **driver API** only (no `db.conn`, no `cursor = ...`).
 - **Rule 4**: Errors must be **logged** with enough context and be **handled** consistently (typed errors, safe fallbacks, no silent failures).
+- **Rule 5**: Any database driver MUST be a subclass of **`BaseDatabaseDriver` (ABC)** and implement a stable set of **abstract methods**. All call sites MUST depend on the **base type** (e.g., `BaseDatabaseDriver`) in signatures/DI to enable transparent future databases.
+
+### Driver interface requirement (for future DB backends)
+
+- The driver is a **polymorphic boundary**. It MUST:
+  - Inherit from `code_analysis/core/db_driver/base.py:BaseDatabaseDriver`
+  - Implement the abstract API (execute/fetchone/fetchall/commit/rollback/lastrowid/create_schema/get_table_info/connect/disconnect).
+- The rest of the codebase MUST:
+  - Type against `BaseDatabaseDriver` (or an even narrower protocol if introduced later).
+  - Avoid driver-specific types (`SQLiteDriver`, `SQLiteDriverProxy`) in signatures.
+  - Use explicit driver selection via configuration (so PostgreSQL/MySQL/etc. can be plugged in later).
 - **Rule 5 (Extensibility)**:
   - All database drivers **must be subclasses** of the shared abstract base class `BaseDatabaseDriver`
     (`code_analysis/core/db_driver/base.py`) and implement its **abstract method set**.

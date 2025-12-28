@@ -15,34 +15,41 @@ from mcp_proxy_adapter.commands.hooks import register_auto_import_module
 
 
 def register_code_analysis_commands(reg: registry) -> None:
-    """Register all code analysis commands."""
+    """Register all code analysis commands.
+
+    Args:
+        reg: MCP command registry instance.
+
+    Returns:
+        None
+    """
     # Import commands that exist (with try/except for missing ones)
     # Note: Some commands may be in different locations or not exist yet
 
     # Try to import existing commands
     try:
-        from .commands.analyze_project_command import AnalyzeProjectCommand
+        from .commands.analyze_project_command import AnalyzeProjectCommand  # type: ignore[import-not-found]
 
         reg.register(AnalyzeProjectCommand, "custom")
     except ImportError:
         pass
 
     try:
-        from .commands.analyze_file_command import AnalyzeFileCommand
+        from .commands.analyze_file_command import AnalyzeFileCommand  # type: ignore[import-not-found]
 
         reg.register(AnalyzeFileCommand, "custom")
     except ImportError:
         pass
 
     try:
-        from .commands.help_command import HelpCommand
+        from .commands.help_command import HelpCommand  # type: ignore[import-not-found]
 
         reg.register(HelpCommand, "custom")
     except ImportError:
         pass
 
     try:
-        from .commands.check_vectors_command import CheckVectorsCommand
+        from .commands.check_vectors_command import CheckVectorsCommand  # type: ignore[import-not-found]
 
         reg.register(CheckVectorsCommand, "custom")
     except ImportError:
@@ -71,17 +78,17 @@ def register_code_analysis_commands(reg: registry) -> None:
 
     try:
         from .commands.ast_mcp_commands import (
-            GetASTMCPCommand,
-            SearchASTNodesMCPCommand,
             ASTStatisticsMCPCommand,
-            ListProjectFilesMCPCommand,
-            GetCodeEntityInfoMCPCommand,
-            ListCodeEntitiesMCPCommand,
-            GetImportsMCPCommand,
-            FindDependenciesMCPCommand,
-            GetClassHierarchyMCPCommand,
-            FindUsagesMCPCommand,
             ExportGraphMCPCommand,
+            FindDependenciesMCPCommand,
+            FindUsagesMCPCommand,
+            GetASTMCPCommand,
+            GetClassHierarchyMCPCommand,
+            GetCodeEntityInfoMCPCommand,
+            GetImportsMCPCommand,
+            ListCodeEntitiesMCPCommand,
+            ListProjectFilesMCPCommand,
+            SearchASTNodesMCPCommand,
         )
 
         reg.register(GetASTMCPCommand, "custom")
@@ -106,7 +113,7 @@ def register_code_analysis_commands(reg: registry) -> None:
         pass
 
     try:
-        from .commands.vector_commands import RebuildFaissCommand, RevectorizeCommand
+        from .commands.vector_commands import RebuildFaissCommand, RevectorizeCommand  # type: ignore[import-not-found]
 
         reg.register(RebuildFaissCommand, "custom")
         reg.register(RevectorizeCommand, "custom")
@@ -133,7 +140,7 @@ def register_code_analysis_commands(reg: registry) -> None:
         logger.error(f"Failed to register semantic_search command: {e}", exc_info=True)
 
     try:
-        from .commands.watch_dirs_commands import (
+        from .commands.watch_dirs_commands import (  # type: ignore[import-not-found]
             AddWatchDirCommand,
             RemoveWatchDirCommand,
         )
@@ -145,8 +152,8 @@ def register_code_analysis_commands(reg: registry) -> None:
 
     try:
         from .commands.refactor_mcp_commands import (
-            SplitClassMCPCommand,
             ExtractSuperclassMCPCommand,
+            SplitClassMCPCommand,
             SplitFileToPackageMCPCommand,
         )
 
@@ -170,9 +177,9 @@ def register_code_analysis_commands(reg: registry) -> None:
     # Search commands (may have dependencies)
     try:
         from .commands.search_mcp_commands import (
+            FindClassesMCPCommand,
             FulltextSearchMCPCommand,
             ListClassMethodsMCPCommand,
-            FindClassesMCPCommand,
         )
 
         reg.register(FulltextSearchMCPCommand, "custom")
@@ -205,8 +212,8 @@ def register_code_analysis_commands(reg: registry) -> None:
 
     try:
         from .commands.code_mapper_mcp_commands import (
-            ListLongFilesMCPCommand,
             ListErrorsByCategoryMCPCommand,
+            ListLongFilesMCPCommand,
         )
 
         reg.register(ListLongFilesMCPCommand, "custom")
@@ -230,11 +237,11 @@ def register_code_analysis_commands(reg: registry) -> None:
 
     # Backup commands (exist)
     from .commands.backup_mcp_commands import (
+        ClearAllBackupsMCPCommand,
+        DeleteBackupMCPCommand,
         ListBackupFilesMCPCommand,
         ListBackupVersionsMCPCommand,
         RestoreBackupFileMCPCommand,
-        DeleteBackupMCPCommand,
-        ClearAllBackupsMCPCommand,
     )
 
     reg.register(ListBackupFilesMCPCommand, "custom")
@@ -247,9 +254,9 @@ def register_code_analysis_commands(reg: registry) -> None:
     try:
         from .commands.file_management_mcp_commands import (
             CleanupDeletedFilesMCPCommand,
-            UnmarkDeletedFileMCPCommand,
             CollapseVersionsMCPCommand,
             RepairDatabaseMCPCommand,
+            UnmarkDeletedFileMCPCommand,
         )
 
         reg.register(CleanupDeletedFilesMCPCommand, "custom")
@@ -273,8 +280,8 @@ def register_code_analysis_commands(reg: registry) -> None:
 
     # Log viewer commands (exist)
     from .commands.log_viewer_mcp_commands import (
-        ViewWorkerLogsMCPCommand,
         ListWorkerLogsMCPCommand,
+        ViewWorkerLogsMCPCommand,
     )
 
     reg.register(ViewWorkerLogsMCPCommand, "custom")
@@ -282,8 +289,8 @@ def register_code_analysis_commands(reg: registry) -> None:
 
     # Worker status commands (exist)
     from .commands.worker_status_mcp_commands import (
-        GetWorkerStatusMCPCommand,
         GetDatabaseStatusMCPCommand,
+        GetWorkerStatusMCPCommand,
     )
 
     reg.register(GetWorkerStatusMCPCommand, "custom")
@@ -292,9 +299,9 @@ def register_code_analysis_commands(reg: registry) -> None:
     # Repair worker management commands (NEW)
     try:
         from .commands.repair_worker_mcp_commands import (
+            RepairWorkerStatusMCPCommand,
             StartRepairWorkerMCPCommand,
             StopRepairWorkerMCPCommand,
-            RepairWorkerStatusMCPCommand,
         )
 
         reg.register(StartRepairWorkerMCPCommand, "custom")
@@ -345,6 +352,36 @@ def register_code_analysis_commands(reg: registry) -> None:
             f"Failed to register worker management commands: {e}", exc_info=True
         )
 
+    # Database integrity / safe-mode commands
+    try:
+        from .commands.database_integrity_mcp_commands import (
+            BackupDatabaseMCPCommand,
+            GetDatabaseCorruptionStatusMCPCommand,
+            RepairSQLiteDatabaseMCPCommand,
+        )
+
+        reg.register(GetDatabaseCorruptionStatusMCPCommand, "custom")
+        reg.register(BackupDatabaseMCPCommand, "custom")
+        reg.register(RepairSQLiteDatabaseMCPCommand, "custom")
+        import logging
+
+        logger = logging.getLogger(__name__)
+        logger.info(
+            "✅ Registered database_integrity commands: get_database_corruption_status, backup_database, repair_sqlite_database"
+        )
+    except ImportError as e:
+        import logging
+
+        logger = logging.getLogger(__name__)
+        logger.warning(f"Failed to import database_integrity commands: {e}")
+    except Exception as e:
+        import logging
+
+        logger = logging.getLogger(__name__)
+        logger.error(
+            f"Failed to register database_integrity commands: {e}", exc_info=True
+        )
+
 
 # Register hook
 register_custom_commands_hook(register_code_analysis_commands)
@@ -371,3 +408,4 @@ register_auto_import_module("code_analysis.commands.log_viewer_mcp_commands")
 register_auto_import_module("code_analysis.commands.worker_status_mcp_commands")
 register_auto_import_module("code_analysis.commands.repair_worker_mcp_commands")
 register_auto_import_module("code_analysis.commands.worker_management_mcp_commands")
+register_auto_import_module("code_analysis.commands.database_integrity_mcp_commands")

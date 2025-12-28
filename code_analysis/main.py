@@ -279,8 +279,8 @@ def main() -> None:
             "**Via MCP Proxy (Cursor tool)**:\n"
             "- List servers: `mcp_MCP-Proxy-2_list_servers(filter_enabled=None)`\n"
             "- Call command (IMPORTANT: use `server_id` + `copy_number`, NOT `server_key`):\n"
-            "  `mcp_MCP-Proxy-2_call_server(server_id=\"code-analysis-server\", copy_number=1, "
-            "command=\"get_database_status\", params={\"root_dir\": \"/abs/path\"})`\n"
+            '  `mcp_MCP-Proxy-2_call_server(server_id="code-analysis-server", copy_number=1, '
+            'command="get_database_status", params={"root_dir": "/abs/path"})`\n'
             "- Long-running commands (e.g. `update_indexes`) are queued (`use_queue=True`). "
             "Check them with `queue_get_job_status` / `queue_get_job_logs` using returned `job_id`.\n\n"
             "**Without MCP Proxy (direct)**:\n"
@@ -742,11 +742,19 @@ def main() -> None:
 
     main_logger = logging.getLogger(__name__)
 
-    def cleanup_workers():
-        """Cleanup all workers on server exit."""
+    def cleanup_workers() -> None:
+        """Cleanup all workers on server exit.
+
+        Returns:
+            None
+        """
         try:
             main_logger.info("🛑 Server shutdown: stopping all workers")
-            shutdown_cfg = app_config.get("process_management") or app_config.get("server_manager") or {}
+            shutdown_cfg = (
+                app_config.get("process_management")
+                or app_config.get("server_manager")
+                or {}
+            )
             shutdown_timeout = 30.0
             if isinstance(shutdown_cfg, dict):
                 try:
@@ -768,8 +776,16 @@ def main() -> None:
         except Exception as e:
             main_logger.error(f"❌ Error stopping workers: {e}", exc_info=True)
 
-    def signal_handler(signum, frame):
-        """Handle shutdown signals."""
+    def signal_handler(signum: int, frame: object) -> None:
+        """Handle shutdown signals.
+
+        Args:
+            signum: Signal number.
+            frame: Signal frame (unused).
+
+        Returns:
+            None
+        """
         main_logger.info(f"Received signal {signum}, stopping all workers...")
         cleanup_workers()
         sys.exit(0)

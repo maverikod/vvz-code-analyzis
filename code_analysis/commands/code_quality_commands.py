@@ -24,8 +24,16 @@ logger = logging.getLogger(__name__)
 
 
 class FormatCodeCommand(Command):
-    """
-    Command for formatting Python code using black.
+    """Format Python code using Black.
+
+    Attributes:
+        name: MCP command name.
+        version: Command version.
+        descr: Short description.
+        category: Command category.
+        author: Command author.
+        email: Author email.
+        use_queue: Whether to run in the background queue.
     """
 
     name = "format_code"
@@ -37,28 +45,42 @@ class FormatCodeCommand(Command):
     use_queue = False
 
     @classmethod
-    def get_schema(cls) -> Dict[str, Any]:
-        """Get JSON schema for command parameters."""
+    def get_schema(cls: type["FormatCodeCommand"]) -> Dict[str, Any]:
+        """Get JSON schema for command parameters.
+
+        Args:
+            cls: Command class.
+
+        Returns:
+            JSON schema dict.
+        """
         return {
             "type": "object",
+            "description": "Format a Python file using Black.",
             "properties": {
                 "file_path": {
                     "type": "string",
-                    "description": "Path to Python file to format",
+                    "description": "Path to Python file to format.",
+                    "examples": ["/abs/path/to/file.py"],
                 },
             },
             "required": ["file_path"],
+            "additionalProperties": False,
+            "examples": [{"file_path": "/abs/path/to/file.py"}],
         }
 
-    async def execute(self, file_path: str, **kwargs) -> SuccessResult | ErrorResult:
-        """
-        Execute code formatting.
+    async def execute(
+        self: "FormatCodeCommand", file_path: str, **kwargs: Any
+    ) -> SuccessResult | ErrorResult:
+        """Execute code formatting.
 
         Args:
-            file_path: Path to Python file to format
+            self: Command instance.
+            file_path: Path to Python file to format.
+            **kwargs: Extra args (unused).
 
         Returns:
-            SuccessResult with formatting result or ErrorResult on failure
+            SuccessResult with formatting result or ErrorResult on failure.
         """
         try:
             path = Path(file_path)
@@ -84,11 +106,11 @@ class FormatCodeCommand(Command):
                         "message": "Code formatted successfully",
                     }
                 )
-            else:
-                return ErrorResult(
-                    code="FORMATTING_FAILED",
-                    message=error or "Formatting failed",
-                )
+
+            return ErrorResult(
+                code="FORMATTING_FAILED",
+                message=error or "Formatting failed",
+            )
 
         except Exception as e:
             logger.exception(f"Error formatting code: {e}")
@@ -99,8 +121,16 @@ class FormatCodeCommand(Command):
 
 
 class LintCodeCommand(Command):
-    """
-    Command for linting Python code using flake8.
+    """Lint Python code using Flake8.
+
+    Attributes:
+        name: MCP command name.
+        version: Command version.
+        descr: Short description.
+        category: Command category.
+        author: Command author.
+        email: Author email.
+        use_queue: Whether to run in the background queue.
     """
 
     name = "lint_code"
@@ -112,36 +142,55 @@ class LintCodeCommand(Command):
     use_queue = False
 
     @classmethod
-    def get_schema(cls) -> Dict[str, Any]:
-        """Get JSON schema for command parameters."""
+    def get_schema(cls: type["LintCodeCommand"]) -> Dict[str, Any]:
+        """Get JSON schema for command parameters.
+
+        Args:
+            cls: Command class.
+
+        Returns:
+            JSON schema dict.
+        """
         return {
             "type": "object",
+            "description": "Lint a Python file using Flake8.",
             "properties": {
                 "file_path": {
                     "type": "string",
-                    "description": "Path to Python file to lint",
+                    "description": "Path to Python file to lint.",
+                    "examples": ["/abs/path/to/file.py"],
                 },
                 "ignore": {
                     "type": "array",
                     "items": {"type": "string"},
-                    "description": "List of error codes to ignore",
+                    "description": "List of flake8 error codes to ignore.",
+                    "examples": [["E501", "W503"]],
                 },
             },
             "required": ["file_path"],
+            "additionalProperties": False,
+            "examples": [
+                {"file_path": "/abs/path/to/file.py"},
+                {"file_path": "/abs/path/to/file.py", "ignore": ["E501"]},
+            ],
         }
 
     async def execute(
-        self, file_path: str, ignore: Optional[List[str]] = None, **kwargs
+        self: "LintCodeCommand",
+        file_path: str,
+        ignore: Optional[List[str]] = None,
+        **kwargs: Any,
     ) -> SuccessResult | ErrorResult:
-        """
-        Execute code linting.
+        """Execute code linting.
 
         Args:
-            file_path: Path to Python file to lint
-            ignore: Optional list of error codes to ignore
+            self: Command instance.
+            file_path: Path to Python file to lint.
+            ignore: Optional list of error codes to ignore.
+            **kwargs: Extra args (unused).
 
         Returns:
-            SuccessResult with linting result or ErrorResult on failure
+            SuccessResult with linting result or ErrorResult on failure.
         """
         try:
             path = Path(file_path)
@@ -178,8 +227,20 @@ class LintCodeCommand(Command):
 
 
 class TypeCheckCodeCommand(Command):
-    """
-    Command for type checking Python code using mypy.
+    """Type check Python code using mypy.
+
+    Notes:
+        If `config_file` is not provided, this command tries to auto-detect
+        `pyproject.toml` in parent directories of `file_path`.
+
+    Attributes:
+        name: MCP command name.
+        version: Command version.
+        descr: Short description.
+        category: Command category.
+        author: Command author.
+        email: Author email.
+        use_queue: Whether to run in the background queue.
     """
 
     name = "type_check_code"
@@ -191,45 +252,67 @@ class TypeCheckCodeCommand(Command):
     use_queue = False
 
     @classmethod
-    def get_schema(cls) -> Dict[str, Any]:
-        """Get JSON schema for command parameters."""
+    def get_schema(cls: type["TypeCheckCodeCommand"]) -> Dict[str, Any]:
+        """Get JSON schema for command parameters.
+
+        Args:
+            cls: Command class.
+
+        Returns:
+            JSON schema dict.
+        """
         return {
             "type": "object",
+            "description": "Type check Python code using mypy.",
             "properties": {
                 "file_path": {
                     "type": "string",
-                    "description": "Path to Python file to type check",
+                    "description": "Path to Python file to type check.",
+                    "examples": ["/abs/path/to/file.py"],
                 },
                 "config_file": {
                     "type": "string",
-                    "description": "Optional path to mypy config file",
+                    "description": "Optional path to mypy config file (e.g. pyproject.toml).",
+                    "examples": ["/abs/path/to/pyproject.toml"],
                 },
                 "ignore_errors": {
                     "type": "boolean",
-                    "description": "If True, treat errors as warnings",
+                    "description": "If True, treat errors as warnings.",
                     "default": False,
+                    "examples": [False],
                 },
             },
             "required": ["file_path"],
+            "additionalProperties": False,
+            "examples": [
+                {"file_path": "/abs/path/to/file.py"},
+                {
+                    "file_path": "/abs/path/to/file.py",
+                    "config_file": "/abs/path/to/pyproject.toml",
+                    "ignore_errors": False,
+                },
+            ],
         }
 
     async def execute(
-        self,
+        self: "TypeCheckCodeCommand",
         file_path: str,
         config_file: Optional[str] = None,
         ignore_errors: bool = False,
-        **kwargs,
+        **kwargs: Any,
     ) -> SuccessResult | ErrorResult:
-        """
-        Execute type checking.
+        """Execute type checking.
 
         Args:
-            file_path: Path to Python file to type check
-            config_file: Optional path to mypy config file
-            ignore_errors: If True, treat errors as warnings
+            self: Command instance.
+            file_path: Path to Python file to type check.
+            config_file: Optional path to mypy config file. If omitted, the command
+                tries to auto-detect `pyproject.toml` in parent directories.
+            ignore_errors: If True, treat errors as warnings.
+            **kwargs: Extra args (unused).
 
         Returns:
-            SuccessResult with type checking result or ErrorResult on failure
+            SuccessResult with type checking result or ErrorResult on failure.
         """
         try:
             path = Path(file_path)
@@ -246,11 +329,18 @@ class TypeCheckCodeCommand(Command):
                 )
 
             config_path = Path(config_file) if config_file else None
-            if config_file and not config_path.exists():
+            if config_file and config_path and not config_path.exists():
                 return ErrorResult(
                     code="CONFIG_NOT_FOUND",
                     message=f"Config file not found: {config_file}",
                 )
+
+            if config_path is None:
+                for parent in [path.parent, *path.parent.parents]:
+                    candidate = parent / "pyproject.toml"
+                    if candidate.exists() and candidate.is_file():
+                        config_path = candidate
+                        break
 
             success, error, errors = type_check_with_mypy(
                 path, config_file=config_path, ignore_errors=ignore_errors
@@ -259,6 +349,7 @@ class TypeCheckCodeCommand(Command):
             return SuccessResult(
                 data={
                     "file_path": str(path),
+                    "config_file": str(config_path) if config_path else None,
                     "success": success,
                     "error": error,
                     "errors": errors,

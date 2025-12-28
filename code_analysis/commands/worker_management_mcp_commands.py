@@ -47,66 +47,97 @@ class StartWorkerMCPCommand(BaseMCPCommand):
     author = "Vasiliy Zdanovskiy"
     email = "vasilyvz@gmail.com"
     use_queue = False
-
     @classmethod
     def get_schema(cls: type["StartWorkerMCPCommand"]) -> Dict[str, Any]:
-        """
-        Get JSON schema for command parameters.
+        """Get JSON schema for command parameters.
 
-        Args:
-            cls: Command class.
+    Notes:
+        This schema is used by MCP Proxy for request validation.
+        Keep it strict and deterministic.
 
-        Returns:
-            JSON schema dict.
-        """
+    Args:
+        cls: Command class.
+
+    Returns:
+        JSON schema dict.
+    """
         return {
             "type": "object",
+            "description": (
+                "Start a background worker process. "
+                "Supported worker_type values: 'file_watcher', 'vectorization'."
+            ),
             "properties": {
                 "worker_type": {
                     "type": "string",
                     "enum": ["file_watcher", "vectorization"],
-                    "description": "Type of worker to start",
+                    "description": "Type of worker to start.",
+                    "examples": ["file_watcher"],
                 },
                 "root_dir": {
                     "type": "string",
-                    "description": "Project root directory (contains data/code_analysis.db)",
+                    "description": "Project root directory (contains data/code_analysis.db).",
+                    "examples": ["/abs/path/to/project"],
                 },
                 "project_id": {
                     "type": "string",
-                    "description": "Optional project UUID; if omitted, inferred/created by root_dir",
+                    "description": "Optional project UUID; if omitted, inferred/created by root_dir.",
                 },
                 "watch_dirs": {
                     "type": "array",
                     "items": {"type": "string"},
-                    "description": "Directories to watch (file_watcher only; default: [root_dir])",
+                    "description": "Directories to watch (file_watcher only; default: [root_dir]).",
+                    "examples": [["/abs/path/to/project"]],
                 },
                 "scan_interval": {
                     "type": "integer",
-                    "description": "Scan interval seconds (file_watcher only)",
+                    "description": "Scan interval seconds (file_watcher only).",
                     "default": 60,
+                    "examples": [60],
                 },
                 "poll_interval": {
                     "type": "integer",
-                    "description": "Poll interval seconds (vectorization only)",
+                    "description": "Poll interval seconds (vectorization only).",
                     "default": 30,
+                    "examples": [30],
                 },
                 "batch_size": {
                     "type": "integer",
-                    "description": "Batch size (vectorization only)",
+                    "description": "Batch size (vectorization only).",
                     "default": 10,
+                    "examples": [10],
                 },
                 "vector_dim": {
                     "type": "integer",
-                    "description": "Vector dimension (vectorization only)",
+                    "description": "Vector dimension (vectorization only).",
                     "default": 384,
+                    "examples": [384],
                 },
                 "worker_log_path": {
                     "type": "string",
-                    "description": "Optional log path for the worker process",
+                    "description": "Optional log path for the worker process.",
+                    "examples": ["/abs/path/to/logs/file_watcher.log"],
                 },
             },
             "required": ["worker_type", "root_dir"],
             "additionalProperties": False,
+            "examples": [
+                {
+                    "worker_type": "file_watcher",
+                    "root_dir": "/abs/path/to/project",
+                    "watch_dirs": ["/abs/path/to/project"],
+                    "scan_interval": 60,
+                    "worker_log_path": "/abs/path/to/project/logs/file_watcher.log",
+                },
+                {
+                    "worker_type": "vectorization",
+                    "root_dir": "/abs/path/to/project",
+                    "poll_interval": 30,
+                    "batch_size": 10,
+                    "vector_dim": 384,
+                    "worker_log_path": "/abs/path/to/project/logs/vectorization_worker.log",
+                },
+            ],
         }
 
     async def execute(
@@ -221,34 +252,42 @@ class StopWorkerMCPCommand(BaseMCPCommand):
     author = "Vasiliy Zdanovskiy"
     email = "vasilyvz@gmail.com"
     use_queue = False
-
     @classmethod
     def get_schema(cls: type["StopWorkerMCPCommand"]) -> Dict[str, Any]:
-        """
-        Get JSON schema for command parameters.
+        """Get JSON schema for command parameters.
 
-        Args:
-            cls: Command class.
+    Notes:
+        This schema is used by MCP Proxy for request validation.
 
-        Returns:
-            JSON schema dict.
-        """
+    Args:
+        cls: Command class.
+
+    Returns:
+        JSON schema dict.
+    """
         return {
             "type": "object",
+            "description": "Stop background worker(s) by type.",
             "properties": {
                 "worker_type": {
                     "type": "string",
                     "enum": ["file_watcher", "vectorization"],
-                    "description": "Type of worker to stop",
+                    "description": "Type of worker to stop.",
+                    "examples": ["file_watcher"],
                 },
                 "timeout": {
                     "type": "integer",
-                    "description": "Timeout in seconds before force kill",
+                    "description": "Timeout in seconds before force kill.",
                     "default": 10,
+                    "examples": [10],
                 },
             },
             "required": ["worker_type"],
             "additionalProperties": False,
+            "examples": [
+                {"worker_type": "file_watcher", "timeout": 10},
+                {"worker_type": "vectorization", "timeout": 10},
+            ],
         }
 
     async def execute(

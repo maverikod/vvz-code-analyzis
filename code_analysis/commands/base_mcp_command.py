@@ -36,51 +36,99 @@ class BaseMCPCommand(Command):
 
     @staticmethod
     def _ensure_database_integrity(db_path: Path) -> Dict[str, Any]:
-        """
-        Ensure SQLite physical integrity for a database file.
+        """Ensure SQLite physical integrity for a database file.
 
-        If the database is corrupted, this method will:
-        - create backup copies of the DB file (+ WAL/SHM/JOURNAL if present);
-        - remove the corrupted DB file (+ sidecars);
-        - allow subsequent initialization to recreate schema.
+        Notes:
+            If corruption is detected, this method:
+            - creates filesystem backups of the DB file (+ sidecars);
+            - writes a persistent corruption marker next to the DB.
+
+            It does NOT attempt to recreate the DB automatically. Once a project is
+            marked corrupted, DB-dependent commands must be blocked until explicit
+            repair/restore.
 
         Args:
             db_path: Path to SQLite database file.
 
         Returns:
             Dict with keys:
-                ok: True if database is OK or was successfully recreated.
-                repaired: True if recreation was performed.
+                ok: True only if DB is OK and not blocked by a marker.
+                repaired: Always False here (repair is explicit via separate commands).
                 message: Human-readable summary.
-                backup_paths: List of created backup file paths.
+                backup_paths: List of created backup file paths (if any).
+                marker_path: Corruption marker path if present/created.
         """
-        from ..core.db_integrity import ensure_sqlite_integrity_or_recreate
+        from ..core.db_integrity import (
+            backup_sqlite_files,
+            check_sqlite_integrity,
+            corruption_marker_path,
+            read_corruption_marker,
+            write_corruption_marker,
+        )
 
-        result = ensure_sqlite_integrity_or_recreate(db_path, backup_dir=db_path.parent)
+        marker_path = corruption_marker_path(db_path)
+        marker_data = read_corruption_marker(db_path)
+        if marker_data is not None:
+            msg = str(marker_data.get("message") or "Database is marked as corrupted")
+            backups = marker_data.get("backup_paths")
+            backup_paths: list[str] = []
+            if isinstance(backups, list):
+                backup_paths = [str(p) for p in backups]
+            return {
+                "ok": False,
+                "repaired": False,
+                "message": msg,
+                "backup_paths": backup_paths,
+                "marker_path": str(marker_path),
+            }
+
+        check = check_sqlite_integrity(db_path)
+        if check.ok:
+            return {
+                "ok": True,
+                "repaired": False,
+                "message": check.message,
+                "backup_paths": [],
+                "marker_path": None,
+            }
+
+        backups = backup_sqlite_files(
+            db_path, backup_dir=db_path.parent, include_sidecars=True
+        )
+        marker = write_corruption_marker(
+            db_path,
+            message=check.message,
+            backup_paths=backups,
+        )
         return {
-            "ok": result.ok,
-            "repaired": result.repaired,
-            "message": result.message,
-            "backup_paths": list(result.backup_paths),
+            "ok": False,
+            "repaired": False,
+            "message": check.message,
+            "backup_paths": list(backups),
+            "marker_path": marker,
         }
 
     @staticmethod
     def _open_database(root_dir: str, auto_analyze: bool = True) -> CodeDatabase:
-        """
-        Open database connection for project.
+        """Open database connection for project.
 
         Automatically creates database and runs analysis if database doesn't exist
         or is empty.
 
+        IMPORTANT:
+            If the database file is detected as corrupted, the project is put into
+            "safe mode" and DB-dependent commands are blocked until explicit
+            repair/restore.
+
         Args:
-            root_dir: Project root directory
-            auto_analyze: If True, automatically run analysis if DB is missing or empty
+            root_dir: Project root directory.
+            auto_analyze: If True, automatically run analysis if DB is missing or empty.
 
         Returns:
-            CodeDatabase instance
+            CodeDatabase instance.
 
         Raises:
-            DatabaseError: If database cannot be opened or created
+            DatabaseError: If database cannot be opened or created.
         """
         try:
             root_path = Path(root_dir).resolve()
@@ -89,12 +137,46 @@ class BaseMCPCommand(Command):
             db_path = data_dir / "code_analysis.db"
 
             integrity = BaseMCPCommand._ensure_database_integrity(db_path)
-            if integrity.get("repaired"):
-                logger.warning(
-                    "SQLite corruption detected for %s; recreated. %s. Backups=%s",
-                    db_path,
-                    integrity.get("message"),
-                    integrity.get("backup_paths"),
+            if integrity.get("ok") is False:
+                # Stop all workers aggressively: they must not operate on corrupted DB.
+                try:
+                    from ..core.worker_manager import get_worker_manager
+
+                    stop_result = get_worker_manager().stop_all_workers(timeout=10.0)
+                    logger.warning(
+                        "🛑 Stopped all workers due to corrupted database. %s",
+                        stop_result.get("message"),
+                    )
+                except Exception as e:
+                    logger.error(
+                        "Failed to stop workers after corruption detection: %s",
+                        e,
+                        exc_info=True,
+                    )
+
+                marker_path = integrity.get("marker_path")
+                backup_paths = integrity.get("backup_paths")
+                raise DatabaseError(
+                    "Database is corrupted and project is in safe mode. "
+                    "Only backup/restore/repair commands are allowed.",
+                    operation="database_corrupted",
+                    details={
+                        "root_dir": str(root_path),
+                        "db_path": str(db_path),
+                        "marker_path": marker_path,
+                        "backup_paths": backup_paths,
+                        "integrity_message": integrity.get("message"),
+                        "allowed_commands": [
+                            "get_database_corruption_status",
+                            "backup_database",
+                            "repair_sqlite_database",
+                            "list_backup_files",
+                            "list_backup_versions",
+                            "restore_backup_file",
+                            "delete_backup",
+                            "clear_all_backups",
+                        ],
+                    },
                 )
 
             # Create database if it doesn't exist

@@ -45,6 +45,9 @@ class UpdateIndexesMCPCommand(BaseMCPCommand):
     def get_schema(cls: type["UpdateIndexesMCPCommand"]) -> Dict[str, Any]:
         """Get JSON schema for command parameters.
 
+        Notes:
+            This schema is used by MCP Proxy for request validation and tool routing.
+
         Args:
             cls: Command class.
 
@@ -53,19 +56,29 @@ class UpdateIndexesMCPCommand(BaseMCPCommand):
         """
         return {
             "type": "object",
+            "description": (
+                "Analyze Python project under root_dir and update code indexes in SQLite. "
+                "This is a long-running command and is executed via queue."
+            ),
             "properties": {
                 "root_dir": {
                     "type": "string",
-                    "description": "Root directory to analyze",
+                    "description": "Root directory to analyze.",
+                    "examples": ["/abs/path/to/project"],
                 },
                 "max_lines": {
                     "type": "integer",
-                    "description": "Maximum lines per file threshold",
+                    "description": "Maximum lines per file threshold.",
                     "default": 400,
+                    "examples": [400],
                 },
             },
             "required": ["root_dir"],
             "additionalProperties": False,
+            "examples": [
+                {"root_dir": "/abs/path/to/project", "max_lines": 400},
+                {"root_dir": "/abs/path/to/project", "max_lines": 250},
+            ],
         }
 
     def _extract_docstring(
@@ -384,9 +397,15 @@ class UpdateIndexesMCPCommand(BaseMCPCommand):
         self: "UpdateIndexesMCPCommand",
         root_dir: str,
         max_lines: int = 400,
-        **kwargs,
+        **kwargs: Any,
     ) -> SuccessResult | ErrorResult:
         """Execute code index update.
+
+        Notes:
+            If the database is detected as corrupted, this command will create a
+            filesystem backup, write a persistent corruption marker, stop workers,
+            and return an error. The project is then in "safe mode" until explicit
+            repair/restore.
 
         Args:
             self: Command instance.
@@ -400,15 +419,11 @@ class UpdateIndexesMCPCommand(BaseMCPCommand):
         from ..core.db_integrity import (
             backup_sqlite_files,
             check_sqlite_integrity,
-            recreate_sqlite_database_file,
+            read_corruption_marker,
+            write_corruption_marker,
         )
         from ..core.progress_tracker import get_progress_tracker_from_context
-        from ..core.worker_launcher import (
-            default_faiss_index_path,
-            start_file_watcher_worker,
-            start_vectorization_worker,
-            stop_worker_type,
-        )
+        from ..core.worker_launcher import stop_worker_type
 
         progress_tracker = get_progress_tracker_from_context(
             kwargs.get("context") or {}
@@ -426,23 +441,62 @@ class UpdateIndexesMCPCommand(BaseMCPCommand):
             data_dir.mkdir(parents=True, exist_ok=True)
             db_path = data_dir / "code_analysis.db"
 
+            marker = read_corruption_marker(db_path)
+            if marker is not None:
+                if progress_tracker:
+                    progress_tracker.set_status("failed")
+                    progress_tracker.set_description(
+                        "Database is marked as corrupted (safe mode). Run repair/restore first."
+                    )
+                    progress_tracker.set_progress(0)
+
+                return ErrorResult(
+                    message=(
+                        "Database is corrupted and project is in safe mode. "
+                        "Only backup/restore/repair commands are allowed."
+                    ),
+                    code="DATABASE_CORRUPTED",
+                    details={"db_path": str(db_path), "marker": marker},
+                )
+
             db_check = check_sqlite_integrity(db_path)
-            db_repaired = False
-            db_backup_paths: list[str] = []
             if not db_check.ok:
                 if progress_tracker:
                     progress_tracker.set_description(
-                        f"Database corrupted ({db_check.message}); backing up and recreating..."
+                        f"Database corrupted ({db_check.message}); creating backup and entering safe mode..."
                     )
 
                 stop_worker_type("file_watcher", timeout=5.0)
                 stop_worker_type("vectorization", timeout=5.0)
 
-                db_backup_paths = list(
-                    backup_sqlite_files(db_path, backup_dir=data_dir)
+                backup_paths = list(backup_sqlite_files(db_path, backup_dir=data_dir))
+                marker_path = write_corruption_marker(
+                    db_path,
+                    message=db_check.message,
+                    backup_paths=tuple(backup_paths),
                 )
-                recreate_sqlite_database_file(db_path)
-                db_repaired = True
+
+                if progress_tracker:
+                    progress_tracker.set_status("failed")
+                    progress_tracker.set_description(
+                        "Database corruption detected. Safe mode enabled; run repair/restore."
+                    )
+                    progress_tracker.set_progress(0)
+
+                return ErrorResult(
+                    message=(
+                        "Database corruption detected. A backup was created and the project "
+                        "was put into safe mode. Run 'repair_sqlite_database' (force=true) "
+                        "or restore from backup, then re-run update_indexes."
+                    ),
+                    code="DATABASE_CORRUPTED",
+                    details={
+                        "db_path": str(db_path),
+                        "marker_path": marker_path,
+                        "backup_paths": backup_paths,
+                        "integrity_message": db_check.message,
+                    },
+                )
 
             database = self._open_database(root_dir, auto_analyze=False)
             try:
@@ -492,8 +546,8 @@ class UpdateIndexesMCPCommand(BaseMCPCommand):
                             "functions": 0,
                             "methods": 0,
                             "imports": 0,
-                            "db_repaired": db_repaired,
-                            "db_backup_paths": db_backup_paths,
+                            "db_repaired": False,
+                            "db_backup_paths": [],
                             "message": "No Python files found",
                         }
                     )
@@ -558,50 +612,6 @@ class UpdateIndexesMCPCommand(BaseMCPCommand):
                 total_methods = sum(r.get("methods", 0) for r in results)
                 total_imports = sum(r.get("imports", 0) for r in results)
 
-                worker_start: dict[str, Any] = {}
-                if db_repaired:
-                    try:
-                        worker_start["file_watcher"] = start_file_watcher_worker(
-                            db_path=str(db_path),
-                            project_id=project_id,
-                            watch_dirs=[str(root_path)],
-                            scan_interval=60,
-                            version_dir=str(
-                                (root_path / "data" / "versions").resolve()
-                            ),
-                            worker_log_path=str(
-                                (root_path / "logs" / "file_watcher.log").resolve()
-                            ),
-                            project_root=str(root_path),
-                            ignore_patterns=[".git", "__pycache__", "data", "logs"],
-                        ).__dict__
-                    except Exception as e:
-                        worker_start["file_watcher"] = {
-                            "success": False,
-                            "error": str(e),
-                        }
-
-                    try:
-                        worker_start["vectorization"] = start_vectorization_worker(
-                            db_path=str(db_path),
-                            project_id=project_id,
-                            faiss_index_path=default_faiss_index_path(str(root_path)),
-                            vector_dim=384,
-                            svo_config=None,
-                            batch_size=10,
-                            poll_interval=30,
-                            worker_log_path=str(
-                                (
-                                    root_path / "logs" / "vectorization_worker.log"
-                                ).resolve()
-                            ),
-                        ).__dict__
-                    except Exception as e:
-                        worker_start["vectorization"] = {
-                            "success": False,
-                            "error": str(e),
-                        }
-
                 if progress_tracker:
                     progress_tracker.set_progress(100)
                     progress_tracker.set_description("Indexing completed")
@@ -620,9 +630,9 @@ class UpdateIndexesMCPCommand(BaseMCPCommand):
                         "functions": total_functions,
                         "methods": total_methods,
                         "imports": total_imports,
-                        "db_repaired": db_repaired,
-                        "db_backup_paths": db_backup_paths,
-                        "workers_restarted": worker_start,
+                        "db_repaired": False,
+                        "db_backup_paths": [],
+                        "workers_restarted": {},
                         "message": (
                             f"Indexes updated: {successful}/{total} files processed, "
                             f"{errors} errors, {syntax_errors} syntax errors"

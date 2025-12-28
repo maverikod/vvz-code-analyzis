@@ -151,11 +151,13 @@ def backup_sqlite_files(
 
 
 def recreate_sqlite_database_file(db_path: Path) -> None:
-    """
-    Delete SQLite file and its sidecars (if any) to allow recreating from scratch.
+    """Delete SQLite file and its sidecars (if any) to allow recreating from scratch.
 
     Args:
         db_path: Path to SQLite file.
+
+    Returns:
+        None
     """
     paths: List[Path] = [db_path]
     paths.extend(_sidecar_paths(db_path))
@@ -173,8 +175,11 @@ def ensure_sqlite_integrity_or_recreate(
     *,
     backup_dir: Optional[Path] = None,
 ) -> SQLiteRepairResult:
-    """
-    Ensure SQLite file integrity; if corrupted, backup and recreate.
+    """Ensure SQLite file integrity; if corrupted, backup and recreate.
+
+    Notes:
+        If a corruption marker exists for this DB, it is best-effort cleared after
+        successful recreation.
 
     Args:
         db_path: Path to SQLite file.
@@ -189,9 +194,107 @@ def ensure_sqlite_integrity_or_recreate(
 
     backups = backup_sqlite_files(db_path, backup_dir=backup_dir, include_sidecars=True)
     recreate_sqlite_database_file(db_path)
+
+    # If we repaired the DB file, we can clear the persistent marker.
+    try:
+        clear_corruption_marker(db_path)
+    except Exception:
+        pass
+
     return SQLiteRepairResult(
         ok=True,
         repaired=True,
-        message=f"Database was corrupted ({check.message}); backed up {len(backups)} file(s) and recreated",
+        message=(
+            f"Database was corrupted ({check.message}); backed up {len(backups)} file(s) and recreated"
+        ),
         backup_paths=backups,
     )
+
+
+def corruption_marker_path(db_path: Path) -> Path:
+    """Return path to persistent corruption marker for a SQLite db.
+
+    Args:
+        db_path: Path to SQLite db file.
+
+    Returns:
+        Path to marker JSON file.
+    """
+    return db_path.parent / f"{db_path.name}.corruption.json"
+
+
+def read_corruption_marker(db_path: Path) -> Optional[dict[str, object]]:
+    """Read corruption marker JSON if present.
+
+    Args:
+        db_path: Path to SQLite db file.
+
+    Returns:
+        Parsed marker dict if present and readable; otherwise None.
+    """
+    import json
+
+    marker = corruption_marker_path(db_path)
+    if not marker.exists():
+        return None
+
+    try:
+        data = json.loads(marker.read_text(encoding="utf-8"))
+        if isinstance(data, dict):
+            return data  # type: ignore[return-value]
+        return {"raw": data}
+    except Exception as e:
+        return {"error": f"Failed to read marker: {e}", "path": str(marker)}
+
+
+def write_corruption_marker(
+    db_path: Path,
+    *,
+    message: str,
+    backup_paths: tuple[str, ...] = (),
+) -> str:
+    """Write corruption marker JSON.
+
+    Notes:
+        Marker is used to keep the project in a "safe mode" where DB-dependent
+        commands are blocked until explicit repair.
+
+    Args:
+        db_path: Path to SQLite db file.
+        message: Human-readable corruption message.
+        backup_paths: Backup paths created at detection time.
+
+    Returns:
+        Marker path as string.
+    """
+    import json
+
+    marker = corruption_marker_path(db_path)
+    payload = {
+        "db_path": str(db_path),
+        "detected_at": time.time(),
+        "message": message,
+        "backup_paths": list(backup_paths),
+        "blocked": True,
+    }
+    marker.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
+    return str(marker)
+
+
+def clear_corruption_marker(db_path: Path) -> bool:
+    """Remove corruption marker if present.
+
+    Args:
+        db_path: Path to SQLite db file.
+
+    Returns:
+        True if marker was removed; False if it did not exist.
+    """
+    marker = corruption_marker_path(db_path)
+    if not marker.exists():
+        return False
+    try:
+        marker.unlink()
+        return True
+    except Exception:
+        return False

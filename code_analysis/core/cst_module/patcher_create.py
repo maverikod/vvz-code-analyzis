@@ -30,8 +30,12 @@ class _CreateRewriter(cst.CSTTransformer):
         create_after: dict[tuple[int, int, int, int], list[cst.BaseStatement]],
         create_before: dict[tuple[int, int, int, int], list[cst.BaseStatement]],
         create_at_end: list[cst.BaseStatement],
-        create_at_end_of_class: dict[tuple[int, int, int, int], list[cst.BaseStatement]],
-        create_at_end_of_function: dict[tuple[int, int, int, int], list[cst.BaseStatement]],
+        create_at_end_of_class: dict[
+            tuple[int, int, int, int], list[cst.BaseStatement]
+        ],
+        create_at_end_of_function: dict[
+            tuple[int, int, int, int], list[cst.BaseStatement]
+        ],
     ):
         self._create_after = create_after
         self._create_before = create_before
@@ -70,15 +74,24 @@ class _CreateRewriter(cst.CSTTransformer):
                 if isinstance(stmt.body, cst.IndentedBlock):
                     new_body[-1] = stmt.with_changes(
                         body=stmt.body.with_changes(
-                            body=list(stmt.body.body) + self._create_at_end_of_class[span]
+                            body=list(stmt.body.body)
+                            + self._create_at_end_of_class[span]
                         )
                     )
-            elif isinstance(stmt, (cst.FunctionDef, cst.AsyncFunctionDef)) and span in self._create_at_end_of_function:
+            # NOTE:
+            # This project pins a LibCST build where async functions are represented
+            # as `cst.FunctionDef` with an `asynchronous` modifier, and the
+            # top-level `cst.AsyncFunctionDef` node does not exist.
+            elif (
+                isinstance(stmt, cst.FunctionDef)
+                and span in self._create_at_end_of_function
+            ):
                 # Need to modify the function body
                 if isinstance(stmt.body, cst.IndentedBlock):
                     new_body[-1] = stmt.with_changes(
                         body=stmt.body.with_changes(
-                            body=list(stmt.body.body) + self._create_at_end_of_function[span]
+                            body=list(stmt.body.body)
+                            + self._create_at_end_of_function[span]
                         )
                     )
 
@@ -147,8 +160,12 @@ def apply_create_ops(source: str, ops: list[CreateOp]) -> tuple[str, dict[str, A
     create_after: dict[tuple[int, int, int, int], list[cst.BaseStatement]] = {}
     create_before: dict[tuple[int, int, int, int], list[cst.BaseStatement]] = {}
     create_at_end: list[cst.BaseStatement] = []
-    create_at_end_of_class: dict[tuple[int, int, int, int], list[cst.BaseStatement]] = {}
-    create_at_end_of_function: dict[tuple[int, int, int, int], list[cst.BaseStatement]] = {}
+    create_at_end_of_class: dict[tuple[int, int, int, int], list[cst.BaseStatement]] = (
+        {}
+    )
+    create_at_end_of_function: dict[
+        tuple[int, int, int, int], list[cst.BaseStatement]
+    ] = {}
 
     created = 0
     unmatched: list[Selector] = []
@@ -269,4 +286,3 @@ def apply_create_ops(source: str, ops: list[CreateOp]) -> tuple[str, dict[str, A
         ],
     }
     return new_source, stats
-

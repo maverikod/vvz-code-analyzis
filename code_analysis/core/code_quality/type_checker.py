@@ -28,46 +28,14 @@ def type_check_with_mypy(
     Returns:
         Tuple of (success, error_message, list_of_errors)
     """
-    try:
-        from mypy import api
-
-        # Build mypy arguments
-        args = [str(file_path)]
-        if config_file:
-            args.extend(["--config-file", str(config_file)])
-        # Note: mypy doesn't support --ignore-errors flag
-        # Instead, we'll just run it and return errors as warnings if ignore_errors=True
-
-        # Run mypy
-        stdout, stderr, exit_code = api.run(args)
-
-        errors = []
-        if stdout:
-            errors.extend([line for line in stdout.split("\n") if line.strip()])
-        if stderr:
-            errors.extend([line for line in stderr.split("\n") if line.strip()])
-
-        if exit_code != 0:
-            error_msg = f"Found {len(errors)} mypy errors"
-            if ignore_errors:
-                # Treat errors as warnings if ignore_errors=True
-                logger.info(f"{error_msg} in {file_path} (ignored)")
-                return (True, None, errors)
-            else:
-                logger.warning(f"{error_msg} in {file_path}")
-                return (False, error_msg, errors)
-        else:
-            logger.debug(f"No mypy errors found in {file_path}")
-            return (True, None, [])
-
-    except ImportError:
-        # Fallback to subprocess if mypy is not available as library
-        logger.debug("Mypy not available as library, falling back to subprocess")
-        return _type_check_with_subprocess(file_path, config_file, ignore_errors)
-    except Exception as e:
-        error_msg = f"Error during type checking: {str(e)}"
-        logger.warning(error_msg)
-        return (False, error_msg, [])
+    # IMPORTANT:
+    # The server process can inject command paths into PYTHONPATH (spawn-mode helpers),
+    # and this project contains a package named `code_analysis.commands.ast` that may
+    # shadow the stdlib `ast` module for in-process tooling. Running mypy via its
+    # library API inside the server process can therefore fail in non-obvious ways.
+    # To keep the MCP command robust, always run mypy via subprocess with sanitized
+    # environment (see `_type_check_with_subprocess`).
+    return _type_check_with_subprocess(file_path, config_file, ignore_errors)
 
 
 def _type_check_with_subprocess(
@@ -76,6 +44,7 @@ def _type_check_with_subprocess(
     ignore_errors: bool = False,
 ) -> Tuple[bool, Optional[str], List[str]]:
     """Fallback to subprocess if mypy library is not available."""
+    import os
     import subprocess
 
     try:
@@ -85,11 +54,15 @@ def _type_check_with_subprocess(
         # Note: mypy doesn't support --ignore-errors flag
         # We'll handle ignore_errors in the result processing
 
+        env = os.environ.copy()
+        env.pop("PYTHONPATH", None)
+
         result = subprocess.run(
             cmd,
             capture_output=True,
             text=True,
             timeout=60,
+            env=env,
         )
 
         errors = []

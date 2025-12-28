@@ -1,6 +1,6 @@
 {
   "server": {
-    "host": "0.0.0.0",
+    "host": "172.28.0.1",
     "port": 15000,
     "protocol": "mtls",
     "servername": "code-analysis-server",
@@ -95,8 +95,11 @@
     "verify_client": true,
     "chk_hostname": false
   },
+  "process_management": {
+    "shutdown_grace_seconds": 10.0
+  },
   "code_analysis": {
-    "host": "0.0.0.0",
+    "host": "172.28.0.1",
     "port": 15000,
     "log": "logs/code_analysis.log",
     "db_path": "data/code_analysis.db",

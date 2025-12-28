@@ -99,6 +99,24 @@ If you want to refactor by **logical blocks** (preserving comments, moving impor
 validating via `compile()`), see `docs/CST_TOOLS.md`, `docs/CST_QUERY.md` and MCP commands
 `compose_cst_module` / `query_cst`.
 
+## MCP Server usage (proxy vs direct)
+
+This repository also runs an MCP server (`code-analysis-server`) via `mcp-proxy-adapter`.
+
+### Via MCP Proxy (recommended)
+
+- **List servers**: `mcp_MCP-Proxy-2_list_servers(filter_enabled=None)`
+- **Call command** (IMPORTANT: use `server_id` + `copy_number`, NOT `server_key`):
+  `mcp_MCP-Proxy-2_call_server(server_id="code-analysis-server", copy_number=1, command="get_database_status", params={"root_dir": "/abs/path"})`
+- **Queued commands** (e.g. `update_indexes`) return a `job_id`; track via `queue_get_job_status` / `queue_get_job_logs`.
+
+See `docs/MCP_PROXY_USAGE_GUIDE.md` for more details.
+
+### Without MCP Proxy (direct)
+
+- Inspect API schema: `GET https://<host>:<port>/openapi.json` (mTLS)
+- Call commands using endpoints described in that OpenAPI schema.
+
 ## Code Refactoring
 
 ### Class Splitting

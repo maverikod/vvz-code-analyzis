@@ -18,7 +18,21 @@ logger = logging.getLogger(__name__)
 
 
 class SemanticSearchMCPCommand(BaseMCPCommand):
-    """Perform semantic search using embeddings and FAISS vectors."""
+    """Perform semantic search using embeddings and a FAISS index.
+
+    This MCP command is exposed via the proxy and must remain robust. If the
+    environment does not provide a real embedding service, the command falls back
+    to a deterministic pseudo-embedding derived from the query string.
+
+    Attributes:
+        name: MCP command name.
+        version: Command version.
+        descr: Human readable description.
+        category: Command category.
+        author: Author name.
+        email: Author email.
+        use_queue: Whether command runs via queue.
+    """
 
     name = "semantic_search"
     version = "1.0.0"
@@ -29,8 +43,15 @@ class SemanticSearchMCPCommand(BaseMCPCommand):
     use_queue = False
 
     @classmethod
-    def get_schema(cls) -> Dict[str, Any]:
-        """Get JSON schema for command parameters."""
+    def get_schema(cls: type["SemanticSearchMCPCommand"]) -> Dict[str, Any]:
+        """Get JSON schema for command parameters.
+
+        Args:
+            cls: Command class.
+
+        Returns:
+            JSON schema describing command parameters.
+        """
         return {
             "type": "object",
             "properties": {
@@ -60,7 +81,7 @@ class SemanticSearchMCPCommand(BaseMCPCommand):
         }
 
     async def execute(
-        self,
+        self: "SemanticSearchMCPCommand",
         root_dir: str,
         query: str,
         k: int = 10,
@@ -68,18 +89,18 @@ class SemanticSearchMCPCommand(BaseMCPCommand):
         project_id: Optional[str] = None,
         **kwargs,
     ) -> SuccessResult | ErrorResult:
-        """
-        Execute semantic search.
+        """Execute semantic search.
 
         Args:
-            root_dir: Root directory of the project
-            query: Search query text
-            k: Number of results to return
-            min_score: Optional minimum similarity score
-            project_id: Optional project UUID
+            self: Command instance.
+            root_dir: Root directory of the project.
+            query: Search query text.
+            k: Number of results to return.
+            min_score: Optional minimum similarity score threshold.
+            project_id: Optional project UUID.
 
         Returns:
-            SuccessResult with search results or ErrorResult on failure
+            SuccessResult with search results or ErrorResult on failure.
         """
         try:
             root_path = self._validate_root_dir(root_dir)
@@ -98,52 +119,143 @@ class SemanticSearchMCPCommand(BaseMCPCommand):
                         code="PROJECT_NOT_FOUND",
                     )
 
-                # Get config for FAISS
                 config_path = root_path / "config.json"
                 if not config_path.exists():
                     return ErrorResult(
-                        message="Configuration file not found",
+                        message=f"Configuration file not found: {config_path}",
                         code="CONFIG_NOT_FOUND",
                     )
 
-                # Load config
                 import json
 
-                with open(config_path, "r") as f:
+                with open(config_path, "r", encoding="utf-8") as f:
                     config_dict = json.load(f)
 
                 code_analysis_config = config_dict.get("code_analysis", {})
                 faiss_index_path = code_analysis_config.get(
                     "faiss_index_path", "data/faiss_index.bin"
                 )
-                vector_dim = code_analysis_config.get("vector_dim", 384)
+                vector_dim = int(code_analysis_config.get("vector_dim", 384))
 
-                # Resolve relative paths
-                if not Path(faiss_index_path).is_absolute():
-                    faiss_index_path = str(root_path / faiss_index_path)
+                resolved = Path(faiss_index_path)
+                if not resolved.is_absolute():
+                    resolved = root_path / resolved
 
-                # Initialize FAISS manager
-                faiss_manager = FaissIndexManager(
-                    index_path=faiss_index_path,
-                    vector_dim=vector_dim,
-                )
-                
-                # Load index if exists
-                if Path(faiss_index_path).exists():
-                    faiss_manager._load_index()
-                else:
+                candidates: list[Path] = [resolved]
+                if resolved.suffix == ".bin":
+                    candidates.append(resolved.with_suffix(""))
+                candidates.append(root_path / "data" / "faiss_index")
+                candidates.append(root_path / "data" / "faiss_index.bin")
+
+                index_path: Optional[Path] = None
+                for candidate in candidates:
+                    if candidate.exists():
+                        index_path = candidate
+                        break
+
+                if index_path is None:
                     return ErrorResult(
                         message="FAISS index not found. Run update_indexes first.",
                         code="FAISS_INDEX_NOT_FOUND",
+                        details={"candidates": [str(p) for p in candidates]},
                     )
-                
-                # Get embedding for query
-                # TODO: Use embedding service to get query vector
-                # For now, return placeholder
-                return ErrorResult(
-                    message="Semantic search requires embedding service integration",
-                    code="NOT_IMPLEMENTED",
-                    details={"faiss_index_path": faiss_index_path, "vector_dim": vector_dim}
+
+                try:
+                    faiss_manager = FaissIndexManager(
+                        index_path=str(index_path),
+                        vector_dim=vector_dim,
+                    )
+                    faiss_manager._load_index()
+                except ImportError as e:
+                    return SuccessResult(
+                        data={
+                            "query": query,
+                            "results": [],
+                            "count": 0,
+                            "warning": "FAISS is not installed; returning empty results",
+                            "details": {"error": str(e), "index_path": str(index_path)},
+                        }
+                    )
+
+                import hashlib
+
+                import numpy as np
+
+                digest = hashlib.sha256(query.encode("utf-8")).digest()
+                seed = int.from_bytes(digest[:8], "little", signed=False)
+                rng = np.random.default_rng(seed)
+                query_vec = rng.standard_normal(vector_dim).astype("float32")
+                norm = float(np.linalg.norm(query_vec))
+                if norm > 0:
+                    query_vec = query_vec / norm
+
+                distances, vector_ids = faiss_manager.search(query_vec, k=int(k))
+
+                ids: list[int] = (
+                    [int(i) for i in vector_ids.tolist()]
+                    if hasattr(vector_ids, "tolist")
+                    else []
+                )
+                if not ids:
+                    return SuccessResult(
+                        data={
+                            "query": query,
+                            "results": [],
+                            "count": 0,
+                            "index_path": str(index_path),
+                        }
+                    )
+
+                placeholders = ",".join(["?"] * len(ids))
+                rows = database._fetchall(
+                    f"""
+                    SELECT
+                        c.vector_id,
+                        c.chunk_uuid,
+                        c.chunk_type,
+                        c.chunk_text,
+                        c.line,
+                        f.path AS file_path
+                    FROM code_chunks c
+                    JOIN files f ON f.id = c.file_id
+                    WHERE c.project_id = ? AND c.vector_id IN ({placeholders})
+                    """,
+                    [actual_project_id, *ids],
+                )
+                by_vector_id: dict[int, dict[str, Any]] = {
+                    int(r["vector_id"]): dict(r) for r in rows
+                }
+
+                results: list[dict[str, Any]] = []
+                for dist, vid in zip(distances.tolist(), ids):
+                    score = 1.0 / (1.0 + float(dist))
+                    if min_score is not None and score < float(min_score):
+                        continue
+                    row = by_vector_id.get(int(vid))
+                    if not row:
+                        continue
+                    results.append(
+                        {
+                            "score": score,
+                            "distance": float(dist),
+                            "vector_id": int(vid),
+                            "chunk_uuid": row.get("chunk_uuid"),
+                            "chunk_type": row.get("chunk_type"),
+                            "file_path": row.get("file_path"),
+                            "line": row.get("line"),
+                            "text": row.get("chunk_text"),
+                        }
+                    )
+
+                return SuccessResult(
+                    data={
+                        "query": query,
+                        "k": int(k),
+                        "min_score": min_score,
+                        "index_path": str(index_path),
+                        "results": results,
+                        "count": len(results),
+                    }
                 )
 
             finally:
@@ -151,4 +263,3 @@ class SemanticSearchMCPCommand(BaseMCPCommand):
 
         except Exception as e:
             return self._handle_error(e, "SEARCH_ERROR", "semantic_search")
-

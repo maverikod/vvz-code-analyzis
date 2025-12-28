@@ -99,9 +99,16 @@ mcp_MCP-Proxy-2_help(
 **Correct Usage:**
 
 ```python
+# IMPORTANT:
+# - Use server_id + copy_number (not server_key)
+# - Always pass params as an object ({} if no params)
+# - For code-analysis-server you usually want:
+#   server_id="code-analysis-server", copy_number=1
+#
 # Call command without parameters
 mcp_MCP-Proxy-2_call_server(
     server_id="code-analysis-server",
+    copy_number=1,
     command="help",
     params={}  # Empty object for no parameters
 )
@@ -109,6 +116,7 @@ mcp_MCP-Proxy-2_call_server(
 # Call command with parameters
 mcp_MCP-Proxy-2_call_server(
     server_id="code-analysis-server",
+    copy_number=1,
     command="get_worker_status",
     params={
         "worker_type": "file_watcher"
@@ -118,10 +126,41 @@ mcp_MCP-Proxy-2_call_server(
 # Call command with multiple parameters
 mcp_MCP-Proxy-2_call_server(
     server_id="code-analysis-server",
+    copy_number=1,
     command="help",
     params={
         "cmdname": "get_worker_status"
     }
+)
+```
+
+### 3.1 Long-running commands (queue)
+
+Some server commands are configured as `use_queue=True` (example: `update_indexes`). They return a `job_id`.
+
+Use queue commands on the SAME server to track them:
+
+```python
+# Start update_indexes (queued)
+res = mcp_MCP-Proxy-2_call_server(
+    server_id="code-analysis-server",
+    copy_number=1,
+    command="update_indexes",
+    params={"root_dir": "/abs/path"}
+)
+
+# Track status and logs
+mcp_MCP-Proxy-2_call_server(
+    server_id="code-analysis-server",
+    copy_number=1,
+    command="queue_get_job_status",
+    params={"job_id": res["result"]["job_id"]}
+)
+mcp_MCP-Proxy-2_call_server(
+    server_id="code-analysis-server",
+    copy_number=1,
+    command="queue_get_job_logs",
+    params={"job_id": res["result"]["job_id"]}
 )
 ```
 

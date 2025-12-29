@@ -45,6 +45,26 @@ class WorkerStatusCommand:
         self.log_path = Path(log_path) if log_path else None
         self.lock_file_path = Path(lock_file_path) if lock_file_path else None
 
+    def _get_pid_file_path(self) -> Optional[Path]:
+        """
+        Get PID file path for the worker based on the log file path.
+
+        This project starts workers as `multiprocessing.Process(daemon=True)`. With the
+        "spawn" start method, the OS process cmdline often does not contain
+        "vectorization"/"file_watcher", so heuristic cmdline search is unreliable.
+
+        We therefore also support PID file discovery: if `log_path` is provided and
+        points to `<name>.log`, a sibling `<name>.pid` is used.
+
+        Returns:
+            PID file path if `log_path` exists and has a `.log` suffix, otherwise None.
+        """
+        if not self.log_path:
+            return None
+        if self.log_path.suffix != ".log":
+            return None
+        return self.log_path.with_suffix(".pid")
+
     def _get_lock_file_info(self) -> Optional[Dict[str, Any]]:
         """Get lock file information for file watcher."""
         if not self.lock_file_path or not self.lock_file_path.exists():
@@ -121,6 +141,23 @@ class WorkerStatusCommand:
         except Exception as e:
             logger.warning(f"Error finding processes: {e}")
         return processes
+
+    def _get_pid_from_pid_file(self) -> Optional[int]:
+        """
+        Read PID from `<worker>.pid` file if available.
+
+        Returns:
+            PID if pid file exists and contains a valid integer, otherwise None.
+        """
+        pid_file = self._get_pid_file_path()
+        if not pid_file or not pid_file.exists():
+            return None
+
+        try:
+            content = pid_file.read_text(encoding="utf-8").strip()
+            return int(content)
+        except Exception:
+            return None
 
     def _get_recent_log_activity(self, lines: int = 10) -> Dict[str, Any]:
         """Get recent log activity."""
@@ -214,6 +251,25 @@ class WorkerStatusCommand:
         if self.worker_type == "file_watcher":
             result["lock_file"] = self._get_lock_file_info()
 
+            # Use lock pid as a strong signal of the active worker process.
+            lock_pid = None
+            if isinstance(result["lock_file"], dict):
+                lock_pid = result["lock_file"].get("pid")
+            if isinstance(lock_pid, int):
+                proc_details = self._get_process_by_pid(lock_pid)
+                if proc_details:
+                    existing_pids = {p.get("pid") for p in result["processes"]}
+                    if lock_pid not in existing_pids:
+                        result["processes"].append(proc_details)
+
+        # Fallback: PID file discovery (vectorization/file_watcher)
+        if not result["processes"]:
+            pid = self._get_pid_from_pid_file()
+            if isinstance(pid, int):
+                proc_details = self._get_process_by_pid(pid)
+                if proc_details:
+                    result["processes"].append(proc_details)
+
         # Get recent log activity
         result["log_activity"] = self._get_recent_log_activity()
 
@@ -290,7 +346,9 @@ class DatabaseStatusCommand:
 
             try:
                 # Project statistics
-                project_count_row = db._fetchone("SELECT COUNT(*) as count FROM projects")
+                project_count_row = db._fetchone(
+                    "SELECT COUNT(*) as count FROM projects"
+                )
                 project_count = project_count_row["count"] if project_count_row else 0
                 projects = db._fetchall("SELECT id, name FROM projects LIMIT 10")
                 result["projects"] = {
@@ -302,11 +360,17 @@ class DatabaseStatusCommand:
                 total_files_row = db._fetchone("SELECT COUNT(*) as count FROM files")
                 total_files = total_files_row["count"] if total_files_row else 0
 
-                deleted_files_row = db._fetchone("SELECT COUNT(*) as count FROM files WHERE deleted = 1")
+                deleted_files_row = db._fetchone(
+                    "SELECT COUNT(*) as count FROM files WHERE deleted = 1"
+                )
                 deleted_files = deleted_files_row["count"] if deleted_files_row else 0
 
-                files_with_docstring_row = db._fetchone("SELECT COUNT(*) as count FROM files WHERE has_docstring = 1")
-                files_with_docstring = files_with_docstring_row["count"] if files_with_docstring_row else 0
+                files_with_docstring_row = db._fetchone(
+                    "SELECT COUNT(*) as count FROM files WHERE has_docstring = 1"
+                )
+                files_with_docstring = (
+                    files_with_docstring_row["count"] if files_with_docstring_row else 0
+                )
 
                 files_needing_chunking_row = db._fetchone(
                     """
@@ -315,7 +379,11 @@ class DatabaseStatusCommand:
                     AND NOT EXISTS (SELECT 1 FROM code_chunks WHERE code_chunks.file_id = files.id)
                     """
                 )
-                files_needing_chunking = files_needing_chunking_row["count"] if files_needing_chunking_row else 0
+                files_needing_chunking = (
+                    files_needing_chunking_row["count"]
+                    if files_needing_chunking_row
+                    else 0
+                )
 
                 result["files"] = {
                     "total": total_files,
@@ -326,18 +394,26 @@ class DatabaseStatusCommand:
                 }
 
                 # Chunk statistics
-                total_chunks_row = db._fetchone("SELECT COUNT(*) as count FROM code_chunks")
+                total_chunks_row = db._fetchone(
+                    "SELECT COUNT(*) as count FROM code_chunks"
+                )
                 total_chunks = total_chunks_row["count"] if total_chunks_row else 0
 
                 vectorized_chunks_row = db._fetchone(
                     "SELECT COUNT(*) as count FROM code_chunks WHERE embedding_vector IS NOT NULL"
                 )
-                vectorized_chunks = vectorized_chunks_row["count"] if vectorized_chunks_row else 0
+                vectorized_chunks = (
+                    vectorized_chunks_row["count"] if vectorized_chunks_row else 0
+                )
 
                 not_vectorized_chunks_row = db._fetchone(
                     "SELECT COUNT(*) as count FROM code_chunks WHERE embedding_vector IS NULL"
                 )
-                not_vectorized_chunks = not_vectorized_chunks_row["count"] if not_vectorized_chunks_row else 0
+                not_vectorized_chunks = (
+                    not_vectorized_chunks_row["count"]
+                    if not_vectorized_chunks_row
+                    else 0
+                )
 
                 result["chunks"] = {
                     "total": total_chunks,
@@ -357,7 +433,9 @@ class DatabaseStatusCommand:
                     WHERE updated_at > julianday('now', '-1 day')
                     """
                 )
-                files_updated_24h = files_updated_24h_row["count"] if files_updated_24h_row else 0
+                files_updated_24h = (
+                    files_updated_24h_row["count"] if files_updated_24h_row else 0
+                )
 
                 chunks_updated_24h_row = db._fetchone(
                     """
@@ -365,7 +443,9 @@ class DatabaseStatusCommand:
                     WHERE created_at > julianday('now', '-1 day')
                     """
                 )
-                chunks_updated_24h = chunks_updated_24h_row["count"] if chunks_updated_24h_row else 0
+                chunks_updated_24h = (
+                    chunks_updated_24h_row["count"] if chunks_updated_24h_row else 0
+                )
 
                 result["recent_activity"] = {
                     "files_updated_24h": files_updated_24h,
@@ -408,7 +488,9 @@ class DatabaseStatusCommand:
                         "id": c["id"],
                         "file_id": c["file_id"],
                         "chunk_preview": (
-                            (c["chunk_text"][:100] + "...") if c["chunk_text"] and len(c["chunk_text"]) > 100 else c["chunk_text"]
+                            (c["chunk_text"][:100] + "...")
+                            if c["chunk_text"] and len(c["chunk_text"]) > 100
+                            else c["chunk_text"]
                         ),
                         "created_at": c["created_at"],
                     }

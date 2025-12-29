@@ -199,8 +199,47 @@ class FileChangeProcessor:
             True if successful, False otherwise
         """
         try:
-            # Mark file for chunking (this will delete existing chunks and update updated_at)
+            # Mark file for chunking (this will delete existing chunks and update updated_at).
+            # If the file is not yet present in DB (new file), we first create a minimal
+            # file record and then mark it for chunking.
             result = self.database.mark_file_needs_chunking(file_path, self.project_id)
+            if not result:
+                # New file: insert/update file record first.
+                path_obj = Path(file_path)
+                lines = 0
+                has_docstring = False
+                try:
+                    if path_obj.exists() and path_obj.is_file():
+                        # Lightweight docstring detection: module docstring at file start.
+                        text = path_obj.read_text(encoding="utf-8", errors="ignore")
+                        lines = text.count("\n") + (1 if text else 0)
+                        stripped = text.lstrip()
+                        has_docstring = stripped.startswith(
+                            '"""'
+                        ) or stripped.startswith("'''")
+                except Exception:
+                    logger.debug(
+                        f"[QUEUE] Failed to read file for metadata, using defaults: {file_path}"
+                    )
+
+                try:
+                    self.database.add_file(
+                        path=file_path,
+                        lines=lines,
+                        last_modified=mtime,
+                        has_docstring=has_docstring,
+                        project_id=self.project_id,
+                    )
+                except Exception as e:
+                    logger.error(
+                        f"[QUEUE] Failed to add new file record: {file_path} ({e})"
+                    )
+                    return False
+
+                # Retry marking for chunking after inserting the file record.
+                result = self.database.mark_file_needs_chunking(
+                    file_path, self.project_id
+                )
             if result:
                 # Update last_modified if file exists
                 self.database._execute(

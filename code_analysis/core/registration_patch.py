@@ -8,7 +8,6 @@ email: vasilyvz@gmail.com
 """
 
 import logging
-import re
 from typing import Any, Dict
 
 logger = logging.getLogger(__name__)
@@ -17,7 +16,7 @@ logger = logging.getLogger(__name__)
 def patch_registration_manager() -> None:
     """
     Patch RegistrationManager to handle "already registered" error.
-    
+
     When server is already registered:
     1. Unregister first
     2. Then register again
@@ -36,7 +35,9 @@ def patch_registration_manager() -> None:
             """
             Patched register_with_proxy that handles "already registered" by unregistering first.
             """
-            import asyncio
+            from mcp_proxy_adapter.api.core.registration_manager import (
+                set_registration_status,
+            )
 
             # Call original method and catch "already registered" error
             try:
@@ -44,37 +45,29 @@ def patch_registration_manager() -> None:
             except Exception as exc:
                 error_str = str(exc).lower()
                 full_error = self._format_httpx_error(exc)
-                
+
                 # Check if error is "already registered"
-                if "already registered" in error_str or "already registered" in full_error.lower():
+                if (
+                    "already registered" in error_str
+                    or "already registered" in full_error.lower()
+                ):
+                    # Align with adapter examples: treat "already registered" as success
+                    # (proxy already has the server entry). Heartbeats will keep it alive.
                     self.logger.info(
-                        "⚠️  Server already registered, unregistering and re-registering..."
+                        "✅ Server is already registered in proxy; marking as registered and continuing."
                     )
-                    
-                    # Unregister first
-                    try:
-                        self.registered = True  # Set flag so unregister can work
-                        await self.unregister()
-                        self.logger.info("✅ Successfully unregistered from proxy")
-                    except Exception as e:
-                        self.logger.warning(f"Failed to unregister: {e}")
-                    
-                    # Wait a bit before re-registering
-                    await asyncio.sleep(1)
-                    
-                    # Try to register again
-                    try:
-                        return await original_register(self, config)
-                    except Exception as e:
-                        self.logger.error(f"Failed to re-register: {e}")
-                        raise
+                    self.registered = True
+                    await set_registration_status(True)
+                    return True
                 else:
                     # Not "already registered" error - re-raise
                     raise
 
         # Apply patch
         RegistrationManager.register_with_proxy = patched_register_with_proxy
-        logger.info("✅ Applied registration manager patch for 'already registered' handling")
+        logger.info(
+            "✅ Applied registration manager patch for 'already registered' handling"
+        )
 
     except ImportError as e:
         logger.warning(f"Failed to import RegistrationManager for patching: {e}")

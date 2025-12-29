@@ -9,18 +9,18 @@ import argparse
 import sys
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Any
+from typing import Any, AsyncIterator
 
 # Apply registration patch before importing adapter
 from .core.registration_patch import patch_registration_manager
 
 patch_registration_manager()
 
-from mcp_proxy_adapter.api.core.app_factory import AppFactory
-from mcp_proxy_adapter.core.config.simple_config import SimpleConfig
-from mcp_proxy_adapter.core.server_engine import ServerEngineFactory
+from mcp_proxy_adapter.api.core.app_factory import AppFactory  # noqa: E402
+from mcp_proxy_adapter.core.config.simple_config import SimpleConfig  # noqa: E402
+from mcp_proxy_adapter.core.server_engine import ServerEngineFactory  # noqa: E402
 
-from . import hooks  # noqa: F401
+from . import hooks  # noqa: F401,E402
 
 
 def _print_startup_info(
@@ -281,13 +281,19 @@ def main() -> None:
 
     # Create lifespan context manager for automatic worker startup
     @asynccontextmanager
-    async def lifespan(app_instance):
-        """Lifespan context manager for automatic worker startup and shutdown."""
-        import multiprocessing
+    async def lifespan(app_instance: Any) -> AsyncIterator[None]:
+        """
+        Lifespan context manager for automatic worker startup and shutdown.
+
+        Args:
+            app_instance: FastAPI application instance.
+
+        Yields:
+            None
+        """
         import logging
         from pathlib import Path
         from code_analysis.core.db_worker_manager import get_db_worker_manager
-        from code_analysis.core.config import ServerConfig
 
         logger = logging.getLogger(__name__)
         logger.info("🚀 Server startup: initializing workers...")
@@ -307,11 +313,12 @@ def main() -> None:
 
             code_analysis_config = app_config_lifespan.get("code_analysis", {})
             if code_analysis_config:
-                server_config = ServerConfig(**code_analysis_config)
                 root_dir = Path.cwd()
                 db_path = root_dir / "data" / "code_analysis.db"
 
-                log_dir = Path(app_config_lifespan.get("server", {}).get("log_dir", "./logs"))
+                log_dir = Path(
+                    app_config_lifespan.get("server", {}).get("log_dir", "./logs")
+                )
                 worker_log_path = str(log_dir / "db_worker.log")
 
                 logger.info(f"🚀 Starting DB worker for database: {db_path}")
@@ -384,20 +391,123 @@ def main() -> None:
         config_path=str(config_path),
     )
 
-    # Add lifespan context manager to app (FastAPI supports this via router)
-    # Note: This wraps the existing lifespan if any, or adds new one
-    if hasattr(app.router, "lifespan_context") and app.router.lifespan_context:
-        # If app already has lifespan, we need to wrap it
-        original_lifespan = app.router.lifespan_context
-        @asynccontextmanager
-        async def wrapped_lifespan(app_instance):
-            async with original_lifespan(app_instance):
-                async with lifespan(app_instance):
-                    yield
-        app.router.lifespan_context = wrapped_lifespan
-    else:
-        # No existing lifespan, just set ours
-        app.router.lifespan_context = lifespan
+    # Add startup/shutdown events to start/stop workers
+    # Note: FastAPI lifespan must be passed at app creation, but AppFactory doesn't support it
+    # So we use startup/shutdown events (deprecated but still works) as fallback
+    @app.on_event("startup")  # type: ignore[misc]
+    async def start_workers_on_startup() -> None:
+        """Start workers on server startup using lifespan context manager."""
+        import logging
+
+        logger = logging.getLogger(__name__)
+        print(
+            "🚀 [STARTUP EVENT] Server startup: initializing workers via startup event...",
+            flush=True,
+        )
+        logger.info(
+            "🚀 [STARTUP EVENT] Server startup: initializing workers via startup event..."
+        )
+
+        # IMPORTANT:
+        # Startup events run BEFORE the server begins accepting connections.
+        # We must NOT block here, otherwise the server won't bind the port and
+        # proxy registration/health checks will fail.
+        try:
+            # Start DB worker first
+            from pathlib import Path
+            from code_analysis.core.db_worker_manager import get_db_worker_manager
+
+            from mcp_proxy_adapter.config import get_config
+
+            cfg = get_config()
+            app_config_lifespan = getattr(cfg, "config_data", {})
+            if not app_config_lifespan:
+                if hasattr(cfg, "config_path") and cfg.config_path:
+                    import json
+
+                    with open(cfg.config_path, "r", encoding="utf-8") as f:
+                        app_config_lifespan = json.load(f)
+
+            code_analysis_config = app_config_lifespan.get("code_analysis", {})
+            if code_analysis_config:
+                root_dir = Path.cwd()
+                db_path = root_dir / "data" / "code_analysis.db"
+                log_dir = Path(
+                    app_config_lifespan.get("server", {}).get("log_dir", "./logs")
+                )
+                worker_log_path = str(log_dir / "db_worker.log")
+
+                logger.info(f"🚀 Starting DB worker for database: {db_path}")
+                db_worker_manager = get_db_worker_manager()
+                worker_info = db_worker_manager.get_or_start_worker(
+                    str(db_path),
+                    worker_log_path,
+                )
+                logger.info(f"✅ DB worker started (PID: {worker_info['pid']})")
+
+            # Start vectorization and file watcher workers in background (non-blocking)
+            import threading
+            import asyncio
+
+            def _start_non_db_workers_bg() -> None:
+                asyncio.run(startup_vectorization_worker())
+                asyncio.run(startup_file_watcher_worker())
+
+            threading.Thread(target=_start_non_db_workers_bg, daemon=True).start()
+
+            print(
+                "✅ [STARTUP EVENT] Workers startup scheduled in background",
+                flush=True,
+            )
+            logger.info("✅ [STARTUP EVENT] Workers startup scheduled in background")
+        except Exception as e:
+            print(
+                f"❌ [STARTUP EVENT] Failed to start workers: {e}",
+                flush=True,
+                file=sys.stderr,
+            )
+            logger.error(
+                f"❌ [STARTUP EVENT] Failed to start workers: {e}", exc_info=True
+            )
+
+    @app.on_event("shutdown")  # type: ignore[misc]
+    async def stop_workers_on_shutdown() -> None:
+        """Stop workers on server shutdown."""
+        import logging
+
+        logger = logging.getLogger(__name__)
+        print(
+            "🛑 [SHUTDOWN EVENT] Server shutdown: stopping workers via shutdown event...",
+            flush=True,
+        )
+        logger.info(
+            "🛑 [SHUTDOWN EVENT] Server shutdown: stopping workers via shutdown event..."
+        )
+
+        try:
+            shutdown_cfg = (
+                app_config.get("process_management")
+                or app_config.get("server_manager")
+                or {}
+            )
+            shutdown_timeout = 30.0
+            if isinstance(shutdown_cfg, dict):
+                try:
+                    val = shutdown_cfg.get("shutdown_grace_seconds")
+                    if isinstance(val, (int, float)) and float(val) > 0:
+                        shutdown_timeout = float(val)
+                except Exception:
+                    shutdown_timeout = 30.0
+
+            shutdown_result = worker_manager.stop_all_workers(timeout=shutdown_timeout)
+            if shutdown_result.get("total_failed", 0) > 0:
+                logger.warning(
+                    f"⚠️  Some workers failed to stop: {shutdown_result.get('message')}"
+                )
+            else:
+                logger.info(f"✅ All workers stopped: {shutdown_result.get('message')}")
+        except Exception as e:
+            logger.error(f"❌ Error stopping workers: {e}", exc_info=True)
 
     # Store worker manager in app state for shutdown
     app.state.worker_manager = worker_manager
@@ -473,32 +583,44 @@ def main() -> None:
             try:
                 logger.info(f"[STEP 1] Creating driver config for db_path={db_path}")
                 from code_analysis.core.database import CodeDatabase
-                from code_analysis.core.database.base import create_driver_config_for_worker
+                from code_analysis.core.database.base import (
+                    create_driver_config_for_worker,
+                )
 
                 driver_config = create_driver_config_for_worker(
                     db_path=db_path,
                     driver_type="sqlite_proxy",
                 )
-                logger.info(f"[STEP 2] Driver config created: type={driver_config.get('type')}")
-                
+                logger.info(
+                    f"[STEP 2] Driver config created: type={driver_config.get('type')}"
+                )
+
                 # Override timeout and poll_interval for proxy driver
                 if driver_config.get("type") == "sqlite_proxy":
                     driver_config["config"]["worker_config"]["command_timeout"] = 60.0
                     driver_config["config"]["worker_config"]["poll_interval"] = 1.0
-                    logger.info(f"[STEP 3] Proxy driver config updated: timeout=60.0, poll_interval=1.0")
-                
-                logger.info(f"[STEP 4] Creating CodeDatabase instance with driver_config")
+                    logger.info(
+                        "[STEP 3] Proxy driver config updated: timeout=60.0, poll_interval=1.0"
+                    )
+
+                logger.info(
+                    "[STEP 4] Creating CodeDatabase instance with driver_config"
+                )
                 database = CodeDatabase(driver_config=driver_config)
-                logger.info(f"[STEP 5] CodeDatabase created, executing query to get project_id")
-                
-                row = database._fetchone("SELECT id FROM projects ORDER BY created_at LIMIT 1")
+                logger.info(
+                    "[STEP 5] CodeDatabase created, executing query to get project_id"
+                )
+
+                row = database._fetchone(
+                    "SELECT id FROM projects ORDER BY created_at LIMIT 1"
+                )
                 logger.info(f"[STEP 6] Query executed, result: {row}")
-                
+
                 project_id = row["id"] if row else None
                 logger.info(f"[STEP 7] Extracted project_id: {project_id}")
-                
+
                 database.close()
-                logger.info(f"[STEP 8] Database connection closed")
+                logger.info("[STEP 8] Database connection closed")
 
                 if not project_id:
                     logger.warning(
@@ -506,9 +628,7 @@ def main() -> None:
                     )
                     return
             except Exception as e:
-                logger.error(
-                    f"⚠️  Failed to get project ID at step: {e}", exc_info=True
-                )
+                logger.error(f"⚠️  Failed to get project ID at step: {e}", exc_info=True)
                 return
 
             # Get FAISS index path and vector dimension
@@ -532,7 +652,9 @@ def main() -> None:
 
                 # Rebuild FAISS index from database (vectors are stored in database)
                 logger.info("🔄 Rebuilding FAISS index from database...")
-                from code_analysis.core.database.base import create_driver_config_for_worker
+                from code_analysis.core.database.base import (
+                    create_driver_config_for_worker,
+                )
 
                 driver_config = create_driver_config_for_worker(db_path)
                 database = CodeDatabase(driver_config=driver_config)
@@ -594,6 +716,14 @@ def main() -> None:
             process.start()
             print(f"✅ Vectorization worker started with PID {process.pid}", flush=True)
             logger.info(f"✅ Vectorization worker started with PID {process.pid}")
+
+            # Write PID file next to log file (used by get_worker_status)
+            if worker_log_path:
+                try:
+                    pid_file_path = Path(worker_log_path).with_suffix(".pid")
+                    pid_file_path.write_text(str(process.pid))
+                except Exception:
+                    logger.exception("Failed to write vectorization worker PID file")
 
             # Register worker in WorkerManager
             worker_manager.register_worker(
@@ -687,32 +817,44 @@ def main() -> None:
             try:
                 logger.info(f"[STEP 1] Creating driver config for db_path={db_path}")
                 from code_analysis.core.database import CodeDatabase
-                from code_analysis.core.database.base import create_driver_config_for_worker
+                from code_analysis.core.database.base import (
+                    create_driver_config_for_worker,
+                )
 
                 driver_config = create_driver_config_for_worker(
                     db_path=db_path,
                     driver_type="sqlite_proxy",
                 )
-                logger.info(f"[STEP 2] Driver config created: type={driver_config.get('type')}")
-                
+                logger.info(
+                    f"[STEP 2] Driver config created: type={driver_config.get('type')}"
+                )
+
                 # Override timeout and poll_interval for proxy driver
                 if driver_config.get("type") == "sqlite_proxy":
                     driver_config["config"]["worker_config"]["command_timeout"] = 60.0
                     driver_config["config"]["worker_config"]["poll_interval"] = 1.0
-                    logger.info(f"[STEP 3] Proxy driver config updated: timeout=60.0, poll_interval=1.0")
-                
-                logger.info(f"[STEP 4] Creating CodeDatabase instance with driver_config")
+                    logger.info(
+                        "[STEP 3] Proxy driver config updated: timeout=60.0, poll_interval=1.0"
+                    )
+
+                logger.info(
+                    "[STEP 4] Creating CodeDatabase instance with driver_config"
+                )
                 database = CodeDatabase(driver_config=driver_config)
-                logger.info(f"[STEP 5] CodeDatabase created, executing query to get project_id")
-                
-                row = database._fetchone("SELECT id FROM projects ORDER BY created_at LIMIT 1")
+                logger.info(
+                    "[STEP 5] CodeDatabase created, executing query to get project_id"
+                )
+
+                row = database._fetchone(
+                    "SELECT id FROM projects ORDER BY created_at LIMIT 1"
+                )
                 logger.info(f"[STEP 6] Query executed, result: {row}")
-                
+
                 project_id = row["id"] if row else None
                 logger.info(f"[STEP 7] Extracted project_id: {project_id}")
-                
+
                 database.close()
-                logger.info(f"[STEP 8] Database connection closed")
+                logger.info("[STEP 8] Database connection closed")
 
                 if not project_id:
                     logger.warning(
@@ -720,9 +862,7 @@ def main() -> None:
                     )
                     return
             except Exception as e:
-                logger.error(
-                    f"⚠️  Failed to get project ID at step: {e}", exc_info=True
-                )
+                logger.error(f"⚠️  Failed to get project ID at step: {e}", exc_info=True)
                 return
 
             # Get file watcher config parameters
@@ -770,6 +910,14 @@ def main() -> None:
             print(f"✅ File watcher worker started with PID {process.pid}", flush=True)
             logger.info(f"✅ File watcher worker started with PID {process.pid}")
 
+            # Write PID file next to log file (used by get_worker_status)
+            if worker_log_path:
+                try:
+                    pid_file_path = Path(worker_log_path).with_suffix(".pid")
+                    pid_file_path.write_text(str(process.pid))
+                except Exception:
+                    logger.exception("Failed to write file watcher PID file")
+
             # Register worker in WorkerManager
             worker_manager.register_worker(
                 "file_watcher",
@@ -790,13 +938,14 @@ def main() -> None:
 
     # Setup logging for main module
     import logging
+
     main_logger = logging.getLogger(__name__)
     if not main_logger.handlers:
         # Configure logging if not already configured
         log_dir = Path(app_config.get("server", {}).get("log_dir", "./logs"))
         log_dir.mkdir(parents=True, exist_ok=True)
         log_file = log_dir / "mcp_server.log"
-        
+
         handler = logging.FileHandler(log_file, encoding="utf-8")
         handler.setLevel(logging.INFO)
         formatter = logging.Formatter(
@@ -888,10 +1037,75 @@ def main() -> None:
         sys.exit(0)
 
     # Register handlers (before server starts, after app creation)
-    # Note: Workers are started via lifespan context manager, cleanup is handled there too
     atexit.register(cleanup_workers)
     signal.signal(signal.SIGTERM, signal_handler)
     signal.signal(signal.SIGINT, signal_handler)
+
+    # Start workers directly before server starts (startup events may not be called)
+    # This ensures workers start regardless of FastAPI event system
+    import asyncio
+    import logging
+
+    worker_logger = logging.getLogger(__name__)
+    worker_logger.info("🚀 Starting workers directly before server start...")
+    print("🚀 Starting workers directly before server start...", flush=True)
+
+    try:
+        # Start DB worker first
+        from code_analysis.core.db_worker_manager import get_db_worker_manager
+
+        code_analysis_config = app_config.get("code_analysis", {}) or {}
+        root_dir = config_path.parent.resolve()
+
+        # Resolve DB path from config (do NOT shadow the adapter's `server_config`)
+        db_path_cfg = None
+        if isinstance(code_analysis_config, dict):
+            db_path_cfg = code_analysis_config.get(
+                "db_path"
+            ) or code_analysis_config.get("database_path")
+
+        if db_path_cfg:
+            db_path = Path(db_path_cfg)
+            if not db_path.is_absolute():
+                db_path = (root_dir / db_path).resolve()
+        else:
+            db_path = (root_dir / "data" / "code_analysis.db").resolve()
+
+        log_dir = Path(app_config.get("server", {}).get("log_dir", "./logs"))
+        if not log_dir.is_absolute():
+            log_dir = (root_dir / log_dir).resolve()
+        worker_log_path = str(log_dir / "db_worker.log")
+
+        worker_logger.info(f"🚀 Starting DB worker for database: {db_path}")
+        print(f"🚀 Starting DB worker for database: {db_path}", flush=True)
+        db_worker_manager = get_db_worker_manager()
+        worker_info = db_worker_manager.get_or_start_worker(
+            str(db_path),
+            worker_log_path,
+        )
+        worker_logger.info(f"✅ DB worker started (PID: {worker_info['pid']})")
+        print(f"✅ DB worker started (PID: {worker_info['pid']})", flush=True)
+
+        # Start vectorization and file watcher workers in background
+        # IMPORTANT: do not set/close the global event loop in the main thread
+        # (Hypercorn will manage its own asyncio loop).
+        async def _start_non_db_workers() -> None:
+            await startup_vectorization_worker()
+            await startup_file_watcher_worker()
+
+        import threading
+
+        def _start_non_db_workers_thread() -> None:
+            asyncio.run(_start_non_db_workers())
+
+        threading.Thread(target=_start_non_db_workers_thread, daemon=True).start()
+
+        worker_logger.info("✅ All workers started successfully")
+        print("✅ All workers started successfully", flush=True)
+    except Exception as e:
+        worker_logger.error(f"❌ Failed to start workers: {e}", exc_info=True)
+        print(f"❌ Failed to start workers: {e}", flush=True, file=sys.stderr)
+        # Continue anyway - server can start without workers
 
     # Run server
     engine = ServerEngineFactory.get_engine("hypercorn")

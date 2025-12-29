@@ -45,6 +45,7 @@ class SQLiteDriverProxy(BaseDatabaseDriver):
 
     def __init__(self) -> None:
         """Initialize SQLite proxy driver."""
+        # Initialize all attributes first
         self.conn: Optional[Any] = None  # Not used, kept for compatibility
         self.db_path: Optional[Path] = None
         self._socket_path: Optional[str] = None
@@ -54,6 +55,7 @@ class SQLiteDriverProxy(BaseDatabaseDriver):
         self.worker_log_path: Optional[str] = None
         self._lastrowid: Optional[int] = None
         self._socket_timeout: float = 5.0  # Socket connection timeout
+        logger.debug(f"[SQLITE_PROXY] __init__ completed, poll_interval={self.poll_interval}")
 
     def connect(self, config: Dict[str, Any]) -> None:
         """
@@ -71,15 +73,38 @@ class SQLiteDriverProxy(BaseDatabaseDriver):
         if "path" not in config:
             raise ValueError("SQLite proxy driver requires 'path' in config")
 
+        # Ensure all attributes are initialized (defensive programming)
+        if not hasattr(self, "poll_interval"):
+            self.poll_interval = 0.1
+            logger.warning("[SQLITE_PROXY] poll_interval not initialized, using default 0.1")
+        if not hasattr(self, "command_timeout"):
+            self.command_timeout = 30.0
+            logger.warning("[SQLITE_PROXY] command_timeout not initialized, using default 30.0")
+        if not hasattr(self, "_socket_timeout"):
+            self._socket_timeout = 5.0
+        if not hasattr(self, "_worker_initialized"):
+            self._worker_initialized = False
+        if not hasattr(self, "_lastrowid"):
+            self._lastrowid = None
+
         self.db_path = Path(config["path"]).resolve()
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         logger.info(f"[SQLITE_PROXY] db_path resolved: {self.db_path}")
 
         # Get worker config
         worker_config = config.get("worker_config", {})
-        self.command_timeout = worker_config.get("command_timeout", self.command_timeout)
-        self.poll_interval = worker_config.get("poll_interval", self.poll_interval)
+        # Use getattr to safely get current values (defensive - in case __init__ wasn't called)
+        current_command_timeout = getattr(self, "command_timeout", 30.0)
+        current_poll_interval = getattr(self, "poll_interval", 0.1)
+        
+        # Update from config, using current values as defaults
+        new_command_timeout = worker_config.get("command_timeout", current_command_timeout)
+        new_poll_interval = worker_config.get("poll_interval", current_poll_interval)
+        
+        self.command_timeout = new_command_timeout
+        self.poll_interval = new_poll_interval
         self.worker_log_path = worker_config.get("worker_log_path")
+        logger.debug(f"[SQLITE_PROXY] connect() updated poll_interval={self.poll_interval}, command_timeout={self.command_timeout}")
 
         # Start worker process
         self._start_worker()

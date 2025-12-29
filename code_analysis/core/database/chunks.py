@@ -31,22 +31,19 @@ async def add_vector_index(
     Returns:
         Vector index record ID
     """
-    assert self.conn is not None
-    cursor = self.conn.cursor()
-    cursor.execute(
+    existing = self._fetchone(
         "\n            SELECT id FROM vector_index\n            WHERE project_id = ? AND entity_type = ? AND entity_id = ?\n        ",
         (project_id, entity_type, entity_id),
     )
-    existing = cursor.fetchone()
     if existing:
-        cursor.execute(
+        self._execute(
             "\n                UPDATE vector_index\n                SET vector_id = ?, vector_dim = ?, embedding_model = ?\n                WHERE id = ?\n            ",
-            (vector_id, vector_dim, embedding_model, existing[0]),
+            (vector_id, vector_dim, embedding_model, existing["id"]),
         )
-        self.conn.commit()
-        return existing[0]
+        self._commit()
+        return existing["id"]
     else:
-        cursor.execute(
+        self._execute(
             "\n                INSERT INTO vector_index\n                (project_id, entity_type, entity_id, vector_id, vector_dim, embedding_model)\n                VALUES (?, ?, ?, ?, ?, ?)\n            ",
             (
                 project_id,
@@ -57,8 +54,8 @@ async def add_vector_index(
                 embedding_model,
             ),
         )
-        self.conn.commit()
-        result = cursor.lastrowid
+        self._commit()
+        result = self._lastrowid()
         assert result is not None
         return result
 
@@ -77,16 +74,10 @@ async def get_vector_index(
     Returns:
         Vector index record or None
     """
-    assert self.conn is not None
-    cursor = self.conn.cursor()
-    cursor.execute(
+    return self._fetchone(
         "\n            SELECT * FROM vector_index\n            WHERE project_id = ? AND entity_type = ? AND entity_id = ?\n        ",
         (project_id, entity_type, entity_id),
     )
-    row = cursor.fetchone()
-    if row:
-        return dict(row)
-    return None
 
 
 async def add_code_chunk(
@@ -131,64 +122,60 @@ async def add_code_chunk(
     Returns:
         Chunk ID
     """
-    with self._lock:
-        assert self.conn is not None
-        cursor = self.conn.cursor()
-        cursor.execute(
-            "\n                SELECT id FROM code_chunks\n                WHERE chunk_uuid = ?\n            ",
-            (chunk_uuid,),
+    existing = self._fetchone(
+        "\n                SELECT id FROM code_chunks\n                WHERE chunk_uuid = ?\n            ",
+        (chunk_uuid,),
+    )
+    if existing:
+        self._execute(
+            "\n                    UPDATE code_chunks\n                    SET chunk_text = ?, chunk_type = ?, chunk_ordinal = ?,\n                        vector_id = ?, embedding_model = ?,\n                        bm25_score = ?, embedding_vector = ?,\n                        class_id = ?, function_id = ?, method_id = ?,\n                        line = ?, ast_node_type = ?, source_type = ?,\n                        binding_level = ?\n                    WHERE id = ?\n                ",
+            (
+                chunk_text,
+                chunk_type,
+                chunk_ordinal,
+                vector_id,
+                embedding_model,
+                bm25_score,
+                embedding_vector,
+                class_id,
+                function_id,
+                method_id,
+                line,
+                ast_node_type,
+                source_type,
+                binding_level,
+                existing["id"],
+            ),
         )
-        existing = cursor.fetchone()
-        if existing:
-            cursor.execute(
-                "\n                    UPDATE code_chunks\n                    SET chunk_text = ?, chunk_type = ?, chunk_ordinal = ?,\n                        vector_id = ?, embedding_model = ?,\n                        bm25_score = ?, embedding_vector = ?,\n                        class_id = ?, function_id = ?, method_id = ?,\n                        line = ?, ast_node_type = ?, source_type = ?,\n                        binding_level = ?\n                    WHERE id = ?\n                ",
-                (
-                    chunk_text,
-                    chunk_type,
-                    chunk_ordinal,
-                    vector_id,
-                    embedding_model,
-                    bm25_score,
-                    embedding_vector,
-                    class_id,
-                    function_id,
-                    method_id,
-                    line,
-                    ast_node_type,
-                    source_type,
-                    binding_level,
-                    existing[0],
-                ),
-            )
-            self.conn.commit()
-            return existing[0]
-        else:
-            cursor.execute(
-                "\n                    INSERT INTO code_chunks\n                    (file_id, project_id, chunk_uuid, chunk_type, chunk_text,\n                     chunk_ordinal, vector_id, embedding_model, bm25_score, embedding_vector,\n                     class_id, function_id, method_id, line, ast_node_type, source_type, binding_level)\n                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)\n                ",
-                (
-                    file_id,
-                    project_id,
-                    chunk_uuid,
-                    chunk_type,
-                    chunk_text,
-                    chunk_ordinal,
-                    vector_id,
-                    embedding_model,
-                    bm25_score,
-                    embedding_vector,
-                    class_id,
-                    function_id,
-                    method_id,
-                    line,
-                    ast_node_type,
-                    source_type,
-                    binding_level,
-                ),
-            )
-            self.conn.commit()
-            result = cursor.lastrowid
-            assert result is not None
-            return result
+        self._commit()
+        return existing["id"]
+    else:
+        self._execute(
+            "\n                    INSERT INTO code_chunks\n                    (file_id, project_id, chunk_uuid, chunk_type, chunk_text,\n                     chunk_ordinal, vector_id, embedding_model, bm25_score, embedding_vector,\n                     class_id, function_id, method_id, line, ast_node_type, source_type, binding_level)\n                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)\n                ",
+            (
+                file_id,
+                project_id,
+                chunk_uuid,
+                chunk_type,
+                chunk_text,
+                chunk_ordinal,
+                vector_id,
+                embedding_model,
+                bm25_score,
+                embedding_vector,
+                class_id,
+                function_id,
+                method_id,
+                line,
+                ast_node_type,
+                source_type,
+                binding_level,
+            ),
+        )
+        self._commit()
+        result = self._lastrowid()
+        assert result is not None
+        return result
 
 
 async def get_code_chunks(
@@ -210,8 +197,6 @@ async def get_code_chunks(
     Returns:
         List of chunk records
     """
-    assert self.conn is not None
-    cursor = self.conn.cursor()
     if include_deleted:
         query = "SELECT * FROM code_chunks WHERE 1=1"
     else:
@@ -229,8 +214,7 @@ async def get_code_chunks(
         params.append(project_id)
     query += " ORDER BY chunk_ordinal, id LIMIT ?"
     params.append(limit)
-    cursor.execute(query, params)
-    return [dict(row) for row in cursor.fetchall()]
+    return self._fetchall(query, tuple(params))
 
 
 def get_all_chunks_for_faiss_rebuild(self) -> List[Dict[str, Any]]:
@@ -249,13 +233,9 @@ def get_all_chunks_for_faiss_rebuild(self) -> List[Dict[str, Any]]:
     Returns:
         List of chunk records with vector_id and embedding_model
     """
-    with self._lock:
-        assert self.conn is not None
-        cursor = self.conn.cursor()
-        cursor.execute(
-            "\n                SELECT id, file_id, project_id, chunk_uuid, chunk_text, \n                       vector_id, embedding_model, chunk_type, embedding_vector\n                FROM code_chunks\n                WHERE vector_id IS NOT NULL AND embedding_model IS NOT NULL\n                ORDER BY id\n                "
-        )
-        return [dict(row) for row in cursor.fetchall()]
+    return self._fetchall(
+        "\n                SELECT id, file_id, project_id, chunk_uuid, chunk_text, \n                       vector_id, embedding_model, chunk_type, embedding_vector\n                FROM code_chunks\n                WHERE vector_id IS NOT NULL AND embedding_model IS NOT NULL\n                ORDER BY id\n                "
+    )
 
 
 async def get_non_vectorized_chunks(
@@ -275,20 +255,16 @@ async def get_non_vectorized_chunks(
     Returns:
         List of chunk records without vector_id (only from non-deleted files)
     """
-    with self._lock:
-        assert self.conn is not None
-        cursor = self.conn.cursor()
-        if project_id:
-            cursor.execute(
-                "\n                    SELECT cc.id, cc.file_id, cc.project_id, cc.chunk_uuid, cc.chunk_text,\n                           cc.chunk_type, cc.chunk_ordinal, cc.embedding_model,\n                           cc.class_id, cc.function_id, cc.method_id, cc.line, cc.ast_node_type, cc.source_type\n                    FROM code_chunks cc\n                    JOIN files f ON cc.file_id = f.id\n                    WHERE cc.vector_id IS NULL AND cc.project_id = ?\n                    AND (f.deleted = 0 OR f.deleted IS NULL)\n                    ORDER BY (cc.embedding_vector IS NOT NULL) DESC, cc.id\n                    LIMIT ?\n                    ",
-                (project_id, limit),
-            )
-        else:
-            cursor.execute(
-                "\n                    SELECT cc.id, cc.file_id, cc.project_id, cc.chunk_uuid, cc.chunk_text,\n                           cc.chunk_type, cc.chunk_ordinal, cc.embedding_model,\n                           cc.class_id, cc.function_id, cc.method_id, cc.line, cc.ast_node_type, cc.source_type\n                    FROM code_chunks cc\n                    JOIN files f ON cc.file_id = f.id\n                    WHERE cc.vector_id IS NULL\n                    AND (f.deleted = 0 OR f.deleted IS NULL)\n                    ORDER BY (cc.embedding_vector IS NOT NULL) DESC, cc.id\n                    LIMIT ?\n                    ",
-                (limit,),
-            )
-        return [dict(row) for row in cursor.fetchall()]
+    if project_id:
+        return self._fetchall(
+            "\n                    SELECT cc.id, cc.file_id, cc.project_id, cc.chunk_uuid, cc.chunk_text,\n                           cc.chunk_type, cc.chunk_ordinal, cc.embedding_model,\n                           cc.class_id, cc.function_id, cc.method_id, cc.line, cc.ast_node_type, cc.source_type\n                    FROM code_chunks cc\n                    JOIN files f ON cc.file_id = f.id\n                    WHERE cc.vector_id IS NULL AND cc.project_id = ?\n                    AND (f.deleted = 0 OR f.deleted IS NULL)\n                    ORDER BY (cc.embedding_vector IS NOT NULL) DESC, cc.id\n                    LIMIT ?\n                    ",
+            (project_id, limit),
+        )
+    else:
+        return self._fetchall(
+            "\n                    SELECT cc.id, cc.file_id, cc.project_id, cc.chunk_uuid, cc.chunk_text,\n                           cc.chunk_type, cc.chunk_ordinal, cc.embedding_model,\n                           cc.class_id, cc.function_id, cc.method_id, cc.line, cc.ast_node_type, cc.source_type\n                    FROM code_chunks cc\n                    JOIN files f ON cc.file_id = f.id\n                    WHERE cc.vector_id IS NULL\n                    AND (f.deleted = 0 OR f.deleted IS NULL)\n                    ORDER BY (cc.embedding_vector IS NOT NULL) DESC, cc.id\n                    LIMIT ?\n                    ",
+            (limit,),
+        )
 
 
 async def update_chunk_vector_id(
@@ -305,17 +281,14 @@ async def update_chunk_vector_id(
         vector_id: FAISS vector index ID
         embedding_model: Optional embedding model name
     """
-    with self._lock:
-        assert self.conn is not None
-        cursor = self.conn.cursor()
-        if embedding_model:
-            cursor.execute(
-                "\n                    UPDATE code_chunks\n                    SET vector_id = ?, embedding_model = ?\n                    WHERE id = ?\n                    ",
-                (vector_id, embedding_model, chunk_id),
-            )
-        else:
-            cursor.execute(
-                "\n                    UPDATE code_chunks\n                    SET vector_id = ?\n                    WHERE id = ?\n                    ",
-                (vector_id, chunk_id),
-            )
-        self.conn.commit()
+    if embedding_model:
+        self._execute(
+            "\n                    UPDATE code_chunks\n                    SET vector_id = ?, embedding_model = ?\n                    WHERE id = ?\n                    ",
+            (vector_id, embedding_model, chunk_id),
+        )
+    else:
+        self._execute(
+            "\n                    UPDATE code_chunks\n                    SET vector_id = ?\n                    WHERE id = ?\n                    ",
+            (vector_id, chunk_id),
+        )
+    self._commit()

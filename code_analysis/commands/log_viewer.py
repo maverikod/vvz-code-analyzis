@@ -340,9 +340,10 @@ class LogViewerCommand:
 
 class ListLogFilesCommand:
     """
-    Command to list available log files for workers.
+    Command to list available log files for workers and server.
 
     Scans configured log directories and returns available log files.
+    Supports worker logs (file_watcher, vectorization) and server logs (mcp_proxy_adapter, etc.).
     """
 
     def __init__(
@@ -350,7 +351,7 @@ class ListLogFilesCommand:
         log_dirs: Optional[List[str]] = None,
         worker_type: Optional[
             str
-        ] = None,  # "file_watcher", "vectorization", or None for all
+        ] = None,  # "file_watcher", "vectorization", "server", or None for all
     ):
         """
         Initialize list log files command.
@@ -382,6 +383,11 @@ class ListLogFilesCommand:
         log_patterns = {
             "file_watcher": ["file_watcher.log*", "file_watcher*.log*"],
             "vectorization": ["vectorization_worker.log*", "vectorization*.log*"],
+            "server": [
+                "mcp_proxy_adapter.log*",
+                "mcp_proxy_adapter*.log*",
+                "*.log*",  # Fallback: all .log files
+            ],
         }
 
         try:
@@ -393,15 +399,40 @@ class ListLogFilesCommand:
                 if self.worker_type:
                     patterns = log_patterns.get(self.worker_type, [])
                 else:
+                    # If no worker_type specified, search all patterns
                     patterns = []
                     for patterns_list in log_patterns.values():
                         patterns.extend(patterns_list)
+                    # Remove duplicates while preserving order
+                    seen_patterns = set()
+                    unique_patterns = []
+                    for pattern in patterns:
+                        if pattern not in seen_patterns:
+                            unique_patterns.append(pattern)
+                            seen_patterns.add(pattern)
+
+                    patterns = unique_patterns
 
                 # Search for log files
+                found_files = set()  # Track found files to avoid duplicates
                 for pattern in patterns:
                     for log_file in log_dir.glob(pattern):
-                        if log_file.is_file():
+                        if log_file.is_file() and str(log_file) not in found_files:
+                            found_files.add(str(log_file))
                             stat = log_file.stat()
+                            detected_type = self._detect_worker_type(log_file.name)
+
+                            # Apply worker_type filter if specified
+                            if self.worker_type and detected_type != self.worker_type:
+                                # Special handling: if worker_type is "server", include all non-worker logs
+                                if self.worker_type == "server" and detected_type not in [
+                                    "file_watcher",
+                                    "vectorization",
+                                ]:
+                                    pass  # Include server logs
+                                else:
+                                    continue
+
                             result["log_files"].append(
                                 {
                                     "path": str(log_file),
@@ -409,9 +440,7 @@ class ListLogFilesCommand:
                                     "modified": datetime.fromtimestamp(
                                         stat.st_mtime
                                     ).isoformat(),
-                                    "worker_type": self._detect_worker_type(
-                                        log_file.name
-                                    ),
+                                    "worker_type": detected_type,
                                 }
                             )
 
@@ -436,9 +465,23 @@ class ListLogFilesCommand:
         return result
 
     def _detect_worker_type(self, filename: str) -> str:
-        """Detect worker type from filename."""
-        if "file_watcher" in filename.lower():
+        """
+        Detect worker type from filename.
+
+        Args:
+            filename: Name of the log file
+
+        Returns:
+            Type of log: "file_watcher", "vectorization", "server", or "unknown"
+        """
+        filename_lower = filename.lower()
+        if "file_watcher" in filename_lower:
             return "file_watcher"
-        elif "vectorization" in filename.lower():
+        elif "vectorization" in filename_lower:
             return "vectorization"
+        elif "mcp_proxy_adapter" in filename_lower:
+            return "server"
+        elif filename_lower.endswith(".log") or filename_lower.endswith(".log."):
+            # Default to server for other .log files
+            return "server"
         return "unknown"

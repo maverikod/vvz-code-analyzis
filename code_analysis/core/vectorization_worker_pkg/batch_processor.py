@@ -77,7 +77,9 @@ async def process_embedding_ready_chunks(
                         break
                     await asyncio.sleep(1)
             else:
-                logger.info(f"No chunks needing vector_id assignment in this cycle (iteration {empty_iterations}/{max_empty_iterations})")
+                logger.info(
+                    f"No chunks needing vector_id assignment in this cycle (iteration {empty_iterations}/{max_empty_iterations})"
+                )
             break
 
         logger.info(
@@ -120,13 +122,10 @@ async def process_embedding_ready_chunks(
 
                 # Check if chunk has embedding_vector in database
                 db_check_start = time.time()
-                with database._lock:
-                    cursor = database.conn.cursor()
-                    cursor.execute(
-                        "SELECT embedding_vector, embedding_model FROM code_chunks WHERE id = ?",
-                        (chunk_id,),
-                    )
-                    row = cursor.fetchone()
+                row = database._fetchone(
+                    "SELECT embedding_vector, embedding_model FROM code_chunks WHERE id = ?",
+                    (chunk_id,),
+                )
                 db_check_duration = time.time() - db_check_start
                 logger.debug(
                     f"[TIMING] [CHUNK {chunk_id}] DB check took {db_check_duration:.3f}s"
@@ -135,13 +134,13 @@ async def process_embedding_ready_chunks(
                 embedding_array: Optional[np.ndarray] = None
                 embedding_model: Optional[str] = None
 
-                if row and row[0]:  # embedding_vector exists
+                if row and row.get("embedding_vector"):  # embedding_vector exists
                     # Load embedding from database
                     load_start = time.time()
                     try:
-                        embedding_list = json.loads(row[0])
+                        embedding_list = json.loads(row["embedding_vector"])
                         embedding_array = np.array(embedding_list, dtype="float32")
-                        embedding_model = row[1]
+                        embedding_model = row["embedding_model"]
                         load_duration = time.time() - load_start
                         logger.debug(
                             f"[TIMING] [CHUNK {chunk_id}] Loaded embedding from DB in {load_duration:.3f}s "
@@ -209,17 +208,15 @@ async def process_embedding_ready_chunks(
                                     if hasattr(embedding, "tolist")
                                     else embedding
                                 )
-                                with database._lock:
-                                    cursor = database.conn.cursor()
-                                    cursor.execute(
-                                        "UPDATE code_chunks SET embedding_vector = ?, embedding_model = ? WHERE id = ?",
-                                        (
-                                            embedding_json,
-                                            embedding_model,
-                                            chunk_id,
-                                        ),
-                                    )
-                                    database.conn.commit()
+                                database._execute(
+                                    "UPDATE code_chunks SET embedding_vector = ?, embedding_model = ? WHERE id = ?",
+                                    (
+                                        embedding_json,
+                                        embedding_model,
+                                        chunk_id,
+                                    ),
+                                )
+                                database._commit()
                                 save_duration = time.time() - save_start
                                 logger.debug(
                                     f"[TIMING] [CHUNK {chunk_id}] Saved embedding to DB in {save_duration:.3f}s"

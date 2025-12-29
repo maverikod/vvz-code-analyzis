@@ -26,15 +26,12 @@ def add_issue(
 
     If project_id is not provided, it will be retrieved from file_id.
     """
-    assert self.conn is not None
-    cursor = self.conn.cursor()
     if project_id is None and file_id is not None:
-        cursor.execute("SELECT project_id FROM files WHERE id = ?", (file_id,))
-        result = cursor.fetchone()
+        result = self._fetchone("SELECT project_id FROM files WHERE id = ?", (file_id,))
         if result:
-            project_id = result[0]
+            project_id = result["project_id"]
     metadata_json = json.dumps(metadata) if metadata else None
-    cursor.execute(
+    self._execute(
         "\n            INSERT INTO issues\n            (file_id, project_id, class_id, function_id, method_id, issue_type,\n             line, description, metadata)\n            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)\n        ",
         (
             file_id,
@@ -48,8 +45,8 @@ def add_issue(
             metadata_json,
         ),
     )
-    self.conn.commit()
-    result = cursor.lastrowid
+    self._commit()
+    result = self._lastrowid()
     assert result is not None
     return result
 
@@ -58,16 +55,13 @@ def get_issues_by_type(
     self, issue_type: str, project_id: Optional[str] = None
 ) -> List[Dict[str, Any]]:
     """Get all issues of a specific type."""
-    assert self.conn is not None
-    cursor = self.conn.cursor()
     if project_id:
-        cursor.execute(
+        return self._fetchall(
             "\n                SELECT i.*, f.path as file_path\n                FROM issues i\n                LEFT JOIN files f ON i.file_id = f.id\n                WHERE i.issue_type = ? AND (f.project_id = ? OR f.project_id IS NULL)\n                ORDER BY f.path, i.line\n            ",
             (issue_type, project_id),
         )
     else:
-        cursor.execute(
+        return self._fetchall(
             "\n                SELECT i.*, f.path as file_path\n                FROM issues i\n                LEFT JOIN files f ON i.file_id = f.id\n                WHERE i.issue_type = ?\n                ORDER BY f.path, i.line\n            ",
             (issue_type,),
         )
-    return [dict(row) for row in cursor.fetchall()]

@@ -21,10 +21,8 @@ def add_method(
     has_not_implemented: bool = False,
 ) -> int:
     """Add method record. Returns method_id."""
-    assert self.conn is not None
-    cursor = self.conn.cursor()
     args_json = json.dumps(args) if args else None
-    cursor.execute(
+    self._execute(
         "\n            INSERT OR REPLACE INTO methods\n            (class_id, name, line, args, docstring, is_abstract,\n             has_pass, has_not_implemented)\n            VALUES (?, ?, ?, ?, ?, ?, ?, ?)\n        ",
         (
             class_id,
@@ -37,8 +35,8 @@ def add_method(
             has_not_implemented,
         ),
     )
-    self.conn.commit()
-    result = cursor.lastrowid
+    self._commit()
+    result = self._lastrowid()
     assert result is not None
     return result
 
@@ -60,9 +58,6 @@ def search_methods(
     Returns:
         List of matching methods
     """
-    assert self.conn is not None
-    cursor = self.conn.cursor()
-
     # Build query with filters
     query = """
         SELECT m.*, c.name as class_name, f.path as file_path
@@ -87,5 +82,4 @@ def search_methods(
 
     query += " ORDER BY c.name, m.name, m.line"
 
-    cursor.execute(query, params)
-    return [dict(row) for row in cursor.fetchall()]
+    return self._fetchall(query, tuple(params))

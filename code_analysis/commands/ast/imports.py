@@ -84,9 +84,6 @@ class GetImportsMCPCommand(BaseMCPCommand):
                 )
 
             # Get imports from database
-            assert db.conn is not None
-            cursor = db.conn.cursor()
-            
             query = "SELECT * FROM imports WHERE file_id IN (SELECT id FROM files WHERE project_id = ?)"
             params = [proj_id]
             
@@ -110,33 +107,27 @@ class GetImportsMCPCommand(BaseMCPCommand):
                 
                 # Try versioned path pattern
                 if not file_record:
-                    assert db.conn is not None
-                    cursor = db.conn.cursor()
-                    cursor.execute(
+                    row = db._fetchone(
                         "SELECT * FROM files WHERE project_id = ? AND path LIKE ?",
                         (proj_id, f"%{file_path}")
                     )
-                    row = cursor.fetchone()
                     if row:
-                        file_record = dict(row)
+                        file_record = row
                 
                 # Try by filename
                 if not file_record and "/" in file_path:
                     filename = file_path.split("/")[-1]
-                    assert db.conn is not None
-                    cursor = db.conn.cursor()
-                    cursor.execute(
+                    rows = db._fetchall(
                         "SELECT * FROM files WHERE project_id = ? AND path LIKE ?",
                         (proj_id, f"%{filename}")
                     )
-                    rows = cursor.fetchall()
                     for row in rows:
-                        path_str = dict(row)["path"]
+                        path_str = row["path"]
                         if file_path in path_str or path_str.endswith(file_path):
-                            file_record = dict(row)
+                            file_record = row
                             break
                     if not file_record and rows:
-                        file_record = dict(rows[0])
+                        file_record = rows[0]
                 
                 if not file_record:
                     db.close()
@@ -162,10 +153,9 @@ class GetImportsMCPCommand(BaseMCPCommand):
             if offset:
                 query += f" OFFSET {offset}"
             
-            cursor.execute(query, params)
-            rows = cursor.fetchall()
+            rows = db._fetchall(query, tuple(params))
             
-            imports = [dict(row) for row in rows]
+            imports = rows
             db.close()
             
             return SuccessResult(

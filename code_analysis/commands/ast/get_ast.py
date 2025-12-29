@@ -94,36 +94,30 @@ class GetASTMCPCommand(BaseMCPCommand):
                 # Files in DB may be stored with versioned paths like:
                 # data/versions/{uuid}/code_analysis/main.py
                 # Try searching by path ending
-                assert db.conn is not None
-                cursor = db.conn.cursor()
                 # Search for files where path ends with the requested path
-                cursor.execute(
+                row = db._fetchone(
                     "SELECT * FROM files WHERE project_id = ? AND path LIKE ?",
                     (proj_id, f"%{file_path}")
                 )
-                row = cursor.fetchone()
                 if row:
-                    file_record = dict(row)
+                    file_record = row
             
             # Try 3: search by filename if path contains /
             if not file_record and "/" in file_path:
                 filename = file_path.split("/")[-1]
-                assert db.conn is not None
-                cursor = db.conn.cursor()
-                cursor.execute(
+                rows = db._fetchall(
                     "SELECT * FROM files WHERE project_id = ? AND path LIKE ?",
                     (proj_id, f"%{filename}")
                 )
-                rows = cursor.fetchall()
                 # If multiple matches, prefer the one that matches the path structure
                 for row in rows:
-                    path_str = dict(row)["path"]
+                    path_str = row["path"]
                     if file_path in path_str or path_str.endswith(file_path):
-                        file_record = dict(row)
+                        file_record = row
                         break
                 # If still no match, use first result
                 if not file_record and rows:
-                    file_record = dict(rows[0])
+                    file_record = rows[0]
             
             if not file_record:
                 db.close()

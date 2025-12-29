@@ -8,14 +8,16 @@ email: vasilyvz@gmail.com
 - **Rule 1**: Only the **DB worker** may access SQLite directly (`sqlite3.connect`, cursors, commits).
 - **Rule 2**: Only the **database driver** may talk to the DB worker (IPC/queue/RPC).
 - **Rule 3**: **All** DB calls in the codebase must go through the **driver API** only (no `db.conn`, no `cursor = ...`).
-- **Rule 4**: Errors must be **logged** with enough context and be **handled** consistently (typed errors, safe fallbacks, no silent failures).
+- **Rule 4**: Errors must be **logged** with enough context and be **handled** consistently (typed errors, no silent failures).
 - **Rule 5**: Any database driver MUST be a subclass of **`BaseDatabaseDriver` (ABC)** and implement a stable set of **abstract methods**. All call sites MUST depend on the **base type** (e.g., `BaseDatabaseDriver`) in signatures/DI to enable transparent future databases.
+- **Rule 6**: **CRITICAL**: All driver operations with DB worker MUST use **async/await** (async methods). No synchronous queue access. Polling MUST use `await asyncio.sleep(poll_interval)`. RPC calls MUST use `await`. All queue operations MUST be async.
 
 ### Driver interface requirement (for future DB backends)
 
 - The driver is a **polymorphic boundary**. It MUST:
   - Inherit from `code_analysis/core/db_driver/base.py:BaseDatabaseDriver`
   - Implement the abstract API (execute/fetchone/fetchall/commit/rollback/lastrowid/create_schema/get_table_info/connect/disconnect).
+  - **CRITICAL**: For proxy drivers (sqlite_proxy), all operations with worker MUST use async/await internally.
 - The rest of the codebase MUST:
   - Type against `BaseDatabaseDriver` (or an even narrower protocol if introduced later).
   - Avoid driver-specific types (`SQLiteDriver`, `SQLiteDriverProxy`) in signatures.
@@ -42,26 +44,60 @@ email: vasilyvz@gmail.com
 │  code_analysis server     │
 │  (commands, workers, etc) │
 └─────────────┬────────────┘
-              │ DB operations (ALL)
+              │ 1. DB operation request
+              │ driver_config required
               ▼
 ┌──────────────────────────┐
-│       CodeDatabase        │   (no .conn exposure)
-│  uses BaseDatabaseDriver  │
+│       CodeDatabase        │   (NO .conn, NO db_path)
+│  uses BaseDatabaseDriver  │   (driver can be any type)
 └─────────────┬────────────┘
-              │ IPC only (driver ↔ worker)
+              │ 2. Driver API call
               ▼
 ┌──────────────────────────┐
-│     SQLiteDriverProxy     │   (ONLY component that talks to worker)
+│   DatabaseDriver          │   (sqlite_proxy, mysql, postgres, etc.)
+│   (polymorphic boundary)  │
 └─────────────┬────────────┘
-              │ jobs/messages
+              │ 3. RPC call to separate process
               ▼
 ┌──────────────────────────┐
-│     DB Worker process     │   (ONLY component that touches sqlite3)
-│  owns sqlite3 connection  │
+│   DB Worker Process       │   (separate process)
+│   - Receives RPC request  │
+│   - Creates job in queue  │
+│   - Returns job ID        │
 └─────────────┬────────────┘
+              │ 4. Job ID returned to driver
               ▼
-          SQLite file
+┌──────────────────────────┐
+│   DatabaseDriver          │
+│   - Polls job status      │   (async/await, poll_interval from config)
+│   - Waits for completion  │   (await asyncio.sleep(poll_interval))
+└─────────────┬────────────┘
+              │ 5. Result/error returned
+              ▼
+┌──────────────────────────┐
+│   CodeDatabase            │
+│   - Returns to client     │   (transparent for client)
+└──────────────────────────┘
 ```
+
+**Architecture flow (for sqlite_proxy):**
+1. **Client** → sends DB operation request to `CodeDatabase`
+2. **CodeDatabase** → calls driver API method (execute, fetchone, etc.)
+3. **Driver** → makes RPC call (**async/await**) to separate DB worker process
+4. **DB Worker Process** → creates job in queue (**async/await**), returns job ID to driver
+5. **Driver** → polls job status periodically (**async/await** with `await asyncio.sleep(poll_interval)`, poll_interval from config)
+6. **Driver** → receives result/error, returns to CodeDatabase
+7. **CodeDatabase** → returns result to client (entire async chain is transparent for client)
+
+**CRITICAL**: All operations in steps 3-5 MUST use async/await. No synchronous queue access.
+
+**Key points:**
+- Driver can be ANY type (sqlite_proxy, mysql, postgres, etc.) - not tied to SQLite.
+- For SQLite: driver → RPC (async/await) → worker process → queue → SQLite file.
+- For MySQL/PostgreSQL: driver → remote server → database.
+- **CRITICAL**: All driver operations with worker MUST use async/await (async methods).
+- Polling interval (poll_interval) MUST be in config (generator + validator).
+- NO backward compatibility, NO fallbacks, NO configuration switches.
 
 ### Implementation plan (step-by-step)
 
@@ -72,24 +108,25 @@ email: vasilyvz@gmail.com
 
 ---
 
-## Step 0 — Lock in “strict mode” configuration (scaffolding)
+## Step 0 — Remove all backward compatibility and configuration switches
 
 ### Objective
-Introduce an explicit server setting that enables the strict model:
-**no direct sqlite connections anywhere except DB worker**.
+**NO configuration switches, NO fallbacks, NO backward compatibility.**
+All database access MUST go through driver → worker → database.
+Driver can be any type (sqlite, mysql, postgres, etc.) - not tied to specific database.
 
 ### Changes
-- **File**: `code_analysis/core/config.py` (or wherever ServerConfig lives)
-  - Add a boolean flag, e.g. `db_access.worker_only: bool = True`.
-  - Document defaults in docstring.
+- **File**: `code_analysis/core/config.py`
+  - Remove `DatabaseAccessConfig` class completely.
+  - Remove `db_access` field from `ServerConfig`.
+  - Remove any `worker_only` or `use_proxy` flags.
 - **File**: `config.json`
-  - Add:
-    - `code_analysis.db_access.worker_only = true`
-    - (optional) `code_analysis.db_access.driver = "sqlite_proxy"`
+  - Remove `db_access` section completely.
 
 ### Acceptance criteria
-- Config loads with defaults.
-- Flag is accessible from runtime (server + workers).
+- No configuration switches for database access mode.
+- No fallback mechanisms.
+- Driver type is specified explicitly in `driver_config` when creating `CodeDatabase`.
 
 ---
 
@@ -97,21 +134,22 @@ Introduce an explicit server setting that enables the strict model:
 
 ### Objective
 Stop exposing raw connection/cursor API. Everything must use driver methods.
+**NO backward compatibility, NO fallbacks.**
 
 ### Changes
 - **File**: `code_analysis/core/database/base.py`
   - **Class**: `CodeDatabase`
-    - Remove `self.conn` exposure (or keep it only during transition behind feature flag).
+    - Remove `self.conn` property completely.
+    - Remove `db_path` parameter - only accept `driver_config` (required).
     - Ensure all internal helpers (`_execute`, `_fetchone`, `_fetchall`, `_commit`, `_rollback`)
       are the only allowed query primitives.
-    - Add explicit logging when legacy `.conn` is accessed (temporary) to find offenders.
 - **File**: `code_analysis/core/database/driver_compat.py`
-  - Mark as **temporary** and plan deletion once migration completes.
-  - Do not use it in production strict mode.
+  - **DELETE** this file completely - no compatibility layer needed.
 
 ### Acceptance criteria
-- In strict mode, any access to `db.conn` fails fast with a clear error.
-- In non-strict mode, existing code still runs while we migrate modules.
+- `CodeDatabase` accepts only `driver_config` parameter (required).
+- No `.conn` property exists.
+- Any attempt to access `.conn` raises `AttributeError`.
 
 ---
 
@@ -156,53 +194,91 @@ with calls to `self._execute(...)`, `self._fetchone(...)`, `self._fetchall(...)`
 
 ---
 
-## Step 3 — Enforce “worker_only” by design: make direct sqlite driver unusable outside worker
+## Step 3 — Enforce worker-only design: make direct sqlite driver unusable outside worker
 
 ### Objective
-Guarantee Rule 1 at runtime.
+Guarantee Rule 1 at runtime. **NO configuration switches, NO fallbacks.**
 
 ### Changes
 - **File**: `code_analysis/core/db_driver/sqlite.py`
   - **Class**: `SQLiteDriver`
     - Add a guard in `connect()`:
-      - if strict mode is enabled and environment does not indicate DB worker context,
-        raise a `DatabaseError` (or `RuntimeError`) with guidance.
-    - DB worker process should set an env var, e.g. `CODE_ANALYSIS_DB_WORKER=1`.
+      - Check environment variable `CODE_ANALYSIS_DB_WORKER=1`.
+      - If not set, raise `RuntimeError` with clear message.
+    - DB worker process MUST set env var `CODE_ANALYSIS_DB_WORKER=1`.
 - **File**: `code_analysis/core/db_driver/__init__.py`
   - **Function**: `create_driver`
-    - If strict mode enabled and driver_name resolves to `"sqlite"` without proxy,
-      reject creation (log + raise).
+    - If `driver_name == "sqlite"` and not in DB worker (env var check),
+      reject creation immediately (log + raise).
+    - **NO** configuration checks, **NO** fallbacks.
 
 ### Acceptance criteria
-- Starting server in strict mode cannot open direct sqlite connections.
-- DB worker can (has env var).
+- Direct `sqlite` driver can ONLY be created in DB worker process.
+- All other code MUST use proxy driver or other database drivers (mysql, postgres, etc.).
 
 ---
 
-## Step 4 — Replace current queuemgr usage with a server-safe synchronous driver client
+## Step 4 — Implement RPC-based architecture with polling
 
 ### Objective
-Make the proxy driver safe in sync contexts (server request handlers) without event-loop hacks.
+Implement proper RPC-based architecture with exact flow:
+1. **Client** → sends DB operation request to driver
+2. **Driver** → makes RPC call (**async/await**) to separate DB worker process
+3. **DB Worker Process** → creates job in queue (**async/await**), returns job ID to driver
+4. **Driver** → polls job status periodically using job ID (**async/await** with `await asyncio.sleep(poll_interval)`, poll_interval from config)
+5. **Driver** → receives result/error, returns to client (transparent chain - client doesn't see async)
+
+**CRITICAL**: Steps 2-4 MUST use async/await. All queue operations MUST be async methods.
 
 ### Rationale
-The current `SQLiteDriverProxy` uses `AsyncQueueSystem` and creates/joins event loops/threads.
-This is fragile inside a web server and previously caused timeouts.
+Current implementation uses `AsyncQueueSystem` directly, which is fragile.
+Proper architecture requires:
+- Separate DB worker process (RPC server)
+- Driver as RPC client (**MUST use async/await internally**)
+- Job ID returned from worker to driver
+- Polling with configurable interval (**async/await** with `await asyncio.sleep(poll_interval)`, poll_interval in config)
+- Transparent operation for client code (async chain hidden from client)
+- **CRITICAL**: All queue operations MUST be async methods: `await add_job()`, `await start_job()`, `await get_job_status()`
 
 ### Changes
 - **File**: `code_analysis/core/db_driver/sqlite_proxy.py`
   - **Class**: `SQLiteDriverProxy`
-    - Replace `AsyncQueueSystem` usage with a **synchronous queue client** (from queuemgr’s sync API),
-      or implement a single long-lived background queue controller created once at startup.
-    - Ensure:
-      - no per-call event loop creation;
-      - driver methods are pure sync;
-      - timeouts are configurable and logged.
-- **File**: `code_analysis/core/worker_manager.py`
-  - Register DB worker (and queue system if applicable) as a managed worker type, e.g. `db_worker`.
+    - **CRITICAL**: All driver methods MUST use async/await internally
+    - Implement RPC client to communicate with DB worker process
+    - RPC call: send operation request → receive job ID (async/await, not direct queue access)
+    - Polling: periodically check job status using job ID (async/await with `await asyncio.sleep(poll_interval)`)
+    - Return result/error when job completes
+    - **All internal operations MUST be async**: `await add_job()`, `await start_job()`, `await get_job_status()`, `await asyncio.sleep(poll_interval)`
+    - API is transparent for client (client doesn't need to know about async - wrapped via `_run_async`)
+    - Use `poll_interval` from `worker_config` (default: 0.1 seconds = 100ms)
+- **File**: `code_analysis/core/db_driver/sqlite_worker.py` (create if missing)
+  - Implement RPC server (DB worker process)
+  - **CRITICAL**: All RPC handlers MUST be async methods (async/await)
+  - Receive RPC requests from driver (async/await)
+  - Create job in queue using queuemgr (async/await)
+  - Return job ID to driver (not result directly)
+- **File**: `code_analysis/core/database/base.py`
+  - **Function**: `create_driver_config_for_worker`
+    - Add `poll_interval` to `worker_config` (default: 0.1 seconds = 100ms)
+    - Document that poll_interval is in seconds
+- **File**: `code_analysis/core/config_generator.py`
+  - Note: `poll_interval` is set dynamically via `create_driver_config_for_worker()` function
+  - If config generator creates example driver configs, include `poll_interval` in `worker_config`
+  - Default value: 0.1 seconds (100ms)
+- **File**: `code_analysis/core/config.py` (if needed for validation)
+  - Document poll_interval in driver worker config structure
+  - Validate poll_interval > 0 if present
 
 ### Acceptance criteria
-- `get_database_status` and other non-queued MCP commands work reliably under load.
-- Proxy driver logs: operation name, duration, timeout, and root_dir/db_path.
+- **CRITICAL**: All driver methods use async/await internally (no synchronous queue access)
+- Driver makes RPC call to separate process (async/await, not direct queue access)
+- DB worker process creates job in queue and returns job ID (async/await, not result)
+- Driver polls job status using job ID with configurable interval (async/await with `await asyncio.sleep(poll_interval)`, poll_interval from config)
+- All queue operations use async/await: `await add_job()`, `await start_job()`, `await get_job_status()`
+- `poll_interval` is included in config generator (default: 0.1 seconds)
+- `poll_interval` is validated in config validator (must be > 0)
+- Client code sees transparent API (entire async chain is hidden from client via `_run_async` wrapper)
+- All operations work reliably under load.
 
 ---
 
@@ -231,21 +307,24 @@ Make DB worker the only owner of sqlite3 connection.
 ## Step 6 — Migrate all workers to driver-only access (no `CodeDatabase(db_path)` with direct sqlite)
 
 ### Objective
-Workers must not touch sqlite3 directly; they must use proxy driver.
+Workers must not touch sqlite3 directly; they must use proxy driver or other database drivers.
+**NO backward compatibility, NO fallbacks.**
 
 ### Changes
 - **File**: `code_analysis/core/file_watcher_pkg/base.py`
   - **Class**: `FileWatcherWorker.run`
     - Replace `database = CodeDatabase(self.db_path)` with:
-      - `CodeDatabase(driver_config={"type": "sqlite", "config": {"path": str(self.db_path), "use_proxy": True, ...}})`
+      - `CodeDatabase(driver_config=create_driver_config_for_worker(self.db_path))`
+      - Use `create_driver_config_for_worker()` helper function.
 - **File**: `code_analysis/core/vectorization_worker_pkg/processing.py`
-  - Replace `CodeDatabase(self.db_path)` similarly.
+  - Replace `CodeDatabase(self.db_path)` with `CodeDatabase(driver_config=create_driver_config_for_worker(self.db_path))`.
 - **File**: `code_analysis/core/repair_worker_pkg/base.py`
-  - Replace `CodeDatabase(self.db_path)` similarly.
+  - Replace `CodeDatabase(self.db_path)` with `CodeDatabase(driver_config=create_driver_config_for_worker(self.db_path))`.
 
 ### Acceptance criteria
-- Workers run with strict mode enabled.
+- All workers use `driver_config` parameter only.
 - No worker imports `sqlite3` or uses `.conn.cursor()`.
+- Workers can use any database driver type (sqlite_proxy, mysql, postgres, etc.).
 
 ---
 
@@ -293,36 +372,45 @@ All driver/worker errors are logged and surfaced consistently.
 ## Step 9 — Tests + enforcement checks
 
 ### Objective
-Prevent regressions: no direct DB access.
+Prevent regressions: no direct DB access, no backward compatibility.
 
 ### Changes
 - **New tests**: `tests/test_db_worker_only.py`
-  - Assert that in strict mode:
-    - creating `SQLiteDriver` outside worker raises;
-    - `CodeDatabase(db_path)` uses proxy (or is forbidden if direct);
-    - core commands can run basic SELECT via proxy.
+  - Assert that:
+    - creating `SQLiteDriver` outside worker raises `RuntimeError`;
+    - `CodeDatabase(db_path)` is forbidden (only `driver_config` allowed);
+    - `CodeDatabase` without `driver_config` raises `ValueError`;
+    - core commands can run basic SELECT via proxy driver;
+    - other database drivers (mysql, postgres) can be used.
 - Add a CI-style grep test:
-  - Fail if `.conn.cursor(` exists outside DB worker and test helpers.
+  - Fail if `.conn.cursor(` exists anywhere (except DB worker).
   - Fail if `sqlite3.connect(` exists outside DB worker and db_integrity.
+  - Fail if `CodeDatabase(db_path=` exists (must use `driver_config`).
 
 ### Acceptance criteria
-- Tests cover the “worker-only” invariant.
+- Tests cover the "worker-only" invariant.
+- Tests verify no backward compatibility exists.
 - Lint/mypy/black are clean.
 
 ---
 
-## Step 10 — Cleanup / removal of transitional compatibility
+## Step 10 — Cleanup / removal of all compatibility
 
 ### Objective
-Remove remaining legacy paths.
+Remove ALL legacy paths, ALL compatibility layers, ALL fallbacks.
 
 ### Changes
-- Delete `code_analysis/core/database/driver_compat.py` (or keep only for tests).
+- Delete `code_analysis/core/database/driver_compat.py` completely.
 - Remove any `db.conn` usage in codebase.
-- Make `worker_only` mode the default.
+- Remove `DatabaseAccessConfig` from config.
+- Remove all `worker_only` and `use_proxy` flags.
+- Ensure `CodeDatabase` accepts ONLY `driver_config` parameter.
 
 ### Acceptance criteria
-- Only DB worker owns sqlite3 connection.
+- Only DB worker owns sqlite3 connection (for sqlite driver).
 - All code calls DB through driver API only.
+- No configuration switches for database access.
+- Any database driver type can be used (sqlite, mysql, postgres, etc.).
+- Driver is not tied to specific database implementation.
 
 

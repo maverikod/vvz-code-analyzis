@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import inspect
 
-from .base import CodeDatabase
+from .base import CodeDatabase, create_driver_config_for_worker
 from . import ast
 from . import chunks
 from . import classes
@@ -51,4 +51,4 @@ _MODULES = [
 for _m in _MODULES:
     _add_functions_as_methods(CodeDatabase, _m)
 
-__all__ = ["CodeDatabase"]
+__all__ = ["CodeDatabase", "create_driver_config_for_worker"]

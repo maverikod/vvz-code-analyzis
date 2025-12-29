@@ -43,7 +43,10 @@ async def process_chunks(self, poll_interval: int = 30) -> Dict[str, Any]:
         logger.warning("FAISS manager not available, skipping vectorization")
         return {"processed": 0, "errors": 0}
 
-    database = CodeDatabase(self.db_path)
+    from ..database import create_driver_config_for_worker
+
+    driver_config = create_driver_config_for_worker(self.db_path)
+    database = CodeDatabase(driver_config=driver_config)
     total_processed = 0
     total_errors = 0
     cycle_count = 0
@@ -107,7 +110,9 @@ async def process_chunks(self, poll_interval: int = 30) -> Dict[str, Any]:
                         logger.error(f"Error requesting chunking: {e}", exc_info=True)
             else:
                 # No SVO client manager, skip chunking
-                logger.debug("SVO client manager not available, skipping chunking requests")
+                logger.debug(
+                    "SVO client manager not available, skipping chunking requests"
+                )
 
             # Step 2: Assign vector_id in FAISS for chunks that already have embeddings.
             batch_processed, batch_errors = await process_embedding_ready_chunks(
@@ -158,7 +163,9 @@ async def process_chunks(self, poll_interval: int = 30) -> Dict[str, Any]:
                                 exc_info=True,
                             )
                 else:
-                    logger.debug("SVO client manager not available, skipping fallback chunking")
+                    logger.debug(
+                        "SVO client manager not available, skipping fallback chunking"
+                    )
 
             # Wait for next cycle (with early exit check)
             # Increase poll interval if services are unavailable (circuit breaker)
@@ -176,9 +183,7 @@ async def process_chunks(self, poll_interval: int = 30) -> Dict[str, Any]:
                         )
 
             if not self._stop_event.is_set():
-                logger.debug(
-                    f"Waiting {actual_poll_interval}s before next cycle..."
-                )
+                logger.debug(f"Waiting {actual_poll_interval}s before next cycle...")
                 for _ in range(actual_poll_interval):
                     if self._stop_event.is_set():
                         break

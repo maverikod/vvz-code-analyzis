@@ -75,9 +75,6 @@ class SearchASTNodesMCPCommand(BaseMCPCommand):
             # Search AST nodes by type
             # We can search in classes, functions, methods tables
             # For more complex searches, would need to parse AST JSON
-            assert db.conn is not None
-            cursor = db.conn.cursor()
-
             results = []
 
             # Map node types to database tables
@@ -107,13 +104,12 @@ class SearchASTNodesMCPCommand(BaseMCPCommand):
 
                     file_record = db.get_file_by_path(file_path, proj_id)
                     if not file_record:
-                        cursor.execute(
+                        row = db._fetchone(
                             "SELECT id FROM files WHERE project_id = ? AND path LIKE ?",
                             (proj_id, f"%{file_path}"),
                         )
-                        row = cursor.fetchone()
                         if row:
-                            file_record = {"id": row[0]}
+                            file_record = {"id": row["id"]}
 
                     if file_record:
                         query += " AND c.file_id = ?"
@@ -123,17 +119,15 @@ class SearchASTNodesMCPCommand(BaseMCPCommand):
                 if limit:
                     query += f" LIMIT {limit}"
 
-                cursor.execute(query, params)
-                rows = cursor.fetchall()
+                rows = db._fetchall(query, tuple(params))
                 for row in rows:
-                    row_dict = dict(row)
                     results.append(
                         {
                             "node_type": "ClassDef",
-                            "name": row_dict["name"],
-                            "file_path": row_dict["file_path"],
-                            "line": row_dict["line"],
-                            "docstring": row_dict.get("docstring"),
+                            "name": row["name"],
+                            "file_path": row["file_path"],
+                            "line": row["line"],
+                            "docstring": row.get("docstring"),
                         }
                     )
 
@@ -163,13 +157,12 @@ class SearchASTNodesMCPCommand(BaseMCPCommand):
 
                     file_record = db.get_file_by_path(file_path, proj_id)
                     if not file_record:
-                        cursor.execute(
+                        row = db._fetchone(
                             "SELECT id FROM files WHERE project_id = ? AND path LIKE ?",
                             (proj_id, f"%{file_path}"),
                         )
-                        row = cursor.fetchone()
                         if row:
-                            file_record = {"id": row[0]}
+                            file_record = {"id": row["id"]}
 
                     if file_record:
                         query += " AND func.file_id = ?"
@@ -179,17 +172,15 @@ class SearchASTNodesMCPCommand(BaseMCPCommand):
                 if limit:
                     query += f" LIMIT {limit}"
 
-                cursor.execute(query, params)
-                rows = cursor.fetchall()
+                rows = db._fetchall(query, tuple(params))
                 for row in rows:
-                    row_dict = dict(row)
                     results.append(
                         {
                             "node_type": "FunctionDef",
-                            "name": row_dict["name"],
-                            "file_path": row_dict["file_path"],
-                            "line": row_dict["line"],
-                            "docstring": row_dict.get("docstring"),
+                            "name": row["name"],
+                            "file_path": row["file_path"],
+                            "line": row["line"],
+                            "docstring": row.get("docstring"),
                         }
                     )
 
@@ -220,13 +211,12 @@ class SearchASTNodesMCPCommand(BaseMCPCommand):
 
                     file_record = db.get_file_by_path(file_path, proj_id)
                     if not file_record:
-                        cursor.execute(
+                        row = db._fetchone(
                             "SELECT id FROM files WHERE project_id = ? AND path LIKE ?",
                             (proj_id, f"%{file_path}"),
                         )
-                        row = cursor.fetchone()
                         if row:
-                            file_record = {"id": row[0]}
+                            file_record = {"id": row["id"]}
 
                     if file_record:
                         query += " AND f.id = ?"
@@ -236,18 +226,16 @@ class SearchASTNodesMCPCommand(BaseMCPCommand):
                 if limit:
                     query += f" LIMIT {limit}"
 
-                cursor.execute(query, params)
-                rows = cursor.fetchall()
+                rows = db._fetchall(query, tuple(params))
                 for row in rows:
-                    row_dict = dict(row)
                     results.append(
                         {
                             "node_type": "FunctionDef",
-                            "name": row_dict["name"],
-                            "class_name": row_dict.get("class_name"),
-                            "file_path": row_dict["file_path"],
-                            "line": row_dict["line"],
-                            "docstring": row_dict.get("docstring"),
+                            "name": row["name"],
+                            "class_name": row.get("class_name"),
+                            "file_path": row["file_path"],
+                            "line": row["line"],
+                            "docstring": row.get("docstring"),
                         }
                     )
 

@@ -72,6 +72,45 @@ class DatabaseError(CodeAnalysisError):
         self.operation = operation
 
 
+class DatabaseOperationError(CodeAnalysisError):
+    """Raised when specific database operations fail with detailed context."""
+
+    def __init__(
+        self,
+        message: str,
+        operation: str = None,
+        db_path: str = None,
+        sql: str = None,
+        params: tuple = None,
+        root_dir: str = None,
+        timeout: float = None,
+        cause: Exception = None,
+        details: dict = None,
+    ):
+        """
+        Initialize database operation error.
+
+        Args:
+            message: Human-readable error message
+            operation: Database operation name (e.g., 'execute', 'fetchone')
+            db_path: Path to database file
+            sql: SQL statement that failed (may be truncated in logs)
+            params: Query parameters tuple
+            root_dir: Project root directory (if applicable)
+            timeout: Operation timeout in seconds (if applicable)
+            cause: Original exception that caused this error
+            details: Optional additional error details
+        """
+        super().__init__(message, code="DATABASE_OPERATION_ERROR", details=details)
+        self.operation = operation
+        self.db_path = db_path
+        self.sql = sql
+        self.params = params
+        self.root_dir = root_dir
+        self.timeout = timeout
+        self.cause = cause
+
+
 class AnalysisError(CodeAnalysisError):
     """Raised when analysis operations fail."""
 

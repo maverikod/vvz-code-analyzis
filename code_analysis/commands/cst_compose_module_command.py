@@ -115,7 +115,16 @@ class ComposeCSTModuleCommand(BaseMCPCommand):
                             },
                             "position": {
                                 "type": "string",
-                                "enum": ["before", "after", "end", "end_of_module", "after_selector", "before_selector", "end_of_class", "end_of_function"],
+                                "enum": [
+                                    "before",
+                                    "after",
+                                    "end",
+                                    "end_of_module",
+                                    "after_selector",
+                                    "before_selector",
+                                    "end_of_class",
+                                    "end_of_function",
+                                ],
                                 "default": "after",
                                 "description": "Position for insert/create: before/after/end (insert), end_of_module/after_selector/before_selector/end_of_class/end_of_function (create)",
                             },
@@ -235,7 +244,7 @@ class ComposeCSTModuleCommand(BaseMCPCommand):
             for op in ops:
                 op_type = op.get("operation_type", "replace")
                 sel_dict = op.get("selector")
-                
+
                 selector = None
                 if sel_dict:
                     selector = Selector(
@@ -305,18 +314,24 @@ class ComposeCSTModuleCommand(BaseMCPCommand):
             }
 
             if replace_ops:
-                current_source, replace_stats = apply_replace_ops(current_source, replace_ops)
+                current_source, replace_stats = apply_replace_ops(
+                    current_source, replace_ops
+                )
                 all_stats["replaced"] = replace_stats.get("replaced", 0)
                 all_stats["removed"] = replace_stats.get("removed", 0)
                 all_stats["unmatched"].extend(replace_stats.get("unmatched", []))
 
             if insert_ops:
-                current_source, insert_stats = apply_insert_ops(current_source, insert_ops)
+                current_source, insert_stats = apply_insert_ops(
+                    current_source, insert_ops
+                )
                 all_stats["inserted"] = insert_stats.get("inserted", 0)
                 all_stats["unmatched"].extend(insert_stats.get("unmatched", []))
 
             if create_ops:
-                current_source, create_stats = apply_create_ops(current_source, create_ops)
+                current_source, create_stats = apply_create_ops(
+                    current_source, create_ops
+                )
                 all_stats["created"] = create_stats.get("created", 0)
                 all_stats["unmatched"].extend(create_stats.get("unmatched", []))
 

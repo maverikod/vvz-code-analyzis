@@ -93,9 +93,9 @@ class RepairWorkerManager:
                 kwargs={
                     "batch_size": self.batch_size,
                     "poll_interval": self.poll_interval,
-                    "worker_log_path": str(self.worker_log_path)
-                    if self.worker_log_path
-                    else None,
+                    "worker_log_path": (
+                        str(self.worker_log_path) if self.worker_log_path else None
+                    ),
                 },
                 daemon=True,
             )
@@ -105,13 +105,12 @@ class RepairWorkerManager:
             # Wait a bit to check if process started successfully
             time.sleep(0.5)
             if process.is_alive():
-                logger.info(
-                    f"Repair worker started successfully (PID: {process.pid})"
-                )
-                
+                logger.info(f"Repair worker started successfully (PID: {process.pid})")
+
                 # Register worker in WorkerManager
                 try:
                     from ..core.worker_manager import get_worker_manager
+
                     worker_manager = get_worker_manager()
                     worker_manager.register_worker(
                         "repair",
@@ -119,11 +118,13 @@ class RepairWorkerManager:
                             "pid": process.pid,
                             "process": process,
                             "name": f"repair_{self.project_id}",
-                        }
+                        },
                     )
                 except Exception as e:
-                    logger.warning(f"Failed to register repair worker in WorkerManager: {e}")
-                
+                    logger.warning(
+                        f"Failed to register repair worker in WorkerManager: {e}"
+                    )
+
                 return {
                     "success": True,
                     "message": f"Repair worker started (PID: {process.pid})",
@@ -350,4 +351,3 @@ class RepairWorkerManager:
         except Exception as e:
             logger.warning(f"Error reading log file: {e}")
             return {"available": True, "error": str(e)}
-

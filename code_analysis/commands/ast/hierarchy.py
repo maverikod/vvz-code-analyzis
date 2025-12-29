@@ -68,9 +68,6 @@ class GetClassHierarchyMCPCommand(BaseMCPCommand):
 
             # Get class hierarchy from database
             # Classes table has 'bases' field (JSON array of base class names)
-            assert db.conn is not None
-            cursor = db.conn.cursor()
-            
             import json
             
             # Build hierarchy map
@@ -107,23 +104,21 @@ class GetClassHierarchyMCPCommand(BaseMCPCommand):
                 file_record = db.get_file_by_path(file_path, proj_id)
                 if not file_record:
                     # Try versioned path
-                    cursor.execute(
+                    row = db._fetchone(
                         "SELECT id FROM files WHERE project_id = ? AND path LIKE ?",
                         (proj_id, f"%{file_path}")
                     )
-                    row = cursor.fetchone()
                     if row:
-                        file_record = {"id": row[0]}
+                        file_record = {"id": row["id"]}
                 
                 if file_record:
                     query += " AND c.file_id = ?"
                     params.append(file_record["id"])
             
-            cursor.execute(query, params)
-            rows = cursor.fetchall()
+            rows = db._fetchall(query, tuple(params))
             
             for row in rows:
-                class_info = dict(row)
+                class_info = row
                 class_name_val = class_info["name"]
                 bases_str = class_info.get("bases")
                 

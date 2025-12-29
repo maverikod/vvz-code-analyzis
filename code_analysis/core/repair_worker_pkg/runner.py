@@ -152,4 +152,3 @@ def run_repair_worker(
             "errors": 1,
             "error": str(e),
         }
-

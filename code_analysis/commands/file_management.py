@@ -85,12 +85,10 @@ class CleanupDeletedFilesCommand:
                 deleted_files = self.database.get_deleted_files(self.project_id)
             else:
                 # Get all projects and their deleted files
-                cursor = self.database.conn.cursor()
-                cursor.execute("SELECT id FROM projects")
-                projects = cursor.fetchall()
+                projects = self.database._fetchall("SELECT id FROM projects")
                 deleted_files = []
                 for project_row in projects:
-                    project_id = project_row[0]
+                    project_id = project_row["id"]
                     deleted_files.extend(self.database.get_deleted_files(project_id))
 
             # Filter by age if specified
@@ -235,8 +233,7 @@ class UnmarkDeletedFileCommand:
 
         try:
             # Get file info
-            cursor = self.database.conn.cursor()
-            cursor.execute(
+            row = self.database._fetchone(
                 """
                 SELECT id, path, original_path, version_dir 
                 FROM files 
@@ -246,18 +243,15 @@ class UnmarkDeletedFileCommand:
                 """,
                 (self.project_id, self.file_path, self.file_path),
             )
-            row = cursor.fetchone()
 
             if not row:
                 result["error"] = f"File not found: {self.file_path}"
                 return result
 
-            file_id, current_path, original_path, version_dir = (
-                row[0],
-                row[1],
-                row[2],
-                row[3],
-            )
+            file_id = row["id"]
+            current_path = row["path"]
+            original_path = row["original_path"]
+            version_dir = row["version_dir"]
 
             result["original_path"] = original_path
             result["version_dir"] = version_dir
@@ -340,8 +334,7 @@ class CollapseVersionsCommand:
         try:
             if self.dry_run:
                 # Just analyze, don't delete
-                cursor = self.database.conn.cursor()
-                cursor.execute(
+                files_with_versions = self.database._fetchall(
                     """
                     SELECT path, COUNT(*) as version_count
                     FROM files
@@ -351,11 +344,10 @@ class CollapseVersionsCommand:
                     """,
                     (self.project_id,),
                 )
-                files_with_versions = cursor.fetchall()
 
                 for path_row in files_with_versions:
-                    file_path = path_row[0]
-                    version_count = path_row[1]
+                    file_path = path_row["path"]
+                    version_count = path_row["version_count"]
 
                     # Get all versions
                     versions = self.database.get_file_versions(
@@ -516,21 +508,19 @@ class RepairDatabaseCommand:
                         # File exists but marked as deleted - restore it
                         try:
                             if not self.dry_run:
-                                with self.database._lock:
-                                    cursor = self.database.conn.cursor()
-                                    cursor.execute(
-                                        """
-                                        UPDATE files 
-                                        SET deleted = 0, 
-                                            original_path = NULL, 
-                                            version_dir = NULL, 
-                                            path = ?,
-                                            updated_at = julianday('now')
-                                        WHERE id = ?
-                                        """,
-                                        (check_path, file_id),
-                                    )
-                                    self.database.conn.commit()
+                                self.database._execute(
+                                    """
+                                    UPDATE files 
+                                    SET deleted = 0, 
+                                        original_path = NULL, 
+                                        version_dir = NULL, 
+                                        path = ?,
+                                        updated_at = julianday('now')
+                                    WHERE id = ?
+                                    """,
+                                    (check_path, file_id),
+                                )
+                                self.database._commit()
                             result["files_in_project_restored"].append(
                                 {"id": file_id, "path": check_path}
                             )
@@ -568,7 +558,9 @@ class RepairDatabaseCommand:
                             result["files_in_versions_marked_deleted"].append(
                                 {"id": file_id, "path": check_path}
                             )
-                            logger.info(f"Marked file in versions as deleted: {check_path}")
+                            logger.info(
+                                f"Marked file in versions as deleted: {check_path}"
+                            )
                         except Exception as e:
                             error_msg = f"Error marking {check_path} as deleted: {e}"
                             logger.error(error_msg)
@@ -641,7 +633,11 @@ class RepairDatabaseCommand:
             # Determine target path
             if file_record.get("deleted"):
                 # File is marked as deleted - restore to version directory
-                version_path = Path(self.version_dir) / file_record.get("version_dir", "") / file_path
+                version_path = (
+                    Path(self.version_dir)
+                    / file_record.get("version_dir", "")
+                    / file_path
+                )
                 version_path.parent.mkdir(parents=True, exist_ok=True)
                 target_path = version_path
             else:
@@ -651,7 +647,7 @@ class RepairDatabaseCommand:
             # Restore file content
             target_path.parent.mkdir(parents=True, exist_ok=True)
             target_path.write_text(cst_code, encoding="utf-8")
-            
+
             logger.info(f"Restored file {file_path} from CST to {target_path}")
             return True
 
@@ -712,14 +708,14 @@ class RepairDatabaseCommand:
 
                     # Send SIGTERM for graceful shutdown
                     proc.terminate()
-                    logger.info(
-                        f"Sent SIGTERM to {worker_type} worker (PID: {pid})"
-                    )
+                    logger.info(f"Sent SIGTERM to {worker_type} worker (PID: {pid})")
 
                     # Wait up to 10 seconds for graceful shutdown
                     try:
                         proc.wait(timeout=10)
-                        logger.info(f"{worker_type} worker stopped gracefully (PID: {pid})")
+                        logger.info(
+                            f"{worker_type} worker stopped gracefully (PID: {pid})"
+                        )
                         result["stopped_count"] += 1
                         result["stopped_workers"].append(
                             {"pid": pid, "type": worker_type, "graceful": True}
@@ -749,6 +745,7 @@ class RepairDatabaseCommand:
             # Wait a bit for processes to fully terminate
             if all_worker_processes:
                 import asyncio
+
                 await asyncio.sleep(1)
 
         except ImportError:

@@ -27,21 +27,17 @@ def get_or_create_project(
     Returns:
         Project ID (UUID4 string)
     """
-    with self._lock:
-        assert self.conn is not None
-        cursor = self.conn.cursor()
-        cursor.execute("SELECT id FROM projects WHERE root_path = ?", (root_path,))
-        row = cursor.fetchone()
-        if row:
-            return row[0]
-        project_id = str(uuid.uuid4())
-        project_name = name or Path(root_path).name
-        cursor.execute(
-            "\n                INSERT INTO projects (id, root_path, name, comment, updated_at)\n                VALUES (?, ?, ?, ?, julianday('now'))\n            ",
-            (project_id, root_path, project_name, comment),
-        )
-        self.conn.commit()
-        return project_id
+    row = self._fetchone("SELECT id FROM projects WHERE root_path = ?", (root_path,))
+    if row:
+        return row["id"]
+    project_id = str(uuid.uuid4())
+    project_name = name or Path(root_path).name
+    self._execute(
+        "\n                INSERT INTO projects (id, root_path, name, comment, updated_at)\n                VALUES (?, ?, ?, ?, julianday('now'))\n            ",
+        (project_id, root_path, project_name, comment),
+    )
+    self._commit()
+    return project_id
 
 
 def get_project_id(self, root_path: str) -> Optional[str]:
@@ -54,11 +50,8 @@ def get_project_id(self, root_path: str) -> Optional[str]:
     Returns:
         Project ID (UUID4 string) or None if not found
     """
-    assert self.conn is not None
-    cursor = self.conn.cursor()
-    cursor.execute("SELECT id FROM projects WHERE root_path = ?", (root_path,))
-    row = cursor.fetchone()
-    return row[0] if row else None
+    row = self._fetchone("SELECT id FROM projects WHERE root_path = ?", (root_path,))
+    return row["id"] if row else None
 
 
 def get_project(self, project_id: str) -> Optional[Dict[str, Any]]:
@@ -71,13 +64,7 @@ def get_project(self, project_id: str) -> Optional[Dict[str, Any]]:
     Returns:
         Project record as dictionary or None if not found
     """
-    assert self.conn is not None
-    cursor = self.conn.cursor()
-    cursor.execute("SELECT * FROM projects WHERE id = ?", (project_id,))
-    row = cursor.fetchone()
-    if row:
-        return dict(row)
-    return None
+    return self._fetchone("SELECT * FROM projects WHERE id = ?", (project_id,))
 
 
 async def clear_project_data(self, project_id: str) -> None:
@@ -91,75 +78,69 @@ async def clear_project_data(self, project_id: str) -> None:
     Args:
         project_id: Project ID (UUID4 string)
     """
-    assert self.conn is not None
-    cursor = self.conn.cursor()
-    cursor.execute("SELECT id FROM files WHERE project_id = ?", (project_id,))
-    file_ids = [row[0] for row in cursor.fetchall()]
+    file_rows = self._fetchall("SELECT id FROM files WHERE project_id = ?", (project_id,))
+    file_ids = [row["id"] for row in file_rows]
     if not file_ids:
-        cursor.execute("DELETE FROM vector_index WHERE project_id = ?", (project_id,))
-        self.conn.commit()
+        self._execute("DELETE FROM vector_index WHERE project_id = ?", (project_id,))
+        self._commit()
         return
     placeholders = ",".join("?" * len(file_ids))
-    cursor.execute(
-        f"SELECT id FROM classes WHERE file_id IN ({placeholders})", file_ids
+    class_rows = self._fetchall(
+        f"SELECT id FROM classes WHERE file_id IN ({placeholders})", tuple(file_ids)
     )
-    class_ids = [row[0] for row in cursor.fetchall()]
-    cursor.execute(
-        f"SELECT id FROM code_content WHERE file_id IN ({placeholders})", file_ids
+    class_ids = [row["id"] for row in class_rows]
+    content_rows = self._fetchall(
+        f"SELECT id FROM code_content WHERE file_id IN ({placeholders})", tuple(file_ids)
     )
-    content_ids = [row[0] for row in cursor.fetchall()]
+    content_ids = [row["id"] for row in content_rows]
     if content_ids:
         content_placeholders = ",".join("?" * len(content_ids))
-        cursor.execute(
+        self._execute(
             f"DELETE FROM code_content_fts WHERE rowid IN ({content_placeholders})",
-            content_ids,
+            tuple(content_ids),
         )
     if class_ids:
         method_placeholders = ",".join("?" * len(class_ids))
-        cursor.execute(
-            f"DELETE FROM methods WHERE class_id IN ({method_placeholders})", class_ids
+        self._execute(
+            f"DELETE FROM methods WHERE class_id IN ({method_placeholders})", tuple(class_ids)
         )
     if file_ids:
-        cursor.execute(
-            f"DELETE FROM classes WHERE file_id IN ({placeholders})", file_ids
+        self._execute(
+            f"DELETE FROM classes WHERE file_id IN ({placeholders})", tuple(file_ids)
         )
     if file_ids:
-        cursor.execute(
-            f"DELETE FROM functions WHERE file_id IN ({placeholders})", file_ids
+        self._execute(
+            f"DELETE FROM functions WHERE file_id IN ({placeholders})", tuple(file_ids)
         )
     if file_ids:
-        cursor.execute(
-            f"DELETE FROM imports WHERE file_id IN ({placeholders})", file_ids
+        self._execute(
+            f"DELETE FROM imports WHERE file_id IN ({placeholders})", tuple(file_ids)
         )
     if file_ids:
-        cursor.execute(
-            f"DELETE FROM issues WHERE file_id IN ({placeholders})", file_ids
+        self._execute(
+            f"DELETE FROM issues WHERE file_id IN ({placeholders})", tuple(file_ids)
         )
     if file_ids:
-        cursor.execute(
-            f"DELETE FROM usages WHERE file_id IN ({placeholders})", file_ids
-        )
-    if file_ids:
-        cursor.execute(
+        self._execute(
             f"\n                DELETE FROM dependencies \n                WHERE source_file_id IN ({placeholders}) \n                OR target_file_id IN ({placeholders})\n            ",
-            file_ids + file_ids,
+            tuple(file_ids + file_ids),
         )
     if file_ids:
-        cursor.execute(
-            f"DELETE FROM code_content WHERE file_id IN ({placeholders})", file_ids
+        self._execute(
+            f"DELETE FROM code_content WHERE file_id IN ({placeholders})", tuple(file_ids)
         )
     if file_ids:
-        cursor.execute(
-            f"DELETE FROM ast_trees WHERE file_id IN ({placeholders})", file_ids
+        self._execute(
+            f"DELETE FROM ast_trees WHERE file_id IN ({placeholders})", tuple(file_ids)
         )
     if file_ids:
-        cursor.execute(
-            f"DELETE FROM code_chunks WHERE file_id IN ({placeholders})", file_ids
+        self._execute(
+            f"DELETE FROM code_chunks WHERE file_id IN ({placeholders})", tuple(file_ids)
         )
-    cursor.execute("DELETE FROM vector_index WHERE project_id = ?", (project_id,))
-    cursor.execute("DELETE FROM files WHERE project_id = ?", (project_id,))
-    cursor.execute("DELETE FROM projects WHERE id = ?", (project_id,))
-    self.conn.commit()
+    self._execute("DELETE FROM vector_index WHERE project_id = ?", (project_id,))
+    self._execute("DELETE FROM files WHERE project_id = ?", (project_id,))
+    self._execute("DELETE FROM projects WHERE id = ?", (project_id,))
+    self._commit()
     logger.info(f"Cleared all data and removed project {project_id}")
 
 
@@ -176,29 +157,26 @@ def get_project_files(
     Returns:
         List of file records as dictionaries
     """
-    assert self.conn is not None
-    cursor = self.conn.cursor()
     if include_deleted:
-        cursor.execute(
+        rows = self._fetchall(
             "SELECT id, path, lines, last_modified, has_docstring, deleted FROM files WHERE project_id = ?",
             (project_id,),
         )
     else:
-        cursor.execute(
+        rows = self._fetchall(
             "SELECT id, path, lines, last_modified, has_docstring, deleted FROM files WHERE project_id = ? AND (deleted = 0 OR deleted IS NULL)",
-        (project_id,),
-    )
-    rows = cursor.fetchall()
+            (project_id,),
+        )
     result = []
     for row in rows:
         result.append(
             {
-                "id": row[0],
-                "path": row[1],
-                "lines": row[2],
-                "last_modified": row[3],
-                "has_docstring": row[4],
-                "deleted": row[5] if len(row) > 5 else 0,
+                "id": row["id"],
+                "path": row["path"],
+                "lines": row["lines"],
+                "last_modified": row["last_modified"],
+                "has_docstring": row["has_docstring"],
+                "deleted": row.get("deleted", 0),
             }
         )
     return result

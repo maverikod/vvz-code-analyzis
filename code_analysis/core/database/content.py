@@ -31,20 +31,18 @@ def add_code_content(
     Returns:
         Content ID
     """
-    assert self.conn is not None
-    cursor = self.conn.cursor()
-    cursor.execute(
+    self._execute(
         "\n            INSERT INTO code_content\n            (file_id, entity_type, entity_id, entity_name, content, docstring)\n            VALUES (?, ?, ?, ?, ?, ?)\n        ",
         (file_id, entity_type, entity_id, entity_name, content, docstring),
     )
-    self.conn.commit()
-    content_id = cursor.lastrowid
+    self._commit()
+    content_id = self._lastrowid()
     assert content_id is not None
-    cursor.execute(
+    self._execute(
         "\n            INSERT INTO code_content_fts\n            (rowid, entity_type, entity_name, content, docstring)\n            VALUES (?, ?, ?, ?, ?)\n        ",
         (content_id, entity_type, entity_name, content, docstring or ""),
     )
-    self.conn.commit()
+    self._commit()
     return content_id
 
 
@@ -67,8 +65,6 @@ def full_text_search(
     Returns:
         List of matching records with file paths
     """
-    assert self.conn is not None
-    cursor = self.conn.cursor()
     fts_query = "\n            SELECT c.*, f.path as file_path\n            FROM code_content_fts fts\n            JOIN code_content c ON fts.rowid = c.id\n            JOIN files f ON c.file_id = f.id\n            WHERE code_content_fts MATCH ? AND f.project_id = ?\n        "
     params = [query, project_id]
     if entity_type:
@@ -76,5 +72,4 @@ def full_text_search(
         params.append(entity_type)
     fts_query += " ORDER BY rank LIMIT ?"
     params.append(limit)
-    cursor.execute(fts_query, params)
-    return [dict(row) for row in cursor.fetchall()]
+    return self._fetchall(fts_query, tuple(params))

@@ -103,7 +103,11 @@ class StartRepairWorkerMCPCommand(BaseMCPCommand):
             if not Path(version_dir).is_absolute():
                 version_dir = str(root_path / version_dir)
 
-            db_path = root_path / database.db_path if hasattr(database, "db_path") else root_path / "data" / "code_analysis.db"
+            db_path = (
+                root_path / database.db_path
+                if hasattr(database, "db_path")
+                else root_path / "data" / "code_analysis.db"
+            )
             worker_log_path = root_path / "logs" / "repair_worker.log"
 
             try:
@@ -122,7 +126,9 @@ class StartRepairWorkerMCPCommand(BaseMCPCommand):
                 database.close()
 
         except Exception as e:
-            return self._handle_error(e, "START_REPAIR_WORKER_ERROR", "start_repair_worker")
+            return self._handle_error(
+                e, "START_REPAIR_WORKER_ERROR", "start_repair_worker"
+            )
 
 
 class StopRepairWorkerMCPCommand(BaseMCPCommand):
@@ -187,7 +193,9 @@ class StopRepairWorkerMCPCommand(BaseMCPCommand):
             return SuccessResult(data=result)
 
         except Exception as e:
-            return self._handle_error(e, "STOP_REPAIR_WORKER_ERROR", "stop_repair_worker")
+            return self._handle_error(
+                e, "STOP_REPAIR_WORKER_ERROR", "stop_repair_worker"
+            )
 
 
 class RepairWorkerStatusMCPCommand(BaseMCPCommand):
@@ -253,4 +261,3 @@ class RepairWorkerStatusMCPCommand(BaseMCPCommand):
             return self._handle_error(
                 e, "REPAIR_WORKER_STATUS_ERROR", "repair_worker_status"
             )
-

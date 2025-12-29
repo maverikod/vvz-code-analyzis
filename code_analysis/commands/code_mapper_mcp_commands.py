@@ -19,7 +19,7 @@ logger = logging.getLogger(__name__)
 class ListLongFilesMCPCommand(BaseMCPCommand):
     """
     MCP command to list files exceeding line limit.
-    
+
     Equivalent to old code_mapper functionality for finding oversized files.
     """
 
@@ -77,7 +77,7 @@ class ListLongFilesMCPCommand(BaseMCPCommand):
             root_path = self._validate_root_dir(root_dir)
             db = self._open_database(root_dir)
             proj_id = self._get_project_id(db, root_path, project_id)
-            
+
             if not proj_id:
                 db.close()
                 return ErrorResult(
@@ -99,7 +99,7 @@ class ListLongFilesMCPCommand(BaseMCPCommand):
 class ListErrorsByCategoryMCPCommand(BaseMCPCommand):
     """
     MCP command to list errors grouped by category.
-    
+
     Equivalent to old code_mapper functionality for listing code issues.
     """
 
@@ -149,7 +149,7 @@ class ListErrorsByCategoryMCPCommand(BaseMCPCommand):
         try:
             root_path = self._validate_root_dir(root_dir)
             db = self._open_database(root_dir)
-            
+
             # Try to get project_id, but allow None (all projects)
             proj_id = None
             if project_id:
@@ -159,7 +159,9 @@ class ListErrorsByCategoryMCPCommand(BaseMCPCommand):
                     proj_id = self._get_project_id(db, root_path, None)
                 except Exception:
                     # If project not found, use None to get all projects
-                    logger.info(f"Project not found for {root_dir}, listing errors from all projects")
+                    logger.info(
+                        f"Project not found for {root_dir}, listing errors from all projects"
+                    )
                     proj_id = None
 
             command = ListErrorsByCategoryCommand(db, proj_id)
@@ -170,4 +172,3 @@ class ListErrorsByCategoryMCPCommand(BaseMCPCommand):
 
         except Exception as e:
             return self._handle_error(e, "LIST_ERRORS_ERROR", "list_errors_by_category")
-

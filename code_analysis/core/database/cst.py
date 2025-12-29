@@ -23,9 +23,7 @@ def is_cst_outdated(self, file_id: int, file_mtime: float) -> bool:
     Returns:
         True if CST is outdated, False otherwise
     """
-    assert self.conn is not None
-    cursor = self.conn.cursor()
-    cursor.execute(
+    row = self._fetchone(
         """
         SELECT file_mtime FROM cst_trees
         WHERE file_id = ?
@@ -34,11 +32,10 @@ def is_cst_outdated(self, file_id: int, file_mtime: float) -> bool:
         """,
         (file_id,),
     )
-    row = cursor.fetchone()
     if not row:
         return True
 
-    db_mtime = row[0]
+    db_mtime = row["file_mtime"]
     return file_mtime > db_mtime
 
 
@@ -65,10 +62,8 @@ def save_cst_tree(
     Returns:
         CST tree ID
     """
-    assert self.conn is not None
-    cursor = self.conn.cursor()
     if overwrite:
-        cursor.execute(
+        self._execute(
             """
                 DELETE FROM cst_trees
                 WHERE file_id = ?
@@ -76,26 +71,25 @@ def save_cst_tree(
             (file_id,),
         )
     if not overwrite:
-        cursor.execute(
+        existing = self._fetchone(
             """
                 SELECT id FROM cst_trees
                 WHERE file_id = ? AND cst_hash = ?
             """,
             (file_id, cst_hash),
         )
-        existing = cursor.fetchone()
         if existing:
-            cursor.execute(
+            self._execute(
                 """
                     UPDATE cst_trees
                     SET cst_code = ?, file_mtime = ?, updated_at = julianday('now')
                     WHERE id = ?
                 """,
-                (cst_code, file_mtime, existing[0]),
+                (cst_code, file_mtime, existing["id"]),
             )
-            self.conn.commit()
-            return existing[0]
-    cursor.execute(
+            self._commit()
+            return existing["id"]
+    self._execute(
         """
             INSERT INTO cst_trees
             (file_id, project_id, cst_code, cst_hash, file_mtime)
@@ -103,8 +97,8 @@ def save_cst_tree(
         """,
         (file_id, project_id, cst_code, cst_hash, file_mtime),
     )
-    self.conn.commit()
-    result = cursor.lastrowid
+    self._commit()
+    result = self._lastrowid()
     assert result is not None
     return result
 
@@ -148,9 +142,7 @@ async def get_cst_tree(self, file_id: int) -> Optional[Dict[str, Any]]:
             "updated_at": float
         }
     """
-    assert self.conn is not None
-    cursor = self.conn.cursor()
-    cursor.execute(
+    row = self._fetchone(
         """
         SELECT id, file_id, project_id, cst_code, cst_hash, file_mtime, created_at, updated_at
         FROM cst_trees
@@ -160,18 +152,5 @@ async def get_cst_tree(self, file_id: int) -> Optional[Dict[str, Any]]:
         """,
         (file_id,),
     )
-    row = cursor.fetchone()
-    if not row:
-        return None
-
-    return {
-        "id": row[0],
-        "file_id": row[1],
-        "project_id": row[2],
-        "cst_code": row[3],
-        "cst_hash": row[4],
-        "file_mtime": row[5],
-        "created_at": row[6],
-        "updated_at": row[7],
-    }
+    return row
 

@@ -79,9 +79,6 @@ class ListCodeEntitiesMCPCommand(BaseMCPCommand):
                 )
 
             # List entities from database
-            assert db.conn is not None
-            cursor = db.conn.cursor()
-            
             entities = []
             
             if not entity_type or entity_type == "class":
@@ -97,9 +94,9 @@ class ListCodeEntitiesMCPCommand(BaseMCPCommand):
                     query += f" LIMIT {limit}"
                 if offset:
                     query += f" OFFSET {offset}"
-                cursor.execute(query, params)
-                for row in cursor.fetchall():
-                    entities.append({"type": "class", **dict(row)})
+                rows = db._fetchall(query, tuple(params))
+                for row in rows:
+                    entities.append({"type": "class", **row})
             
             if not entity_type or entity_type == "function":
                 query = "SELECT func.*, f.path as file_path FROM functions func JOIN files f ON func.file_id = f.id WHERE f.project_id = ?"
@@ -114,9 +111,9 @@ class ListCodeEntitiesMCPCommand(BaseMCPCommand):
                     query += f" LIMIT {limit}"
                 if offset:
                     query += f" OFFSET {offset}"
-                cursor.execute(query, params)
-                for row in cursor.fetchall():
-                    entities.append({"type": "function", **dict(row)})
+                rows = db._fetchall(query, tuple(params))
+                for row in rows:
+                    entities.append({"type": "function", **row})
             
             if not entity_type or entity_type == "method":
                 query = "SELECT m.*, c.name as class_name, f.path as file_path FROM methods m JOIN classes c ON m.class_id = c.id JOIN files f ON c.file_id = f.id WHERE f.project_id = ?"
@@ -131,9 +128,9 @@ class ListCodeEntitiesMCPCommand(BaseMCPCommand):
                     query += f" LIMIT {limit}"
                 if offset:
                     query += f" OFFSET {offset}"
-                cursor.execute(query, params)
-                for row in cursor.fetchall():
-                    entities.append({"type": "method", **dict(row)})
+                rows = db._fetchall(query, tuple(params))
+                for row in rows:
+                    entities.append({"type": "method", **row})
             
             db.close()
             

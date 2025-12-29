@@ -101,7 +101,7 @@ async def _chunk_missing_docstring_files(
 ) -> int:
     """
     Chunk files that currently have no docstring chunks in DB (fallback pass).
-    
+
     **Important**: Only processes files that:
     - Are not marked as deleted
     - Actually exist on disk
@@ -109,9 +109,7 @@ async def _chunk_missing_docstring_files(
     """
     from ..docstring_chunker_pkg import DocstringChunker
 
-    assert database.conn is not None
-    cursor = database.conn.cursor()
-    cursor.execute(
+    rows = database._fetchall(
         """
         SELECT f.id, f.path, f.project_id
         FROM files f
@@ -125,7 +123,6 @@ async def _chunk_missing_docstring_files(
         """,
         (self.project_id, limit),
     )
-    rows = cursor.fetchall()
     if not rows:
         return 0
 
@@ -140,9 +137,9 @@ async def _chunk_missing_docstring_files(
     for row in rows:
         if self._stop_event.is_set():
             break
-        file_id = row[0]
-        file_path = row[1]
-        project_id = row[2]
+        file_id = row["id"]
+        file_path = row["path"]
+        project_id = row["project_id"]
 
         # Check if file exists on disk before attempting to process
         file_path_obj = Path(file_path)
@@ -177,13 +174,11 @@ def _log_missing_docstring_files(
 ) -> None:
     """
     Log files that have no docstring chunks in the database.
-    
+
     **Important**: Only logs files that are not marked as deleted.
     """
     try:
-        assert database.conn is not None
-        cursor = database.conn.cursor()
-        cursor.execute(
+        rows = database._fetchall(
             """
             SELECT f.path
             FROM files f
@@ -197,9 +192,8 @@ def _log_missing_docstring_files(
             """,
             (self.project_id, sample),
         )
-        rows = cursor.fetchall()
         if rows:
-            paths = [row[0] for row in rows]
+            paths = [row["path"] for row in rows]
             # Filter out paths that don't exist on disk (may have been split/refactored)
             existing_paths = [p for p in paths if Path(p).exists()]
             if existing_paths:

@@ -246,7 +246,10 @@ class RestoreDatabaseFromConfigMCPCommand(BaseMCPCommand):
             clear_corruption_marker(db_path)
 
             # Step 4: sequentially analyze configured directories into the same DB
-            db = CodeDatabase(db_path)
+            from ..database import create_driver_config_for_worker
+
+            driver_config = create_driver_config_for_worker(db_path)
+            db = CodeDatabase(driver_config=driver_config)
             cmd = None
             try:
                 from .code_mapper_mcp_command import UpdateIndexesMCPCommand

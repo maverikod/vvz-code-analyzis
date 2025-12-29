@@ -86,9 +86,6 @@ class FindDependenciesMCPCommand(BaseMCPCommand):
             # Find dependencies from database
             # Dependencies table stores file-to-file dependencies
             # For entity dependencies, we search through usages and imports
-            assert db.conn is not None
-            cursor = db.conn.cursor()
-            
             results = []
             
             # Search in usages table for entity usages
@@ -115,8 +112,7 @@ class FindDependenciesMCPCommand(BaseMCPCommand):
                 if offset:
                     usage_query += f" OFFSET {offset}"
                 
-                cursor.execute(usage_query, usage_params)
-                usage_rows = cursor.fetchall()
+                usage_rows = db._fetchall(usage_query, tuple(usage_params))
                 for row in usage_rows:
                     results.append({
                         "type": "usage",
@@ -143,8 +139,7 @@ class FindDependenciesMCPCommand(BaseMCPCommand):
                 if offset:
                     import_query += f" OFFSET {offset}"
                 
-                cursor.execute(import_query, import_params)
-                import_rows = cursor.fetchall()
+                import_rows = db._fetchall(import_query, tuple(import_params))
                 for row in import_rows:
                     results.append({
                         "type": "import",

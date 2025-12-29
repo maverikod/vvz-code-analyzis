@@ -89,9 +89,6 @@ class FindUsagesMCPCommand(BaseMCPCommand):
                 )
 
             # Find usages from database
-            assert db.conn is not None
-            cursor = db.conn.cursor()
-            
             query = "SELECT * FROM usages WHERE file_id IN (SELECT id FROM files WHERE project_id = ?)"
             params = [proj_id]
             
@@ -123,10 +120,9 @@ class FindUsagesMCPCommand(BaseMCPCommand):
             if offset:
                 query += f" OFFSET {offset}"
             
-            cursor.execute(query, params)
-            rows = cursor.fetchall()
+            rows = db._fetchall(query, tuple(params))
             
-            usages = [dict(row) for row in rows]
+            usages = rows
             db.close()
 
             return SuccessResult(

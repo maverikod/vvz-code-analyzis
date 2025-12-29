@@ -182,7 +182,10 @@ class BaseMCPCommand(Command):
 
             # Create database if it doesn't exist
             db_exists = db_path.exists()
-            db = CodeDatabase(db_path)
+            from ..core.database.base import create_driver_config_for_worker
+
+            driver_config = create_driver_config_for_worker(db_path)
+            db = CodeDatabase(driver_config=driver_config)
 
             # Check if database is empty (no projects or no files)
             if auto_analyze:
@@ -194,10 +197,9 @@ class BaseMCPCommand(Command):
                     needs_analysis = True
                 else:
                     try:
-                        assert db.conn is not None
-                        cursor = db.conn.cursor()
-                        cursor.execute("SELECT COUNT(*) FROM projects")
-                        project_count = cursor.fetchone()[0]
+                        # Use driver API instead of direct connection
+                        result = db._fetchone("SELECT COUNT(*) as count FROM projects")
+                        project_count = result["count"] if result else 0
 
                         if project_count == 0:
                             logger.info(
@@ -205,8 +207,8 @@ class BaseMCPCommand(Command):
                             )
                             needs_analysis = True
                         else:
-                            cursor.execute("SELECT COUNT(*) FROM files")
-                            file_count = cursor.fetchone()[0]
+                            result = db._fetchone("SELECT COUNT(*) as count FROM files")
+                            file_count = result["count"] if result else 0
                             if file_count == 0:
                                 logger.info(
                                     "Database exists but has no files, will run analysis"

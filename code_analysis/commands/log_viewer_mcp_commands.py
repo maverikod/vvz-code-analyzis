@@ -154,8 +154,8 @@ class ListWorkerLogsMCPCommand(BaseMCPCommand):
                 },
                 "worker_type": {
                     "type": "string",
-                    "enum": ["file_watcher", "vectorization"],
-                    "description": "Filter by worker type (optional)",
+                    "enum": ["file_watcher", "vectorization", "server"],
+                    "description": "Filter by worker type (file_watcher, vectorization) or server logs (optional)",
                 },
             },
             "required": [],

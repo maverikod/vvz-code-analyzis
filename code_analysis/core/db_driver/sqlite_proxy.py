@@ -1,35 +1,41 @@
 """
 SQLite database driver proxy.
 
-This proxy driver sends database operations to a separate process
-via queuemgr, ensuring thread/process safety.
+This proxy driver sends database operations to a separate process worker,
+ensuring thread/process safety.
+
+Architecture:
+1. Client connects via socket, sends request, receives job_id, disconnects
+2. Client periodically polls server for results
+3. Client sends delete command after receiving results
+4. Server automatically cleans up expired jobs
 
 Author: Vasiliy Zdanovskiy
 email: vasilyvz@gmail.com
 """
 
-import asyncio
 import logging
+import socket
+import json
+import struct
 import time
 import uuid
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-from queuemgr.async_simple_api import AsyncQueueSystem
-from queuemgr.exceptions import ProcessControlError, TimeoutError as QueueTimeoutError
-
 from .base import BaseDatabaseDriver
-from .sqlite_worker_job import SQLiteDatabaseJob
+from ..db_worker_manager import get_db_worker_manager
+from ..exceptions import DatabaseOperationError
 
 logger = logging.getLogger(__name__)
 
 
 class SQLiteDriverProxy(BaseDatabaseDriver):
     """
-    Proxy driver that sends SQLite operations to a separate process via queuemgr.
+    Proxy driver that sends SQLite operations to a separate process worker.
 
     This driver implements the BaseDatabaseDriver interface but delegates
-    all operations to SQLiteDatabaseJob running in a separate process.
+    all operations to a dedicated DB worker process via IPC queues.
     """
 
     @property
@@ -41,292 +47,348 @@ class SQLiteDriverProxy(BaseDatabaseDriver):
         """Initialize SQLite proxy driver."""
         self.conn: Optional[Any] = None  # Not used, kept for compatibility
         self.db_path: Optional[Path] = None
-        self._queue_system: Optional[AsyncQueueSystem] = None
-        self._queue_initialized: bool = False
+        self._socket_path: Optional[str] = None
+        self._worker_initialized: bool = False
         self.command_timeout: float = 30.0
-        self.registry_path: str = "data/queuemgr_registry.jsonl"
+        self.poll_interval: float = 0.1  # Polling interval in seconds (default: 100ms)
+        self.worker_log_path: Optional[str] = None
         self._lastrowid: Optional[int] = None
+        self._socket_timeout: float = 5.0  # Socket connection timeout
 
     def connect(self, config: Dict[str, Any]) -> None:
         """
-        Establish connection to queue system.
+        Establish connection to worker process.
 
         Args:
             config: Configuration dict with:
                 - path: Path to SQLite database file
-                - worker_config (optional): Configuration for queue system:
-                    - registry_path: Path to queuemgr registry file
+                - worker_config (optional): Configuration for worker:
                     - command_timeout: Timeout for commands in seconds
+                    - poll_interval: Polling interval in seconds
+                    - worker_log_path: Path to worker log file
         """
+        logger.info("[SQLITE_PROXY] connect() called")
         if "path" not in config:
             raise ValueError("SQLite proxy driver requires 'path' in config")
 
         self.db_path = Path(config["path"]).resolve()
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
+        logger.info(f"[SQLITE_PROXY] db_path resolved: {self.db_path}")
 
         # Get worker config
         worker_config = config.get("worker_config", {})
-        self.registry_path = worker_config.get("registry_path", self.registry_path)
         self.command_timeout = worker_config.get("command_timeout", self.command_timeout)
+        self.poll_interval = worker_config.get("poll_interval", self.poll_interval)
+        self.worker_log_path = worker_config.get("worker_log_path")
 
-        # Initialize queue system synchronously
-        # We need to ensure queue is ready before returning
-        try:
-            loop = asyncio.get_running_loop()
-            # We're in async context - this is problematic
-            # We'll need to initialize in a separate thread
-            import threading
-            import queue as thread_queue
-            
-            init_queue = thread_queue.Queue()
-            exception_queue = thread_queue.Queue()
-            
-            def init_in_thread():
-                try:
-                    new_loop = asyncio.new_event_loop()
-                    asyncio.set_event_loop(new_loop)
-                    try:
-                        new_loop.run_until_complete(self._initialize_queue_async())
-                        init_queue.put(True)
-                    finally:
-                        new_loop.close()
-                except Exception as e:
-                    exception_queue.put(e)
-            
-            thread = threading.Thread(target=init_in_thread)
-            thread.start()
-            thread.join(timeout=10.0)  # 10 second timeout
-            
-            if not exception_queue.empty():
-                raise exception_queue.get()
-            if init_queue.empty():
-                raise RuntimeError("Queue initialization timed out")
-        except RuntimeError:
-            # No running loop, create new one
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            try:
-                loop.run_until_complete(self._initialize_queue_async())
-            finally:
-                loop.close()
+        # Start worker process
+        self._start_worker()
 
-        logger.info(f"SQLite proxy driver connected to database: {self.db_path}")
+        logger.info(f"[SQLITE_PROXY] SQLite proxy driver connected to database: {self.db_path}")
 
-    async def _initialize_queue_async(self) -> None:
-        """Initialize queue system asynchronously."""
-        if self._queue_initialized:
+    def _start_worker(self) -> None:
+        """Connect to existing DB worker process via global manager."""
+        if self._worker_initialized and self._socket_path:
+            logger.info("[SQLITE_PROXY] Worker already initialized")
             return
 
-        try:
-            self._queue_system = AsyncQueueSystem(
-                registry_path=self.registry_path,
-                shutdown_timeout=30.0,
-                command_timeout=self.command_timeout,
-            )
-            await self._queue_system.start()
-            self._queue_initialized = True
-            logger.info("Queue system initialized for SQLite proxy driver")
-            
-            # Register queue system in WorkerManager
-            try:
-                from ..worker_manager import get_worker_manager
-                worker_manager = get_worker_manager()
-                worker_manager.register_worker(
-                    "sqlite_queue",
-                    {
-                        "queue_system": self._queue_system,
-                        "name": f"sqlite_queue_{id(self._queue_system)}",
-                        "db_path": str(self.db_path),
-                    }
-                )
-            except Exception as e:
-                logger.warning(f"Failed to register SQLite queue in WorkerManager: {e}")
-        except Exception as e:
-            logger.error(f"Failed to initialize queue system: {e}", exc_info=True)
-            raise RuntimeError(f"Failed to initialize queue system: {e}") from e
+        logger.info("[SQLITE_PROXY] Connecting to DB worker via manager")
 
-    def _ensure_queue_initialized(self) -> None:
-        """Ensure queue system is initialized."""
-        if not self._queue_initialized or self._queue_system is None:
-            # Try to initialize synchronously
-            try:
-                loop = asyncio.get_running_loop()
-                # If we're in async context, we need to wait
-                # This is a limitation - we should be called from async context
-                raise RuntimeError(
-                    "Queue system not initialized. "
-                    "Ensure connect() was called and completed."
-                )
-            except RuntimeError:
-                # No running loop, create new one
-                loop = asyncio.new_event_loop()
-                asyncio.set_event_loop(loop)
-                try:
-                    loop.run_until_complete(self._initialize_queue_async())
-                finally:
-                    loop.close()
+        # Get existing worker or start new one via global manager
+        # Note: Worker should be started from main process, not from daemon workers
+        # If worker doesn't exist, manager will start it (but this should be rare)
+        worker_manager = get_db_worker_manager()
+        worker_info = worker_manager.get_or_start_worker(
+            str(self.db_path),
+            self.worker_log_path,
+        )
 
-    async def _execute_operation(
-        self, operation: str, **kwargs: Any
-    ) -> Any:
+        self._socket_path = worker_info["socket_path"]
+        self._worker_initialized = True
+
+        logger.info(f"[SQLITE_PROXY] Connected to DB worker (socket: {self._socket_path})")
+
+    def _ensure_worker_running(self) -> None:
+        """Ensure worker process is running."""
+        if not self._worker_initialized or not self._socket_path:
+            raise RuntimeError("Worker not initialized. Ensure connect() was called.")
+
+        # Check if socket file exists
+        if not Path(self._socket_path).exists():
+            logger.warning("[SQLITE_PROXY] Worker socket not found, reconnecting...")
+            self._worker_initialized = False
+            self._start_worker()
+
+    def _send_request(self, request: Dict[str, Any]) -> Dict[str, Any]:
         """
-        Execute database operation via queue.
+        Send request to worker via socket and receive response.
 
         Args:
-            operation: Operation type (execute, fetchone, fetchall, commit, rollback, lastrowid, get_table_info)
-            **kwargs: Operation-specific parameters
+            request: Request dictionary
+
+        Returns:
+            Response dictionary
+
+        Raises:
+            DatabaseOperationError: If communication fails
+        """
+        sock = None
+        try:
+            sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            sock.settimeout(self._socket_timeout)
+            sock.connect(self._socket_path)
+
+            # Send request
+            data = json.dumps(request).encode('utf-8')
+            length = struct.pack('!I', len(data))
+            sock.sendall(length + data)
+
+            # Receive response
+            length_data = b''
+            while len(length_data) < 4:
+                chunk = sock.recv(4 - len(length_data))
+                if not chunk:
+                    raise DatabaseOperationError(
+                        message="Connection closed by worker",
+                        operation=request.get("command", "unknown"),
+                        db_path=str(self.db_path),
+                    )
+                length_data += chunk
+
+            length = struct.unpack('!I', length_data)[0]
+            data = b''
+            while len(data) < length:
+                chunk = sock.recv(length - len(data))
+                if not chunk:
+                    raise DatabaseOperationError(
+                        message="Connection closed by worker",
+                        operation=request.get("command", "unknown"),
+                        db_path=str(self.db_path),
+                    )
+                data += chunk
+
+            return json.loads(data.decode('utf-8'))
+
+        except socket.timeout:
+            raise DatabaseOperationError(
+                message=f"Socket timeout after {self._socket_timeout}s",
+                operation=request.get("command", "unknown"),
+                db_path=str(self.db_path),
+            )
+        except Exception as e:
+            raise DatabaseOperationError(
+                message=f"Error communicating with worker: {e}",
+                operation=request.get("command", "unknown"),
+                db_path=str(self.db_path),
+                cause=e,
+            ) from e
+        finally:
+            if sock:
+                try:
+                    sock.close()
+                except Exception:
+                    pass
+
+    def _execute_operation(
+        self,
+        operation: str,
+        sql: Optional[str] = None,
+        params: Optional[Tuple[Any, ...]] = None,
+        table_name: Optional[str] = None,
+    ) -> Any:
+        """
+        Execute database operation via worker process.
+
+        Args:
+            operation: Operation type (execute, fetchone, fetchall, commit,
+                rollback, lastrowid, get_table_info)
+            sql: SQL statement (for execute, fetchone, fetchall)
+            params: Query parameters tuple (optional)
+            table_name: Table name (for get_table_info)
 
         Returns:
             Operation result
 
         Raises:
-            RuntimeError: If operation fails
-            TimeoutError: If operation times out
+            DatabaseOperationError: If operation fails or times out
         """
-        self._ensure_queue_initialized()
-
-        if not self._queue_system:
-            raise RuntimeError("Queue system not initialized")
+        self._ensure_worker_running()
 
         # Generate unique job ID
-        job_id = f"sqlite_{operation}_{uuid.uuid4().hex[:8]}"
+        job_id = f"{operation}_{uuid.uuid4().hex[:8]}"
+        logger.debug(f"[SQLITE_PROXY] Executing operation '{operation}' (job_id={job_id})")
 
-        # Prepare job params
-        params: Dict[str, Any] = {
+        # Step 1: Submit job
+        submit_request = {
+            "command": "submit",
+            "job_id": job_id,
             "operation": operation,
-            "db_path": str(self.db_path),
-            **kwargs
         }
+        if sql is not None:
+            submit_request["sql"] = sql
+        if params is not None:
+            submit_request["params"] = params
+        if table_name is not None:
+            submit_request["table_name"] = table_name
 
         try:
-            # Add job to queue
-            await self._queue_system.add_job(SQLiteDatabaseJob, job_id, params)
-
-            # Start job
-            await self._queue_system.start_job(job_id)
-
-            # Wait for completion
-            max_wait = self.command_timeout
-            start_time = time.time()
-            poll_interval = 0.1  # Poll every 100ms
-
-            while time.time() - start_time < max_wait:
-                status = await self._queue_system.get_job_status(job_id)
-
-                job_status = status.get("status", "unknown")
-                
-                if job_status == "completed":
-                    result = status.get("result", {})
-                    if isinstance(result, dict) and result.get("success"):
-                        return result.get("result")
-                    else:
-                        error = result.get("error", "Unknown error") if isinstance(result, dict) else "Unknown error"
-                        raise RuntimeError(f"Database operation failed: {error}")
-                elif job_status == "error":
-                    error_msg = status.get("error", "Unknown error")
-                    raise RuntimeError(f"Job failed: {error_msg}")
-                elif job_status in ("pending", "running"):
-                    # Job is still running, wait a bit
-                    await asyncio.sleep(poll_interval)
-                    continue
-                else:
-                    # Unknown status
-                    await asyncio.sleep(poll_interval)
-                    continue
-
-            # Timeout
-            try:
-                await self._queue_system.stop_job(job_id)
-            except Exception:
-                pass  # Ignore errors when stopping
-            raise TimeoutError(
-                f"Database operation '{operation}' timed out after {max_wait}s"
-            )
-
-        except ProcessControlError as e:
-            raise RuntimeError(f"Queue system error: {e}") from e
-        except Exception as e:
-            # Clean up job on error
-            try:
-                await self._queue_system.delete_job(job_id, force=True)
-            except Exception:
-                pass  # Ignore cleanup errors
+            submit_response = self._send_request(submit_request)
+            if not submit_response.get("success"):
+                error = submit_response.get("error", "Unknown error")
+                raise DatabaseOperationError(
+                    message=f"Failed to submit job: {error}",
+                    operation=operation,
+                    db_path=str(self.db_path),
+                    sql=sql,
+                    params=params,
+                    timeout=self.command_timeout,
+                )
+        except DatabaseOperationError:
             raise
+        except Exception as e:
+            raise DatabaseOperationError(
+                message=f"Failed to submit job: {e}",
+                operation=operation,
+                db_path=str(self.db_path),
+                sql=sql,
+                params=params,
+                timeout=self.command_timeout,
+                cause=e,
+            ) from e
 
-    def _run_async(self, coro: Any) -> Any:
-        """
-        Run async coroutine in current context.
+        # Step 2: Poll for result
+        max_wait = self.command_timeout
+        start_time = time.time()
+        poll_interval = self.poll_interval
 
-        Args:
-            coro: Coroutine to run
+        while time.time() - start_time < max_wait:
+            try:
+                # Poll for result
+                poll_request = {
+                    "command": "poll",
+                    "job_id": job_id,
+                }
+                poll_response = self._send_request(poll_request)
 
-        Returns:
-            Coroutine result
-        """
-        try:
-            loop = asyncio.get_running_loop()
-            # We're in async context - this is a problem
-            # For now, we'll create a new event loop in a thread
-            # This is not ideal but works for the transition period
-            import concurrent.futures
-            import threading
-            
-            result = None
-            exception = None
-            
-            def run_in_thread():
-                nonlocal result, exception
-                try:
-                    new_loop = asyncio.new_event_loop()
-                    asyncio.set_event_loop(new_loop)
+                if not poll_response.get("success"):
+                    error = poll_response.get("error", "Unknown error")
+                    raise DatabaseOperationError(
+                        message=f"Poll failed: {error}",
+                        operation=operation,
+                        db_path=str(self.db_path),
+                        sql=sql,
+                        params=params,
+                        timeout=self.command_timeout,
+                    )
+
+                status = poll_response.get("status")
+                if status == "pending":
+                    # Still processing, wait and poll again
+                    time.sleep(poll_interval)
+                    continue
+                elif status in ("completed", "failed"):
+                    # Job completed, get result
+                    result = poll_response.get("result")
+                    error = poll_response.get("error")
+
+                    # Step 3: Delete job from queue
                     try:
-                        result = new_loop.run_until_complete(coro)
-                    finally:
-                        new_loop.close()
-                except Exception as e:
-                    exception = e
-            
-            thread = threading.Thread(target=run_in_thread)
-            thread.start()
-            thread.join()
-            
-            if exception:
-                raise exception
-            return result
-        except RuntimeError:
-            # No running loop, create new one
-            return asyncio.run(coro)
+                        delete_request = {
+                            "command": "delete",
+                            "job_id": job_id,
+                        }
+                        self._send_request(delete_request)
+                    except Exception as e:
+                        logger.warning(f"Failed to delete job {job_id}: {e}")
+
+                    if status == "failed" or not poll_response.get("success", False):
+                        error_msg = (
+                            error.get("message", str(error)) if isinstance(error, dict) else str(error)
+                        )
+                        logger.error(
+                            f"Database operation '{operation}' failed: {error_msg}",
+                            extra={
+                                "operation": operation,
+                                "db_path": str(self.db_path),
+                                "sql": self._truncate_sql(sql),
+                                "params": params,
+                            },
+                        )
+                        raise DatabaseOperationError(
+                            message=f"Database operation failed: {error_msg}",
+                            operation=operation,
+                            db_path=str(self.db_path),
+                            sql=sql,
+                            params=params,
+                            timeout=self.command_timeout,
+                        )
+
+                    logger.debug(f"[SQLITE_PROXY] Operation '{operation}' completed successfully")
+                    return result
+                else:
+                    raise DatabaseOperationError(
+                        message=f"Unknown job status: {status}",
+                        operation=operation,
+                        db_path=str(self.db_path),
+                        sql=sql,
+                        params=params,
+                        timeout=self.command_timeout,
+                    )
+
+            except DatabaseOperationError:
+                raise
+            except Exception as e:
+                logger.error(
+                    f"Error polling for result: {e}",
+                    extra={
+                        "operation": operation,
+                        "db_path": str(self.db_path),
+                        "job_id": job_id,
+                    },
+                    exc_info=True,
+                )
+                raise DatabaseOperationError(
+                    message=f"Error polling for result: {e}",
+                    operation=operation,
+                    db_path=str(self.db_path),
+                    sql=sql,
+                    params=params,
+                    timeout=self.command_timeout,
+                    cause=e,
+                ) from e
+
+        # Timeout
+        logger.error(
+            f"Database operation '{operation}' timed out after {max_wait}s",
+            extra={
+                "operation": operation,
+                "db_path": str(self.db_path),
+                "sql": self._truncate_sql(sql),
+                "timeout": max_wait,
+                "job_id": job_id,
+            },
+        )
+        raise DatabaseOperationError(
+            message=f"Database operation '{operation}' timed out after {max_wait}s",
+            operation=operation,
+            db_path=str(self.db_path),
+            sql=sql,
+            params=params,
+            timeout=max_wait,
+        )
 
     def disconnect(self) -> None:
-        """Close connection to queue system."""
-        if self._queue_system and self._queue_initialized:
-            try:
-                loop = asyncio.get_event_loop()
-                if loop.is_running():
-                    # Schedule shutdown
-                    asyncio.create_task(self._queue_system.stop())
-                else:
-                    loop.run_until_complete(self._queue_system.stop())
-            except RuntimeError:
-                # No loop, create new one
-                loop = asyncio.new_event_loop()
-                asyncio.set_event_loop(loop)
-                try:
-                    loop.run_until_complete(self._queue_system.stop())
-                finally:
-                    loop.close()
-
-            self._queue_initialized = False
-            self._queue_system = None
-            logger.info("Queue system disconnected for SQLite proxy driver")
+        """Close connection to worker process."""
+        # Don't stop worker here - it's managed globally and may be used by other connections
+        # Worker will be stopped when server shuts down via WorkerManager or atexit handlers
+        self._worker_initialized = False
+        self._socket_path = None
+        logger.info("[SQLITE_PROXY] DB driver disconnected (worker remains running for other connections)")
 
     def execute(self, sql: str, params: Optional[Tuple[Any, ...]] = None) -> None:
         """Execute SQL statement."""
-        result = self._run_async(
-            self._execute_operation("execute", sql=sql, params=params)
-        )
-        # Best-effort: store lastrowid from last execute. SQLiteDatabaseJob returns
-        # {"lastrowid": ..., "rowcount": ...} for execute.
+        result = self._execute_operation("execute", sql=sql, params=params)
+        # Store lastrowid from result
         try:
             if isinstance(result, dict) and "lastrowid" in result:
                 val = result.get("lastrowid")
@@ -338,27 +400,26 @@ class SQLiteDriverProxy(BaseDatabaseDriver):
         self, sql: str, params: Optional[Tuple[Any, ...]] = None
     ) -> Optional[Dict[str, Any]]:
         """Execute SELECT query and return first row."""
-        return self._run_async(
-            self._execute_operation("fetchone", sql=sql, params=params)
-        )
+        result = self._execute_operation("fetchone", sql=sql, params=params)
+        if isinstance(result, dict):
+            return result
+        return None
 
     def fetchall(
         self, sql: str, params: Optional[Tuple[Any, ...]] = None
     ) -> List[Dict[str, Any]]:
         """Execute SELECT query and return all rows."""
-        result = self._run_async(
-            self._execute_operation("fetchall", sql=sql, params=params)
-        )
+        result = self._execute_operation("fetchall", sql=sql, params=params)
         return result if result is not None else []
 
     def commit(self) -> None:
         """Commit current transaction."""
-        # No-op: sqlite worker auto-commits each execute().
+        # No-op: worker auto-commits each execute().
         return None
 
     def rollback(self) -> None:
         """Rollback current transaction."""
-        # No-op: sqlite worker auto-commits each execute().
+        # No-op: worker auto-commits each execute().
         return None
 
     def lastrowid(self) -> Optional[int]:
@@ -379,8 +440,22 @@ class SQLiteDriverProxy(BaseDatabaseDriver):
 
     def get_table_info(self, table_name: str) -> List[Dict[str, Any]]:
         """Get information about table columns."""
-        result = self._run_async(
-            self._execute_operation("get_table_info", table_name=table_name)
-        )
+        result = self._execute_operation("get_table_info", table_name=table_name)
         return result if result is not None else []
 
+    def _truncate_sql(self, sql: Optional[str], max_length: int = 200) -> Optional[str]:
+        """
+        Truncate SQL statement for logging to avoid huge payloads.
+
+        Args:
+            sql: SQL statement to truncate
+            max_length: Maximum length before truncation
+
+        Returns:
+            Truncated SQL statement or None
+        """
+        if not sql:
+            return None
+        if len(sql) <= max_length:
+            return sql
+        return sql[:max_length] + "..."

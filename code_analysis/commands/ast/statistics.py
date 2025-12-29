@@ -62,9 +62,6 @@ class ASTStatisticsMCPCommand(BaseMCPCommand):
                 )
 
             # Get AST statistics from database
-            assert db.conn is not None
-            cursor = db.conn.cursor()
-            
             if file_path:
                 file_record = db.get_file_by_path(file_path, proj_id)
                 if not file_record:
@@ -73,11 +70,11 @@ class ASTStatisticsMCPCommand(BaseMCPCommand):
                         message=f"File not found: {file_path}",
                         code="FILE_NOT_FOUND",
                     )
-                cursor.execute(
-                    "SELECT COUNT(*) FROM ast_trees WHERE file_id = ?",
+                row = db._fetchone(
+                    "SELECT COUNT(*) as count FROM ast_trees WHERE file_id = ?",
                     (file_record["id"],),
                 )
-                ast_count = cursor.fetchone()[0]
+                ast_count = row["count"] if row else 0
                 db.close()
                 return SuccessResult(
                     data={
@@ -88,16 +85,16 @@ class ASTStatisticsMCPCommand(BaseMCPCommand):
                 )
             else:
                 # Project-wide stats
-                cursor.execute(
-                    "SELECT COUNT(*) FROM ast_trees WHERE project_id = ?",
+                row = db._fetchone(
+                    "SELECT COUNT(*) as count FROM ast_trees WHERE project_id = ?",
                     (proj_id,),
                 )
-                ast_count = cursor.fetchone()[0]
-                cursor.execute(
-                    "SELECT COUNT(*) FROM files WHERE project_id = ? AND (deleted = 0 OR deleted IS NULL)",
+                ast_count = row["count"] if row else 0
+                row = db._fetchone(
+                    "SELECT COUNT(*) as count FROM files WHERE project_id = ? AND (deleted = 0 OR deleted IS NULL)",
                     (proj_id,),
                 )
-                file_count = cursor.fetchone()[0]
+                file_count = row["count"] if row else 0
                 db.close()
                 return SuccessResult(
                     data={

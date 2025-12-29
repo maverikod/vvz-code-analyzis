@@ -40,10 +40,8 @@ def create_driver(driver_name: str, config: Dict[str, Any]) -> BaseDatabaseDrive
     Create and initialize database driver.
 
     Args:
-        driver_name: Name of the driver (e.g., 'sqlite', 'sqlite_proxy')
-                     For 'sqlite', checks config for 'use_proxy' flag
+        driver_name: Name of the driver (e.g., 'sqlite', 'sqlite_proxy', 'mysql', 'postgres')
         config: Driver-specific configuration
-                - For 'sqlite': can include 'use_proxy' boolean to use proxy driver
                 - For 'sqlite_proxy': can include 'worker_config' dict
 
     Returns:
@@ -53,37 +51,47 @@ def create_driver(driver_name: str, config: Dict[str, Any]) -> BaseDatabaseDrive
         ValueError: If driver name is not registered
         RuntimeError: If driver initialization fails
     """
-    # Handle automatic proxy selection for sqlite driver
+    logger.info(f"[create_driver] Called with driver_name={driver_name}, config_keys={list(config.keys())}")
+    import os
+
+    # Direct sqlite driver can only be used in DB worker process
     if driver_name == "sqlite":
-        use_proxy = config.get("use_proxy", False)
-        if use_proxy:
-            logger.info("Using proxy driver for sqlite (use_proxy=True)")
-            driver_name = "sqlite_proxy"
-            # Extract worker_config if present
-            worker_config = config.get("worker_config", {})
-            # Keep other config but add worker_config
-            proxy_config = {k: v for k, v in config.items() if k != "use_proxy"}
-            if worker_config:
-                proxy_config["worker_config"] = worker_config
-            config = proxy_config
+        is_worker = os.getenv("CODE_ANALYSIS_DB_WORKER", "0") == "1"
+        logger.info(f"[create_driver] sqlite driver check: is_worker={is_worker}")
+        if not is_worker:
+            logger.error(
+                "Direct 'sqlite' driver can only be used in DB worker process. "
+                "Use 'sqlite_proxy' driver instead."
+            )
+            raise RuntimeError(
+                "Direct SQLite driver can only be used in DB worker process. "
+                "Use sqlite_proxy driver instead."
+            )
 
     if driver_name not in _DRIVERS:
         available = ", ".join(_DRIVERS.keys())
+        logger.error(f"[create_driver] Unknown driver: {driver_name}, available: {available}")
         raise ValueError(
             f"Unknown database driver: {driver_name}. "
             f"Available drivers: {available}"
         )
 
     driver_class = _DRIVERS[driver_name]
-    logger.info(f"Creating database driver: {driver_name}")
+    logger.info(f"[create_driver] Creating database driver: {driver_name}, class={driver_class}")
 
     try:
+        logger.info(f"[create_driver] Instantiating driver class")
+        print(f"[create_driver] Instantiating driver class", flush=True)
         driver = driver_class()
+        logger.info(f"[create_driver] Driver instance created, calling connect() with config")
+        print(f"[create_driver] Driver instance created, calling connect() with config", flush=True)
         driver.connect(config)
-        logger.info(f"Database driver '{driver_name}' initialized successfully")
+        logger.info(f"[create_driver] Database driver '{driver_name}' initialized successfully")
+        print(f"[create_driver] Database driver '{driver_name}' initialized successfully", flush=True)
         return driver
     except Exception as e:
-        logger.error(f"Failed to initialize database driver '{driver_name}': {e}")
+        logger.error(f"[create_driver] Failed to initialize database driver '{driver_name}': {e}", exc_info=True)
+        print(f"[create_driver] Failed to initialize database driver '{driver_name}': {e}", flush=True, file=__import__('sys').stderr)
         raise RuntimeError(f"Database driver initialization failed: {e}") from e
 
 

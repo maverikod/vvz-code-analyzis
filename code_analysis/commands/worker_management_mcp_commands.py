@@ -47,20 +47,21 @@ class StartWorkerMCPCommand(BaseMCPCommand):
     author = "Vasiliy Zdanovskiy"
     email = "vasilyvz@gmail.com"
     use_queue = False
+
     @classmethod
     def get_schema(cls: type["StartWorkerMCPCommand"]) -> Dict[str, Any]:
         """Get JSON schema for command parameters.
 
-    Notes:
-        This schema is used by MCP Proxy for request validation.
-        Keep it strict and deterministic.
+        Notes:
+            This schema is used by MCP Proxy for request validation.
+            Keep it strict and deterministic.
 
-    Args:
-        cls: Command class.
+        Args:
+            cls: Command class.
 
-    Returns:
-        JSON schema dict.
-    """
+        Returns:
+            JSON schema dict.
+        """
         return {
             "type": "object",
             "description": (
@@ -252,19 +253,20 @@ class StopWorkerMCPCommand(BaseMCPCommand):
     author = "Vasiliy Zdanovskiy"
     email = "vasilyvz@gmail.com"
     use_queue = False
+
     @classmethod
     def get_schema(cls: type["StopWorkerMCPCommand"]) -> Dict[str, Any]:
         """Get JSON schema for command parameters.
 
-    Notes:
-        This schema is used by MCP Proxy for request validation.
+        Notes:
+            This schema is used by MCP Proxy for request validation.
 
-    Args:
-        cls: Command class.
+        Args:
+            cls: Command class.
 
-    Returns:
-        JSON schema dict.
-    """
+        Returns:
+            JSON schema dict.
+        """
         return {
             "type": "object",
             "description": "Stop background worker(s) by type.",

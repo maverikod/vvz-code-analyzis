@@ -203,17 +203,15 @@ class FileChangeProcessor:
             result = self.database.mark_file_needs_chunking(file_path, self.project_id)
             if result:
                 # Update last_modified if file exists
-                with self.database._lock:
-                    cursor = self.database.conn.cursor()
-                    cursor.execute(
-                        """
-                        UPDATE files 
-                        SET last_modified = ?, updated_at = julianday('now')
-                        WHERE project_id = ? AND path = ?
-                        """,
-                        (mtime, self.project_id, file_path),
-                    )
-                    self.database.conn.commit()
+                self.database._execute(
+                    """
+                    UPDATE files 
+                    SET last_modified = ?, updated_at = julianday('now')
+                    WHERE project_id = ? AND path = ?
+                    """,
+                    (mtime, self.project_id, file_path),
+                )
+                self.database._commit()
                 logger.debug(
                     f"[QUEUE] File queued for chunking: {file_path} | "
                     f"mtime updated to: {datetime.fromtimestamp(mtime).strftime('%Y-%m-%d %H:%M:%S')}"

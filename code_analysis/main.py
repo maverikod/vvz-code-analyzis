@@ -10,6 +10,11 @@ import sys
 from pathlib import Path
 from typing import Any
 
+# Apply registration patch before importing adapter
+from .core.registration_patch import patch_registration_manager
+
+patch_registration_manager()
+
 from mcp_proxy_adapter.api.core.app_factory import AppFactory
 from mcp_proxy_adapter.core.config.simple_config import SimpleConfig
 from mcp_proxy_adapter.core.server_engine import ServerEngineFactory
@@ -369,15 +374,36 @@ def main() -> None:
             db_path = root_dir / "data" / "code_analysis.db"
 
             # Get project ID (use first project or default)
+            # Use proxy driver since we're in the main server process, not a worker
             try:
+                logger.info(f"[STEP 1] Creating driver config for db_path={db_path}")
                 from code_analysis.core.database import CodeDatabase
+                from code_analysis.core.database.base import create_driver_config_for_worker
 
-                database = CodeDatabase(db_path)
-                cursor = database.conn.cursor()
-                cursor.execute("SELECT id FROM projects ORDER BY created_at LIMIT 1")
-                row = cursor.fetchone()
-                project_id = row[0] if row else None
+                driver_config = create_driver_config_for_worker(
+                    db_path=db_path,
+                    driver_type="sqlite_proxy",
+                )
+                logger.info(f"[STEP 2] Driver config created: type={driver_config.get('type')}")
+                
+                # Override timeout and poll_interval for proxy driver
+                if driver_config.get("type") == "sqlite_proxy":
+                    driver_config["config"]["worker_config"]["command_timeout"] = 60.0
+                    driver_config["config"]["worker_config"]["poll_interval"] = 1.0
+                    logger.info(f"[STEP 3] Proxy driver config updated: timeout=60.0, poll_interval=1.0")
+                
+                logger.info(f"[STEP 4] Creating CodeDatabase instance with driver_config")
+                database = CodeDatabase(driver_config=driver_config)
+                logger.info(f"[STEP 5] CodeDatabase created, executing query to get project_id")
+                
+                row = database._fetchone("SELECT id FROM projects ORDER BY created_at LIMIT 1")
+                logger.info(f"[STEP 6] Query executed, result: {row}")
+                
+                project_id = row["id"] if row else None
+                logger.info(f"[STEP 7] Extracted project_id: {project_id}")
+                
                 database.close()
+                logger.info(f"[STEP 8] Database connection closed")
 
                 if not project_id:
                     logger.warning(
@@ -385,8 +411,8 @@ def main() -> None:
                     )
                     return
             except Exception as e:
-                logger.warning(
-                    f"⚠️  Failed to get project ID: {e}, skipping vectorization worker"
+                logger.error(
+                    f"⚠️  Failed to get project ID at step: {e}", exc_info=True
                 )
                 return
 
@@ -411,7 +437,10 @@ def main() -> None:
 
                 # Rebuild FAISS index from database (vectors are stored in database)
                 logger.info("🔄 Rebuilding FAISS index from database...")
-                database = CodeDatabase(db_path)
+                from code_analysis.core.database.base import create_driver_config_for_worker
+
+                driver_config = create_driver_config_for_worker(db_path)
+                database = CodeDatabase(driver_config=driver_config)
                 try:
                     vectors_count = await faiss_manager.rebuild_from_database(
                         database, svo_client_manager
@@ -559,15 +588,36 @@ def main() -> None:
             db_path = root_dir / "data" / "code_analysis.db"
 
             # Get project ID (use first project or default)
+            # Use proxy driver since we're in the main server process, not a worker
             try:
+                logger.info(f"[STEP 1] Creating driver config for db_path={db_path}")
                 from code_analysis.core.database import CodeDatabase
+                from code_analysis.core.database.base import create_driver_config_for_worker
 
-                database = CodeDatabase(db_path)
-                cursor = database.conn.cursor()
-                cursor.execute("SELECT id FROM projects ORDER BY created_at LIMIT 1")
-                row = cursor.fetchone()
-                project_id = row[0] if row else None
+                driver_config = create_driver_config_for_worker(
+                    db_path=db_path,
+                    driver_type="sqlite_proxy",
+                )
+                logger.info(f"[STEP 2] Driver config created: type={driver_config.get('type')}")
+                
+                # Override timeout and poll_interval for proxy driver
+                if driver_config.get("type") == "sqlite_proxy":
+                    driver_config["config"]["worker_config"]["command_timeout"] = 60.0
+                    driver_config["config"]["worker_config"]["poll_interval"] = 1.0
+                    logger.info(f"[STEP 3] Proxy driver config updated: timeout=60.0, poll_interval=1.0")
+                
+                logger.info(f"[STEP 4] Creating CodeDatabase instance with driver_config")
+                database = CodeDatabase(driver_config=driver_config)
+                logger.info(f"[STEP 5] CodeDatabase created, executing query to get project_id")
+                
+                row = database._fetchone("SELECT id FROM projects ORDER BY created_at LIMIT 1")
+                logger.info(f"[STEP 6] Query executed, result: {row}")
+                
+                project_id = row["id"] if row else None
+                logger.info(f"[STEP 7] Extracted project_id: {project_id}")
+                
                 database.close()
+                logger.info(f"[STEP 8] Database connection closed")
 
                 if not project_id:
                     logger.warning(
@@ -575,8 +625,8 @@ def main() -> None:
                     )
                     return
             except Exception as e:
-                logger.warning(
-                    f"⚠️  Failed to get project ID: {e}, skipping file watcher worker"
+                logger.error(
+                    f"⚠️  Failed to get project ID at step: {e}", exc_info=True
                 )
                 return
 
@@ -643,14 +693,147 @@ def main() -> None:
             )
             logger.error(f"❌ Failed to start file watcher worker: {e}", exc_info=True)
 
+    # Setup logging for main module
+    main_logger = logging.getLogger(__name__)
+    if not main_logger.handlers:
+        # Configure logging if not already configured
+        log_dir = Path(app_config.get("server", {}).get("log_dir", "./logs"))
+        log_dir.mkdir(parents=True, exist_ok=True)
+        log_file = log_dir / "mcp_server.log"
+        
+        handler = logging.FileHandler(log_file, encoding="utf-8")
+        handler.setLevel(logging.INFO)
+        formatter = logging.Formatter(
+            "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+        )
+        handler.setFormatter(formatter)
+        main_logger.addHandler(handler)
+        main_logger.setLevel(logging.INFO)
+    
     if args.daemon:
         import threading
+        import time
 
-        main_logger = logging.getLogger(__name__)
+        def startup_db_worker() -> None:
+            """Start DB worker from main process before other workers."""
+            import logging
+            from pathlib import Path
+            from code_analysis.core.db_worker_manager import get_db_worker_manager
+            from code_analysis.core.config import ServerConfig
+
+            logger = logging.getLogger(__name__)
+            logger.info("🔍 startup_db_worker called")
+
+            try:
+                # Get config from global config instance
+                from mcp_proxy_adapter.config import get_config
+
+                cfg = get_config()
+                app_config = getattr(cfg, "config_data", {})
+                if not app_config:
+                    if hasattr(cfg, "config_path") and cfg.config_path:
+                        import json
+
+                        with open(cfg.config_path, "r", encoding="utf-8") as f:
+                            app_config = json.load(f)
+
+                code_analysis_config = app_config.get("code_analysis", {})
+                if not code_analysis_config:
+                    logger.warning("⚠️  code_analysis config not found, skipping DB worker startup")
+                    return
+
+                server_config = ServerConfig(**code_analysis_config)
+                # Get database path from config or use default
+                root_dir = Path.cwd()
+                db_path = root_dir / "data" / "code_analysis.db"
+
+                # Get log directory for worker log
+                log_dir = Path(app_config.get("server", {}).get("log_dir", "./logs"))
+                worker_log_path = str(log_dir / "db_worker.log")
+
+                # Start DB worker from main process
+                logger.info(f"🚀 Starting DB worker for database: {db_path}")
+                print(f"🚀 Starting DB worker for database: {db_path}", flush=True)
+
+                db_worker_manager = get_db_worker_manager()
+                worker_info = db_worker_manager.get_or_start_worker(
+                    str(db_path),
+                    worker_log_path,
+                )
+
+                logger.info(f"✅ DB worker started (PID: {worker_info['pid']})")
+                print(f"✅ DB worker started (PID: {worker_info['pid']})", flush=True)
+
+            except Exception as e:
+                logger.error(f"❌ Failed to start DB worker: {e}", exc_info=True)
+                print(f"❌ Failed to start DB worker: {e}", flush=True, file=sys.stderr)
 
         def run_startup() -> None:
+            """Start workers after successful registration."""
+            # Start DB worker first (from main process, not daemon)
+            startup_db_worker()
             import asyncio
 
+            # Wait for registration to complete (max 30 seconds)
+            # Registration happens very quickly, so we wait a bit for it to complete
+            max_wait = 30
+            wait_interval = 1
+            waited = 0
+            
+            main_logger.info("🔍 Waiting for server registration before starting workers...")
+            print("🔍 Waiting for server registration before starting workers...", flush=True)
+            
+            # Give registration a moment to complete
+            time.sleep(3)
+            
+            while waited < max_wait:
+                try:
+                    # Check registration status using async function
+                    from mcp_proxy_adapter.api.core.registration_manager.status import (
+                        get_registration_status,
+                    )
+                    
+                    # Use asyncio to check status - create new event loop for thread
+                    try:
+                        loop = asyncio.new_event_loop()
+                        asyncio.set_event_loop(loop)
+                        is_registered = loop.run_until_complete(get_registration_status())
+                        loop.close()
+                    except RuntimeError:
+                        # If event loop already exists, use it
+                        try:
+                            loop = asyncio.get_event_loop()
+                            is_registered = loop.run_until_complete(get_registration_status())
+                        except RuntimeError:
+                            # No event loop, create new one
+                            loop = asyncio.new_event_loop()
+                            asyncio.set_event_loop(loop)
+                            is_registered = loop.run_until_complete(get_registration_status())
+                            loop.close()
+                    
+                    if is_registered:
+                        main_logger.info("✅ Server registered successfully, starting workers...")
+                        print("✅ Server registered successfully, starting workers...", flush=True)
+                        break
+                    
+                    time.sleep(wait_interval)
+                    waited += wait_interval
+                    if waited % 5 == 0:
+                        main_logger.info(f"⏳ Still waiting for registration... ({waited}s/{max_wait}s)")
+                        print(f"⏳ Still waiting for registration... ({waited}s/{max_wait}s)", flush=True)
+                except Exception as e:
+                    main_logger.warning(f"⚠️  Error checking registration status: {e}", exc_info=True)
+                    print(f"⚠️  Error checking registration status: {e}", flush=True, file=sys.stderr)
+                    time.sleep(wait_interval)
+                    waited += wait_interval
+            
+            if waited >= max_wait:
+                main_logger.warning(
+                    "⚠️  Registration timeout, starting workers anyway (may fail if registration not complete)"
+                )
+                print("⚠️  Registration timeout, starting workers anyway", flush=True, file=sys.stderr)
+            
+            # Start vectorization worker
             try:
                 print(
                     "🔍 Background thread: calling startup_vectorization_worker",
@@ -659,7 +842,14 @@ def main() -> None:
                 main_logger.info(
                     "🔍 Background thread: calling startup_vectorization_worker"
                 )
-                asyncio.run(startup_vectorization_worker())
+                try:
+                    loop = asyncio.new_event_loop()
+                    asyncio.set_event_loop(loop)
+                    loop.run_until_complete(startup_vectorization_worker())
+                    loop.close()
+                except RuntimeError:
+                    loop = asyncio.get_event_loop()
+                    loop.run_until_complete(startup_vectorization_worker())
             except Exception as e:
                 print(
                     f"❌ Failed to start vectorization worker: {e}",
@@ -669,15 +859,8 @@ def main() -> None:
                 main_logger.error(
                     f"Failed to start vectorization worker: {e}", exc_info=True
                 )
-
-        main_logger.info("🔍 Starting background thread for vectorization worker")
-        startup_thread = threading.Thread(target=run_startup, daemon=True)
-        startup_thread.start()
-        main_logger.info(f"🔍 Background thread started: {startup_thread.is_alive()}")
-
-        def run_file_watcher_startup() -> None:
-            import asyncio
-
+            
+            # Start file watcher worker
             try:
                 print(
                     "🔍 Background thread: calling startup_file_watcher_worker",
@@ -686,7 +869,14 @@ def main() -> None:
                 main_logger.info(
                     "🔍 Background thread: calling startup_file_watcher_worker"
                 )
-                asyncio.run(startup_file_watcher_worker())
+                try:
+                    loop = asyncio.new_event_loop()
+                    asyncio.set_event_loop(loop)
+                    loop.run_until_complete(startup_file_watcher_worker())
+                    loop.close()
+                except RuntimeError:
+                    loop = asyncio.get_event_loop()
+                    loop.run_until_complete(startup_file_watcher_worker())
             except Exception as e:
                 print(
                     f"❌ Failed to start file watcher worker: {e}",
@@ -697,14 +887,12 @@ def main() -> None:
                     f"Failed to start file watcher worker: {e}", exc_info=True
                 )
 
-        main_logger.info("🔍 Starting background thread for file watcher worker")
-        file_watcher_thread = threading.Thread(
-            target=run_file_watcher_startup, daemon=True
-        )
-        file_watcher_thread.start()
-        main_logger.info(
-            f"🔍 File watcher background thread started: {file_watcher_thread.is_alive()}"
-        )
+        main_logger.info("🔍 Starting background thread for workers (after registration)")
+        print("🔍 Starting background thread for workers (after registration)", flush=True)
+        startup_thread = threading.Thread(target=run_startup, daemon=True)
+        startup_thread.start()
+        main_logger.info(f"🔍 Background thread started: {startup_thread.is_alive()}")
+        print(f"🔍 Background thread started: {startup_thread.is_alive()}", flush=True)
 
     # Prepare server configuration for ServerEngine
     server_config = {

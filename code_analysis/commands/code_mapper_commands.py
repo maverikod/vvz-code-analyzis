@@ -16,7 +16,7 @@ logger = logging.getLogger(__name__)
 class ListLongFilesCommand:
     """
     Command to list files exceeding line limit.
-    
+
     This is equivalent to old code_mapper functionality for finding oversized files.
     """
 
@@ -44,11 +44,8 @@ class ListLongFilesCommand:
             - max_lines: Threshold used
         """
         try:
-            assert self.database.conn is not None
-            cursor = self.database.conn.cursor()
-            
             # Get files exceeding line limit
-            cursor.execute(
+            rows = self.database._fetchall(
                 """
                 SELECT id, path, lines, last_modified, has_docstring
                 FROM files
@@ -59,18 +56,19 @@ class ListLongFilesCommand:
                 """,
                 (self.project_id, self.max_lines),
             )
-            
-            rows = cursor.fetchall()
+
             files = []
             for row in rows:
-                files.append({
-                    "id": row[0],
-                    "path": row[1],
-                    "lines": row[2],
-                    "last_modified": row[3],
-                    "has_docstring": bool(row[4]),
-                })
-            
+                files.append(
+                    {
+                        "id": row["id"],
+                        "path": row["path"],
+                        "lines": row["lines"],
+                        "last_modified": row["last_modified"],
+                        "has_docstring": bool(row["has_docstring"]),
+                    }
+                )
+
             return {
                 "files": files,
                 "count": len(files),
@@ -85,7 +83,7 @@ class ListLongFilesCommand:
 class ListErrorsByCategoryCommand:
     """
     Command to list errors grouped by category.
-    
+
     This is equivalent to old code_mapper functionality for listing code issues.
     """
 
@@ -111,12 +109,9 @@ class ListErrorsByCategoryCommand:
             - total: Total number of issues
         """
         try:
-            assert self.database.conn is not None
-            cursor = self.database.conn.cursor()
-            
             # Get all issues grouped by type
             if self.project_id:
-                cursor.execute(
+                rows = self.database._fetchall(
                     """
                     SELECT i.issue_type, i.id, i.file_id, i.line, i.description, 
                            i.metadata, f.path as file_path
@@ -128,7 +123,7 @@ class ListErrorsByCategoryCommand:
                     (self.project_id, self.project_id),
                 )
             else:
-                cursor.execute(
+                rows = self.database._fetchall(
                     """
                     SELECT i.issue_type, i.id, i.file_id, i.line, i.description, 
                            i.metadata, f.path as file_path
@@ -137,32 +132,31 @@ class ListErrorsByCategoryCommand:
                     ORDER BY i.issue_type, f.path, i.line
                     """,
                 )
-            
-            rows = cursor.fetchall()
-            
+
             # Group by category
             categories: Dict[str, List[Dict[str, Any]]] = {}
             for row in rows:
-                issue_type = row[0]
+                issue_type = row["issue_type"]
                 if issue_type not in categories:
                     categories[issue_type] = []
-                
-                categories[issue_type].append({
-                    "id": row[1],
-                    "file_id": row[2],
-                    "line": row[3],
-                    "description": row[4],
-                    "metadata": row[5],
-                    "file_path": row[6],
-                })
-            
+
+                categories[issue_type].append(
+                    {
+                        "id": row["id"],
+                        "file_id": row["file_id"],
+                        "line": row["line"],
+                        "description": row["description"],
+                        "metadata": row["metadata"],
+                        "file_path": row["file_path"],
+                    }
+                )
+
             # Create summary
             summary = {
-                issue_type: len(issues) 
-                for issue_type, issues in categories.items()
+                issue_type: len(issues) for issue_type, issues in categories.items()
             }
             total = sum(summary.values())
-            
+
             return {
                 "categories": categories,
                 "summary": summary,
@@ -172,4 +166,3 @@ class ListErrorsByCategoryCommand:
         except Exception as e:
             logger.exception(f"Error listing errors by category: {e}")
             raise
-

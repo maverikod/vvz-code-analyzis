@@ -78,9 +78,6 @@ class GetCodeEntityInfoMCPCommand(BaseMCPCommand):
                 )
 
             # Get entity info from database
-            assert db.conn is not None
-            cursor = db.conn.cursor()
-            
             query = None
             params = []
             
@@ -124,12 +121,11 @@ class GetCodeEntityInfoMCPCommand(BaseMCPCommand):
                     code="INVALID_ENTITY_TYPE",
                 )
             
-            cursor.execute(query, params)
-            rows = cursor.fetchall()
+            rows = db._fetchall(query, tuple(params))
             db.close()
 
             if rows:
-                entities = [dict(row) for row in rows]
+                entities = rows
                 return SuccessResult(
                     data={
                         "success": True,

@@ -326,17 +326,15 @@ class FaissIndexManager:
                                 import json
 
                                 embedding_json = json.dumps(embedding.tolist())
-                                with database._lock:
-                                    cursor = database.conn.cursor()
-                                    cursor.execute(
-                                        """
-                                        UPDATE code_chunks
-                                        SET embedding_vector = ?
-                                        WHERE id = ?
-                                        """,
-                                        (embedding_json, chunk.get("id")),
-                                    )
-                                    database.conn.commit()
+                                database._execute(
+                                    """
+                                    UPDATE code_chunks
+                                    SET embedding_vector = ?
+                                    WHERE id = ?
+                                    """,
+                                    (embedding_json, chunk.get("id")),
+                                )
+                                database._commit()
                                 logger.debug(
                                     f"Saved embedding to database for chunk {chunk.get('id')}"
                                 )

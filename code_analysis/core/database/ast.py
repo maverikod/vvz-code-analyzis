@@ -19,16 +19,13 @@ def is_ast_outdated(self, file_id: int, file_mtime: float) -> bool:
     Returns:
         True if AST is outdated or doesn't exist, False otherwise
     """
-    assert self.conn is not None
-    cursor = self.conn.cursor()
-    cursor.execute(
+    row = self._fetchone(
         "\n            SELECT file_mtime FROM ast_trees\n            WHERE file_id = ?\n            ORDER BY updated_at DESC\n            LIMIT 1\n        ",
         (file_id,),
     )
-    row = cursor.fetchone()
     if not row:
         return True
-    db_mtime = row[0]
+    db_mtime = row["file_mtime"]
     return file_mtime > db_mtime
 
 
@@ -55,32 +52,29 @@ def save_ast_tree(
     Returns:
         AST tree ID
     """
-    assert self.conn is not None
-    cursor = self.conn.cursor()
     if overwrite:
-        cursor.execute(
+        self._execute(
             "\n                DELETE FROM ast_trees\n                WHERE file_id = ?\n            ",
             (file_id,),
         )
     if not overwrite:
-        cursor.execute(
+        existing = self._fetchone(
             "\n                SELECT id FROM ast_trees\n                WHERE file_id = ? AND ast_hash = ?\n            ",
             (file_id, ast_hash),
         )
-        existing = cursor.fetchone()
         if existing:
-            cursor.execute(
+            self._execute(
                 "\n                    UPDATE ast_trees\n                    SET ast_json = ?, file_mtime = ?, updated_at = julianday('now')\n                    WHERE id = ?\n                ",
-                (ast_json, file_mtime, existing[0]),
+                (ast_json, file_mtime, existing["id"]),
             )
-            self.conn.commit()
-            return existing[0]
-    cursor.execute(
+            self._commit()
+            return existing["id"]
+    self._execute(
         "\n            INSERT INTO ast_trees\n            (file_id, project_id, ast_json, ast_hash, file_mtime)\n            VALUES (?, ?, ?, ?, ?)\n        ",
         (file_id, project_id, ast_json, ast_hash, file_mtime),
     )
-    self.conn.commit()
-    result = cursor.lastrowid
+    self._commit()
+    result = self._lastrowid()
     assert result is not None
     return result
 
@@ -114,22 +108,8 @@ async def get_ast_tree(self, file_id: int) -> Optional[Dict[str, Any]]:
     Returns:
         AST tree record with JSON or None
     """
-    assert self.conn is not None
-    cursor = self.conn.cursor()
-    cursor.execute(
+    row = self._fetchone(
         "\n            SELECT id, file_id, project_id, ast_json, ast_hash, file_mtime, created_at, updated_at\n            FROM ast_trees\n            WHERE file_id = ?\n            ORDER BY updated_at DESC\n            LIMIT 1\n        ",
         (file_id,),
     )
-    row = cursor.fetchone()
-    if row:
-        return {
-            "id": row[0],
-            "file_id": row[1],
-            "project_id": row[2],
-            "ast_json": row[3],
-            "ast_hash": row[4],
-            "file_mtime": row[5],
-            "created_at": row[6],
-            "updated_at": row[7],
-        }
-    return None
+    return row

@@ -33,14 +33,12 @@ def add_usage(
     Returns:
         Usage ID
     """
-    assert self.conn is not None
-    cursor = self.conn.cursor()
-    cursor.execute(
+    self._execute(
         "\n            INSERT INTO usages\n            (file_id, line, usage_type, target_type, target_class, target_name, context)\n            VALUES (?, ?, ?, ?, ?, ?, ?)\n        ",
         (file_id, line, usage_type, target_type, target_class, target_name, context),
     )
-    self.conn.commit()
-    result = cursor.lastrowid
+    self._commit()
+    result = self._lastrowid()
     assert result is not None
     return result
 
@@ -64,8 +62,6 @@ def find_usages(
     Returns:
         List of usage records with file paths
     """
-    assert self.conn is not None
-    cursor = self.conn.cursor()
     query = "\n            SELECT u.*, f.path as file_path\n            FROM usages u\n            JOIN files f ON u.file_id = f.id\n            WHERE u.target_name = ? AND f.project_id = ?\n        "
     params = [target_name, project_id]
     if target_type:
@@ -75,5 +71,4 @@ def find_usages(
         query += " AND u.target_class = ?"
         params.append(target_class)
     query += " ORDER BY f.path, u.line"
-    cursor.execute(query, params)
-    return [dict(row) for row in cursor.fetchall()]
+    return self._fetchall(query, tuple(params))

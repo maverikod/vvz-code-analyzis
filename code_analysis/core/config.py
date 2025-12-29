@@ -126,37 +126,6 @@ class SVOServiceConfig(BaseModel):
         return self
 
 
-class DatabaseAccessConfig(BaseModel):
-    """Database access configuration for strict worker-only mode."""
-
-    model_config = {"extra": "forbid"}  # Reject unknown fields
-
-    worker_only: bool = Field(
-        default=True,
-        description=(
-            "If True, only DB worker process may access SQLite directly. "
-            "All other code must use driver API (proxy driver). "
-            "Default: True (strict mode enabled)."
-        ),
-    )
-    driver: str = Field(
-        default="sqlite_proxy",
-        description=(
-            "Default driver type to use when creating database connections. "
-            "Options: 'sqlite' (direct, only allowed in worker), 'sqlite_proxy' (via worker). "
-            "Default: 'sqlite_proxy'."
-        ),
-    )
-
-    @field_validator("driver")
-    @classmethod
-    def validate_driver(cls, v: str) -> str:
-        """Validate driver type."""
-        if v not in ("sqlite", "sqlite_proxy"):
-            raise ValueError(f"Driver must be 'sqlite' or 'sqlite_proxy', got: {v}")
-        return v
-
-
 class ServerConfig(BaseModel):
     """MCP server configuration."""
 
@@ -168,10 +137,6 @@ class ServerConfig(BaseModel):
     db_path: Optional[str] = Field(default=None, description="Path to SQLite database")
     dirs: List[ProjectDir] = Field(
         default_factory=list, description="Project directories"
-    )
-    db_access: Optional[DatabaseAccessConfig] = Field(
-        default_factory=lambda: DatabaseAccessConfig(),
-        description="Database access configuration (strict worker-only mode)",
     )
     chunker: Optional[SVOServiceConfig] = Field(
         default=None,

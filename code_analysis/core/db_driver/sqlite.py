@@ -5,6 +5,7 @@ Author: Vasiliy Zdanovskiy
 email: vasilyvz@gmail.com
 """
 
+import os
 import sqlite3
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -24,6 +25,7 @@ class SQLiteDriver(BaseDatabaseDriver):
         """Initialize SQLite driver."""
         self.conn: Optional[sqlite3.Connection] = None
         self.db_path: Optional[Path] = None
+        self._lastrowid: Optional[int] = None
 
     def connect(self, config: Dict[str, Any]) -> None:
         """
@@ -31,9 +33,20 @@ class SQLiteDriver(BaseDatabaseDriver):
 
         Args:
             config: Configuration dict with 'path' key pointing to database file
+
+        Raises:
+            RuntimeError: If code is not running in DB worker process.
         """
         if "path" not in config:
             raise ValueError("SQLite driver requires 'path' in config")
+
+        # Direct SQLite driver can only be used in DB worker process
+        is_worker = os.getenv("CODE_ANALYSIS_DB_WORKER", "0") == "1"
+        if not is_worker:
+            raise RuntimeError(
+                "Direct SQLite driver can only be used in DB worker process. "
+                "Use sqlite_proxy driver instead."
+            )
 
         self.db_path = Path(config["path"]).resolve()
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
@@ -50,6 +63,7 @@ class SQLiteDriver(BaseDatabaseDriver):
         if self.conn:
             self.conn.close()
             self.conn = None
+        self._lastrowid = None
 
     def execute(self, sql: str, params: Optional[Tuple[Any, ...]] = None) -> None:
         """
@@ -67,6 +81,8 @@ class SQLiteDriver(BaseDatabaseDriver):
             cursor.execute(sql, params)
         else:
             cursor.execute(sql)
+        # Store lastrowid for later retrieval
+        self._lastrowid = cursor.lastrowid
 
     def fetchone(
         self, sql: str, params: Optional[Tuple[Any, ...]] = None
@@ -137,10 +153,7 @@ class SQLiteDriver(BaseDatabaseDriver):
         Returns:
             Last inserted row ID or None
         """
-        if not self.conn:
-            raise RuntimeError("Database connection not established")
-        cursor = self.conn.cursor()
-        return cursor.lastrowid
+        return self._lastrowid
 
     def create_schema(self, schema_sql: List[str]) -> None:
         """

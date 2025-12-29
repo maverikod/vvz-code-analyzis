@@ -104,9 +104,10 @@ class FileWatcherWorker:
         )
 
         try:
-            from ..database import CodeDatabase
+            from ..database import CodeDatabase, create_driver_config_for_worker
 
-            database = CodeDatabase(self.db_path)
+            driver_config = create_driver_config_for_worker(self.db_path)
+            database = CodeDatabase(driver_config=driver_config)
             processor = FileChangeProcessor(database, self.project_id, self.version_dir)
 
             while not self._stop_event.is_set():

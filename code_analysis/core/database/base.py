@@ -6,17 +6,54 @@ email: vasilyvz@gmail.com
 """
 
 import uuid
-import os
 from pathlib import Path
 from typing import Dict, List, Any, Optional
 import logging
 import threading
-import traceback
 
 from ..db_driver import create_driver
-from .driver_compat import DriverBackedConnection
 
 logger = logging.getLogger(__name__)
+
+
+def create_driver_config_for_worker(
+    db_path: Path, driver_type: str = "sqlite_proxy"
+) -> Dict[str, Any]:
+    """
+    Create driver configuration for worker processes.
+
+    Args:
+        db_path: Path to database file
+        driver_type: Driver type (default: "sqlite_proxy")
+
+    Returns:
+        Driver configuration dict with 'type' and 'config' keys
+    """
+    resolved_path = Path(db_path).resolve()
+
+    if driver_type == "sqlite_proxy":
+        return {
+            "type": "sqlite_proxy",
+            "config": {
+                "path": str(resolved_path),
+                "worker_config": {
+                    # Default worker config - can be overridden by caller
+                    "registry_path": str(
+                        resolved_path.parent / "queuemgr_registry.jsonl"
+                    ),
+                    "command_timeout": 30.0,
+                    "poll_interval": 0.1,  # Polling interval in seconds (100ms default)
+                },
+            },
+        }
+    else:
+        # For other driver types (mysql, postgres, etc.), use provided type
+        # Config structure depends on driver type
+        return {
+            "type": driver_type,
+            "config": {"path": str(resolved_path)},
+        }
+
 
 # One lock per database (by driver instance or path)
 # This allows concurrent access to different databases while serializing access to the same database
@@ -35,55 +72,41 @@ def _get_db_lock(lock_key: str) -> threading.Lock:
 class CodeDatabase:
     """Database for code analysis data using pluggable drivers."""
 
-    def __init__(
-        self,
-        db_path: Optional[Path] = None,
-        driver_config: Optional[Dict[str, Any]] = None,
-    ) -> None:
+    def __init__(self, driver_config: Dict[str, Any]) -> None:
         """
         Initialize database connection and create schema.
 
         Args:
-            db_path: Path to database file (for backward compatibility, creates SQLite driver)
             driver_config: Driver configuration dict with 'type' and 'config' keys.
-                          If None and db_path provided, uses SQLite driver.
+                          Required. No backward compatibility - must specify driver.
+
+        Raises:
+            ValueError: If driver_config is missing or invalid.
         """
-        # Load driver
-        if driver_config:
-            driver_type = driver_config.get("type", "sqlite")
-            driver_cfg = driver_config.get("config", {})
-        elif db_path:
-            # Backward compatibility: use SQLite driver
-            driver_type = "sqlite"
-            # IMPORTANT:
-            # Use the direct sqlite driver by default for server stability.
-            # Proxy-based access must be explicitly enabled via driver_config
-            # (`{"type": "sqlite", "config": {"use_proxy": True, ...}}`) where needed.
-            resolved = Path(db_path).resolve()
-            driver_cfg = {"path": str(resolved)}
-            self.db_path = resolved
-        else:
-            raise ValueError("Either db_path or driver_config must be provided")
+        logger.info(f"[CodeDatabase] __init__ called with driver_config type={driver_config.get('type') if driver_config else None}")
+        if not driver_config:
+            raise ValueError("driver_config is required. No backward compatibility.")
+
+        driver_type = driver_config.get("type")
+        if not driver_type:
+            raise ValueError("driver_config must contain 'type' key")
+
+        driver_cfg = driver_config.get("config", {})
+        logger.info(f"[CodeDatabase] Creating driver: type={driver_type}, config_keys={list(driver_cfg.keys())}")
+        print(f"[CodeDatabase] Creating driver: type={driver_type}, config_keys={list(driver_cfg.keys())}", flush=True)
 
         try:
+            logger.info(f"[CodeDatabase] Calling create_driver({driver_type}, ...)")
+            print(f"[CodeDatabase] Calling create_driver({driver_type}, ...)", flush=True)
             self.driver = create_driver(driver_type, driver_cfg)
-            logger.info(f"Database driver '{driver_type}' loaded successfully")
+            logger.info(f"[CodeDatabase] Database driver '{driver_type}' loaded successfully")
+            print(f"[CodeDatabase] Database driver '{driver_type}' loaded successfully", flush=True)
         except Exception as e:
-            logger.error(f"Failed to load database driver '{driver_type}': {e}")
+            logger.error(f"[CodeDatabase] Failed to load database driver '{driver_type}': {e}", exc_info=True)
             raise
 
         # Store driver type for logging
         self._driver_type = driver_type
-
-        # Backward compatibility:
-        # Many legacy modules expect `self.conn.cursor().execute(...)`.
-        # For proxy drivers, expose a lightweight driver-backed connection shim.
-        # In strict mode (worker_only=True), accessing .conn will log warnings.
-        driver_conn = getattr(self.driver, "conn", None)
-        if driver_conn is not None:
-            self._conn_impl = driver_conn
-        else:
-            self._conn_impl = DriverBackedConnection(self.driver)
 
         # Use lock only if driver is not thread-safe
         if not self.driver.is_thread_safe:
@@ -94,46 +117,6 @@ class CodeDatabase:
             self._lock = None
 
         self._create_schema()
-
-    @property
-    def conn(self) -> Any:
-        """
-        Legacy connection accessor with logging for migration tracking.
-
-        In strict mode (worker_only=True), this logs a warning to help identify
-        code that needs migration to driver API.
-
-        Returns:
-            Connection object (real sqlite3 connection or DriverBackedConnection shim).
-
-        Note:
-            This property is for backward compatibility only. New code should use
-            driver methods (_execute, _fetchone, _fetchall, _commit) instead.
-        """
-        # Check if strict mode is enabled (via environment variable or config)
-        # For now, use environment variable as a simple way to enable strict mode
-        worker_only = (
-            os.getenv("CODE_ANALYSIS_DB_WORKER_ONLY", "false").lower() == "true"
-        )
-        is_worker = os.getenv("CODE_ANALYSIS_DB_WORKER", "0") == "1"
-
-        # Log access to .conn for migration tracking
-        if worker_only and not is_worker:
-            # In strict mode outside worker, log warning with stack trace
-            stack = "".join(traceback.format_stack()[:-1])  # Exclude this property call
-            logger.warning(
-                f"⚠️  Legacy .conn access detected (strict mode enabled, not in worker). "
-                f"Driver type: {self._driver_type}. "
-                f"Stack trace:\n{stack}"
-            )
-        else:
-            # In non-strict mode or in worker, log at debug level
-            logger.debug(
-                f"Legacy .conn access (worker_only={worker_only}, is_worker={is_worker}, "
-                f"driver={self._driver_type})"
-            )
-
-        return self._conn_impl
 
     def __getattr__(self, name: str) -> Any:
         """

@@ -7,6 +7,7 @@ email: vasilyvz@gmail.com
 
 import argparse
 import sys
+from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
 
@@ -273,6 +274,91 @@ def main() -> None:
     if hasattr(cfg, "feature_manager"):
         cfg.feature_manager.config_data = cfg.config_data
 
+    # Initialize worker manager
+    from code_analysis.core.worker_manager import get_worker_manager
+
+    worker_manager = get_worker_manager()
+
+    # Create lifespan context manager for automatic worker startup
+    @asynccontextmanager
+    async def lifespan(app_instance):
+        """Lifespan context manager for automatic worker startup and shutdown."""
+        import multiprocessing
+        import logging
+        from pathlib import Path
+        from code_analysis.core.db_worker_manager import get_db_worker_manager
+        from code_analysis.core.config import ServerConfig
+
+        logger = logging.getLogger(__name__)
+        logger.info("🚀 Server startup: initializing workers...")
+
+        # Start DB worker first (required for other workers)
+        try:
+            from mcp_proxy_adapter.config import get_config
+
+            cfg = get_config()
+            app_config_lifespan = getattr(cfg, "config_data", {})
+            if not app_config_lifespan:
+                if hasattr(cfg, "config_path") and cfg.config_path:
+                    import json
+
+                    with open(cfg.config_path, "r", encoding="utf-8") as f:
+                        app_config_lifespan = json.load(f)
+
+            code_analysis_config = app_config_lifespan.get("code_analysis", {})
+            if code_analysis_config:
+                server_config = ServerConfig(**code_analysis_config)
+                root_dir = Path.cwd()
+                db_path = root_dir / "data" / "code_analysis.db"
+
+                log_dir = Path(app_config_lifespan.get("server", {}).get("log_dir", "./logs"))
+                worker_log_path = str(log_dir / "db_worker.log")
+
+                logger.info(f"🚀 Starting DB worker for database: {db_path}")
+                db_worker_manager = get_db_worker_manager()
+                worker_info = db_worker_manager.get_or_start_worker(
+                    str(db_path),
+                    worker_log_path,
+                )
+                logger.info(f"✅ DB worker started (PID: {worker_info['pid']})")
+        except Exception as e:
+            logger.error(f"❌ Failed to start DB worker: {e}", exc_info=True)
+
+        # Start vectorization and file watcher workers
+        await startup_vectorization_worker()
+        await startup_file_watcher_worker()
+
+        logger.info("✅ All workers started successfully")
+
+        yield  # Server is running
+
+        # Shutdown: cleanup workers
+        logger.info("🛑 Server shutdown: stopping all workers...")
+        try:
+            shutdown_cfg = (
+                app_config_lifespan.get("process_management")
+                or app_config_lifespan.get("server_manager")
+                or {}
+            )
+            shutdown_timeout = 30.0
+            if isinstance(shutdown_cfg, dict):
+                try:
+                    val = shutdown_cfg.get("shutdown_grace_seconds")
+                    if isinstance(val, (int, float)) and float(val) > 0:
+                        shutdown_timeout = float(val)
+                except Exception:
+                    shutdown_timeout = 30.0
+
+            shutdown_result = worker_manager.stop_all_workers(timeout=shutdown_timeout)
+            if shutdown_result.get("total_failed", 0) > 0:
+                logger.warning(
+                    f"⚠️  Some workers failed to stop: {shutdown_result.get('message')}"
+                )
+            else:
+                logger.info(f"✅ All workers stopped: {shutdown_result.get('message')}")
+        except Exception as e:
+            logger.error(f"❌ Error stopping workers: {e}", exc_info=True)
+
     # Create FastAPI app using AppFactory
     app_factory = AppFactory()
     app = app_factory.create_app(
@@ -298,10 +384,20 @@ def main() -> None:
         config_path=str(config_path),
     )
 
-    # Initialize worker manager
-    from code_analysis.core.worker_manager import get_worker_manager
-
-    worker_manager = get_worker_manager()
+    # Add lifespan context manager to app (FastAPI supports this via router)
+    # Note: This wraps the existing lifespan if any, or adds new one
+    if hasattr(app.router, "lifespan_context") and app.router.lifespan_context:
+        # If app already has lifespan, we need to wrap it
+        original_lifespan = app.router.lifespan_context
+        @asynccontextmanager
+        async def wrapped_lifespan(app_instance):
+            async with original_lifespan(app_instance):
+                async with lifespan(app_instance):
+                    yield
+        app.router.lifespan_context = wrapped_lifespan
+    else:
+        # No existing lifespan, just set ours
+        app.router.lifespan_context = lifespan
 
     # Store worker manager in app state for shutdown
     app.state.worker_manager = worker_manager
@@ -311,7 +407,6 @@ def main() -> None:
     # Registration happens automatically via AppFactory if auto_on_startup is enabled
 
     # Start vectorization worker on startup
-    # Note: on_event("startup") is deprecated, so we'll call this from lifespan
     async def startup_vectorization_worker() -> None:
         """Start vectorization worker in background process on server startup."""
         import multiprocessing
@@ -694,6 +789,7 @@ def main() -> None:
             logger.error(f"❌ Failed to start file watcher worker: {e}", exc_info=True)
 
     # Setup logging for main module
+    import logging
     main_logger = logging.getLogger(__name__)
     if not main_logger.handlers:
         # Configure logging if not already configured
@@ -709,190 +805,6 @@ def main() -> None:
         handler.setFormatter(formatter)
         main_logger.addHandler(handler)
         main_logger.setLevel(logging.INFO)
-    
-    if args.daemon:
-        import threading
-        import time
-
-        def startup_db_worker() -> None:
-            """Start DB worker from main process before other workers."""
-            import logging
-            from pathlib import Path
-            from code_analysis.core.db_worker_manager import get_db_worker_manager
-            from code_analysis.core.config import ServerConfig
-
-            logger = logging.getLogger(__name__)
-            logger.info("🔍 startup_db_worker called")
-
-            try:
-                # Get config from global config instance
-                from mcp_proxy_adapter.config import get_config
-
-                cfg = get_config()
-                app_config = getattr(cfg, "config_data", {})
-                if not app_config:
-                    if hasattr(cfg, "config_path") and cfg.config_path:
-                        import json
-
-                        with open(cfg.config_path, "r", encoding="utf-8") as f:
-                            app_config = json.load(f)
-
-                code_analysis_config = app_config.get("code_analysis", {})
-                if not code_analysis_config:
-                    logger.warning("⚠️  code_analysis config not found, skipping DB worker startup")
-                    return
-
-                server_config = ServerConfig(**code_analysis_config)
-                # Get database path from config or use default
-                root_dir = Path.cwd()
-                db_path = root_dir / "data" / "code_analysis.db"
-
-                # Get log directory for worker log
-                log_dir = Path(app_config.get("server", {}).get("log_dir", "./logs"))
-                worker_log_path = str(log_dir / "db_worker.log")
-
-                # Start DB worker from main process
-                logger.info(f"🚀 Starting DB worker for database: {db_path}")
-                print(f"🚀 Starting DB worker for database: {db_path}", flush=True)
-
-                db_worker_manager = get_db_worker_manager()
-                worker_info = db_worker_manager.get_or_start_worker(
-                    str(db_path),
-                    worker_log_path,
-                )
-
-                logger.info(f"✅ DB worker started (PID: {worker_info['pid']})")
-                print(f"✅ DB worker started (PID: {worker_info['pid']})", flush=True)
-
-            except Exception as e:
-                logger.error(f"❌ Failed to start DB worker: {e}", exc_info=True)
-                print(f"❌ Failed to start DB worker: {e}", flush=True, file=sys.stderr)
-
-        def run_startup() -> None:
-            """Start workers after successful registration."""
-            # Start DB worker first (from main process, not daemon)
-            startup_db_worker()
-            import asyncio
-
-            # Wait for registration to complete (max 30 seconds)
-            # Registration happens very quickly, so we wait a bit for it to complete
-            max_wait = 30
-            wait_interval = 1
-            waited = 0
-            
-            main_logger.info("🔍 Waiting for server registration before starting workers...")
-            print("🔍 Waiting for server registration before starting workers...", flush=True)
-            
-            # Give registration a moment to complete
-            time.sleep(3)
-            
-            while waited < max_wait:
-                try:
-                    # Check registration status using async function
-                    from mcp_proxy_adapter.api.core.registration_manager.status import (
-                        get_registration_status,
-                    )
-                    
-                    # Use asyncio to check status - create new event loop for thread
-                    try:
-                        loop = asyncio.new_event_loop()
-                        asyncio.set_event_loop(loop)
-                        is_registered = loop.run_until_complete(get_registration_status())
-                        loop.close()
-                    except RuntimeError:
-                        # If event loop already exists, use it
-                        try:
-                            loop = asyncio.get_event_loop()
-                            is_registered = loop.run_until_complete(get_registration_status())
-                        except RuntimeError:
-                            # No event loop, create new one
-                            loop = asyncio.new_event_loop()
-                            asyncio.set_event_loop(loop)
-                            is_registered = loop.run_until_complete(get_registration_status())
-                            loop.close()
-                    
-                    if is_registered:
-                        main_logger.info("✅ Server registered successfully, starting workers...")
-                        print("✅ Server registered successfully, starting workers...", flush=True)
-                        break
-                    
-                    time.sleep(wait_interval)
-                    waited += wait_interval
-                    if waited % 5 == 0:
-                        main_logger.info(f"⏳ Still waiting for registration... ({waited}s/{max_wait}s)")
-                        print(f"⏳ Still waiting for registration... ({waited}s/{max_wait}s)", flush=True)
-                except Exception as e:
-                    main_logger.warning(f"⚠️  Error checking registration status: {e}", exc_info=True)
-                    print(f"⚠️  Error checking registration status: {e}", flush=True, file=sys.stderr)
-                    time.sleep(wait_interval)
-                    waited += wait_interval
-            
-            if waited >= max_wait:
-                main_logger.warning(
-                    "⚠️  Registration timeout, starting workers anyway (may fail if registration not complete)"
-                )
-                print("⚠️  Registration timeout, starting workers anyway", flush=True, file=sys.stderr)
-            
-            # Start vectorization worker
-            try:
-                print(
-                    "🔍 Background thread: calling startup_vectorization_worker",
-                    flush=True,
-                )
-                main_logger.info(
-                    "🔍 Background thread: calling startup_vectorization_worker"
-                )
-                try:
-                    loop = asyncio.new_event_loop()
-                    asyncio.set_event_loop(loop)
-                    loop.run_until_complete(startup_vectorization_worker())
-                    loop.close()
-                except RuntimeError:
-                    loop = asyncio.get_event_loop()
-                    loop.run_until_complete(startup_vectorization_worker())
-            except Exception as e:
-                print(
-                    f"❌ Failed to start vectorization worker: {e}",
-                    flush=True,
-                    file=sys.stderr,
-                )
-                main_logger.error(
-                    f"Failed to start vectorization worker: {e}", exc_info=True
-                )
-            
-            # Start file watcher worker
-            try:
-                print(
-                    "🔍 Background thread: calling startup_file_watcher_worker",
-                    flush=True,
-                )
-                main_logger.info(
-                    "🔍 Background thread: calling startup_file_watcher_worker"
-                )
-                try:
-                    loop = asyncio.new_event_loop()
-                    asyncio.set_event_loop(loop)
-                    loop.run_until_complete(startup_file_watcher_worker())
-                    loop.close()
-                except RuntimeError:
-                    loop = asyncio.get_event_loop()
-                    loop.run_until_complete(startup_file_watcher_worker())
-            except Exception as e:
-                print(
-                    f"❌ Failed to start file watcher worker: {e}",
-                    flush=True,
-                    file=sys.stderr,
-                )
-                main_logger.error(
-                    f"Failed to start file watcher worker: {e}", exc_info=True
-                )
-
-        main_logger.info("🔍 Starting background thread for workers (after registration)")
-        print("🔍 Starting background thread for workers (after registration)", flush=True)
-        startup_thread = threading.Thread(target=run_startup, daemon=True)
-        startup_thread.start()
-        main_logger.info(f"🔍 Background thread started: {startup_thread.is_alive()}")
-        print(f"🔍 Background thread started: {startup_thread.is_alive()}", flush=True)
 
     # Prepare server configuration for ServerEngine
     server_config = {
@@ -926,9 +838,6 @@ def main() -> None:
     # Register shutdown handlers for worker cleanup (before server starts)
     import atexit
     import signal
-    import logging
-
-    main_logger = logging.getLogger(__name__)
 
     def cleanup_workers() -> None:
         """Cleanup all workers on server exit.
@@ -979,6 +888,7 @@ def main() -> None:
         sys.exit(0)
 
     # Register handlers (before server starts, after app creation)
+    # Note: Workers are started via lifespan context manager, cleanup is handled there too
     atexit.register(cleanup_workers)
     signal.signal(signal.SIGTERM, signal_handler)
     signal.signal(signal.SIGINT, signal_handler)

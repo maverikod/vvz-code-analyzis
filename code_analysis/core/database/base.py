@@ -38,9 +38,6 @@ def create_driver_config_for_worker(
                 "path": str(resolved_path),
                 "worker_config": {
                     # Default worker config - can be overridden by caller
-                    "registry_path": str(
-                        resolved_path.parent / "queuemgr_registry.jsonl"
-                    ),
                     "command_timeout": 30.0,
                     "poll_interval": 0.1,  # Polling interval in seconds (100ms default)
                 },

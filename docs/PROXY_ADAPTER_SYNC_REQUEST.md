@@ -5,6 +5,19 @@ email: vasilyvz@gmail.com
 
 ## Proxy / Adapter sync request
 
+## Status
+
+**FIXED upstream in `mcp_proxy_adapter` (current `.venv` state).**
+
+- `/health.components.proxy_registration` now reports status using
+  `mcp_proxy_adapter.api.core.registration_manager.get_registration_snapshot_sync()`
+  (single source of truth).
+- `AuthManager.get_headers()` exists again, so legacy registration client no longer
+  crashes with `AttributeError`.
+
+This document is kept as historical context for what was out of sync and what was
+requested from adapter/proxy developers.
+
 ## Summary
 
 There are **two different proxy registration implementations** living in `mcp_proxy_adapter`, and they are currently **out of sync**:
@@ -15,7 +28,8 @@ There are **two different proxy registration implementations** living in `mcp_pr
 As a result:
 
 - Server registration in MCP-Proxy **works** (confirmed by registration logs and by MCP-Proxy server list).
-- `/health` still reports `components.proxy_registration.enabled=false` and `registered=false`, because it reads status from the legacy path which is not initialized and/or broken.
+- Previously, `/health` could report `components.proxy_registration.enabled=false` and `registered=false`
+  due to reading status from a legacy path. This is now fixed upstream.
 
 ## Evidence (code references)
 
@@ -41,14 +55,14 @@ Yet `/health` reports:
 
 This mismatch is expected given the two independent registration systems above.
 
-## Bug 1: `core/proxy/registration_client.py` is calling a non-existing AuthManager API
+## Bug 1 (fixed): `core/proxy/registration_client.py` was calling a non-existing AuthManager API
 
 From logs (stacktrace):
 
 - `AttributeError: 'AuthManager' object has no attribute 'get_headers'`
 - Location: `mcp_proxy_adapter/core/proxy/registration_client.py` calls `headers = self.auth_manager.get_headers()`.
 
-This indicates `RegistrationClient` and `AuthManager` implementations are not aligned.
+This indicated `RegistrationClient` and `AuthManager` implementations were not aligned. Fixed upstream.
 
 ## Bug 2: Confusing builtin command `proxy_registration`
 

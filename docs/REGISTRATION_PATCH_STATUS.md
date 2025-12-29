@@ -4,6 +4,14 @@
 **Email**: vasilyvz@gmail.com  
 **Date**: 2025-12-29
 
+## Update (2025-12-30)
+
+`code_analysis/core/registration_patch.py` was **removed** because the upstream `mcp_proxy_adapter`
+was fixed (health status now reads from `api.core.registration_manager` snapshot; legacy auth API
+`AuthManager.get_headers()` exists again).
+
+This file is kept for historical troubleshooting context.
+
 ## Current Status
 
 ### ✅ Server Status
@@ -31,12 +39,10 @@ The error occurs in `prepare_registration_context` function in `context_builder.
 And in `metadata_builders.py`:
 - Line 72: `uuid_value = registration_config.get("instance_uuid") or config.get("uuid")`
 
-### Patch Implementation
-The patch (`code_analysis/core/registration_patch.py`) handles:
-1. ✅ Detection of `RegistrationContext` type
-2. ✅ Conversion to dict using stored config
-3. ✅ Fallback to empty dict if no config available
-4. ✅ Logging of config type for debugging
+### Patch Implementation (historical)
+
+The patch (`code_analysis/core/registration_patch.py`) was used temporarily during investigation,
+but is no longer present in the repository.
 
 ### Current Behavior
 - Patch is applied successfully (visible in logs: `🔍 [PATCH] register_with_proxy called with config type: dict`)

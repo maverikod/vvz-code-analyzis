@@ -11,11 +11,6 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any, AsyncIterator
 
-# Apply registration patch before importing adapter
-from .core.registration_patch import patch_registration_manager
-
-patch_registration_manager()
-
 from mcp_proxy_adapter.api.core.app_factory import AppFactory  # noqa: E402
 from mcp_proxy_adapter.core.config.simple_config import SimpleConfig  # noqa: E402
 from mcp_proxy_adapter.core.server_engine import ServerEngineFactory  # noqa: E402

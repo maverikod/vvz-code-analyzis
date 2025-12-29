@@ -4,13 +4,19 @@
 **Email**: vasilyvz@gmail.com  
 **Date**: 2025-12-29
 
+## Update (2025-12-30)
+
+The upstream `mcp_proxy_adapter` has been fixed; `code_analysis/core/registration_patch.py` was
+removed and is no longer part of the server startup path. This document is kept as historical
+context for the investigation and resolution at that time.
+
 ## Problem Summary
 
 Server was failing to start properly - port 15000 was not listening, preventing OpenAPI schema access and API calls.
 
 ## Root Cause
 
-The issue was in the registration patch (`code_analysis/core/registration_patch.py`):
+The issue was in the registration patch (`code_analysis/core/registration_patch.py`, now removed):
 
 1. **Error**: `'RegistrationContext' object has no attribute 'get'`
    - The patch was trying to use `config.get("registration", {})` 

@@ -3,8 +3,8 @@ SVO client manager.
 
 This module provides a single integration point for "SVO" services used by this
 project:
-- embedding service (vectorization)
-- (optionally) chunker service
+- chunker service (SVO) - chunks text and returns chunks with embeddings
+- embedding service (embed-client) - only vectorization (embeddings)
 
 The codebase relies on `SVOClientManager` during startup and in the vectorization
 worker. Historically it referenced `code_analysis.core.svo_client_manager`, but
@@ -18,15 +18,31 @@ email: vasilyvz@gmail.com
 from __future__ import annotations
 
 import asyncio
-import hashlib
 import logging
 import time
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Iterable, List, Optional
 
-import numpy as np
-
 logger = logging.getLogger(__name__)
+
+# Try to import embed_client (vectorization only)
+try:
+    from embed_client.async_client import EmbeddingServiceAsyncClient
+    from embed_client.client_factory import ClientFactory
+    EMBED_CLIENT_AVAILABLE = True
+except ImportError:
+    EmbeddingServiceAsyncClient = None  # type: ignore
+    ClientFactory = None  # type: ignore
+    EMBED_CLIENT_AVAILABLE = False
+
+# Try to import svo_client (chunker - chunks and vectorizes)
+try:
+    from svo_client import ChunkerClient
+    CHUNKER_CLIENT_AVAILABLE = True
+except ImportError:
+    ChunkerClient = None  # type: ignore
+    CHUNKER_CLIENT_AVAILABLE = False
 
 
 @dataclass(frozen=True)
@@ -47,16 +63,17 @@ class CircuitState:
 
 class SVOClientManager:
     """
-    Manager for SVO service clients (embeddings / chunker).
+    Manager for SVO service clients (chunker and embedding).
 
-    This manager is intentionally robust: if an external embedding service is
-    unavailable or not configured, it falls back to deterministic pseudo-embeddings.
-    That ensures the following commands remain operational:
-    - `update_indexes` (rebuilds FAISS)
-    - `semantic_search` (can search with FAISS even without external embeddings)
+    - Chunker (SVO): Chunks text and returns chunks with embeddings (for docstrings)
+    - Embedding (embed-client): Only vectorization (for search queries)
+
+    This manager requires real services to be available and configured.
+    No fallback mechanisms - if service is unavailable, exceptions are raised.
 
     Attributes:
         vector_dim: Target embedding dimensionality.
+        chunker_enabled: Whether chunker service is enabled by config.
         embedding_enabled: Whether embedding service is enabled by config.
         failure_threshold: Failure count threshold to open the circuit breaker.
         recovery_timeout: Seconds to wait before transitioning open -> half_open.
@@ -65,21 +82,25 @@ class SVOClientManager:
         backoff_multiplier: Multiplier for exponential backoff.
     """
 
-    def __init__(self, server_config: Any):
+    def __init__(self, server_config: Any, root_dir: Optional[str | Path] = None):
         """
         Initialize SVO client manager from server config.
 
         Args:
             server_config: Parsed config model or dict. The manager expects
                 `code_analysis.embedding` and `code_analysis.vector_dim` keys when a dict.
+            root_dir: Optional root directory path for resolving relative certificate paths.
+                If not provided, will try to infer from config (db_path or log path).
         """
 
         cfg = self._to_dict(server_config)
         ca_cfg = cfg.get("code_analysis") or {}
+        chunker_cfg = ca_cfg.get("chunker") or {}
         emb_cfg = ca_cfg.get("embedding") or {}
         worker_cfg = (ca_cfg.get("worker") or {}).get("circuit_breaker") or {}
 
         self.vector_dim: int = int(ca_cfg.get("vector_dim", 384))
+        self.chunker_enabled: bool = bool(chunker_cfg.get("enabled", False))
         self.embedding_enabled: bool = bool(emb_cfg.get("enabled", False))
 
         self.failure_threshold: int = int(worker_cfg.get("failure_threshold", 5))
@@ -97,8 +118,50 @@ class SVOClientManager:
         self._opened_at: Optional[float] = None
         self._half_open_successes: int = 0
 
-        # Keep original cfg for potential future extension (real HTTP client)
+        # Keep original cfg for client creation
         self._config: dict[str, Any] = cfg
+
+        # Chunker client (SVO - chunks and vectorizes)
+        self._chunker_client: Optional[Any] = None
+
+        # Extract chunker configuration
+        self._chunker_url: str = str(chunker_cfg.get("url") or chunker_cfg.get("host") or "localhost")
+        self._chunker_port: int = int(chunker_cfg.get("port", 8009))
+        self._chunker_protocol: str = str(chunker_cfg.get("protocol", "http"))
+        self._chunker_cert_file: Optional[str] = chunker_cfg.get("cert_file")
+        self._chunker_key_file: Optional[str] = chunker_cfg.get("key_file")
+        self._chunker_ca_cert_file: Optional[str] = chunker_cfg.get("ca_cert_file")
+        self._chunker_crl_file: Optional[str] = chunker_cfg.get("crl_file")
+        self._chunker_timeout: Optional[float] = chunker_cfg.get("timeout")
+
+        # Embedding client (embed-client - only vectorization)
+        self._embedding_client: Optional[Any] = None
+
+        # Extract embedding configuration
+        self._embedding_url: str = str(emb_cfg.get("url") or emb_cfg.get("host") or "localhost")
+        self._embedding_port: int = int(emb_cfg.get("port", 8001))
+        self._embedding_protocol: str = str(emb_cfg.get("protocol", "http"))
+        # Store certificate paths as-is (will be resolved relative to config file location if needed)
+        self._embedding_cert_file: Optional[str] = emb_cfg.get("cert_file")
+        self._embedding_key_file: Optional[str] = emb_cfg.get("key_file")
+        self._embedding_ca_cert_file: Optional[str] = emb_cfg.get("ca_cert_file")
+        self._embedding_crl_file: Optional[str] = emb_cfg.get("crl_file")
+        self._embedding_timeout: Optional[float] = emb_cfg.get("timeout")
+        
+        # Store root path for resolving relative certificate paths
+        # Priority: explicit root_dir > infer from config > current working directory
+        self._root_path: Optional[Path] = None
+        if root_dir:
+            self._root_path = Path(root_dir)
+        elif "code_analysis" in cfg:
+            # Try to infer from db_path or log path
+            db_path = ca_cfg.get("db_path")
+            if db_path:
+                self._root_path = Path(db_path).parent.parent  # data/code_analysis.db -> project root
+            else:
+                log_path = ca_cfg.get("log")
+                if log_path:
+                    self._root_path = Path(log_path).parent.parent  # logs/code_analysis.log -> project root
 
         # Async init/close markers
         self._initialized: bool = False
@@ -108,26 +171,190 @@ class SVOClientManager:
         """
         Initialize underlying clients.
 
-        This implementation is currently a no-op. It exists to keep compatibility
-        with existing startup logic and to allow future addition of real HTTP clients.
+        Creates:
+        - ChunkerClient (SVO) if chunker is enabled - for chunking and vectorization
+        - EmbeddingServiceAsyncClient (embed-client) if embedding is enabled - for vectorization only
         """
 
         async with self._lock:
+            # Initialize chunker client (SVO - chunks and vectorizes)
+            if self.chunker_enabled and CHUNKER_CLIENT_AVAILABLE:
+                try:
+                    # Create ChunkerClient (uses host and port, not url)
+                    # Map cert_file/key_file/ca_cert_file to cert/key/ca
+                    chunker_kwargs: dict[str, Any] = {
+                        "host": self._chunker_url,
+                        "port": self._chunker_port,
+                        "check_hostname": False,  # Assuming internal network
+                    }
+                    if self._chunker_timeout:
+                        chunker_kwargs["timeout"] = self._chunker_timeout
+                    
+                    # Map certificate files to ChunkerClient parameters
+                    if self._chunker_protocol in ("mtls", "https"):
+                        if self._chunker_cert_file:
+                            cert_path = Path(self._chunker_cert_file)
+                            if not cert_path.is_absolute() and self._root_path:
+                                cert_path = self._root_path / cert_path
+                            chunker_kwargs["cert"] = str(cert_path.resolve())
+                        if self._chunker_key_file:
+                            key_path = Path(self._chunker_key_file)
+                            if not key_path.is_absolute() and self._root_path:
+                                key_path = self._root_path / key_path
+                            chunker_kwargs["key"] = str(key_path.resolve())
+                        if self._chunker_ca_cert_file:
+                            ca_cert_path = Path(self._chunker_ca_cert_file)
+                            if not ca_cert_path.is_absolute() and self._root_path:
+                                ca_cert_path = self._root_path / ca_cert_path
+                            chunker_kwargs["ca"] = str(ca_cert_path.resolve())
+                    
+                    self._chunker_client = ChunkerClient(**chunker_kwargs)
+
+                    logger.info(
+                        "SVOClientManager initialized with real chunker service "
+                        "(url=%s:%s, protocol=%s)",
+                        self._chunker_url,
+                        self._chunker_port,
+                        self._chunker_protocol,
+                    )
+                except Exception as e:
+                    logger.error(
+                        "Failed to initialize real chunker client: %s",
+                        e,
+                        exc_info=True,
+                    )
+                    raise RuntimeError(
+                        f"Failed to initialize chunker service: {e}"
+                    ) from e
+            else:
+                if self.chunker_enabled and not CHUNKER_CLIENT_AVAILABLE:
+                    error_msg = (
+                        "svo_client library is not available. "
+                        "Install it to use chunker service."
+                    )
+                    logger.error(error_msg)
+                    raise RuntimeError(error_msg)
+
+            # Initialize embedding client (embed-client - only vectorization)
+            if self.embedding_enabled and EMBED_CLIENT_AVAILABLE:
+                try:
+                    # Determine base URL based on protocol
+                    if self._embedding_protocol == "mtls":
+                        base_url = f"https://{self._embedding_url}"
+                    elif self._embedding_protocol == "https":
+                        base_url = f"https://{self._embedding_url}"
+                    else:
+                        base_url = f"http://{self._embedding_url}"
+
+                    # Create client using ClientFactory
+                    client_kwargs: dict[str, Any] = {}
+                    if self._embedding_timeout:
+                        client_kwargs["timeout"] = self._embedding_timeout
+
+                    # Configure SSL/TLS for mTLS or HTTPS
+                    if self._embedding_protocol in ("mtls", "https"):
+                        ssl_enabled = True
+                        if self._embedding_protocol == "mtls":
+                            if self._embedding_cert_file and self._embedding_key_file:
+                                # Resolve relative paths
+                                cert_path = Path(self._embedding_cert_file)
+                                key_path = Path(self._embedding_key_file)
+                                if not cert_path.is_absolute() and self._root_path:
+                                    cert_path = self._root_path / cert_path
+                                if not key_path.is_absolute() and self._root_path:
+                                    key_path = self._root_path / key_path
+                                client_kwargs["cert_file"] = str(cert_path.resolve())
+                                client_kwargs["key_file"] = str(key_path.resolve())
+                            if self._embedding_ca_cert_file:
+                                ca_cert_path = Path(self._embedding_ca_cert_file)
+                                if not ca_cert_path.is_absolute() and self._root_path:
+                                    ca_cert_path = self._root_path / ca_cert_path
+                                client_kwargs["ca_cert_file"] = str(ca_cert_path.resolve())
+                            if self._embedding_crl_file:
+                                crl_path = Path(self._embedding_crl_file)
+                                if not crl_path.is_absolute() and self._root_path:
+                                    crl_path = self._root_path / crl_path
+                                client_kwargs["crl_file"] = str(crl_path.resolve())
+                        else:
+                            # HTTPS without client certs
+                            if self._embedding_ca_cert_file:
+                                ca_cert_path = Path(self._embedding_ca_cert_file)
+                                if not ca_cert_path.is_absolute() and self._root_path:
+                                    ca_cert_path = self._root_path / ca_cert_path
+                                client_kwargs["ca_cert_file"] = str(ca_cert_path.resolve())
+                    else:
+                        ssl_enabled = False
+
+                    # Create client
+                    self._embedding_client = ClientFactory.create_client(
+                        base_url=base_url,
+                        port=self._embedding_port,
+                        auth_method="none",  # Can be extended later
+                        ssl_enabled=ssl_enabled,
+                        **client_kwargs,
+                    )
+
+                    # Initialize client (enter context manager)
+                    await self._embedding_client.__aenter__()
+
+                    logger.info(
+                        "SVOClientManager initialized with real embedding service "
+                        "(url=%s:%s, protocol=%s, vector_dim=%s)",
+                        self._embedding_url,
+                        self._embedding_port,
+                        self._embedding_protocol,
+                        self.vector_dim,
+                    )
+                except Exception as e:
+                    logger.error(
+                        "Failed to initialize real embedding client: %s",
+                        e,
+                        exc_info=True,
+                    )
+                    raise RuntimeError(
+                        f"Failed to initialize embedding service: {e}"
+                    ) from e
+            else:
+                if not self.embedding_enabled:
+                    error_msg = (
+                        "Embedding service is disabled in configuration. "
+                        "Set code_analysis.embedding.enabled=true to enable."
+                    )
+                    logger.error(error_msg)
+                    raise RuntimeError(error_msg)
+                elif not EMBED_CLIENT_AVAILABLE:
+                    error_msg = (
+                        "embed_client library is not available. "
+                        "Install it to use embedding service."
+                    )
+                    logger.error(error_msg)
+                    raise RuntimeError(error_msg)
+
             self._initialized = True
-        logger.info(
-            "SVOClientManager initialized (embedding_enabled=%s, vector_dim=%s)",
-            self.embedding_enabled,
-            self.vector_dim,
-        )
 
     async def close(self) -> None:
         """
         Close underlying clients.
-
-        This implementation is currently a no-op.
         """
 
         async with self._lock:
+            if self._chunker_client:
+                try:
+                    if hasattr(self._chunker_client, "close"):
+                        await self._chunker_client.close()
+                except Exception as e:
+                    logger.warning("Error closing chunker client: %s", e, exc_info=True)
+                finally:
+                    self._chunker_client = None
+
+            if self._embedding_client:
+                try:
+                    await self._embedding_client.__aexit__(None, None, None)
+                except Exception as e:
+                    logger.warning("Error closing embedding client: %s", e, exc_info=True)
+                finally:
+                    self._embedding_client = None
+
             self._initialized = False
         logger.info("SVOClientManager closed")
 
@@ -162,24 +389,75 @@ class SVOClientManager:
         )
         return float(min(self.max_backoff, delay))
 
+    async def get_chunks(self, text: str, **kwargs: Any) -> List[Any]:
+        """
+        Get chunks with embeddings from chunker service (SVO).
+
+        Chunker service chunks text and returns chunks with embeddings.
+        Used for vectorizing docstrings.
+
+        Args:
+            text: Text to chunk and vectorize.
+            **kwargs: Additional chunking parameters (type, language, etc.).
+
+        Returns:
+            List of chunk objects with embeddings (SemanticChunk from svo_client).
+
+        Raises:
+            RuntimeError: If chunker service is not available or not enabled.
+        """
+
+        self._maybe_transition()
+
+        # Require real chunker service
+        if not self._chunker_client or not self.chunker_enabled:
+            error_msg = (
+                "Chunker service is not available or not enabled. "
+                "Ensure code_analysis.chunker.enabled=true and service is running."
+            )
+            logger.error(
+                "get_chunks called but chunker service is not available: "
+                "client=%s, enabled=%s",
+                self._chunker_client is not None,
+                self.chunker_enabled,
+            )
+            raise RuntimeError(error_msg)
+
+        try:
+            # Call chunker service - it returns chunks with embeddings
+            chunks = await self._chunker_client.chunk_text(text=text, **kwargs)
+            self._record_success()
+            return chunks
+        except Exception as e:
+            self._record_failure()
+            logger.error(
+                "Failed to get chunks from chunker service: %s",
+                e,
+                exc_info=True,
+            )
+            raise
+
     async def get_embeddings(self, chunks: Iterable[Any], **kwargs: Any) -> List[Any]:
         """
-        Get embeddings for provided chunks.
+        Get embeddings for provided chunks using real embedding service.
 
         The method is compatible with existing code expecting each chunk object
         to receive an `embedding` attribute.
 
-        If embedding service is disabled/unavailable, it uses deterministic pseudo
-        embeddings derived from chunk text.
+        Requires real embedding service to be available and enabled.
+        No fallback mechanisms - raises exception if service is unavailable.
 
         Args:
             chunks: Iterable of objects with either `.body` or `.text` attributes.
             **kwargs: Extra parameters accepted for compatibility with callers
-                (e.g. `type`, `language`, etc.). They are ignored by the fallback
-                implementation.
+                (e.g. `type`, `language`, etc.).
 
         Returns:
             List of the same chunk objects, each augmented with `.embedding`.
+
+        Raises:
+            RuntimeError: If embedding service is not available or not enabled.
+            ValueError: If embedding service returns invalid response.
         """
 
         self._maybe_transition()
@@ -187,21 +465,93 @@ class SVOClientManager:
         if not chunks_list:
             return []
 
-        # Currently we only implement fallback embeddings. If a real service is enabled,
-        # we still fall back (robust) until a stable remote API integration is added.
+        # Require real embedding service
+        if not self._embedding_client or not self.embedding_enabled:
+            error_msg = (
+                "Embedding service is not available or not enabled. "
+                "Ensure code_analysis.embedding.enabled=true and service is running."
+            )
+            logger.error(
+                "get_embeddings called but embedding service is not available: "
+                "client=%s, enabled=%s",
+                self._embedding_client is not None,
+                self.embedding_enabled,
+            )
+            raise RuntimeError(error_msg)
+
         try:
+            # Extract texts from chunks
+            texts: list[str] = []
             for ch in chunks_list:
                 text = self._get_chunk_text(ch)
-                emb = self._pseudo_embedding(text, dim=self.vector_dim)
-                setattr(ch, "embedding", emb)
-            self._record_success()
-            return chunks_list
+                texts.append(text)
+
+            # Call embedding service
+            result = await self._embedding_client.cmd(
+                command="embed",
+                params={"texts": texts},
+            )
+
+            # Extract embeddings from response
+            if result and "result" in result:
+                result_data = result["result"]
+                if result_data.get("success") and "data" in result_data:
+                    data = result_data["data"]
+                    # Try different response formats
+                    embeddings = None
+                    if "embeddings" in data:
+                        embeddings = data["embeddings"]
+                    elif "results" in data:
+                        # New format with results array
+                        results = data["results"]
+                        embeddings = [
+                            r.get("embedding") if isinstance(r, dict) else None
+                            for r in results
+                        ]
+
+                    if embeddings and len(embeddings) == len(chunks_list):
+                        # Assign embeddings to chunks
+                        for ch, emb in zip(chunks_list, embeddings):
+                            if emb is not None:
+                                setattr(ch, "embedding", emb)
+                                # Also set embedding_model if available
+                                if isinstance(data, dict) and "model" in data:
+                                    setattr(ch, "embedding_model", data["model"])
+                        self._record_success()
+                        return chunks_list
+                    else:
+                        error_msg = "Embedding service returned unexpected format or count mismatch"
+                        logger.error(
+                            "%s: expected %d embeddings, got %d",
+                            error_msg,
+                            len(chunks_list),
+                            len(embeddings) if embeddings else 0,
+                        )
+                        raise ValueError(error_msg)
+                else:
+                    error_msg = result_data.get("error", "Unknown error")
+                    logger.error(
+                        "Embedding service returned error: %s (response: %s)",
+                        error_msg,
+                        result_data,
+                    )
+                    raise ValueError(f"Embedding service error: {error_msg}")
+            else:
+                error_msg = "Invalid embedding service response"
+                logger.error(
+                    "%s: result structure is invalid (result=%s)",
+                    error_msg,
+                    result,
+                )
+                raise ValueError(error_msg)
+
         except Exception as e:
             self._record_failure()
-            logger.warning(
-                "Failed to generate embeddings (fallback): %s", e, exc_info=True
+            logger.error(
+                "Failed to get embeddings from real service: %s",
+                e,
+                exc_info=True,
             )
-            # Re-raise to let callers decide (most code handles exceptions and continues)
             raise
 
     # ==========================
@@ -261,27 +611,6 @@ class SVOClientManager:
             return str(getattr(chunk, "text"))
         return str(chunk)
 
-    @staticmethod
-    def _pseudo_embedding(text: str, dim: int) -> List[float]:
-        """
-        Create a deterministic pseudo-embedding for a given text.
-
-        Args:
-            text: Input text.
-            dim: Embedding dimension.
-
-        Returns:
-            Unit-normalized vector (list[float]) of length dim.
-        """
-
-        digest = hashlib.sha256(text.encode("utf-8")).digest()
-        seed = int.from_bytes(digest[:8], "little", signed=False)
-        rng = np.random.default_rng(seed)
-        vec = rng.standard_normal(int(dim)).astype("float32")
-        norm = float(np.linalg.norm(vec))
-        if norm > 0.0:
-            vec = vec / norm
-        return [float(x) for x in vec.tolist()]
 
     @staticmethod
     def _to_dict(cfg: Any) -> dict[str, Any]:

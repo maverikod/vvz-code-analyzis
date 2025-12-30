@@ -152,11 +152,11 @@ async def process_embedding_ready_chunks(
                             f"({ast_binding}): {e}"
                         )
 
-                # If no embedding in DB, try to get it from SVO service
+                # If no embedding in DB, try to get it from chunker service (SVO)
                 if embedding_array is None and self.svo_client_manager:
                     logger.info(
                         f"Chunk {chunk_id} has no embedding in DB ({ast_binding}), "
-                        "requesting from SVO service..."
+                        "requesting from chunker service (SVO)..."
                     )
                     try:
                         if not chunk_text:
@@ -164,28 +164,21 @@ async def process_embedding_ready_chunks(
                             continue
 
                         logger.debug(
-                            f"[CHUNK {chunk_id}] Requesting embedding from SVO service for text:\n"
+                            f"[CHUNK {chunk_id}] Requesting chunks with embeddings from chunker service for text:\n"
                             f"  {chunk_text_preview!r}"
                         )
 
-                        # Create dummy chunk object for embedding API
-                        class DummyChunk:
-                            def __init__(self, text: str):
-                                self.body = text
-                                self.text = text
-
-                        dummy_chunk = DummyChunk(chunk_text)
                         embedding_request_start = time.time()
-                        # Pass type parameter to chunker - it should return embeddings
+                        # Use chunker service - it chunks and returns chunks with embeddings
                         chunk_type = chunk.get("chunk_type", "DocBlock")
-                        chunks_with_emb = await self.svo_client_manager.get_embeddings(
-                            [dummy_chunk], type=chunk_type
+                        chunks_with_emb = await self.svo_client_manager.get_chunks(
+                            text=chunk_text, type=chunk_type
                         )
                         embedding_request_duration = (
                             time.time() - embedding_request_start
                         )
                         logger.debug(
-                            f"[TIMING] [CHUNK {chunk_id}] SVO embedding request took {embedding_request_duration:.3f}s"
+                            f"[TIMING] [CHUNK {chunk_id}] Chunker service request took {embedding_request_duration:.3f}s"
                         )
 
                         if chunks_with_emb and len(chunks_with_emb) > 0:

@@ -138,34 +138,6 @@ async def process_chunks(self, poll_interval: int = 30) -> Dict[str, Any]:
                     f"[CYCLE #{cycle_count}] No chunks processed in {cycle_duration:.3f}s"
                 )
 
-            # Step 3: Fallback — try to chunk files that have no docstring chunks at all
-            # Skip fallback chunking if circuit breaker is open
-            if not cycle_activity:
-                if self.svo_client_manager:
-                    circuit_state = self.svo_client_manager.get_circuit_state()
-                    if circuit_state == "open":
-                        logger.debug(
-                            "Skipping fallback chunking - circuit breaker is OPEN"
-                        )
-                    else:
-                        try:
-                            missing_chunked = await self._chunk_missing_docstring_files(
-                                database, limit=3
-                            )
-                            if missing_chunked > 0:
-                                cycle_activity = True
-                                logger.info(
-                                    f"Requested chunking for {missing_chunked} files without docstring chunks (fallback)"
-                                )
-                        except Exception as e:
-                            logger.warning(
-                                f"Failed to process files without docstring chunks: {e}",
-                                exc_info=True,
-                            )
-                else:
-                    logger.debug(
-                        "SVO client manager not available, skipping fallback chunking"
-                    )
 
             # Wait for next cycle (with early exit check)
             # Increase poll interval if services are unavailable (circuit breaker)

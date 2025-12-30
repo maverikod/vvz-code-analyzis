@@ -20,9 +20,8 @@ logger = logging.getLogger(__name__)
 class SemanticSearchMCPCommand(BaseMCPCommand):
     """Perform semantic search using embeddings and a FAISS index.
 
-    This MCP command is exposed via the proxy and must remain robust. If the
-    environment does not provide a real embedding service, the command falls back
-    to a deterministic pseudo-embedding derived from the query string.
+    This MCP command requires real embedding service to be available.
+    No fallback mechanisms - raises exception if service is unavailable.
 
     Attributes:
         name: MCP command name.
@@ -131,7 +130,8 @@ class SemanticSearchMCPCommand(BaseMCPCommand):
                 with open(config_path, "r", encoding="utf-8") as f:
                     config_dict = json.load(f)
 
-                code_analysis_config = config_dict.get("code_analysis", {})
+                # Extract code_analysis config (may be nested)
+                code_analysis_config = config_dict.get("code_analysis", config_dict)
                 faiss_index_path = code_analysis_config.get(
                     "faiss_index_path", "data/faiss_index.bin"
                 )
@@ -177,17 +177,58 @@ class SemanticSearchMCPCommand(BaseMCPCommand):
                         }
                     )
 
-                import hashlib
+                # Get query embedding using real embedding service
+                from ..core.svo_client_manager import SVOClientManager
 
-                import numpy as np
+                # Create SVOClientManager from config
+                # Pass the full config_dict and root_dir - SVOClientManager will extract code_analysis.embedding
+                svo_client_manager = SVOClientManager(config_dict, root_dir=root_path)
+                await svo_client_manager.initialize()
 
-                digest = hashlib.sha256(query.encode("utf-8")).digest()
-                seed = int.from_bytes(digest[:8], "little", signed=False)
-                rng = np.random.default_rng(seed)
-                query_vec = rng.standard_normal(vector_dim).astype("float32")
-                norm = float(np.linalg.norm(query_vec))
-                if norm > 0:
-                    query_vec = query_vec / norm
+                try:
+                    # Create dummy chunk object for embedding
+                    class QueryChunk:
+                        def __init__(self, text: str):
+                            self.body = text
+                            self.text = text
+
+                    query_chunk = QueryChunk(query)
+                    chunks_with_emb = await svo_client_manager.get_embeddings([query_chunk])
+
+                    if not chunks_with_emb or not hasattr(chunks_with_emb[0], "embedding"):
+                        error_msg = "Failed to get embedding for query from real service"
+                        logger.error(
+                            "%s: chunks_with_emb=%s, has_embedding=%s",
+                            error_msg,
+                            chunks_with_emb is not None,
+                            hasattr(chunks_with_emb[0], "embedding") if chunks_with_emb else False,
+                        )
+                        return ErrorResult(
+                            message=error_msg,
+                            code="EMBEDDING_SERVICE_ERROR",
+                        )
+
+                    # Use real embedding
+                    import numpy as np
+
+                    embedding = getattr(chunks_with_emb[0], "embedding")
+                    query_vec = np.array(embedding, dtype="float32")
+                    norm = float(np.linalg.norm(query_vec))
+                    if norm > 0:
+                        query_vec = query_vec / norm
+                    else:
+                        error_msg = "Invalid embedding vector (zero norm)"
+                        logger.error(
+                            "%s: embedding vector has zero norm (dim=%d)",
+                            error_msg,
+                            len(query_vec),
+                        )
+                        return ErrorResult(
+                            message=error_msg,
+                            code="EMBEDDING_SERVICE_ERROR",
+                        )
+                finally:
+                    await svo_client_manager.close()
 
                 distances, vector_ids = faiss_manager.search(query_vec, k=int(k))
 

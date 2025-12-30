@@ -262,8 +262,15 @@ class FaissIndexManager:
         """
         logger.info("Rebuilding FAISS index from database...")
 
-        # Create fresh index
+        # Create fresh index (this clears all existing vectors)
+        # This ensures index only contains vectors that exist in database
+        old_vector_count = self.index.ntotal if self.index is not None else 0
         self._create_index()
+        if old_vector_count > 0:
+            logger.info(
+                f"Cleared {old_vector_count} vectors from FAISS index "
+                "(will rebuild from database)"
+            )
 
         # Get all chunks with embeddings
         chunks = database.get_all_chunks_for_faiss_rebuild()
@@ -300,25 +307,21 @@ class FaissIndexManager:
                         f"Failed to parse embedding_vector from database for chunk {chunk.get('id')}: {e}"
                     )
 
-            # If embedding not in database, try to get from SVO service
+            # If embedding not in database, try to get from chunker service (SVO)
             if embedding_array is None and svo_client_manager:
                 logger.debug(
                     f"Embedding not in database for chunk {chunk.get('id')}, "
-                    "requesting from SVO service..."
+                    "requesting from chunker service (SVO)..."
                 )
                 try:
-                    # Create a dummy chunk object with text
-                    class DummyChunk:
-                        def __init__(self, text):
-                            self.body = text
-                            self.text = text
-
-                    dummy_chunks = [DummyChunk(chunk_text)]
-                    chunks_with_emb = await svo_client_manager.get_embeddings(
-                        dummy_chunks
-                    )
+                    # Use chunker service - it chunks and returns chunks with embeddings
+                    chunks_with_emb = await svo_client_manager.get_chunks(text=chunk_text)
                     if chunks_with_emb and len(chunks_with_emb) > 0:
-                        embedding = getattr(chunks_with_emb[0], "embedding", None)
+                        # Chunker returns SemanticChunk objects with embeddings
+                        first_chunk = chunks_with_emb[0]
+                        embedding = getattr(first_chunk, "embedding", None) or getattr(
+                            first_chunk, "vector", None
+                        )
                         if embedding is not None:
                             embedding_array = np.array(embedding, dtype="float32")
                             # Save embedding to database for future use

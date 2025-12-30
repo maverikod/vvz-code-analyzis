@@ -46,7 +46,7 @@ class DocstringChunker:
         - This implementation focuses on docstrings only (module/class/function/method).
         - It does not depend on external chunker services.
         - If `svo_client_manager` is provided, it precomputes embeddings using the
-          manager's `get_embeddings(...)` (which can be a fallback pseudo-embedding).
+          manager's `get_embeddings(...)` (requires real embedding service).
 
     Attributes:
         database: CodeDatabase instance.
@@ -62,7 +62,7 @@ class DocstringChunker:
         svo_client_manager: Optional[Any] = None,
         faiss_manager: Optional[Any] = None,
         min_chunk_length: int = 30,
-        embedding_model: str = "pseudo-embedding-v1",
+        embedding_model: Optional[str] = None,
     ) -> None:
         """
         Initialize docstring chunker.
@@ -112,26 +112,45 @@ class DocstringChunker:
         if not items:
             return 0
 
-        # Precompute embeddings (optional)
+        # Precompute embeddings using chunker service (SVO - chunks and vectorizes)
         embeddings: list[Optional[list[float]]] = [None] * len(items)
         if self.svo_client_manager:
             try:
-                dummy_chunks = [_DummyChunk(it.text) for it in items]
-                chunks_with_emb = await self.svo_client_manager.get_embeddings(
-                    dummy_chunks, type="DocBlock"
-                )
-                for i, ch in enumerate(chunks_with_emb):
-                    emb = getattr(ch, "embedding", None)
-                    if isinstance(emb, list) and emb:
-                        embeddings[i] = emb
+                # Use chunker service for each docstring - it returns chunks with embeddings
+                for i, item in enumerate(items):
+                    try:
+                        # Call chunker service - it chunks and vectorizes
+                        chunks = await self.svo_client_manager.get_chunks(
+                            text=item.text, type="DocBlock"
+                        )
+                        # Extract embedding from first chunk (chunker returns chunks with embeddings)
+                        if chunks and len(chunks) > 0:
+                            first_chunk = chunks[0]
+                            # SemanticChunk from svo_client has embedding attribute
+                            emb = getattr(first_chunk, "embedding", None)
+                            if isinstance(emb, list) and emb:
+                                embeddings[i] = emb
+                            elif hasattr(first_chunk, "vector") and first_chunk.vector:
+                                # Alternative: check for vector attribute
+                                embeddings[i] = first_chunk.vector
+                    except Exception as e:
+                        logger.error(
+                            "Failed to get chunks with embeddings for docstring %d in %s: %s",
+                            i,
+                            file_path,
+                            e,
+                            exc_info=True,
+                        )
+                        raise
             except Exception as e:
-                # Robust behavior: if embedding fails, still store raw docstrings.
-                logger.warning(
+                # If chunking fails, raise exception - no fallback
+                logger.error(
                     "Failed to precompute embeddings for docstrings in %s: %s",
                     file_path,
                     e,
                     exc_info=True,
                 )
+                raise
 
         # Persist items
         written = 0

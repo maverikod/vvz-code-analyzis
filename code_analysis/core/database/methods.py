@@ -19,11 +19,24 @@ def add_method(
     is_abstract: bool = False,
     has_pass: bool = False,
     has_not_implemented: bool = False,
+    complexity: Optional[int] = None,
 ) -> int:
-    """Add method record. Returns method_id."""
+    """Add method record. Returns method_id.
+
+    Args:
+        class_id: Class ID.
+        name: Method name.
+        line: Line number.
+        args: Method arguments.
+        docstring: Method docstring.
+        is_abstract: Whether method is abstract.
+        has_pass: Whether method has only pass.
+        has_not_implemented: Whether method has NotImplemented.
+        complexity: Cyclomatic complexity (optional).
+    """
     args_json = json.dumps(args) if args else None
     self._execute(
-        "\n            INSERT OR REPLACE INTO methods\n            (class_id, name, line, args, docstring, is_abstract,\n             has_pass, has_not_implemented)\n            VALUES (?, ?, ?, ?, ?, ?, ?, ?)\n        ",
+        "\n            INSERT OR REPLACE INTO methods\n            (class_id, name, line, args, docstring, is_abstract,\n             has_pass, has_not_implemented, complexity)\n            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)\n        ",
         (
             class_id,
             name,
@@ -33,6 +46,7 @@ def add_method(
             is_abstract,
             has_pass,
             has_not_implemented,
+            complexity,
         ),
     )
     self._commit()

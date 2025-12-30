@@ -722,6 +722,28 @@ class CodeDatabase:
             except Exception as e:
                 logger.warning(f"Could not create index idx_files_deleted: {e}")
 
+        # Migration: Add complexity column to functions table if it doesn't exist
+        functions_table_info = self._get_table_info("functions")
+        functions_columns = {col["name"]: col["type"] for col in functions_table_info}
+        if "complexity" not in functions_columns:
+            try:
+                logger.info("Migrating functions table: adding complexity column")
+                self._execute("ALTER TABLE functions ADD COLUMN complexity INTEGER")
+                self._commit()
+            except Exception as e:
+                logger.warning(f"Could not add complexity column to functions: {e}")
+
+        # Migration: Add complexity column to methods table if it doesn't exist
+        methods_table_info = self._get_table_info("methods")
+        methods_columns = {col["name"]: col["type"] for col in methods_table_info}
+        if "complexity" not in methods_columns:
+            try:
+                logger.info("Migrating methods table: adding complexity column")
+                self._execute("ALTER TABLE methods ADD COLUMN complexity INTEGER")
+                self._commit()
+            except Exception as e:
+                logger.warning(f"Could not add complexity column to methods: {e}")
+
     def close(self) -> None:
         """Close database connection."""
         if self.driver:

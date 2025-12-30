@@ -10,13 +10,28 @@ from typing import Dict, List, Any, Optional
 
 
 def add_function(
-    self, file_id: int, name: str, line: int, args: List[str], docstring: Optional[str]
+    self,
+    file_id: int,
+    name: str,
+    line: int,
+    args: List[str],
+    docstring: Optional[str],
+    complexity: Optional[int] = None,
 ) -> int:
-    """Add function record. Returns function_id."""
+    """Add function record. Returns function_id.
+
+    Args:
+        file_id: File ID.
+        name: Function name.
+        line: Line number.
+        args: Function arguments.
+        docstring: Function docstring.
+        complexity: Cyclomatic complexity (optional).
+    """
     args_json = json.dumps(args) if args else None
     self._execute(
-        "\n            INSERT OR REPLACE INTO functions (file_id, name, line, args, docstring)\n            VALUES (?, ?, ?, ?, ?)\n        ",
-        (file_id, name, line, args_json, docstring),
+        "\n            INSERT OR REPLACE INTO functions (file_id, name, line, args, docstring, complexity)\n            VALUES (?, ?, ?, ?, ?, ?)\n        ",
+        (file_id, name, line, args_json, docstring, complexity),
     )
     self._commit()
     result = self._lastrowid()

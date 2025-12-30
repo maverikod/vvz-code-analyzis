@@ -15,6 +15,7 @@ from typing import Any, Dict, Optional
 
 from mcp_proxy_adapter.commands.result import SuccessResult, ErrorResult
 
+from ..core.complexity_analyzer import calculate_complexity
 from .base_mcp_command import BaseMCPCommand
 
 logger = logging.getLogger(__name__)
@@ -353,12 +354,24 @@ class UpdateIndexesMCPCommand(BaseMCPCommand):
                         if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)):
                             method_docstring = self._extract_docstring(item)
                             method_args = self._extract_args(item)
+                            # Calculate cyclomatic complexity
+                            try:
+                                method_complexity = calculate_complexity(item)
+                            except Exception as e:
+                                logger.debug(
+                                    "Failed to calculate complexity for method %s.%s: %s",
+                                    node.name,
+                                    item.name,
+                                    e,
+                                )
+                                method_complexity = None
                             method_id = database.add_method(
                                 class_id,
                                 item.name,
                                 item.lineno,
                                 method_args,
                                 method_docstring,
+                                complexity=method_complexity,
                             )
                             methods_added += 1
 
@@ -401,8 +414,23 @@ class UpdateIndexesMCPCommand(BaseMCPCommand):
                     if not is_method:
                         docstring = self._extract_docstring(node)
                         args = self._extract_args(node)
+                        # Calculate cyclomatic complexity
+                        try:
+                            function_complexity = calculate_complexity(node)
+                        except Exception as e:
+                            logger.debug(
+                                "Failed to calculate complexity for function %s: %s",
+                                node.name,
+                                e,
+                            )
+                            function_complexity = None
                         function_id = database.add_function(
-                            file_id, node.name, node.lineno, args, docstring
+                            file_id,
+                            node.name,
+                            node.lineno,
+                            args,
+                            docstring,
+                            complexity=function_complexity,
                         )
                         functions_added += 1
 

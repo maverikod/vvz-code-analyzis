@@ -174,6 +174,26 @@ def register_code_analysis_commands(reg: registry) -> None:
     reg.register(LintCodeCommand, "custom")
     reg.register(TypeCheckCodeCommand, "custom")
 
+    # Complexity analysis command
+    try:
+        from .commands.analyze_complexity_mcp import AnalyzeComplexityMCPCommand
+
+        reg.register(AnalyzeComplexityMCPCommand, "custom")
+        import logging
+
+        logger = logging.getLogger(__name__)
+        logger.info("✅ Registered analyze_complexity command")
+    except ImportError as e:
+        import logging
+
+        logger = logging.getLogger(__name__)
+        logger.warning(f"Failed to import analyze_complexity command: {e}")
+    except Exception as e:
+        import logging
+
+        logger = logging.getLogger(__name__)
+        logger.error(f"Failed to register analyze_complexity command: {e}", exc_info=True)
+
     # Search commands (may have dependencies)
     try:
         from .commands.search_mcp_commands import (
@@ -422,6 +442,7 @@ register_auto_import_module("code_analysis.commands.semantic_search_mcp")
 register_auto_import_module("code_analysis.commands.watch_dirs_commands")
 register_auto_import_module("code_analysis.commands.refactor_mcp_commands")
 register_auto_import_module("code_analysis.commands.code_quality_commands")
+register_auto_import_module("code_analysis.commands.analyze_complexity_mcp")
 register_auto_import_module("code_analysis.commands.search_mcp_commands")
 register_auto_import_module("code_analysis.commands.code_mapper_mcp_command")
 register_auto_import_module("code_analysis.commands.backup_mcp_commands")

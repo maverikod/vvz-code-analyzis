@@ -287,6 +287,187 @@ This document provides a detailed step-by-step implementation plan for:
 
 ---
 
+### 1.4 Find Placeholders, Stubs, and Empty Methods
+
+#### Step 1: Create placeholder/stub detector
+- **File**: `code_analysis/core/placeholder_detector.py`
+- **Purpose**: Find placeholders, stubs, and empty methods that need implementation
+- **Implementation**:
+  1. **Placeholder detection**:
+     - Search for common placeholder patterns in comments and docstrings:
+       - `TODO`, `FIXME`, `XXX`, `HACK`, `NOTE`, `BUG`, `OPTIMIZE`
+       - Case-insensitive matching
+       - Extract placeholder text and location
+     - Search for placeholder strings in code:
+       - `"TODO"`, `"FIXME"`, `"placeholder"`, `"stub"`, `"not implemented"`
+       - String literals containing placeholder keywords
+     - Search for placeholder variable names:
+       - Variables named `placeholder`, `stub`, `todo`, `fixme`, `not_implemented`
+  2. **Stub detection**:
+     - Functions/methods with only `pass` statement
+     - Functions/methods with only `...` (Ellipsis)
+     - Functions/methods with only docstring and `pass`
+     - Functions/methods with only `raise NotImplementedError`
+     - Functions/methods with only `return None` (if return type is not Optional)
+  3. **Empty method detection**:
+     - Methods with empty body (only `pass` or `...`)
+     - Methods with only docstring
+     - **Exclude**:
+       - Abstract methods (with `@abstractmethod` decorator)
+       - Methods with `raise NotImplementedError` (if abstract)
+       - Methods in abstract base classes (inheriting from ABC)
+       - Property getters/setters/deleters
+       - Special methods (`__init__`, `__str__`, etc.) with only `pass` (may be intentional)
+  4. **Configuration**:
+     - `check_placeholders`: Check for placeholder comments/strings (default: True)
+     - `check_stubs`: Check for stub functions/methods (default: True)
+     - `check_empty_methods`: Check for empty methods (default: True)
+     - `placeholder_patterns`: Custom placeholder patterns (default: common patterns)
+     - `ignore_abstract`: Ignore abstract methods (default: True)
+     - `ignore_special_methods`: Ignore special methods like `__init__` (default: False)
+
+#### Step 2: Create MCP command
+- **File**: `code_analysis/commands/find_placeholders_mcp.py`
+- **Command**: `find_placeholders`
+- **Parameters**:
+  - `root_dir`: Project root directory
+  - `project_id` (optional): Project ID
+  - `file_path` (optional): Specific file to analyze
+  - `check_placeholders` (optional): Check for placeholders (default: True)
+  - `check_stubs` (optional): Check for stubs (default: True)
+  - `check_empty_methods` (optional): Check for empty methods (default: True)
+  - `ignore_abstract` (optional): Ignore abstract methods (default: True)
+  - `placeholder_patterns` (optional): Custom placeholder patterns (list of strings)
+- **Output**: List of placeholders, stubs, and empty methods
+- **Schema**:
+  ```python
+  {
+    "placeholders": [
+      {
+        "file_path": str,
+        "line": int,
+        "type": "comment" | "string" | "variable",
+        "pattern": str,
+        "text": str,
+        "context": str  # surrounding code
+      }
+    ],
+    "stubs": [
+      {
+        "file_path": str,
+        "function_name": str,
+        "class_name": Optional[str],
+        "line": int,
+        "type": "function" | "method",
+        "stub_type": "pass" | "ellipsis" | "not_implemented" | "return_none",
+        "code_snippet": str
+      }
+    ],
+    "empty_methods": [
+      {
+        "file_path": str,
+        "method_name": str,
+        "class_name": str,
+        "line": int,
+        "body_type": "pass" | "ellipsis" | "docstring_only",
+        "code_snippet": str,
+        "is_abstract": bool
+      }
+    ],
+    "summary": {
+      "total_placeholders": int,
+      "total_stubs": int,
+      "total_empty_methods": int
+    }
+  }
+  ```
+
+#### Step 3: Database schema updates
+- **File**: `code_analysis/core/database/placeholders.py` (new)
+- **Tables**:
+  1. `code_placeholders`:
+     - `id`: INTEGER PRIMARY KEY
+     - `project_id`: TEXT
+     - `file_id`: INTEGER (FK to files)
+     - `line`: INTEGER
+     - `type`: TEXT ("comment", "string", "variable")
+     - `pattern`: TEXT (matched pattern, e.g., "TODO", "FIXME")
+     - `text`: TEXT (full placeholder text)
+     - `context`: TEXT (surrounding code snippet)
+     - `detected_at`: TIMESTAMP
+  2. `code_stubs`:
+     - `id`: INTEGER PRIMARY KEY
+     - `project_id`: TEXT
+     - `file_id`: INTEGER (FK to files)
+     - `function_id`: INTEGER (FK to functions, nullable)
+     - `method_id`: INTEGER (FK to methods, nullable)
+     - `line`: INTEGER
+     - `type`: TEXT ("function", "method")
+     - `stub_type`: TEXT ("pass", "ellipsis", "not_implemented", "return_none")
+     - `code_snippet`: TEXT
+     - `detected_at`: TIMESTAMP
+  3. `empty_methods`:
+     - `id`: INTEGER PRIMARY KEY
+     - `project_id`: TEXT
+     - `file_id`: INTEGER (FK to files)
+     - `method_id`: INTEGER (FK to methods)
+     - `class_id`: INTEGER (FK to classes)
+     - `line`: INTEGER
+     - `body_type`: TEXT ("pass", "ellipsis", "docstring_only")
+     - `is_abstract`: BOOLEAN
+     - `code_snippet`: TEXT
+     - `detected_at`: TIMESTAMP
+
+#### Step 4: Integration with code_mapper
+- **File**: `code_analysis/commands/code_mapper_mcp_command.py`
+- **Changes**:
+  1. Add optional `find_placeholders` parameter to `update_indexes`
+  2. Run placeholder/stub detection after AST analysis
+  3. Store results in database
+  4. Update indexes with placeholder/stub information
+  5. Link stubs to functions/methods in database
+
+#### Step 5: AST-based detection logic
+- **Implementation details**:
+  1. **Placeholder in comments**:
+     - Parse AST with `ast.get_docstring()` and `ast.walk()`
+     - Check docstrings for placeholder patterns
+     - Use tokenizer to find inline comments with placeholders
+  2. **Stub detection**:
+     - Check function/method body:
+       - Single `ast.Pass` node → stub
+       - Single `ast.Constant(value=Ellipsis)` → stub
+       - Single `ast.Raise` with `NotImplementedError` → stub
+       - Single `ast.Return` with `ast.Constant(value=None)` → stub (if return type not Optional)
+  3. **Empty method detection**:
+     - Check if method body is empty or contains only:
+       - `pass`
+       - `...`
+       - Docstring only
+     - Check decorators for `@abstractmethod`
+     - Check class bases for `ABC`
+     - Exclude if abstract or special method (based on configuration)
+
+#### Step 6: Testing
+- Create test file: `tests/test_placeholder_detector.py`
+- Test cases:
+  - Placeholder in comment (`# TODO: implement this`)
+  - Placeholder in docstring (`"""TODO: fix this"""`)
+  - Placeholder in string literal (`"TODO: implement"`)
+  - Stub function with `pass`
+  - Stub function with `...`
+  - Stub function with `raise NotImplementedError`
+  - Empty method with only `pass`
+  - Empty method with only docstring
+  - Abstract method (should be excluded)
+  - Method with `@abstractmethod` (should be excluded)
+  - Method in ABC class (should be excluded)
+  - Special method `__init__` with `pass` (based on config)
+  - Property getter/setter (should be excluded)
+  - Method with `raise NotImplementedError` in abstract class
+
+---
+
 ## 2. CST Storage in Database
 
 ### 2.1 Database Schema for CST Trees

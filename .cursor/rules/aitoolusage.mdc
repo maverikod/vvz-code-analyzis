@@ -55,51 +55,60 @@ source .venv/bin/activate && \
 python -m code_analysis.cli.server_manager_cli --config config.json restart
 ```
 
-## 2. Code Writing vs CST Manipulation
+## 2. Code Editing Priority Rules
 
-### 2.1 When to Write Code Directly
+**CRITICAL**: For editing existing code, **ALWAYS** use CST tools first. Direct file editing (`search_replace`, `write`) is **ONLY** for new files or when CST is not applicable.
 
-**Use direct code writing for**:
-- ✅ Creating new files/modules from scratch
-- ✅ Prototyping and experimentation
-- ✅ Simple additions (new functions, classes)
-- ✅ Test files and utilities
-- ✅ Code that will be auto-formatted anyway
+### 2.1 Priority Order for Code Editing
 
-**Example**:
-```python
-# ✅ CORRECT: Creating new module
-compose_cst_module(
-    selector={"kind": "module"},
-    file_docstring="New module",
-    new_code="class MyClass:\n    def method(self): pass"
-)
-```
+**When editing existing code, use this priority:**
 
-### 2.2 When to Use CST
+1. ✅ **CST Tools** (via `compose_cst_module` MCP command) - **PRIMARY FOR EXISTING CODE**
+2. ⚠️ **Direct file editing** (`search_replace`, `write`) - **ONLY FOR NEW FILES OR WHEN CST FAILS**
 
-**Use CST manipulation for**:
-- ✅ Modifying existing code
-- ✅ Replacing methods/functions in existing files
-- ✅ Refactoring operations
-- ✅ When preserving comments/formatting is critical
-- ✅ Precise block replacements using selectors
+**Rationale**:
+- CST preserves formatting, comments, and code structure
+- CST validates syntax automatically (compile check)
+- CST validates docstrings and type hints
+- CST normalizes imports automatically
+- Direct editing can break formatting and lose comments
 
-**Example**:
-```python
-# ✅ CORRECT: Replacing existing method
-compose_cst_module(
-    selector={"kind": "method", "name": "MyClass.old_method"},
-    new_code="def old_method(self, param: int) -> str:\n    return str(param)"
-)
-```
+### 2.2 When to Use CST Tools (PRIORITY)
 
-### 2.3 Hybrid Approach
+**ALWAYS use CST for**:
+- ✅ **Modifying existing code** (functions, classes, methods)
+- ✅ **Replacing code blocks** in existing files
+- ✅ **Removing code** from existing files
+- ✅ **Refactoring operations**
+- ✅ **When preserving comments/formatting is critical**
+- ✅ **Any change to existing `.py` files**
+
+**CST Workflow**:
+1. **Discover**: Use `list_cst_blocks` to find blocks with stable IDs
+2. **Query** (optional): Use `query_cst` for complex selectors
+3. **Preview**: Use `compose_cst_module` with `apply=false` and `return_diff=true`
+4. **Apply**: Use `compose_cst_module` with `apply=true` and `create_backup=true`
+
+### 2.3 When to Write Code Directly (EXCEPTIONS ONLY)
+
+**Use direct code writing (`write` tool) ONLY for**:
+- ✅ Creating **new files/modules from scratch** (file doesn't exist)
+- ✅ Creating **documentation files** (.md files)
+- ✅ Creating **configuration files** (JSON, YAML, etc.)
+- ✅ Creating **test files** (when file doesn't exist)
+
+**Use `search_replace` ONLY when**:
+- ⚠️ CST tools failed and you need a workaround
+- ⚠️ Editing non-Python files (markdown, config, etc.)
+- ⚠️ Simple text replacements in comments/docstrings (though CST is still preferred)
+
+### 2.4 Hybrid Approach
 
 **Best Practice**: Use hybrid approach based on context:
-1. **New code** → Write directly
-2. **Existing code** → Use CST with selectors
-3. **Complex refactoring** → Use specialized commands (`split_class`, `split_file_to_package`)
+1. **New Python files** → Direct write (`write` tool)
+2. **Existing Python files** → **CST tools** (`compose_cst_module` via MCP)
+3. **Complex refactoring** → Specialized commands (`split_class`, `split_file_to_package`)
+4. **Non-Python files** → Direct editing (`write`, `search_replace`)
 
 ### 2.4 File Splitting Rules
 
@@ -463,32 +472,67 @@ mcp_MCP-Proxy-2_call_server(
 )
 ```
 
-### 9.2 Modifying Existing Code
+### 9.2 Modifying Existing Code (CRITICAL: Use CST)
+
+**ALWAYS use CST tools for existing code. Never use `search_replace` or direct editing.**
 
 ```python
-# 1. List blocks to find what to modify
-mcp_MCP-Proxy-2_call_server(
+# Step 1: Discover blocks to understand structure
+blocks_result = mcp_MCP-Proxy-2_call_server(
     server_id="code-analysis-server",
     command="list_cst_blocks",
     params={"root_dir": "/path", "file_path": "file.py"}
 )
 
-# 2. Modify using CST
-mcp_MCP-Proxy-2_call_server(
+# Step 2 (optional): Query for specific nodes if needed
+query_result = mcp_MCP-Proxy-2_call_server(
+    server_id="code-analysis-server",
+    command="query_cst",
+    params={
+        "root_dir": "/path",
+        "file_path": "file.py",
+        "selector": "function[name='my_func']"
+    }
+)
+
+# Step 3: Preview changes (recommended)
+preview_result = mcp_MCP-Proxy-2_call_server(
     server_id="code-analysis-server",
     command="compose_cst_module",
     params={
         "root_dir": "/path",
         "file_path": "file.py",
         "ops": [{
-            "selector": {"kind": "method", "name": "MyClass.method"},
-            "new_code": "def method(self, param: int) -> str:\n    \"\"\"...\"\"\"\n    return str(param)"
+            "selector": {"kind": "block_id", "block_id": "function:my_func:10-20"},
+            "new_code": "def my_func(param: int) -> str:\n    \"\"\"Updated function.\"\"\"\n    return str(param)"
         }],
-        "apply": True
+        "apply": False,  # Preview only
+        "return_diff": True
     }
 )
 
-# 3. Restart server
+# Step 4: Apply changes
+result = mcp_MCP-Proxy-2_call_server(
+    server_id="code-analysis-server",
+    command="compose_cst_module",
+    params={
+        "root_dir": "/path",
+        "file_path": "file.py",
+        "ops": [{
+            "selector": {"kind": "block_id", "block_id": "function:my_func:10-20"},
+            "new_code": "def my_func(param: int) -> str:\n    \"\"\"Updated function.\"\"\"\n    return str(param)"
+        }],
+        "apply": True,
+        "create_backup": True
+    }
+)
+
+# Step 5: Validate and restart
+mcp_MCP-Proxy-2_call_server(
+    server_id="code-analysis-server",
+    command="format_code",
+    params={"file_path": "file.py"}
+)
 run_terminal_cmd("cd /path && source .venv/bin/activate && python -m code_analysis.cli.server_manager_cli --config config.json restart")
 ```
 
@@ -538,17 +582,21 @@ mcp_MCP-Proxy-2_call_server(
 ### 10.1 Always Do
 
 - ✅ Use MCP commands as primary interface
+- ✅ **Use CST tools (`compose_cst_module`) for ALL existing code modifications**
+- ✅ **Use `list_cst_blocks` and `query_cst` to discover code structure before editing**
+- ✅ Preview changes with `apply=false` and `return_diff=true` before applying
 - ✅ Validate code before committing
 - ✅ Follow file organization standards
 - ✅ Keep files under 400 lines
 - ✅ Add proper docstrings and type hints
 - ✅ Restart server after code changes
 - ✅ Update indexes after changes
-- ✅ Use CST for existing code modifications
-- ✅ Write code directly for new modules
+- ✅ Use direct write (`write` tool) ONLY for new files
 
 ### 10.2 Never Do
 
+- ❌ **Use `search_replace` or direct editing for existing Python code** (use CST tools!)
+- ❌ **Edit existing code without first using `list_cst_blocks` or `query_cst`**
 - ❌ Use CLI when MCP is available
 - ❌ Skip validation
 - ❌ Ignore errors
@@ -566,10 +614,17 @@ mcp_MCP-Proxy-2_call_server(
 1. **MCP** → `mcp_MCP-Proxy-2_call_server`
 2. **CLI** → `run_terminal_cmd` (fallback only)
 
-### 11.2 Code Creation
+### 11.2 Code Editing Priority
 
-- **New code** → Write directly
-- **Existing code** → Use CST
+1. **Existing Python code** → **CST tools** (`compose_cst_module` via MCP) - **REQUIRED**
+2. **New Python files** → Direct write (`write` tool)
+3. **Non-Python files** → Direct editing (`write`, `search_replace`)
+
+**CST Workflow**:
+1. `list_cst_blocks` → discover structure
+2. `query_cst` (optional) → find specific nodes
+3. `compose_cst_module` with `apply=false` → preview
+4. `compose_cst_module` with `apply=true` → apply
 
 ### 11.3 Validation
 

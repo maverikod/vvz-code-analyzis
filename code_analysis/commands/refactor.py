@@ -11,10 +11,10 @@ from typing import Dict, Any
 
 from ..core.refactorer_pkg.splitter import ClassSplitter
 from ..core.refactorer_pkg.extractor import SuperclassExtractor
+from ..core.refactorer_pkg.file_splitter import FileToPackageSplitter
 
-# TODO: Add ClassMerger and FileToPackageSplitter when available
+# TODO: Add ClassMerger when available
 # from ..core.refactorer_pkg.merger import ClassMerger
-# from ..core.refactorer_pkg.file_splitter import FileToPackageSplitter
 
 logger = logging.getLogger(__name__)
 

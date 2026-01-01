@@ -194,6 +194,48 @@ def register_code_analysis_commands(reg: registry) -> None:
         logger = logging.getLogger(__name__)
         logger.error(f"Failed to register analyze_complexity command: {e}", exc_info=True)
 
+    # Duplicate detection command
+    try:
+        from .commands.find_duplicates_mcp import FindDuplicatesMCPCommand
+
+        reg.register(FindDuplicatesMCPCommand, "custom")
+        import logging
+
+        logger = logging.getLogger(__name__)
+        logger.info("✅ Registered find_duplicates command")
+    except ImportError as e:
+        import logging
+
+        logger = logging.getLogger(__name__)
+        logger.warning(f"Failed to import find_duplicates command: {e}")
+    except Exception as e:
+        import logging
+
+        logger = logging.getLogger(__name__)
+        logger.error(f"Failed to register find_duplicates command: {e}", exc_info=True)
+
+    # Comprehensive analysis command
+    try:
+        from .commands.comprehensive_analysis_mcp import ComprehensiveAnalysisMCPCommand
+
+        reg.register(ComprehensiveAnalysisMCPCommand, "custom")
+        import logging
+
+        logger = logging.getLogger(__name__)
+        logger.info("✅ Registered comprehensive_analysis command")
+    except ImportError as e:
+        import logging
+
+        logger = logging.getLogger(__name__)
+        logger.warning(f"Failed to import comprehensive_analysis command: {e}")
+    except Exception as e:
+        import logging
+
+        logger = logging.getLogger(__name__)
+        logger.error(
+            f"Failed to register comprehensive_analysis command: {e}", exc_info=True
+        )
+
     # Search commands (may have dependencies)
     try:
         from .commands.search_mcp_commands import (
@@ -443,6 +485,8 @@ register_auto_import_module("code_analysis.commands.watch_dirs_commands")
 register_auto_import_module("code_analysis.commands.refactor_mcp_commands")
 register_auto_import_module("code_analysis.commands.code_quality_commands")
 register_auto_import_module("code_analysis.commands.analyze_complexity_mcp")
+register_auto_import_module("code_analysis.commands.find_duplicates_mcp")
+register_auto_import_module("code_analysis.commands.comprehensive_analysis_mcp")
 register_auto_import_module("code_analysis.commands.search_mcp_commands")
 register_auto_import_module("code_analysis.commands.code_mapper_mcp_command")
 register_auto_import_module("code_analysis.commands.backup_mcp_commands")

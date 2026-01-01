@@ -7,6 +7,170 @@
 
 This document defines rules for AI models on how to use the code analysis and refactoring tools in this project. These rules ensure efficient, safe, and correct usage of the available tools.
 
+## 0. AI Prompt Rules (MANDATORY)
+
+**⚠️ CRITICAL: These rules apply ONLY when server `code-analysis-server` is available via MCP Proxy. When server is unavailable, use fallback tools with user approval.**
+
+### 0.0 Quick Reference (For Prompt Insertion)
+
+**⚠️ CRITICAL: These are HARD RULES when server `code-analysis-server` is available via MCP Proxy.**
+
+**IF server is available:**
+
+1. **Python code operations → SERVER TOOLS ONLY (MANDATORY)**
+   - ✅ Editing existing Python code → `compose_cst_module` (via MCP)
+   - ✅ Splitting files → `split_file_to_package` (via MCP)
+   - ✅ Code analysis → `comprehensive_analysis`, `get_code_entity_info` (via MCP)
+   - ✅ Code quality → `format_code`, `lint_code`, `type_check_code` (via MCP)
+   - ❌ **FORBIDDEN**: `search_replace` or `write` on existing `.py` files
+
+2. **Error handling → USER DECISION REQUIRED**
+   - ✅ Report ALL errors to user immediately
+   - ✅ Wait for user approval before using fallback
+   - ❌ **FORBIDDEN**: Silent fallback to direct file editing
+
+3. **Why server tools are MANDATORY:**
+   - Reliability: 9/10 vs 4/10 (automatic validation, backups, error handling)
+   - Safety: 9/10 vs 4/10 (syntax/docstring/type validation)
+   - Convenience (complex): 8/10 vs 3/10 (semantic operations)
+
+4. **Direct tools allowed ONLY for:**
+   - ✅ Creating NEW files (file doesn't exist)
+   - ✅ Non-Python files (`.md`, `.json`, `.yaml`, `.txt`)
+   - ✅ When server unavailable (with user notification)
+   - ✅ When server fails AND user explicitly approves fallback
+
+**Workflow for existing Python code (when server available):**
+1. `list_cst_blocks` → discover structure
+2. `compose_cst_module` with `apply=false` → preview
+3. `compose_cst_module` with `apply=true` → apply
+4. `comprehensive_analysis` → validate quality
+
+**Remember**: Server tools = 9/10 reliability. Direct tools = 4/10 reliability. When server is available, using direct tools for Python code is a violation.
+
+### 0.1 Core Principle
+
+**Use server tools in specified cases WHEN server is available. If server tools fail, MANDATORY to notify user and get approval before using fallback.**
+
+**Key Points:**
+- ✅ Use server tools when available (reliability 9/10 vs 4/10)
+- ✅ Report ALL errors to user immediately
+- ✅ Wait for user decision before using fallback tools
+- ❌ Never silently switch to direct file editing
+- ❌ Never proceed without user approval on errors
+
+### 0.2 Tool Selection Rules (MANDATORY WHEN SERVER AVAILABLE)
+
+**IF server `code-analysis-server` is available via MCP Proxy:**
+
+1. **MUST use server tools** for ALL Python code operations:
+   - ✅ Editing existing Python code → `compose_cst_module` (MANDATORY)
+   - ✅ Splitting files → `split_file_to_package` (MANDATORY)
+   - ✅ Code analysis → `comprehensive_analysis`, `get_code_entity_info` (MANDATORY)
+   - ✅ Code quality → `format_code`, `lint_code`, `type_check_code` (MANDATORY)
+
+2. **NEVER use direct file editing** (`search_replace`, `write`) for existing Python code:
+   - ❌ `search_replace` on existing `.py` files = FORBIDDEN
+   - ❌ Direct `write` on existing `.py` files = FORBIDDEN
+   - ✅ Exception: Creating NEW files from scratch only
+
+3. **Why server tools are MANDATORY (when available):**
+   - **Reliability**: 9/10 vs 4/10 (automatic validation, backups, error handling)
+   - **Safety**: Syntax validation, docstring checks, type hint validation
+   - **Consistency**: Preserves formatting, comments, structure
+   - **Recovery**: Automatic backups before changes
+
+### 0.3 Error Handling and Fallback Rules (MANDATORY)
+
+**CRITICAL: When server tools fail or return errors:**
+
+1. **MUST immediately notify user** about the error:
+   - Report the exact error message from server
+   - Report which command failed
+   - Report what operation was attempted
+
+2. **MUST NOT automatically switch to fallback tools**:
+   - ❌ Do NOT silently use `search_replace` if `compose_cst_module` fails
+   - ❌ Do NOT proceed with direct file editing without user approval
+   - ✅ Wait for user decision
+
+3. **User makes the decision**:
+   - User decides whether to:
+     - Retry the server command
+     - Use fallback tools (direct file editing)
+     - Cancel the operation
+     - Investigate the error further
+
+4. **Example error handling workflow**:
+   ```
+   Server tool fails → Report error to user → Wait for user decision → 
+   User approves fallback → Use direct tools (with warning about reduced safety)
+   ```
+
+**Remember**: Model's role is to report errors and wait for user decision. User controls fallback strategy.
+
+### 0.4 Code Editing Workflow (MANDATORY WHEN SERVER AVAILABLE)
+
+**For existing Python files, ALWAYS follow this sequence (when server is available):**
+
+1. **Discover** → `list_cst_blocks` to find code structure
+2. **Preview** → `compose_cst_module` with `apply=false` to see changes
+3. **Apply** → `compose_cst_module` with `apply=true` and `create_backup=true`
+4. **Validate** → `format_code`, `lint_code`, `type_check_code`
+5. **Analyze** → `comprehensive_analysis` after logically completed steps
+
+**If any step fails:**
+- Report error to user immediately
+- Wait for user decision before proceeding
+- Do NOT automatically switch to direct file editing
+
+**NEVER skip steps 1-2. NEVER use `search_replace` for Python code (when server is available).**
+
+### 0.5 When Direct Tools Are Allowed (EXCEPTIONS ONLY)
+
+**Direct tools (`write`, `search_replace`) ONLY for:**
+- ✅ Creating NEW files (file doesn't exist)
+- ✅ Editing non-Python files (`.md`, `.json`, `.yaml`, `.txt`)
+- ✅ Simple text replacements in comments/docstrings (CST still preferred)
+- ✅ **When server is unavailable** (with user notification)
+- ✅ **When server tool fails and user explicitly approves fallback**
+
+**Direct tools FORBIDDEN for:**
+- ❌ Modifying existing Python code (when server is available)
+- ❌ Splitting large files (when server is available)
+- ❌ Refactoring operations (when server is available)
+- ❌ **Silent fallback without user approval**
+
+### 0.6 Tool Comparison Summary
+
+| Operation | Server Tools | Direct Tools | Winner |
+|-----------|-------------|--------------|--------|
+| **Reliability** | 9/10 (auto-validation, backups) | 4/10 (no validation) | **Server** |
+| **Safety** | 9/10 (syntax/docstring checks) | 4/10 (no checks) | **Server** |
+| **Convenience (complex)** | 8/10 (semantic operations) | 3/10 (manual work) | **Server** |
+| **Convenience (simple)** | 5/10 (overhead) | 9/10 (direct) | Direct* |
+
+*Direct tools only for simple non-code tasks or new files.
+
+### 0.7 Quick Decision Tree
+
+```
+Is server available?
+├─ YES → Is it Python code?
+│   ├─ YES → Is file existing?
+│   │   ├─ YES → Use compose_cst_module (MANDATORY)
+│   │   │   └─ If fails → Report error to user → Wait for decision
+│   │   └─ NO → Use write (allowed for new files)
+│   └─ NO → Use write/search_replace (allowed for non-Python)
+└─ NO → Notify user → Get approval → Use direct tools if approved
+```
+
+**Remember**: 
+- Server tools provide 9/10 reliability vs 4/10 for direct tools
+- When server is available, using direct tools for Python code is a violation
+- **When server tools fail, MANDATORY to report to user and wait for decision**
+- User controls fallback strategy, not the model
+
 ## 1. Tool Priority Rules
 
 ### 1.1 Primary Interface: MCP (Multi-Command Protocol)
@@ -58,10 +222,15 @@ python -m code_analysis.cli.server_manager_cli --config config.json restart
 
 ### 2.1 Priority Order for Code Editing
 
-**When editing existing code, use this priority:**
+**When editing existing code, use this priority (when server is available):**
 
 1. ✅ **CST Tools** (via `compose_cst_module` MCP command) - **PRIMARY FOR EXISTING CODE**
-2. ⚠️ **Direct file editing** (`search_replace`, `write`) - **ONLY FOR NEW FILES OR WHEN CST FAILS**
+2. ⚠️ **Direct file editing** (`search_replace`, `write`) - **ONLY FOR NEW FILES OR WHEN CST FAILS AND USER APPROVES**
+
+**IMPORTANT**: If CST tools fail, you MUST:
+- Report the error to user immediately
+- Wait for user decision before using fallback tools
+- Do NOT automatically switch to direct file editing
 
 **Rationale**:
 - CST preserves formatting, comments, and code structure
@@ -329,8 +498,9 @@ mcp_MCP-Proxy-2_call_server(
 1. ✅ Run `black` (automatic via `format_code`)
 2. ✅ Run `flake8` (automatic via `lint_code`)
 3. ✅ Run `mypy` (automatic via `type_check_code`)
-4. ✅ Update `code_mapper` indexes
-5. ✅ Restart server if code changed
+4. ✅ **Run comprehensive analysis** (after each logically completed step)
+5. ✅ Update `code_mapper` indexes
+6. ✅ Restart server if code changed
 
 **Commands**:
 ```python
@@ -341,6 +511,105 @@ mcp_MCP-Proxy-2_call_server(
     params={"root_dir": "/path"}
 )
 ```
+
+### 5.3 Comprehensive Code Quality Check
+
+**CRITICAL**: After each logically completed step, run comprehensive analysis to check code quality.
+
+**Rule**: 
+- ✅ **MUST** run `comprehensive_analysis` after each logically completed step
+- ✅ This ensures all code quality issues are detected early
+- ✅ Helps maintain code quality throughout development
+
+**When to run**:
+- After implementing a new feature
+- After refactoring code
+- After fixing bugs
+- Before committing changes
+- After merging code from different branches
+
+**Command**:
+```python
+# Comprehensive analysis for specific file
+mcp_MCP-Proxy-2_call_server(
+    server_id="code-analysis-server",
+    command="comprehensive_analysis",
+    params={
+        "root_dir": "/home/vasilyvz/projects/tools/code_analysis",
+        "file_path": "code_analysis/core/new_module.py",  # Optional: specific file
+        "check_placeholders": True,      # Check for TODO, FIXME, etc.
+        "check_stubs": True,             # Check for pass, ellipsis, NotImplementedError
+        "check_empty_methods": True,     # Check for empty methods (excluding abstract)
+        "check_imports": True,           # Check imports not at top
+        "check_long_files": True,        # Check files > 400 lines
+        "check_duplicates": True,        # Check for code duplicates
+        "check_flake8": True,            # Run flake8 linting
+        "check_mypy": True,              # Run mypy type checking
+        "duplicate_min_lines": 5,        # Minimum lines for duplicates
+        "duplicate_min_similarity": 0.8, # Minimum similarity for duplicates
+        "max_lines": 400                 # Maximum lines threshold
+    },
+    use_queue=True  # This is a long-running command
+)
+
+# Comprehensive analysis for entire project
+mcp_MCP-Proxy-2_call_server(
+    server_id="code-analysis-server",
+    command="comprehensive_analysis",
+    params={
+        "root_dir": "/home/vasilyvz/projects/tools/code_analysis",
+        # file_path omitted = analyze all files in project
+        "check_placeholders": True,
+        "check_stubs": True,
+        "check_empty_methods": True,
+        "check_imports": True,
+        "check_long_files": True,
+        "check_duplicates": True,
+        "check_flake8": True,
+        "check_mypy": True
+    },
+    use_queue=True
+)
+
+# Check job status and get results
+result = mcp_MCP-Proxy-2_call_server(
+    server_id="code-analysis-server",
+    command="queue_get_job_status",
+    params={"job_id": "comprehensive_analysis_..."}  # Job ID from previous call
+)
+
+# Results structure:
+# {
+#   "placeholders": [...],      # TODO, FIXME, etc.
+#   "stubs": [...],            # Functions with pass, ellipsis, etc.
+#   "empty_methods": [...],     # Methods without body (excluding abstract)
+#   "imports_not_at_top": [...], # Imports after non-import statements
+#   "long_files": [...],        # Files exceeding line limit
+#   "duplicates": [...],         # Code duplicates
+#   "flake8_errors": [...],      # Flake8 linting errors
+#   "mypy_errors": [...],       # Mypy type checking errors
+#   "summary": {
+#     "total_placeholders": int,
+#     "total_stubs": int,
+#     "total_empty_methods": int,
+#     "total_imports_not_at_top": int,
+#     "total_long_files": int,
+#     "total_duplicate_groups": int,
+#     "total_duplicate_occurrences": int,
+#     "total_flake8_errors": int,
+#     "files_with_flake8_errors": int,
+#     "total_mypy_errors": int,
+#     "files_with_mypy_errors": int
+#   }
+# }
+```
+
+**Action after comprehensive analysis**:
+1. ✅ Review all detected issues
+2. ✅ Fix critical issues immediately (errors, duplicates, long files)
+3. ✅ Address warnings and suggestions
+4. ✅ Re-run analysis to verify fixes
+5. ✅ Commit only after all issues are resolved
 
 ## 6. Available MCP Commands
 
@@ -391,6 +660,18 @@ mcp_MCP-Proxy-2_call_server(
 - `get_imports` - Get imports
 - `find_dependencies` - Find dependencies
 - `get_class_hierarchy` - Get class hierarchy
+
+### 6.8 Comprehensive Analysis Commands
+
+- `comprehensive_analysis` - Comprehensive code quality analysis combining:
+  - Placeholders (TODO, FIXME, etc.)
+  - Stubs (pass, ellipsis, NotImplementedError)
+  - Empty methods (excluding abstract)
+  - Imports not at top of file
+  - Long files (>400 lines)
+  - Code duplicates (structural and semantic)
+  - Flake8 linting errors
+  - Mypy type checking errors
 
 ## 7. Error Handling Rules
 
@@ -604,6 +885,45 @@ mcp_MCP-Proxy-2_call_server(
     params={"file_path": "file.py"}
 )
 
+# Step 6: Run comprehensive analysis (after logically completed step)
+comprehensive_result = mcp_MCP-Proxy-2_call_server(
+    server_id="code-analysis-server",
+    command="comprehensive_analysis",
+    params={
+        "root_dir": "/path",
+        "file_path": "file.py",
+        "check_placeholders": True,
+        "check_stubs": True,
+        "check_empty_methods": True,
+        "check_imports": True,
+        "check_long_files": True,
+        "check_duplicates": True,
+        "check_flake8": True,
+        "check_mypy": True
+    },
+    use_queue=True
+)
+
+# Get results when job completes
+if comprehensive_result.get("result", {}).get("queued"):
+    job_id = comprehensive_result["result"]["job_id"]
+    # Poll for results
+    import time
+    while True:
+        status = mcp_MCP-Proxy-2_call_server(
+            server_id="code-analysis-server",
+            command="queue_get_job_status",
+            params={"job_id": job_id}
+        )
+        if status["result"]["data"]["status"] == "completed":
+            analysis_results = status["result"]["data"]["result"]["result"]["data"]
+            # Review and fix issues found in analysis_results
+            break
+        elif status["result"]["data"]["status"] == "failed":
+            # Handle error
+            break
+        time.sleep(1)
+
 # Restart server if code changed
 run_terminal_cmd("cd /path && source .venv/bin/activate && python -m code_analysis.cli.server_manager_cli --config config.json restart")
 ```
@@ -666,6 +986,7 @@ mcp_MCP-Proxy-2_call_server(
 - ✅ **Use CST tools (`compose_cst_module`) for ALL existing code modifications**
 - ✅ **Use `list_cst_blocks` and `query_cst` to discover code structure before editing**
 - ✅ Preview changes with `apply=false` and `return_diff=true` before applying
+- ✅ **Run `comprehensive_analysis` after each logically completed step**
 - ✅ Validate code before committing
 - ✅ Follow file organization standards
 - ✅ Keep files under 400 lines
@@ -717,8 +1038,9 @@ mcp_MCP-Proxy-2_call_server(
 1. Format code
 2. Lint code
 3. Type check
-4. Update indexes
-5. Restart server
+4. **Run comprehensive analysis** (after each logically completed step)
+5. Update indexes
+6. Restart server
 
 ---
 

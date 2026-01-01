@@ -39,8 +39,8 @@ class ViewWorkerLogsMCPCommand(BaseMCPCommand):
                 },
                 "worker_type": {
                     "type": "string",
-                    "enum": ["file_watcher", "vectorization"],
-                    "description": "Type of worker (file_watcher or vectorization)",
+                    "enum": ["file_watcher", "vectorization", "analysis"],
+                    "description": "Type of worker (file_watcher, vectorization, or analysis)",
                     "default": "file_watcher",
                 },
                 "from_time": {
@@ -154,8 +154,8 @@ class ListWorkerLogsMCPCommand(BaseMCPCommand):
                 },
                 "worker_type": {
                     "type": "string",
-                    "enum": ["file_watcher", "vectorization", "server"],
-                    "description": "Filter by worker type (file_watcher, vectorization) or server logs (optional)",
+                    "enum": ["file_watcher", "vectorization", "analysis", "server"],
+                    "description": "Filter by worker type (file_watcher, vectorization, analysis) or server logs (optional)",
                 },
             },
             "required": [],

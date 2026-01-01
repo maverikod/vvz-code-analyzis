@@ -142,7 +142,9 @@
       "retry_attempts": 3,
       "retry_delay": 10.0,
       "watch_dirs": [
-        "/home/vasilyvz/projects/tools/code_analysis"
+        "/home/vasilyvz/projects/tools/code_analysis",
+        "/home/vasilyvz/projects/tools/code_analysis/test_data/code_analysis_test",
+        "/home/vasilyvz/projects/vast_srv"
       ],
       "dynamic_watch_file": "data/dynamic_watch_dirs.json",
       "log_path": "logs/vectorization_worker.log",

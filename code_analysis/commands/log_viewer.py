@@ -383,6 +383,7 @@ class ListLogFilesCommand:
         log_patterns = {
             "file_watcher": ["file_watcher.log*", "file_watcher*.log*"],
             "vectorization": ["vectorization_worker.log*", "vectorization*.log*"],
+            "analysis": ["comprehensive_analysis.log*", "comprehensive_analysis*.log*"],
             "server": [
                 "mcp_proxy_adapter.log*",
                 "mcp_proxy_adapter*.log*",
@@ -428,6 +429,7 @@ class ListLogFilesCommand:
                                 if self.worker_type == "server" and detected_type not in [
                                     "file_watcher",
                                     "vectorization",
+                                    "analysis",
                                 ]:
                                     pass  # Include server logs
                                 else:
@@ -472,13 +474,15 @@ class ListLogFilesCommand:
             filename: Name of the log file
 
         Returns:
-            Type of log: "file_watcher", "vectorization", "server", or "unknown"
+            Type of log: "file_watcher", "vectorization", "analysis", "server", or "unknown"
         """
         filename_lower = filename.lower()
         if "file_watcher" in filename_lower:
             return "file_watcher"
         elif "vectorization" in filename_lower:
             return "vectorization"
+        elif "comprehensive_analysis" in filename_lower:
+            return "analysis"
         elif "mcp_proxy_adapter" in filename_lower:
             return "server"
         elif filename_lower.endswith(".log") or filename_lower.endswith(".log."):

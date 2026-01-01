@@ -483,6 +483,37 @@ class CodeDatabase:
             logger.info("Added binding_level column to code_chunks table")
         except Exception:
             pass
+        # Create code_duplicates table
+        self._execute(
+            """
+                CREATE TABLE IF NOT EXISTS code_duplicates (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    project_id TEXT NOT NULL,
+                    duplicate_hash TEXT NOT NULL,
+                    similarity REAL NOT NULL,
+                    created_at REAL DEFAULT (julianday('now')),
+                    FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE,
+                    UNIQUE(project_id, duplicate_hash)
+                )
+            """
+        )
+        # Create duplicate_occurrences table
+        self._execute(
+            """
+                CREATE TABLE IF NOT EXISTS duplicate_occurrences (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    duplicate_id INTEGER NOT NULL,
+                    file_id INTEGER NOT NULL,
+                    start_line INTEGER NOT NULL,
+                    end_line INTEGER NOT NULL,
+                    code_snippet TEXT,
+                    ast_node_id INTEGER,
+                    created_at REAL DEFAULT (julianday('now')),
+                    FOREIGN KEY (duplicate_id) REFERENCES code_duplicates(id) ON DELETE CASCADE,
+                    FOREIGN KEY (file_id) REFERENCES files(id) ON DELETE CASCADE
+                )
+            """
+        )
         self._commit()
         self._migrate_to_uuid_projects()
         self._migrate_schema()
@@ -518,6 +549,10 @@ class CodeDatabase:
             "CREATE INDEX IF NOT EXISTS idx_code_chunks_vector ON code_chunks(vector_id)",
             "CREATE INDEX IF NOT EXISTS idx_code_chunks_not_vectorized ON code_chunks(project_id, id) WHERE vector_id IS NULL",
             "CREATE INDEX IF NOT EXISTS idx_files_deleted ON files(deleted) WHERE deleted = 1",
+            "CREATE INDEX IF NOT EXISTS idx_code_duplicates_project ON code_duplicates(project_id)",
+            "CREATE INDEX IF NOT EXISTS idx_code_duplicates_hash ON code_duplicates(duplicate_hash)",
+            "CREATE INDEX IF NOT EXISTS idx_duplicate_occurrences_duplicate ON duplicate_occurrences(duplicate_id)",
+            "CREATE INDEX IF NOT EXISTS idx_duplicate_occurrences_file ON duplicate_occurrences(file_id)",
         ]
         for index_sql in indexes:
             self._execute(index_sql)

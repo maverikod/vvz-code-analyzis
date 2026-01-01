@@ -2,13 +2,14 @@
 
 **Author:** Vasiliy Zdanovskiy  
 **Email:** vasilyvz@gmail.com  
-**Date:** 2025-12-29  
+**Date:** 2025-12-31  
 **Package:** `mcp_proxy_adapter`  
-**Component:** `api.core.registration_manager.manager.RegistrationManager`
+**Component:** `api.core.registration_manager.manager.RegistrationManager`  
+**Status:** 🔴 **CONFIRMED BUG** - Requires fix in adapter or workaround in application code
 
 ## Summary
 
-When a server is already registered with the proxy, the `RegistrationManager.register_with_proxy()` method attempts to unregister and reset status, causing unnecessary disruption. Instead, it should gracefully handle the "already registered" case by setting the status to "registered" and continuing with heartbeat.
+When a server is already registered with the proxy, the `RegistrationManager.register_with_proxy()` method attempts to unregister and reset status, but **returns `False`**, causing registration to fail and trigger retry loops. The adapter should automatically unregister the old registration and re-register, returning `True` on success.
 
 ## Problem Description
 
@@ -60,7 +61,7 @@ From logs:
 
 **File:** `.venv/lib/python3.12/site-packages/mcp_proxy_adapter/api/core/registration_manager/manager.py`
 
-**Lines:** 216-226
+### Location 1: Direct error message check (Lines 216-226)
 
 ```python
 if "already registered" in error_msg:
@@ -69,12 +70,37 @@ if "already registered" in error_msg:
     )
     self.registered = False
     await set_registration_status(False)
+    await set_registration_snapshot(registered=False)
     try:
         await self.unregister()
     except Exception as e:
         self.logger.warning(f"Failed to unregister: {e}")
-    return False
+    return False  # ❌ BUG: Returns False, causing retry loop
 ```
+
+### Location 2: Exception handler (Lines 246-260)
+
+**Проблема:** При обработке исключения `ConnectionError` с сообщением "already registered" код не проверяет это условие и просто повторяет попытку регистрации, что приводит к бесконечному циклу повторных попыток.
+
+```python
+except Exception as exc:  # noqa: BLE001
+    full_error = self._format_httpx_error(exc)
+    # ❌ BUG: No check for "already registered" in exception handler
+    if attempt < max_retries - 1:
+        self.logger.warning(
+            "⚠️  Registration attempt %s/%s failed: %s. Retrying in %ss...",
+            attempt + 1,
+            max_retries,
+            full_error,
+            retry_delay,
+        )
+        await asyncio.sleep(retry_delay)
+    else:
+        # ... error logging ...
+        raise
+```
+
+**Проблема:** Когда `ConnectionError` содержит "already registered", исключение обрабатывается как обычная ошибка и происходит повторная попытка, что приводит к бесконечному циклу.
 
 ## Proposed Fix
 
@@ -106,30 +132,65 @@ if "already registered" in error_msg:
         return True
 ```
 
-### Option 2: Handle in exception handler
+### Option 2: Handle in exception handler (КРИТИЧНО)
 
-Also handle "already registered" in the exception handler (lines 236-254):
+**Обязательно** нужно обработать "already registered" в обработчике исключений (lines 246-260), так как ошибка приходит как `ConnectionError`:
 
 ```python
 except Exception as exc:  # noqa: BLE001
     full_error = self._format_httpx_error(exc)
-    # Check if error is "already registered"
+    
+    # ✅ КРИТИЧНО: Проверка "already registered" в исключении
     if "already registered" in full_error.lower():
         # Extract server_key from error message
         import re
         match = re.search(r"already registered as ([^\s,]+)", full_error.lower())
-        if match:
-            server_key = match.group(1)
-            self.logger.info(
-                f"✅ Server already registered as {server_key} (from exception), "
-                "setting status to registered and continuing with heartbeat"
-            )
-            self.registered = True
-            await set_registration_status(True)
-            return True
+        server_key = match.group(1) if match else "unknown"
+        
+        self.logger.info(
+            f"🔄 Server already registered as {server_key}, "
+            "unregistering and re-registering..."
+        )
+        
+        # Unregister old registration
+        try:
+            await self.unregister()
+            self.logger.info(f"✅ Unregistered {server_key}")
+        except Exception as unreg_exc:
+            self.logger.warning(f"⚠️  Failed to unregister: {unreg_exc}")
+        
+        # Wait for proxy to process unregistration
+        await asyncio.sleep(1.0)
+        
+        # Re-register
+        try:
+            registration_response = await _register()
+            if registration_response and registration_response.get("success"):
+                self.logger.info(f"✅ Successfully re-registered after auto-fix")
+                self.registered = True
+                await set_registration_status(True)
+                await set_registration_snapshot(registered=True)
+                return True
+            else:
+                self.logger.error("❌ Re-registration failed after unregister")
+                # Fall through to retry logic
+        except Exception as rereg_exc:
+            self.logger.error(f"❌ Re-registration exception: {rereg_exc}")
+            # Fall through to retry logic
     
+    # Existing retry logic for other errors
     if attempt < max_retries - 1:
-        # ... existing retry logic ...
+        self.logger.warning(
+            "⚠️  Registration attempt %s/%s failed: %s. Retrying in %ss...",
+            attempt + 1,
+            max_retries,
+            full_error,
+            retry_delay,
+        )
+        await asyncio.sleep(retry_delay)
+    else:
+        # ... existing error logging ...
+        raise
 ```
 
 ### Option 3: Handle in `JsonRpcClient.register_with_proxy`
@@ -212,9 +273,18 @@ The `server_key` (e.g., "code-analysis-server_1") can be extracted using regex: 
 
 ## Recommendations
 
-1. **Immediate Fix:** Implement Option 1 + Option 2 (handle in both places)
-2. **Long-term:** Consider adding a "check registration status" API endpoint to proxy
-3. **Documentation:** Update registration flow documentation to explain "already registered" handling
+1. **КРИТИЧНО - Immediate Fix:** 
+   - **Обязательно** исправить Option 2 (обработка исключения) - это основная проблема
+   - Опционально исправить Option 1 (прямая проверка error_msg) для улучшения логирования
+   - При обработке исключения: отменить старую регистрацию, подождать, зарегистрироваться заново, вернуть `True`
+
+2. **Long-term:** 
+   - Добавить API endpoint в proxy для проверки статуса регистрации
+   - Добавить метод `check_registration_status()` в `RegistrationManager`
+
+3. **Documentation:** 
+   - Обновить документацию регистрации с объяснением обработки "already registered"
+   - Добавить примеры обработки ошибок регистрации
 
 ## Related Issues
 

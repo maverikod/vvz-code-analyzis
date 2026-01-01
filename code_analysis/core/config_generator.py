@@ -370,4 +370,20 @@ class CodeAnalysisConfigGenerator:
         with open(out_path_obj, "w", encoding="utf-8") as f:
             json.dump(config, f, indent=2, ensure_ascii=False)
 
+        # Validate generated configuration
+        from .config_validator import CodeAnalysisConfigValidator
+
+        validator = CodeAnalysisConfigValidator(str(out_path_obj))
+        validator.load_config()
+        validation_results = validator.validate_config()
+        summary = validator.get_validation_summary()
+
+        if not summary["is_valid"]:
+            errors = [
+                r.message for r in validation_results if r.level == "error"
+            ]
+            raise ValueError(
+                f"Generated configuration is invalid: {'; '.join(errors)}"
+            )
+
         return str(out_path_obj.resolve())

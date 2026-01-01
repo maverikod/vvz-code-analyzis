@@ -114,24 +114,49 @@ class SQLiteDriverProxy(BaseDatabaseDriver):
     def _start_worker(self) -> None:
         """Connect to existing DB worker process via global manager."""
         if self._worker_initialized and self._socket_path:
-            logger.info("[SQLITE_PROXY] Worker already initialized")
+            logger.info(f"[SQLITE_PROXY] Worker already initialized (socket: {self._socket_path})")
             return
 
-        logger.info("[SQLITE_PROXY] Connecting to DB worker via manager")
+        logger.info(f"[SQLITE_PROXY] Connecting to DB worker via manager (db_path: {self.db_path})")
 
         # Get existing worker or start new one via global manager
         # Note: Worker should be started from main process, not from daemon workers
         # If worker doesn't exist, manager will start it (but this should be rare)
-        worker_manager = get_db_worker_manager()
-        worker_info = worker_manager.get_or_start_worker(
-            str(self.db_path),
-            self.worker_log_path,
-        )
+        try:
+            worker_manager = get_db_worker_manager()
+            logger.info(f"[SQLITE_PROXY] Got worker manager, calling get_or_start_worker...")
+            worker_info = worker_manager.get_or_start_worker(
+                str(self.db_path),
+                self.worker_log_path,
+            )
+            logger.info(f"[SQLITE_PROXY] get_or_start_worker returned: worker_info keys: {list(worker_info.keys()) if worker_info else 'None'}")
 
-        self._socket_path = worker_info["socket_path"]
-        self._worker_initialized = True
-
-        logger.info(f"[SQLITE_PROXY] Connected to DB worker (socket: {self._socket_path})")
+            self._socket_path = worker_info.get("socket_path")
+            if not self._socket_path:
+                raise RuntimeError(f"No socket_path in worker_info: {worker_info}")
+            
+            logger.info(f"[SQLITE_PROXY] Got socket_path: {self._socket_path}")
+            
+            # Verify socket file exists
+            socket_file = Path(self._socket_path)
+            if not socket_file.exists():
+                logger.warning(f"[SQLITE_PROXY] Socket file does not exist: {self._socket_path}, waiting...")
+                import time
+                max_wait = 5.0
+                wait_interval = 0.1
+                waited = 0.0
+                while not socket_file.exists() and waited < max_wait:
+                    time.sleep(wait_interval)
+                    waited += wait_interval
+                if not socket_file.exists():
+                    raise RuntimeError(f"Socket file not created after {waited:.1f}s: {self._socket_path}")
+                logger.info(f"[SQLITE_PROXY] Socket file exists after {waited:.1f}s wait")
+            
+            self._worker_initialized = True
+            logger.info(f"[SQLITE_PROXY] Connected to DB worker (socket: {self._socket_path}, exists: {socket_file.exists()})")
+        except Exception as e:
+            logger.error(f"[SQLITE_PROXY] Failed to start worker: {type(e).__name__}: {e}", exc_info=True)
+            raise
 
     def _ensure_worker_running(self) -> None:
         """Ensure worker process is running."""
@@ -157,11 +182,34 @@ class SQLiteDriverProxy(BaseDatabaseDriver):
         Raises:
             DatabaseOperationError: If communication fails
         """
+        logger.debug(f"[SQLITE_PROXY] _send_request called, socket_path: {self._socket_path}, initialized: {self._worker_initialized}")
+        
+        # Ensure worker is running before sending request
+        if not self._worker_initialized or not self._socket_path:
+            logger.error(f"[SQLITE_PROXY] Worker not initialized! initialized: {self._worker_initialized}, socket_path: {self._socket_path}")
+            raise RuntimeError("Worker not initialized. Ensure connect() was called.")
+        
+        # Verify socket file exists before attempting connection
+        socket_file = Path(self._socket_path)
+        if not socket_file.exists():
+            logger.error(f"[SQLITE_PROXY] Socket file does not exist: {self._socket_path}")
+            logger.error(f"[SQLITE_PROXY] Attempting to reconnect...")
+            self._worker_initialized = False
+            self._start_worker()
+            socket_file = Path(self._socket_path)
+            if not socket_file.exists():
+                raise DatabaseOperationError(
+                    f"Socket file does not exist after reconnect: {self._socket_path}",
+                    operation=request.get("command", "unknown"),
+                )
+        
+        logger.debug(f"[SQLITE_PROXY] Connecting to socket: {self._socket_path}")
         sock = None
         try:
             sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
             sock.settimeout(self._socket_timeout)
             sock.connect(self._socket_path)
+            logger.debug(f"[SQLITE_PROXY] Successfully connected to socket")
 
             # Send request
             data = json.dumps(request).encode('utf-8')

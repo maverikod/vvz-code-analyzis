@@ -6,10 +6,8 @@ email: vasilyvz@gmail.com
 """
 
 from typing import Dict, List, Any, Optional
-
-
 def add_code_content(
-    self,
+    self: "CodeDatabase",
     file_id: int,
     entity_type: str,
     entity_name: str,
@@ -21,6 +19,7 @@ def add_code_content(
     Add code content for full-text search.
 
     Args:
+        self: Database instance
         file_id: File ID
         entity_type: Type (class, method, function)
         entity_name: Name of entity
@@ -44,10 +43,8 @@ def add_code_content(
     )
     self._commit()
     return content_id
-
-
 def full_text_search(
-    self,
+    self: "CodeDatabase",
     query: str,
     project_id: str,
     entity_type: Optional[str] = None,
@@ -57,6 +54,7 @@ def full_text_search(
     Perform full-text search in code content.
 
     Args:
+        self: Database instance
         query: Search query
         project_id: Project ID to filter by
         entity_type: Filter by entity type
@@ -65,8 +63,18 @@ def full_text_search(
     Returns:
         List of matching records with file paths
     """
-    fts_query = "\n            SELECT c.*, f.path as file_path\n            FROM code_content_fts fts\n            JOIN code_content c ON fts.rowid = c.id\n            JOIN files f ON c.file_id = f.id\n            WHERE code_content_fts MATCH ? AND f.project_id = ?\n        "
-    params = [query, project_id]
+    # Escape FTS5 special characters in query
+    # Replace dots with spaces to avoid FTS5 syntax errors
+    escaped_query = query.replace(".", " ")
+    
+    fts_query = (
+        "\n            SELECT c.*, f.path as file_path\n"
+        "            FROM code_content_fts fts\n"
+        "            JOIN code_content c ON fts.rowid = c.id\n"
+        "            JOIN files f ON c.file_id = f.id\n"
+        "            WHERE fts MATCH ? AND f.project_id = ?\n"
+    )
+    params = [escaped_query, project_id]
     if entity_type:
         fts_query += " AND c.entity_type = ?"
         params.append(entity_type)

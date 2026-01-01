@@ -238,14 +238,34 @@ class WorkerStatusCommand:
             "log_activity": None,
         }
 
-        # Find worker processes
-        processes = self._find_worker_processes()
-        for proc_info in processes:
-            pid = proc_info.get("pid")
-            if pid:
-                proc_details = self._get_process_by_pid(pid)
-                if proc_details:
-                    result["processes"].append(proc_details)
+        # First, try to get registered workers from WorkerManager
+        try:
+            from ..core.worker_manager import get_worker_manager
+            worker_manager = get_worker_manager()
+            manager_status = worker_manager.get_worker_status()
+            
+            # Get workers of this type from manager
+            workers_by_type = manager_status.get("by_type", {}).get(self.worker_type, {})
+            registered_pids = workers_by_type.get("pids", [])
+            
+            # Get process details for registered workers
+            for pid in registered_pids:
+                if pid:
+                    proc_details = self._get_process_by_pid(pid)
+                    if proc_details:
+                        result["processes"].append(proc_details)
+        except Exception as e:
+            logger.warning(f"Failed to get workers from WorkerManager: {e}")
+
+        # If no registered workers found, try to find by process name
+        if not result["processes"]:
+            processes = self._find_worker_processes()
+            for proc_info in processes:
+                pid = proc_info.get("pid")
+                if pid:
+                    proc_details = self._get_process_by_pid(pid)
+                    if proc_details:
+                        result["processes"].append(proc_details)
 
         # Get lock file info (for file watcher)
         if self.worker_type == "file_watcher":

@@ -94,14 +94,32 @@ class SVOClientManager:
         """
 
         cfg = self._to_dict(server_config)
-        ca_cfg = cfg.get("code_analysis") or {}
-        chunker_cfg = ca_cfg.get("chunker") or {}
-        emb_cfg = ca_cfg.get("embedding") or {}
-        worker_cfg = (ca_cfg.get("worker") or {}).get("circuit_breaker") or {}
-
-        self.vector_dim: int = int(ca_cfg.get("vector_dim", 384))
-        self.chunker_enabled: bool = bool(chunker_cfg.get("enabled", False))
-        self.embedding_enabled: bool = bool(emb_cfg.get("enabled", False))
+        
+        # Handle both formats: full config dict with "code_analysis" key, or ServerConfig object
+        if "code_analysis" in cfg:
+            ca_cfg = cfg.get("code_analysis") or {}
+        else:
+            # server_config is already a ServerConfig object (parsed code_analysis section)
+            ca_cfg = cfg
+        
+        # Convert nested objects to dicts if needed
+        if hasattr(ca_cfg, "chunker") and hasattr(ca_cfg.chunker, "enabled"):
+            # ServerConfig object - extract directly
+            chunker_cfg = self._to_dict(ca_cfg.chunker) if ca_cfg.chunker else {}
+            emb_cfg = self._to_dict(ca_cfg.embedding) if ca_cfg.embedding else {}
+            worker_dict = self._to_dict(ca_cfg.worker) if ca_cfg.worker else {}
+            worker_cfg = worker_dict.get("circuit_breaker") or {} if isinstance(worker_dict, dict) else {}
+            self.vector_dim: int = int(ca_cfg.vector_dim or 384)
+            self.chunker_enabled: bool = bool(chunker_cfg.get("enabled", False))
+            self.embedding_enabled: bool = bool(emb_cfg.get("enabled", False))
+        else:
+            # Dict format - extract as before
+            chunker_cfg = ca_cfg.get("chunker") or {}
+            emb_cfg = ca_cfg.get("embedding") or {}
+            worker_cfg = (ca_cfg.get("worker") or {}).get("circuit_breaker") or {}
+            self.vector_dim: int = int(ca_cfg.get("vector_dim", 384))
+            self.chunker_enabled: bool = bool(chunker_cfg.get("enabled", False))
+            self.embedding_enabled: bool = bool(emb_cfg.get("enabled", False))
 
         self.failure_threshold: int = int(worker_cfg.get("failure_threshold", 5))
         self.recovery_timeout: float = float(worker_cfg.get("recovery_timeout", 60.0))
@@ -124,29 +142,31 @@ class SVOClientManager:
         # Chunker client (SVO - chunks and vectorizes)
         self._chunker_client: Optional[Any] = None
 
-        # Extract chunker configuration
-        self._chunker_url: str = str(chunker_cfg.get("url") or chunker_cfg.get("host") or "localhost")
-        self._chunker_port: int = int(chunker_cfg.get("port", 8009))
-        self._chunker_protocol: str = str(chunker_cfg.get("protocol", "http"))
-        self._chunker_cert_file: Optional[str] = chunker_cfg.get("cert_file")
-        self._chunker_key_file: Optional[str] = chunker_cfg.get("key_file")
-        self._chunker_ca_cert_file: Optional[str] = chunker_cfg.get("ca_cert_file")
-        self._chunker_crl_file: Optional[str] = chunker_cfg.get("crl_file")
-        self._chunker_timeout: Optional[float] = chunker_cfg.get("timeout")
+        # Extract chunker configuration (ensure dict format)
+        chunker_cfg_dict = self._to_dict(chunker_cfg) if not isinstance(chunker_cfg, dict) else chunker_cfg
+        self._chunker_url: str = str(chunker_cfg_dict.get("url") or chunker_cfg_dict.get("host") or "localhost")
+        self._chunker_port: int = int(chunker_cfg_dict.get("port", 8009))
+        self._chunker_protocol: str = str(chunker_cfg_dict.get("protocol", "http"))
+        self._chunker_cert_file: Optional[str] = chunker_cfg_dict.get("cert_file")
+        self._chunker_key_file: Optional[str] = chunker_cfg_dict.get("key_file")
+        self._chunker_ca_cert_file: Optional[str] = chunker_cfg_dict.get("ca_cert_file")
+        self._chunker_crl_file: Optional[str] = chunker_cfg_dict.get("crl_file")
+        self._chunker_timeout: Optional[float] = chunker_cfg_dict.get("timeout")
 
         # Embedding client (embed-client - only vectorization)
         self._embedding_client: Optional[Any] = None
 
-        # Extract embedding configuration
-        self._embedding_url: str = str(emb_cfg.get("url") or emb_cfg.get("host") or "localhost")
-        self._embedding_port: int = int(emb_cfg.get("port", 8001))
-        self._embedding_protocol: str = str(emb_cfg.get("protocol", "http"))
+        # Extract embedding configuration (ensure dict format)
+        emb_cfg_dict = self._to_dict(emb_cfg) if not isinstance(emb_cfg, dict) else emb_cfg
+        self._embedding_url: str = str(emb_cfg_dict.get("url") or emb_cfg_dict.get("host") or "localhost")
+        self._embedding_port: int = int(emb_cfg_dict.get("port", 8001))
+        self._embedding_protocol: str = str(emb_cfg_dict.get("protocol", "http"))
         # Store certificate paths as-is (will be resolved relative to config file location if needed)
-        self._embedding_cert_file: Optional[str] = emb_cfg.get("cert_file")
-        self._embedding_key_file: Optional[str] = emb_cfg.get("key_file")
-        self._embedding_ca_cert_file: Optional[str] = emb_cfg.get("ca_cert_file")
-        self._embedding_crl_file: Optional[str] = emb_cfg.get("crl_file")
-        self._embedding_timeout: Optional[float] = emb_cfg.get("timeout")
+        self._embedding_cert_file: Optional[str] = emb_cfg_dict.get("cert_file")
+        self._embedding_key_file: Optional[str] = emb_cfg_dict.get("key_file")
+        self._embedding_ca_cert_file: Optional[str] = emb_cfg_dict.get("ca_cert_file")
+        self._embedding_crl_file: Optional[str] = emb_cfg_dict.get("crl_file")
+        self._embedding_timeout: Optional[float] = emb_cfg_dict.get("timeout")
         
         # Store root path for resolving relative certificate paths
         # Priority: explicit root_dir > infer from config > current working directory
@@ -208,7 +228,9 @@ class SVOClientManager:
                                 ca_cert_path = self._root_path / ca_cert_path
                             chunker_kwargs["ca"] = str(ca_cert_path.resolve())
                     
+                    # Create ChunkerClient and enter context manager
                     self._chunker_client = ChunkerClient(**chunker_kwargs)
+                    await self._chunker_client.__aenter__()
 
                     logger.info(
                         "SVOClientManager initialized with real chunker service "
@@ -340,8 +362,8 @@ class SVOClientManager:
         async with self._lock:
             if self._chunker_client:
                 try:
-                    if hasattr(self._chunker_client, "close"):
-                        await self._chunker_client.close()
+                    # Use context manager exit for proper cleanup
+                    await self._chunker_client.__aexit__(None, None, None)
                 except Exception as e:
                     logger.warning("Error closing chunker client: %s", e, exc_info=True)
                 finally:

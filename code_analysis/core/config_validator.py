@@ -9,6 +9,7 @@ email: vasilyvz@gmail.com
 
 import json
 import re
+import urllib.parse
 from pathlib import Path
 from typing import Dict, List, Any, Optional, Tuple
 
@@ -107,6 +108,8 @@ class CodeAnalysisConfigValidator:
         self._validate_file_existence()
         self._validate_protocol_consistency()
         self._validate_uuid_format()
+        self._validate_field_types()
+        self._validate_field_values()
 
         return self.validation_results
 
@@ -242,29 +245,51 @@ class CodeAnalysisConfigValidator:
 
         # Validate max_concurrent_jobs
         max_concurrent = queue_manager.get("max_concurrent_jobs")
-        if max_concurrent is not None and max_concurrent < 1:
-            self.validation_results.append(
-                ValidationResult(
-                    level="error",
-                    message="queue_manager.max_concurrent_jobs must be at least 1",
-                    section="queue_manager",
-                    key="max_concurrent_jobs",
-                    suggestion="Set max_concurrent_jobs to 1 or higher",
+        if max_concurrent is not None:
+            if not isinstance(max_concurrent, int):
+                self.validation_results.append(
+                    ValidationResult(
+                        level="error",
+                        message=f"queue_manager.max_concurrent_jobs must be int, got {type(max_concurrent).__name__}",
+                        section="queue_manager",
+                        key="max_concurrent_jobs",
+                        suggestion="Set max_concurrent_jobs to an integer value",
+                    )
                 )
-            )
+            elif max_concurrent < 1:
+                self.validation_results.append(
+                    ValidationResult(
+                        level="error",
+                        message="queue_manager.max_concurrent_jobs must be at least 1",
+                        section="queue_manager",
+                        key="max_concurrent_jobs",
+                        suggestion="Set max_concurrent_jobs to 1 or higher",
+                    )
+                )
 
         # Validate retention
         retention = queue_manager.get("completed_job_retention_seconds")
-        if retention is not None and retention < 0:
-            self.validation_results.append(
-                ValidationResult(
-                    level="error",
-                    message="queue_manager.completed_job_retention_seconds must be >= 0",
-                    section="queue_manager",
-                    key="completed_job_retention_seconds",
-                    suggestion="Set completed_job_retention_seconds to 0 or higher",
+        if retention is not None:
+            if not isinstance(retention, int):
+                self.validation_results.append(
+                    ValidationResult(
+                        level="error",
+                        message=f"queue_manager.completed_job_retention_seconds must be int, got {type(retention).__name__}",
+                        section="queue_manager",
+                        key="completed_job_retention_seconds",
+                        suggestion="Set completed_job_retention_seconds to an integer value",
+                    )
                 )
-            )
+            elif retention < 0:
+                self.validation_results.append(
+                    ValidationResult(
+                        level="error",
+                        message="queue_manager.completed_job_retention_seconds must be >= 0",
+                        section="queue_manager",
+                        key="completed_job_retention_seconds",
+                        suggestion="Set completed_job_retention_seconds to 0 or higher",
+                    )
+                )
 
     def _validate_code_analysis_section(self) -> None:
         """Validate code_analysis section."""
@@ -429,7 +454,7 @@ class CodeAnalysisConfigValidator:
         server = self.config_data.get("server", {})
         ssl = server.get("ssl")
         if ssl:
-            for field in ["cert", "key", "ca"]:
+            for field in ["cert", "key", "ca", "crl"]:
                 if field in ssl and ssl[field]:
                     file_path = Path(ssl[field])
                     if not file_path.is_absolute():
@@ -450,7 +475,7 @@ class CodeAnalysisConfigValidator:
         if registration.get("enabled"):
             reg_ssl = registration.get("ssl")
             if reg_ssl:
-                for field in ["cert", "key", "ca"]:
+                for field in ["cert", "key", "ca", "crl"]:
                     if field in reg_ssl and reg_ssl[field]:
                         file_path = Path(reg_ssl[field])
                         if not file_path.is_absolute():
@@ -462,6 +487,47 @@ class CodeAnalysisConfigValidator:
                                     message=f"Registration SSL file not found: {reg_ssl[field]}",
                                     section="registration",
                                     key=f"ssl.{field}",
+                                    suggestion=f"Ensure file exists at {file_path}",
+                                )
+                            )
+
+        # Check code_analysis SSL files (chunker and embedding)
+        code_analysis = self.config_data.get("code_analysis", {})
+        if code_analysis:
+            # Check chunker SSL files
+            chunker = code_analysis.get("chunker", {})
+            if chunker:
+                for field in ["cert_file", "key_file", "ca_cert_file", "crl_file"]:
+                    if field in chunker and chunker[field]:
+                        file_path = Path(chunker[field])
+                        if not file_path.is_absolute():
+                            file_path = config_dir / file_path
+                        if not file_path.exists():
+                            self.validation_results.append(
+                                ValidationResult(
+                                    level="error",
+                                    message=f"Chunker SSL file not found: {chunker[field]}",
+                                    section="code_analysis",
+                                    key=f"chunker.{field}",
+                                    suggestion=f"Ensure file exists at {file_path}",
+                                )
+                            )
+
+            # Check embedding SSL files
+            embedding = code_analysis.get("embedding", {})
+            if embedding:
+                for field in ["cert_file", "key_file", "ca_cert_file", "crl_file"]:
+                    if field in embedding and embedding[field]:
+                        file_path = Path(embedding[field])
+                        if not file_path.is_absolute():
+                            file_path = config_dir / file_path
+                        if not file_path.exists():
+                            self.validation_results.append(
+                                ValidationResult(
+                                    level="error",
+                                    message=f"Embedding SSL file not found: {embedding[field]}",
+                                    section="code_analysis",
+                                    key=f"embedding.{field}",
                                     suggestion=f"Ensure file exists at {file_path}",
                                 )
                             )
@@ -506,6 +572,276 @@ class CodeAnalysisConfigValidator:
             r"^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
         )
         return bool(re.match(uuid_pattern, uuid_str, re.IGNORECASE))
+
+    def _validate_field_type(
+        self, section: str, key: str, value: Any, expected_type: type | tuple[type, ...]
+    ) -> bool:
+        """
+        Validate field type.
+
+        Args:
+            section: Configuration section name.
+            key: Field key.
+            value: Field value.
+            expected_type: Expected type.
+
+        Returns:
+            True if type is valid, False otherwise.
+        """
+        if value is None:
+            return True  # None is allowed for optional fields
+
+        if not isinstance(value, expected_type):
+            self.validation_results.append(
+                ValidationResult(
+                    level="error",
+                    message=f"Field '{section}.{key}' must be {expected_type.__name__}, got {type(value).__name__}",
+                    section=section,
+                    key=key,
+                    suggestion=f"Change '{section}.{key}' to {expected_type.__name__} type",
+                )
+            )
+            return False
+        return True
+
+    def _validate_url_format(self, url: str) -> bool:
+        """
+        Validate URL format.
+
+        Args:
+            url: URL string to validate.
+
+        Returns:
+            True if URL is valid, False otherwise.
+        """
+        try:
+            result = urllib.parse.urlparse(url)
+            return bool(result.scheme and result.netloc)
+        except Exception:
+            return False
+
+    def _validate_port_range(self, port: int) -> bool:
+        """
+        Validate port number range.
+
+        Args:
+            port: Port number.
+
+        Returns:
+            True if port is in valid range (1-65535), False otherwise.
+        """
+        return 1 <= port <= 65535
+
+    def _validate_field_types(self) -> None:
+        """Validate types of all configuration fields."""
+        # Server section
+        server = self.config_data.get("server", {})
+        if server:
+            self._validate_field_type("server", "host", server.get("host"), str)
+            self._validate_field_type("server", "port", server.get("port"), int)
+            self._validate_field_type("server", "protocol", server.get("protocol"), str)
+            self._validate_field_type("server", "servername", server.get("servername"), str)
+            self._validate_field_type("server", "advertised_host", server.get("advertised_host"), str)
+            self._validate_field_type("server", "debug", server.get("debug"), bool)
+            self._validate_field_type("server", "log_level", server.get("log_level"), str)
+            self._validate_field_type("server", "log_dir", server.get("log_dir"), str)
+
+            # Server SSL
+            ssl = server.get("ssl")
+            if ssl and isinstance(ssl, dict):
+                self._validate_field_type("server", "ssl.cert", ssl.get("cert"), (str, type(None)))
+                self._validate_field_type("server", "ssl.key", ssl.get("key"), (str, type(None)))
+                self._validate_field_type("server", "ssl.ca", ssl.get("ca"), (str, type(None)))
+                self._validate_field_type("server", "ssl.crl", ssl.get("crl"), (str, type(None)))
+                self._validate_field_type("server", "ssl.dnscheck", ssl.get("dnscheck"), bool)
+                self._validate_field_type("server", "ssl.check_hostname", ssl.get("check_hostname"), bool)
+
+        # Registration section
+        registration = self.config_data.get("registration", {})
+        if registration:
+            self._validate_field_type("registration", "enabled", registration.get("enabled"), bool)
+            self._validate_field_type("registration", "protocol", registration.get("protocol"), str)
+            self._validate_field_type("registration", "register_url", registration.get("register_url"), str)
+            self._validate_field_type("registration", "unregister_url", registration.get("unregister_url"), str)
+            self._validate_field_type("registration", "heartbeat_interval", registration.get("heartbeat_interval"), int)
+            self._validate_field_type("registration", "server_id", registration.get("server_id"), str)
+            self._validate_field_type("registration", "server_name", registration.get("server_name"), str)
+            self._validate_field_type("registration", "instance_uuid", registration.get("instance_uuid"), str)
+            self._validate_field_type("registration", "auto_on_startup", registration.get("auto_on_startup"), bool)
+            self._validate_field_type("registration", "auto_on_shutdown", registration.get("auto_on_shutdown"), bool)
+
+            # Registration SSL
+            reg_ssl = registration.get("ssl")
+            if reg_ssl and isinstance(reg_ssl, dict):
+                self._validate_field_type("registration", "ssl.cert", reg_ssl.get("cert"), (str, type(None)))
+                self._validate_field_type("registration", "ssl.key", reg_ssl.get("key"), (str, type(None)))
+                self._validate_field_type("registration", "ssl.ca", reg_ssl.get("ca"), (str, type(None)))
+                self._validate_field_type("registration", "ssl.crl", reg_ssl.get("crl"), (str, type(None)))
+                self._validate_field_type("registration", "ssl.dnscheck", reg_ssl.get("dnscheck"), bool)
+                self._validate_field_type("registration", "ssl.check_hostname", reg_ssl.get("check_hostname"), bool)
+
+        # Queue manager section
+        queue_manager = self.config_data.get("queue_manager", {})
+        if queue_manager:
+            self._validate_field_type("queue_manager", "enabled", queue_manager.get("enabled"), bool)
+            self._validate_field_type("queue_manager", "in_memory", queue_manager.get("in_memory"), bool)
+            self._validate_field_type("queue_manager", "shutdown_timeout", queue_manager.get("shutdown_timeout"), (int, float))
+            self._validate_field_type("queue_manager", "max_concurrent_jobs", queue_manager.get("max_concurrent_jobs"), int)
+            self._validate_field_type("queue_manager", "max_queue_size", queue_manager.get("max_queue_size"), (int, type(None)))
+            self._validate_field_type("queue_manager", "completed_job_retention_seconds", queue_manager.get("completed_job_retention_seconds"), int)
+
+        # Code analysis section
+        code_analysis = self.config_data.get("code_analysis", {})
+        if code_analysis:
+            self._validate_field_type("code_analysis", "host", code_analysis.get("host"), str)
+            self._validate_field_type("code_analysis", "port", code_analysis.get("port"), int)
+            self._validate_field_type("code_analysis", "log", code_analysis.get("log"), str)
+            self._validate_field_type("code_analysis", "db_path", code_analysis.get("db_path"), str)
+            self._validate_field_type("code_analysis", "faiss_index_path", code_analysis.get("faiss_index_path"), str)
+            self._validate_field_type("code_analysis", "vector_dim", code_analysis.get("vector_dim"), int)
+            self._validate_field_type("code_analysis", "min_chunk_length", code_analysis.get("min_chunk_length"), int)
+            self._validate_field_type("code_analysis", "vectorization_retry_attempts", code_analysis.get("vectorization_retry_attempts"), int)
+            self._validate_field_type("code_analysis", "vectorization_retry_delay", code_analysis.get("vectorization_retry_delay"), (int, float))
+
+            # Chunker section
+            chunker = code_analysis.get("chunker", {})
+            if chunker and isinstance(chunker, dict):
+                self._validate_field_type("code_analysis", "chunker.enabled", chunker.get("enabled"), bool)
+                self._validate_field_type("code_analysis", "chunker.url", chunker.get("url"), str)
+                self._validate_field_type("code_analysis", "chunker.port", chunker.get("port"), int)
+                self._validate_field_type("code_analysis", "chunker.protocol", chunker.get("protocol"), str)
+                self._validate_field_type("code_analysis", "chunker.cert_file", chunker.get("cert_file"), (str, type(None)))
+                self._validate_field_type("code_analysis", "chunker.key_file", chunker.get("key_file"), (str, type(None)))
+                self._validate_field_type("code_analysis", "chunker.ca_cert_file", chunker.get("ca_cert_file"), (str, type(None)))
+                self._validate_field_type("code_analysis", "chunker.crl_file", chunker.get("crl_file"), (str, type(None)))
+                self._validate_field_type("code_analysis", "chunker.retry_attempts", chunker.get("retry_attempts"), int)
+                self._validate_field_type("code_analysis", "chunker.retry_delay", chunker.get("retry_delay"), (int, float))
+                self._validate_field_type("code_analysis", "chunker.timeout", chunker.get("timeout"), (int, float, type(None)))
+
+            # Embedding section
+            embedding = code_analysis.get("embedding", {})
+            if embedding and isinstance(embedding, dict):
+                self._validate_field_type("code_analysis", "embedding.enabled", embedding.get("enabled"), bool)
+                self._validate_field_type("code_analysis", "embedding.host", embedding.get("host"), str)
+                self._validate_field_type("code_analysis", "embedding.port", embedding.get("port"), int)
+                self._validate_field_type("code_analysis", "embedding.protocol", embedding.get("protocol"), str)
+                self._validate_field_type("code_analysis", "embedding.cert_file", embedding.get("cert_file"), (str, type(None)))
+                self._validate_field_type("code_analysis", "embedding.key_file", embedding.get("key_file"), (str, type(None)))
+                self._validate_field_type("code_analysis", "embedding.ca_cert_file", embedding.get("ca_cert_file"), (str, type(None)))
+                self._validate_field_type("code_analysis", "embedding.crl_file", embedding.get("crl_file"), (str, type(None)))
+                self._validate_field_type("code_analysis", "embedding.retry_attempts", embedding.get("retry_attempts"), int)
+                self._validate_field_type("code_analysis", "embedding.retry_delay", embedding.get("retry_delay"), (int, float))
+                self._validate_field_type("code_analysis", "embedding.timeout", embedding.get("timeout"), (int, float, type(None)))
+
+    def _validate_field_values(self) -> None:
+        """Validate values of configuration fields."""
+        # Server section
+        server = self.config_data.get("server", {})
+        if server:
+            port = server.get("port")
+            if port is not None and isinstance(port, int):
+                if not self._validate_port_range(port):
+                    self.validation_results.append(
+                        ValidationResult(
+                            level="error",
+                            message=f"Server port {port} is out of valid range (1-65535)",
+                            section="server",
+                            key="port",
+                            suggestion="Set port to a value between 1 and 65535",
+                        )
+                    )
+
+        # Registration section
+        registration = self.config_data.get("registration", {})
+        if registration:
+            register_url = registration.get("register_url")
+            if register_url and isinstance(register_url, str):
+                if not self._validate_url_format(register_url):
+                    self.validation_results.append(
+                        ValidationResult(
+                            level="error",
+                            message=f"Invalid URL format in registration.register_url: {register_url}",
+                            section="registration",
+                            key="register_url",
+                            suggestion="Use a valid URL format (e.g., https://host:port/path)",
+                        )
+                    )
+
+            unregister_url = registration.get("unregister_url")
+            if unregister_url and isinstance(unregister_url, str):
+                if not self._validate_url_format(unregister_url):
+                    self.validation_results.append(
+                        ValidationResult(
+                            level="error",
+                            message=f"Invalid URL format in registration.unregister_url: {unregister_url}",
+                            section="registration",
+                            key="unregister_url",
+                            suggestion="Use a valid URL format (e.g., https://host:port/path)",
+                        )
+                    )
+
+            heartbeat = registration.get("heartbeat", {})
+            if heartbeat and isinstance(heartbeat, dict):
+                heartbeat_url = heartbeat.get("url")
+                if heartbeat_url and isinstance(heartbeat_url, str):
+                    if not self._validate_url_format(heartbeat_url):
+                        self.validation_results.append(
+                            ValidationResult(
+                                level="error",
+                                message=f"Invalid URL format in registration.heartbeat.url: {heartbeat_url}",
+                                section="registration",
+                                key="heartbeat.url",
+                                suggestion="Use a valid URL format (e.g., https://host:port/path)",
+                            )
+                        )
+
+        # Code analysis section
+        code_analysis = self.config_data.get("code_analysis", {})
+        if code_analysis:
+            port = code_analysis.get("port")
+            if port is not None and isinstance(port, int):
+                if not self._validate_port_range(port):
+                    self.validation_results.append(
+                        ValidationResult(
+                            level="error",
+                            message=f"Code analysis port {port} is out of valid range (1-65535)",
+                            section="code_analysis",
+                            key="port",
+                            suggestion="Set port to a value between 1 and 65535",
+                        )
+                    )
+
+            # Chunker section
+            chunker = code_analysis.get("chunker", {})
+            if chunker and isinstance(chunker, dict):
+                port = chunker.get("port")
+                if port is not None and isinstance(port, int):
+                    if not self._validate_port_range(port):
+                        self.validation_results.append(
+                            ValidationResult(
+                                level="error",
+                                message=f"Chunker port {port} is out of valid range (1-65535)",
+                                section="code_analysis",
+                                key="chunker.port",
+                                suggestion="Set port to a value between 1 and 65535",
+                            )
+                        )
+
+            # Embedding section
+            embedding = code_analysis.get("embedding", {})
+            if embedding and isinstance(embedding, dict):
+                port = embedding.get("port")
+                if port is not None and isinstance(port, int):
+                    if not self._validate_port_range(port):
+                        self.validation_results.append(
+                            ValidationResult(
+                                level="error",
+                                message=f"Embedding port {port} is out of valid range (1-65535)",
+                                section="code_analysis",
+                                key="embedding.port",
+                                suggestion="Set port to a value between 1 and 65535",
+                            )
+                        )
 
     def get_validation_summary(self) -> Dict[str, Any]:
         """

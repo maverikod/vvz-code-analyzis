@@ -23,6 +23,7 @@ from . import methods
 from . import projects
 from . import statistics
 from . import usages
+from . import duplicates
 
 
 def _add_functions_as_methods(target_class: type, source_module: object) -> None:
@@ -46,6 +47,7 @@ _MODULES = [
     chunks,
     content,
     statistics,
+    duplicates,
 ]
 
 for _m in _MODULES:

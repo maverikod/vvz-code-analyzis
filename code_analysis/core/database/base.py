@@ -80,7 +80,9 @@ class CodeDatabase:
         Raises:
             ValueError: If driver_config is missing or invalid.
         """
-        logger.info(f"[CodeDatabase] __init__ called with driver_config type={driver_config.get('type') if driver_config else None}")
+        logger.info(
+            f"[CodeDatabase] __init__ called with driver_config type={driver_config.get('type') if driver_config else None}"
+        )
         if not driver_config:
             raise ValueError("driver_config is required. No backward compatibility.")
 
@@ -89,17 +91,32 @@ class CodeDatabase:
             raise ValueError("driver_config must contain 'type' key")
 
         driver_cfg = driver_config.get("config", {})
-        logger.info(f"[CodeDatabase] Creating driver: type={driver_type}, config_keys={list(driver_cfg.keys())}")
-        print(f"[CodeDatabase] Creating driver: type={driver_type}, config_keys={list(driver_cfg.keys())}", flush=True)
+        logger.info(
+            f"[CodeDatabase] Creating driver: type={driver_type}, config_keys={list(driver_cfg.keys())}"
+        )
+        print(
+            f"[CodeDatabase] Creating driver: type={driver_type}, config_keys={list(driver_cfg.keys())}",
+            flush=True,
+        )
 
         try:
             logger.info(f"[CodeDatabase] Calling create_driver({driver_type}, ...)")
-            print(f"[CodeDatabase] Calling create_driver({driver_type}, ...)", flush=True)
+            print(
+                f"[CodeDatabase] Calling create_driver({driver_type}, ...)", flush=True
+            )
             self.driver = create_driver(driver_type, driver_cfg)
-            logger.info(f"[CodeDatabase] Database driver '{driver_type}' loaded successfully")
-            print(f"[CodeDatabase] Database driver '{driver_type}' loaded successfully", flush=True)
+            logger.info(
+                f"[CodeDatabase] Database driver '{driver_type}' loaded successfully"
+            )
+            print(
+                f"[CodeDatabase] Database driver '{driver_type}' loaded successfully",
+                flush=True,
+            )
         except Exception as e:
-            logger.error(f"[CodeDatabase] Failed to load database driver '{driver_type}': {e}", exc_info=True)
+            logger.error(
+                f"[CodeDatabase] Failed to load database driver '{driver_type}': {e}",
+                exc_info=True,
+            )
             raise
 
         # Store driver type for logging
@@ -466,23 +483,26 @@ class CodeDatabase:
             """
         )
         # Try to add missing columns (if table already exists)
-        try:
+        # IMPORTANT:
+        # We must avoid executing ALTER TABLE statements when columns already exist.
+        # Even if we catch exceptions, sqlite_proxy's DB worker logs them as ERROR,
+        # which clutters logs and can destabilize long-running jobs (update_indexes).
+        existing_columns = {
+            col.get("name")
+            for col in self._get_table_info("code_chunks")
+            if isinstance(col, dict) and col.get("name")
+        }
+        if "bm25_score" not in existing_columns:
             self._execute("ALTER TABLE code_chunks ADD COLUMN bm25_score REAL")
             logger.info("Added bm25_score column to code_chunks table")
-        except Exception:
-            pass
-        try:
+        if "embedding_vector" not in existing_columns:
             self._execute("ALTER TABLE code_chunks ADD COLUMN embedding_vector TEXT")
             logger.info("Added embedding_vector column to code_chunks table")
-        except Exception:
-            pass
-        try:
+        if "binding_level" not in existing_columns:
             self._execute(
                 "ALTER TABLE code_chunks ADD COLUMN binding_level INTEGER DEFAULT 0"
             )
             logger.info("Added binding_level column to code_chunks table")
-        except Exception:
-            pass
         # Create code_duplicates table
         self._execute(
             """

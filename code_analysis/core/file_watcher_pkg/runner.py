@@ -13,8 +13,6 @@ from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from .base import FileWatcherWorker
-
 logger = logging.getLogger(__name__)
 
 
@@ -80,66 +78,59 @@ def _setup_worker_logging(
 
 def run_file_watcher_worker(
     db_path: str,
-    project_id: str,
-    watch_dirs: List[str],
+    project_watch_dirs: List[tuple[str, str]],
     scan_interval: int = 60,
     lock_file_name: str = ".file_watcher.lock",
     version_dir: Optional[str] = None,
-    worker_log_path: Optional[str] = None,
-    project_root: Optional[str] = None,
     ignore_patterns: Optional[List[str]] = None,
+    worker_log_path: Optional[str] = None,
     log_max_bytes: int = 10485760,  # 10 MB default
     log_backup_count: int = 5,
 ) -> Dict[str, Any]:
-    """
-    Run file watcher worker in separate process.
+    """Run file watcher worker in separate process.
 
-    This function is designed to be called from multiprocessing.Process.
-    It runs indefinitely, scanning directories at specified intervals.
+    Worker policy:
+        This worker must NOT start other processes (including DB worker).
+        It connects to an already running DB worker via sqlite_proxy.
 
     Args:
-        db_path: Path to database file
-        project_id: Project ID
-        watch_dirs: List of root directories to watch (from config)
-        scan_interval: Interval in seconds between scans (default: 60)
-        lock_file_name: Name of lock file (default: ".file_watcher.lock")
-        version_dir: Version directory for deleted files (optional)
-        worker_log_path: Path to worker log file (optional)
-        project_root: Project root directory (for relative paths, optional)
-        log_max_bytes: Maximum log file size in bytes before rotation (default: 10 MB)
-        log_backup_count: Number of backup log files to keep (default: 5)
+        db_path: Path to database file.
+        project_watch_dirs: List of (project_id, watch_dir) pairs.
+        scan_interval: Scan interval seconds.
+        lock_file_name: Lock file name.
+        version_dir: Version directory for deleted files.
+        ignore_patterns: Optional ignore patterns.
+        worker_log_path: Optional log file path.
+        log_max_bytes: Log rotation max bytes.
+        log_backup_count: Log rotation backup count.
 
     Returns:
-        Dictionary with processing statistics (only when stopped)
+        Stats dict (only when stopped).
     """
+    import os
+
+    # Enforce worker policy: never spawn DB worker from this process.
+    os.environ["CODE_ANALYSIS_DB_WORKER_NO_SPAWN"] = "1"
+
     # Setup worker logging first
     _setup_worker_logging(worker_log_path, log_max_bytes, log_backup_count)
 
-    logger.info(
-        f"Starting file watcher worker for project {project_id}, "
-        f"scan interval: {scan_interval}s, "
-        f"watching {len(watch_dirs)} directories"
+    from .multi_project_worker import MultiProjectFileWatcherWorker, build_project_specs
+
+    worker = MultiProjectFileWatcherWorker(
+        db_path=Path(db_path),
+        projects=build_project_specs(project_watch_dirs),
+        scan_interval=int(scan_interval),
+        lock_file_name=lock_file_name,
+        version_dir=version_dir,
+        ignore_patterns=ignore_patterns or [],
     )
 
     try:
-        # Create worker
-        worker = FileWatcherWorker(
-            db_path=Path(db_path),
-            project_id=project_id,
-            watch_dirs=[Path(d) for d in watch_dirs],
-            scan_interval=scan_interval,
-            lock_file_name=lock_file_name,
-            version_dir=version_dir,
-            project_root=Path(project_root) if project_root else None,
-            ignore_patterns=ignore_patterns,
-        )
-
-        # Run worker
-        result = asyncio.run(worker.run())
-        return result
+        return asyncio.run(worker.run())
     except KeyboardInterrupt:
-        logger.info("File watcher worker interrupted")
-        return {"scanned_dirs": 0, "errors": 0, "interrupted": True}
+        worker.stop()
+        return {"cycles": 0, "errors": 0, "interrupted": True}
     except Exception as e:
         logger.error(f"File watcher worker error: {e}", exc_info=True)
-        return {"scanned_dirs": 0, "errors": 1, "error": str(e)}
+        return {"cycles": 0, "errors": 1}

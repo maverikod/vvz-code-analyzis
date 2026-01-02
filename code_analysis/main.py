@@ -26,7 +26,11 @@ def _print_startup_info(
     server_config: dict[str, Any],
     app_config: dict[str, Any],
 ) -> None:
-    """Print server startup info without actually starting the server process."""
+    """Print server startup info without actually starting the server process.
+
+    Returns:
+        None
+    """
     print("ℹ️  code-analysis-server startup info (no --daemon):", flush=True)
     print(f"   Config: {config_path}", flush=True)
     print(f"   Host: {server_host}", flush=True)
@@ -48,7 +52,11 @@ def _print_startup_info(
 
 
 def main() -> None:
-    """Main function to run code-analysis-server."""
+    """Main function to run code-analysis-server.
+
+    Returns:
+        None
+    """
     parser = argparse.ArgumentParser(description="Code Analysis Server")
     parser.add_argument(
         "--config",
@@ -155,9 +163,7 @@ def main() -> None:
 
             for error in errors:
                 section_info = (
-                    f" ({error.section}"
-                    + (f".{error.key}" if error.key else "")
-                    + ")"
+                    f" ({error.section}" + (f".{error.key}" if error.key else "") + ")"
                     if error.section
                     else ""
                 )
@@ -268,7 +274,7 @@ def main() -> None:
         Args:
             app_instance: FastAPI application instance.
 
-        Yields:
+        Returns:
             None
         """
         import logging
@@ -376,7 +382,11 @@ def main() -> None:
     # So we use startup/shutdown events (deprecated but still works) as fallback
     @app.on_event("startup")  # type: ignore[misc]
     async def start_workers_on_startup() -> None:
-        """Start workers on server startup using lifespan context manager."""
+        """Start workers on server startup using startup event.
+
+        Returns:
+            None
+        """
         import logging
 
         logger = logging.getLogger(__name__)
@@ -430,7 +440,11 @@ def main() -> None:
             import asyncio
 
             def _start_non_db_workers_bg() -> None:
-                """Start non-DB workers in background thread with error handling."""
+                """Start non-DB workers in background thread with error handling.
+
+                Returns:
+                    None
+                """
                 try:
                     logger.info("🚀 [BACKGROUND] Starting vectorization worker...")
                     asyncio.run(startup_vectorization_worker())
@@ -440,7 +454,7 @@ def main() -> None:
                         f"❌ [BACKGROUND] Failed to start vectorization worker: {e}",
                         exc_info=True,
                     )
-                
+
                 try:
                     logger.info("🚀 [BACKGROUND] Starting file watcher worker...")
                     asyncio.run(startup_file_watcher_worker())
@@ -471,7 +485,11 @@ def main() -> None:
 
     @app.on_event("shutdown")  # type: ignore[misc]
     async def stop_workers_on_shutdown() -> None:
-        """Stop workers on server shutdown."""
+        """Stop workers on server shutdown.
+
+        Returns:
+            None
+        """
         import logging
 
         logger = logging.getLogger(__name__)
@@ -510,15 +528,18 @@ def main() -> None:
 
     # Store worker manager in app state for shutdown
     app.state.worker_manager = worker_manager
-    
+
     # Start worker monitoring thread
     import logging
+
     monitoring_logger = logging.getLogger(__name__)
     try:
         worker_manager.start_monitoring(interval=30.0)
         monitoring_logger.info("✅ Worker monitoring started")
     except Exception as e:
-        monitoring_logger.error(f"❌ Failed to start worker monitoring: {e}", exc_info=True)
+        monitoring_logger.error(
+            f"❌ Failed to start worker monitoring: {e}", exc_info=True
+        )
 
     # Commands are automatically registered via hooks
     # Queue manager is automatically initialized if enabled in config
@@ -526,7 +547,11 @@ def main() -> None:
 
     # Start vectorization worker on startup
     async def startup_vectorization_worker() -> None:
-        """Start vectorization worker in background process on server startup."""
+        """Start vectorization worker in background process on server startup.
+
+        Returns:
+            None
+        """
         import multiprocessing
         from pathlib import Path
         from code_analysis.core.vectorization_worker_pkg import run_vectorization_worker
@@ -628,6 +653,7 @@ def main() -> None:
                 )
                 # Retry logic: DB worker may need time to be ready
                 import time
+
                 max_retries = 5
                 retry_delay = 2.0
                 database = None
@@ -646,9 +672,11 @@ def main() -> None:
                             time.sleep(retry_delay)
                         else:
                             raise
-                
+
                 if not database:
-                    raise RuntimeError("Failed to create CodeDatabase after all retries")
+                    raise RuntimeError(
+                        "Failed to create CodeDatabase after all retries"
+                    )
 
                 # Get or create project for each watch_dir
                 for watch_dir in watch_dirs:
@@ -658,15 +686,12 @@ def main() -> None:
                             f"⚠️  Watch directory does not exist: {watch_dir_path}, skipping"
                         )
                         continue
-                    
+
                     project_id = database.get_or_create_project(
-                        str(watch_dir_path),
-                        name=watch_dir_path.name
+                        str(watch_dir_path), name=watch_dir_path.name
                     )
                     project_ids.append(project_id)
-                    logger.info(
-                        f"[STEP 6] Project for {watch_dir_path}: {project_id}"
-                    )
+                    logger.info(f"[STEP 6] Project for {watch_dir_path}: {project_id}")
 
                 database.close()
                 logger.info("[STEP 7] Database connection closed")
@@ -747,7 +772,8 @@ def main() -> None:
                 if worker_log_path:
                     log_path_obj = Path(worker_log_path)
                     project_log_path = str(
-                        log_path_obj.parent / f"{log_path_obj.stem}_{project_id[:8]}{log_path_obj.suffix}"
+                        log_path_obj.parent
+                        / f"{log_path_obj.stem}_{project_id[:8]}{log_path_obj.suffix}"
                     )
 
             print(
@@ -756,7 +782,7 @@ def main() -> None:
             logger.info(f"🚀 Starting vectorization worker for project {project_id}")
             if project_log_path:
                 logger.info(f"📝 Worker log file: {project_log_path}")
-            
+
             process = multiprocessing.Process(
                 target=run_vectorization_worker,
                 args=(
@@ -769,13 +795,18 @@ def main() -> None:
                     "svo_config": svo_config,
                     "batch_size": batch_size,
                     "poll_interval": poll_interval,
-                        "worker_log_path": project_log_path,
+                    "worker_log_path": project_log_path,
                 },
                 daemon=True,  # Daemon process will be killed when parent exits
             )
             process.start()
-            print(f"✅ Vectorization worker started with PID {process.pid} for project {project_id}", flush=True)
-            logger.info(f"✅ Vectorization worker started with PID {process.pid} for project {project_id}")
+            print(
+                f"✅ Vectorization worker started with PID {process.pid} for project {project_id}",
+                flush=True,
+            )
+            logger.info(
+                f"✅ Vectorization worker started with PID {process.pid} for project {project_id}"
+            )
 
             # Write PID file next to log file (used by get_worker_status)
             if project_log_path:
@@ -783,7 +814,9 @@ def main() -> None:
                     pid_file_path = Path(project_log_path).with_suffix(".pid")
                     pid_file_path.write_text(str(process.pid))
                 except Exception:
-                    logger.exception(f"Failed to write vectorization worker PID file for project {project_id}")
+                    logger.exception(
+                        f"Failed to write vectorization worker PID file for project {project_id}"
+                    )
 
                 # Create restart function for this worker (capture values, not references)
                 _db_path_val = str(db_path)
@@ -794,9 +827,13 @@ def main() -> None:
                 _batch_size_val = batch_size
                 _poll_interval_val = poll_interval
                 _project_log_path_val = project_log_path
-                
-                def _restart_vectorization_worker():
-                    """Restart vectorization worker."""
+
+                def _restart_vectorization_worker() -> dict[str, Any]:
+                    """Restart vectorization worker.
+
+                    Returns:
+                        Worker registration data for WorkerManager.
+                    """
                     new_process = multiprocessing.Process(
                         target=run_vectorization_worker,
                         args=(
@@ -816,7 +853,9 @@ def main() -> None:
                     new_process.start()
                     if _project_log_path_val:
                         try:
-                            pid_file_path = Path(_project_log_path_val).with_suffix(".pid")
+                            pid_file_path = Path(_project_log_path_val).with_suffix(
+                                ".pid"
+                            )
                             pid_file_path.write_text(str(new_process.pid))
                         except Exception:
                             pass
@@ -831,8 +870,11 @@ def main() -> None:
 
             # Register worker in WorkerManager with restart function
             from code_analysis.core.worker_manager import get_worker_manager
+
             worker_manager = get_worker_manager()
-            logger.info(f"📝 Registering vectorization worker in WorkerManager: PID={process.pid}, project={project_id}")
+            logger.info(
+                f"📝 Registering vectorization worker in WorkerManager: PID={process.pid}, project={project_id}"
+            )
             worker_manager.register_worker(
                 "vectorization",
                 {
@@ -844,10 +886,14 @@ def main() -> None:
                     "restart_kwargs": {},
                 },
             )
-            logger.info(f"✅ Vectorization worker registered in WorkerManager: PID={process.pid}")
+            logger.info(
+                f"✅ Vectorization worker registered in WorkerManager: PID={process.pid}"
+            )
             started_processes.append((project_id, process))
-            
-            logger.info(f"✅ Started {len(started_processes)} vectorization worker(s) for {len(project_ids)} project(s)")
+
+            logger.info(
+                f"✅ Started {len(started_processes)} vectorization worker(s) for {len(project_ids)} project(s)"
+            )
 
         except Exception as e:
             print(
@@ -857,15 +903,18 @@ def main() -> None:
             )
             logger.error(f"❌ Failed to start vectorization worker: {e}", exc_info=True)
 
-    # Start file watcher worker on startup
     async def startup_file_watcher_worker() -> None:
-        """Start file watcher worker in background process on server startup."""
+        """Start file watcher worker in background process on server startup.
+
+        Returns:
+            None
+        """
+        import logging
         import multiprocessing
         from pathlib import Path
-        from code_analysis.core.file_watcher_pkg import run_file_watcher_worker
-        from code_analysis.core.config import ServerConfig
 
-        import logging
+        from code_analysis.core.config import ServerConfig
+        from code_analysis.core.file_watcher_pkg import run_file_watcher_worker
 
         logger = logging.getLogger(__name__)
         logger.info("🔍 startup_file_watcher_worker called")
@@ -912,7 +961,7 @@ def main() -> None:
 
             # Get watch_dirs from worker config (same as vectorization worker)
             worker_config = server_config.worker
-            watch_dirs = []
+            watch_dirs: list[str] = []
             if worker_config and isinstance(worker_config, dict):
                 watch_dirs = worker_config.get("watch_dirs", [])
 
@@ -927,8 +976,7 @@ def main() -> None:
             db_path = root_dir / "data" / "code_analysis.db"
 
             # Get or create projects for each watch_dir
-            # Use proxy driver since we're in the main server process, not a worker
-            project_watch_dirs = []  # List of (project_id, watch_dir) tuples
+            project_watch_dirs: list[tuple[str, str]] = []
             try:
                 logger.info(f"[STEP 1] Creating driver config for db_path={db_path}")
                 from code_analysis.core.database import CodeDatabase
@@ -955,8 +1003,8 @@ def main() -> None:
                 logger.info(
                     "[STEP 4] Creating CodeDatabase instance with driver_config (with retry)"
                 )
-                # Retry logic: DB worker may need time to be ready
                 import time
+
                 max_retries = 5
                 retry_delay = 2.0
                 database = None
@@ -975,11 +1023,12 @@ def main() -> None:
                             time.sleep(retry_delay)
                         else:
                             raise
-                
-                if not database:
-                    raise RuntimeError("Failed to create CodeDatabase after all retries")
 
-                # Get or create project for each watch_dir
+                if not database:
+                    raise RuntimeError(
+                        "Failed to create CodeDatabase after all retries"
+                    )
+
                 for watch_dir in watch_dirs:
                     watch_dir_path = Path(watch_dir).resolve()
                     if not watch_dir_path.exists():
@@ -987,15 +1036,12 @@ def main() -> None:
                             f"⚠️  Watch directory does not exist: {watch_dir_path}, skipping"
                         )
                         continue
-                    
+
                     project_id = database.get_or_create_project(
-                        str(watch_dir_path),
-                        name=watch_dir_path.name
+                        str(watch_dir_path), name=watch_dir_path.name
                     )
                     project_watch_dirs.append((project_id, str(watch_dir_path)))
-                    logger.info(
-                        f"[STEP 6] Project for {watch_dir_path}: {project_id}"
-                    )
+                    logger.info(f"[STEP 6] Project for {watch_dir_path}: {project_id}")
 
                 database.close()
                 logger.info("[STEP 7] Database connection closed")
@@ -1009,7 +1055,6 @@ def main() -> None:
                 logger.error(f"⚠️  Failed to get/create projects: {e}", exc_info=True)
                 return
 
-            # Get file watcher config parameters
             scan_interval = file_watcher_config.get("scan_interval", 60)
             lock_file_name = file_watcher_config.get(
                 "lock_file_name", ".file_watcher.lock"
@@ -1018,122 +1063,117 @@ def main() -> None:
             worker_log_path = file_watcher_config.get("log_path")
             ignore_patterns = file_watcher_config.get("ignore_patterns", [])
 
-            # Start worker process for each project
-            started_processes = []
-            for project_id, project_watch_dir in project_watch_dirs:
-                # Create unique log path for each project if base log path is provided
-                project_log_path = None
-                if worker_log_path:
-                    log_path_obj = Path(worker_log_path)
-                    project_log_path = str(
-                        log_path_obj.parent / f"{log_path_obj.stem}_{project_id[:8]}{log_path_obj.suffix}"
-                    )
-
-                # Use project's watch_dir as project_root
-                project_root = project_watch_dir
-
-            # Start worker in separate process
+            projects_count = len(project_watch_dirs)
             print(
-                f"🚀 Starting file watcher worker for project {project_id} (dir: {project_watch_dir})", flush=True
+                f"🚀 Starting file watcher worker (single process) for {projects_count} project(s)",
+                flush=True,
             )
-            logger.info(f"🚀 Starting file watcher worker for project {project_id} (dir: {project_watch_dir})")
-            if project_log_path:
-                logger.info(f"📝 Worker log file: {project_log_path}")
-            
+            logger.info(
+                f"🚀 Starting file watcher worker (single process) for {projects_count} project(s)"
+            )
+            if worker_log_path:
+                logger.info(f"📝 Worker log file: {worker_log_path}")
+
             process = multiprocessing.Process(
                 target=run_file_watcher_worker,
                 args=(
                     str(db_path),
-                    project_id,
-                        [project_watch_dir],  # Single watch_dir for this project
+                    list(project_watch_dirs),
                 ),
                 kwargs={
                     "scan_interval": scan_interval,
                     "lock_file_name": lock_file_name,
                     "version_dir": version_dir,
-                        "worker_log_path": project_log_path,
-                    "project_root": project_root,
+                    "worker_log_path": worker_log_path,
                     "ignore_patterns": ignore_patterns,
                 },
-                daemon=True,  # Daemon process will be killed when parent exits
+                daemon=True,
             )
             process.start()
-            print(f"✅ File watcher worker started with PID {process.pid} for project {project_id}", flush=True)
-            logger.info(f"✅ File watcher worker started with PID {process.pid} for project {project_id}")
+
+            print(
+                f"✅ File watcher worker started with PID {process.pid} for {projects_count} project(s)",
+                flush=True,
+            )
+            logger.info(
+                f"✅ File watcher worker started with PID {process.pid} for {projects_count} project(s)"
+            )
 
             # Write PID file next to log file (used by get_worker_status)
-            if project_log_path:
+            if worker_log_path:
                 try:
-                    pid_file_path = Path(project_log_path).with_suffix(".pid")
+                    pid_file_path = Path(worker_log_path).with_suffix(".pid")
                     pid_file_path.write_text(str(process.pid))
                 except Exception:
-                    logger.exception(f"Failed to write file watcher PID file for project {project_id}")
+                    logger.exception("Failed to write file watcher PID file")
 
-                # Create restart function for this worker (capture values, not references)
-                _db_path_fw_val = str(db_path)
-                _project_id_fw_val = project_id
-                _project_watch_dir_fw_val = project_watch_dir
-                _scan_interval_fw_val = scan_interval
-                _lock_file_name_fw_val = lock_file_name
-                _version_dir_fw_val = version_dir
-                _project_log_path_fw_val = project_log_path
-                _project_root_fw_val = project_root
-                _ignore_patterns_fw_val = ignore_patterns
-                
-                def _restart_file_watcher_worker():
-                    """Restart file watcher worker."""
-                    new_process = multiprocessing.Process(
-                        target=run_file_watcher_worker,
-                        args=(
-                            _db_path_fw_val,
-                            _project_id_fw_val,
-                            [_project_watch_dir_fw_val],
-                        ),
-                        kwargs={
-                            "scan_interval": _scan_interval_fw_val,
-                            "lock_file_name": _lock_file_name_fw_val,
-                            "version_dir": _version_dir_fw_val,
-                            "worker_log_path": _project_log_path_fw_val,
-                            "project_root": _project_root_fw_val,
-                            "ignore_patterns": _ignore_patterns_fw_val,
-                        },
-                        daemon=True,
-                    )
-                    new_process.start()
-                    if _project_log_path_fw_val:
-                        try:
-                            pid_file_path = Path(_project_log_path_fw_val).with_suffix(".pid")
-                            pid_file_path.write_text(str(new_process.pid))
-                        except Exception:
-                            pass
-                    return {
-                        "pid": new_process.pid,
-                        "process": new_process,
-                        "name": f"file_watcher_{_project_id_fw_val}",
-                        "restart_func": _restart_file_watcher_worker,
-                        "restart_args": (),
-                        "restart_kwargs": {},
-                    }
+            _db_path_fw_val = str(db_path)
+            _project_watch_dirs_fw_val = list(project_watch_dirs)
+            _scan_interval_fw_val = scan_interval
+            _lock_file_name_fw_val = lock_file_name
+            _version_dir_fw_val = version_dir
+            _worker_log_path_fw_val = worker_log_path
+            _ignore_patterns_fw_val = ignore_patterns
 
-            # Register worker in WorkerManager with restart function
+            def _restart_file_watcher_worker() -> dict[str, Any]:
+                """Restart file watcher worker.
+
+                Returns:
+                    Worker registration data for WorkerManager.
+                """
+                new_process = multiprocessing.Process(
+                    target=run_file_watcher_worker,
+                    args=(
+                        _db_path_fw_val,
+                        list(_project_watch_dirs_fw_val),
+                    ),
+                    kwargs={
+                        "scan_interval": _scan_interval_fw_val,
+                        "lock_file_name": _lock_file_name_fw_val,
+                        "version_dir": _version_dir_fw_val,
+                        "worker_log_path": _worker_log_path_fw_val,
+                        "ignore_patterns": _ignore_patterns_fw_val,
+                    },
+                    daemon=True,
+                )
+                new_process.start()
+                if _worker_log_path_fw_val:
+                    try:
+                        pid_file_path = Path(_worker_log_path_fw_val).with_suffix(
+                            ".pid"
+                        )
+                        pid_file_path.write_text(str(new_process.pid))
+                    except Exception:
+                        pass
+                return {
+                    "pid": new_process.pid,
+                    "process": new_process,
+                    "name": "file_watcher_multi",
+                    "restart_func": _restart_file_watcher_worker,
+                    "restart_args": (),
+                    "restart_kwargs": {},
+                }
+
             from code_analysis.core.worker_manager import get_worker_manager
+
             worker_manager = get_worker_manager()
-            logger.info(f"📝 Registering file_watcher worker in WorkerManager: PID={process.pid}, project={project_id}")
+            logger.info(
+                f"📝 Registering file_watcher worker in WorkerManager: PID={process.pid}, projects={projects_count}"
+            )
             worker_manager.register_worker(
                 "file_watcher",
                 {
                     "pid": process.pid,
                     "process": process,
-                    "name": f"file_watcher_{project_id}",
+                    "name": "file_watcher_multi",
                     "restart_func": _restart_file_watcher_worker,
                     "restart_args": (),
                     "restart_kwargs": {},
                 },
             )
-            logger.info(f"✅ File watcher worker registered in WorkerManager: PID={process.pid}")
-            started_processes.append((project_id, process))
-            
-            logger.info(f"✅ Started {len(started_processes)} file watcher worker(s) for {len(project_watch_dirs)} project(s)")
+            logger.info(
+                f"✅ File watcher worker registered in WorkerManager: PID={process.pid}"
+            )
 
         except Exception as e:
             print(
@@ -1297,11 +1337,13 @@ def main() -> None:
         # Note: get_or_start_worker already waits for socket file to exist,
         # but we add additional delay to ensure worker is fully initialized
         import time
-        
+
         socket_path = worker_info.get("socket_path")
         worker_logger.info(f"🔍 DB worker socket_path: {socket_path}")
         if socket_path:
-            worker_logger.info(f"⏳ Waiting for DB worker to initialize (socket: {socket_path})")
+            worker_logger.info(
+                f"⏳ Waiting for DB worker to initialize (socket: {socket_path})"
+            )
             socket_file = Path(socket_path)
             # Wait for socket file to exist (with timeout)
             max_wait = 5.0  # Maximum wait time in seconds
@@ -1310,63 +1352,97 @@ def main() -> None:
             while not socket_file.exists() and waited < max_wait:
                 time.sleep(wait_interval)
                 waited += wait_interval
-            
+
             if socket_file.exists():
-                worker_logger.info(f"✅ DB worker socket file exists after {waited:.1f}s")
+                worker_logger.info(
+                    f"✅ DB worker socket file exists after {waited:.1f}s"
+                )
                 # Additional wait to ensure worker is accepting connections
                 time.sleep(1.0)  # Give worker time to start listening
-                worker_logger.info(f"✅ DB worker socket exists, waiting additional 1s for initialization")
+                worker_logger.info(
+                    "✅ DB worker socket exists, waiting additional 1s for initialization"
+                )
             else:
-                worker_logger.warning(f"⚠️  DB worker socket not created after {waited:.1f}s, continuing anyway")
+                worker_logger.warning(
+                    f"⚠️  DB worker socket not created after {waited:.1f}s, continuing anyway"
+                )
         else:
-            worker_logger.warning("⚠️  No socket_path in worker_info, waiting 3s as fallback")
+            worker_logger.warning(
+                "⚠️  No socket_path in worker_info, waiting 3s as fallback"
+            )
             time.sleep(3.0)
-        
-        worker_logger.info("✅ DB worker initialization wait completed, proceeding to start other workers")
+
+        worker_logger.info(
+            "✅ DB worker initialization wait completed, proceeding to start other workers"
+        )
 
         # Start vectorization and file watcher workers in background
         # IMPORTANT: do not set/close the global event loop in the main thread
         # (Hypercorn will manage its own asyncio loop).
         async def _start_non_db_workers() -> None:
-            """Start non-DB workers with error handling."""
-            worker_logger.info("🔍 [MAIN] Entering _start_non_db_workers async function")
-            
+            """Start non-DB workers with error handling.
+
+            Returns:
+                None
+            """
+            worker_logger.info(
+                "🔍 [MAIN] Entering _start_non_db_workers async function"
+            )
+
             # Check DB worker status before starting
-            worker_logger.info("🔍 [MAIN] Checking DB worker status before starting other workers...")
+            worker_logger.info(
+                "🔍 [MAIN] Checking DB worker status before starting other workers..."
+            )
             try:
                 from code_analysis.core.db_worker_manager import get_db_worker_manager
+
                 db_worker_manager_check = get_db_worker_manager()
                 worker_info_check = db_worker_manager_check.get_or_start_worker(
                     str(db_path),
                     str(log_dir / "db_worker.log"),
                 )
                 socket_path_check = worker_info_check.get("socket_path")
-                worker_logger.info(f"🔍 [MAIN] DB worker socket_path: {socket_path_check}")
+                worker_logger.info(
+                    f"🔍 [MAIN] DB worker socket_path: {socket_path_check}"
+                )
                 if socket_path_check:
                     socket_file_check = Path(socket_path_check)
                     exists = socket_file_check.exists()
                     worker_logger.info(f"🔍 [MAIN] Socket file exists: {exists}")
                     if exists:
                         stat = socket_file_check.stat()
-                        worker_logger.info(f"🔍 [MAIN] Socket file size: {stat.st_size}, mode: {oct(stat.st_mode)}")
+                        worker_logger.info(
+                            f"🔍 [MAIN] Socket file size: {stat.st_size}, mode: {oct(stat.st_mode)}"
+                        )
                     else:
-                        worker_logger.warning(f"⚠️  [MAIN] Socket file does not exist, waiting longer...")
+                        worker_logger.warning(
+                            "⚠️  [MAIN] Socket file does not exist, waiting longer..."
+                        )
                         await asyncio.sleep(3.0)
                         exists_after_wait = socket_file_check.exists()
-                        worker_logger.info(f"🔍 [MAIN] Socket file exists after wait: {exists_after_wait}")
+                        worker_logger.info(
+                            f"🔍 [MAIN] Socket file exists after wait: {exists_after_wait}"
+                        )
             except Exception as e:
-                worker_logger.error(f"❌ [MAIN] Failed to check DB worker: {e}", exc_info=True)
-            
+                worker_logger.error(
+                    f"❌ [MAIN] Failed to check DB worker: {e}", exc_info=True
+                )
+
             # Additional wait in async context to ensure DB worker is fully ready
             import asyncio
+
             worker_logger.info("⏳ [MAIN] Waiting 2s before starting workers...")
             await asyncio.sleep(2.0)
-            worker_logger.info("✅ [MAIN] Wait completed, starting vectorization worker...")
-            
+            worker_logger.info(
+                "✅ [MAIN] Wait completed, starting vectorization worker..."
+            )
+
             try:
                 worker_logger.info("🚀 [MAIN] Starting vectorization worker...")
                 await startup_vectorization_worker()
-                worker_logger.info("✅ [MAIN] Vectorization worker started successfully")
+                worker_logger.info(
+                    "✅ [MAIN] Vectorization worker started successfully"
+                )
             except Exception as e:
                 worker_logger.error(
                     f"❌ [MAIN] Failed to start vectorization worker: {e}",
@@ -1377,7 +1453,7 @@ def main() -> None:
                     flush=True,
                     file=sys.stderr,
                 )
-            
+
             try:
                 worker_logger.info("🚀 [MAIN] Starting file watcher worker...")
                 await startup_file_watcher_worker()
@@ -1392,16 +1468,22 @@ def main() -> None:
                     flush=True,
                     file=sys.stderr,
                 )
-            
+
             worker_logger.info("✅ [MAIN] _start_non_db_workers completed")
 
         import threading
 
         def _start_non_db_workers_thread() -> None:
-            """Start non-DB workers in background thread."""
+            """Start non-DB workers in background thread.
+
+            Returns:
+                None
+            """
             worker_logger.info("🔍 [THREAD] Entering _start_non_db_workers_thread")
             try:
-                worker_logger.info("🔍 [THREAD] Calling asyncio.run(_start_non_db_workers)...")
+                worker_logger.info(
+                    "🔍 [THREAD] Calling asyncio.run(_start_non_db_workers)..."
+                )
                 asyncio.run(_start_non_db_workers())
                 worker_logger.info("✅ [THREAD] asyncio.run completed successfully")
             except Exception as e:
@@ -1420,8 +1502,13 @@ def main() -> None:
         thread.start()
         worker_logger.info(f"✅ Background thread started: {thread.is_alive()}")
 
-        worker_logger.info("✅ DB worker started, non-DB workers starting in background thread")
-        print("✅ DB worker started, non-DB workers starting in background thread", flush=True)
+        worker_logger.info(
+            "✅ DB worker started, non-DB workers starting in background thread"
+        )
+        print(
+            "✅ DB worker started, non-DB workers starting in background thread",
+            flush=True,
+        )
     except Exception as e:
         worker_logger.error(f"❌ Failed to start workers: {e}", exc_info=True)
         print(f"❌ Failed to start workers: {e}", flush=True, file=sys.stderr)

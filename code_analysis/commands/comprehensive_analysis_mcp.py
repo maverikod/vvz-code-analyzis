@@ -16,19 +16,32 @@ email: vasilyvz@gmail.com
 import logging
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Optional
 
 from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 
-from ..core.comprehensive_analyzer import ComprehensiveAnalyzer
-from ..core.duplicate_detector import DuplicateDetector
+from ..core.comprehensive_analysis_runner import (
+    ComprehensiveAnalysisConfig,
+    run_comprehensive_analysis,
+)
 from .base_mcp_command import BaseMCPCommand
 
 logger = logging.getLogger(__name__)
 
 
 class ComprehensiveAnalysisMCPCommand(BaseMCPCommand):
-    """Comprehensive code analysis command combining multiple analysis types."""
+    """
+    Comprehensive code analysis command combining multiple analysis types.
+
+    Attributes:
+        name: MCP command name.
+        version: Command version.
+        descr: Human-readable description.
+        category: Command category.
+        author: Command author.
+        email: Author email.
+        use_queue: Whether the command is executed via queue.
+    """
 
     name = "comprehensive_analysis"
     version = "1.0.0"
@@ -37,7 +50,6 @@ class ComprehensiveAnalysisMCPCommand(BaseMCPCommand):
     author = "Vasiliy Zdanovskiy"
     email = "vasilyvz@gmail.com"
     use_queue = True
-
 
     @classmethod
     def get_schema(cls) -> Dict[str, Any]:
@@ -147,6 +159,7 @@ class ComprehensiveAnalysisMCPCommand(BaseMCPCommand):
         """Execute comprehensive analysis.
 
         Args:
+            self: Command instance.
             root_dir: Project root directory.
             file_path: Optional path to specific file to analyze.
             project_id: Optional project UUID.
@@ -175,15 +188,15 @@ class ComprehensiveAnalysisMCPCommand(BaseMCPCommand):
         # Setup dedicated log file for comprehensive analysis
         analysis_logger = logging.getLogger("comprehensive_analysis")
         analysis_logger.setLevel(logging.INFO)
-        
+
         # Remove existing handlers to avoid duplicates
         analysis_logger.handlers = []
-        
+
         # Create logs directory if it doesn't exist
         root_path = self._validate_root_dir(root_dir)
         logs_dir = root_path / "logs"
         logs_dir.mkdir(exist_ok=True)
-        
+
         # Create rotating file handler for comprehensive_analysis.log
         log_file = logs_dir / "comprehensive_analysis.log"
         file_handler = RotatingFileHandler(
@@ -211,250 +224,52 @@ class ComprehensiveAnalysisMCPCommand(BaseMCPCommand):
                     message="Project not found", code="PROJECT_NOT_FOUND"
                 )
 
-            if progress_tracker:
-                progress_tracker.set_status("running")
-                progress_tracker.set_description(
-                    "Initializing comprehensive analysis..."
-                )
-                progress_tracker.set_progress(0)
-
-            analyzer = ComprehensiveAnalyzer(max_lines=max_lines)
-            results: Dict[str, Any] = {
-                "placeholders": [],
-                "stubs": [],
-                "empty_methods": [],
-                "imports_not_at_top": [],
-                "long_files": [],
-                "duplicates": [],
-                "flake8_errors": [],
-                "mypy_errors": [],
-                "summary": {},
-            }
-
-            # Resolve mypy config file path if provided
-            mypy_config = None
+            mypy_config: Optional[Path] = None
             if mypy_config_file:
                 mypy_config = Path(mypy_config_file)
                 if not mypy_config.is_absolute():
                     mypy_config = root_path / mypy_config
 
+            config = ComprehensiveAnalysisConfig(
+                max_lines=max_lines,
+                check_placeholders=check_placeholders,
+                check_stubs=check_stubs,
+                check_empty_methods=check_empty_methods,
+                check_imports=check_imports,
+                check_long_files=check_long_files,
+                check_duplicates=check_duplicates,
+                check_flake8=check_flake8,
+                check_mypy=check_mypy,
+                duplicate_min_lines=duplicate_min_lines,
+                duplicate_min_similarity=duplicate_min_similarity,
+                mypy_config=mypy_config,
+                exclude_dir_names=("test_data",),
+            )
+
+            file_path_obj: Optional[Path] = None
             if file_path:
-                # Analyze specific file
                 file_path_obj = self._validate_file_path(file_path, root_path)
                 if not file_path_obj.exists():
                     db.close()
                     return ErrorResult(message="File not found", code="FILE_NOT_FOUND")
 
-                rel_path = str(file_path_obj.relative_to(root_path))
-                logger.info(f"Analyzing single file: {rel_path}")
-                analysis_logger.info(f"Starting analysis of single file: {rel_path}")
-                source_code = file_path_obj.read_text(encoding="utf-8")
-
-                # Run all checks
-                if check_placeholders:
-                    placeholders = analyzer.find_placeholders(
-                        file_path_obj, source_code
-                    )
-                    for p in placeholders:
-                        p["file_path"] = rel_path
-                    results["placeholders"] = placeholders
-
-                if check_stubs:
-                    stubs = analyzer.find_stubs(file_path_obj, source_code)
-                    for s in stubs:
-                        s["file_path"] = rel_path
-                    results["stubs"] = stubs
-
-                if check_empty_methods:
-                    empty_methods = analyzer.find_empty_methods(
-                        file_path_obj, source_code
-                    )
-                    for m in empty_methods:
-                        m["file_path"] = rel_path
-                    results["empty_methods"] = empty_methods
-
-                if check_imports:
-                    imports_not_at_top = analyzer.find_imports_not_at_top(
-                        file_path_obj, source_code
-                    )
-                    for imp in imports_not_at_top:
-                        imp["file_path"] = rel_path
-                    results["imports_not_at_top"] = imports_not_at_top
-
-                if check_duplicates:
-                    detector = DuplicateDetector(
-                        min_lines=duplicate_min_lines,
-                        min_similarity=duplicate_min_similarity,
-                        use_semantic=False,
-                    )
-                    duplicates = detector.find_duplicates_in_file(str(file_path_obj))
-                    for group in duplicates:
-                        for occ in group["occurrences"]:
-                            occ["file_path"] = rel_path
-                    results["duplicates"] = duplicates
-
-                if check_flake8:
-                    flake8_result = analyzer.check_flake8(file_path_obj)
-                    if not flake8_result["success"]:
-                        flake8_result["file_path"] = rel_path
-                        results["flake8_errors"].append(flake8_result)
-
-                if check_mypy:
-                    mypy_result = analyzer.check_mypy(file_path_obj, mypy_config)
-                    if not mypy_result["success"]:
-                        mypy_result["file_path"] = rel_path
-                        results["mypy_errors"].append(mypy_result)
-
-            else:
-                # Analyze all files in project
-                files = db._fetchall(
-                    "SELECT id, path, lines FROM files WHERE project_id = ? AND deleted = 0",
-                    (proj_id,),
-                )
-
-                files_total = len(files)
-                analysis_logger.info(
-                    f"Starting comprehensive analysis: {files_total} files to analyze"
-                )
-                if progress_tracker:
-                    progress_tracker.set_description(
-                        f"Analyzing {files_total} files..."
-                    )
-                    progress_tracker.set_progress(0)
-
-                all_placeholders: List[Dict[str, Any]] = []
-                all_stubs: List[Dict[str, Any]] = []
-                all_empty_methods: List[Dict[str, Any]] = []
-                all_imports_not_at_top: List[Dict[str, Any]] = []
-                all_duplicates: List[Dict[str, Any]] = []
-                all_flake8_errors: List[Dict[str, Any]] = []
-                all_mypy_errors: List[Dict[str, Any]] = []
-                file_records: List[Dict[str, Any]] = []
-
-                last_percent = -1
-                for idx, file_record in enumerate(files):
-                    file_path_str = file_record["path"]
-
-                    # Resolve full path
-                    if Path(file_path_str).is_absolute():
-                        full_path = Path(file_path_str)
-                    else:
-                        full_path = root_path / file_path_str
-
-                    if not full_path.exists() or not full_path.is_file():
-                        logger.debug(f"Skipping non-existent file: {file_path_str}")
-                        continue
-
-                    try:
-                        source_code = full_path.read_text(encoding="utf-8")
-                    except Exception as e:
-                        logger.warning(f"Failed to read file {file_path_str}: {e}")
-                        continue
-
-                    file_records.append(
-                        {"path": file_path_str, "lines": file_record.get("lines", 0)}
+                if file_path_obj.suffix != ".py":
+                    db.close()
+                    return ErrorResult(
+                        message="Only Python (.py) files are supported for comprehensive_analysis",
+                        code="UNSUPPORTED_FILE_TYPE",
+                        details={"file_path": str(file_path_obj)},
                     )
 
-                    # Log each processed file
-                    logger.info(f"Analyzing file {idx + 1}/{files_total}: {file_path_str}")
-                    analysis_logger.info(f"Analyzing file {idx + 1}/{files_total}: {file_path_str}")
-
-                    # Run checks
-                    if check_placeholders:
-                        placeholders = analyzer.find_placeholders(
-                            full_path, source_code
-                        )
-                        for p in placeholders:
-                            p["file_path"] = file_path_str
-                        all_placeholders.extend(placeholders)
-
-                    if check_stubs:
-                        stubs = analyzer.find_stubs(full_path, source_code)
-                        for s in stubs:
-                            s["file_path"] = file_path_str
-                        all_stubs.extend(stubs)
-
-                    if check_empty_methods:
-                        empty_methods = analyzer.find_empty_methods(
-                            full_path, source_code
-                        )
-                        for m in empty_methods:
-                            m["file_path"] = file_path_str
-                        all_empty_methods.extend(empty_methods)
-
-                    if check_imports:
-                        imports_not_at_top = analyzer.find_imports_not_at_top(
-                            full_path, source_code
-                        )
-                        for imp in imports_not_at_top:
-                            imp["file_path"] = file_path_str
-                        all_imports_not_at_top.extend(imports_not_at_top)
-
-                    if check_duplicates:
-                        detector = DuplicateDetector(
-                            min_lines=duplicate_min_lines,
-                            min_similarity=duplicate_min_similarity,
-                            use_semantic=False,
-                        )
-                        duplicates = detector.find_duplicates_in_file(str(full_path))
-                        for group in duplicates:
-                            for occ in group["occurrences"]:
-                                occ["file_path"] = file_path_str
-                        all_duplicates.extend(duplicates)
-
-                    if check_flake8:
-                        flake8_result = analyzer.check_flake8(full_path)
-                        if not flake8_result["success"]:
-                            flake8_result["file_path"] = file_path_str
-                            all_flake8_errors.append(flake8_result)
-
-                    if check_mypy:
-                        mypy_result = analyzer.check_mypy(full_path, mypy_config)
-                        if not mypy_result["success"]:
-                            mypy_result["file_path"] = file_path_str
-                            all_mypy_errors.append(mypy_result)
-
-                    # Update progress
-                    if progress_tracker and files_total > 0:
-                        percent = int(((idx + 1) / files_total) * 100)
-                        if percent != last_percent:
-                            progress_tracker.set_progress(percent)
-                            progress_tracker.set_description(
-                                f"Analyzing: {idx + 1}/{files_total} ({percent}%)"
-                            )
-                            last_percent = percent
-
-                results["placeholders"] = all_placeholders
-                results["stubs"] = all_stubs
-                results["empty_methods"] = all_empty_methods
-                results["imports_not_at_top"] = all_imports_not_at_top
-                results["duplicates"] = all_duplicates
-                results["flake8_errors"] = all_flake8_errors
-                results["mypy_errors"] = all_mypy_errors
-
-                if check_long_files:
-                    results["long_files"] = analyzer.find_long_files(file_records)
-
-            # Create summary
-            results["summary"] = {
-                "total_placeholders": len(results["placeholders"]),
-                "total_stubs": len(results["stubs"]),
-                "total_empty_methods": len(results["empty_methods"]),
-                "total_imports_not_at_top": len(results["imports_not_at_top"]),
-                "total_long_files": len(results["long_files"]),
-                "total_duplicate_groups": len(results["duplicates"]),
-                "total_duplicate_occurrences": sum(
-                    len(g["occurrences"]) for g in results["duplicates"]
-                ),
-                "total_flake8_errors": sum(
-                    e.get("error_count", 0) for e in results["flake8_errors"]
-                ),
-                "files_with_flake8_errors": len(results["flake8_errors"]),
-                "total_mypy_errors": sum(
-                    e.get("error_count", 0) for e in results["mypy_errors"]
-                ),
-                "files_with_mypy_errors": len(results["mypy_errors"]),
-            }
+            results = run_comprehensive_analysis(
+                root_path=root_path,
+                db=db,
+                project_id=proj_id,
+                file_path=file_path_obj,
+                config=config,
+                progress_tracker=progress_tracker,
+                analysis_logger=analysis_logger,
+            )
 
             db.close()
 
@@ -467,7 +282,7 @@ class ComprehensiveAnalysisMCPCommand(BaseMCPCommand):
             analysis_logger.info(
                 f"Comprehensive analysis completed. Summary: {results['summary']}"
             )
-            
+
             # Clean up handler
             for handler in analysis_logger.handlers[:]:
                 handler.close()
@@ -477,12 +292,12 @@ class ComprehensiveAnalysisMCPCommand(BaseMCPCommand):
         except Exception as e:
             # Log error to analysis log
             analysis_logger.error(f"Comprehensive analysis failed: {e}", exc_info=True)
-            
+
             # Clean up handler
             for handler in analysis_logger.handlers[:]:
                 handler.close()
                 analysis_logger.removeHandler(handler)
-            
+
             return self._handle_error(
                 e, "COMPREHENSIVE_ANALYSIS_ERROR", "comprehensive_analysis"
             )

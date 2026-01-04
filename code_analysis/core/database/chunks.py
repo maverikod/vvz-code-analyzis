@@ -236,7 +236,7 @@ def get_all_chunks_for_faiss_rebuild(self) -> List[Dict[str, Any]]:
         List of chunk records with vector_id and embedding_model
     """
     return self._fetchall(
-        "\n                SELECT cc.id, cc.file_id, cc.project_id, cc.chunk_uuid, cc.chunk_text,\n                       cc.vector_id, cc.embedding_model, cc.chunk_type, cc.embedding_vector\n                FROM code_chunks cc\n                JOIN files f ON f.id = cc.file_id\n                WHERE (f.deleted = 0 OR f.deleted IS NULL)\n                  AND cc.embedding_model IS NOT NULL\n                  AND cc.embedding_vector IS NOT NULL\n                ORDER BY cc.id\n                "
+        "\n                SELECT id, file_id, project_id, chunk_uuid, chunk_text,\n                       vector_id, embedding_model, chunk_type, embedding_vector\n                FROM code_chunks\n                WHERE embedding_model IS NOT NULL\n                  AND embedding_vector IS NOT NULL\n                ORDER BY id\n                "
     )
 
 

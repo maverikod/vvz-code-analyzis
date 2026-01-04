@@ -5,9 +5,16 @@ Author: Vasiliy Zdanovskiy
 email: vasilyvz@gmail.com
 """
 
-from typing import Dict, List, Any, Optional
+from __future__ import annotations
+
+from typing import TYPE_CHECKING, Any, Dict, List, Optional
+
+if TYPE_CHECKING:
+    from .base import CodeDatabase
+
+
 def add_code_content(
-    self: "CodeDatabase",
+    self: CodeDatabase,
     file_id: int,
     entity_type: str,
     entity_name: str,
@@ -43,8 +50,10 @@ def add_code_content(
     )
     self._commit()
     return content_id
+
+
 def full_text_search(
-    self: "CodeDatabase",
+    self: CodeDatabase,
     query: str,
     project_id: str,
     entity_type: Optional[str] = None,
@@ -63,16 +72,18 @@ def full_text_search(
     Returns:
         List of matching records with file paths
     """
-    # Escape FTS5 special characters in query
-    # Replace dots with spaces to avoid FTS5 syntax errors
+    # Escape FTS5 special characters in query.
+    # Replace dots with spaces to avoid FTS5 syntax errors.
     escaped_query = query.replace(".", " ")
-    
+
+    # IMPORTANT: SQLite FTS5 MATCH does not reliably accept an alias on the
+    # left-hand side (it may be parsed as a column name). Use the real table.
     fts_query = (
         "\n            SELECT c.*, f.path as file_path\n"
-        "            FROM code_content_fts fts\n"
-        "            JOIN code_content c ON fts.rowid = c.id\n"
+        "            FROM code_content_fts\n"
+        "            JOIN code_content c ON code_content_fts.rowid = c.id\n"
         "            JOIN files f ON c.file_id = f.id\n"
-        "            WHERE fts MATCH ? AND f.project_id = ?\n"
+        "            WHERE code_content_fts MATCH ? AND f.project_id = ?\n"
     )
     params = [escaped_query, project_id]
     if entity_type:

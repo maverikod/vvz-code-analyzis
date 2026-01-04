@@ -311,9 +311,13 @@ class FaissIndexManager:
         """
         Rebuild FAISS index from database.
 
-        This operation recreates the FAISS index file from `code_chunks.embedding_vector`
-        and rewrites `code_chunks.vector_id` to a dense range `0..N-1`, so the mapping
-        is stable and consistent for search.
+        This operation recreates the FAISS index file from `code_chunks.embedding_vector`.
+
+        Important:
+            `code_chunks.vector_id` must be a 1:1 mapping to FAISS vector IDs.
+            To avoid duplicated IDs and huge per-row UPDATEs (which destabilize the
+            sqlite_proxy worker), we reassign `vector_id` to a dense range `0..N-1`
+            using a single SQL statement before building the FAISS file.
 
         Args:
             self: Instance.
@@ -324,6 +328,32 @@ class FaissIndexManager:
             Number of vectors loaded
         """
         logger.info("Rebuilding FAISS index from database...")
+
+        # Ensure `vector_id` is dense and unique (single SQL statement).
+        # This avoids thousands of per-row UPDATEs through sqlite_proxy.
+        try:
+            database._execute(
+                """
+                WITH ranked AS (
+                    SELECT
+                        id,
+                        (ROW_NUMBER() OVER (ORDER BY id) - 1) AS new_vector_id
+                    FROM code_chunks
+                    WHERE embedding_model IS NOT NULL
+                      AND embedding_vector IS NOT NULL
+                )
+                UPDATE code_chunks
+                SET vector_id = (SELECT new_vector_id FROM ranked WHERE ranked.id = code_chunks.id)
+                WHERE id IN (SELECT id FROM ranked)
+                """
+            )
+            database._commit()
+        except Exception as e:
+            logger.warning(
+                "Failed to normalize code_chunks.vector_id mapping: %s",
+                e,
+                exc_info=True,
+            )
 
         # Create fresh index (this clears all existing vectors)
         old_vector_count = int(self.index.ntotal) if self.index is not None else 0
@@ -342,14 +372,16 @@ class FaissIndexManager:
 
         loaded_count = 0
         missing_embeddings = 0
-        updated_vector_ids = 0
 
-        # Assign dense vector IDs in deterministic order.
-        for new_vector_id, chunk in enumerate(chunks):
+        for chunk in chunks:
+            vector_id = chunk.get("vector_id")
             embedding_vector_json = chunk.get("embedding_vector")
             chunk_text = chunk.get("chunk_text", "")
             chunk_id = chunk.get("id")
             embedding_model = chunk.get("embedding_model")
+
+            if vector_id is None:
+                continue
 
             # Try to get embedding from database first (embedding_vector column)
             embedding_array = None
@@ -392,7 +424,6 @@ class FaissIndexManager:
                                     "UPDATE code_chunks SET embedding_vector = ?, embedding_model = ? WHERE id = ?",
                                     (embedding_json, embedding_model, chunk_id),
                                 )
-                                updated_vector_ids += 1
                             except Exception as e:
                                 logger.warning(
                                     f"Failed to save embedding to database: {e}"
@@ -415,14 +446,7 @@ class FaissIndexManager:
             # Add vector to FAISS index
             if embedding_array is not None:
                 try:
-                    self.add_vector(embedding_array, vector_id=int(new_vector_id))
-                    # Rewrite DB vector_id to match the rebuilt index.
-                    if chunk_id is not None:
-                        database._execute(
-                            "UPDATE code_chunks SET vector_id = ? WHERE id = ?",
-                            (int(new_vector_id), int(chunk_id)),
-                        )
-                        updated_vector_ids += 1
+                    self.add_vector(embedding_array, vector_id=int(vector_id))
                     loaded_count += 1
                 except Exception as e:
                     logger.error(
@@ -444,10 +468,9 @@ class FaissIndexManager:
         self.save_index()
 
         logger.info(
-            "Rebuilt FAISS index: loaded %d vectors, missing %d embeddings, db_updates=%d",
+            "Rebuilt FAISS index: loaded %d vectors, missing %d embeddings",
             loaded_count,
             missing_embeddings,
-            updated_vector_ids,
         )
 
         return loaded_count

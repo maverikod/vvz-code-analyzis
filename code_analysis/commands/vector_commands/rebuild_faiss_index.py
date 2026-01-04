@@ -122,7 +122,7 @@ class RebuildFaissCommand(BaseMCPCommand):
         code_analysis_cfg = cfg.get("code_analysis", cfg)
         cfg_vector_dim = int(code_analysis_cfg.get("vector_dim", 384))
         cfg_index_path = str(
-            code_analysis_cfg.get("faiss_index_path", "data/faiss_index")
+            code_analysis_cfg.get("faiss_index_path", "data/faiss_index.bin")
         )
 
         eff_vector_dim = int(vector_dim or cfg_vector_dim)

@@ -15,6 +15,8 @@ from mcp_proxy_adapter.api.core.app_factory import AppFactory  # noqa: E402
 from mcp_proxy_adapter.core.config.simple_config import SimpleConfig  # noqa: E402
 from mcp_proxy_adapter.core.server_engine import ServerEngineFactory  # noqa: E402
 
+from code_analysis.core.worker_launcher import default_faiss_index_path
+
 from . import hooks  # noqa: F401,E402
 
 
@@ -706,10 +708,12 @@ def main() -> None:
                 return
 
             # Get FAISS index path and vector dimension
-            faiss_index_path = root_dir / "data" / "faiss_index"
-            vector_dim = (
-                server_config.vector_dim or 384
-            )  # Default dimension, should match chunker model
+            # Prefer config-defined path, fallback to default (`data/faiss_index.bin`).
+            faiss_index_path = Path(
+                server_config.faiss_index_path
+                or default_faiss_index_path(str(root_dir))
+            )
+            vector_dim = server_config.vector_dim or 384
 
             # Initialize FAISS manager and rebuild from database
             try:

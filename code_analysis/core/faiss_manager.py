@@ -1,17 +1,24 @@
 """
 FAISS index manager for vector similarity search.
 
-Manages FAISS index for storing and searching code embeddings.
-Provides unified interface for vector operations with database synchronization.
+The system stores embeddings in two places:
+- SQLite (`code_chunks.embedding_vector`): source of truth for vector values.
+- FAISS index file (`faiss_index_path`): fast nearest-neighbor search.
+
+The FAISS index file can be rebuilt from the database at any time and is rebuilt
+on server startup.
 
 Author: Vasiliy Zdanovskiy
 email: vasilyvz@gmail.com
 """
 
+from __future__ import annotations
+
+import json
 import logging
 import threading
 from pathlib import Path
-from typing import List, Optional, Dict, Any, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 
@@ -39,18 +46,22 @@ class FaissIndexManager:
     """
 
     def __init__(
-        self,
+        self: "FaissIndexManager",
         index_path: str,
         vector_dim: int,
         index_type: str = "Flat",
-    ):
+    ) -> None:
         """
         Initialize FAISS index manager.
 
         Args:
+            self: Instance.
             index_path: Path to FAISS index file
             vector_dim: Dimension of vectors (must be same for all)
             index_type: Type of FAISS index ("Flat" for exact search, "IVF" for approximate)
+
+        Returns:
+            None
         """
         if faiss is None:
             raise ImportError(
@@ -58,51 +69,80 @@ class FaissIndexManager:
             )
 
         self.index_path = Path(index_path)
-        self.vector_dim = vector_dim
-        self.index_type = index_type
+        self.vector_dim = int(vector_dim)
+        self.index_type = str(index_type)
         self.index: Optional[faiss.Index] = None
-        self._next_vector_id = 0
+        self._next_vector_id: int = 0
         # Mutex for all FAISS operations (thread-safe access)
         self._lock = threading.Lock()
 
         # Create parent directory if needed
         self.index_path.parent.mkdir(parents=True, exist_ok=True)
 
-        # Always create fresh index - will be rebuilt from database on startup
-        # This ensures index is always in sync with database
-        self._create_index()
+        if self.index_path.exists() and self.index_path.is_file():
+            self._load_index()
+        else:
+            self._create_index()
 
-    def _create_index(self) -> None:
-        """Create new FAISS index."""
+    def _create_index(self: "FaissIndexManager") -> None:
+        """
+        Create a new empty FAISS index.
+
+        Returns:
+            None
+        """
         if self.index_type == "Flat":
-            # Flat index for exact search
-            self.index = faiss.IndexFlatL2(self.vector_dim)
+            base = faiss.IndexFlatL2(self.vector_dim)
         else:
             # Default to Flat for now
             logger.warning(f"Unknown index type {self.index_type}, using Flat")
-            self.index = faiss.IndexFlatL2(self.vector_dim)
+            base = faiss.IndexFlatL2(self.vector_dim)
+
+        # Use explicit IDs so `code_chunks.vector_id` is stable and correct.
+        self.index = faiss.IndexIDMap2(base)
 
         self._next_vector_id = 0
         logger.info(
             f"Created new FAISS index: {self.index_path}, dim={self.vector_dim}"
         )
 
-    def _load_index(self) -> None:
-        """Load FAISS index from disk."""
-        try:
-            self.index = faiss.read_index(str(self.index_path))
-            self._next_vector_id = self.index.ntotal
-            logger.info(
-                f"Loaded FAISS index: {self.index_path}, "
-                f"vectors={self._next_vector_id}, dim={self.vector_dim}"
-            )
-        except Exception as e:
-            logger.error(f"Failed to load FAISS index from {self.index_path}: {e}")
-            logger.info("Creating new index instead")
-            self._create_index()
+    def _load_index(self: "FaissIndexManager") -> None:
+        """
+        Load FAISS index from disk.
 
-    def save_index(self) -> None:
-        """Save FAISS index to disk."""
+        Returns:
+            None
+        """
+        with self._lock:
+            try:
+                loaded = faiss.read_index(str(self.index_path))
+                # If the index is not ID-mapped, it is a legacy/broken format for this project.
+                if not hasattr(loaded, "add_with_ids"):
+                    logger.warning(
+                        "Loaded FAISS index is missing add_with_ids (legacy). "
+                        "It will be rebuilt from database on startup: %s",
+                        self.index_path,
+                    )
+                self.index = loaded
+                self._next_vector_id = int(getattr(loaded, "ntotal", 0))
+                logger.info(
+                    "Loaded FAISS index: %s, vectors=%d, dim=%d",
+                    self.index_path,
+                    self._next_vector_id,
+                    self.vector_dim,
+                )
+            except Exception as e:
+                logger.error(f"Failed to load FAISS index from {self.index_path}: {e}")
+                logger.info("Creating new index instead")
+                self._create_index()
+
+    def save_index(self: "FaissIndexManager") -> None:
+        """
+        Save FAISS index to disk.
+
+        Returns:
+            None
+        """
         with self._lock:
             if self.index is None:
                 logger.warning("Cannot save: index is not initialized")
@@ -115,11 +155,33 @@ class FaissIndexManager:
                 logger.error(f"Failed to save FAISS index to {self.index_path}: {e}")
                 raise
 
-    def add_vector(self, embedding: np.ndarray, vector_id: Optional[int] = None) -> int:
+    @staticmethod
+    def _normalize_vector(vec: np.ndarray) -> np.ndarray:
+        """
+        Normalize vector to unit length.
+
+        Args:
+            vec: Vector to normalize.
+
+        Returns:
+            Normalized vector (float32).
+        """
+        vec = vec.reshape(-1).astype("float32")
+        norm = float(np.linalg.norm(vec))
+        if norm > 0:
+            vec = vec / norm
+        return vec.astype("float32")
+
+    def add_vector(
+        self: "FaissIndexManager",
+        embedding: np.ndarray,
+        vector_id: Optional[int] = None,
+    ) -> int:
         """
         Add vector to FAISS index.
 
         Args:
+            self: Instance.
             embedding: Vector as numpy array (shape: [vector_dim])
             vector_id: Optional vector ID to use (for rebuilding from database)
                       If None, uses next available ID
@@ -138,40 +200,35 @@ class FaissIndexManager:
                     f"got {embedding.shape[0]}"
                 )
 
-            # Reshape for FAISS (needs 2D array)
-            embedding_2d = embedding.reshape(1, -1).astype("float32")
+            embedding_2d = self._normalize_vector(embedding).reshape(1, -1)
 
-            if vector_id is not None:
-                # For rebuilding: check if we need to extend index
-                if vector_id >= self.index.ntotal:
-                    # Need to add padding vectors
-                    padding_needed = vector_id - self.index.ntotal + 1
-                    # Add zero vectors as padding
-                    padding = np.zeros(
-                        (padding_needed, self.vector_dim), dtype="float32"
-                    )
-                    self.index.add(padding)
-                    self._next_vector_id = vector_id + 1
-                # Replace vector at specific position
-                # FAISS doesn't support direct replacement, so we'll add and track
-                # For now, just add (will be cleaned up on rebuild)
-                self.index.add(embedding_2d)
+            if vector_id is None:
+                vector_id = self._next_vector_id
+                self._next_vector_id += 1
+            else:
+                vector_id = int(vector_id)
                 if vector_id >= self._next_vector_id:
                     self._next_vector_id = vector_id + 1
-                return vector_id
-            else:
-                # Normal add: append to end
-                vector_id = self._next_vector_id
-                self.index.add(embedding_2d)
-                self._next_vector_id += 1
-                return vector_id
 
-    def remove_vectors(self, vector_ids: List[int]) -> None:
+            # Prefer explicit ids. If loaded index is legacy, fall back to append.
+            if hasattr(self.index, "add_with_ids"):
+                ids = np.array([vector_id], dtype="int64")
+                self.index.add_with_ids(embedding_2d, ids)
+            else:
+                self.index.add(embedding_2d)
+
+            return int(vector_id)
+
+    def remove_vectors(self: "FaissIndexManager", vector_ids: List[int]) -> None:
         """
         Remove vectors from FAISS index by IDs.
 
         Args:
+            self: Instance.
             vector_ids: List of vector IDs to remove
+
+        Returns:
+            None
 
         Note:
             FAISS doesn't support direct removal. This method marks vectors
@@ -188,12 +245,13 @@ class FaissIndexManager:
         )
 
     def search(
-        self, query_vector: np.ndarray, k: int = 10
+        self: "FaissIndexManager", query_vector: np.ndarray, k: int = 10
     ) -> Tuple[np.ndarray, np.ndarray]:
         """
         Search for similar vectors.
 
         Args:
+            self: Instance.
             query_vector: Query vector (shape: [vector_dim])
             k: Number of results to return
 
@@ -214,19 +272,20 @@ class FaissIndexManager:
                     f"got {query_vector.shape[0]}"
                 )
 
-            # Reshape for FAISS
-            query_2d = query_vector.reshape(1, -1).astype("float32")
+            # Reshape for FAISS (normalize like embeddings)
+            query_2d = self._normalize_vector(query_vector).reshape(1, -1)
 
             # Search
             distances, indices = self.index.search(query_2d, min(k, self.index.ntotal))
 
             return distances[0], indices[0]
 
-    def get_vector(self, vector_id: int) -> Optional[np.ndarray]:
+    def get_vector(self: "FaissIndexManager", vector_id: int) -> Optional[np.ndarray]:
         """
         Get vector by ID from index.
 
         Args:
+            self: Instance.
             vector_id: Vector ID
 
         Returns:
@@ -245,15 +304,19 @@ class FaissIndexManager:
         return None
 
     async def rebuild_from_database(
-        self, database: CodeDatabase, svo_client_manager: Optional[Any] = None
+        self: "FaissIndexManager",
+        database: CodeDatabase,
+        svo_client_manager: Optional[Any] = None,
     ) -> int:
         """
         Rebuild FAISS index from database.
 
-        Loads all chunks with embeddings from database and adds them to index.
-        This cleans up any "garbage" vectors from previous updates.
+        This operation recreates the FAISS index file from `code_chunks.embedding_vector`
+        and rewrites `code_chunks.vector_id` to a dense range `0..N-1`, so the mapping
+        is stable and consistent for search.
 
         Args:
+            self: Instance.
             database: CodeDatabase instance
             svo_client_manager: Optional SVOClientManager to get embeddings if missing
 
@@ -263,40 +326,36 @@ class FaissIndexManager:
         logger.info("Rebuilding FAISS index from database...")
 
         # Create fresh index (this clears all existing vectors)
-        # This ensures index only contains vectors that exist in database
-        old_vector_count = self.index.ntotal if self.index is not None else 0
+        old_vector_count = int(self.index.ntotal) if self.index is not None else 0
         self._create_index()
         if old_vector_count > 0:
             logger.info(
-                f"Cleared {old_vector_count} vectors from FAISS index "
-                "(will rebuild from database)"
+                "Cleared %d vectors from FAISS index (rebuild)", old_vector_count
             )
 
-        # Get all chunks with embeddings
+        # Get all chunks with embeddings (prefer DB as source of truth)
         chunks = database.get_all_chunks_for_faiss_rebuild()
         if not chunks:
             logger.info("No chunks with embeddings found in database")
+            self.save_index()
             return 0
 
         loaded_count = 0
         missing_embeddings = 0
+        updated_vector_ids = 0
 
-        for chunk in chunks:
-            vector_id = chunk.get("vector_id")
+        # Assign dense vector IDs in deterministic order.
+        for new_vector_id, chunk in enumerate(chunks):
             embedding_vector_json = chunk.get("embedding_vector")
             chunk_text = chunk.get("chunk_text", "")
-            chunk.get("embedding_model")
-
-            if vector_id is None:
-                continue
+            chunk_id = chunk.get("id")
+            embedding_model = chunk.get("embedding_model")
 
             # Try to get embedding from database first (embedding_vector column)
             embedding_array = None
 
             if embedding_vector_json:
                 try:
-                    import json
-
                     embedding_list = json.loads(embedding_vector_json)
                     embedding_array = np.array(embedding_list, dtype="float32")
                     logger.debug(
@@ -307,46 +366,37 @@ class FaissIndexManager:
                         f"Failed to parse embedding_vector from database for chunk {chunk.get('id')}: {e}"
                     )
 
-            # If embedding not in database, try to get from chunker service (SVO)
+            # If embedding not in database, try to get from embedding service (SVO client manager).
             if embedding_array is None and svo_client_manager:
                 logger.debug(
                     f"Embedding not in database for chunk {chunk.get('id')}, "
-                    "requesting from chunker service (SVO)..."
+                    "requesting from embedding service..."
                 )
                 try:
-                    # Use chunker service - it chunks and returns chunks with embeddings
-                    chunks_with_emb = await svo_client_manager.get_chunks(text=chunk_text)
-                    if chunks_with_emb and len(chunks_with_emb) > 0:
-                        # Chunker returns SemanticChunk objects with embeddings
-                        first_chunk = chunks_with_emb[0]
-                        embedding = getattr(first_chunk, "embedding", None) or getattr(
-                            first_chunk, "vector", None
-                        )
+
+                    class _TmpChunk:
+                        def __init__(self, text: str):
+                            self.body = text
+                            self.text = text
+
+                    tmp = _TmpChunk(chunk_text)
+                    chunks_with_emb = await svo_client_manager.get_embeddings([tmp])
+                    if chunks_with_emb and hasattr(chunks_with_emb[0], "embedding"):
+                        embedding = getattr(chunks_with_emb[0], "embedding")
                         if embedding is not None:
                             embedding_array = np.array(embedding, dtype="float32")
                             # Save embedding to database for future use
                             try:
-                                import json
-
-                                embedding_json = json.dumps(embedding.tolist())
+                                embedding_json = json.dumps(embedding_array.tolist())
                                 database._execute(
-                                    """
-                                    UPDATE code_chunks
-                                    SET embedding_vector = ?
-                                    WHERE id = ?
-                                    """,
-                                    (embedding_json, chunk.get("id")),
+                                    "UPDATE code_chunks SET embedding_vector = ?, embedding_model = ? WHERE id = ?",
+                                    (embedding_json, embedding_model, chunk_id),
                                 )
-                                database._commit()
-                                logger.debug(
-                                    f"Saved embedding to database for chunk {chunk.get('id')}"
-                                )
+                                updated_vector_ids += 1
                             except Exception as e:
                                 logger.warning(
                                     f"Failed to save embedding to database: {e}"
                                 )
-                        else:
-                            missing_embeddings += 1
                     else:
                         missing_embeddings += 1
                 except Exception as e:
@@ -365,7 +415,14 @@ class FaissIndexManager:
             # Add vector to FAISS index
             if embedding_array is not None:
                 try:
-                    self.add_vector(embedding_array, vector_id=vector_id)
+                    self.add_vector(embedding_array, vector_id=int(new_vector_id))
+                    # Rewrite DB vector_id to match the rebuilt index.
+                    if chunk_id is not None:
+                        database._execute(
+                            "UPDATE code_chunks SET vector_id = ? WHERE id = ?",
+                            (int(new_vector_id), int(chunk_id)),
+                        )
+                        updated_vector_ids += 1
                     loaded_count += 1
                 except Exception as e:
                     logger.error(
@@ -378,19 +435,29 @@ class FaissIndexManager:
                 f"Could not load {missing_embeddings} vectors: embeddings not available"
             )
 
+        try:
+            database._commit()
+        except Exception:
+            pass
+
         # Save rebuilt index
         self.save_index()
 
         logger.info(
-            f"Rebuilt FAISS index: loaded {loaded_count} vectors, "
-            f"missing {missing_embeddings} embeddings"
+            "Rebuilt FAISS index: loaded %d vectors, missing %d embeddings, db_updates=%d",
+            loaded_count,
+            missing_embeddings,
+            updated_vector_ids,
         )
 
         return loaded_count
 
-    def get_stats(self) -> Dict[str, Any]:
+    def get_stats(self: "FaissIndexManager") -> Dict[str, Any]:
         """
         Get index statistics.
+
+        Args:
+            self: Instance.
 
         Returns:
             Dictionary with index statistics
@@ -406,8 +473,16 @@ class FaissIndexManager:
             "index_path": str(self.index_path),
         }
 
-    def close(self) -> None:
-        """Close and save index."""
+    def close(self: "FaissIndexManager") -> None:
+        """
+        Close and save index.
+
+        Args:
+            self: Instance.
+
+        Returns:
+            None
+        """
         if self.index is not None:
             self.save_index()
             self.index = None

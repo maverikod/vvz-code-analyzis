@@ -113,7 +113,7 @@ def register_code_analysis_commands(reg: registry) -> None:
         pass
 
     try:
-        from .commands.vector_commands import RebuildFaissCommand, RevectorizeCommand  # type: ignore[import-not-found]
+        from .commands.vector_commands import RebuildFaissCommand, RevectorizeCommand
 
         reg.register(RebuildFaissCommand, "custom")
         reg.register(RevectorizeCommand, "custom")
@@ -192,7 +192,9 @@ def register_code_analysis_commands(reg: registry) -> None:
         import logging
 
         logger = logging.getLogger(__name__)
-        logger.error(f"Failed to register analyze_complexity command: {e}", exc_info=True)
+        logger.error(
+            f"Failed to register analyze_complexity command: {e}", exc_info=True
+        )
 
     # Duplicate detection command
     try:

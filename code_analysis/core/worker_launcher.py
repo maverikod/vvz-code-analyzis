@@ -43,8 +43,8 @@ def start_file_watcher_worker(
     db_path: str,
     project_id: str,
     watch_dirs: List[str],
+    locks_dir: str,
     scan_interval: int = 60,
-    lock_file_name: str = ".file_watcher.lock",
     version_dir: Optional[str] = None,
     worker_log_path: Optional[str] = None,
     project_root: Optional[str] = None,
@@ -57,8 +57,8 @@ def start_file_watcher_worker(
         db_path: Path to database file.
         project_id: Project ID to watch.
         watch_dirs: Directories to scan.
+        locks_dir: Service state directory for lock files (from StoragePaths).
         scan_interval: Scan interval seconds.
-        lock_file_name: Lock file name.
         version_dir: Version directory for deleted files.
         worker_log_path: Log path for worker process.
         project_root: Project root for relative paths.
@@ -69,15 +69,17 @@ def start_file_watcher_worker(
     """
     from .file_watcher_pkg.runner import run_file_watcher_worker
 
+    # Convert to project_watch_dirs format: List[tuple[str, str]] = [(project_id, watch_dir), ...]
+    project_watch_dirs = [(project_id, watch_dir) for watch_dir in watch_dirs]
+    
     process = multiprocessing.Process(
         target=run_file_watcher_worker,
-        args=(db_path, project_id, watch_dirs),
+        args=(db_path, project_watch_dirs),
         kwargs={
+            "locks_dir": locks_dir,
             "scan_interval": int(scan_interval),
-            "lock_file_name": lock_file_name,
             "version_dir": version_dir,
             "worker_log_path": worker_log_path,
-            "project_root": project_root,
             "ignore_patterns": ignore_patterns or [],
         },
         daemon=True,
@@ -102,6 +104,7 @@ def start_vectorization_worker(
     project_id: str,
     faiss_index_path: str,
     vector_dim: int = 384,
+    dataset_id: Optional[str] = None,
     svo_config: Optional[Dict[str, Any]] = None,
     batch_size: int = 10,
     poll_interval: int = 30,
@@ -110,11 +113,16 @@ def start_vectorization_worker(
     """
     Start vectorization worker in a separate process and register it.
 
+    Implements dataset-scoped vectorization (Step 2 of refactor plan).
+    If dataset_id is provided, processes chunks only for that dataset using dataset-scoped FAISS index.
+    If dataset_id is None, processes chunks for all datasets in project (legacy mode).
+
     Args:
         db_path: Path to database file.
         project_id: Project ID to process.
-        faiss_index_path: Path to FAISS index directory/file.
+        faiss_index_path: Path to FAISS index file (must be dataset-scoped if dataset_id provided).
         vector_dim: Embedding vector dimension.
+        dataset_id: Optional dataset ID to filter by (for dataset-scoped processing).
         svo_config: Optional SVO config dict.
         batch_size: Batch size.
         poll_interval: Poll interval seconds.
@@ -127,7 +135,7 @@ def start_vectorization_worker(
 
     process = multiprocessing.Process(
         target=run_vectorization_worker,
-        args=(db_path, project_id, faiss_index_path, int(vector_dim)),
+        args=(db_path, project_id, faiss_index_path, int(vector_dim), dataset_id),
         kwargs={
             "svo_config": svo_config,
             "batch_size": int(batch_size),
@@ -164,15 +172,3 @@ def stop_worker_type(worker_type: str, *, timeout: float = 10.0) -> Dict[str, An
     return get_worker_manager().stop_worker_type(worker_type, timeout=timeout)
 
 
-def default_faiss_index_path(root_dir: str) -> str:
-    """
-    Default FAISS index path for a project root.
-
-    Args:
-        root_dir: Project root directory.
-
-    Returns:
-        Path string.
-    """
-    root_path = Path(root_dir).resolve()
-    return str((root_path / "data" / "faiss_index").resolve())

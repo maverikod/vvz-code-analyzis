@@ -14,6 +14,13 @@ from mcp_proxy_adapter.commands.result import ErrorResult
 
 from ..core.database import CodeDatabase
 from ..core.exceptions import CodeAnalysisError, DatabaseError, ValidationError
+from ..core.project_resolution import ProjectIdError, normalize_root_dir
+from ..core.project_resolution import require_matching_project_id
+from ..core.storage_paths import (
+    ensure_storage_dirs,
+    load_raw_config,
+    resolve_storage_paths,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -131,10 +138,20 @@ class BaseMCPCommand(Command):
             DatabaseError: If database cannot be opened or created.
         """
         try:
-            root_path = Path(root_dir).resolve()
-            data_dir = root_path / "data"
-            data_dir.mkdir(parents=True, exist_ok=True)
-            db_path = data_dir / "code_analysis.db"
+            # Root path is still needed for diagnostics and for auto-analysis entrypoints.
+            root_path = normalize_root_dir(root_dir)
+
+            # NOTE:
+            # `root_dir` is a watched project root (source directory),
+            # but DB is service state and MUST NOT be created inside watched dirs.
+            # Resolve DB path from server config.
+            config_path = BaseMCPCommand._resolve_config_path()
+            config_data = load_raw_config(config_path)
+            storage = resolve_storage_paths(
+                config_data=config_data, config_path=config_path
+            )
+            ensure_storage_dirs(storage)
+            db_path = storage.db_path
 
             integrity = BaseMCPCommand._ensure_database_integrity(db_path)
             if integrity.get("ok") is False:
@@ -277,6 +294,50 @@ class BaseMCPCommand(Command):
             ) from e
 
     @staticmethod
+    def _resolve_config_path() -> Path:
+        """
+        Resolve active server config path.
+
+        Priority:
+        - mcp_proxy_adapter global config (cfg.config_path)
+        - cwd/config.json
+        """
+
+        try:
+            from mcp_proxy_adapter.config import get_config
+
+            cfg = get_config()
+            cfg_path = getattr(cfg, "config_path", None)
+            if isinstance(cfg_path, str) and cfg_path.strip():
+                return Path(cfg_path).expanduser().resolve()
+        except Exception:
+            pass
+
+        return (Path.cwd() / "config.json").resolve()
+
+    @staticmethod
+    def _require_project_id_gate(root_dir: str, project_id: Optional[str]) -> str:
+        """
+        Enforce mutating-command safety gate against `<root_dir>/projectid`.
+
+        Args:
+            root_dir: Project root directory.
+            project_id: Provided project_id.
+
+        Returns:
+            Validated project_id.
+        """
+
+        try:
+            return require_matching_project_id(root_dir, project_id)
+        except ProjectIdError as e:
+            raise ValidationError(
+                str(e),
+                field="project_id",
+                details={"root_dir": str(root_dir), "project_id": project_id},
+            ) from e
+
+    @staticmethod
     def _get_project_id(
         db: CodeDatabase, root_path: Path, project_id: Optional[str] = None
     ) -> Optional[str]:
@@ -296,8 +357,27 @@ class BaseMCPCommand(Command):
         """
         try:
             if project_id:
-                project = db.get_project(project_id)
-                return project_id if project else None
+                # Strict binding: if root_path exists with a different id, treat it as an error.
+                existing = db.get_project_id(str(root_path))
+                if existing and existing != project_id:
+                    raise ValidationError(
+                        "Project root is already registered with a different project_id",
+                        field="project_id",
+                        details={
+                            "root_path": str(root_path),
+                            "existing_project_id": existing,
+                            "provided_project_id": project_id,
+                        },
+                    )
+
+                # Ensure project exists (create if missing) with this id.
+                return db.get_or_create_project(
+                    str(root_path),
+                    name=root_path.name,
+                    project_id=project_id,
+                )
+
+            # Non-mutating commands may still infer/create.
             return db.get_or_create_project(str(root_path), name=root_path.name)
         except Exception as e:
             raise DatabaseError(
@@ -321,20 +401,7 @@ class BaseMCPCommand(Command):
             ValidationError: If root directory is invalid
         """
         try:
-            root_path = Path(root_dir).resolve()
-            if not root_path.exists():
-                raise ValidationError(
-                    f"Root directory does not exist: {root_dir}",
-                    field="root_dir",
-                    details={"root_dir": root_dir},
-                )
-            if not root_path.is_dir():
-                raise ValidationError(
-                    f"Root directory is not a directory: {root_dir}",
-                    field="root_dir",
-                    details={"root_dir": root_dir},
-                )
-            return root_path
+            return normalize_root_dir(root_dir)
         except ValidationError:
             raise
         except Exception as e:

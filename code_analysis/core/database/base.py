@@ -80,9 +80,7 @@ class CodeDatabase:
         Raises:
             ValueError: If driver_config is missing or invalid.
         """
-        logger.info(
-            f"[CodeDatabase] __init__ called with driver_config type={driver_config.get('type') if driver_config else None}"
-        )
+        logger.info(f"[CodeDatabase] __init__ called with driver_config type={driver_config.get('type') if driver_config else None}")
         if not driver_config:
             raise ValueError("driver_config is required. No backward compatibility.")
 
@@ -91,32 +89,17 @@ class CodeDatabase:
             raise ValueError("driver_config must contain 'type' key")
 
         driver_cfg = driver_config.get("config", {})
-        logger.info(
-            f"[CodeDatabase] Creating driver: type={driver_type}, config_keys={list(driver_cfg.keys())}"
-        )
-        print(
-            f"[CodeDatabase] Creating driver: type={driver_type}, config_keys={list(driver_cfg.keys())}",
-            flush=True,
-        )
+        logger.info(f"[CodeDatabase] Creating driver: type={driver_type}, config_keys={list(driver_cfg.keys())}")
+        print(f"[CodeDatabase] Creating driver: type={driver_type}, config_keys={list(driver_cfg.keys())}", flush=True)
 
         try:
             logger.info(f"[CodeDatabase] Calling create_driver({driver_type}, ...)")
-            print(
-                f"[CodeDatabase] Calling create_driver({driver_type}, ...)", flush=True
-            )
+            print(f"[CodeDatabase] Calling create_driver({driver_type}, ...)", flush=True)
             self.driver = create_driver(driver_type, driver_cfg)
-            logger.info(
-                f"[CodeDatabase] Database driver '{driver_type}' loaded successfully"
-            )
-            print(
-                f"[CodeDatabase] Database driver '{driver_type}' loaded successfully",
-                flush=True,
-            )
+            logger.info(f"[CodeDatabase] Database driver '{driver_type}' loaded successfully")
+            print(f"[CodeDatabase] Database driver '{driver_type}' loaded successfully", flush=True)
         except Exception as e:
-            logger.error(
-                f"[CodeDatabase] Failed to load database driver '{driver_type}': {e}",
-                exc_info=True,
-            )
+            logger.error(f"[CodeDatabase] Failed to load database driver '{driver_type}': {e}", exc_info=True)
             raise
 
         # Store driver type for logging
@@ -218,11 +201,30 @@ class CodeDatabase:
                 )
             """
         )
+        # Create datasets table (Step 1.1 of refactor plan)
+        # datasets table supports multi-root indexing within a project
+        self._execute(
+            """
+                CREATE TABLE IF NOT EXISTS datasets (
+                    id TEXT PRIMARY KEY,
+                    project_id TEXT NOT NULL,
+                    root_path TEXT NOT NULL,
+                    name TEXT,
+                    created_at REAL DEFAULT (julianday('now')),
+                    updated_at REAL DEFAULT (julianday('now')),
+                    FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE,
+                    UNIQUE(project_id, root_path)
+                )
+            """
+        )
+        # Update files table to include dataset_id (Step 1.1 of refactor plan)
+        # Files now have UNIQUE(project_id, dataset_id, path) constraint
         self._execute(
             """
                 CREATE TABLE IF NOT EXISTS files (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     project_id TEXT NOT NULL,
+                    dataset_id TEXT NOT NULL,
                     path TEXT NOT NULL,
                     lines INTEGER,
                     last_modified REAL,
@@ -233,7 +235,8 @@ class CodeDatabase:
                     created_at REAL DEFAULT (julianday('now')),
                     updated_at REAL DEFAULT (julianday('now')),
                     FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE,
-                    UNIQUE(project_id, path)
+                    FOREIGN KEY (dataset_id) REFERENCES datasets(id) ON DELETE CASCADE,
+                    UNIQUE(project_id, dataset_id, path)
                 )
             """
         )
@@ -483,26 +486,23 @@ class CodeDatabase:
             """
         )
         # Try to add missing columns (if table already exists)
-        # IMPORTANT:
-        # We must avoid executing ALTER TABLE statements when columns already exist.
-        # Even if we catch exceptions, sqlite_proxy's DB worker logs them as ERROR,
-        # which clutters logs and can destabilize long-running jobs (update_indexes).
-        existing_columns = {
-            col.get("name")
-            for col in self._get_table_info("code_chunks")
-            if isinstance(col, dict) and col.get("name")
-        }
-        if "bm25_score" not in existing_columns:
+        try:
             self._execute("ALTER TABLE code_chunks ADD COLUMN bm25_score REAL")
             logger.info("Added bm25_score column to code_chunks table")
-        if "embedding_vector" not in existing_columns:
+        except Exception:
+            pass
+        try:
             self._execute("ALTER TABLE code_chunks ADD COLUMN embedding_vector TEXT")
             logger.info("Added embedding_vector column to code_chunks table")
-        if "binding_level" not in existing_columns:
+        except Exception:
+            pass
+        try:
             self._execute(
                 "ALTER TABLE code_chunks ADD COLUMN binding_level INTEGER DEFAULT 0"
             )
             logger.info("Added binding_level column to code_chunks table")
+        except Exception:
+            pass
         # Create code_duplicates table
         self._execute(
             """
@@ -540,7 +540,10 @@ class CodeDatabase:
         # Create indexes
         indexes = [
             "CREATE INDEX IF NOT EXISTS idx_projects_root_path ON projects(root_path)",
+            "CREATE INDEX IF NOT EXISTS idx_datasets_project ON datasets(project_id)",
+            "CREATE INDEX IF NOT EXISTS idx_datasets_root_path ON datasets(root_path)",
             "CREATE INDEX IF NOT EXISTS idx_files_project ON files(project_id)",
+            "CREATE INDEX IF NOT EXISTS idx_files_dataset ON files(dataset_id)",
             "CREATE INDEX IF NOT EXISTS idx_files_path ON files(path)",
             "CREATE INDEX IF NOT EXISTS idx_classes_name ON classes(name)",
             "CREATE INDEX IF NOT EXISTS idx_classes_file ON classes(file_id)",
@@ -635,6 +638,7 @@ class CodeDatabase:
                 CREATE TABLE IF NOT EXISTS files_new (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     project_id TEXT NOT NULL,
+                    dataset_id TEXT NOT NULL,
                     path TEXT NOT NULL,
                     lines INTEGER,
                     last_modified REAL,
@@ -642,20 +646,21 @@ class CodeDatabase:
                     created_at REAL DEFAULT (julianday('now')),
                     updated_at REAL DEFAULT (julianday('now')),
                     FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE,
-                    UNIQUE(project_id, path)
+                    UNIQUE(project_id, dataset_id, path)
                 )
             """
             )
             self._execute(
                 """
                 INSERT INTO files_new (
-                    id, project_id, path, lines, last_modified,
+                    id, project_id, dataset_id, path, lines, last_modified,
                     has_docstring, created_at, updated_at
                 )
-                SELECT id, project_id, path, lines, last_modified,
+                SELECT id, project_id, ?, path, lines, last_modified,
                        has_docstring, created_at, updated_at
                 FROM files
-            """
+            """,
+                (str(uuid.uuid4()),),  # Create default dataset_id for migration
             )
             self._execute("DROP TABLE files")
             self._execute("ALTER TABLE files_new RENAME TO files")
@@ -676,6 +681,80 @@ class CodeDatabase:
         This method is called on every database initialization to ensure
         the schema is up to date with the latest version.
         """
+        # Check if datasets table exists, if not create it
+        try:
+            table_info = self._get_table_info("datasets")
+            datasets_exists = True
+        except Exception:
+            datasets_exists = False
+
+        if not datasets_exists:
+            logger.info("Creating datasets table...")
+            self._execute(
+                """
+                CREATE TABLE IF NOT EXISTS datasets (
+                    id TEXT PRIMARY KEY,
+                    project_id TEXT NOT NULL,
+                    root_path TEXT NOT NULL,
+                    name TEXT,
+                    created_at REAL DEFAULT (julianday('now')),
+                    updated_at REAL DEFAULT (julianday('now')),
+                    FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE,
+                    UNIQUE(project_id, root_path)
+                )
+            """
+            )
+            self._commit()
+
+        # Check if files table has dataset_id column
+        files_table_info = self._get_table_info("files")
+        files_columns = {col["name"]: col["type"] for col in files_table_info}
+
+        if "dataset_id" not in files_columns:
+            logger.info("Migrating files table: adding dataset_id column")
+            # This is a complex migration - we need to:
+            # 1. Create default datasets for existing projects
+            # 2. Add dataset_id column to files
+            # 3. Update all files to have a dataset_id
+            try:
+                # Get all projects
+                projects = self._fetchall("SELECT id, root_path FROM projects")
+                for project in projects:
+                    project_id = project["id"]
+                    root_path = project["root_path"]
+                    # Create default dataset for this project
+                    dataset_id = str(uuid.uuid4())
+                    self._execute(
+                        """
+                        INSERT OR IGNORE INTO datasets (id, project_id, root_path, name)
+                        VALUES (?, ?, ?, ?)
+                    """,
+                        (dataset_id, project_id, root_path, f"Default dataset for {root_path}"),
+                    )
+
+                # Add dataset_id column
+                self._execute("ALTER TABLE files ADD COLUMN dataset_id TEXT")
+                # Update all files to have dataset_id (use first dataset for each project)
+                for project in projects:
+                    project_id = project["id"]
+                    dataset = self._fetchone(
+                        "SELECT id FROM datasets WHERE project_id = ? LIMIT 1",
+                        (project_id,),
+                    )
+                    if dataset:
+                        dataset_id = dataset["id"]
+                        self._execute(
+                            "UPDATE files SET dataset_id = ? WHERE project_id = ? AND dataset_id IS NULL",
+                            (dataset_id, project_id),
+                        )
+
+                # Make dataset_id NOT NULL (requires recreating table in SQLite)
+                # For now, we'll just ensure it's set for all rows
+                self._commit()
+                logger.info("Migration completed: files table now has dataset_id")
+            except Exception as e:
+                logger.warning(f"Migration issue (may already exist): {e}")
+
         # Use driver interface to get table info
         issues_table_info = self._get_table_info("issues")
         issues_columns = {col["name"]: col["type"] for col in issues_table_info}
@@ -719,6 +798,9 @@ class CodeDatabase:
             "line": "INTEGER",
             "ast_node_type": "TEXT",
             "source_type": "TEXT",
+            "bm25_score": "REAL",
+            "embedding_vector": "TEXT",
+            "binding_level": "INTEGER DEFAULT 0",
         }
         for col_name, col_type in new_columns.items():
             if col_name not in chunks_columns:
@@ -736,9 +818,6 @@ class CodeDatabase:
                     )
 
         # Migration: Add deleted, original_path, version_dir columns to files table if they don't exist
-        files_table_info = self._get_table_info("files")
-        files_columns = {col["name"]: col["type"] for col in files_table_info}
-
         if "deleted" not in files_columns:
             try:
                 logger.info("Migrating files table: adding deleted column")
@@ -811,3 +890,240 @@ class CodeDatabase:
     def __exit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
         """Context manager exit."""
         self.close()
+
+    def get_all_chunks_for_faiss_rebuild(
+        self, project_id: Optional[str] = None, dataset_id: Optional[str] = None
+    ) -> List[Dict[str, Any]]:
+        """
+        Get all code chunks with embeddings for FAISS index rebuild.
+
+        Implements dataset-scoped FAISS (Step 2 of refactor plan).
+        If project_id and dataset_id are provided, filters chunks for that dataset only.
+        If only project_id is provided, returns chunks for all datasets in the project.
+        If neither is provided, returns chunks for all projects (legacy mode).
+
+        Args:
+            project_id: Optional project ID to filter by.
+            dataset_id: Optional dataset ID to filter by (requires project_id).
+
+        Returns:
+            List of chunk records with embeddings.
+        """
+        if dataset_id and not project_id:
+            raise ValueError("dataset_id requires project_id")
+
+        if project_id and dataset_id:
+            # Dataset-scoped: get chunks only for this dataset
+            return self._fetchall(
+                """
+                SELECT 
+                    cc.id,
+                    cc.file_id,
+                    cc.project_id,
+                    cc.chunk_uuid,
+                    cc.chunk_type,
+                    cc.chunk_text,
+                    cc.chunk_ordinal,
+                    cc.vector_id,
+                    cc.embedding_model,
+                    cc.embedding_vector,
+                    cc.class_id,
+                    cc.function_id,
+                    cc.method_id,
+                    cc.line,
+                    cc.ast_node_type,
+                    cc.source_type
+                FROM code_chunks cc
+                INNER JOIN files f ON cc.file_id = f.id
+                WHERE cc.project_id = ?
+                  AND f.dataset_id = ?
+                  AND cc.embedding_model IS NOT NULL
+                  AND cc.embedding_vector IS NOT NULL
+                ORDER BY cc.id
+                """,
+                (project_id, dataset_id),
+            )
+        elif project_id:
+            # Project-scoped: get chunks for all datasets in project
+            return self._fetchall(
+                """
+                SELECT 
+                    cc.id,
+                    cc.file_id,
+                    cc.project_id,
+                    cc.chunk_uuid,
+                    cc.chunk_type,
+                    cc.chunk_text,
+                    cc.chunk_ordinal,
+                    cc.vector_id,
+                    cc.embedding_model,
+                    cc.embedding_vector,
+                    cc.class_id,
+                    cc.function_id,
+                    cc.method_id,
+                    cc.line,
+                    cc.ast_node_type,
+                    cc.source_type
+                FROM code_chunks cc
+                WHERE cc.project_id = ?
+                  AND cc.embedding_model IS NOT NULL
+                  AND cc.embedding_vector IS NOT NULL
+                ORDER BY cc.id
+                """,
+                (project_id,),
+            )
+        else:
+            # Legacy mode: all chunks (for backward compatibility)
+            return self._fetchall(
+                """
+                SELECT 
+                    cc.id,
+                    cc.file_id,
+                    cc.project_id,
+                    cc.chunk_uuid,
+                    cc.chunk_type,
+                    cc.chunk_text,
+                    cc.chunk_ordinal,
+                    cc.vector_id,
+                    cc.embedding_model,
+                    cc.embedding_vector,
+                    cc.class_id,
+                    cc.function_id,
+                    cc.method_id,
+                    cc.line,
+                    cc.ast_node_type,
+                    cc.source_type
+                FROM code_chunks cc
+                WHERE cc.embedding_model IS NOT NULL
+                  AND cc.embedding_vector IS NOT NULL
+                ORDER BY cc.id
+                """
+            )
+
+    def get_non_vectorized_chunks(
+        self,
+        project_id: str,
+        dataset_id: Optional[str] = None,
+        limit: int = 10,
+    ) -> List[Dict[str, Any]]:
+        """
+        Get chunks that have embeddings but need vector_id assignment.
+
+        Implements dataset-scoped vectorization (Step 2 of refactor plan).
+        If dataset_id is provided, returns chunks only for that dataset.
+        If dataset_id is None, returns chunks for all datasets in project.
+
+        Args:
+            project_id: Project ID (REQUIRED for write operations).
+            dataset_id: Optional dataset ID to filter by.
+            limit: Maximum number of chunks to return.
+
+        Returns:
+            List of chunk records that need vector_id assignment.
+        """
+        if dataset_id:
+            # Dataset-scoped: get chunks only for this dataset
+            return self._fetchall(
+                """
+                SELECT 
+                    cc.id,
+                    cc.file_id,
+                    cc.project_id,
+                    cc.chunk_uuid,
+                    cc.chunk_type,
+                    cc.chunk_text,
+                    cc.chunk_ordinal,
+                    cc.vector_id,
+                    cc.embedding_model,
+                    cc.embedding_vector,
+                    cc.class_id,
+                    cc.function_id,
+                    cc.method_id,
+                    cc.line,
+                    cc.ast_node_type,
+                    cc.source_type,
+                    f.dataset_id
+                FROM code_chunks cc
+                INNER JOIN files f ON cc.file_id = f.id
+                WHERE cc.project_id = ?
+                  AND f.dataset_id = ?
+                  AND cc.embedding_vector IS NOT NULL
+                  AND cc.vector_id IS NULL
+                ORDER BY cc.id
+                LIMIT ?
+                """,
+                (project_id, dataset_id, limit),
+            )
+        else:
+            # Project-scoped: get chunks for all datasets in project
+            return self._fetchall(
+                """
+                SELECT 
+                    cc.id,
+                    cc.file_id,
+                    cc.project_id,
+                    cc.chunk_uuid,
+                    cc.chunk_type,
+                    cc.chunk_text,
+                    cc.chunk_ordinal,
+                    cc.vector_id,
+                    cc.embedding_model,
+                    cc.embedding_vector,
+                    cc.class_id,
+                    cc.function_id,
+                    cc.method_id,
+                    cc.line,
+                    cc.ast_node_type,
+                    cc.source_type,
+                    f.dataset_id
+                FROM code_chunks cc
+                INNER JOIN files f ON cc.file_id = f.id
+                WHERE cc.project_id = ?
+                  AND cc.embedding_vector IS NOT NULL
+                  AND cc.vector_id IS NULL
+                ORDER BY cc.id
+                LIMIT ?
+                """,
+                (project_id, limit),
+            )
+
+    async def update_chunk_vector_id(
+        self,
+        chunk_id: int,
+        vector_id: int,
+        embedding_model: Optional[str] = None,
+    ) -> None:
+        """
+        Update chunk with vector_id and embedding_model.
+
+        This method is called after adding vector to FAISS index.
+        After update, chunk is automatically excluded from get_non_vectorized_chunks query.
+
+        Args:
+            chunk_id: Chunk ID.
+            vector_id: FAISS index position (vector ID).
+            embedding_model: Optional embedding model name.
+
+        Returns:
+            None
+        """
+        if embedding_model:
+            self._execute(
+                """
+                UPDATE code_chunks
+                SET vector_id = ?, embedding_model = ?
+                WHERE id = ?
+                """,
+                (vector_id, embedding_model, chunk_id),
+            )
+        else:
+            self._execute(
+                """
+                UPDATE code_chunks
+                SET vector_id = ?
+                WHERE id = ?
+                """,
+                (vector_id, chunk_id),
+            )
+        self._commit()
+

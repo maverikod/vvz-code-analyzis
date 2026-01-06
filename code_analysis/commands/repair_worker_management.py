@@ -7,8 +7,6 @@ email: vasilyvz@gmail.com
 
 import logging
 import multiprocessing
-import os
-import signal
 import time
 from pathlib import Path
 from typing import Any, Dict, Optional, TYPE_CHECKING

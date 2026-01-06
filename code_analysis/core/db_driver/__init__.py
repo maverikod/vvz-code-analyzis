@@ -51,7 +51,9 @@ def create_driver(driver_name: str, config: Dict[str, Any]) -> BaseDatabaseDrive
         ValueError: If driver name is not registered
         RuntimeError: If driver initialization fails
     """
-    logger.info(f"[create_driver] Called with driver_name={driver_name}, config_keys={list(config.keys())}")
+    logger.info(
+        f"[create_driver] Called with driver_name={driver_name}, config_keys={list(config.keys())}"
+    )
     import os
 
     # Direct sqlite driver can only be used in DB worker process
@@ -70,28 +72,45 @@ def create_driver(driver_name: str, config: Dict[str, Any]) -> BaseDatabaseDrive
 
     if driver_name not in _DRIVERS:
         available = ", ".join(_DRIVERS.keys())
-        logger.error(f"[create_driver] Unknown driver: {driver_name}, available: {available}")
+        logger.error(
+            f"[create_driver] Unknown driver: {driver_name}, available: {available}"
+        )
         raise ValueError(
             f"Unknown database driver: {driver_name}. "
             f"Available drivers: {available}"
         )
 
     driver_class = _DRIVERS[driver_name]
-    logger.info(f"[create_driver] Creating database driver: {driver_name}, class={driver_class}")
+    logger.info(
+        f"[create_driver] Creating database driver: {driver_name}, class={driver_class}"
+    )
 
     try:
-        logger.info(f"[create_driver] Instantiating driver class")
-        print(f"[create_driver] Instantiating driver class", flush=True)
+        logger.info("[create_driver] Instantiating driver class")
+        print("[create_driver] Instantiating driver class", flush=True)
         driver = driver_class()
-        logger.info(f"[create_driver] Driver instance created, calling connect() with config")
-        print(f"[create_driver] Driver instance created, calling connect() with config", flush=True)
+        logger.info("[create_driver] Driver instance created, calling connect() with config")
+        print(
+            "[create_driver] Driver instance created, calling connect() with config",
+            flush=True,
+        )
         driver.connect(config)
         logger.info(f"[create_driver] Database driver '{driver_name}' initialized successfully")
-        print(f"[create_driver] Database driver '{driver_name}' initialized successfully", flush=True)
+        print(
+            f"[create_driver] Database driver '{driver_name}' initialized successfully",
+            flush=True,
+        )
         return driver
     except Exception as e:
-        logger.error(f"[create_driver] Failed to initialize database driver '{driver_name}': {e}", exc_info=True)
-        print(f"[create_driver] Failed to initialize database driver '{driver_name}': {e}", flush=True, file=__import__('sys').stderr)
+        logger.error(
+            f"[create_driver] Failed to initialize database driver '{driver_name}': {e}",
+            exc_info=True,
+        )
+        print(
+            f"[create_driver] Failed to initialize database driver '{driver_name}': {e}",
+            flush=True,
+            file=__import__("sys").stderr,
+        )
         raise RuntimeError(f"Database driver initialization failed: {e}") from e
 
 

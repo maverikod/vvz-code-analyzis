@@ -18,23 +18,31 @@ def get_file_by_path(
     """
     Get file record by path and project ID.
 
+    Implements Step 5 of refactor plan: all file paths are absolute.
+    Path is normalized to absolute before querying.
+
     Args:
-        path: File path
+        path: File path (will be normalized to absolute)
         project_id: Project ID
         include_deleted: If True, include files marked as deleted (default: False)
 
     Returns:
         File record as dictionary or None if not found
     """
+    from ..project_resolution import normalize_abs_path
+
+    # Normalize path to absolute (Step 5: absolute paths everywhere)
+    abs_path = normalize_abs_path(path)
+
     if include_deleted:
         row = self._fetchone(
             "SELECT * FROM files WHERE path = ? AND project_id = ?",
-            (path, project_id),
+            (abs_path, project_id),
         )
     else:
         row = self._fetchone(
             "SELECT * FROM files WHERE path = ? AND project_id = ? AND (deleted = 0 OR deleted IS NULL)",
-            (path, project_id),
+            (abs_path, project_id),
         )
     return row
 
@@ -46,11 +54,37 @@ def add_file(
     last_modified: float,
     has_docstring: bool,
     project_id: str,
+    dataset_id: str,
 ) -> int:
-    """Add or update file record. Returns file_id."""
+    """
+    Add or update file record. Returns file_id.
+
+    Implements Step 5 of refactor plan: all file paths are absolute.
+    Files are uniquely identified by (project_id, dataset_id, path).
+
+    Args:
+        path: File path (will be normalized to absolute)
+        lines: Number of lines in file
+        last_modified: Last modification timestamp
+        has_docstring: Whether file has docstring
+        project_id: Project ID (UUID4 string)
+        dataset_id: Dataset ID (UUID4 string)
+
+    Returns:
+        File ID
+    """
+    from ..project_resolution import normalize_abs_path
+
+    # Normalize path to absolute (Step 5: absolute paths everywhere)
+    abs_path = normalize_abs_path(path)
+
     self._execute(
-        "\n            INSERT OR REPLACE INTO files\n            (project_id, path, lines, last_modified, has_docstring, updated_at)\n            VALUES (?, ?, ?, ?, ?, julianday('now'))\n        ",
-        (project_id, path, lines, last_modified, has_docstring),
+        """
+            INSERT OR REPLACE INTO files
+            (project_id, dataset_id, path, lines, last_modified, has_docstring, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, julianday('now'))
+        """,
+        (project_id, dataset_id, abs_path, lines, last_modified, has_docstring),
     )
     self._commit()
     result = self._lastrowid()
@@ -64,23 +98,31 @@ def get_file_id(
     """
     Get file ID by path and project.
 
+    Implements Step 5 of refactor plan: all file paths are absolute.
+    Path is normalized to absolute before querying.
+
     Args:
-        path: File path
+        path: File path (will be normalized to absolute)
         project_id: Project ID
         include_deleted: If True, include files marked as deleted (default: False)
 
     Returns:
         File ID or None if not found
     """
+    from ..project_resolution import normalize_abs_path
+
+    # Normalize path to absolute (Step 5: absolute paths everywhere)
+    abs_path = normalize_abs_path(path)
+
     if include_deleted:
         row = self._fetchone(
             "SELECT id FROM files WHERE path = ? AND project_id = ?",
-            (path, project_id),
+            (abs_path, project_id),
         )
     else:
         row = self._fetchone(
             "SELECT id FROM files WHERE path = ? AND project_id = ? AND (deleted = 0 OR deleted IS NULL)",
-            (path, project_id),
+            (abs_path, project_id),
         )
     return row["id"] if row else None
 
@@ -207,7 +249,12 @@ async def remove_missing_files(
 
 
 def get_file_summary(self, file_path: str, project_id: str) -> Optional[Dict[str, Any]]:
-    """Get summary for a file."""
+    """
+    Get summary for a file.
+
+    Implements Step 5 of refactor plan: all file paths are absolute.
+    Path is normalized via get_file_id which normalizes to absolute.
+    """
     file_id = self.get_file_id(file_path, project_id)
     if not file_id:
         return None
@@ -269,16 +316,24 @@ def mark_file_needs_chunking(self, file_path: str, project_id: str) -> bool:
 
     **Important**: Files with deleted=1 are NOT marked for chunking.
 
+    Implements Step 5 of refactor plan: all file paths are absolute.
+    Path is normalized to absolute before querying.
+
     Args:
-        file_path: Absolute file path as stored in DB
+        file_path: File path (will be normalized to absolute)
         project_id: Project ID
 
     Returns:
         True if file was found and processed, False otherwise.
     """
+    from ..project_resolution import normalize_abs_path
+
+    # Normalize path to absolute (Step 5: absolute paths everywhere)
+    abs_path = normalize_abs_path(file_path)
+
     row = self._fetchone(
         "SELECT id, deleted FROM files WHERE project_id = ? AND path = ?",
-        (project_id, file_path),
+        (project_id, abs_path),
     )
     if not row:
         return False
@@ -317,8 +372,11 @@ def mark_file_deleted(
     4. Set deleted=1, update updated_at
     5. File will NOT be chunked or processed
 
+    Implements Step 5 of refactor plan: all file paths are absolute.
+    Path is normalized to absolute before querying.
+
     Args:
-        file_path: Original file path (will be moved)
+        file_path: Original file path (will be normalized to absolute and moved)
         project_id: Project ID
         version_dir: Directory where deleted files are stored
         reason: Optional reason for deletion
@@ -328,16 +386,20 @@ def mark_file_deleted(
     """
     import shutil
     from pathlib import Path
+    from ..project_resolution import normalize_abs_path
+
+    # Normalize path to absolute (Step 5: absolute paths everywhere)
+    abs_path = normalize_abs_path(file_path)
 
     row = self._fetchone(
         "SELECT id FROM files WHERE project_id = ? AND path = ?",
-        (project_id, file_path),
+        (project_id, abs_path),
     )
     if not row:
         return False
 
     file_id = row["id"]
-    original_path = Path(file_path)
+    original_path = Path(abs_path)
 
     # Check if file exists
     if not original_path.exists():
@@ -430,8 +492,11 @@ def unmark_file_deleted(self, file_path: str, project_id: str) -> bool:
     6. Set deleted=0, update updated_at
     7. File will be processed again
 
+    Implements Step 5 of refactor plan: all file paths are absolute.
+    Path is normalized to absolute before querying.
+
     Args:
-        file_path: Current file path (in version_dir) or original_path to search
+        file_path: Current file path (in version_dir) or original_path to search (will be normalized to absolute)
         project_id: Project ID
 
     Returns:
@@ -439,6 +504,10 @@ def unmark_file_deleted(self, file_path: str, project_id: str) -> bool:
     """
     import shutil
     from pathlib import Path
+    from ..project_resolution import normalize_abs_path
+
+    # Normalize path to absolute (Step 5: absolute paths everywhere)
+    abs_path = normalize_abs_path(file_path)
 
     # Try to find by current path (in version_dir) or original_path
     row = self._fetchone(
@@ -449,16 +518,15 @@ def unmark_file_deleted(self, file_path: str, project_id: str) -> bool:
         ORDER BY last_modified DESC
         LIMIT 1
         """,
-        (project_id, file_path, file_path),
+        (project_id, abs_path, abs_path),
     )
     if not row:
         return False
 
-    file_id, current_path, original_path_str, version_dir_str = (
+    file_id, current_path, original_path_str = (
         row["id"],
         row["path"],
         row["original_path"],
-        row["version_dir"],
     )
 
     if not original_path_str:
@@ -583,20 +651,28 @@ def get_file_versions(self, file_path: str, project_id: str) -> List[Dict[str, A
     Version = last_modified timestamp.
     Multiple records with same path but different last_modified are considered versions.
 
+    Implements Step 5 of refactor plan: all file paths are absolute.
+    Path is normalized to absolute before querying.
+
     Args:
-        file_path: File path
+        file_path: File path (will be normalized to absolute)
         project_id: Project ID
 
     Returns:
         List of file versions sorted by last_modified (newest first)
     """
+    from ..project_resolution import normalize_abs_path
+
+    # Normalize path to absolute (Step 5: absolute paths everywhere)
+    abs_path = normalize_abs_path(file_path)
+
     return self._fetchall(
         """
         SELECT * FROM files 
         WHERE project_id = ? AND path = ?
         ORDER BY last_modified DESC
         """,
-        (project_id, file_path),
+        (project_id, abs_path),
     )
 
 
@@ -644,11 +720,9 @@ def collapse_file_versions(
 
         if keep_latest:
             # Keep the first one (newest by last_modified DESC)
-            keep_version = versions[0]
             delete_versions = versions[1:]
         else:
             # Keep the oldest
-            keep_version = versions[-1]
             delete_versions = versions[:-1]
 
         # Hard delete old versions

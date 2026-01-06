@@ -142,9 +142,7 @@
       "retry_attempts": 3,
       "retry_delay": 10.0,
       "watch_dirs": [
-        "/home/vasilyvz/projects/tools/code_analysis",
-        "/home/vasilyvz/projects/tools/code_analysis/test_data/code_analysis_test",
-        "/home/vasilyvz/projects/vast_srv"
+        "/home/vasilyvz/projects/tools/code_analysis/test_data"
       ],
       "dynamic_watch_file": "data/dynamic_watch_dirs.json",
       "log_path": "logs/vectorization_worker.log",
@@ -168,7 +166,6 @@
     "file_watcher": {
       "enabled": true,
       "scan_interval": 60,
-      "lock_file_name": ".file_watcher.lock",
       "log_path": "logs/file_watcher.log",
       "version_dir": "data/versions",
       "max_scan_duration": 300,

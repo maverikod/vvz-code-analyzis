@@ -199,7 +199,8 @@ class ServerConfig(BaseModel):
         default_factory=lambda: {
             "enabled": True,
             "scan_interval": 60,
-            "lock_file_name": ".file_watcher.lock",
+            # lock_file_name removed: locks are now stored in locks_dir (service state directory)
+            # See Step 4 of REFACTOR_MULTI_PROJECT_INDEXING_PLAN.md
             "log_path": "logs/file_watcher.log",
             "log_rotation": {
                 "max_bytes": 10485760,  # 10 MB

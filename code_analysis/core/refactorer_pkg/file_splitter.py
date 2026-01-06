@@ -7,7 +7,6 @@ email: vasilyvz@gmail.com
 
 import ast
 import logging
-from pathlib import Path
 from typing import Any, Dict, Tuple
 
 from .base import BaseRefactorer
@@ -58,7 +57,9 @@ class FileToPackageSplitter(BaseRefactorer):
             package_dir.mkdir(exist_ok=True)
             init_file = package_dir / "__init__.py"
             if not init_file.exists():
-                init_file.write_text('"""Package created by split_file_to_package."""\n')
+                init_file.write_text(
+                    '"""Package created by split_file_to_package."""\n'
+                )
 
             # Split code into modules
             source_lines = self.source.splitlines(keepends=True)
@@ -72,7 +73,10 @@ class FileToPackageSplitter(BaseRefactorer):
                 module_path.write_text(module_content)
                 created_modules.append(module_name)
 
-            return True, f"File split into package at {package_dir} with modules: {', '.join(created_modules)}"
+            return (
+                True,
+                f"File split into package at {package_dir} with modules: {', '.join(created_modules)}",
+            )
         except Exception as e:
             error_msg = f"Error splitting file to package: {str(e)}"
             logger.error(error_msg, exc_info=True)
@@ -94,14 +98,14 @@ class FileToPackageSplitter(BaseRefactorer):
         """
         # Get file docstring if exists
         file_docstring = self._get_file_docstring()
-        
+
         # Collect classes and functions to include
         classes = module_config.get("classes", [])
         functions = module_config.get("functions", [])
-        
+
         # Build imports (simplified - would need proper import analysis)
         imports = self._extract_imports()
-        
+
         # Build module content
         lines = []
         if file_docstring:
@@ -109,26 +113,26 @@ class FileToPackageSplitter(BaseRefactorer):
         else:
             lines.append(f'"""Module {module_name}."""\n')
         lines.append("\n")
-        
+
         # Add imports
         if imports:
             lines.extend(imports)
             lines.append("\n")
-        
+
         # Extract and add classes
         for class_name in classes:
             class_code = self._extract_class_code(class_name, source_lines)
             if class_code:
                 lines.extend(class_code)
                 lines.append("\n")
-        
+
         # Extract and add functions
         for func_name in functions:
             func_code = self._extract_function_code(func_name, source_lines)
             if func_code:
                 lines.extend(func_code)
                 lines.append("\n")
-        
+
         return "".join(lines)
 
     def _get_file_docstring(self) -> str:
@@ -144,15 +148,19 @@ class FileToPackageSplitter(BaseRefactorer):
         imports = []
         if not self.tree:
             return imports
-        
+
         for node in self.tree.body:
             if isinstance(node, (ast.Import, ast.ImportFrom)):
                 # Use source lines to preserve formatting
                 start_line = node.lineno - 1
-                end_line = node.end_lineno if hasattr(node, 'end_lineno') else node.lineno
-                import_lines = self.source.splitlines(keepends=True)[start_line:end_line]
+                end_line = (
+                    node.end_lineno if hasattr(node, "end_lineno") else node.lineno
+                )
+                import_lines = self.source.splitlines(keepends=True)[
+                    start_line:end_line
+                ]
                 imports.extend(import_lines)
-        
+
         return imports
 
     def _extract_class_code(self, class_name: str, source_lines: list) -> list:
@@ -160,19 +168,23 @@ class FileToPackageSplitter(BaseRefactorer):
         class_node = self._find_class_in_ast(class_name)
         if not class_node:
             return []
-        
+
         start_line = class_node.lineno - 1
-        end_line = class_node.end_lineno if hasattr(class_node, 'end_lineno') else start_line + 1
-        
+        end_line = (
+            class_node.end_lineno
+            if hasattr(class_node, "end_lineno")
+            else start_line + 1
+        )
+
         # Find the actual end by looking for next top-level definition
         for i in range(end_line, len(source_lines)):
             line = source_lines[i].strip()
-            if line and not line.startswith('#') and not line.startswith('"""'):
+            if line and not line.startswith("#") and not line.startswith('"""'):
                 # Check if this is a new top-level definition
-                if line.startswith('class ') or line.startswith('def '):
+                if line.startswith("class ") or line.startswith("def "):
                     end_line = i
                     break
-        
+
         return source_lines[start_line:end_line]
 
     def _extract_function_code(self, func_name: str, source_lines: list) -> list:
@@ -180,18 +192,20 @@ class FileToPackageSplitter(BaseRefactorer):
         func_node = self._find_function_in_ast(func_name)
         if not func_node:
             return []
-        
+
         start_line = func_node.lineno - 1
-        end_line = func_node.end_lineno if hasattr(func_node, 'end_lineno') else start_line + 1
-        
+        end_line = (
+            func_node.end_lineno if hasattr(func_node, "end_lineno") else start_line + 1
+        )
+
         # Find the actual end
         for i in range(end_line, len(source_lines)):
             line = source_lines[i].strip()
-            if line and not line.startswith('#') and not line.startswith('"""'):
-                if line.startswith('class ') or line.startswith('def '):
+            if line and not line.startswith("#") and not line.startswith('"""'):
+                if line.startswith("class ") or line.startswith("def "):
                     end_line = i
                     break
-        
+
         return source_lines[start_line:end_line]
 
     def _find_class_in_ast(self, class_name: str) -> ast.ClassDef:
@@ -211,4 +225,3 @@ class FileToPackageSplitter(BaseRefactorer):
             if isinstance(node, ast.FunctionDef) and node.name == func_name:
                 return node
         return None
-

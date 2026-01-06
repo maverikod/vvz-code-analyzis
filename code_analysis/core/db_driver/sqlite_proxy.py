@@ -55,7 +55,9 @@ class SQLiteDriverProxy(BaseDatabaseDriver):
         self.worker_log_path: Optional[str] = None
         self._lastrowid: Optional[int] = None
         self._socket_timeout: float = 5.0  # Socket connection timeout
-        logger.debug(f"[SQLITE_PROXY] __init__ completed, poll_interval={self.poll_interval}")
+        logger.debug(
+            f"[SQLITE_PROXY] __init__ completed, poll_interval={self.poll_interval}"
+        )
 
     def connect(self, config: Dict[str, Any]) -> None:
         """
@@ -76,10 +78,14 @@ class SQLiteDriverProxy(BaseDatabaseDriver):
         # Ensure all attributes are initialized (defensive programming)
         if not hasattr(self, "poll_interval"):
             self.poll_interval = 0.1
-            logger.warning("[SQLITE_PROXY] poll_interval not initialized, using default 0.1")
+            logger.warning(
+                "[SQLITE_PROXY] poll_interval not initialized, using default 0.1"
+            )
         if not hasattr(self, "command_timeout"):
             self.command_timeout = 30.0
-            logger.warning("[SQLITE_PROXY] command_timeout not initialized, using default 30.0")
+            logger.warning(
+                "[SQLITE_PROXY] command_timeout not initialized, using default 30.0"
+            )
         if not hasattr(self, "_socket_timeout"):
             self._socket_timeout = 5.0
         if not hasattr(self, "_worker_initialized"):
@@ -96,52 +102,69 @@ class SQLiteDriverProxy(BaseDatabaseDriver):
         # Use getattr to safely get current values (defensive - in case __init__ wasn't called)
         current_command_timeout = getattr(self, "command_timeout", 30.0)
         current_poll_interval = getattr(self, "poll_interval", 0.1)
-        
+
         # Update from config, using current values as defaults
-        new_command_timeout = worker_config.get("command_timeout", current_command_timeout)
+        new_command_timeout = worker_config.get(
+            "command_timeout", current_command_timeout
+        )
         new_poll_interval = worker_config.get("poll_interval", current_poll_interval)
-        
+
         self.command_timeout = new_command_timeout
         self.poll_interval = new_poll_interval
         self.worker_log_path = worker_config.get("worker_log_path")
-        logger.debug(f"[SQLITE_PROXY] connect() updated poll_interval={self.poll_interval}, command_timeout={self.command_timeout}")
+        logger.debug(
+            f"[SQLITE_PROXY] connect() updated poll_interval={self.poll_interval}, command_timeout={self.command_timeout}"
+        )
 
         # Start worker process
         self._start_worker()
 
-        logger.info(f"[SQLITE_PROXY] SQLite proxy driver connected to database: {self.db_path}")
+        logger.info(
+            f"[SQLITE_PROXY] SQLite proxy driver connected to database: {self.db_path}"
+        )
 
     def _start_worker(self) -> None:
         """Connect to existing DB worker process via global manager."""
         if self._worker_initialized and self._socket_path:
-            logger.info(f"[SQLITE_PROXY] Worker already initialized (socket: {self._socket_path})")
+            logger.info(
+                f"[SQLITE_PROXY] Worker already initialized (socket: {self._socket_path})"
+            )
             return
 
-        logger.info(f"[SQLITE_PROXY] Connecting to DB worker via manager (db_path: {self.db_path})")
+        logger.info(
+            f"[SQLITE_PROXY] Connecting to DB worker via manager (db_path: {self.db_path})"
+        )
 
         # Get existing worker or start new one via global manager
         # Note: Worker should be started from main process, not from daemon workers
         # If worker doesn't exist, manager will start it (but this should be rare)
         try:
             worker_manager = get_db_worker_manager()
-            logger.info(f"[SQLITE_PROXY] Got worker manager, calling get_or_start_worker...")
+            logger.info(
+                "[SQLITE_PROXY] Got worker manager, calling get_or_start_worker..."
+            )
             worker_info = worker_manager.get_or_start_worker(
                 str(self.db_path),
                 self.worker_log_path,
             )
-            logger.info(f"[SQLITE_PROXY] get_or_start_worker returned: worker_info keys: {list(worker_info.keys()) if worker_info else 'None'}")
+            logger.info(
+                f"[SQLITE_PROXY] get_or_start_worker returned: worker_info keys: {list(worker_info.keys()) if worker_info else 'None'}"
+            )
 
             self._socket_path = worker_info.get("socket_path")
             if not self._socket_path:
                 raise RuntimeError(f"No socket_path in worker_info: {worker_info}")
-            
+
             logger.info(f"[SQLITE_PROXY] Got socket_path: {self._socket_path}")
-            
+
             # Verify socket file exists
             socket_file = Path(self._socket_path)
             if not socket_file.exists():
-                logger.warning(f"[SQLITE_PROXY] Socket file does not exist: {self._socket_path}, waiting...")
+                logger.warning(
+                    f"[SQLITE_PROXY] Socket file does not exist: {self._socket_path}, waiting..."
+                )
                 import time
+
                 max_wait = 5.0
                 wait_interval = 0.1
                 waited = 0.0
@@ -149,13 +172,22 @@ class SQLiteDriverProxy(BaseDatabaseDriver):
                     time.sleep(wait_interval)
                     waited += wait_interval
                 if not socket_file.exists():
-                    raise RuntimeError(f"Socket file not created after {waited:.1f}s: {self._socket_path}")
-                logger.info(f"[SQLITE_PROXY] Socket file exists after {waited:.1f}s wait")
-            
+                    raise RuntimeError(
+                        f"Socket file not created after {waited:.1f}s: {self._socket_path}"
+                    )
+                logger.info(
+                    f"[SQLITE_PROXY] Socket file exists after {waited:.1f}s wait"
+                )
+
             self._worker_initialized = True
-            logger.info(f"[SQLITE_PROXY] Connected to DB worker (socket: {self._socket_path}, exists: {socket_file.exists()})")
+            logger.info(
+                f"[SQLITE_PROXY] Connected to DB worker (socket: {self._socket_path}, exists: {socket_file.exists()})"
+            )
         except Exception as e:
-            logger.error(f"[SQLITE_PROXY] Failed to start worker: {type(e).__name__}: {e}", exc_info=True)
+            logger.error(
+                f"[SQLITE_PROXY] Failed to start worker: {type(e).__name__}: {e}",
+                exc_info=True,
+            )
             raise
 
     def _ensure_worker_running(self) -> None:
@@ -182,18 +214,24 @@ class SQLiteDriverProxy(BaseDatabaseDriver):
         Raises:
             DatabaseOperationError: If communication fails
         """
-        logger.debug(f"[SQLITE_PROXY] _send_request called, socket_path: {self._socket_path}, initialized: {self._worker_initialized}")
-        
+        logger.debug(
+            f"[SQLITE_PROXY] _send_request called, socket_path: {self._socket_path}, initialized: {self._worker_initialized}"
+        )
+
         # Ensure worker is running before sending request
         if not self._worker_initialized or not self._socket_path:
-            logger.error(f"[SQLITE_PROXY] Worker not initialized! initialized: {self._worker_initialized}, socket_path: {self._socket_path}")
+            logger.error(
+                f"[SQLITE_PROXY] Worker not initialized! initialized: {self._worker_initialized}, socket_path: {self._socket_path}"
+            )
             raise RuntimeError("Worker not initialized. Ensure connect() was called.")
-        
+
         # Verify socket file exists before attempting connection
         socket_file = Path(self._socket_path)
         if not socket_file.exists():
-            logger.error(f"[SQLITE_PROXY] Socket file does not exist: {self._socket_path}")
-            logger.error(f"[SQLITE_PROXY] Attempting to reconnect...")
+            logger.error(
+                f"[SQLITE_PROXY] Socket file does not exist: {self._socket_path}"
+            )
+            logger.error("[SQLITE_PROXY] Attempting to reconnect...")
             self._worker_initialized = False
             self._start_worker()
             socket_file = Path(self._socket_path)
@@ -202,22 +240,22 @@ class SQLiteDriverProxy(BaseDatabaseDriver):
                     f"Socket file does not exist after reconnect: {self._socket_path}",
                     operation=request.get("command", "unknown"),
                 )
-        
+
         logger.debug(f"[SQLITE_PROXY] Connecting to socket: {self._socket_path}")
         sock = None
         try:
             sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
             sock.settimeout(self._socket_timeout)
             sock.connect(self._socket_path)
-            logger.debug(f"[SQLITE_PROXY] Successfully connected to socket")
+            logger.debug("[SQLITE_PROXY] Successfully connected to socket")
 
             # Send request
-            data = json.dumps(request).encode('utf-8')
-            length = struct.pack('!I', len(data))
+            data = json.dumps(request).encode("utf-8")
+            length = struct.pack("!I", len(data))
             sock.sendall(length + data)
 
             # Receive response
-            length_data = b''
+            length_data = b""
             while len(length_data) < 4:
                 chunk = sock.recv(4 - len(length_data))
                 if not chunk:
@@ -228,8 +266,8 @@ class SQLiteDriverProxy(BaseDatabaseDriver):
                     )
                 length_data += chunk
 
-            length = struct.unpack('!I', length_data)[0]
-            data = b''
+            length = struct.unpack("!I", length_data)[0]
+            data = b""
             while len(data) < length:
                 chunk = sock.recv(length - len(data))
                 if not chunk:
@@ -240,7 +278,7 @@ class SQLiteDriverProxy(BaseDatabaseDriver):
                     )
                 data += chunk
 
-            return json.loads(data.decode('utf-8'))
+            return json.loads(data.decode("utf-8"))
 
         except socket.timeout:
             raise DatabaseOperationError(
@@ -289,7 +327,9 @@ class SQLiteDriverProxy(BaseDatabaseDriver):
 
         # Generate unique job ID
         job_id = f"{operation}_{uuid.uuid4().hex[:8]}"
-        logger.debug(f"[SQLITE_PROXY] Executing operation '{operation}' (job_id={job_id})")
+        logger.debug(
+            f"[SQLITE_PROXY] Executing operation '{operation}' (job_id={job_id})"
+        )
 
         # Step 1: Submit job
         submit_request = {
@@ -376,7 +416,9 @@ class SQLiteDriverProxy(BaseDatabaseDriver):
 
                     if status == "failed" or not poll_response.get("success", False):
                         error_msg = (
-                            error.get("message", str(error)) if isinstance(error, dict) else str(error)
+                            error.get("message", str(error))
+                            if isinstance(error, dict)
+                            else str(error)
                         )
                         logger.error(
                             f"Database operation '{operation}' failed: {error_msg}",
@@ -396,7 +438,9 @@ class SQLiteDriverProxy(BaseDatabaseDriver):
                             timeout=self.command_timeout,
                         )
 
-                    logger.debug(f"[SQLITE_PROXY] Operation '{operation}' completed successfully")
+                    logger.debug(
+                        f"[SQLITE_PROXY] Operation '{operation}' completed successfully"
+                    )
                     return result
                 else:
                     raise DatabaseOperationError(
@@ -456,7 +500,9 @@ class SQLiteDriverProxy(BaseDatabaseDriver):
         # Worker will be stopped when server shuts down via WorkerManager or atexit handlers
         self._worker_initialized = False
         self._socket_path = None
-        logger.info("[SQLITE_PROXY] DB driver disconnected (worker remains running for other connections)")
+        logger.info(
+            "[SQLITE_PROXY] DB driver disconnected (worker remains running for other connections)"
+        )
 
     def execute(self, sql: str, params: Optional[Tuple[Any, ...]] = None) -> None:
         """Execute SQL statement."""

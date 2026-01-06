@@ -18,7 +18,7 @@ from libcst.metadata import MetadataWrapper, PositionProvider
 from ...cst_query import query_source
 from .blocks import list_cst_blocks
 from .errors import CSTModulePatchError
-from .models import BlockInfo, ReplaceOp, InsertOp, CreateOp, Selector
+from .models import BlockInfo, ReplaceOp, Selector
 from .utils import move_module_imports_to_top
 
 

@@ -51,10 +51,15 @@ async def process_embedding_ready_chunks(
     while not self._stop_event.is_set():
         # Get chunks with embeddings in DB but without vector_id
         # These are chunks where embedding was saved but FAISS add failed or wasn't done
+        # Filter by dataset_id if provided (dataset-scoped vectorization)
         step_start = time.time()
-        logger.info("[TIMING] Step 2: Starting to get non-vectorized chunks from DB")
-        chunks = await database.get_non_vectorized_chunks(
+        dataset_id = getattr(self, "dataset_id", None)
+        scope_desc = f"project={self.project_id}, dataset={dataset_id}" if dataset_id else f"project={self.project_id}"
+        logger.info(f"[TIMING] Step 2: Starting to get non-vectorized chunks from DB ({scope_desc})")
+        # get_non_vectorized_chunks is synchronous, returns List[Dict], not a coroutine
+        chunks = database.get_non_vectorized_chunks(
             project_id=self.project_id,
+            dataset_id=dataset_id,
             limit=self.batch_size,
         )
         step_duration = time.time() - step_start
@@ -94,6 +99,16 @@ async def process_embedding_ready_chunks(
                 chunk_start_time = time.time()
                 chunk_id = chunk["id"]
                 chunk_text = chunk.get("chunk_text", "")
+                chunk_dataset_id = chunk.get("dataset_id")
+
+                # Validate dataset_id if worker is dataset-scoped
+                if dataset_id and chunk_dataset_id and chunk_dataset_id != dataset_id:
+                    logger.warning(
+                        f"Chunk {chunk_id} belongs to dataset {chunk_dataset_id}, "
+                        f"but worker is processing dataset {dataset_id}, skipping"
+                    )
+                    batch_errors += 1
+                    continue
 
                 # Log chunk text (docstring) for debugging
                 chunk_text_preview = (

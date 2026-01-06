@@ -13,6 +13,8 @@ from mcp_proxy_adapter.commands.result import SuccessResult, ErrorResult
 
 from .base_mcp_command import BaseMCPCommand
 from ..core.faiss_manager import FaissIndexManager
+from ..core.storage_paths import resolve_storage_paths, get_faiss_index_path
+from ..core.project_resolution import normalize_root_dir
 
 logger = logging.getLogger(__name__)
 
@@ -132,32 +134,36 @@ class SemanticSearchMCPCommand(BaseMCPCommand):
 
                 # Extract code_analysis config (may be nested)
                 code_analysis_config = config_dict.get("code_analysis", config_dict)
-                faiss_index_path = code_analysis_config.get(
-                    "faiss_index_path", "data/faiss_index.bin"
-                )
                 vector_dim = int(code_analysis_config.get("vector_dim", 384))
 
-                resolved = Path(faiss_index_path)
-                if not resolved.is_absolute():
-                    resolved = root_path / resolved
+                # Resolve storage paths (Step 2: dataset-scoped FAISS)
+                storage_paths = resolve_storage_paths(
+                    config_data=config_dict, config_path=config_path
+                )
 
-                candidates: list[Path] = [resolved]
-                if resolved.suffix == ".bin":
-                    candidates.append(resolved.with_suffix(""))
-                candidates.append(root_path / "data" / "faiss_index")
-                candidates.append(root_path / "data" / "faiss_index.bin")
+                # Get dataset_id for root_dir (normalized absolute path)
+                normalized_root = str(normalize_root_dir(root_dir))
+                dataset_id = database.get_dataset_id(actual_project_id, normalized_root)
+                if not dataset_id:
+                    # Create dataset if it doesn't exist
+                    dataset_id = database.get_or_create_dataset(
+                        actual_project_id, normalized_root
+                    )
 
-                index_path: Optional[Path] = None
-                for candidate in candidates:
-                    if candidate.exists():
-                        index_path = candidate
-                        break
+                # Get dataset-scoped FAISS index path (Step 2)
+                index_path = get_faiss_index_path(
+                    storage_paths.faiss_dir, actual_project_id, dataset_id
+                )
 
-                if index_path is None:
+                if not index_path.exists():
                     return ErrorResult(
                         message="FAISS index not found. Run update_indexes first.",
                         code="FAISS_INDEX_NOT_FOUND",
-                        details={"candidates": [str(p) for p in candidates]},
+                        details={
+                            "index_path": str(index_path),
+                            "project_id": actual_project_id,
+                            "dataset_id": dataset_id,
+                        },
                     )
 
                 try:
@@ -247,6 +253,7 @@ class SemanticSearchMCPCommand(BaseMCPCommand):
                         }
                     )
 
+                # Filter results by dataset_id to ensure dataset-scoped search
                 placeholders = ",".join(["?"] * len(ids))
                 rows = database._fetchall(
                     f"""
@@ -259,9 +266,11 @@ class SemanticSearchMCPCommand(BaseMCPCommand):
                         f.path AS file_path
                     FROM code_chunks c
                     JOIN files f ON f.id = c.file_id
-                    WHERE c.project_id = ? AND c.vector_id IN ({placeholders})
+                    WHERE c.project_id = ? 
+                      AND f.dataset_id = ?
+                      AND c.vector_id IN ({placeholders})
                     """,
-                    [actual_project_id, *ids],
+                    [actual_project_id, dataset_id, *ids],
                 )
                 by_vector_id: dict[int, dict[str, Any]] = {
                     int(r["vector_id"]): dict(r) for r in rows
@@ -294,6 +303,8 @@ class SemanticSearchMCPCommand(BaseMCPCommand):
                         "k": int(k),
                         "min_score": min_score,
                         "index_path": str(index_path),
+                        "project_id": actual_project_id,
+                        "dataset_id": dataset_id,
                         "results": results,
                         "count": len(results),
                     }

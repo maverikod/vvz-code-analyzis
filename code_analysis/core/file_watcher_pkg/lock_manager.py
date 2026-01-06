@@ -1,17 +1,22 @@
 """
 Lock file manager for file watcher worker.
 
-Manages .lock files in root watched directories to prevent multiple instances.
+Manages lock files in service state directory (locks_dir) to prevent multiple instances.
+Lock files are stored in {locks_dir}/{project_id}/{lock_key}.lock format.
 
 Author: Vasiliy Zdanovskiy
 email: vasilyvz@gmail.com
 """
 
+import hashlib
 import json
 import logging
 import os
 import socket
+import time
 from pathlib import Path
+
+from ..project_resolution import normalize_root_dir
 
 logger = logging.getLogger(__name__)
 
@@ -20,18 +25,60 @@ class LockManager:
     """
     Manages lock files for file watcher worker.
 
-    Lock files are created only in root watched directories from config,
-    not in subdirectories.
+    Lock files are created in service state directory (locks_dir), not in watched directories.
+    This implements Step 4 of the refactor plan: directory locking to prevent parallel scans.
+
+    Lock file path: {locks_dir}/{project_id}/{lock_key}.lock
+    where lock_key is a stable hash of the resolved absolute watch_dir path.
     """
 
-    def __init__(self, lock_file_name: str = ".file_watcher.lock"):
+    def __init__(
+        self,
+        locks_dir: Path,
+        project_id: str,
+    ):
         """
         Initialize lock manager.
 
         Args:
-            lock_file_name: Name of lock file (default: ".file_watcher.lock")
+            locks_dir: Service state directory for lock files (from StoragePaths).
+            project_id: Project identifier (UUID4 string).
         """
-        self.lock_file_name = lock_file_name
+        self.locks_dir = Path(locks_dir).resolve()
+        self.project_id = project_id
+        # Ensure locks directory exists
+        self.locks_dir.mkdir(parents=True, exist_ok=True)
+        # Project-specific lock directory
+        self.project_locks_dir = self.locks_dir / project_id
+        self.project_locks_dir.mkdir(parents=True, exist_ok=True)
+
+    def _get_lock_key(self, watch_dir: Path) -> str:
+        """
+        Generate stable lock key from watch directory path.
+
+        Uses SHA256 hash of normalized absolute path to create a stable identifier.
+
+        Args:
+            watch_dir: Watch directory path (will be normalized to absolute).
+
+        Returns:
+            Lock key string (hex digest).
+        """
+        normalized = str(normalize_root_dir(watch_dir))
+        return hashlib.sha256(normalized.encode("utf-8")).hexdigest()[:16]
+
+    def _get_lock_path(self, watch_dir: Path) -> Path:
+        """
+        Get lock file path for a watch directory.
+
+        Args:
+            watch_dir: Watch directory path.
+
+        Returns:
+            Absolute Path to lock file.
+        """
+        lock_key = self._get_lock_key(watch_dir)
+        return self.project_locks_dir / f"{lock_key}.lock"
 
     def acquire_lock(self, root_dir: Path, pid: int) -> bool:
         """
@@ -45,13 +92,14 @@ class LockManager:
         5. Write lock info
 
         Args:
-            root_dir: Root watched directory
+            root_dir: Root watched directory (will be normalized to absolute).
             pid: Process ID of current worker
 
         Returns:
             True if lock acquired, False otherwise
         """
-        lock_path = root_dir / self.lock_file_name
+        normalized_root = normalize_root_dir(root_dir)
+        lock_path = self._get_lock_path(normalized_root)
 
         # Check if lock exists
         if lock_path.exists():
@@ -65,13 +113,14 @@ class LockManager:
                     if existing_pid and self._is_process_alive(existing_pid):
                         logger.warning(
                             f"Lock file exists and process {existing_pid} is alive "
-                            f"in {root_dir}. Another worker is running."
+                            f"for {normalized_root}. Another worker is running."
                         )
                         return False
 
                     # Process is dead, remove stale lock
                     logger.info(
-                        f"Removing stale lock file (process {existing_pid} is dead)"
+                        f"Removing stale lock file (process {existing_pid} is dead) "
+                        f"for {normalized_root}"
                     )
                     lock_path.unlink()
             except (json.JSONDecodeError, KeyError, OSError) as e:
@@ -86,13 +135,11 @@ class LockManager:
         try:
             lock_data = {
                 "pid": pid,
-                "timestamp": (
-                    os.path.getmtime(lock_path.parent)
-                    if lock_path.parent.exists()
-                    else 0
-                ),
+                "timestamp": time.time(),
+                "watch_dir": str(normalized_root),
                 "worker_name": "file_watcher_worker",
                 "hostname": socket.gethostname(),
+                "project_id": self.project_id,
             }
 
             # Atomic write: write to temp file, then rename
@@ -101,7 +148,10 @@ class LockManager:
                 json.dump(lock_data, f, indent=2)
             temp_path.replace(lock_path)
 
-            logger.info(f"Acquired lock for {root_dir} (PID: {pid})")
+            logger.info(
+                f"Acquired lock for {normalized_root} (PID: {pid}, "
+                f"lock_path: {lock_path})"
+            )
             return True
         except OSError as e:
             logger.error(f"Failed to create lock file {lock_path}: {e}")
@@ -112,13 +162,14 @@ class LockManager:
         Release lock for root directory.
 
         Args:
-            root_dir: Root watched directory
+            root_dir: Root watched directory (will be normalized to absolute).
         """
-        lock_path = root_dir / self.lock_file_name
+        normalized_root = normalize_root_dir(root_dir)
+        lock_path = self._get_lock_path(normalized_root)
         try:
             if lock_path.exists():
                 lock_path.unlink()
-                logger.info(f"Released lock for {root_dir}")
+                logger.info(f"Released lock for {normalized_root} (lock_path: {lock_path})")
         except OSError as e:
             logger.warning(f"Failed to remove lock file {lock_path}: {e}")
 
@@ -144,10 +195,11 @@ class LockManager:
         Check if lock file exists for root directory.
 
         Args:
-            root_dir: Root watched directory
+            root_dir: Root watched directory (will be normalized to absolute).
 
         Returns:
             True if lock file exists, False otherwise
         """
-        lock_path = root_dir / self.lock_file_name
+        normalized_root = normalize_root_dir(root_dir)
+        lock_path = self._get_lock_path(normalized_root)
         return lock_path.exists()

@@ -5,7 +5,6 @@ Author: Vasiliy Zdanovskiy
 email: vasilyvz@gmail.com
 """
 
-import hashlib
 import logging
 from typing import Dict, Any, Optional
 
@@ -119,7 +118,9 @@ def overwrite_cst_tree(
     Returns:
         CST tree ID
     """
-    return self.save_cst_tree(file_id, project_id, cst_code, cst_hash, file_mtime, overwrite=True)
+    return self.save_cst_tree(
+        file_id, project_id, cst_code, cst_hash, file_mtime, overwrite=True
+    )
 
 
 async def get_cst_tree(self, file_id: int) -> Optional[Dict[str, Any]]:
@@ -153,4 +154,3 @@ async def get_cst_tree(self, file_id: int) -> Optional[Dict[str, Any]]:
         (file_id,),
     )
     return row
-

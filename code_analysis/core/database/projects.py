@@ -73,17 +73,43 @@ async def clear_project_data(self, project_id: str) -> None:
 
     Removes all files, classes, functions, imports, issues, usages,
     dependencies, code_content, ast_trees, code_chunks, vector_index entries,
-    and the project record itself from the database.
+    code_duplicates, duplicate_occurrences, datasets, and the project record itself.
 
     Args:
         project_id: Project ID (UUID4 string)
     """
     file_rows = self._fetchall("SELECT id FROM files WHERE project_id = ?", (project_id,))
     file_ids = [row["id"] for row in file_rows]
+    
+    # Delete duplicates first (before files)
+    try:
+        # Delete duplicate occurrences first (foreign key constraint)
+        self._execute(
+            """
+            DELETE FROM duplicate_occurrences
+            WHERE duplicate_id IN (
+                SELECT id FROM code_duplicates WHERE project_id = ?
+            )
+            """,
+            (project_id,),
+        )
+        # Delete duplicate groups
+        self._execute(
+            "DELETE FROM code_duplicates WHERE project_id = ?",
+            (project_id,),
+        )
+    except Exception as e:
+        logger.warning(f"Failed to delete duplicates for project {project_id}: {e}")
+    
     if not file_ids:
+        # Delete datasets and vector_index even if no files
+        self._execute("DELETE FROM datasets WHERE project_id = ?", (project_id,))
         self._execute("DELETE FROM vector_index WHERE project_id = ?", (project_id,))
+        self._execute("DELETE FROM projects WHERE id = ?", (project_id,))
         self._commit()
+        logger.info(f"Cleared all data and removed project {project_id} (no files)")
         return
+    
     placeholders = ",".join("?" * len(file_ids))
     class_rows = self._fetchall(
         f"SELECT id FROM classes WHERE file_id IN ({placeholders})", tuple(file_ids)
@@ -137,6 +163,9 @@ async def clear_project_data(self, project_id: str) -> None:
         self._execute(
             f"DELETE FROM code_chunks WHERE file_id IN ({placeholders})", tuple(file_ids)
         )
+    
+    # Delete datasets (CASCADE should handle files, but explicit is better)
+    self._execute("DELETE FROM datasets WHERE project_id = ?", (project_id,))
     self._execute("DELETE FROM vector_index WHERE project_id = ?", (project_id,))
     self._execute("DELETE FROM files WHERE project_id = ?", (project_id,))
     self._execute("DELETE FROM projects WHERE id = ?", (project_id,))

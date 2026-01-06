@@ -17,11 +17,12 @@ from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 
 from .base_mcp_command import BaseMCPCommand
 from ..core.worker_launcher import (
-    default_faiss_index_path,
     start_file_watcher_worker,
     start_vectorization_worker,
     stop_worker_type,
 )
+from ..core.storage_paths import load_raw_config, resolve_storage_paths, get_faiss_index_path
+from ..core.project_resolution import normalize_root_dir
 
 logger = logging.getLogger(__name__)
 
@@ -114,6 +115,10 @@ class StartWorkerMCPCommand(BaseMCPCommand):
                     "default": 384,
                     "examples": [384],
                 },
+                "dataset_id": {
+                    "type": "string",
+                    "description": "Optional dataset UUID (vectorization only); if omitted, resolved from root_dir.",
+                },
                 "worker_log_path": {
                     "type": "string",
                     "description": "Optional log path for the worker process.",
@@ -151,6 +156,7 @@ class StartWorkerMCPCommand(BaseMCPCommand):
         poll_interval: int = 30,
         batch_size: int = 10,
         vector_dim: int = 384,
+        dataset_id: Optional[str] = None,
         worker_log_path: Optional[str] = None,
         **kwargs: Any,
     ) -> SuccessResult | ErrorResult:
@@ -175,8 +181,14 @@ class StartWorkerMCPCommand(BaseMCPCommand):
         """
         try:
             root_path = self._validate_root_dir(root_dir)
-            data_dir = root_path / "data"
-            db_path = data_dir / "code_analysis.db"
+
+            # Resolve service state paths from server config (DB/FAISS/locks).
+            config_path = self._resolve_config_path()
+            config_data = load_raw_config(config_path)
+            storage = resolve_storage_paths(
+                config_data=config_data, config_path=config_path
+            )
+            db_path = storage.db_path
 
             database = self._open_database(str(root_path), auto_analyze=False)
             try:
@@ -187,6 +199,19 @@ class StartWorkerMCPCommand(BaseMCPCommand):
                     resolved_project_id = database.get_or_create_project(
                         str(root_path), name=root_path.name
                     )
+                
+                # Resolve dataset_id from root_dir if not provided (for vectorization worker)
+                resolved_dataset_id = dataset_id
+                if worker_type == "vectorization" and resolved_dataset_id is None:
+                    normalized_root = str(normalize_root_dir(root_dir))
+                    resolved_dataset_id = database.get_dataset_id(
+                        resolved_project_id, normalized_root
+                    )
+                    if not resolved_dataset_id:
+                        # Create dataset if it doesn't exist
+                        resolved_dataset_id = database.get_or_create_dataset(
+                            resolved_project_id, normalized_root
+                        )
             finally:
                 database.close()
 
@@ -200,10 +225,13 @@ class StartWorkerMCPCommand(BaseMCPCommand):
                     project_id=resolved_project_id,
                     watch_dirs=dirs,
                     scan_interval=scan_interval,
-                    version_dir=str((root_path / "data" / "versions").resolve()),
+                    version_dir=str(
+                        (storage.config_dir / "data" / "versions").resolve()
+                    ),
                     worker_log_path=log_path,
                     project_root=str(root_path),
                     ignore_patterns=[".git", "__pycache__", "data", "logs"],
+                    locks_dir=str(storage.locks_dir),
                 )
                 return SuccessResult(data=res.__dict__)
 
@@ -211,12 +239,34 @@ class StartWorkerMCPCommand(BaseMCPCommand):
                 log_path = worker_log_path or str(
                     (root_path / "logs" / "vectorization_worker.log").resolve()
                 )
+                
+                # Get dataset-scoped FAISS index path
+                index_path = get_faiss_index_path(
+                    storage.faiss_dir, resolved_project_id, resolved_dataset_id
+                )
+                
+                # Load SVO config from config_data
+                from code_analysis.core.config import ServerConfig
+                svo_config = None
+                code_analysis_config = config_data.get("code_analysis", {})
+                if code_analysis_config:
+                    try:
+                        server_config = ServerConfig(**code_analysis_config)
+                        svo_config = (
+                            server_config.model_dump()
+                            if hasattr(server_config, "model_dump")
+                            else server_config.dict()
+                        )
+                    except Exception as e:
+                        logger.warning(f"Failed to load SVO config: {e}")
+                
                 res = start_vectorization_worker(
                     db_path=str(db_path),
                     project_id=resolved_project_id,
-                    faiss_index_path=default_faiss_index_path(str(root_path)),
+                    faiss_index_path=str(index_path),
                     vector_dim=vector_dim,
-                    svo_config=None,
+                    dataset_id=resolved_dataset_id,
+                    svo_config=svo_config,
                     batch_size=batch_size,
                     poll_interval=poll_interval,
                     worker_log_path=log_path,

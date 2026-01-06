@@ -307,9 +307,16 @@ class FaissIndexManager:
         self: "FaissIndexManager",
         database: CodeDatabase,
         svo_client_manager: Optional[Any] = None,
+        project_id: Optional[str] = None,
+        dataset_id: Optional[str] = None,
     ) -> int:
         """
         Rebuild FAISS index from database.
+
+        Implements dataset-scoped FAISS (Step 2 of refactor plan).
+        If project_id and dataset_id are provided, rebuilds index for that dataset only.
+        If only project_id is provided, rebuilds index for all datasets in the project.
+        If neither is provided, rebuilds index for all projects (legacy mode).
 
         This operation recreates the FAISS index file from `code_chunks.embedding_vector`.
 
@@ -323,30 +330,83 @@ class FaissIndexManager:
             self: Instance.
             database: CodeDatabase instance
             svo_client_manager: Optional SVOClientManager to get embeddings if missing
+            project_id: Optional project ID to filter by
+            dataset_id: Optional dataset ID to filter by (requires project_id)
 
         Returns:
             Number of vectors loaded
         """
-        logger.info("Rebuilding FAISS index from database...")
+        if dataset_id and not project_id:
+            raise ValueError("dataset_id requires project_id")
+
+        scope_desc = (
+            f"project={project_id}, dataset={dataset_id}"
+            if project_id and dataset_id
+            else f"project={project_id}" if project_id else "all projects"
+        )
+        logger.info(f"Rebuilding FAISS index from database ({scope_desc})...")
 
         # Ensure `vector_id` is dense and unique (single SQL statement).
         # This avoids thousands of per-row UPDATEs through sqlite_proxy.
+        # Filter by project_id and dataset_id if provided (dataset-scoped FAISS).
         try:
-            database._execute(
-                """
-                WITH ranked AS (
-                    SELECT
-                        id,
-                        (ROW_NUMBER() OVER (ORDER BY id) - 1) AS new_vector_id
-                    FROM code_chunks
-                    WHERE embedding_model IS NOT NULL
-                      AND embedding_vector IS NOT NULL
+            if project_id and dataset_id:
+                # Dataset-scoped: normalize vector_id only for this dataset
+                database._execute(
+                    """
+                    WITH ranked AS (
+                        SELECT
+                            cc.id,
+                            (ROW_NUMBER() OVER (ORDER BY cc.id) - 1) AS new_vector_id
+                        FROM code_chunks cc
+                        INNER JOIN files f ON cc.file_id = f.id
+                        WHERE cc.project_id = ?
+                          AND f.dataset_id = ?
+                          AND cc.embedding_model IS NOT NULL
+                          AND cc.embedding_vector IS NOT NULL
+                    )
+                    UPDATE code_chunks
+                    SET vector_id = (SELECT new_vector_id FROM ranked WHERE ranked.id = code_chunks.id)
+                    WHERE id IN (SELECT id FROM ranked)
+                    """,
+                    (project_id, dataset_id),
                 )
-                UPDATE code_chunks
-                SET vector_id = (SELECT new_vector_id FROM ranked WHERE ranked.id = code_chunks.id)
-                WHERE id IN (SELECT id FROM ranked)
-                """
-            )
+            elif project_id:
+                # Project-scoped: normalize vector_id for all datasets in project
+                database._execute(
+                    """
+                    WITH ranked AS (
+                        SELECT
+                            id,
+                            (ROW_NUMBER() OVER (ORDER BY id) - 1) AS new_vector_id
+                        FROM code_chunks
+                        WHERE project_id = ?
+                          AND embedding_model IS NOT NULL
+                          AND embedding_vector IS NOT NULL
+                    )
+                    UPDATE code_chunks
+                    SET vector_id = (SELECT new_vector_id FROM ranked WHERE ranked.id = code_chunks.id)
+                    WHERE id IN (SELECT id FROM ranked)
+                    """,
+                    (project_id,),
+                )
+            else:
+                # Legacy mode: normalize vector_id for all chunks
+                database._execute(
+                    """
+                    WITH ranked AS (
+                        SELECT
+                            id,
+                            (ROW_NUMBER() OVER (ORDER BY id) - 1) AS new_vector_id
+                        FROM code_chunks
+                        WHERE embedding_model IS NOT NULL
+                          AND embedding_vector IS NOT NULL
+                    )
+                    UPDATE code_chunks
+                    SET vector_id = (SELECT new_vector_id FROM ranked WHERE ranked.id = code_chunks.id)
+                    WHERE id IN (SELECT id FROM ranked)
+                    """
+                )
             database._commit()
         except Exception as e:
             logger.warning(
@@ -363,8 +423,10 @@ class FaissIndexManager:
                 "Cleared %d vectors from FAISS index (rebuild)", old_vector_count
             )
 
-        # Get all chunks with embeddings (prefer DB as source of truth)
-        chunks = database.get_all_chunks_for_faiss_rebuild()
+        # Get chunks with embeddings (filtered by project_id and dataset_id if provided)
+        chunks = database.get_all_chunks_for_faiss_rebuild(
+            project_id=project_id, dataset_id=dataset_id
+        )
         if not chunks:
             logger.info("No chunks with embeddings found in database")
             self.save_index()

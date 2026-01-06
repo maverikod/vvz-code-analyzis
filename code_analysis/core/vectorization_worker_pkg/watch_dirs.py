@@ -76,14 +76,36 @@ def _refresh_config(self) -> None:
 async def _enqueue_watch_dirs(self, database: "CodeDatabase") -> int:
     """
     Scan watch_dirs and ensure files are registered for chunking.
-    Returns number of files enqueued (new or marked needing chunking).
+
+    Implements dataset-scoped file processing (Step 2 of refactor plan).
+    Resolves dataset_id from each watch_dir root.
+
+    Returns:
+        Number of files enqueued (new or marked needing chunking).
     """
+    from ..project_resolution import normalize_root_dir
+
     enqueued = 0
     for root in self.watch_dirs:
         try:
             root_path = Path(root)
             if not root_path.exists():
                 continue
+
+            # Resolve dataset_id for this watch_dir
+            normalized_root = str(normalize_root_dir(root_path))
+            dataset_id = getattr(self, "dataset_id", None)
+            if not dataset_id:
+                dataset_id = database.get_dataset_id(self.project_id, normalized_root)
+                if not dataset_id:
+                    # Create dataset if it doesn't exist
+                    dataset_id = database.get_or_create_dataset(
+                        self.project_id, normalized_root
+                    )
+                    logger.info(
+                        f"Created dataset {dataset_id} for watch_dir {normalized_root}"
+                    )
+
             for file_path in root_path.rglob("*.py"):
                 file_stat = file_path.stat()
                 file_mtime = file_stat.st_mtime
@@ -96,6 +118,7 @@ async def _enqueue_watch_dirs(self, database: "CodeDatabase") -> int:
                         last_modified=file_mtime,
                         has_docstring=False,
                         project_id=self.project_id,
+                        dataset_id=dataset_id,
                     )
                     database.mark_file_needs_chunking(str(file_path), self.project_id)
                     enqueued += 1

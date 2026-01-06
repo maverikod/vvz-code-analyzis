@@ -119,22 +119,27 @@ def scan_directory(
     """
     Scan directory recursively for code files.
 
+    Implements Step 5 of refactor plan: all file paths are absolute.
+    Returns dictionary with absolute paths as keys.
+
     Args:
         root_dir: Root directory to scan
-        project_root: Project root directory (for relative paths)
+        project_root: Project root directory (unused, kept for compatibility)
+        ignore_patterns: Glob patterns to ignore
 
     Returns:
-        Dictionary mapping file paths to file info:
+        Dictionary mapping absolute file paths to file info:
         {
-            "path/to/file.py": {
-                "path": Path("path/to/file.py"),
+            "/absolute/path/to/file.py": {
+                "path": Path("/absolute/path/to/file.py"),
                 "mtime": 1234567890.0,
                 "size": 1024,
             }
         }
     """
+    from ..project_resolution import normalize_abs_path
+
     files: Dict[str, Dict] = {}
-    project_root = project_root or root_dir
 
     try:
         for item in root_dir.rglob("*"):
@@ -144,16 +149,12 @@ def scan_directory(
             if item.is_file():
                 try:
                     stat = item.stat()
-                    # Use relative path from project root
-                    try:
-                        rel_path = item.relative_to(project_root)
-                        path_key = str(rel_path)
-                    except ValueError:
-                        # Path not relative to project root, use absolute
-                        path_key = str(item)
+                    # Always use absolute resolved path (Step 5: absolute paths everywhere)
+                    abs_path = normalize_abs_path(item)
+                    path_key = abs_path
 
                     files[path_key] = {
-                        "path": item,
+                        "path": Path(abs_path),
                         "mtime": stat.st_mtime,
                         "size": stat.st_size,
                     }

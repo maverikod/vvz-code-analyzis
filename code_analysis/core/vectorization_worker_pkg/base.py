@@ -26,6 +26,7 @@ class VectorizationWorker:
         self,
         db_path: Path,
         project_id: str,
+        dataset_id: Optional[str] = None,
         svo_client_manager: Optional["SVOClientManager"] = None,
         faiss_manager: Optional["FaissIndexManager"] = None,
         batch_size: int = 10,
@@ -41,11 +42,16 @@ class VectorizationWorker:
         """
         Initialize vectorization worker.
 
+        Implements dataset-scoped vectorization (Step 2 of refactor plan).
+        If dataset_id is provided, processes chunks only for that dataset.
+        If dataset_id is None, processes chunks for all datasets in project (legacy mode).
+
         Args:
             db_path: Path to database file
-            project_id: Project ID to process
+            project_id: Project ID to process (REQUIRED)
+            dataset_id: Optional dataset ID to filter by (for dataset-scoped processing)
             svo_client_manager: SVO client manager for embeddings
-            faiss_manager: FAISS index manager
+            faiss_manager: FAISS index manager (must be dataset-scoped if dataset_id provided)
             batch_size: Number of chunks to process in one batch
             retry_attempts: Number of retry attempts for vectorization (default: 3)
             retry_delay: Delay in seconds between retry attempts (default: 10.0)
@@ -55,6 +61,7 @@ class VectorizationWorker:
         """
         self.db_path = db_path
         self.project_id = project_id
+        self.dataset_id = dataset_id
         self.svo_client_manager = svo_client_manager
         self.faiss_manager = faiss_manager
         self.batch_size = batch_size

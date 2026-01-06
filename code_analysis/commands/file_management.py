@@ -248,7 +248,6 @@ class UnmarkDeletedFileCommand:
                 result["error"] = f"File not found: {self.file_path}"
                 return result
 
-            file_id = row["id"]
             current_path = row["path"]
             original_path = row["original_path"]
             version_dir = row["version_dir"]
@@ -670,7 +669,6 @@ class RepairDatabaseCommand:
 
         try:
             import psutil
-            import signal
 
             # Find all worker processes
             worker_patterns = [

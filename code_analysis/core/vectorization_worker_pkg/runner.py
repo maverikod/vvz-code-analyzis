@@ -81,6 +81,7 @@ def run_vectorization_worker(
     project_id: str,
     faiss_index_path: str,
     vector_dim: int,
+    dataset_id: Optional[str] = None,
     svo_config: Optional[Dict[str, Any]] = None,
     batch_size: int = 10,
     poll_interval: int = 30,
@@ -93,14 +94,19 @@ def run_vectorization_worker(
     """
     Run vectorization worker in separate process with continuous polling.
 
+    Implements dataset-scoped vectorization (Step 2 of refactor plan).
+    If dataset_id is provided, processes chunks only for that dataset using dataset-scoped FAISS index.
+    If dataset_id is None, processes chunks for all datasets in project (legacy mode).
+
     This function is designed to be called from multiprocessing.Process.
     It runs indefinitely, checking for chunks to vectorize at specified intervals.
 
     Args:
         db_path: Path to database file
-        project_id: Project ID to process
-        faiss_index_path: Path to FAISS index file
+        project_id: Project ID to process (REQUIRED)
+        faiss_index_path: Path to FAISS index file (must be dataset-scoped if dataset_id provided)
         vector_dim: Vector dimension
+        dataset_id: Optional dataset ID to filter by (for dataset-scoped processing)
         svo_config: SVO client configuration (optional)
         batch_size: Batch size for processing
         poll_interval: Interval in seconds between polling cycles (default: 30)
@@ -118,21 +124,30 @@ def run_vectorization_worker(
     # Setup worker logging first
     _setup_worker_logging(worker_log_path, log_max_bytes, log_backup_count)
 
+    scope_desc = f"project={project_id}, dataset={dataset_id}" if dataset_id else f"project={project_id}"
     logger.info(
-        f"Starting continuous vectorization worker for project {project_id}, "
-        f"poll interval: {poll_interval}s"
+        f"Starting continuous vectorization worker for {scope_desc}, "
+        f"poll interval: {poll_interval}s, "
+        f"FAISS index: {faiss_index_path}"
     )
 
     # Initialize SVO client manager if config provided
     svo_client_manager = None
+    logger.info(f"SVO config provided: {svo_config is not None}, type: {type(svo_config)}")
     if svo_config:
         try:
+            logger.info(f"Creating ServerConfig from svo_config, keys: {list(svo_config.keys()) if isinstance(svo_config, dict) else 'not a dict'}")
             server_config_obj = ServerConfig(**svo_config)
+            logger.info("Creating SVOClientManager...")
             svo_client_manager = SVOClientManager(server_config_obj)
+            logger.info("Initializing SVOClientManager...")
             asyncio.run(svo_client_manager.initialize())
+            logger.info("SVOClientManager initialized successfully")
         except Exception as e:
-            logger.error(f"Failed to initialize SVO client manager: {e}")
+            logger.error(f"Failed to initialize SVO client manager: {e}", exc_info=True)
             return {"processed": 0, "errors": 1}
+    else:
+        logger.warning("No svo_config provided, SVO client manager will not be initialized")
 
     # Initialize FAISS manager
     try:
@@ -183,6 +198,7 @@ def run_vectorization_worker(
     worker = VectorizationWorker(
         db_path=Path(db_path),
         project_id=project_id,
+        dataset_id=dataset_id,
         svo_client_manager=svo_client_manager,
         faiss_manager=faiss_manager,
         batch_size=batch_size,

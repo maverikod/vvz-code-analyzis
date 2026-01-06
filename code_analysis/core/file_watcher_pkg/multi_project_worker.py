@@ -57,8 +57,8 @@ class MultiProjectFileWatcherWorker:
         self,
         db_path: Path,
         projects: Sequence[ProjectWatchSpec],
+        locks_dir: Path,
         scan_interval: int = 60,
-        lock_file_name: str = ".file_watcher.lock",
         version_dir: Optional[str] = None,
         ignore_patterns: Optional[List[str]] = None,
     ) -> None:
@@ -68,15 +68,15 @@ class MultiProjectFileWatcherWorker:
         Args:
             db_path: Path to SQLite database file.
             projects: Projects to scan (project_id + dirs).
+            locks_dir: Service state directory for lock files (from StoragePaths).
             scan_interval: Delay between cycles in seconds.
-            lock_file_name: Lock file name created in each root watch_dir.
             version_dir: Version directory for deleted files (optional).
             ignore_patterns: Glob patterns to ignore (optional).
         """
         self.db_path = db_path
         self.projects = list(projects)
         self.scan_interval = int(scan_interval)
-        self.lock_manager = LockManager(lock_file_name)
+        self.locks_dir = Path(locks_dir).resolve()
         self.version_dir = version_dir
         self.ignore_patterns = ignore_patterns or []
 
@@ -115,7 +115,8 @@ class MultiProjectFileWatcherWorker:
             f"scan_interval={self.scan_interval}s"
         )
 
-        from ..database import CodeDatabase, create_driver_config_for_worker
+        from ..database import CodeDatabase
+        from ..database.base import create_driver_config_for_worker
 
         driver_config = create_driver_config_for_worker(self.db_path)
 
@@ -275,7 +276,10 @@ class MultiProjectFileWatcherWorker:
                 )
                 continue
 
-            if not self.lock_manager.acquire_lock(root_dir, self._pid):
+            # Create LockManager for this project (each project has its own locks_dir subdirectory)
+            lock_manager = LockManager(self.locks_dir, spec.project_id)
+
+            if not lock_manager.acquire_lock(root_dir, self._pid):
                 logger.warning(
                     f"[project={spec.project_id}] Could not acquire lock for {root_dir}, skipping"
                 )
@@ -285,6 +289,7 @@ class MultiProjectFileWatcherWorker:
             try:
                 from datetime import datetime
 
+                # Step 3: Scan phase - compute delta without DB operations
                 scan_start = datetime.now()
                 logger.info(
                     f"[project={spec.project_id}] [SCAN START] Directory: {root_dir} | "
@@ -296,15 +301,28 @@ class MultiProjectFileWatcherWorker:
                     ignore_patterns=self.ignore_patterns,
                 )
 
-                dir_stats = processor.process_changes(root_dir, scanned_files)
-
+                # Compute delta (scan phase - no DB writes)
+                delta = processor.compute_delta(root_dir, scanned_files)
                 scan_end = datetime.now()
-                duration = (scan_end - scan_start).total_seconds()
+                scan_duration = (scan_end - scan_start).total_seconds()
                 logger.info(
                     f"[project={spec.project_id}] [SCAN END] Directory: {root_dir} | "
                     f"time: {scan_end.strftime('%Y-%m-%d %H:%M:%S')} | "
-                    f"duration: {duration:.2f}s | "
+                    f"duration: {scan_duration:.2f}s | "
                     f"files_scanned: {len(scanned_files)} | "
+                    f"delta: new={len(delta.new_files)}, "
+                    f"changed={len(delta.changed_files)}, "
+                    f"deleted={len(delta.deleted_files)}"
+                )
+
+                # Step 3: Queue phase - batch DB operations
+                queue_start = datetime.now()
+                dir_stats = processor.queue_changes(root_dir, delta)
+                queue_end = datetime.now()
+                queue_duration = (queue_end - queue_start).total_seconds()
+                logger.info(
+                    f"[project={spec.project_id}] [QUEUE END] Directory: {root_dir} | "
+                    f"duration: {queue_duration:.2f}s | "
                     f"new: {dir_stats.get('new_files', 0)} | "
                     f"changed: {dir_stats.get('changed_files', 0)} | "
                     f"deleted: {dir_stats.get('deleted_files', 0)}"
@@ -322,7 +340,8 @@ class MultiProjectFileWatcherWorker:
                 )
                 stats["errors"] += 1
             finally:
-                self.lock_manager.release_lock(root_dir)
+                # Release lock using the same LockManager instance
+                lock_manager.release_lock(root_dir)
 
         return stats
 

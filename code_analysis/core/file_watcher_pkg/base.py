@@ -29,10 +29,10 @@ class FileWatcherWorker:
     - Scan root watch_dirs from config (recursively)
     - Compare file mtime with DB last_modified
     - Mark changed files for processing
-    - Handle .lock files for process locking (only at root level)
+    - Handle lock files in service state directory (locks_dir)
 
-    Note: Lock files are created only in root watched directories
-    from config, not in subdirectories.
+    Note: Lock files are created in service state directory (locks_dir),
+    not in watched directories. This implements Step 4 of the refactor plan.
     """
 
     def __init__(
@@ -40,8 +40,8 @@ class FileWatcherWorker:
         db_path: Path,
         project_id: str,
         watch_dirs: List[Path],
+        locks_dir: Path,
         scan_interval: int = 60,
-        lock_file_name: str = ".file_watcher.lock",
         version_dir: Optional[str] = None,
         project_root: Optional[Path] = None,
         ignore_patterns: Optional[List[str]] = None,
@@ -53,9 +53,8 @@ class FileWatcherWorker:
             db_path: Path to database file
             project_id: Project ID
             watch_dirs: List of root directories to watch (from config).
-                       Lock files will be created only in these root directories.
+            locks_dir: Service state directory for lock files (from StoragePaths).
             scan_interval: Interval in seconds between scans (default: 60)
-            lock_file_name: Name of lock file (default: ".file_watcher.lock")
             version_dir: Version directory for deleted files (optional)
             project_root: Project root directory (for relative paths, optional)
             ignore_patterns: List of glob patterns to ignore (from config, optional)
@@ -64,14 +63,13 @@ class FileWatcherWorker:
         self.project_id = project_id
         self.watch_dirs = [Path(d) for d in watch_dirs]
         self.scan_interval = scan_interval
-        self.lock_file_name = lock_file_name
         self.version_dir = version_dir
         self.project_root = project_root or (
             self.watch_dirs[0] if self.watch_dirs else None
         )
         self.ignore_patterns = ignore_patterns or []
 
-        self.lock_manager = LockManager(lock_file_name)
+        self.lock_manager = LockManager(locks_dir, project_id)
         self._stop_event = multiprocessing.Event()
         self._pid = os.getpid()
 
@@ -182,7 +180,7 @@ class FileWatcherWorker:
                 continue
 
             try:
-                # Scan directory
+                # Step 3: Scan phase - compute delta without DB operations
                 from datetime import datetime
 
                 scan_start = datetime.now()
@@ -194,8 +192,8 @@ class FileWatcherWorker:
                     root_dir, self.project_root, self.ignore_patterns
                 )
 
-                # Process changes
-                dir_stats = processor.process_changes(root_dir, scanned_files)
+                # Compute delta (scan phase - no DB writes)
+                delta = processor.compute_delta(root_dir, scanned_files)
                 scan_end = datetime.now()
                 scan_duration = (scan_end - scan_start).total_seconds()
                 logger.info(
@@ -203,6 +201,19 @@ class FileWatcherWorker:
                     f"time: {scan_end.strftime('%Y-%m-%d %H:%M:%S')} | "
                     f"duration: {scan_duration:.2f}s | "
                     f"files_scanned: {len(scanned_files)} | "
+                    f"delta: new={len(delta.new_files)}, "
+                    f"changed={len(delta.changed_files)}, "
+                    f"deleted={len(delta.deleted_files)}"
+                )
+
+                # Step 3: Queue phase - batch DB operations
+                queue_start = datetime.now()
+                dir_stats = processor.queue_changes(root_dir, delta)
+                queue_end = datetime.now()
+                queue_duration = (queue_end - queue_start).total_seconds()
+                logger.info(
+                    f"[QUEUE END] Directory: {root_dir} | "
+                    f"duration: {queue_duration:.2f}s | "
                     f"new: {dir_stats.get('new_files', 0)} | "
                     f"changed: {dir_stats.get('changed_files', 0)} | "
                     f"deleted: {dir_stats.get('deleted_files', 0)}"

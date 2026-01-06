@@ -79,8 +79,8 @@ def _setup_worker_logging(
 def run_file_watcher_worker(
     db_path: str,
     project_watch_dirs: List[tuple[str, str]],
+    locks_dir: str,
     scan_interval: int = 60,
-    lock_file_name: str = ".file_watcher.lock",
     version_dir: Optional[str] = None,
     ignore_patterns: Optional[List[str]] = None,
     worker_log_path: Optional[str] = None,
@@ -96,8 +96,8 @@ def run_file_watcher_worker(
     Args:
         db_path: Path to database file.
         project_watch_dirs: List of (project_id, watch_dir) pairs.
+        locks_dir: Service state directory for lock files (from StoragePaths).
         scan_interval: Scan interval seconds.
-        lock_file_name: Lock file name.
         version_dir: Version directory for deleted files.
         ignore_patterns: Optional ignore patterns.
         worker_log_path: Optional log file path.
@@ -120,8 +120,8 @@ def run_file_watcher_worker(
     worker = MultiProjectFileWatcherWorker(
         db_path=Path(db_path),
         projects=build_project_specs(project_watch_dirs),
+        locks_dir=Path(locks_dir),
         scan_interval=int(scan_interval),
-        lock_file_name=lock_file_name,
         version_dir=version_dir,
         ignore_patterns=ignore_patterns or [],
     )

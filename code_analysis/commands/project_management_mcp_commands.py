@@ -817,6 +817,7 @@ class DeleteUnwatchedProjectsMCPCommand(BaseMCPCommand):
                     database=database,
                     watched_dirs=watched_dirs,
                     dry_run=dry_run,
+                    server_root_dir=str(root_path),
                 )
                 result = await cmd.execute()
 

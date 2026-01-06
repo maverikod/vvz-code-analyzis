@@ -146,6 +146,7 @@ class DeleteUnwatchedProjectsCommand:
         database: CodeDatabase,
         watched_dirs: List[str],
         dry_run: bool = False,
+        server_root_dir: Optional[str] = None,
     ):
         """
         Initialize delete unwatched projects command.
@@ -154,10 +155,12 @@ class DeleteUnwatchedProjectsCommand:
             database: CodeDatabase instance
             watched_dirs: List of watched directory paths (absolute)
             dry_run: If True, only show what would be deleted
+            server_root_dir: Server root directory (will be protected from deletion)
         """
         self.database = database
         self.watched_dirs = {Path(d).resolve() for d in watched_dirs}
         self.dry_run = dry_run
+        self.server_root_dir = Path(server_root_dir).resolve() if server_root_dir else None
 
     async def execute(self) -> Dict[str, Any]:
         """
@@ -188,6 +191,16 @@ class DeleteUnwatchedProjectsCommand:
                     "root_path": root_path,
                     "name": project_name,
                     "reason": "invalid_path",
+                })
+                continue
+
+            # Protect server root directory from deletion
+            if self.server_root_dir and project_path == self.server_root_dir:
+                projects_to_keep.append({
+                    "project_id": project_id,
+                    "root_path": root_path,
+                    "name": project_name,
+                    "reason": "server_root_protected",
                 })
                 continue
 

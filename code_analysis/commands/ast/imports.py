@@ -167,3 +167,241 @@ class GetImportsMCPCommand(BaseMCPCommand):
             )
         except Exception as e:
             return self._handle_error(e, "GET_IMPORTS_ERROR", "get_imports")
+
+    @classmethod
+    def metadata(cls: type["GetImportsMCPCommand"]) -> Dict[str, Any]:
+        """
+        Get detailed command metadata for AI models.
+
+        This method provides comprehensive information about the command,
+        including detailed descriptions, usage examples, and edge cases.
+        The metadata should be as detailed and clear as a man page.
+
+        Args:
+            cls: Command class.
+
+        Returns:
+            Dictionary with command metadata.
+        """
+        return {
+            "name": cls.name,
+            "version": cls.version,
+            "description": cls.descr,
+            "category": cls.category,
+            "author": cls.author,
+            "email": cls.email,
+            "detailed_description": (
+                "The get_imports command retrieves import information from files or the entire project. "
+                "It returns a list of all import statements with filtering options by file, import type, "
+                "and module name.\n\n"
+                "Operation flow:\n"
+                "1. Validates root_dir exists and is a directory\n"
+                "2. Opens database connection\n"
+                "3. Resolves project_id (from parameter or inferred from root_dir)\n"
+                "4. If file_path provided:\n"
+                "   - Normalizes file path (absolute to relative if possible)\n"
+                "   - Tries multiple path matching strategies\n"
+                "   - Filters imports to that specific file\n"
+                "5. If file_path not provided, queries all imports in project\n"
+                "6. Applies filters: import_type, module_name (LIKE pattern)\n"
+                "7. Applies pagination: limit and offset\n"
+                "8. Returns list of imports ordered by file_id and line\n\n"
+                "Import Types:\n"
+                "- 'import': Standard import statements (import os)\n"
+                "- 'import_from': From-import statements (from os import path)\n\n"
+                "Use cases:\n"
+                "- List all imports in a file\n"
+                "- Find all files importing a specific module\n"
+                "- Analyze import dependencies\n"
+                "- Check for unused imports\n"
+                "- Understand module usage patterns\n\n"
+                "Important notes:\n"
+                "- Results ordered by file_id and line number\n"
+                "- Supports pagination with limit and offset\n"
+                "- module_name filter uses LIKE pattern matching\n"
+                "- Path resolution is flexible to handle versioned files"
+            ),
+            "parameters": {
+                "root_dir": {
+                    "description": (
+                        "Project root directory path. Can be absolute or relative. "
+                        "Must contain data/code_analysis.db file."
+                    ),
+                    "type": "string",
+                    "required": True,
+                },
+                "file_path": {
+                    "description": (
+                        "Optional file path to filter by. If provided, only returns imports "
+                        "from this specific file. Can be absolute or relative to root_dir."
+                    ),
+                    "type": "string",
+                    "required": False,
+                },
+                "import_type": {
+                    "description": (
+                        "Type of import to filter by. Optional. Options: 'import' or 'import_from'. "
+                        "If null, returns all import types."
+                    ),
+                    "type": "string",
+                    "required": False,
+                    "enum": ["import", "import_from"],
+                },
+                "module_name": {
+                    "description": (
+                        "Optional module name to filter by. Uses LIKE pattern matching, so partial "
+                        "matches are supported. Example: 'os' matches 'os', 'os.path', etc."
+                    ),
+                    "type": "string",
+                    "required": False,
+                    "examples": ["os", "json", "code_analysis"],
+                },
+                "limit": {
+                    "description": (
+                        "Optional limit on number of results. Use for pagination or "
+                        "to limit large result sets."
+                    ),
+                    "type": "integer",
+                    "required": False,
+                },
+                "offset": {
+                    "description": (
+                        "Offset for pagination. Default is 0. Use with limit for paginated results."
+                    ),
+                    "type": "integer",
+                    "required": False,
+                    "default": 0,
+                },
+                "project_id": {
+                    "description": (
+                        "Optional project UUID. If omitted, inferred from root_dir."
+                    ),
+                    "type": "string",
+                    "required": False,
+                },
+            },
+            "usage_examples": [
+                {
+                    "description": "Get all imports in a file",
+                    "command": {
+                        "root_dir": "/home/user/projects/my_project",
+                        "file_path": "src/main.py",
+                    },
+                    "explanation": (
+                        "Returns all import statements from src/main.py file."
+                    ),
+                },
+                {
+                    "description": "Get all imports in project",
+                    "command": {
+                        "root_dir": "/home/user/projects/my_project",
+                    },
+                    "explanation": (
+                        "Returns all import statements across the entire project."
+                    ),
+                },
+                {
+                    "description": "Find all files importing a module",
+                    "command": {
+                        "root_dir": "/home/user/projects/my_project",
+                        "module_name": "os",
+                    },
+                    "explanation": (
+                        "Finds all files that import 'os' module (or modules containing 'os')."
+                    ),
+                },
+                {
+                    "description": "Get only import_from statements",
+                    "command": {
+                        "root_dir": "/home/user/projects/my_project",
+                        "import_type": "import_from",
+                    },
+                    "explanation": (
+                        "Returns only 'from X import Y' style imports, excluding 'import X' statements."
+                    ),
+                },
+                {
+                    "description": "Get imports with pagination",
+                    "command": {
+                        "root_dir": "/home/user/projects/my_project",
+                        "limit": 100,
+                        "offset": 0,
+                    },
+                    "explanation": (
+                        "Returns first 100 imports. Use offset for next page."
+                    ),
+                },
+            ],
+            "error_cases": {
+                "PROJECT_NOT_FOUND": {
+                    "description": "Project not found in database",
+                    "example": "root_dir='/path' but project not registered",
+                    "solution": "Ensure project is registered. Run update_indexes first.",
+                },
+                "FILE_NOT_FOUND": {
+                    "description": "File not found in database",
+                    "example": "file_path='src/main.py' but file not in database",
+                    "solution": (
+                        "Ensure file exists and has been indexed. Check file path is correct. "
+                        "Run update_indexes to index files."
+                    ),
+                },
+                "GET_IMPORTS_ERROR": {
+                    "description": "General error during import retrieval",
+                    "example": "Database error, invalid parameters, or corrupted data",
+                    "solution": (
+                        "Check database integrity, verify parameters, ensure project has been analyzed."
+                    ),
+                },
+            },
+            "return_value": {
+                "success": {
+                    "description": "Command executed successfully",
+                    "data": {
+                        "success": "Always true on success",
+                        "imports": (
+                            "List of import dictionaries from database. Each contains:\n"
+                            "- file_id: Database ID of file\n"
+                            "- line: Line number where import occurs\n"
+                            "- import_type: Type of import ('import' or 'import_from')\n"
+                            "- module: Module name (for import_from) or null\n"
+                            "- name: Imported name\n"
+                            "- Additional database fields as available"
+                        ),
+                        "count": "Number of imports found",
+                    },
+                    "example": {
+                        "success": True,
+                        "imports": [
+                            {
+                                "file_id": 1,
+                                "line": 1,
+                                "import_type": "import",
+                                "module": None,
+                                "name": "os",
+                            },
+                            {
+                                "file_id": 1,
+                                "line": 2,
+                                "import_type": "import_from",
+                                "module": "json",
+                                "name": "loads",
+                            },
+                        ],
+                        "count": 2,
+                    },
+                },
+                "error": {
+                    "description": "Command failed",
+                    "code": "Error code (e.g., PROJECT_NOT_FOUND, FILE_NOT_FOUND, GET_IMPORTS_ERROR)",
+                    "message": "Human-readable error message",
+                },
+            },
+            "best_practices": [
+                "Use file_path filter to focus on specific file imports",
+                "Use module_name filter to find module usage patterns",
+                "Use import_type filter to separate import styles",
+                "Use limit and offset for pagination with large result sets",
+                "Combine with export_graph (graph_type='dependencies') for visualization",
+            ],
+        }

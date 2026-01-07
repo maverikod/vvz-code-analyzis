@@ -115,6 +115,173 @@ class GetDatabaseCorruptionStatusMCPCommand(BaseMCPCommand):
                 "get_database_corruption_status",
             )
 
+    @classmethod
+    def metadata(cls: type["GetDatabaseCorruptionStatusMCPCommand"]) -> Dict[str, Any]:
+        """
+        Get detailed command metadata for AI models.
+
+        This method provides comprehensive information about the command,
+        including detailed descriptions, usage examples, and edge cases.
+        The metadata should be as detailed and clear as a man page.
+
+        Args:
+            cls: Command class.
+
+        Returns:
+            Dictionary with command metadata.
+        """
+        return {
+            "name": cls.name,
+            "version": cls.version,
+            "description": cls.descr,
+            "category": cls.category,
+            "author": cls.author,
+            "email": cls.email,
+            "detailed_description": (
+                "The get_database_corruption_status command checks the corruption status "
+                "of a project's SQLite database. It reports both the persistent corruption "
+                "marker status and the current physical integrity check result.\n\n"
+                "Operation flow:\n"
+                "1. Validates root_dir exists and is a directory\n"
+                "2. Resolves database path: root_dir/data/code_analysis.db\n"
+                "3. Reads persistent corruption marker (if present)\n"
+                "4. Runs SQLite integrity check (PRAGMA quick_check)\n"
+                "5. Returns combined status information\n\n"
+                "Corruption Marker:\n"
+                "- Persistent marker file stored next to database\n"
+                "- Created when corruption is detected\n"
+                "- Prevents DB-dependent commands from running\n"
+                "- Contains backup paths and error message\n"
+                "- Must be cleared explicitly after repair\n\n"
+                "Integrity Check:\n"
+                "- Uses SQLite PRAGMA quick_check(1) for fast check\n"
+                "- Falls back to PRAGMA integrity_check if needed\n"
+                "- Detects physical corruption (malformed database)\n"
+                "- Ignores transient errors (database locked, busy)\n"
+                "- Returns OK if database file doesn't exist (not corrupted)\n\n"
+                "Safe Mode Policy:\n"
+                "- If marker present, DB-dependent commands are blocked\n"
+                "- Only backup/restore/repair commands allowed\n"
+                "- Prevents further corruption from operations\n"
+                "- Ensures data safety during recovery\n\n"
+                "Use cases:\n"
+                "- Check database health before operations\n"
+                "- Diagnose corruption issues\n"
+                "- Verify marker status after repair\n"
+                "- Monitor database integrity\n"
+                "- Troubleshoot database errors\n\n"
+                "Important notes:\n"
+                "- Marker presence blocks DB-dependent commands\n"
+                "- Integrity check is read-only (doesn't modify DB)\n"
+                "- Transient lock errors are not treated as corruption\n"
+                "- Marker must be cleared after successful repair\n"
+                "- Both marker and integrity status are reported"
+            ),
+            "parameters": {
+                "root_dir": {
+                    "description": (
+                        "Project root directory path. Can be absolute or relative. "
+                        "Must contain data/code_analysis.db file."
+                    ),
+                    "type": "string",
+                    "required": True,
+                    "examples": [
+                        "/home/user/projects/my_project",
+                        ".",
+                        "./code_analysis",
+                    ],
+                },
+            },
+            "usage_examples": [
+                {
+                    "description": "Check database corruption status",
+                    "command": {
+                        "root_dir": "/home/user/projects/my_project",
+                    },
+                    "explanation": (
+                        "Checks both corruption marker and integrity status for the project database."
+                    ),
+                },
+                {
+                    "description": "Verify database health before operations",
+                    "command": {
+                        "root_dir": ".",
+                    },
+                    "explanation": (
+                        "Checks database status in current directory before running DB operations."
+                    ),
+                },
+            ],
+            "error_cases": {
+                "DB_CORRUPTION_STATUS_ERROR": {
+                    "description": "Error during status check",
+                    "example": (
+                        "Invalid root_dir, permission errors, or unexpected exceptions"
+                    ),
+                    "solution": (
+                        "Verify root_dir exists and is accessible, check file permissions, "
+                        "review logs for details"
+                    ),
+                },
+            },
+            "return_value": {
+                "success": {
+                    "description": "Status check completed successfully",
+                    "data": {
+                        "root_dir": "Project root directory path",
+                        "db_path": "Path to database file",
+                        "marker_path": "Path to corruption marker file",
+                        "marker_present": "True if corruption marker exists",
+                        "marker": (
+                            "Marker data if present (None otherwise). Contains:\n"
+                            "- message: Error message\n"
+                            "- backup_paths: List of backup file paths\n"
+                            "- timestamp: When marker was created"
+                        ),
+                        "integrity_ok": "True if database integrity check passed",
+                        "integrity_message": "Message from integrity check",
+                    },
+                    "example_healthy": {
+                        "root_dir": "/home/user/projects/my_project",
+                        "db_path": "/home/user/projects/my_project/data/code_analysis.db",
+                        "marker_path": "/home/user/projects/my_project/data/code_analysis.db.corrupt-marker",
+                        "marker_present": False,
+                        "marker": None,
+                        "integrity_ok": True,
+                        "integrity_message": "quick_check: ok",
+                    },
+                    "example_corrupted": {
+                        "root_dir": "/home/user/projects/my_project",
+                        "db_path": "/home/user/projects/my_project/data/code_analysis.db",
+                        "marker_path": "/home/user/projects/my_project/data/code_analysis.db.corrupt-marker",
+                        "marker_present": True,
+                        "marker": {
+                            "message": "Database is marked as corrupted",
+                            "backup_paths": [
+                                "/home/user/projects/my_project/data/code_analysis.db.corrupt-backup.20240115-143025"
+                            ],
+                            "timestamp": "2024-01-15T14:30:25",
+                        },
+                        "integrity_ok": False,
+                        "integrity_message": "integrity_check failed: database disk image is malformed",
+                    },
+                },
+                "error": {
+                    "description": "Command failed",
+                    "code": "Error code (e.g., DB_CORRUPTION_STATUS_ERROR)",
+                    "message": "Human-readable error message",
+                },
+            },
+            "best_practices": [
+                "Check status before running DB-dependent operations",
+                "If marker_present=True, run repair_sqlite_database to fix",
+                "If integrity_ok=False, database needs repair",
+                "Use backup_database before repair operations",
+                "Clear marker after successful repair (done automatically by repair command)",
+                "Monitor integrity_ok status regularly",
+            ],
+        }
+
 
 class BackupDatabaseMCPCommand(BaseMCPCommand):
     """Create a filesystem backup of the project SQLite database file.
@@ -215,6 +382,192 @@ class BackupDatabaseMCPCommand(BaseMCPCommand):
             )
         except Exception as e:
             return self._handle_error(e, "BACKUP_DATABASE_ERROR", "backup_database")
+
+    @classmethod
+    def metadata(cls: type["BackupDatabaseMCPCommand"]) -> Dict[str, Any]:
+        """
+        Get detailed command metadata for AI models.
+
+        This method provides comprehensive information about the command,
+        including detailed descriptions, usage examples, and edge cases.
+        The metadata should be as detailed and clear as a man page.
+
+        Args:
+            cls: Command class.
+
+        Returns:
+            Dictionary with command metadata.
+        """
+        return {
+            "name": cls.name,
+            "version": cls.version,
+            "description": cls.descr,
+            "category": cls.category,
+            "author": cls.author,
+            "email": cls.email,
+            "detailed_description": (
+                "The backup_database command creates filesystem backups of a project's "
+                "SQLite database file and its sidecar files (WAL, SHM, journal). "
+                "This is a safety measure before destructive operations like repair.\n\n"
+                "Operation flow:\n"
+                "1. Validates root_dir exists and is a directory\n"
+                "2. Resolves database path: root_dir/data/code_analysis.db\n"
+                "3. Determines backup directory (default: root_dir/data)\n"
+                "4. Creates timestamped backups of database file\n"
+                "5. Creates backups of sidecar files if present (-wal, -shm, -journal)\n"
+                "6. Returns list of created backup file paths\n\n"
+                "Backup Files:\n"
+                "- Main database file: code_analysis.db.corrupt-backup.TIMESTAMP\n"
+                "- WAL file (if present): code_analysis.db-wal.corrupt-backup.TIMESTAMP\n"
+                "- SHM file (if present): code_analysis.db-shm.corrupt-backup.TIMESTAMP\n"
+                "- Journal file (if present): code_analysis.db-journal.corrupt-backup.TIMESTAMP\n"
+                "- Timestamp format: YYYYMMDD-HHMMSS\n\n"
+                "Sidecar Files:\n"
+                "- WAL (Write-Ahead Logging): Transaction log for SQLite\n"
+                "- SHM (Shared Memory): Shared memory file for WAL mode\n"
+                "- Journal: Rollback journal (if not in WAL mode)\n"
+                "- These files are critical for database consistency\n\n"
+                "Use cases:\n"
+                "- Create backup before repair operations\n"
+                "- Preserve database state before destructive changes\n"
+                "- Create recovery point for database restoration\n"
+                "- Backup before major database operations\n"
+                "- Safety measure before corruption repair\n\n"
+                "Important notes:\n"
+                "- Backups are created with timestamp in filename\n"
+                "- Multiple backups can coexist (each has unique timestamp)\n"
+                "- Only existing files are backed up (missing sidecars are skipped)\n"
+                "- Backup directory is created if it doesn't exist\n"
+                "- Original files are not modified (read-only operation)\n"
+                "- Use restore_database to restore from backup"
+            ),
+            "parameters": {
+                "root_dir": {
+                    "description": (
+                        "Project root directory path. Can be absolute or relative. "
+                        "Must contain data/code_analysis.db file."
+                    ),
+                    "type": "string",
+                    "required": True,
+                    "examples": [
+                        "/home/user/projects/my_project",
+                        ".",
+                        "./code_analysis",
+                    ],
+                },
+                "backup_dir": {
+                    "description": (
+                        "Optional directory where backup files will be stored. "
+                        "If not provided, defaults to root_dir/data. "
+                        "Directory is created if it doesn't exist."
+                    ),
+                    "type": "string",
+                    "required": False,
+                    "examples": [
+                        "/home/user/projects/my_project/data",
+                        "/backups/my_project",
+                    ],
+                },
+            },
+            "usage_examples": [
+                {
+                    "description": "Backup database to default location",
+                    "command": {
+                        "root_dir": "/home/user/projects/my_project",
+                    },
+                    "explanation": (
+                        "Creates backups in root_dir/data with timestamped filenames."
+                    ),
+                },
+                {
+                    "description": "Backup database to custom location",
+                    "command": {
+                        "root_dir": "/home/user/projects/my_project",
+                        "backup_dir": "/backups/my_project",
+                    },
+                    "explanation": (
+                        "Creates backups in specified directory instead of default location."
+                    ),
+                },
+                {
+                    "description": "Backup before repair operation",
+                    "command": {
+                        "root_dir": ".",
+                    },
+                    "explanation": (
+                        "Creates safety backup before running repair_sqlite_database."
+                    ),
+                },
+            ],
+            "error_cases": {
+                "BACKUP_DATABASE_ERROR": {
+                    "description": "Error during backup creation",
+                    "examples": [
+                        {
+                            "case": "Database file not found",
+                            "message": "Database file does not exist",
+                            "solution": (
+                                "Verify database path is correct. "
+                                "Database may not exist yet (this is OK, backup will be empty)."
+                            ),
+                        },
+                        {
+                            "case": "Permission error",
+                            "message": "Permission denied",
+                            "solution": (
+                                "Check file and directory permissions. "
+                                "Ensure write access to backup directory."
+                            ),
+                        },
+                        {
+                            "case": "Disk space",
+                            "message": "No space left on device",
+                            "solution": "Free up disk space in backup directory",
+                        },
+                    ],
+                },
+            },
+            "return_value": {
+                "success": {
+                    "description": "Backup created successfully",
+                    "data": {
+                        "root_dir": "Project root directory path",
+                        "db_path": "Path to database file",
+                        "backup_dir": "Directory where backups were created",
+                        "backup_paths": (
+                            "List of created backup file paths. Includes:\n"
+                            "- Database file backup\n"
+                            "- Sidecar file backups (if present)"
+                        ),
+                        "count": "Number of backup files created",
+                    },
+                    "example": {
+                        "root_dir": "/home/user/projects/my_project",
+                        "db_path": "/home/user/projects/my_project/data/code_analysis.db",
+                        "backup_dir": "/home/user/projects/my_project/data",
+                        "backup_paths": [
+                            "/home/user/projects/my_project/data/code_analysis.db.corrupt-backup.20240115-143025",
+                            "/home/user/projects/my_project/data/code_analysis.db-wal.corrupt-backup.20240115-143025",
+                        ],
+                        "count": 2,
+                    },
+                },
+                "error": {
+                    "description": "Command failed",
+                    "code": "Error code (e.g., BACKUP_DATABASE_ERROR)",
+                    "message": "Human-readable error message",
+                },
+            },
+            "best_practices": [
+                "Run backup_database before repair_sqlite_database",
+                "Use backup_database before any destructive database operations",
+                "Store backups in separate directory for safety",
+                "Keep multiple backups with different timestamps",
+                "Verify backup_paths list after backup creation",
+                "Use restore_database to restore from backup if needed",
+                "Backup is automatically created by repair command, but manual backup is safer",
+            ],
+        }
 
 
 class RepairSQLiteDatabaseMCPCommand(BaseMCPCommand):
@@ -373,3 +726,243 @@ class RepairSQLiteDatabaseMCPCommand(BaseMCPCommand):
             return self._handle_error(
                 e, "REPAIR_SQLITE_ERROR", "repair_sqlite_database"
             )
+
+    @classmethod
+    def metadata(cls: type["RepairSQLiteDatabaseMCPCommand"]) -> Dict[str, Any]:
+        """
+        Get detailed command metadata for AI models.
+
+        This method provides comprehensive information about the command,
+        including detailed descriptions, usage examples, and edge cases.
+        The metadata should be as detailed and clear as a man page.
+
+        Args:
+            cls: Command class.
+
+        Returns:
+            Dictionary with command metadata.
+        """
+        return {
+            "name": cls.name,
+            "version": cls.version,
+            "description": cls.descr,
+            "category": cls.category,
+            "author": cls.author,
+            "email": cls.email,
+            "detailed_description": (
+                "The repair_sqlite_database command repairs a corrupted SQLite database "
+                "by backing it up and recreating it from scratch. This is a destructive "
+                "operation that removes all data from the database.\n\n"
+                "Operation flow:\n"
+                "1. Validates root_dir exists and is a directory\n"
+                "2. If force=False, checks if only marker clearing is needed\n"
+                "3. If force=False and DB is healthy, clears marker only\n"
+                "4. If force=False and DB is corrupted, requires force=True\n"
+                "5. If force=True, stops all workers\n"
+                "6. Creates automatic backup of database and sidecars\n"
+                "7. Recreates database file from scratch (empty schema)\n"
+                "8. Clears corruption marker\n"
+                "9. Returns repair result with next steps\n\n"
+                "Repair Modes:\n"
+                "- Non-destructive (force=False): Only clears marker if DB is healthy\n"
+                "  - Useful when marker was set due to transient errors\n"
+                "  - Does not recreate database\n"
+                "  - Safe operation, no data loss\n"
+                "- Destructive (force=True): Backs up and recreates database\n"
+                "  - All database data is lost\n"
+                "  - Creates fresh empty database\n"
+                "  - Requires explicit confirmation (force=True)\n\n"
+                "Worker Management:\n"
+                "- All workers are stopped before repair\n"
+                "- Prevents concurrent access during repair\n"
+                "- Workers can be restarted after repair\n\n"
+                "After Repair:\n"
+                "- Database is empty (fresh schema)\n"
+                "- Corruption marker is cleared\n"
+                "- Must run update_indexes to rebuild indexes\n"
+                "- All project data must be re-indexed\n\n"
+                "Use cases:\n"
+                "- Repair corrupted database\n"
+                "- Clear corruption marker after manual recovery\n"
+                "- Recover from database corruption\n"
+                "- Reset database to clean state\n"
+                "- Fix database integrity issues\n\n"
+                "Important notes:\n"
+                "- ⚠️ DESTRUCTIVE: All database data is lost when force=True\n"
+                "- Automatic backup is created before recreation\n"
+                "- Must run update_indexes after repair to rebuild data\n"
+                "- Use force=False to clear marker without data loss\n"
+                "- Workers are stopped automatically during repair"
+            ),
+            "parameters": {
+                "root_dir": {
+                    "description": (
+                        "Project root directory path. Can be absolute or relative. "
+                        "Must contain data/code_analysis.db file."
+                    ),
+                    "type": "string",
+                    "required": True,
+                    "examples": [
+                        "/home/user/projects/my_project",
+                        ".",
+                        "./code_analysis",
+                    ],
+                },
+                "force": {
+                    "description": (
+                        "Must be True to perform destructive repair (recreate database). "
+                        "If False, only clears marker if database is healthy. "
+                        "Default is False."
+                    ),
+                    "type": "boolean",
+                    "required": False,
+                    "default": False,
+                    "examples": [False, True],
+                },
+                "backup_dir": {
+                    "description": (
+                        "Optional directory where backup files will be stored. "
+                        "If not provided, defaults to root_dir/data. "
+                        "Backup is created automatically before repair."
+                    ),
+                    "type": "string",
+                    "required": False,
+                    "examples": [
+                        "/home/user/projects/my_project/data",
+                        "/backups/my_project",
+                    ],
+                },
+            },
+            "usage_examples": [
+                {
+                    "description": "Clear marker without data loss",
+                    "command": {
+                        "root_dir": "/home/user/projects/my_project",
+                        "force": False,
+                    },
+                    "explanation": (
+                        "Clears corruption marker if database is healthy. "
+                        "No data loss, safe operation."
+                    ),
+                },
+                {
+                    "description": "Repair corrupted database",
+                    "command": {
+                        "root_dir": "/home/user/projects/my_project",
+                        "force": True,
+                    },
+                    "explanation": (
+                        "Backs up and recreates database. All data is lost. "
+                        "Must run update_indexes after repair."
+                    ),
+                },
+                {
+                    "description": "Repair with custom backup location",
+                    "command": {
+                        "root_dir": "/home/user/projects/my_project",
+                        "force": True,
+                        "backup_dir": "/backups/my_project",
+                    },
+                    "explanation": (
+                        "Repairs database and stores backup in custom location."
+                    ),
+                },
+            ],
+            "error_cases": {
+                "CONFIRM_REQUIRED": {
+                    "description": "Force confirmation required",
+                    "message": (
+                        "This operation is destructive (recreates SQLite DB). "
+                        "Re-run with force=true to proceed."
+                    ),
+                    "solution": (
+                        "Set force=True to confirm destructive operation. "
+                        "If you only need to clear marker, ensure DB is healthy and use force=False."
+                    ),
+                },
+                "REPAIR_SQLITE_ERROR": {
+                    "description": "Error during repair",
+                    "examples": [
+                        {
+                            "case": "Permission error",
+                            "message": "Permission denied",
+                            "solution": (
+                                "Check file and directory permissions. "
+                                "Ensure write access to database and backup directory."
+                            ),
+                        },
+                        {
+                            "case": "Workers cannot be stopped",
+                            "message": "Failed to stop workers",
+                            "solution": (
+                                "Manually stop workers or wait for operations to complete. "
+                                "Workers must be stopped before repair."
+                            ),
+                        },
+                    ],
+                },
+            },
+            "return_value": {
+                "success": {
+                    "description": "Repair completed successfully",
+                    "data": {
+                        "root_dir": "Project root directory path",
+                        "db_path": "Path to database file",
+                        "backup_dir": "Directory where backups were created",
+                        "workers_stopped": "Result of stopping workers",
+                        "repair": {
+                            "ok": "True if repair succeeded",
+                            "repaired": "True if database was recreated",
+                            "message": "Human-readable repair message",
+                            "backup_paths": "List of created backup file paths",
+                        },
+                        "marker_cleared": "True if corruption marker was cleared",
+                        "next_step": "Recommended next action (usually 'Run update_indexes')",
+                        "mode": "Repair mode (only present if force=False and marker cleared)",
+                    },
+                    "example_marker_clear": {
+                        "root_dir": "/home/user/projects/my_project",
+                        "db_path": "/home/user/projects/my_project/data/code_analysis.db",
+                        "mode": "marker_clear_only",
+                        "integrity_ok": True,
+                        "integrity_message": "quick_check: ok",
+                        "marker_cleared": True,
+                        "next_step": "Re-run the blocked command (marker cleared)",
+                    },
+                    "example_full_repair": {
+                        "root_dir": "/home/user/projects/my_project",
+                        "db_path": "/home/user/projects/my_project/data/code_analysis.db",
+                        "backup_dir": "/home/user/projects/my_project/data",
+                        "workers_stopped": {"stopped": True, "count": 2},
+                        "repair": {
+                            "ok": True,
+                            "repaired": True,
+                            "message": (
+                                "Database was corrupted; backed up 2 file(s) and recreated"
+                            ),
+                            "backup_paths": [
+                                "/home/user/projects/my_project/data/code_analysis.db.corrupt-backup.20240115-143025",
+                                "/home/user/projects/my_project/data/code_analysis.db-wal.corrupt-backup.20240115-143025",
+                            ],
+                        },
+                        "marker_cleared": True,
+                        "next_step": "Run update_indexes for the project to rebuild indexes",
+                    },
+                },
+                "error": {
+                    "description": "Command failed",
+                    "code": "Error code (e.g., CONFIRM_REQUIRED, REPAIR_SQLITE_ERROR)",
+                    "message": "Human-readable error message",
+                },
+            },
+            "best_practices": [
+                "⚠️ WARNING: force=True destroys all database data",
+                "Run backup_database manually before repair for extra safety",
+                "Use force=False first to clear marker if DB is healthy",
+                "After repair, immediately run update_indexes to rebuild data",
+                "Check repair.repaired field to confirm database was recreated",
+                "Verify backup_paths list to ensure backup was created",
+                "Use restore_database if you need to restore from backup",
+                "Stop workers manually if automatic stop fails",
+            ],
+        }

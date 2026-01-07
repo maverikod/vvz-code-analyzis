@@ -46,7 +46,24 @@ class SplitClassMCPCommand(BaseMCPCommand):
                 },
                 "config": {
                     "type": "object",
-                    "description": "Split configuration (JSON object or string)",
+                    "description": (
+                        "Split configuration object. Structure: {\n"
+                        "  'src_class': str (required) - Name of source class to split,\n"
+                        "  'dst_classes': dict (required) - Dictionary mapping new class names to their configs.\n"
+                        "    Each destination class config has:\n"
+                        "      'props': list[str] - Properties (attributes) to move to this class,\n"
+                        "      'methods': list[str] - Methods to move to this class.\n"
+                        "  IMPORTANT: ALL properties and methods from src_class must be distributed\n"
+                        "  across dst_classes. Special methods (__init__, __new__, __del__) stay in src_class.\n"
+                        "  Example: {\n"
+                        "    'src_class': 'UserManager',\n"
+                        "    'dst_classes': {\n"
+                        "      'UserAuth': {'props': ['username', 'password'], 'methods': ['authenticate']},\n"
+                        "      'UserPermissions': {'props': ['role'], 'methods': ['authorize']}\n"
+                        "    }\n"
+                        "  }\n"
+                        "}"
+                    ),
                     "additionalProperties": True,
                 },
                 "dry_run": {
@@ -61,6 +78,287 @@ class SplitClassMCPCommand(BaseMCPCommand):
             },
             "required": ["root_dir", "file_path", "config"],
             "additionalProperties": False,
+        }
+
+    @classmethod
+    def metadata(cls: type["SplitClassMCPCommand"]) -> Dict[str, Any]:
+        """
+        Get detailed command metadata for AI models.
+
+        This method provides comprehensive information about the command,
+        including detailed descriptions, usage examples, and edge cases.
+        The metadata should be as detailed and clear as a man page.
+
+        Args:
+            cls: Command class.
+
+        Returns:
+            Dictionary with command metadata.
+        """
+        return {
+            "name": cls.name,
+            "version": cls.version,
+            "description": cls.descr,
+            "category": cls.category,
+            "author": cls.author,
+            "email": cls.email,
+            "detailed_description": (
+                "The split_class command splits a large class into multiple smaller classes "
+                "while maintaining functionality. The original class becomes a facade that "
+                "delegates to the new classes.\n\n"
+                "Operation flow:\n"
+                "1. Validates root_dir exists and is a directory\n"
+                "2. Resolves file_path (absolute or relative to root_dir)\n"
+                "3. Parses config (JSON object or string)\n"
+                "4. Validates that ALL properties and methods from src_class are distributed\n"
+                "5. If dry_run=true: generates preview without making changes\n"
+                "6. If dry_run=false:\n"
+                "   - Creates backup of original file\n"
+                "   - Splits class according to config\n"
+                "   - Validates Python syntax of result\n"
+                "   - Validates completeness (all members present)\n"
+                "   - Formats code with black\n"
+                "   - Returns backup UUID for restoration if needed\n\n"
+                "Configuration Requirements:\n"
+                "- src_class: Name of the class to split (must exist in file)\n"
+                "- dst_classes: Dictionary mapping new class names to their configurations\n"
+                "  Each destination class must specify:\n"
+                "  - props: List of property names (instance attributes from __init__)\n"
+                "  - methods: List of method names to move to this class\n"
+                "- CRITICAL: ALL properties and ALL methods (except __init__, __new__, __del__) "
+                "must be distributed across dst_classes\n"
+                "- Special methods (__init__, __new__, __del__) remain in the original class\n\n"
+                "Result:\n"
+                "- Original class becomes a facade with instances of new classes\n"
+                "- Methods in original class delegate to corresponding new class instances\n"
+                "- New classes are created with their assigned properties and methods\n"
+                "- Original formatting, comments, and docstrings are preserved"
+            ),
+            "parameters": {
+                "root_dir": {
+                    "description": (
+                        "Project root directory path. Must contain data/code_analysis.db file. "
+                        "Can be absolute or relative to current working directory. "
+                        "The directory must exist and be accessible."
+                    ),
+                    "type": "string",
+                    "required": True,
+                    "examples": [
+                        "/home/user/projects/my_project",
+                        "/var/lib/code_analysis/projects/project1",
+                        "./my_project",
+                    ],
+                },
+                "file_path": {
+                    "description": (
+                        "Path to Python file containing the class to split. "
+                        "Can be absolute or relative to root_dir. "
+                        "File must exist and contain valid Python code with the specified class."
+                    ),
+                    "type": "string",
+                    "required": True,
+                    "examples": [
+                        "src/models/user_manager.py",
+                        "app/core/task_queue.py",
+                        "/absolute/path/to/file.py",
+                    ],
+                },
+                "config": {
+                    "description": (
+                        "Split configuration object or JSON string. Must contain:\n"
+                        "- src_class (string, required): Name of class to split\n"
+                        "- dst_classes (dict, required): Mapping of new class names to configs\n"
+                        "  Each config has:\n"
+                        "  - props (list[str]): Properties to move\n"
+                        "  - methods (list[str]): Methods to move\n"
+                        "\n"
+                        "ALL properties and methods from src_class must be distributed.\n"
+                        "Use list_cst_blocks command to discover class structure first."
+                    ),
+                    "type": "object",
+                    "required": True,
+                    "examples": [
+                        {
+                            "src_class": "UserManager",
+                            "dst_classes": {
+                                "UserAuth": {
+                                    "props": ["username", "email", "password"],
+                                    "methods": ["authenticate", "login"],
+                                },
+                                "UserPermissions": {
+                                    "props": ["role", "permissions"],
+                                    "methods": ["authorize", "check_permission"],
+                                },
+                            },
+                        },
+                        {
+                            "src_class": "TaskQueue",
+                            "dst_classes": {
+                                "FTPExecutor": {
+                                    "props": [],
+                                    "methods": [
+                                        "_execute_ftp_upload_task",
+                                        "_execute_ftp_download_task",
+                                        "_create_ftp_connection",
+                                    ],
+                                },
+                                "DockerExecutor": {
+                                    "props": [],
+                                    "methods": [
+                                        "_execute_docker_build_task",
+                                        "_execute_docker_pull_task",
+                                    ],
+                                },
+                            },
+                        },
+                    ],
+                },
+                "dry_run": {
+                    "description": (
+                        "If true, generates preview of changes without modifying files. "
+                        "Use this to validate configuration before applying changes. "
+                        "Returns preview code in response data."
+                    ),
+                    "type": "boolean",
+                    "required": False,
+                    "default": False,
+                },
+                "project_id": {
+                    "description": (
+                        "Optional project UUID. If omitted, inferred from root_dir. "
+                        "Use this to explicitly specify project when multiple projects "
+                        "share the same root directory structure."
+                    ),
+                    "type": "string",
+                    "required": False,
+                },
+            },
+            "usage_examples": [
+                {
+                    "description": "Preview split before applying (recommended first step)",
+                    "command": {
+                        "root_dir": "/home/user/projects/my_project",
+                        "file_path": "src/models/user_manager.py",
+                        "config": {
+                            "src_class": "UserManager",
+                            "dst_classes": {
+                                "UserAuth": {
+                                    "props": ["username", "password"],
+                                    "methods": ["authenticate"],
+                                },
+                                "UserEmail": {
+                                    "props": ["email"],
+                                    "methods": ["send_email"],
+                                },
+                            },
+                        },
+                        "dry_run": True,
+                    },
+                    "explanation": (
+                        "Validates configuration and returns preview code without making changes. "
+                        "Review the preview to ensure split is correct before applying."
+                    ),
+                },
+                {
+                    "description": "Split class into multiple classes",
+                    "command": {
+                        "root_dir": "/home/user/projects/my_project",
+                        "file_path": "src/models/user_manager.py",
+                        "config": {
+                            "src_class": "UserManager",
+                            "dst_classes": {
+                                "UserAuth": {
+                                    "props": ["username", "password"],
+                                    "methods": ["authenticate"],
+                                },
+                                "UserEmail": {
+                                    "props": ["email"],
+                                    "methods": ["send_email"],
+                                },
+                            },
+                        },
+                        "dry_run": False,
+                    },
+                    "explanation": (
+                        "Performs actual split. Creates backup automatically. "
+                        "Returns backup_uuid for restoration if needed."
+                    ),
+                },
+            ],
+            "error_cases": {
+                "PROJECT_NOT_FOUND": {
+                    "description": "Project not found in database for given root_dir",
+                    "example": "root_dir='/path' but project not registered",
+                    "solution": "Run update_indexes or ensure project is registered in database",
+                },
+                "FILE_NOT_FOUND": {
+                    "description": "File path doesn't exist or is not accessible",
+                    "example": "file_path='nonexistent.py'",
+                    "solution": "Provide valid file path relative to root_dir or absolute path",
+                },
+                "SPLIT_CLASS_PREVIEW_ERROR": {
+                    "description": (
+                        "Configuration validation failed. Common causes:\n"
+                        "- Missing properties in config (not all properties distributed)\n"
+                        "- Missing methods in config (not all methods distributed)\n"
+                        "- Extra properties/methods in config (not in source class)\n"
+                        "- Source class not found in file"
+                    ),
+                    "example": (
+                        "Error: Missing properties in split config: {'logger', 'config'}\n"
+                        "Missing methods in split config: {'run_server', 'create_app'}"
+                    ),
+                    "solution": (
+                        "Use list_cst_blocks command to discover all properties and methods. "
+                        "Ensure ALL properties and methods (except __init__, __new__, __del__) "
+                        "are distributed across dst_classes in config."
+                    ),
+                },
+                "SPLIT_CLASS_ERROR": {
+                    "description": "Split operation failed during execution",
+                    "example": "Syntax error in generated code, validation failed",
+                    "solution": (
+                        "Check error message for details. Backup was created - use restore_backup_file "
+                        "if needed. Review configuration and try again with dry_run=true first."
+                    ),
+                },
+            },
+            "return_value": {
+                "success": {
+                    "description": "Command executed successfully",
+                    "data": {
+                        "success": "True if operation succeeded",
+                        "message": "Human-readable success message",
+                        "backup_uuid": (
+                            "UUID of created backup (if dry_run=false). "
+                            "Use this with restore_backup_file command to restore original file."
+                        ),
+                        "preview": (
+                            "Preview code (only if dry_run=true). "
+                            "Shows how the file will look after split."
+                        ),
+                    },
+                    "example": {
+                        "success": True,
+                        "message": "Class split successfully",
+                        "backup_uuid": "123e4567-e89b-12d3-a456-426614174000",
+                    },
+                },
+                "error": {
+                    "description": "Command failed",
+                    "code": "Error code (e.g., SPLIT_CLASS_PREVIEW_ERROR, SPLIT_CLASS_ERROR)",
+                    "message": "Human-readable error message with validation details",
+                    "details": "Additional error information",
+                },
+            },
+            "best_practices": [
+                "Always use dry_run=true first to preview changes",
+                "Use list_cst_blocks command to discover class structure before creating config",
+                "Ensure ALL properties and methods are distributed (validation is strict)",
+                "Keep related functionality together in destination classes",
+                "Test split result with dry_run before applying",
+                "Save backup_uuid for easy restoration if needed",
+            ],
         }
 
     async def execute(
@@ -173,7 +471,26 @@ class ExtractSuperclassMCPCommand(BaseMCPCommand):
                 },
                 "config": {
                     "type": "object",
-                    "description": "Extraction configuration (JSON object or string)",
+                    "description": (
+                        "Extraction configuration object. Structure: {\n"
+                        "  'base_class': str (required) - Name of new base class to create,\n"
+                        "  'child_classes': list[str] (required) - List of child class names to extract from,\n"
+                        "  'abstract_methods': list[str] (optional) - Methods to make abstract in base class,\n"
+                        "  'extract_from': dict (required) - Mapping of child class names to their configs.\n"
+                        "    Each child config has:\n"
+                        "      'properties': list[str] - Properties to extract to base class,\n"
+                        "      'methods': list[str] - Methods to extract to base class.\n"
+                        "  Example: {\n"
+                        "    'base_class': 'Animal',\n"
+                        "    'child_classes': ['Dog', 'Cat'],\n"
+                        "    'abstract_methods': ['make_sound'],\n"
+                        "    'extract_from': {\n"
+                        "      'Dog': {'properties': ['name', 'legs'], 'methods': ['move', 'eat']},\n"
+                        "      'Cat': {'properties': ['name', 'legs'], 'methods': ['move', 'eat']}\n"
+                        "    }\n"
+                        "  }\n"
+                        "}"
+                    ),
                     "additionalProperties": True,
                 },
                 "dry_run": {
@@ -188,6 +505,289 @@ class ExtractSuperclassMCPCommand(BaseMCPCommand):
             },
             "required": ["root_dir", "file_path", "config"],
             "additionalProperties": False,
+        }
+
+    @classmethod
+    def metadata(cls: type["ExtractSuperclassMCPCommand"]) -> Dict[str, Any]:
+        """
+        Get detailed command metadata for AI models.
+
+        This method provides comprehensive information about the command,
+        including detailed descriptions, usage examples, and edge cases.
+        The metadata should be as detailed and clear as a man page.
+
+        Args:
+            cls: Command class.
+
+        Returns:
+            Dictionary with command metadata.
+        """
+        return {
+            "name": cls.name,
+            "version": cls.version,
+            "description": cls.descr,
+            "category": cls.category,
+            "author": cls.author,
+            "email": cls.email,
+            "detailed_description": (
+                "The extract_superclass command extracts common functionality from multiple classes "
+                "into a new base class. Child classes inherit from the base class and keep their unique methods.\n\n"
+                "Operation flow:\n"
+                "1. Validates root_dir exists and is a directory\n"
+                "2. Resolves file_path (absolute or relative to root_dir)\n"
+                "3. Parses config (JSON object or string)\n"
+                "4. Validates all child classes exist in file\n"
+                "5. Checks for multiple inheritance conflicts\n"
+                "6. If dry_run=true: generates preview without making changes\n"
+                "7. If dry_run=false:\n"
+                "   - Creates backup of original file\n"
+                "   - Creates new base class with extracted members\n"
+                "   - Updates child classes to inherit from base class\n"
+                "   - Makes specified methods abstract if abstract_methods provided\n"
+                "   - Validates Python syntax of result\n"
+                "   - Formats code with black\n"
+                "   - Returns backup UUID for restoration if needed\n\n"
+                "Configuration Requirements:\n"
+                "- base_class: Name of new base class to create\n"
+                "- child_classes: List of child class names (must exist in file)\n"
+                "- extract_from: Dictionary mapping each child class to its extraction config\n"
+                "  Each child config specifies:\n"
+                "  - properties: List of property names to extract\n"
+                "  - methods: List of method names to extract\n"
+                "- abstract_methods: Optional list of methods to make abstract in base class\n"
+                "  (requires 'from abc import ABC, abstractmethod')\n\n"
+                "Result:\n"
+                "- New base class is created with extracted properties and methods\n"
+                "- Child classes inherit from base class\n"
+                "- Abstract methods (if specified) are marked with @abstractmethod\n"
+                "- Original formatting, comments, and docstrings are preserved"
+            ),
+            "parameters": {
+                "root_dir": {
+                    "description": (
+                        "Project root directory path. Must contain data/code_analysis.db file. "
+                        "Can be absolute or relative to current working directory. "
+                        "The directory must exist and be accessible."
+                    ),
+                    "type": "string",
+                    "required": True,
+                    "examples": [
+                        "/home/user/projects/my_project",
+                        "/var/lib/code_analysis/projects/project1",
+                        "./my_project",
+                    ],
+                },
+                "file_path": {
+                    "description": (
+                        "Path to Python file containing the classes. "
+                        "Can be absolute or relative to root_dir. "
+                        "File must exist and contain valid Python code with the specified classes."
+                    ),
+                    "type": "string",
+                    "required": True,
+                    "examples": [
+                        "src/models/animals.py",
+                        "app/core/services.py",
+                        "/absolute/path/to/file.py",
+                    ],
+                },
+                "config": {
+                    "description": (
+                        "Extraction configuration object or JSON string. Must contain:\n"
+                        "- base_class (string, required): Name of new base class\n"
+                        "- child_classes (list[str], required): List of child class names\n"
+                        "- extract_from (dict, required): Mapping of child class names to configs\n"
+                        "  Each child config has:\n"
+                        "  - properties (list[str]): Properties to extract\n"
+                        "  - methods (list[str]): Methods to extract\n"
+                        "- abstract_methods (list[str], optional): Methods to make abstract\n"
+                        "\n"
+                        "All child classes must exist in the file.\n"
+                        "Use list_cst_blocks command to discover class structure first."
+                    ),
+                    "type": "object",
+                    "required": True,
+                    "examples": [
+                        {
+                            "base_class": "Animal",
+                            "child_classes": ["Dog", "Cat"],
+                            "abstract_methods": ["make_sound"],
+                            "extract_from": {
+                                "Dog": {
+                                    "properties": ["name", "species", "legs"],
+                                    "methods": ["move", "eat"],
+                                },
+                                "Cat": {
+                                    "properties": ["name", "species", "legs"],
+                                    "methods": ["move", "eat"],
+                                },
+                            },
+                        },
+                        {
+                            "base_class": "BaseCommand",
+                            "child_classes": ["GitCommand", "DockerCommand"],
+                            "extract_from": {
+                                "GitCommand": {
+                                    "properties": ["logger", "config"],
+                                    "methods": ["_validate_params", "_log_result"],
+                                },
+                                "DockerCommand": {
+                                    "properties": ["logger", "config"],
+                                    "methods": ["_validate_params", "_log_result"],
+                                },
+                            },
+                        },
+                    ],
+                },
+                "dry_run": {
+                    "description": (
+                        "If true, generates preview of changes without modifying files. "
+                        "Use this to validate configuration before applying changes. "
+                        "Returns preview code in response data."
+                    ),
+                    "type": "boolean",
+                    "required": False,
+                    "default": False,
+                },
+                "project_id": {
+                    "description": (
+                        "Optional project UUID. If omitted, inferred from root_dir. "
+                        "Use this to explicitly specify project when multiple projects "
+                        "share the same root directory structure."
+                    ),
+                    "type": "string",
+                    "required": False,
+                },
+            },
+            "usage_examples": [
+                {
+                    "description": "Preview extraction before applying (recommended first step)",
+                    "command": {
+                        "root_dir": "/home/user/projects/my_project",
+                        "file_path": "src/models/animals.py",
+                        "config": {
+                            "base_class": "Animal",
+                            "child_classes": ["Dog", "Cat"],
+                            "abstract_methods": ["make_sound"],
+                            "extract_from": {
+                                "Dog": {
+                                    "properties": ["name", "legs"],
+                                    "methods": ["move", "eat"],
+                                },
+                                "Cat": {
+                                    "properties": ["name", "legs"],
+                                    "methods": ["move", "eat"],
+                                },
+                            },
+                        },
+                        "dry_run": True,
+                    },
+                    "explanation": (
+                        "Validates configuration and returns preview code without making changes. "
+                        "Review the preview to ensure extraction is correct before applying."
+                    ),
+                },
+                {
+                    "description": "Extract common functionality into base class",
+                    "command": {
+                        "root_dir": "/home/user/projects/my_project",
+                        "file_path": "src/models/animals.py",
+                        "config": {
+                            "base_class": "Animal",
+                            "child_classes": ["Dog", "Cat"],
+                            "abstract_methods": ["make_sound"],
+                            "extract_from": {
+                                "Dog": {
+                                    "properties": ["name", "legs"],
+                                    "methods": ["move", "eat"],
+                                },
+                                "Cat": {
+                                    "properties": ["name", "legs"],
+                                    "methods": ["move", "eat"],
+                                },
+                            },
+                        },
+                        "dry_run": False,
+                    },
+                    "explanation": (
+                        "Performs actual extraction. Creates backup automatically. "
+                        "Returns backup_uuid for restoration if needed."
+                    ),
+                },
+            ],
+            "error_cases": {
+                "PROJECT_NOT_FOUND": {
+                    "description": "Project not found in database for given root_dir",
+                    "example": "root_dir='/path' but project not registered",
+                    "solution": "Run update_indexes or ensure project is registered in database",
+                },
+                "FILE_NOT_FOUND": {
+                    "description": "File path doesn't exist or is not accessible",
+                    "example": "file_path='nonexistent.py'",
+                    "solution": "Provide valid file path relative to root_dir or absolute path",
+                },
+                "EXTRACT_SUPERCLASS_PREVIEW_ERROR": {
+                    "description": (
+                        "Configuration validation failed. Common causes:\n"
+                        "- Child class not found in file\n"
+                        "- Multiple inheritance conflicts (child already has base class)\n"
+                        "- Invalid property or method names\n"
+                        "- Base class name conflicts with existing class"
+                    ),
+                    "example": (
+                        "Error: Child class 'NonExistentClass' not found\n"
+                        "Error: Multiple inheritance conflict: Dog already inherits from Pet"
+                    ),
+                    "solution": (
+                        "Use list_cst_blocks command to discover all classes and their structure. "
+                        "Ensure all child classes exist. Check for existing inheritance relationships."
+                    ),
+                },
+                "EXTRACT_SUPERCLASS_ERROR": {
+                    "description": "Extraction operation failed during execution",
+                    "example": "Syntax error in generated code, validation failed",
+                    "solution": (
+                        "Check error message for details. Backup was created - use restore_backup_file "
+                        "if needed. Review configuration and try again with dry_run=true first."
+                    ),
+                },
+            },
+            "return_value": {
+                "success": {
+                    "description": "Command executed successfully",
+                    "data": {
+                        "success": "True if operation succeeded",
+                        "message": "Human-readable success message",
+                        "backup_uuid": (
+                            "UUID of created backup (if dry_run=false). "
+                            "Use this with restore_backup_file command to restore original file."
+                        ),
+                        "preview": (
+                            "Preview code (only if dry_run=true). "
+                            "Shows how the file will look after extraction."
+                        ),
+                    },
+                    "example": {
+                        "success": True,
+                        "message": "Superclass extraction successful",
+                        "backup_uuid": "123e4567-e89b-12d3-a456-426614174000",
+                    },
+                },
+                "error": {
+                    "description": "Command failed",
+                    "code": "Error code (e.g., EXTRACT_SUPERCLASS_PREVIEW_ERROR, EXTRACT_SUPERCLASS_ERROR)",
+                    "message": "Human-readable error message with validation details",
+                    "details": "Additional error information",
+                },
+            },
+            "best_practices": [
+                "Always use dry_run=true first to preview changes",
+                "Use list_cst_blocks command to discover class structure before creating config",
+                "Ensure common methods/properties have identical signatures across child classes",
+                "Use abstract_methods for methods that differ in implementation",
+                "Test extraction result with dry_run before applying",
+                "Save backup_uuid for easy restoration if needed",
+            ],
         }
 
     async def execute(
@@ -294,7 +894,27 @@ class SplitFileToPackageMCPCommand(BaseMCPCommand):
                 },
                 "config": {
                     "type": "object",
-                    "description": "File-to-package split configuration (JSON object or string)",
+                    "description": (
+                        "File-to-package split configuration object. Structure: {\n"
+                        "  'modules': dict (required) - Dictionary mapping module names to their configs.\n"
+                        "    Each module config has:\n"
+                        "      'classes': list[str] - List of class names to include in this module,\n"
+                        "      'functions': list[str] - List of function names to include in this module.\n"
+                        "  Example: {\n"
+                        "    'modules': {\n"
+                        "      'ftp_executor': {\n"
+                        "        'classes': ['FTPExecutor'],\n"
+                        "        'functions': ['create_ftp_connection']\n"
+                        "      },\n"
+                        "      'docker_executor': {\n"
+                        "        'classes': ['DockerExecutor'],\n"
+                        "        'functions': []\n"
+                        "      }\n"
+                        "    }\n"
+                        "  }\n"
+                        "  Result: Creates package directory with __init__.py and module files.\n"
+                        "}"
+                    ),
                     "additionalProperties": True,
                 },
                 "project_id": {
@@ -304,6 +924,261 @@ class SplitFileToPackageMCPCommand(BaseMCPCommand):
             },
             "required": ["root_dir", "file_path", "config"],
             "additionalProperties": False,
+        }
+
+    @classmethod
+    def metadata(cls: type["SplitFileToPackageMCPCommand"]) -> Dict[str, Any]:
+        """
+        Get detailed command metadata for AI models.
+
+        This method provides comprehensive information about the command,
+        including detailed descriptions, usage examples, and edge cases.
+        The metadata should be as detailed and clear as a man page.
+
+        Args:
+            cls: Command class.
+
+        Returns:
+            Dictionary with command metadata.
+        """
+        return {
+            "name": cls.name,
+            "version": cls.version,
+            "description": cls.descr,
+            "category": cls.category,
+            "author": cls.author,
+            "email": cls.email,
+            "detailed_description": (
+                "The split_file_to_package command splits a large Python file into a package "
+                "with multiple modules. The original file is replaced by a package directory "
+                "containing __init__.py and module files.\n\n"
+                "Operation flow:\n"
+                "1. Validates root_dir exists and is a directory\n"
+                "2. Resolves file_path (absolute or relative to root_dir)\n"
+                "3. Parses config (JSON object or string)\n"
+                "4. Validates file can be parsed as Python AST\n"
+                "5. Creates package directory (file_stem/)\n"
+                "6. Creates __init__.py in package directory\n"
+                "7. For each module in config:\n"
+                "   - Creates module_name.py file\n"
+                "   - Extracts specified classes and functions from original file\n"
+                "   - Preserves imports, docstrings, and formatting\n"
+                "8. Creates backup of original file\n"
+                "9. Returns backup UUID and list of created modules\n\n"
+                "Configuration Requirements:\n"
+                "- modules: Dictionary mapping module names to their configurations\n"
+                "  Each module must specify:\n"
+                "  - classes: List of class names to include (must exist in file)\n"
+                "  - functions: List of function names to include (must exist in file)\n"
+                "- Module names become Python module files (module_name.py)\n"
+                "- Package directory is created as file_stem/ (e.g., task_queue/ for task_queue.py)\n\n"
+                "Result:\n"
+                "- Original file is replaced by package directory\n"
+                "- Package contains __init__.py and module files\n"
+                "- Each module contains its assigned classes and functions\n"
+                "- Imports are preserved in each module\n"
+                "- Original formatting, comments, and docstrings are preserved"
+            ),
+            "parameters": {
+                "root_dir": {
+                    "description": (
+                        "Project root directory path. Must contain data/code_analysis.db file. "
+                        "Can be absolute or relative to current working directory. "
+                        "The directory must exist and be accessible."
+                    ),
+                    "type": "string",
+                    "required": True,
+                    "examples": [
+                        "/home/user/projects/my_project",
+                        "/var/lib/code_analysis/projects/project1",
+                        "./my_project",
+                    ],
+                },
+                "file_path": {
+                    "description": (
+                        "Path to Python file to split into package. "
+                        "Can be absolute or relative to root_dir. "
+                        "File must exist and contain valid Python code. "
+                        "Package directory will be created as file_stem/ in the same directory."
+                    ),
+                    "type": "string",
+                    "required": True,
+                    "examples": [
+                        "src/models/task_queue.py",
+                        "app/core/large_module.py",
+                        "/absolute/path/to/file.py",
+                    ],
+                },
+                "config": {
+                    "description": (
+                        "Split configuration object or JSON string. Must contain:\n"
+                        "- modules (dict, required): Mapping of module names to configs\n"
+                        "  Each module config has:\n"
+                        "  - classes (list[str]): Class names to include\n"
+                        "  - functions (list[str]): Function names to include\n"
+                        "\n"
+                        "All classes and functions must exist in the file.\n"
+                        "Use list_cst_blocks command to discover file structure first."
+                    ),
+                    "type": "object",
+                    "required": True,
+                    "examples": [
+                        {
+                            "modules": {
+                                "ftp_executor": {
+                                    "classes": ["FTPExecutor"],
+                                    "functions": ["create_ftp_connection"],
+                                },
+                                "docker_executor": {
+                                    "classes": ["DockerExecutor"],
+                                    "functions": [],
+                                },
+                                "k8s_executor": {
+                                    "classes": ["K8sExecutor"],
+                                    "functions": ["setup_k8s_client"],
+                                },
+                            },
+                        },
+                        {
+                            "modules": {
+                                "models": {
+                                    "classes": ["User", "Product", "Order"],
+                                    "functions": [],
+                                },
+                                "utils": {
+                                    "classes": [],
+                                    "functions": ["validate_email", "format_date"],
+                                },
+                            },
+                        },
+                    ],
+                },
+                "project_id": {
+                    "description": (
+                        "Optional project UUID. If omitted, inferred from root_dir. "
+                        "Use this to explicitly specify project when multiple projects "
+                        "share the same root directory structure."
+                    ),
+                    "type": "string",
+                    "required": False,
+                },
+            },
+            "usage_examples": [
+                {
+                    "description": "Split large file into package by functionality",
+                    "command": {
+                        "root_dir": "/home/user/projects/my_project",
+                        "file_path": "src/core/task_queue.py",
+                        "config": {
+                            "modules": {
+                                "ftp_executor": {
+                                    "classes": ["FTPExecutor"],
+                                    "functions": ["create_ftp_connection"],
+                                },
+                                "docker_executor": {
+                                    "classes": ["DockerExecutor"],
+                                    "functions": [],
+                                },
+                            },
+                        },
+                    },
+                    "explanation": (
+                        "Splits task_queue.py into task_queue/ package with "
+                        "ftp_executor.py and docker_executor.py modules. "
+                        "Creates backup automatically."
+                    ),
+                },
+                {
+                    "description": "Split file by entity type (models vs utils)",
+                    "command": {
+                        "root_dir": "/home/user/projects/my_project",
+                        "file_path": "src/models.py",
+                        "config": {
+                            "modules": {
+                                "models": {
+                                    "classes": ["User", "Product", "Order"],
+                                    "functions": [],
+                                },
+                                "utils": {
+                                    "classes": [],
+                                    "functions": ["validate_email", "format_date"],
+                                },
+                            },
+                        },
+                    },
+                    "explanation": (
+                        "Splits models.py into models/ package with "
+                        "models.py (classes) and utils.py (functions) modules."
+                    ),
+                },
+            ],
+            "error_cases": {
+                "PROJECT_NOT_FOUND": {
+                    "description": "Project not found in database for given root_dir",
+                    "example": "root_dir='/path' but project not registered",
+                    "solution": "Run update_indexes or ensure project is registered in database",
+                },
+                "FILE_NOT_FOUND": {
+                    "description": "File path doesn't exist or is not accessible",
+                    "example": "file_path='nonexistent.py'",
+                    "solution": "Provide valid file path relative to root_dir or absolute path",
+                },
+                "SPLIT_FILE_TO_PACKAGE_ERROR": {
+                    "description": (
+                        "Split operation failed. Common causes:\n"
+                        "- Failed to parse file AST (syntax errors)\n"
+                        "- Class or function not found in file\n"
+                        "- No modules specified in config\n"
+                        "- Package directory creation failed (permissions)"
+                    ),
+                    "example": (
+                        "Error: Failed to parse file AST\n"
+                        "Error: Class 'NonExistentClass' not found\n"
+                        "Error: No modules specified in config"
+                    ),
+                    "solution": (
+                        "Use list_cst_blocks command to discover all classes and functions. "
+                        "Ensure file has valid Python syntax. "
+                        "Check that all specified classes/functions exist in the file."
+                    ),
+                },
+            },
+            "return_value": {
+                "success": {
+                    "description": "Command executed successfully",
+                    "data": {
+                        "success": "True if operation succeeded",
+                        "message": "Human-readable success message with package path",
+                        "backup_uuid": (
+                            "UUID of created backup. "
+                            "Use this with restore_backup_file command to restore original file."
+                        ),
+                        "package_path": "Path to created package directory",
+                        "modules": "List of created module names",
+                    },
+                    "example": {
+                        "success": True,
+                        "message": "File split into package at /path/task_queue with modules: ftp_executor, docker_executor",
+                        "backup_uuid": "123e4567-e89b-12d3-a456-426614174000",
+                        "package_path": "/path/task_queue",
+                        "modules": ["ftp_executor", "docker_executor"],
+                    },
+                },
+                "error": {
+                    "description": "Command failed",
+                    "code": "Error code (e.g., SPLIT_FILE_TO_PACKAGE_ERROR)",
+                    "message": "Human-readable error message",
+                    "details": "Additional error information",
+                },
+            },
+            "best_practices": [
+                "Use list_cst_blocks command to discover file structure before creating config",
+                "Group related classes and functions together in modules",
+                "Ensure all classes and functions are distributed across modules",
+                "Keep module names descriptive and follow Python naming conventions",
+                "Test imports after split to ensure package structure is correct",
+                "Save backup_uuid for easy restoration if needed",
+            ],
         }
 
     async def execute(

@@ -213,6 +213,328 @@ class RevectorizeCommand(BaseMCPCommand):
             logger.error(f"Failed to revectorize chunks: {e}", exc_info=True)
             return self._handle_error(e, "REVECTORIZE_ERROR", "revectorize")
 
+    @classmethod
+    def metadata(cls: type["RevectorizeCommand"]) -> Dict[str, Any]:
+        """
+        Get detailed command metadata for AI models.
+
+        This method provides comprehensive information about the command,
+        including detailed descriptions, usage examples, and edge cases.
+        The metadata should be as detailed and clear as a man page.
+
+        Args:
+            cls: Command class.
+
+        Returns:
+            Dictionary with command metadata.
+        """
+        return {
+            "name": cls.name,
+            "version": cls.version,
+            "description": cls.descr,
+            "category": cls.category,
+            "author": cls.author,
+            "email": cls.email,
+            "detailed_description": (
+                "The revectorize command regenerates embeddings for code chunks and updates "
+                "the FAISS index. It implements dataset-scoped FAISS, allowing revectorization "
+                "for specific datasets or all datasets in a project.\n\n"
+                "Operation flow:\n"
+                "1. Validates root_dir exists and is a directory\n"
+                "2. Validates project_id matches root_dir/projectid file\n"
+                "3. Opens database connection\n"
+                "4. Verifies project exists in database\n"
+                "5. Loads config.json to get storage paths and vector dimension\n"
+                "6. Initializes SVOClientManager for embedding generation\n"
+                "7. If dataset_id provided: revectorizes chunks for that dataset\n"
+                "8. If dataset_id omitted: revectorizes chunks for all datasets in project\n"
+                "9. For each dataset:\n"
+                "   - Gets chunks that need revectorization\n"
+                "   - For each chunk:\n"
+                "     * Gets chunk text\n"
+                "     * Calls SVO service to generate embedding\n"
+                "     * Updates database with new embedding\n"
+                "     * Sets vector_id to NULL (will be reassigned on rebuild)\n"
+                "   - Rebuilds FAISS index from updated embeddings\n"
+                "10. Returns revectorization statistics\n\n"
+                "Revectorization Process:\n"
+                "- Finds chunks without embeddings or with force=True (all chunks)\n"
+                "- Generates new embeddings using SVO (Semantic Vector Operations) service\n"
+                "- Updates code_chunks.embedding_vector in database\n"
+                "- Updates code_chunks.embedding_model with model name\n"
+                "- Sets vector_id to NULL (normalized during FAISS rebuild)\n"
+                "- Rebuilds FAISS index after revectorization\n\n"
+                "Force Mode:\n"
+                "- If force=False: Only revectorizes chunks without embeddings\n"
+                "- If force=True: Revectorizes all chunks (regenerates all embeddings)\n"
+                "- Use force=True to update embeddings after model changes\n"
+                "- Use force=False to only process missing embeddings\n\n"
+                "Embedding Generation:\n"
+                "- Uses SVOClientManager to call embedding service\n"
+                "- Embeddings are generated asynchronously\n"
+                "- Vector dimension comes from config.json (default: 384)\n"
+                "- Embeddings are stored as JSON arrays in database\n"
+                "- Model name is stored for tracking embedding source\n\n"
+                "FAISS Index Update:\n"
+                "- After revectorization, FAISS index is rebuilt\n"
+                "- Rebuild normalizes vector_id to dense range\n"
+                "- Index includes all chunks with valid embeddings\n"
+                "- Index is dataset-scoped (one per dataset)\n\n"
+                "Use cases:\n"
+                "- Generate embeddings for chunks without vectors\n"
+                "- Regenerate embeddings after model changes\n"
+                "- Update embeddings for improved quality\n"
+                "- Initialize embeddings for new chunks\n"
+                "- Fix corrupted or invalid embeddings\n"
+                "- Revectorize after embedding service updates\n\n"
+                "Important notes:\n"
+                "- Requires SVO service to be configured and accessible\n"
+                "- Embedding generation can be slow for many chunks\n"
+                "- FAISS index is automatically rebuilt after revectorization\n"
+                "- force=True regenerates all embeddings (can be time-consuming)\n"
+                "- Chunks with empty text are skipped\n"
+                "- Failed chunks are logged but don't stop the process\n"
+                "- project_id must match root_dir/projectid file"
+            ),
+            "parameters": {
+                "root_dir": {
+                    "description": (
+                        "Project root directory path. Can be absolute or relative. "
+                        "Must contain projectid file and config.json."
+                    ),
+                    "type": "string",
+                    "required": True,
+                    "examples": [
+                        "/home/user/projects/my_project",
+                        ".",
+                        "./code_analysis",
+                    ],
+                },
+                "project_id": {
+                    "description": (
+                        "Project UUID. Must match the UUID in root_dir/projectid file. "
+                        "Used to identify project and resolve dataset chunks."
+                    ),
+                    "type": "string",
+                    "required": True,
+                    "examples": [
+                        "123e4567-e89b-12d3-a456-426614174000",
+                    ],
+                },
+                "dataset_id": {
+                    "description": (
+                        "Optional dataset UUID. If provided, revectorizes chunks only for that dataset. "
+                        "If omitted, revectorizes chunks for all datasets in the project. "
+                        "Dataset must exist in database."
+                    ),
+                    "type": "string",
+                    "required": False,
+                    "examples": [
+                        "223e4567-e89b-12d3-a456-426614174001",
+                    ],
+                },
+                "force": {
+                    "description": (
+                        "If True, force revectorization even if embeddings exist. "
+                        "Regenerates all embeddings. If False, only processes chunks without embeddings. "
+                        "Default is False."
+                    ),
+                    "type": "boolean",
+                    "required": False,
+                    "default": False,
+                    "examples": [False, True],
+                },
+            },
+            "usage_examples": [
+                {
+                    "description": "Revectorize missing embeddings for specific dataset",
+                    "command": {
+                        "root_dir": "/home/user/projects/my_project",
+                        "project_id": "123e4567-e89b-12d3-a456-426614174000",
+                        "dataset_id": "223e4567-e89b-12d3-a456-426614174001",
+                        "force": False,
+                    },
+                    "explanation": (
+                        "Revectorizes only chunks without embeddings for specific dataset. "
+                        "FAISS index is automatically rebuilt after completion."
+                    ),
+                },
+                {
+                    "description": "Force revectorize all chunks",
+                    "command": {
+                        "root_dir": "/home/user/projects/my_project",
+                        "project_id": "123e4567-e89b-12d3-a456-426614174000",
+                        "force": True,
+                    },
+                    "explanation": (
+                        "Regenerates all embeddings for all datasets in project. "
+                        "Useful after embedding model changes."
+                    ),
+                },
+                {
+                    "description": "Revectorize all datasets",
+                    "command": {
+                        "root_dir": "/home/user/projects/my_project",
+                        "project_id": "123e4567-e89b-12d3-a456-426614174000",
+                    },
+                    "explanation": (
+                        "Revectorizes missing embeddings for all datasets in project. "
+                        "Processes chunks without embeddings only."
+                    ),
+                },
+            ],
+            "error_cases": {
+                "PROJECT_NOT_FOUND": {
+                    "description": "Project not found in database",
+                    "message": "Project not found: {project_id}",
+                    "solution": (
+                        "Verify project_id is correct. Ensure project is registered in database. "
+                        "Run update_indexes to register project if needed."
+                    ),
+                },
+                "CONFIG_NOT_FOUND": {
+                    "description": "Configuration file not found",
+                    "message": "Configuration file not found: {config_path}",
+                    "solution": (
+                        "Ensure config.json exists in root_dir. "
+                        "Config file is required for SVO service configuration."
+                    ),
+                },
+                "DATASET_ID_MISMATCH": {
+                    "description": "Dataset ID mismatch",
+                    "message": "Dataset ID mismatch: provided {dataset_id}, found {db_dataset_id}",
+                    "solution": (
+                        "Verify dataset_id is correct. Dataset ID in database must match provided ID. "
+                        "Use list_projects or database queries to find correct dataset_id."
+                    ),
+                },
+                "NO_DATASETS": {
+                    "description": "No datasets found for project",
+                    "message": "No datasets found for project {project_id}",
+                    "solution": (
+                        "Ensure project has datasets. Run update_indexes to create datasets. "
+                        "Datasets are created automatically when indexing files."
+                    ),
+                },
+                "REVECTORIZE_ERROR": {
+                    "description": "Error during revectorization",
+                    "examples": [
+                        {
+                            "case": "SVO service unavailable",
+                            "message": "Failed to connect to SVO service",
+                            "solution": (
+                                "Check SVO service configuration in config.json. "
+                                "Verify service is running and accessible."
+                            ),
+                        },
+                        {
+                            "case": "Embedding generation failed",
+                            "message": "Failed to generate embedding",
+                            "solution": (
+                                "Check SVO service logs. Verify chunk text is valid. "
+                                "Some chunks may fail but process continues."
+                            ),
+                        },
+                        {
+                            "case": "Database update error",
+                            "message": "Failed to update database",
+                            "solution": (
+                                "Check database integrity. Verify write permissions. "
+                                "Check database connection."
+                            ),
+                        },
+                    ],
+                },
+            },
+            "return_value": {
+                "success": {
+                    "description": "Revectorization completed successfully",
+                    "data": {
+                        "project_id": "Project UUID that was processed",
+                        "datasets_processed": "Number of datasets processed",
+                        "total_chunks_revectorized": "Total number of chunks revectorized",
+                        "results": (
+                            "List of revectorization results. Each contains:\n"
+                            "- dataset_id: Dataset UUID\n"
+                            "- chunks_revectorized: Number of chunks revectorized\n"
+                            "- vectors_in_index: Number of vectors in rebuilt FAISS index\n"
+                            "- index_path: Path to FAISS index file"
+                        ),
+                    },
+                    "example_single_dataset": {
+                        "project_id": "123e4567-e89b-12d3-a456-426614174000",
+                        "datasets_processed": 1,
+                        "total_chunks_revectorized": 500,
+                        "results": [
+                            {
+                                "dataset_id": "223e4567-e89b-12d3-a456-426614174001",
+                                "chunks_revectorized": 500,
+                                "vectors_in_index": 5000,
+                                "index_path": "/data/faiss/123e4567.../223e4567.../index.faiss",
+                            }
+                        ],
+                    },
+                    "example_multiple_datasets": {
+                        "project_id": "123e4567-e89b-12d3-a456-426614174000",
+                        "datasets_processed": 3,
+                        "total_chunks_revectorized": 1200,
+                        "results": [
+                            {
+                                "dataset_id": "223e4567-e89b-12d3-a456-426614174001",
+                                "chunks_revectorized": 500,
+                                "vectors_in_index": 5000,
+                                "index_path": "/data/faiss/123e4567.../223e4567.../index.faiss",
+                            },
+                            {
+                                "dataset_id": "323e4567-e89b-12d3-a456-426614174002",
+                                "chunks_revectorized": 400,
+                                "vectors_in_index": 7000,
+                                "index_path": "/data/faiss/123e4567.../323e4567.../index.faiss",
+                            },
+                            {
+                                "dataset_id": "423e4567-e89b-12d3-a456-426614174003",
+                                "chunks_revectorized": 300,
+                                "vectors_in_index": 3000,
+                                "index_path": "/data/faiss/123e4567.../423e4567.../index.faiss",
+                            },
+                        ],
+                    },
+                    "example_no_chunks": {
+                        "project_id": "123e4567-e89b-12d3-a456-426614174000",
+                        "datasets_processed": 1,
+                        "total_chunks_revectorized": 0,
+                        "results": [
+                            {
+                                "dataset_id": "223e4567-e89b-12d3-a456-426614174001",
+                                "chunks_revectorized": 0,
+                                "index_path": "/data/faiss/123e4567.../223e4567.../index.faiss",
+                            }
+                        ],
+                    },
+                },
+                "error": {
+                    "description": "Command failed",
+                    "code": (
+                        "Error code (e.g., PROJECT_NOT_FOUND, CONFIG_NOT_FOUND, "
+                        "DATASET_ID_MISMATCH, NO_DATASETS, REVECTORIZE_ERROR)"
+                    ),
+                    "message": "Human-readable error message",
+                },
+            },
+            "best_practices": [
+                "Use force=False to only process missing embeddings (faster)",
+                "Use force=True after embedding model changes",
+                "Run revectorize before rebuild_faiss if embeddings are missing",
+                "Monitor chunks_revectorized to track progress",
+                "Check vectors_in_index to verify FAISS index was rebuilt",
+                "Use dataset_id to revectorize specific dataset",
+                "Revectorize all datasets after model updates",
+                "Ensure SVO service is configured and accessible",
+                "Monitor logs for failed chunk revectorization",
+                "Run rebuild_faiss after revectorize to ensure index is updated",
+            ],
+        }
+
     async def _revectorize_dataset(
         self,
         database: Any,

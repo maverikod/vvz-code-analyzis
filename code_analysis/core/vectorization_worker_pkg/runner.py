@@ -161,6 +161,76 @@ def run_vectorization_worker(
             asyncio.run(svo_client_manager.close())
         return {"processed": 0, "errors": 1}
 
+    # Check index synchronization with database
+    try:
+        from ..database import CodeDatabase
+        from ..database.base import create_driver_config_for_worker
+
+        logger.info("Checking FAISS index synchronization with database...")
+        driver_config = create_driver_config_for_worker(
+            db_path=Path(db_path),
+            driver_type="sqlite_proxy",
+        )
+        # Override timeout for sync check
+        if driver_config.get("type") == "sqlite_proxy":
+            driver_config["config"]["worker_config"]["command_timeout"] = 30.0
+            driver_config["config"]["worker_config"]["poll_interval"] = 0.5
+
+        sync_database = CodeDatabase(driver_config=driver_config)
+        try:
+            is_synced, sync_details = faiss_manager.check_index_sync(
+                database=sync_database,
+                project_id=project_id,
+                dataset_id=dataset_id,
+            )
+
+            if not is_synced:
+                logger.warning(
+                    f"⚠️  FAISS index synchronization check failed for {scope_desc}:"
+                )
+                logger.warning(
+                    f"   Database vectors: {sync_details['db_vector_count']}, "
+                    f"Index vectors: {sync_details['index_vector_count']}"
+                )
+                if sync_details.get("missing_in_index_count", 0) > 0:
+                    logger.warning(
+                        f"   Missing in index: {sync_details['missing_in_index_count']} vectors "
+                        f"(sample: {sync_details['missing_in_index'][:10]})"
+                    )
+                if sync_details.get("extra_in_index_count", 0) > 0:
+                    logger.warning(
+                        f"   Extra in index: {sync_details['extra_in_index_count']} vectors "
+                        f"(sample: {sync_details['extra_in_index'][:10]})"
+                    )
+
+                logger.info(
+                    f"🔄 Rebuilding FAISS index from database to fix synchronization issues..."
+                )
+                # Rebuild index from database
+                vectors_count = await faiss_manager.rebuild_from_database(
+                    database=sync_database,
+                    svo_client_manager=svo_client_manager,
+                    project_id=project_id,
+                    dataset_id=dataset_id,
+                )
+                logger.info(
+                    f"✅ FAISS index rebuilt: {vectors_count} vectors loaded for {scope_desc}"
+                )
+            else:
+                logger.info(
+                    f"✅ FAISS index is synchronized with database for {scope_desc}: "
+                    f"{sync_details['index_vector_count']} vectors"
+                )
+        finally:
+            sync_database.close()
+    except Exception as e:
+        logger.error(
+            f"Failed to check FAISS index synchronization: {e}. "
+            "Continuing with worker startup, but index may be out of sync.",
+            exc_info=True,
+        )
+        # Continue anyway - worker can still function, but index may need manual rebuild
+
     # Get retry config, min_chunk_length, and batch_processor config from svo_config if available
     min_chunk_length = 30  # default
     max_empty_iterations = 3  # default

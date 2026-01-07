@@ -211,13 +211,22 @@ class ComprehensiveAnalysisMCPCommand(BaseMCPCommand):
 
         try:
             db = self._open_database(root_dir)
-            proj_id = self._get_project_id(db, root_path, project_id)
-
-            if not proj_id:
-                db.close()
-                return ErrorResult(
-                    message="Project not found", code="PROJECT_NOT_FOUND"
-                )
+            
+            # Resolve project_id: if explicitly provided, use it; otherwise infer from root_dir
+            # If project_id is None and we can't infer it, we'll analyze all projects
+            proj_id = None
+            if project_id:
+                # Explicit project_id provided - validate it exists
+                proj_id = self._get_project_id(db, root_path, project_id)
+                if not proj_id:
+                    db.close()
+                    return ErrorResult(
+                        message="Project not found", code="PROJECT_NOT_FOUND"
+                    )
+            else:
+                # No explicit project_id - try to infer from root_dir
+                # If inference fails, proj_id remains None and we analyze all projects
+                proj_id = self._get_project_id(db, root_path, None)
 
             if progress_tracker:
                 progress_tracker.set_status("running")
@@ -323,15 +332,37 @@ class ComprehensiveAnalysisMCPCommand(BaseMCPCommand):
                     results["missing_docstrings"] = missing_docstrings
 
             else:
-                # Analyze all files in ALL projects (not just one project)
-                files = db._fetchall(
-                    "SELECT id, path, lines FROM files WHERE deleted = 0",
-                )
+                # Analyze multiple files
+                if proj_id:
+                    # Analyze all files in specific project
+                    project_files = db.get_project_files(proj_id, include_deleted=False)
+                    files = [
+                        {"id": f["id"], "path": f["path"], "lines": f.get("lines", 0)}
+                        for f in project_files
+                    ]
+                    analysis_logger.info(
+                        f"Starting comprehensive analysis for project {proj_id}: {len(files)} files to analyze"
+                    )
+                else:
+                    # Analyze all files in ALL projects
+                    files = db._fetchall(
+                        "SELECT id, path, lines FROM files WHERE deleted = 0",
+                    )
+                    analysis_logger.info(
+                        f"Starting comprehensive analysis for all projects: {len(files)} files to analyze"
+                    )
 
                 files_total = len(files)
-                analysis_logger.info(
-                    f"Starting comprehensive analysis: {files_total} files to analyze"
-                )
+                if progress_tracker:
+                    if proj_id:
+                        progress_tracker.set_description(
+                            f"Analyzing {files_total} files in project..."
+                        )
+                    else:
+                        progress_tracker.set_description(
+                            f"Analyzing {files_total} files in all projects..."
+                        )
+                    progress_tracker.set_progress(0)
                 if progress_tracker:
                     progress_tracker.set_description(
                         f"Analyzing {files_total} files..."
@@ -529,3 +560,368 @@ class ComprehensiveAnalysisMCPCommand(BaseMCPCommand):
             return self._handle_error(
                 e, "COMPREHENSIVE_ANALYSIS_ERROR", "comprehensive_analysis"
             )
+
+    @classmethod
+    def metadata(cls: type["ComprehensiveAnalysisMCPCommand"]) -> Dict[str, Any]:
+        """
+        Get detailed command metadata for AI models.
+
+        This method provides comprehensive information about the command,
+        including detailed descriptions, usage examples, and edge cases.
+        The metadata should be as detailed and clear as a man page.
+
+        Args:
+            cls: Command class.
+
+        Returns:
+            Dictionary with command metadata.
+        """
+        return {
+            "name": cls.name,
+            "version": cls.version,
+            "description": cls.descr,
+            "category": cls.category,
+            "author": cls.author,
+            "email": cls.email,
+            "detailed_description": (
+                "The comprehensive_analysis command performs comprehensive code quality analysis "
+                "combining multiple analysis types in a single operation. This is a long-running "
+                "command executed via queue and provides detailed code quality metrics.\n\n"
+                "Operation flow:\n"
+                "1. Validates root_dir exists and is a directory\n"
+                "2. Opens database connection\n"
+                "3. Resolves project_id:\n"
+                "   - If project_id parameter provided, validates it exists\n"
+                "   - If not provided, tries to infer from root_dir\n"
+                "   - If cannot infer, project_id remains None (analyze all projects)\n"
+                "4. Sets up dedicated log file (logs/comprehensive_analysis.log)\n"
+                "5. Initializes ComprehensiveAnalyzer and DuplicateDetector\n"
+                "6. If file_path provided:\n"
+                "   - Analyzes single file with all enabled checks\n"
+                "7. If file_path not provided:\n"
+                "   - If project_id is set: Analyzes all files in that project\n"
+                "   - If project_id is None: Analyzes ALL files in ALL projects\n"
+                "   - Processes files with progress tracking\n"
+                "   - Runs all enabled checks for each file\n"
+                "8. Aggregates results and creates summary statistics\n"
+                "9. Returns comprehensive analysis results\n"
+                "10. Results are NOT saved to database - they are only returned in the response\n\n"
+                "Analysis Types:\n"
+                "- Placeholders: Finds TODO, FIXME, XXX, HACK, NOTE comments\n"
+                "- Stubs: Finds functions/methods with pass, ellipsis, NotImplementedError\n"
+                "- Empty methods: Finds methods without body (excluding abstract methods)\n"
+                "- Imports not at top: Finds imports after non-import statements\n"
+                "- Long files: Finds files exceeding max_lines threshold\n"
+                "- Duplicates: Finds code duplicates (structural and semantic)\n"
+                "- Flake8: Runs flake8 linter and reports errors\n"
+                "- Mypy: Runs mypy type checker and reports errors\n"
+                "- Missing docstrings: Finds files/classes/methods/functions without docstrings\n\n"
+                "Use cases:\n"
+                "- Complete code quality audit\n"
+                "- Identify code quality issues before refactoring\n"
+                "- Monitor code quality metrics\n"
+                "- Find technical debt indicators\n"
+                "- Generate code quality reports\n\n"
+                "Important notes:\n"
+                "- This is a long-running command (use_queue=True)\n"
+                "- When file_path not provided:\n"
+                "  * If project_id is set: analyzes all files in that project\n"
+                "  * If project_id is None: analyzes ALL files in ALL projects\n"
+                "- Progress is tracked and logged to logs/comprehensive_analysis.log\n"
+                "- Each check can be enabled/disabled via boolean parameters\n"
+                "- Results include summary statistics for all analysis types\n"
+                "- Results are NOT saved to database - they are only returned in the response\n"
+                "- To persist results, save them externally (e.g., to a file or external database)"
+            ),
+            "parameters": {
+                "root_dir": {
+                    "description": (
+                        "Project root directory path. Can be absolute or relative. "
+                        "Must contain data/code_analysis.db file."
+                    ),
+                    "type": "string",
+                    "required": True,
+                },
+                "file_path": {
+                    "description": (
+                        "Optional path to specific file to analyze. If provided, only analyzes this file. "
+                        "If omitted, analyzes files based on project_id parameter (see project_id description)."
+                    ),
+                    "type": "string",
+                    "required": False,
+                },
+                "max_lines": {
+                    "description": (
+                        "Maximum lines threshold for long files check. Default is 400. "
+                        "Files exceeding this threshold are reported as long files."
+                    ),
+                    "type": "integer",
+                    "required": False,
+                    "default": 400,
+                },
+                "check_placeholders": {
+                    "description": (
+                        "Check for placeholders (TODO, FIXME, XXX, HACK, NOTE). Default is True."
+                    ),
+                    "type": "boolean",
+                    "required": False,
+                    "default": True,
+                },
+                "check_stubs": {
+                    "description": (
+                        "Check for stub functions/methods (pass, ellipsis, NotImplementedError). "
+                        "Default is True."
+                    ),
+                    "type": "boolean",
+                    "required": False,
+                    "default": True,
+                },
+                "check_empty_methods": {
+                    "description": (
+                        "Check for empty methods (excluding abstract methods). Default is True."
+                    ),
+                    "type": "boolean",
+                    "required": False,
+                    "default": True,
+                },
+                "check_imports": {
+                    "description": (
+                        "Check for imports not at top of file. Default is True."
+                    ),
+                    "type": "boolean",
+                    "required": False,
+                    "default": True,
+                },
+                "check_long_files": {
+                    "description": (
+                        "Check for long files (exceeding max_lines). Default is True."
+                    ),
+                    "type": "boolean",
+                    "required": False,
+                    "default": True,
+                },
+                "check_duplicates": {
+                    "description": (
+                        "Check for code duplicates. Default is True."
+                    ),
+                    "type": "boolean",
+                    "required": False,
+                    "default": True,
+                },
+                "check_flake8": {
+                    "description": (
+                        "Check code with flake8 linter. Default is True."
+                    ),
+                    "type": "boolean",
+                    "required": False,
+                    "default": True,
+                },
+                "check_mypy": {
+                    "description": (
+                        "Check code with mypy type checker. Default is True."
+                    ),
+                    "type": "boolean",
+                    "required": False,
+                    "default": True,
+                },
+                "check_docstrings": {
+                    "description": (
+                        "Check for missing docstrings (files, classes, methods, functions). "
+                        "Default is True."
+                    ),
+                    "type": "boolean",
+                    "required": False,
+                    "default": True,
+                },
+                "duplicate_min_lines": {
+                    "description": (
+                        "Minimum lines for duplicate detection. Default is 5."
+                    ),
+                    "type": "integer",
+                    "required": False,
+                    "default": 5,
+                },
+                "duplicate_min_similarity": {
+                    "description": (
+                        "Minimum similarity for duplicates (0.0-1.0). Default is 0.8."
+                    ),
+                    "type": "number",
+                    "required": False,
+                    "default": 0.8,
+                },
+                "mypy_config_file": {
+                    "description": (
+                        "Optional path to mypy config file. If provided, uses this config for mypy checks."
+                    ),
+                    "type": "string",
+                    "required": False,
+                },
+                "project_id": {
+                    "description": (
+                        "Optional project UUID. "
+                        "If provided: analyzes all files in that project (when file_path not provided). "
+                        "If omitted: tries to infer from root_dir. "
+                        "If cannot infer: analyzes all files in all projects (when file_path not provided)."
+                    ),
+                    "type": "string",
+                    "required": False,
+                },
+            },
+            "usage_examples": [
+                {
+                    "description": "Run full comprehensive analysis on all files in all projects",
+                    "command": {
+                        "root_dir": "/home/user/projects/my_project",
+                        # project_id not provided - analyzes all projects
+                    },
+                    "explanation": (
+                        "Runs all checks on all files in all projects. This is a long-running operation. "
+                        "Use queue_get_job_status to check progress."
+                    ),
+                },
+                {
+                    "description": "Analyze all files in specific project",
+                    "command": {
+                        "root_dir": "/home/user/projects/my_project",
+                        "project_id": "123e4567-e89b-12d3-a456-426614174000",
+                    },
+                    "explanation": (
+                        "Runs all checks on all files in the specified project only. "
+                        "Faster than analyzing all projects."
+                    ),
+                },
+                {
+                    "description": "Analyze specific file with all checks",
+                    "command": {
+                        "root_dir": "/home/user/projects/my_project",
+                        "file_path": "src/main.py",
+                    },
+                    "explanation": (
+                        "Runs all checks on src/main.py file only. Faster than project-wide analysis."
+                    ),
+                },
+                {
+                    "description": "Run only specific checks",
+                    "command": {
+                        "root_dir": "/home/user/projects/my_project",
+                        "check_placeholders": True,
+                        "check_stubs": True,
+                        "check_duplicates": False,
+                        "check_flake8": False,
+                        "check_mypy": False,
+                    },
+                    "explanation": (
+                        "Runs only placeholder and stub checks, skipping duplicates and linting."
+                    ),
+                },
+                {
+                    "description": "Check with custom duplicate settings",
+                    "command": {
+                        "root_dir": "/home/user/projects/my_project",
+                        "duplicate_min_lines": 10,
+                        "duplicate_min_similarity": 0.9,
+                    },
+                    "explanation": (
+                        "Finds duplicates with minimum 10 lines and 90% similarity."
+                    ),
+                },
+            ],
+            "error_cases": {
+                "PROJECT_NOT_FOUND": {
+                    "description": "Project not found in database",
+                    "example": "root_dir='/path' but project not registered",
+                    "solution": "Ensure project is registered. Run update_indexes first.",
+                },
+                "FILE_NOT_FOUND": {
+                    "description": "File not found",
+                    "example": "file_path='src/main.py' but file doesn't exist",
+                    "solution": "Verify file path is correct and file exists.",
+                },
+                "COMPREHENSIVE_ANALYSIS_ERROR": {
+                    "description": "General error during comprehensive analysis",
+                    "example": "Database error, analysis failure, or tool execution error",
+                    "solution": (
+                        "Check database integrity, verify file paths, ensure analysis tools "
+                        "(flake8, mypy) are installed. Check logs/comprehensive_analysis.log for details."
+                    ),
+                },
+            },
+            "return_value": {
+                "success": {
+                    "description": "Command executed successfully",
+                    "data": {
+                        "placeholders": "List of placeholder comments (TODO, FIXME, etc.)",
+                        "stubs": "List of stub functions/methods",
+                        "empty_methods": "List of empty methods",
+                        "imports_not_at_top": "List of imports not at top of file",
+                        "long_files": "List of files exceeding max_lines",
+                        "duplicates": "List of duplicate code groups",
+                        "flake8_errors": "List of flake8 linting errors",
+                        "mypy_errors": "List of mypy type checking errors",
+                        "missing_docstrings": "List of missing docstrings (files, classes, methods, functions)",
+                        "summary": (
+                            "Summary statistics dictionary with:\n"
+                            "- total_placeholders, total_stubs, total_empty_methods\n"
+                            "- total_imports_not_at_top, total_long_files\n"
+                            "- total_duplicate_groups, total_duplicate_occurrences\n"
+                            "- total_flake8_errors, files_with_flake8_errors\n"
+                            "- total_mypy_errors, files_with_mypy_errors\n"
+                            "- total_missing_docstrings, files_without_docstrings\n"
+                            "- classes_without_docstrings, methods_without_docstrings\n"
+                            "- functions_without_docstrings"
+                        ),
+                    },
+                    "example": {
+                        "placeholders": [
+                            {"file_path": "src/main.py", "line": 42, "type": "TODO", "text": "TODO: refactor"},
+                        ],
+                        "stubs": [
+                            {"file_path": "src/utils.py", "line": 10, "name": "stub_function", "type": "function"},
+                        ],
+                        "summary": {
+                            "total_placeholders": 1,
+                            "total_stubs": 1,
+                            "total_empty_methods": 0,
+                            "total_long_files": 0,
+                            "total_duplicate_groups": 0,
+                            "total_flake8_errors": 0,
+                            "total_mypy_errors": 0,
+                        },
+                    },
+                },
+                "error": {
+                    "description": "Command failed",
+                    "code": "Error code (e.g., PROJECT_NOT_FOUND, FILE_NOT_FOUND, COMPREHENSIVE_ANALYSIS_ERROR)",
+                    "message": "Human-readable error message",
+                },
+            },
+            "best_practices": [
+                "Use file_path parameter for faster analysis of specific files",
+                "Use project_id parameter to analyze specific project instead of all projects",
+                "Disable checks you don't need to improve performance",
+                "Use queue_get_job_status to monitor progress for project-wide analysis",
+                "Check logs/comprehensive_analysis.log for detailed analysis logs",
+                "Review summary statistics first, then drill down into specific issues",
+                "Run this command regularly to track code quality over time",
+                "Use custom duplicate settings to focus on significant duplicates",
+                "Save results externally if you need to persist them (results are not saved to database)",
+            ],
+            "data_persistence": {
+                "results_saved_to_database": False,
+                "description": (
+                    "Results of comprehensive_analysis are NOT saved to the database. "
+                    "They are only returned in the command response. "
+                    "If you need to persist results, save them externally (e.g., to a JSON file or external database)."
+                ),
+                "what_is_saved": (
+                    "Nothing is saved. The command only reads from the database to get the list of files to analyze."
+                ),
+                "what_is_returned": (
+                    "Complete analysis results including:\n"
+                    "- All findings (placeholders, stubs, empty methods, etc.)\n"
+                    "- Summary statistics\n"
+                    "- All errors and warnings\n"
+                    "All data is returned in the SuccessResult.data dictionary."
+                ),
+            },
+        }

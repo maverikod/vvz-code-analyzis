@@ -95,6 +95,147 @@ class ListLongFilesMCPCommand(BaseMCPCommand):
         except Exception as e:
             return self._handle_error(e, "LIST_LONG_FILES_ERROR", "list_long_files")
 
+    @classmethod
+    def metadata(cls: type["ListLongFilesMCPCommand"]) -> Dict[str, Any]:
+        """
+        Get detailed command metadata for AI models.
+
+        This method provides comprehensive information about the command,
+        including detailed descriptions, usage examples, and edge cases.
+        The metadata should be as detailed and clear as a man page.
+
+        Args:
+            cls: Command class.
+
+        Returns:
+            Dictionary with command metadata.
+        """
+        return {
+            "name": cls.name,
+            "version": cls.version,
+            "description": cls.descr,
+            "category": cls.category,
+            "author": cls.author,
+            "email": cls.email,
+            "detailed_description": (
+                "The list_long_files command lists all files in a project that exceed the maximum "
+                "line limit. This is equivalent to old code_mapper functionality for finding oversized files. "
+                "Large files are harder to maintain and may need to be split into smaller modules.\n\n"
+                "Operation flow:\n"
+                "1. Validates root_dir exists and is a directory\n"
+                "2. Opens database connection\n"
+                "3. Resolves project_id (from parameter or inferred from root_dir)\n"
+                "4. Queries files table for project files\n"
+                "5. Filters files where lines > max_lines\n"
+                "6. Returns list of files exceeding the threshold\n\n"
+                "Use cases:\n"
+                "- Identify files that need to be split\n"
+                "- Monitor file size compliance\n"
+                "- Find oversized files before refactoring\n"
+                "- Enforce file size limits\n\n"
+                "Important notes:\n"
+                "- Uses line count from database (updated during indexing)\n"
+                "- Default threshold is 400 lines (project standard)\n"
+                "- Files are sorted by line count (descending)\n"
+                "- Equivalent to code_mapper functionality"
+            ),
+            "parameters": {
+                "root_dir": {
+                    "description": (
+                        "Project root directory path. Can be absolute or relative. "
+                        "Must contain data/code_analysis.db file."
+                    ),
+                    "type": "string",
+                    "required": True,
+                },
+                "max_lines": {
+                    "description": (
+                        "Maximum lines threshold. Default is 400. Files exceeding this threshold "
+                        "are reported as long files."
+                    ),
+                    "type": "integer",
+                    "required": False,
+                    "default": 400,
+                },
+                "project_id": {
+                    "description": (
+                        "Optional project UUID. If omitted, inferred from root_dir."
+                    ),
+                    "type": "string",
+                    "required": False,
+                },
+            },
+            "usage_examples": [
+                {
+                    "description": "List files exceeding 400 lines (default)",
+                    "command": {
+                        "root_dir": "/home/user/projects/my_project",
+                    },
+                    "explanation": (
+                        "Lists all files in project exceeding 400 lines (default threshold)."
+                    ),
+                },
+                {
+                    "description": "List files exceeding custom threshold",
+                    "command": {
+                        "root_dir": "/home/user/projects/my_project",
+                        "max_lines": 500,
+                    },
+                    "explanation": (
+                        "Lists all files exceeding 500 lines."
+                    ),
+                },
+            ],
+            "error_cases": {
+                "PROJECT_NOT_FOUND": {
+                    "description": "Project not found in database",
+                    "example": "root_dir='/path' but project not registered",
+                    "solution": "Ensure project is registered. Run update_indexes first.",
+                },
+                "LIST_LONG_FILES_ERROR": {
+                    "description": "General error during file listing",
+                    "example": "Database error or invalid parameters",
+                    "solution": (
+                        "Check database integrity, verify parameters, ensure project has been indexed."
+                    ),
+                },
+            },
+            "return_value": {
+                "success": {
+                    "description": "Command executed successfully",
+                    "data": {
+                        "long_files": (
+                            "List of files exceeding max_lines. Each entry contains:\n"
+                            "- path: File path\n"
+                            "- lines: Number of lines in file\n"
+                            "- Additional file metadata from database"
+                        ),
+                        "count": "Number of long files found",
+                        "max_lines": "Maximum lines threshold used",
+                    },
+                    "example": {
+                        "long_files": [
+                            {"path": "src/main.py", "lines": 450},
+                            {"path": "src/utils.py", "lines": 520},
+                        ],
+                        "count": 2,
+                        "max_lines": 400,
+                    },
+                },
+                "error": {
+                    "description": "Command failed",
+                    "code": "Error code (e.g., PROJECT_NOT_FOUND, LIST_LONG_FILES_ERROR)",
+                    "message": "Human-readable error message",
+                },
+            },
+            "best_practices": [
+                "Use default max_lines=400 to follow project standards",
+                "Run this command regularly to monitor file sizes",
+                "Use split_file_to_package to split large files",
+                "Combine with comprehensive_analysis for complete code quality overview",
+            ],
+        }
+
 
 class ListErrorsByCategoryMCPCommand(BaseMCPCommand):
     """
@@ -172,3 +313,143 @@ class ListErrorsByCategoryMCPCommand(BaseMCPCommand):
 
         except Exception as e:
             return self._handle_error(e, "LIST_ERRORS_ERROR", "list_errors_by_category")
+
+    @classmethod
+    def metadata(cls: type["ListErrorsByCategoryMCPCommand"]) -> Dict[str, Any]:
+        """
+        Get detailed command metadata for AI models.
+
+        This method provides comprehensive information about the command,
+        including detailed descriptions, usage examples, and edge cases.
+        The metadata should be as detailed and clear as a man page.
+
+        Args:
+            cls: Command class.
+
+        Returns:
+            Dictionary with command metadata.
+        """
+        return {
+            "name": cls.name,
+            "version": cls.version,
+            "description": cls.descr,
+            "category": cls.category,
+            "author": cls.author,
+            "email": cls.email,
+            "detailed_description": (
+                "The list_errors_by_category command lists code errors grouped by category. "
+                "This is equivalent to old code_mapper functionality for listing code issues. "
+                "It provides a categorized view of all code quality issues in the project.\n\n"
+                "Operation flow:\n"
+                "1. Validates root_dir exists and is a directory\n"
+                "2. Opens database connection\n"
+                "3. Resolves project_id (from parameter or inferred from root_dir)\n"
+                "4. If project_id is None, lists errors from all projects\n"
+                "5. Queries issues table grouped by issue_type\n"
+                "6. Aggregates issues by category\n"
+                "7. Creates summary statistics\n"
+                "8. Returns categorized errors with summary\n\n"
+                "Use cases:\n"
+                "- Get overview of code quality issues by category\n"
+                "- Identify most common issue types\n"
+                "- Track code quality metrics\n"
+                "- Generate code quality reports\n\n"
+                "Important notes:\n"
+                "- If project_id is None, returns errors from all projects\n"
+                "- Issues are grouped by issue_type (category)\n"
+                "- Summary includes counts per category and total\n"
+                "- Equivalent to code_mapper functionality"
+            ),
+            "parameters": {
+                "root_dir": {
+                    "description": (
+                        "Project root directory path. Can be absolute or relative. "
+                        "Must contain data/code_analysis.db file."
+                    ),
+                    "type": "string",
+                    "required": True,
+                },
+                "project_id": {
+                    "description": (
+                        "Optional project UUID. If omitted, inferred from root_dir. "
+                        "If project not found, lists errors from all projects."
+                    ),
+                    "type": "string",
+                    "required": False,
+                },
+            },
+            "usage_examples": [
+                {
+                    "description": "List errors for specific project",
+                    "command": {
+                        "root_dir": "/home/user/projects/my_project",
+                    },
+                    "explanation": (
+                        "Lists all code errors grouped by category for the project."
+                    ),
+                },
+                {
+                    "description": "List errors from all projects",
+                    "command": {
+                        "root_dir": "/home/user/projects/my_project",
+                        "project_id": None,
+                    },
+                    "explanation": (
+                        "Lists errors from all projects in the database (if project not found)."
+                    ),
+                },
+            ],
+            "error_cases": {
+                "LIST_ERRORS_ERROR": {
+                    "description": "General error during error listing",
+                    "example": "Database error or invalid parameters",
+                    "solution": (
+                        "Check database integrity, verify parameters, ensure project has been indexed."
+                    ),
+                },
+            },
+            "return_value": {
+                "success": {
+                    "description": "Command executed successfully",
+                    "data": {
+                        "categories": (
+                            "Dictionary mapping issue_type to list of issues. "
+                            "Each issue contains file path, line number, and issue details."
+                        ),
+                        "summary": (
+                            "Summary statistics dictionary with:\n"
+                            "- Counts per category (issue_type)\n"
+                            "- total: Total number of issues"
+                        ),
+                        "total": "Total number of issues found",
+                    },
+                    "example": {
+                        "categories": {
+                            "missing_docstring": [
+                                {"file_path": "src/main.py", "line": 10, "type": "class"},
+                            ],
+                            "long_file": [
+                                {"file_path": "src/utils.py", "lines": 450},
+                            ],
+                        },
+                        "summary": {
+                            "missing_docstring": 1,
+                            "long_file": 1,
+                            "total": 2,
+                        },
+                        "total": 2,
+                    },
+                },
+                "error": {
+                    "description": "Command failed",
+                    "code": "Error code (e.g., LIST_ERRORS_ERROR)",
+                    "message": "Human-readable error message",
+                },
+            },
+            "best_practices": [
+                "Use this command to get overview of code quality issues",
+                "Review summary statistics first, then drill down into specific categories",
+                "Combine with comprehensive_analysis for detailed issue analysis",
+                "Use for tracking code quality trends over time",
+            ],
+        }

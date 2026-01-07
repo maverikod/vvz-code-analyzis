@@ -80,6 +80,291 @@ class GetWorkerStatusMCPCommand(BaseMCPCommand):
         except Exception as e:
             return self._handle_error(e, "WORKER_STATUS_ERROR", "get_worker_status")
 
+    @classmethod
+    def metadata(cls: type["GetWorkerStatusMCPCommand"]) -> Dict[str, Any]:
+        """
+        Get detailed command metadata for AI models.
+
+        This method provides comprehensive information about the command,
+        including detailed descriptions, usage examples, and edge cases.
+        The metadata should be as detailed and clear as a man page.
+
+        Args:
+            cls: Command class.
+
+        Returns:
+            Dictionary with command metadata.
+        """
+        return {
+            "name": cls.name,
+            "version": cls.version,
+            "description": cls.descr,
+            "category": cls.category,
+            "author": cls.author,
+            "email": cls.email,
+            "detailed_description": (
+                "The get_worker_status command monitors worker process status, resource usage, "
+                "and recent activity. It supports two types of workers: file_watcher and vectorization. "
+                "The command provides comprehensive information about worker processes including "
+                "CPU/memory usage, uptime, lock file status, and log activity.\n\n"
+                "Operation flow:\n"
+                "1. Validates worker_type parameter (file_watcher or vectorization)\n"
+                "2. Attempts to get registered workers from WorkerManager\n"
+                "3. If no registered workers, searches for processes by name pattern\n"
+                "4. For file_watcher, checks lock file status if provided\n"
+                "5. Reads PID from PID file if log_path provided (fallback)\n"
+                "6. Collects process information (CPU, memory, uptime)\n"
+                "7. Analyzes recent log activity if log_path provided\n"
+                "8. Returns comprehensive status summary\n\n"
+                "Worker Types:\n"
+                "- file_watcher: Monitors file system changes and updates database\n"
+                "- vectorization: Processes code chunks and generates embeddings\n\n"
+                "Process Discovery Methods:\n"
+                "1. WorkerManager: Gets registered workers (most reliable)\n"
+                "2. Process name search: Searches running processes by cmdline pattern\n"
+                "3. Lock file: For file_watcher, uses lock file PID\n"
+                "4. PID file: Reads PID from <worker>.pid file (if log_path provided)\n\n"
+                "Resource Monitoring:\n"
+                "- CPU usage: Percentage of CPU time used (per process and total)\n"
+                "- Memory usage: Resident Set Size (RSS) in megabytes\n"
+                "- Uptime: Process uptime in seconds\n"
+                "- Process status: Running state (running, sleeping, etc.)\n\n"
+                "Lock File (file_watcher only):\n"
+                "- Contains PID, creation timestamp, worker name, hostname\n"
+                "- Used to identify active file watcher process\n"
+                "- Validates that process is still alive\n\n"
+                "Log Activity:\n"
+                "- Analyzes recent log entries (last 10 lines by default)\n"
+                "- Extracts timestamp from log entries\n"
+                "- Calculates age of last entry\n"
+                "- Provides file size information\n\n"
+                "Use cases:\n"
+                "- Monitor worker health and resource usage\n"
+                "- Troubleshoot worker issues\n"
+                "- Check if workers are running\n"
+                "- Monitor worker performance\n"
+                "- Verify worker activity from logs\n"
+                "- Debug worker startup problems\n\n"
+                "Important notes:\n"
+                "- Requires psutil library for process information\n"
+                "- Process discovery may find multiple workers of same type\n"
+                "- Lock file is optional but recommended for file_watcher\n"
+                "- Log path is optional but enables activity monitoring\n"
+                "- PID file discovery works if log_path points to .log file"
+            ),
+            "parameters": {
+                "worker_type": {
+                    "description": (
+                        "Type of worker to check. Must be one of: 'file_watcher' or 'vectorization'. "
+                        "Determines which worker processes to monitor."
+                    ),
+                    "type": "string",
+                    "required": True,
+                    "enum": ["file_watcher", "vectorization"],
+                    "examples": ["file_watcher", "vectorization"],
+                },
+                "log_path": {
+                    "description": (
+                        "Optional path to worker log file. If provided:\n"
+                        "- Enables log activity analysis\n"
+                        "- Enables PID file discovery (<log_name>.pid)\n"
+                        "- Should point to worker's log file (e.g., file_watcher.log)"
+                    ),
+                    "type": "string",
+                    "required": False,
+                    "examples": [
+                        "/home/user/projects/my_project/logs/file_watcher.log",
+                        "logs/vectorization.log",
+                    ],
+                },
+                "lock_file_path": {
+                    "description": (
+                        "Optional path to lock file (for file_watcher only). "
+                        "Lock file contains PID and metadata of active file watcher. "
+                        "Used to identify the correct worker process."
+                    ),
+                    "type": "string",
+                    "required": False,
+                    "examples": [
+                        "/home/user/projects/my_project/data/file_watcher.lock",
+                    ],
+                },
+            },
+            "usage_examples": [
+                {
+                    "description": "Check file watcher status",
+                    "command": {
+                        "worker_type": "file_watcher",
+                    },
+                    "explanation": (
+                        "Checks status of file watcher workers. "
+                        "Searches for processes and returns status information."
+                    ),
+                },
+                {
+                    "description": "Check vectorization worker with log",
+                    "command": {
+                        "worker_type": "vectorization",
+                        "log_path": "/home/user/projects/my_project/logs/vectorization.log",
+                    },
+                    "explanation": (
+                        "Checks vectorization worker status and analyzes log activity. "
+                        "Also attempts PID file discovery from log path."
+                    ),
+                },
+                {
+                    "description": "Check file watcher with lock file",
+                    "command": {
+                        "worker_type": "file_watcher",
+                        "lock_file_path": "/home/user/projects/my_project/data/file_watcher.lock",
+                        "log_path": "/home/user/projects/my_project/logs/file_watcher.log",
+                    },
+                    "explanation": (
+                        "Checks file watcher using lock file for process identification "
+                        "and log file for activity monitoring."
+                    ),
+                },
+            ],
+            "error_cases": {
+                "WORKER_STATUS_ERROR": {
+                    "description": "Error during worker status check",
+                    "examples": [
+                        {
+                            "case": "Invalid worker type",
+                            "message": "Invalid worker_type",
+                            "solution": "Use 'file_watcher' or 'vectorization'",
+                        },
+                        {
+                            "case": "Permission denied",
+                            "message": "Access denied to process",
+                            "solution": (
+                                "Check process permissions. May need elevated privileges "
+                                "to access other users' processes."
+                            ),
+                        },
+                        {
+                            "case": "Log file read error",
+                            "message": "Error reading log file",
+                            "solution": (
+                                "Verify log_path is correct and file is readable. "
+                                "Error is logged but doesn't fail the command."
+                            ),
+                        },
+                    ],
+                },
+            },
+            "return_value": {
+                "success": {
+                    "description": "Worker status retrieved successfully",
+                    "data": {
+                        "worker_type": "Type of worker checked",
+                        "timestamp": "ISO timestamp of status check",
+                        "processes": (
+                            "List of worker process information. Each contains:\n"
+                            "- pid: Process ID\n"
+                            "- status: Process status (running, sleeping, etc.)\n"
+                            "- cpu_percent: CPU usage percentage\n"
+                            "- memory_mb: Memory usage in megabytes\n"
+                            "- create_time: Process creation timestamp\n"
+                            "- uptime_seconds: Process uptime in seconds\n"
+                            "- cmdline: Process command line (first 3 args)"
+                        ),
+                        "lock_file": (
+                            "Lock file information (file_watcher only). Contains:\n"
+                            "- exists: Whether lock file exists\n"
+                            "- pid: PID from lock file\n"
+                            "- process_alive: Whether process is still running\n"
+                            "- created_at: Lock file creation timestamp\n"
+                            "- worker_name: Worker name\n"
+                            "- hostname: Hostname where worker runs"
+                        ),
+                        "log_activity": (
+                            "Recent log activity information. Contains:\n"
+                            "- available: Whether log file is available\n"
+                            "- file_size_mb: Log file size in megabytes\n"
+                            "- last_entry: Last log entry with timestamp and age\n"
+                            "- recent_lines_count: Number of recent lines analyzed"
+                        ),
+                        "summary": {
+                            "process_count": "Number of worker processes found",
+                            "is_running": "True if any processes are running",
+                            "total_cpu_percent": "Total CPU usage across all processes",
+                            "total_memory_mb": "Total memory usage in megabytes",
+                            "oldest_process_uptime_seconds": "Uptime of oldest process",
+                        },
+                    },
+                    "example_running": {
+                        "worker_type": "file_watcher",
+                        "timestamp": "2024-01-15T14:30:25",
+                        "processes": [
+                            {
+                                "pid": 12345,
+                                "status": "running",
+                                "cpu_percent": 2.5,
+                                "memory_mb": 45.2,
+                                "create_time": "2024-01-15T10:00:00",
+                                "uptime_seconds": 16225,
+                                "cmdline": "python -m code_analysis.workers.file_watcher",
+                            }
+                        ],
+                        "lock_file": {
+                            "exists": True,
+                            "pid": 12345,
+                            "process_alive": True,
+                            "created_at": "2024-01-15T10:00:00",
+                            "worker_name": "file_watcher",
+                            "hostname": "server1",
+                        },
+                        "log_activity": {
+                            "available": True,
+                            "file_size_mb": 2.5,
+                            "last_entry": {
+                                "timestamp": "2024-01-15T14:29:50",
+                                "age_seconds": 35,
+                                "line": "2024-01-15 14:29:50 | INFO | Processed file: src/main.py",
+                            },
+                            "recent_lines_count": 10,
+                        },
+                        "summary": {
+                            "process_count": 1,
+                            "is_running": True,
+                            "total_cpu_percent": 2.5,
+                            "total_memory_mb": 45.2,
+                            "oldest_process_uptime_seconds": 16225,
+                        },
+                    },
+                    "example_not_running": {
+                        "worker_type": "vectorization",
+                        "timestamp": "2024-01-15T14:30:25",
+                        "processes": [],
+                        "lock_file": None,
+                        "log_activity": {"available": False},
+                        "summary": {
+                            "process_count": 0,
+                            "is_running": False,
+                            "total_cpu_percent": 0,
+                            "total_memory_mb": 0,
+                        },
+                    },
+                },
+                "error": {
+                    "description": "Command failed",
+                    "code": "Error code (e.g., WORKER_STATUS_ERROR)",
+                    "message": "Human-readable error message",
+                },
+            },
+            "best_practices": [
+                "Use log_path to enable log activity monitoring",
+                "Use lock_file_path for file_watcher to get accurate process identification",
+                "Check summary.is_running to quickly see if workers are active",
+                "Monitor total_cpu_percent and total_memory_mb for resource usage",
+                "Check log_activity.last_entry.age_seconds to verify recent activity",
+                "Use process_count to detect multiple workers (may indicate issues)",
+                "Check oldest_process_uptime_seconds to see worker stability",
+                "If processes list is empty, worker may not be running",
+            ],
+        }
+
 
 class GetDatabaseStatusMCPCommand(BaseMCPCommand):
     """Get database state and statistics."""
@@ -131,3 +416,262 @@ class GetDatabaseStatusMCPCommand(BaseMCPCommand):
             return SuccessResult(data=result)
         except Exception as e:
             return self._handle_error(e, "DATABASE_STATUS_ERROR", "get_database_status")
+
+    @classmethod
+    def metadata(cls: type["GetDatabaseStatusMCPCommand"]) -> Dict[str, Any]:
+        """
+        Get detailed command metadata for AI models.
+
+        This method provides comprehensive information about the command,
+        including detailed descriptions, usage examples, and edge cases.
+        The metadata should be as detailed and clear as a man page.
+
+        Args:
+            cls: Command class.
+
+        Returns:
+            Dictionary with command metadata.
+        """
+        return {
+            "name": cls.name,
+            "version": cls.version,
+            "description": cls.descr,
+            "category": cls.category,
+            "author": cls.author,
+            "email": cls.email,
+            "detailed_description": (
+                "The get_database_status command provides comprehensive monitoring of the "
+                "SQLite database state, statistics, and pending work. It reports file statistics, "
+                "chunk statistics, project information, and recent activity to help monitor "
+                "database health and identify work that needs to be done.\n\n"
+                "Operation flow:\n"
+                "1. Validates root_dir exists and is a directory\n"
+                "2. Resolves database path: root_dir/data/code_analysis.db\n"
+                "3. Checks if database file exists\n"
+                "4. Gets file size if database exists\n"
+                "5. Opens database connection\n"
+                "6. Queries project statistics\n"
+                "7. Queries file statistics (total, deleted, with docstrings, needing chunking)\n"
+                "8. Queries chunk statistics (total, vectorized, not vectorized)\n"
+                "9. Queries recent activity (last 24 hours)\n"
+                "10. Gets samples of files needing chunking\n"
+                "11. Gets samples of chunks needing vectorization\n"
+                "12. Returns comprehensive status report\n\n"
+                "File Statistics:\n"
+                "- total: Total number of files in database\n"
+                "- deleted: Number of deleted files\n"
+                "- active: Number of active (non-deleted) files\n"
+                "- with_docstring: Files that have docstrings\n"
+                "- needing_chunking: Active files without chunks\n"
+                "- needing_chunking_sample: Sample of files needing chunking (up to 10)\n\n"
+                "Chunk Statistics:\n"
+                "- total: Total number of code chunks\n"
+                "- vectorized: Chunks with embedding vectors\n"
+                "- not_vectorized: Chunks without embedding vectors\n"
+                "- vectorization_percent: Percentage of chunks that are vectorized\n"
+                "- needing_vectorization_sample: Sample of chunks needing vectorization (up to 10)\n\n"
+                "Project Statistics:\n"
+                "- total: Total number of projects\n"
+                "- sample: Sample of projects (up to 10) with id and name\n\n"
+                "Recent Activity:\n"
+                "- files_updated_24h: Files updated in last 24 hours\n"
+                "- chunks_updated_24h: Chunks created in last 24 hours\n\n"
+                "Use cases:\n"
+                "- Monitor database health and size\n"
+                "- Check pending work (files needing chunking, chunks needing vectorization)\n"
+                "- Track project and file statistics\n"
+                "- Monitor recent activity\n"
+                "- Identify files that need processing\n"
+                "- Verify vectorization progress\n"
+                "- Database capacity planning\n\n"
+                "Important notes:\n"
+                "- Database must exist (returns error if not found)\n"
+                "- Statistics are calculated from database queries\n"
+                "- Samples are limited to 10 items each\n"
+                "- Recent activity uses SQLite julianday() for time calculations\n"
+                "- File size is reported in megabytes\n"
+                "- All statistics are read-only (no database modifications)"
+            ),
+            "parameters": {
+                "root_dir": {
+                    "description": (
+                        "Project root directory path. Can be absolute or relative. "
+                        "Must contain data/code_analysis.db file."
+                    ),
+                    "type": "string",
+                    "required": True,
+                    "examples": [
+                        "/home/user/projects/my_project",
+                        ".",
+                        "./code_analysis",
+                    ],
+                },
+            },
+            "usage_examples": [
+                {
+                    "description": "Check database status",
+                    "command": {
+                        "root_dir": "/home/user/projects/my_project",
+                    },
+                    "explanation": (
+                        "Returns comprehensive database statistics including files, chunks, "
+                        "projects, and recent activity."
+                    ),
+                },
+                {
+                    "description": "Monitor database health",
+                    "command": {
+                        "root_dir": ".",
+                    },
+                    "explanation": (
+                        "Checks database status in current directory to monitor health and pending work."
+                    ),
+                },
+            ],
+            "error_cases": {
+                "DATABASE_STATUS_ERROR": {
+                    "description": "Error during database status check",
+                    "examples": [
+                        {
+                            "case": "Database file not found",
+                            "message": "Database file not found",
+                            "solution": (
+                                "Verify root_dir is correct and database exists. "
+                                "Run update_indexes to create database if needed."
+                            ),
+                        },
+                        {
+                            "case": "Database connection error",
+                            "message": "Error connecting to database",
+                            "solution": (
+                                "Check database file permissions. "
+                                "Verify database is not corrupted (use get_database_corruption_status)."
+                            ),
+                        },
+                        {
+                            "case": "Query error",
+                            "message": "Error executing query",
+                            "solution": (
+                                "Database schema may be outdated. "
+                                "Check database integrity and consider repair if needed."
+                            ),
+                        },
+                    ],
+                },
+            },
+            "return_value": {
+                "success": {
+                    "description": "Database status retrieved successfully",
+                    "data": {
+                        "db_path": "Path to database file",
+                        "timestamp": "ISO timestamp of status check",
+                        "exists": "True if database file exists",
+                        "file_size_mb": "Database file size in megabytes",
+                        "projects": {
+                            "total": "Total number of projects",
+                            "sample": "List of project samples (up to 10) with id and name",
+                        },
+                        "files": {
+                            "total": "Total number of files",
+                            "deleted": "Number of deleted files",
+                            "active": "Number of active (non-deleted) files",
+                            "with_docstring": "Files with docstrings",
+                            "needing_chunking": "Active files without chunks",
+                            "needing_chunking_sample": (
+                                "Sample of files needing chunking (up to 10). "
+                                "Each contains: id, path, has_docstring, last_modified"
+                            ),
+                        },
+                        "chunks": {
+                            "total": "Total number of chunks",
+                            "vectorized": "Chunks with embedding vectors",
+                            "not_vectorized": "Chunks without embedding vectors",
+                            "vectorization_percent": "Percentage of vectorized chunks",
+                            "needing_vectorization_sample": (
+                                "Sample of chunks needing vectorization (up to 10). "
+                                "Each contains: id, file_id, chunk_preview, created_at"
+                            ),
+                        },
+                        "recent_activity": {
+                            "files_updated_24h": "Files updated in last 24 hours",
+                            "chunks_updated_24h": "Chunks created in last 24 hours",
+                        },
+                        "error": "Error message if status check failed (optional)",
+                    },
+                    "example": {
+                        "db_path": "/home/user/projects/my_project/data/code_analysis.db",
+                        "timestamp": "2024-01-15T14:30:25",
+                        "exists": True,
+                        "file_size_mb": 125.5,
+                        "projects": {
+                            "total": 3,
+                            "sample": [
+                                {"id": "123e4567-e89b-12d3-a456-426614174000", "name": "project1"},
+                                {"id": "223e4567-e89b-12d3-a456-426614174001", "name": "project2"},
+                            ],
+                        },
+                        "files": {
+                            "total": 1500,
+                            "deleted": 50,
+                            "active": 1450,
+                            "with_docstring": 1200,
+                            "needing_chunking": 25,
+                            "needing_chunking_sample": [
+                                {
+                                    "id": 1001,
+                                    "path": "src/new_file.py",
+                                    "has_docstring": False,
+                                    "last_modified": "2024-01-15T10:00:00",
+                                }
+                            ],
+                        },
+                        "chunks": {
+                            "total": 5000,
+                            "vectorized": 4800,
+                            "not_vectorized": 200,
+                            "vectorization_percent": 96.0,
+                            "needing_vectorization_sample": [
+                                {
+                                    "id": 5001,
+                                    "file_id": 1001,
+                                    "chunk_preview": "def new_function(): ...",
+                                    "created_at": "2024-01-15T10:00:00",
+                                }
+                            ],
+                        },
+                        "recent_activity": {
+                            "files_updated_24h": 45,
+                            "chunks_updated_24h": 120,
+                        },
+                    },
+                    "example_not_found": {
+                        "db_path": "/home/user/projects/my_project/data/code_analysis.db",
+                        "timestamp": "2024-01-15T14:30:25",
+                        "exists": False,
+                        "file_size_mb": 0,
+                        "error": "Database file not found",
+                        "projects": {},
+                        "files": {},
+                        "chunks": {},
+                        "recent_activity": {},
+                    },
+                },
+                "error": {
+                    "description": "Command failed",
+                    "code": "Error code (e.g., DATABASE_STATUS_ERROR)",
+                    "message": "Human-readable error message",
+                },
+            },
+            "best_practices": [
+                "Check exists field first to verify database exists",
+                "Monitor file_size_mb to track database growth",
+                "Check files.needing_chunking to identify pending work",
+                "Check chunks.not_vectorized to see vectorization backlog",
+                "Use vectorization_percent to track vectorization progress",
+                "Review needing_chunking_sample to see specific files needing processing",
+                "Review needing_vectorization_sample to see specific chunks needing vectorization",
+                "Monitor recent_activity to see database update frequency",
+                "Use this command regularly to monitor database health",
+                "Check projects.total to verify project registration",
+            ],
+        }

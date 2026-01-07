@@ -315,3 +315,262 @@ class SemanticSearchMCPCommand(BaseMCPCommand):
 
         except Exception as e:
             return self._handle_error(e, "SEARCH_ERROR", "semantic_search")
+
+    @classmethod
+    def metadata(cls: type["SemanticSearchMCPCommand"]) -> Dict[str, Any]:
+        """
+        Get detailed command metadata for AI models.
+
+        This method provides comprehensive information about the command,
+        including detailed descriptions, usage examples, and edge cases.
+        The metadata should be as detailed and clear as a man page.
+
+        Args:
+            cls: Command class.
+
+        Returns:
+            Dictionary with command metadata.
+        """
+        return {
+            "name": cls.name,
+            "version": cls.version,
+            "description": cls.descr,
+            "category": cls.category,
+            "author": cls.author,
+            "email": cls.email,
+            "detailed_description": (
+                "The semantic_search command performs semantic search using embeddings and FAISS vector index. "
+                "It converts the query text to an embedding vector using an embedding service, "
+                "then searches for similar code chunks in the FAISS index.\n\n"
+                "Operation flow:\n"
+                "1. Validates root_dir exists and is a directory\n"
+                "2. Opens database connection\n"
+                "3. Resolves project_id (from parameter or inferred from root_dir)\n"
+                "4. Loads config.json to get vector_dim and embedding service config\n"
+                "5. Gets or creates dataset_id for the project\n"
+                "6. Resolves FAISS index path (dataset-scoped)\n"
+                "7. Loads FAISS index using FaissIndexManager\n"
+                "8. Gets query embedding from embedding service (SVOClientManager)\n"
+                "9. Normalizes embedding vector\n"
+                "10. Searches FAISS index for k nearest neighbors\n"
+                "11. Filters results by dataset_id and min_score (if provided)\n"
+                "12. Returns similar code chunks with similarity scores\n\n"
+                "Semantic Search:\n"
+                "- Uses embedding vectors to find semantically similar code\n"
+                "- Query is converted to embedding using embedding service\n"
+                "- Searches in FAISS index for similar vectors\n"
+                "- Returns chunks ranked by similarity (distance)\n"
+                "- Similarity score: 1.0 / (1.0 + distance)\n\n"
+                "FAISS Index:\n"
+                "- Dataset-scoped index (one per project dataset)\n"
+                "- Must be built with update_indexes first\n"
+                "- Uses cosine similarity (normalized vectors)\n"
+                "- Supports k-nearest neighbor search\n\n"
+                "Use cases:\n"
+                "- Find code with similar functionality\n"
+                "- Search by meaning rather than exact text\n"
+                "- Discover related code patterns\n"
+                "- Find code implementing similar concepts\n\n"
+                "Important notes:\n"
+                "- Requires embedding service to be available\n"
+                "- Requires FAISS index (run update_indexes first)\n"
+                "- Requires config.json with embedding service configuration\n"
+                "- Results are dataset-scoped (only chunks from same dataset)\n"
+                "- Similarity scores range from 0.0 to 1.0 (higher is better)\n"
+                "- min_score filters results by similarity threshold"
+            ),
+            "parameters": {
+                "root_dir": {
+                    "description": (
+                        "Project root directory path. Can be absolute or relative. "
+                        "Must contain data/code_analysis.db file and config.json."
+                    ),
+                    "type": "string",
+                    "required": True,
+                },
+                "query": {
+                    "description": (
+                        "Search query text. Will be converted to embedding vector using embedding service. "
+                        "Searches for semantically similar code chunks."
+                    ),
+                    "type": "string",
+                    "required": True,
+                    "examples": [
+                        "database connection",
+                        "file processing",
+                        "error handling",
+                        "authentication logic",
+                    ],
+                },
+                "k": {
+                    "description": (
+                        "Number of results to return. Range: 1-100. Default is 10. "
+                        "Returns k nearest neighbors from FAISS index."
+                    ),
+                    "type": "integer",
+                    "required": False,
+                    "default": 10,
+                    "minimum": 1,
+                    "maximum": 100,
+                },
+                "min_score": {
+                    "description": (
+                        "Optional minimum similarity score threshold (0.0-1.0). "
+                        "Only results with score >= min_score are returned. "
+                        "Score is calculated as 1.0 / (1.0 + distance)."
+                    ),
+                    "type": "number",
+                    "required": False,
+                    "minimum": 0.0,
+                    "maximum": 1.0,
+                    "examples": [0.5, 0.7, 0.9],
+                },
+                "project_id": {
+                    "description": (
+                        "Optional project UUID. If omitted, inferred from root_dir."
+                    ),
+                    "type": "string",
+                    "required": False,
+                },
+            },
+            "usage_examples": [
+                {
+                    "description": "Basic semantic search",
+                    "command": {
+                        "root_dir": "/home/user/projects/my_project",
+                        "query": "database connection",
+                        "k": 10,
+                    },
+                    "explanation": (
+                        "Searches for code chunks semantically similar to 'database connection', "
+                        "returning top 10 results."
+                    ),
+                },
+                {
+                    "description": "Search with minimum score threshold",
+                    "command": {
+                        "root_dir": "/home/user/projects/my_project",
+                        "query": "error handling",
+                        "k": 20,
+                        "min_score": 0.7,
+                    },
+                    "explanation": (
+                        "Searches for similar code with minimum similarity score of 0.7, "
+                        "returning up to 20 results."
+                    ),
+                },
+                {
+                    "description": "Find highly similar code",
+                    "command": {
+                        "root_dir": "/home/user/projects/my_project",
+                        "query": "file processing",
+                        "k": 5,
+                        "min_score": 0.9,
+                    },
+                    "explanation": (
+                        "Finds highly similar code (score >= 0.9) related to 'file processing', "
+                        "returning top 5 results."
+                    ),
+                },
+            ],
+            "error_cases": {
+                "PROJECT_NOT_FOUND": {
+                    "description": "Project not found in database",
+                    "example": "root_dir='/path' but project not registered",
+                    "solution": "Ensure project is registered. Run update_indexes first.",
+                },
+                "CONFIG_NOT_FOUND": {
+                    "description": "Configuration file not found",
+                    "example": "root_dir='/path' but config.json missing",
+                    "solution": "Ensure config.json exists in root_dir with embedding service configuration.",
+                },
+                "FAISS_INDEX_NOT_FOUND": {
+                    "description": "FAISS index not found",
+                    "example": "Index file doesn't exist for project/dataset",
+                    "solution": (
+                        "Run update_indexes first to build the FAISS index. "
+                        "Index is dataset-scoped and must be created before searching."
+                    ),
+                },
+                "EMBEDDING_SERVICE_ERROR": {
+                    "description": "Failed to get embedding from service",
+                    "example": "Service unavailable, invalid response, or zero norm vector",
+                    "solution": (
+                        "Check embedding service configuration in config.json. "
+                        "Ensure service is available and responding correctly."
+                    ),
+                },
+                "SEARCH_ERROR": {
+                    "description": "General error during search",
+                    "example": "Database error, FAISS error, or vector dimension mismatch",
+                    "solution": (
+                        "Check database integrity, verify FAISS index is valid, "
+                        "ensure vector_dim matches index configuration."
+                    ),
+                },
+            },
+            "return_value": {
+                "success": {
+                    "description": "Command executed successfully",
+                    "data": {
+                        "query": "Search query that was used",
+                        "k": "Number of results requested",
+                        "min_score": "Minimum score threshold (if provided)",
+                        "index_path": "Path to FAISS index file",
+                        "project_id": "Project UUID",
+                        "dataset_id": "Dataset UUID",
+                        "results": (
+                            "List of similar code chunks. Each contains:\n"
+                            "- score: Similarity score (0.0-1.0, higher is better)\n"
+                            "- distance: Distance in vector space (lower is better)\n"
+                            "- vector_id: Vector ID in FAISS index\n"
+                            "- chunk_uuid: Chunk UUID\n"
+                            "- chunk_type: Type of chunk\n"
+                            "- file_path: Path to file containing the chunk\n"
+                            "- line: Line number in file\n"
+                            "- text: Text content of chunk"
+                        ),
+                        "count": "Number of results returned (after min_score filtering)",
+                    },
+                    "example": {
+                        "query": "database connection",
+                        "k": 10,
+                        "min_score": None,
+                        "index_path": "data/faiss/project_id/dataset_id.index",
+                        "project_id": "928bcf10-db1c-47a3-8341-f60a6d997fe7",
+                        "dataset_id": "abc123...",
+                        "results": [
+                            {
+                                "score": 0.85,
+                                "distance": 0.176,
+                                "vector_id": 42,
+                                "chunk_uuid": "chunk123...",
+                                "chunk_type": "function",
+                                "file_path": "src/db.py",
+                                "line": 10,
+                                "text": "def connect_to_database(...)",
+                            },
+                        ],
+                        "count": 1,
+                    },
+                },
+                "error": {
+                    "description": "Command failed",
+                    "code": (
+                        "Error code (e.g., PROJECT_NOT_FOUND, CONFIG_NOT_FOUND, "
+                        "FAISS_INDEX_NOT_FOUND, EMBEDDING_SERVICE_ERROR, SEARCH_ERROR)"
+                    ),
+                    "message": "Human-readable error message",
+                    "details": "Additional error details (if available)",
+                },
+            },
+            "best_practices": [
+                "Run update_indexes first to build the FAISS index",
+                "Ensure embedding service is configured and available",
+                "Use min_score to filter low-quality results",
+                "Adjust k based on expected result count",
+                "Results are dataset-scoped (only chunks from same dataset)",
+                "Similarity scores help identify most relevant matches",
+                "Query text should describe the concept you're searching for",
+            ],
+        }

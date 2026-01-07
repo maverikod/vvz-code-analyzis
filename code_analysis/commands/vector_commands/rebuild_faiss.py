@@ -245,3 +245,277 @@ class RebuildFaissCommand(BaseMCPCommand):
             logger.error(f"Failed to rebuild FAISS index: {e}", exc_info=True)
             return self._handle_error(e, "REBUILD_FAISS_ERROR", "rebuild_faiss")
 
+    @classmethod
+    def metadata(cls: type["RebuildFaissCommand"]) -> Dict[str, Any]:
+        """
+        Get detailed command metadata for AI models.
+
+        This method provides comprehensive information about the command,
+        including detailed descriptions, usage examples, and edge cases.
+        The metadata should be as detailed and clear as a man page.
+
+        Args:
+            cls: Command class.
+
+        Returns:
+            Dictionary with command metadata.
+        """
+        return {
+            "name": cls.name,
+            "version": cls.version,
+            "description": cls.descr,
+            "category": cls.category,
+            "author": cls.author,
+            "email": cls.email,
+            "detailed_description": (
+                "The rebuild_faiss command rebuilds FAISS (Facebook AI Similarity Search) "
+                "index from database embeddings. It implements dataset-scoped FAISS, allowing "
+                "rebuilding indexes for specific datasets or all datasets in a project.\n\n"
+                "Operation flow:\n"
+                "1. Validates root_dir exists and is a directory\n"
+                "2. Validates project_id matches root_dir/projectid file\n"
+                "3. Opens database connection\n"
+                "4. Verifies project exists in database\n"
+                "5. Loads config.json to get storage paths and vector dimension\n"
+                "6. Initializes SVOClientManager for embeddings\n"
+                "7. If dataset_id provided: rebuilds index for that dataset\n"
+                "8. If dataset_id omitted: rebuilds indexes for all datasets in project\n"
+                "9. For each dataset:\n"
+                "   - Gets dataset-scoped FAISS index path\n"
+                "   - Initializes FaissIndexManager\n"
+                "   - Normalizes vector_id to dense range (0..N-1)\n"
+                "   - Rebuilds FAISS index from database embeddings\n"
+                "   - Closes FAISS manager\n"
+                "10. Returns rebuild statistics\n\n"
+                "FAISS Index Rebuilding:\n"
+                "- Reads embeddings from code_chunks.embedding_vector in database\n"
+                "- Normalizes vector_id to dense range to avoid ID conflicts\n"
+                "- Creates new FAISS index file from embeddings\n"
+                "- Index is dataset-scoped (one index per dataset)\n"
+                "- Index path: {faiss_dir}/{project_id}/{dataset_id}/index.faiss\n\n"
+                "Vector ID Normalization:\n"
+                "- Reassigns vector_id to dense range 0..N-1\n"
+                "- Uses single SQL statement to avoid per-row UPDATEs\n"
+                "- Prevents ID conflicts and stabilizes sqlite_proxy worker\n"
+                "- Only processes chunks with valid embeddings\n\n"
+                "Dataset-Scoped FAISS:\n"
+                "- Each dataset has its own FAISS index file\n"
+                "- Allows independent index management per dataset\n"
+                "- Supports multiple datasets per project\n"
+                "- Indexes are stored in separate directories\n\n"
+                "Use cases:\n"
+                "- Rebuild index after database changes\n"
+                "- Recover from corrupted index file\n"
+                "- Rebuild index after embedding updates\n"
+                "- Initialize index for new dataset\n"
+                "- Sync index with database state\n"
+                "- Rebuild all indexes after project changes\n\n"
+                "Important notes:\n"
+                "- Requires valid embeddings in database (use revectorize if missing)\n"
+                "- Rebuilds index from existing embeddings (doesn't generate new ones)\n"
+                "- Index file is recreated (old index is replaced)\n"
+                "- Vector dimension must match config.json setting\n"
+                "- Requires SVOClientManager for missing embeddings (if any)\n"
+                "- project_id must match root_dir/projectid file"
+            ),
+            "parameters": {
+                "root_dir": {
+                    "description": (
+                        "Project root directory path. Can be absolute or relative. "
+                        "Must contain projectid file and config.json."
+                    ),
+                    "type": "string",
+                    "required": True,
+                    "examples": [
+                        "/home/user/projects/my_project",
+                        ".",
+                        "./code_analysis",
+                    ],
+                },
+                "project_id": {
+                    "description": (
+                        "Project UUID. Must match the UUID in root_dir/projectid file. "
+                        "Used to identify project and resolve dataset indexes."
+                    ),
+                    "type": "string",
+                    "required": True,
+                    "examples": [
+                        "123e4567-e89b-12d3-a456-426614174000",
+                    ],
+                },
+                "dataset_id": {
+                    "description": (
+                        "Optional dataset UUID. If provided, rebuilds index only for that dataset. "
+                        "If omitted, rebuilds indexes for all datasets in the project. "
+                        "Dataset must exist in database."
+                    ),
+                    "type": "string",
+                    "required": False,
+                    "examples": [
+                        "223e4567-e89b-12d3-a456-426614174001",
+                    ],
+                },
+            },
+            "usage_examples": [
+                {
+                    "description": "Rebuild index for specific dataset",
+                    "command": {
+                        "root_dir": "/home/user/projects/my_project",
+                        "project_id": "123e4567-e89b-12d3-a456-426614174000",
+                        "dataset_id": "223e4567-e89b-12d3-a456-426614174001",
+                    },
+                    "explanation": (
+                        "Rebuilds FAISS index for specific dataset. "
+                        "Useful when only one dataset needs index update."
+                    ),
+                },
+                {
+                    "description": "Rebuild indexes for all datasets",
+                    "command": {
+                        "root_dir": "/home/user/projects/my_project",
+                        "project_id": "123e4567-e89b-12d3-a456-426614174000",
+                    },
+                    "explanation": (
+                        "Rebuilds FAISS indexes for all datasets in the project. "
+                        "Useful after project-wide changes."
+                    ),
+                },
+            ],
+            "error_cases": {
+                "PROJECT_NOT_FOUND": {
+                    "description": "Project not found in database",
+                    "message": "Project not found: {project_id}",
+                    "solution": (
+                        "Verify project_id is correct. Ensure project is registered in database. "
+                        "Run update_indexes to register project if needed."
+                    ),
+                },
+                "CONFIG_NOT_FOUND": {
+                    "description": "Configuration file not found",
+                    "message": "Configuration file not found: {config_path}",
+                    "solution": (
+                        "Ensure config.json exists in root_dir. "
+                        "Config file is required for storage paths and vector dimension."
+                    ),
+                },
+                "DATASET_ID_MISMATCH": {
+                    "description": "Dataset ID mismatch",
+                    "message": "Dataset ID mismatch: provided {dataset_id}, found {db_dataset_id}",
+                    "solution": (
+                        "Verify dataset_id is correct. Dataset ID in database must match provided ID. "
+                        "Use list_projects or database queries to find correct dataset_id."
+                    ),
+                },
+                "NO_DATASETS": {
+                    "description": "No datasets found for project",
+                    "message": "No datasets found for project {project_id}",
+                    "solution": (
+                        "Ensure project has datasets. Run update_indexes to create datasets. "
+                        "Datasets are created automatically when indexing files."
+                    ),
+                },
+                "REBUILD_FAISS_ERROR": {
+                    "description": "Error during FAISS index rebuild",
+                    "examples": [
+                        {
+                            "case": "Missing embeddings",
+                            "message": "No embeddings found in database",
+                            "solution": (
+                                "Run revectorize first to generate embeddings. "
+                                "rebuild_faiss requires existing embeddings in database."
+                            ),
+                        },
+                        {
+                            "case": "Vector dimension mismatch",
+                            "message": "Vector dimension mismatch",
+                            "solution": (
+                                "Verify vector_dim in config.json matches embedding dimension. "
+                                "Check SVO service configuration."
+                            ),
+                        },
+                        {
+                            "case": "FAISS library error",
+                            "message": "FAISS index creation failed",
+                            "solution": (
+                                "Check FAISS library installation. "
+                                "Verify disk space and permissions for index directory."
+                            ),
+                        },
+                    ],
+                },
+            },
+            "return_value": {
+                "success": {
+                    "description": "FAISS index rebuilt successfully",
+                    "data": {
+                        "project_id": "Project UUID that was processed",
+                        "datasets_rebuilt": "Number of datasets processed",
+                        "total_vectors": "Total number of vectors in all indexes",
+                        "results": (
+                            "List of rebuild results. Each contains:\n"
+                            "- dataset_id: Dataset UUID\n"
+                            "- index_path: Path to FAISS index file\n"
+                            "- vectors_count: Number of vectors in index\n"
+                            "- root_path: Dataset root path (if all datasets)"
+                        ),
+                    },
+                    "example_single_dataset": {
+                        "project_id": "123e4567-e89b-12d3-a456-426614174000",
+                        "datasets_rebuilt": 1,
+                        "total_vectors": 5000,
+                        "results": [
+                            {
+                                "dataset_id": "223e4567-e89b-12d3-a456-426614174001",
+                                "index_path": "/data/faiss/123e4567.../223e4567.../index.faiss",
+                                "vectors_count": 5000,
+                            }
+                        ],
+                    },
+                    "example_multiple_datasets": {
+                        "project_id": "123e4567-e89b-12d3-a456-426614174000",
+                        "datasets_rebuilt": 3,
+                        "total_vectors": 15000,
+                        "results": [
+                            {
+                                "dataset_id": "223e4567-e89b-12d3-a456-426614174001",
+                                "root_path": "/path/to/dataset1",
+                                "index_path": "/data/faiss/123e4567.../223e4567.../index.faiss",
+                                "vectors_count": 5000,
+                            },
+                            {
+                                "dataset_id": "323e4567-e89b-12d3-a456-426614174002",
+                                "root_path": "/path/to/dataset2",
+                                "index_path": "/data/faiss/123e4567.../323e4567.../index.faiss",
+                                "vectors_count": 7000,
+                            },
+                            {
+                                "dataset_id": "423e4567-e89b-12d3-a456-426614174003",
+                                "root_path": "/path/to/dataset3",
+                                "index_path": "/data/faiss/123e4567.../423e4567.../index.faiss",
+                                "vectors_count": 3000,
+                            },
+                        ],
+                    },
+                },
+                "error": {
+                    "description": "Command failed",
+                    "code": (
+                        "Error code (e.g., PROJECT_NOT_FOUND, CONFIG_NOT_FOUND, "
+                        "DATASET_ID_MISMATCH, NO_DATASETS, REBUILD_FAISS_ERROR)"
+                    ),
+                    "message": "Human-readable error message",
+                },
+            },
+            "best_practices": [
+                "Run revectorize first if embeddings are missing",
+                "Rebuild index after bulk embedding updates",
+                "Use dataset_id to rebuild specific dataset index",
+                "Rebuild all datasets after project-wide changes",
+                "Verify vectors_count matches expected number of chunks",
+                "Check index_path to verify index file location",
+                "Monitor total_vectors to track index size",
+                "Rebuild index after database repairs or restores",
+                "Ensure vector_dim in config matches embedding dimension",
+            ],
+        }
+

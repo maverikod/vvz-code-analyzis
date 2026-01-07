@@ -8,108 +8,128 @@ email: vasilyvz@gmail.com
 This document lists all custom commands available in the code-analysis-server.
 Standard adapter commands (echo, health, queue_*, etc.) are excluded.
 
-**Total custom commands**: 57
+**Total custom commands**: 58
+
+**Metadata Status:**
+
+- ✅ Commands with detailed metadata (man-page level): 42
+- ⚠️ Commands needing detailed metadata: 16
+
+**Note:** Commands marked with ⚠️ need implementation of `metadata()` method with:
+
+- `detailed_description` - comprehensive operation flow
+- `parameters` - detailed parameter descriptions with examples
+- `usage_examples` - practical usage examples
+- `error_cases` - common errors and solutions
+- `return_value` - return value structure
+- `best_practices` - recommended usage patterns
 
 ## Commands by Category
 
+**Legend:**
+
+- ✅ = Has detailed metadata (man-page level documentation)
+- ⚠️ = Needs detailed metadata (missing or insufficient)
+
 ### AST Commands
 
-- `ast_statistics`
-- `export_graph`
-- `find_dependencies`
-- `find_usages`
-- `get_ast`
-- `get_class_hierarchy`
-- `get_code_entity_info`
-- `get_imports`
-- `list_code_entities`
-- `list_project_files`
-- `search_ast_nodes`
+- ✅ `ast_statistics`
+- ✅ `export_graph`
+- ✅ `find_dependencies`
+- ✅ `find_usages`
+- ✅ `get_ast`
+- ✅ `get_class_hierarchy`
+- ✅ `get_code_entity_info`
+- ✅ `get_imports`
+- ✅ `list_code_entities`
+- ✅ `list_project_files`
+- ✅ `search_ast_nodes`
 
 ### Analysis Commands
 
-- `analyze_complexity`
-- `comprehensive_analysis`
-- `find_duplicates`
-- `list_errors_by_category`
-- `list_long_files`
-- `update_indexes`
+- ✅ `analyze_complexity`
+- ✅ `comprehensive_analysis`
+- ✅ `find_duplicates`
+- ✅ `list_errors_by_category`
+- ✅ `list_long_files`
+- ✅ `update_indexes`
 
 ### Backup Management
 
-- `clear_all_backups`
-- `delete_backup`
-- `list_backup_files`
-- `list_backup_versions`
-- `restore_backup_file`
+- ✅ `clear_all_backups`
+- ✅ `delete_backup`
+- ✅ `list_backup_files`
+- ✅ `list_backup_versions`
+- ✅ `restore_backup_file`
 
 ### Code Quality
 
-- `format_code`
-- `lint_code`
-- `type_check_code`
+- ✅ `format_code`
+- ✅ `lint_code`
+- ✅ `type_check_code`
 
 ### Database Integrity Commands
 
-- `backup_database`
-- `get_database_corruption_status`
-- `repair_sqlite_database`
-- `restore_database`
+- ✅ `backup_database`
+- ✅ `get_database_corruption_status`
+- ✅ `repair_sqlite_database`
+- ✅ `restore_database`
 
 ### File Management
 
-- `cleanup_deleted_files`
-- `collapse_versions`
-- `repair_database`
-- `unmark_deleted_file`
+- ✅ `cleanup_deleted_files`
+- ✅ `collapse_versions`
+- ✅ `repair_database`
+- ✅ `unmark_deleted_file`
 
 ### Logging Commands
 
-- `list_worker_logs`
-- `view_worker_logs`
+- ✅ `list_worker_logs`
+- ✅ `view_worker_logs`
 
 ### Monitoring Commands
 
-- `get_database_status`
-- `get_worker_status`
+- ✅ `get_database_status`
+- ✅ `get_worker_status`
 
 ### Project Management
 
-- `change_project_id`
-- `delete_project`
-- `delete_unwatched_projects`
+- ✅ `change_project_id`
+- ✅ `delete_project`
+- ✅ `delete_unwatched_projects`
+- ✅ `list_projects`
 
 ### Refactor Commands
 
-- `compose_cst_module`
-- `extract_superclass`
-- `list_cst_blocks`
-- `query_cst`
-- `split_class`
-- `split_file_to_package`
+- ✅ `compose_cst_module`
+- ✅ `extract_superclass`
+- ✅ `list_cst_blocks`
+- ✅ `query_cst`
+- ✅ `split_class`
+- ✅ `split_file_to_package`
 
 ### Repair Worker Commands
 
-- `repair_worker_status`
-- `start_repair_worker`
-- `stop_repair_worker`
+- ✅ `repair_worker_status`
+- ✅ `start_repair_worker`
+- ✅ `stop_repair_worker`
 
 ### Search Commands
 
-- `find_classes`
-- `fulltext_search`
-- `list_class_methods`
-- `semantic_search`
+- ✅ `find_classes`
+- ✅ `fulltext_search`
+- ✅ `list_class_methods`
+- ✅ `semantic_search`
 
 ### Vectorization Commands
 
-- `rebuild_faiss`
-- `revectorize`
+- ✅ `rebuild_faiss`
+- ✅ `revectorize`
 
 ### Worker Management Commands
 
-- `start_worker`
-- `stop_worker`
+- ✅ `start_worker`
+- ✅ `stop_worker`
 
 ## Command Files by Group
 
@@ -165,4 +185,3 @@ Standard adapter commands (echo, health, queue_*, etc.) are excluded.
 
 - `code_analysis/commands/vector_commands/rebuild_faiss.py`
 - `code_analysis/commands/vector_commands/revectorize.py`
-

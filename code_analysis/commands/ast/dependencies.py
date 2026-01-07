@@ -163,3 +163,240 @@ class FindDependenciesMCPCommand(BaseMCPCommand):
             )
         except Exception as e:
             return self._handle_error(e, "FIND_DEPENDENCIES_ERROR", "find_dependencies")
+
+    @classmethod
+    def metadata(cls: type["FindDependenciesMCPCommand"]) -> Dict[str, Any]:
+        """
+        Get detailed command metadata for AI models.
+
+        This method provides comprehensive information about the command,
+        including detailed descriptions, usage examples, and edge cases.
+        The metadata should be as detailed and clear as a man page.
+
+        Args:
+            cls: Command class.
+
+        Returns:
+            Dictionary with command metadata.
+        """
+        return {
+            "name": cls.name,
+            "version": cls.version,
+            "description": cls.descr,
+            "category": cls.category,
+            "author": cls.author,
+            "email": cls.email,
+            "detailed_description": (
+                "The find_dependencies command finds where a class, function, method, or module "
+                "is used (depended upon) in the project. It searches through usages and imports "
+                "tables to find all locations where the entity is referenced.\n\n"
+                "Operation flow:\n"
+                "1. Validates root_dir exists and is a directory\n"
+                "2. Opens database connection\n"
+                "3. Resolves project_id (from parameter or inferred from root_dir)\n"
+                "4. Searches usages table for entity usages (if entity_type is class/function/method/null)\n"
+                "5. Searches imports table for module dependencies (if entity_type is module/null)\n"
+                "6. Applies filters: entity_name, entity_type, target_class\n"
+                "7. Applies pagination: limit and offset\n"
+                "8. Returns list of dependency locations with file paths and line numbers\n\n"
+                "Search Behavior:\n"
+                "- For classes/functions/methods: Searches in usages table where target_name matches\n"
+                "- For modules: Searches in imports table where module or name matches\n"
+                "- If entity_type is null, searches both usages and imports\n"
+                "- Results include file path, line number, and entity details\n\n"
+                "Use cases:\n"
+                "- Find all places where a class is instantiated or used\n"
+                "- Find all places where a function is called\n"
+                "- Find all places where a method is called\n"
+                "- Find all files that import a specific module\n"
+                "- Impact analysis before refactoring\n"
+                "- Dependency tracking and code navigation\n\n"
+                "Important notes:\n"
+                "- Results are ordered by file path and line number\n"
+                "- Supports pagination with limit and offset\n"
+                "- For methods, use target_class parameter to disambiguate\n"
+                "- Module search uses LIKE pattern matching for partial matches"
+            ),
+            "parameters": {
+                "root_dir": {
+                    "description": (
+                        "Project root directory path. Can be absolute or relative. "
+                        "Must contain data/code_analysis.db file."
+                    ),
+                    "type": "string",
+                    "required": True,
+                },
+                "entity_name": {
+                    "description": (
+                        "Name of entity to find dependencies for. Required. "
+                        "Can be class name, function name, method name, or module name."
+                    ),
+                    "type": "string",
+                    "required": True,
+                    "examples": ["MyClass", "process_data", "calculate", "os"],
+                },
+                "entity_type": {
+                    "description": (
+                        "Type of entity to search for. Optional. If null, searches all types. "
+                        "Options: 'class', 'function', 'method', 'module'. "
+                        "Helps narrow search and improve performance."
+                    ),
+                    "type": "string",
+                    "required": False,
+                    "enum": ["class", "function", "method", "module"],
+                },
+                "target_class": {
+                    "description": (
+                        "Optional class name for methods. Use when searching for methods "
+                        "to disambiguate methods with same name in different classes."
+                    ),
+                    "type": "string",
+                    "required": False,
+                    "examples": ["MyClass", "BaseHandler"],
+                },
+                "limit": {
+                    "description": (
+                        "Optional limit on number of results. Use for pagination or "
+                        "to limit large result sets."
+                    ),
+                    "type": "integer",
+                    "required": False,
+                },
+                "offset": {
+                    "description": (
+                        "Offset for pagination. Default is 0. Use with limit for paginated results."
+                    ),
+                    "type": "integer",
+                    "required": False,
+                    "default": 0,
+                },
+                "project_id": {
+                    "description": (
+                        "Optional project UUID. If omitted, inferred from root_dir."
+                    ),
+                    "type": "string",
+                    "required": False,
+                },
+            },
+            "usage_examples": [
+                {
+                    "description": "Find all usages of a class",
+                    "command": {
+                        "root_dir": "/home/user/projects/my_project",
+                        "entity_name": "DataProcessor",
+                        "entity_type": "class",
+                    },
+                    "explanation": (
+                        "Finds all places where DataProcessor class is used, instantiated, "
+                        "or referenced in the project."
+                    ),
+                },
+                {
+                    "description": "Find all calls to a function",
+                    "command": {
+                        "root_dir": "/home/user/projects/my_project",
+                        "entity_name": "process_data",
+                        "entity_type": "function",
+                    },
+                    "explanation": (
+                        "Finds all function calls to process_data across the project."
+                    ),
+                },
+                {
+                    "description": "Find method usages with class context",
+                    "command": {
+                        "root_dir": "/home/user/projects/my_project",
+                        "entity_name": "execute",
+                        "entity_type": "method",
+                        "target_class": "TaskHandler",
+                    },
+                    "explanation": (
+                        "Finds all calls to execute method specifically in TaskHandler class, "
+                        "excluding execute methods in other classes."
+                    ),
+                },
+                {
+                    "description": "Find module imports with pagination",
+                    "command": {
+                        "root_dir": "/home/user/projects/my_project",
+                        "entity_name": "os",
+                        "entity_type": "module",
+                        "limit": 50,
+                        "offset": 0,
+                    },
+                    "explanation": (
+                        "Finds first 50 files that import 'os' module. Use offset for next page."
+                    ),
+                },
+            ],
+            "error_cases": {
+                "PROJECT_NOT_FOUND": {
+                    "description": "Project not found in database",
+                    "example": "root_dir='/path' but project not registered",
+                    "solution": "Ensure project is registered. Run update_indexes first.",
+                },
+                "FIND_DEPENDENCIES_ERROR": {
+                    "description": "General error during dependency search",
+                    "example": "Database error, invalid parameters, or corrupted data",
+                    "solution": (
+                        "Check database integrity, verify entity_name and entity_type parameters, "
+                        "ensure project has been analyzed."
+                    ),
+                },
+            },
+            "return_value": {
+                "success": {
+                    "description": "Command executed successfully",
+                    "data": {
+                        "success": "Always true on success",
+                        "entity_name": "Entity name that was searched",
+                        "entity_type": "Entity type that was searched (or null)",
+                        "dependencies": (
+                            "List of dependency dictionaries. Each contains:\n"
+                            "- type: 'usage' or 'import'\n"
+                            "- file_path: File where dependency occurs\n"
+                            "- line: Line number where dependency occurs\n"
+                            "- For usages: target_name, target_type, target_class\n"
+                            "- For imports: module, name, import_type"
+                        ),
+                        "count": "Number of dependencies found",
+                    },
+                    "example": {
+                        "success": True,
+                        "entity_name": "DataProcessor",
+                        "entity_type": "class",
+                        "dependencies": [
+                            {
+                                "type": "usage",
+                                "file_path": "src/main.py",
+                                "line": 42,
+                                "target_name": "DataProcessor",
+                                "target_type": "class",
+                                "target_class": None,
+                            },
+                            {
+                                "type": "usage",
+                                "file_path": "src/utils.py",
+                                "line": 15,
+                                "target_name": "DataProcessor",
+                                "target_type": "class",
+                                "target_class": None,
+                            },
+                        ],
+                        "count": 2,
+                    },
+                },
+                "error": {
+                    "description": "Command failed",
+                    "code": "Error code (e.g., PROJECT_NOT_FOUND, FIND_DEPENDENCIES_ERROR)",
+                    "message": "Human-readable error message",
+                },
+            },
+            "best_practices": [
+                "Specify entity_type to narrow search and improve performance",
+                "Use target_class parameter when searching for methods to avoid false matches",
+                "Use limit and offset for pagination when dealing with many results",
+                "Use this command for impact analysis before refactoring",
+                "Combine with find_usages for comprehensive dependency tracking",
+            ],
+        }

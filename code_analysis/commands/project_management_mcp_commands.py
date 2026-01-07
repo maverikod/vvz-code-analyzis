@@ -667,6 +667,203 @@ class DeleteProjectMCPCommand(BaseMCPCommand):
         except Exception as e:
             return self._handle_error(e, "DELETE_PROJECT_ERROR", "delete_project")
 
+    @classmethod
+    def metadata(cls: type["DeleteProjectMCPCommand"]) -> Dict[str, Any]:
+        """
+        Get detailed command metadata for AI models.
+
+        This method provides comprehensive information about the command,
+        including detailed descriptions, usage examples, and edge cases.
+        The metadata should be as detailed and clear as a man page.
+
+        Args:
+            cls: Command class.
+
+        Returns:
+            Dictionary with command metadata.
+        """
+        return {
+            "name": cls.name,
+            "version": cls.version,
+            "description": cls.descr,
+            "category": cls.category,
+            "author": cls.author,
+            "email": cls.email,
+            "detailed_description": (
+                "The delete_project command completely removes a project and all its data from the database. "
+                "This is a destructive operation that cannot be undone.\n\n"
+                "Operation flow:\n"
+                "1. Validates root_dir exists and is a directory\n"
+                "2. Opens database connection\n"
+                "3. Resolves project_id (from parameter or from root_dir/projectid file)\n"
+                "4. Retrieves project information and statistics\n"
+                "5. If dry_run=True:\n"
+                "   - Returns statistics about what would be deleted\n"
+                "   - Does not perform actual deletion\n"
+                "6. If dry_run=False:\n"
+                "   - Deletes all project data from database:\n"
+                "     * All files and their associated data (classes, functions, methods, imports, usages)\n"
+                "     * All chunks and removes from FAISS vector index\n"
+                "     * All duplicates\n"
+                "     * All datasets\n"
+                "     * All AST trees\n"
+                "     * All CST trees\n"
+                "     * The project record itself\n"
+                "7. Returns deletion summary\n\n"
+                "Deleted Data:\n"
+                "- Files: All file records and metadata\n"
+                "- Code entities: All classes, functions, methods\n"
+                "- Imports: All import records\n"
+                "- Usages: All usage records\n"
+                "- Chunks: All code chunks and vector indexes\n"
+                "- Duplicates: All duplicate records\n"
+                "- Datasets: All dataset records\n"
+                "- AST/CST: All AST and CST trees\n"
+                "- Project record: The project itself\n\n"
+                "Use cases:\n"
+                "- Remove projects that are no longer needed\n"
+                "- Clean up test projects\n"
+                "- Free up database space\n"
+                "- Remove orphaned projects\n\n"
+                "Important notes:\n"
+                "- This operation is PERMANENT and cannot be undone\n"
+                "- Always use dry_run=True first to preview what will be deleted\n"
+                "- Project files on disk are NOT deleted (only database records)\n"
+                "- All related data is cascaded and removed\n"
+                "- Use with extreme caution"
+            ),
+            "parameters": {
+                "root_dir": {
+                    "description": (
+                        "Project root directory path. Can be absolute or relative. "
+                        "Must contain projectid file. Used to resolve project_id if not provided."
+                    ),
+                    "type": "string",
+                    "required": True,
+                },
+                "project_id": {
+                    "description": (
+                        "Optional project UUID. If not provided, will be resolved from root_dir/projectid file. "
+                        "If provided, must match the project_id in the file."
+                    ),
+                    "type": "string",
+                    "required": False,
+                },
+                "dry_run": {
+                    "description": (
+                        "If True, only shows what would be deleted without actually deleting. "
+                        "Default is False. ALWAYS use dry_run=True first to preview deletion."
+                    ),
+                    "type": "boolean",
+                    "required": False,
+                    "default": False,
+                },
+            },
+            "usage_examples": [
+                {
+                    "description": "Preview deletion (dry run)",
+                    "command": {
+                        "root_dir": "/home/user/projects/my_project",
+                        "dry_run": True,
+                    },
+                    "explanation": (
+                        "Shows statistics about what would be deleted without actually deleting. "
+                        "Safe to run to preview deletion."
+                    ),
+                },
+                {
+                    "description": "Delete project",
+                    "command": {
+                        "root_dir": "/home/user/projects/my_project",
+                    },
+                    "explanation": (
+                        "Permanently deletes project and all its data from database. "
+                        "WARNING: This is permanent and cannot be undone."
+                    ),
+                },
+                {
+                    "description": "Delete project with explicit project_id",
+                    "command": {
+                        "root_dir": "/home/user/projects/my_project",
+                        "project_id": "928bcf10-db1c-47a3-8341-f60a6d997fe7",
+                    },
+                    "explanation": (
+                        "Deletes project with explicit project_id. "
+                        "Useful when you want to ensure correct project is deleted."
+                    ),
+                },
+            ],
+            "error_cases": {
+                "PROJECT_NOT_FOUND": {
+                    "description": "Project not found in database",
+                    "example": "root_dir='/path' but project not registered in database",
+                    "solution": (
+                        "Verify project exists. Run list_projects to see all projects. "
+                        "Ensure projectid file exists and contains valid UUID."
+                    ),
+                },
+                "DELETE_PROJECT_ERROR": {
+                    "description": "General error during project deletion",
+                    "example": "Database error, cascade deletion failure, or permission denied",
+                    "solution": (
+                        "Check database integrity, ensure database is not locked, "
+                        "verify file permissions. Use dry_run=True first to identify issues."
+                    ),
+                },
+            },
+            "return_value": {
+                "success": {
+                    "description": "Command executed successfully",
+                    "data": {
+                        "success": "Whether deletion was successful (always True for dry_run)",
+                        "dry_run": "Whether this was a dry run",
+                        "project_id": "Project UUID that was deleted (or would be deleted)",
+                        "project_name": "Project name",
+                        "root_path": "Project root path",
+                        "files_count": "Number of files that were deleted",
+                        "chunks_count": "Number of chunks that were deleted",
+                        "datasets_count": "Number of datasets that were deleted",
+                        "message": "Status message",
+                    },
+                    "example_dry_run": {
+                        "success": True,
+                        "dry_run": True,
+                        "project_id": "928bcf10-db1c-47a3-8341-f60a6d997fe7",
+                        "project_name": "my_project",
+                        "root_path": "/home/user/projects/my_project",
+                        "files_count": 42,
+                        "chunks_count": 100,
+                        "datasets_count": 2,
+                        "message": "Would delete project my_project (928bcf10-db1c-47a3-8341-f60a6d997fe7)",
+                    },
+                    "example_deleted": {
+                        "success": True,
+                        "dry_run": False,
+                        "project_id": "928bcf10-db1c-47a3-8341-f60a6d997fe7",
+                        "project_name": "my_project",
+                        "root_path": "/home/user/projects/my_project",
+                        "files_count": 42,
+                        "chunks_count": 100,
+                        "datasets_count": 2,
+                        "message": "Deleted project my_project (928bcf10-db1c-47a3-8341-f60a6d997fe7)",
+                    },
+                },
+                "error": {
+                    "description": "Command failed",
+                    "code": "Error code (e.g., PROJECT_NOT_FOUND, DELETE_PROJECT_ERROR)",
+                    "message": "Human-readable error message",
+                },
+            },
+            "best_practices": [
+                "ALWAYS use dry_run=True first to preview what will be deleted",
+                "Verify project_id is correct before deletion",
+                "Backup database before deleting important projects",
+                "This operation is permanent - double-check before proceeding",
+                "Project files on disk are NOT deleted, only database records",
+                "Use list_projects to verify project exists before deletion",
+            ],
+        }
+
 
 class DeleteUnwatchedProjectsMCPCommand(BaseMCPCommand):
     """
@@ -829,4 +1026,475 @@ class DeleteUnwatchedProjectsMCPCommand(BaseMCPCommand):
                 database.close()
         except Exception as e:
             return self._handle_error(e, "DELETE_UNWATCHED_PROJECTS_ERROR", "delete_unwatched_projects")
+
+    @classmethod
+    def metadata(cls: type["DeleteUnwatchedProjectsMCPCommand"]) -> Dict[str, Any]:
+        """
+        Get detailed command metadata for AI models.
+
+        This method provides comprehensive information about the command,
+        including detailed descriptions, usage examples, and edge cases.
+        The metadata should be as detailed and clear as a man page.
+
+        Args:
+            cls: Command class.
+
+        Returns:
+            Dictionary with command metadata.
+        """
+        return {
+            "name": cls.name,
+            "version": cls.version,
+            "description": cls.descr,
+            "category": cls.category,
+            "author": cls.author,
+            "email": cls.email,
+            "detailed_description": (
+                "The delete_unwatched_projects command deletes projects that are not in the list of "
+                "watched directories. It discovers all projects in watched directories and compares "
+                "them with database projects to find unwatched ones, then deletes those projects.\n\n"
+                "Operation flow:\n"
+                "1. Validates root_dir exists and is a directory\n"
+                "2. Gets watched directories from config.json (code_analysis.worker.watch_dirs) or from parameter\n"
+                "3. Also checks dynamic_watch_file if configured\n"
+                "4. Discovers all projects in watched directories using project discovery\n"
+                "5. Gets all projects from database\n"
+                "6. Compares database projects with discovered projects:\n"
+                "   - Projects in discovered list: Kept\n"
+                "   - Projects not in discovered list: Marked for deletion\n"
+                "   - Server root directory: Always protected from deletion\n"
+                "7. If dry_run=True:\n"
+                "   - Lists projects that would be deleted\n"
+                "   - Lists projects that would be kept\n"
+                "   - Does not perform actual deletion\n"
+                "8. If dry_run=False:\n"
+                "   - Deletes unwatched projects using clear_project_data\n"
+                "   - Removes all project data (files, chunks, datasets, etc.)\n"
+                "9. Returns deletion summary\n\n"
+                "Project Discovery:\n"
+                "- Scans watched directories for projects (looks for projectid files)\n"
+                "- Uses project discovery to find all projects\n"
+                "- Handles nested project errors and duplicate project_id errors\n"
+                "- Collects discovery errors for reporting\n\n"
+                "Protection:\n"
+                "- Server root directory is always protected from deletion\n"
+                "- Projects in watched directories are kept\n"
+                "- Only unwatched projects are deleted\n\n"
+                "Use cases:\n"
+                "- Clean up projects that are no longer in watched directories\n"
+                "- Remove orphaned projects from database\n"
+                "- Maintain database cleanliness\n"
+                "- Free up database space\n\n"
+                "Important notes:\n"
+                "- This operation is PERMANENT and cannot be undone\n"
+                "- Always use dry_run=True first to preview what will be deleted\n"
+                "- Watched directories are read from config.json if not provided\n"
+                "- Server root directory is automatically protected\n"
+                "- Discovery errors are reported but don't stop the process\n"
+                "- Use with extreme caution"
+            ),
+            "parameters": {
+                "root_dir": {
+                    "description": (
+                        "Server root directory path. Can be absolute or relative. "
+                        "Must contain config.json and data/code_analysis.db file. "
+                        "This is the server root, not individual project directories."
+                    ),
+                    "type": "string",
+                    "required": True,
+                },
+                "watched_dirs": {
+                    "description": (
+                        "Optional list of watched directory paths. If not provided, will be read from "
+                        "config.json (code_analysis.worker.watch_dirs). Also checks dynamic_watch_file "
+                        "if configured. These are the directories where projects should be kept."
+                    ),
+                    "type": "array",
+                    "required": False,
+                    "items": {"type": "string"},
+                    "examples": [
+                        ["/home/user/projects", "/var/lib/projects"],
+                        ["/opt/projects"],
+                    ],
+                },
+                "dry_run": {
+                    "description": (
+                        "If True, only shows what would be deleted without actually deleting. "
+                        "Default is False. ALWAYS use dry_run=True first to preview deletion."
+                    ),
+                    "type": "boolean",
+                    "required": False,
+                    "default": False,
+                },
+            },
+            "usage_examples": [
+                {
+                    "description": "Preview deletion (dry run)",
+                    "command": {
+                        "root_dir": "/home/user/projects/code_analysis",
+                        "dry_run": True,
+                    },
+                    "explanation": (
+                        "Shows which projects would be deleted and which would be kept. "
+                        "Safe to run to preview deletion."
+                    ),
+                },
+                {
+                    "description": "Delete unwatched projects using config",
+                    "command": {
+                        "root_dir": "/home/user/projects/code_analysis",
+                    },
+                    "explanation": (
+                        "Deletes projects not in watched directories from config.json. "
+                        "WARNING: This is permanent and cannot be undone."
+                    ),
+                },
+                {
+                    "description": "Delete unwatched projects with explicit watched_dirs",
+                    "command": {
+                        "root_dir": "/home/user/projects/code_analysis",
+                        "watched_dirs": ["/home/user/projects", "/var/lib/projects"],
+                    },
+                    "explanation": (
+                        "Deletes projects not in the specified watched directories. "
+                        "Overrides config.json watched_dirs."
+                    ),
+                },
+            ],
+            "error_cases": {
+                "NO_WATCHED_DIRS": {
+                    "description": "No watched directories found",
+                    "example": "watched_dirs not provided and not in config.json",
+                    "solution": (
+                        "Provide watched_dirs parameter or configure code_analysis.worker.watch_dirs "
+                        "in config.json."
+                    ),
+                },
+                "DELETE_UNWATCHED_PROJECTS_ERROR": {
+                    "description": "General error during deletion",
+                    "example": "Database error, project discovery error, or deletion failure",
+                    "solution": (
+                        "Check database integrity, verify watched directories exist, "
+                        "ensure project discovery works. Use dry_run=True first."
+                    ),
+                },
+            },
+            "return_value": {
+                "success": {
+                    "description": "Command executed successfully",
+                    "data": {
+                        "success": "Whether operation was successful (True if no errors)",
+                        "dry_run": "Whether this was a dry run",
+                        "deleted_count": "Number of projects deleted (or would be deleted)",
+                        "kept_count": "Number of projects kept",
+                        "projects_deleted": (
+                            "List of projects that were deleted. Each contains:\n"
+                            "- project_id: Project UUID\n"
+                            "- root_path: Project root path\n"
+                            "- name: Project name\n"
+                            "- reason: Reason for deletion (not_discovered_in_watch_dirs, invalid_path)"
+                        ),
+                        "projects_kept": (
+                            "List of projects that were kept. Each contains:\n"
+                            "- project_id: Project UUID\n"
+                            "- root_path: Project root path\n"
+                            "- name: Project name\n"
+                            "- reason: Reason for keeping (discovered_in_watch_dirs, server_root_protected)"
+                        ),
+                        "discovery_errors": "List of errors during project discovery (if any)",
+                        "errors": "List of errors during deletion (if any)",
+                        "message": "Status message",
+                    },
+                    "example": {
+                        "success": True,
+                        "dry_run": False,
+                        "deleted_count": 2,
+                        "kept_count": 3,
+                        "projects_deleted": [
+                            {
+                                "project_id": "abc123...",
+                                "root_path": "/old/project1",
+                                "name": "old_project1",
+                                "reason": "not_discovered_in_watch_dirs",
+                            },
+                        ],
+                        "projects_kept": [
+                            {
+                                "project_id": "def456...",
+                                "root_path": "/home/user/projects/active_project",
+                                "name": "active_project",
+                                "reason": "discovered_in_watch_dirs",
+                            },
+                        ],
+                        "discovery_errors": None,
+                        "errors": None,
+                        "message": "Deleted 2 unwatched project(s), kept 3 watched project(s)",
+                    },
+                },
+                "error": {
+                    "description": "Command failed",
+                    "code": "Error code (e.g., NO_WATCHED_DIRS, DELETE_UNWATCHED_PROJECTS_ERROR)",
+                    "message": "Human-readable error message",
+                },
+            },
+            "best_practices": [
+                "ALWAYS use dry_run=True first to preview what will be deleted",
+                "Verify watched_dirs are correct before deletion",
+                "Backup database before deleting projects",
+                "This operation is permanent - double-check before proceeding",
+                "Server root directory is automatically protected",
+                "Review projects_kept and projects_deleted lists carefully",
+                "Check discovery_errors to identify project discovery issues",
+            ],
+        }
+
+
+class ListProjectsMCPCommand(BaseMCPCommand):
+    """
+    List all projects in the database.
+
+    This command retrieves all projects from the database and returns
+    their UUID, root path, name, comment, and last update time.
+
+    Attributes:
+        name: MCP command name.
+        version: Command version.
+        descr: Short description.
+        category: Command category.
+        author: Command author.
+        email: Author email.
+        use_queue: Whether to run in the background queue.
+    """
+
+    name = "list_projects"
+    version = "1.0.0"
+    descr = "List all projects in the database with their UUID and metadata"
+    category = "project_management"
+    author = "Vasiliy Zdanovskiy"
+    email = "vasilyvz@gmail.com"
+    use_queue = False
+
+    @classmethod
+    def get_schema(
+        cls: type["ListProjectsMCPCommand"],
+    ) -> Dict[str, Any]:
+        """
+        Get JSON schema for command parameters.
+
+        Args:
+            cls: Command class.
+
+        Returns:
+            JSON schema dict.
+        """
+        return {
+            "type": "object",
+            "description": "List all projects in the database with their UUID and metadata",
+            "properties": {
+                "root_dir": {
+                    "type": "string",
+                    "description": (
+                        "Server root directory (contains data/code_analysis.db). "
+                        "Must be an absolute path or relative to current working directory."
+                    ),
+                    "examples": [
+                        "/home/user/projects/code_analysis",
+                        "/var/lib/code_analysis",
+                        "./code_analysis",
+                    ],
+                },
+            },
+            "required": ["root_dir"],
+            "additionalProperties": False,
+            "examples": [
+                {
+                    "root_dir": "/home/user/projects/code_analysis",
+                },
+            ],
+        }
+
+    @classmethod
+    def metadata(cls: type["ListProjectsMCPCommand"]) -> Dict[str, Any]:
+        """
+        Get detailed command metadata for AI models.
+
+        This method provides comprehensive information about the command,
+        including detailed descriptions, usage examples, and edge cases.
+        The metadata should be as detailed and clear as a man page.
+
+        Args:
+            cls: Command class.
+
+        Returns:
+            Dictionary with command metadata.
+        """
+        return {
+            "name": cls.name,
+            "version": cls.version,
+            "description": cls.descr,
+            "category": cls.category,
+            "author": cls.author,
+            "email": cls.email,
+            "detailed_description": (
+                "The list_projects command retrieves all projects from the database "
+                "and returns their complete metadata including UUID, root path, name, "
+                "comment, and last update timestamp.\n\n"
+                "Operation flow:\n"
+                "1. Validates root_dir exists and is a directory\n"
+                "2. Opens database connection at root_dir/data/code_analysis.db\n"
+                "3. Queries all projects from the projects table\n"
+                "4. Returns list of projects sorted by name and root_path\n\n"
+                "Use cases:\n"
+                "- Discover all projects in the database\n"
+                "- Get project UUIDs for use in other commands\n"
+                "- Verify project registration\n"
+                "- Audit project metadata\n\n"
+                "Important notes:\n"
+                "- Returns all projects regardless of their status\n"
+                "- Projects are sorted alphabetically by name, then by root_path\n"
+                "- Empty database returns empty list (count: 0)\n"
+                "- Each project entry includes: id (UUID), root_path, name, comment, updated_at"
+            ),
+            "parameters": {
+                "root_dir": {
+                    "description": (
+                        "Server root directory path. Can be absolute or relative to current working directory. "
+                        "Must contain data/code_analysis.db file. The directory must exist and be accessible. "
+                        "This is the root directory of the code-analysis-server, not individual project directories."
+                    ),
+                    "type": "string",
+                    "required": True,
+                    "examples": [
+                        "/home/user/projects/code_analysis",
+                        "/var/lib/code_analysis",
+                        "./code_analysis",
+                        "/opt/code-analysis-server",
+                    ],
+                },
+            },
+            "usage_examples": [
+                {
+                    "description": "Basic usage: list all projects",
+                    "command": {
+                        "root_dir": "/home/user/projects/code_analysis",
+                    },
+                    "explanation": (
+                        "Retrieves all projects from the database and returns their UUID, "
+                        "root path, name, comment, and last update time."
+                    ),
+                },
+                {
+                    "description": "List projects from server root",
+                    "command": {
+                        "root_dir": "/var/lib/code_analysis",
+                    },
+                    "explanation": (
+                        "Lists all projects stored in the server's database. "
+                        "Useful for discovering what projects are registered."
+                    ),
+                },
+            ],
+            "error_cases": {
+                "ROOT_DIR_NOT_FOUND": {
+                    "description": "root_dir path doesn't exist or is not a directory",
+                    "example": "root_dir='/nonexistent/path'",
+                    "solution": "Provide a valid existing directory path",
+                },
+                "DATABASE_NOT_FOUND": {
+                    "description": "Database file not found at root_dir/data/code_analysis.db",
+                    "example": "root_dir='/path' but data/code_analysis.db missing",
+                    "solution": (
+                        "Ensure the database file exists. You may need to run update_indexes "
+                        "or restore_database first to create the database."
+                    ),
+                },
+                "DATABASE_ERROR": {
+                    "description": "Failed to open or query the database",
+                    "example": "Database locked, corrupted, or permission denied",
+                    "solution": (
+                        "Check database integrity, ensure it's not locked by another process, "
+                        "verify file permissions, or run repair_sqlite_database if corrupted"
+                    ),
+                },
+            },
+            "return_value": {
+                "success": {
+                    "description": "Command executed successfully",
+                    "data": {
+                        "projects": (
+                            "List of project dictionaries, each containing:\n"
+                            "- id: Project UUID (string)\n"
+                            "- root_path: Project root directory path (string)\n"
+                            "- name: Project name (string, may be None)\n"
+                            "- comment: Optional comment/description (string, may be None)\n"
+                            "- updated_at: Last update timestamp (float, Julian day)"
+                        ),
+                        "count": "Number of projects found (integer)",
+                    },
+                    "example": {
+                        "projects": [
+                            {
+                                "id": "928bcf10-db1c-47a3-8341-f60a6d997fe7",
+                                "root_path": "/home/user/projects/vast_srv",
+                                "name": "vast_srv",
+                                "comment": None,
+                                "updated_at": 2460300.123456,
+                            },
+                            {
+                                "id": "36ebabd4-a480-4175-8129-2789f89beb40",
+                                "root_path": "/home/user/projects/code_analysis",
+                                "name": "code_analysis",
+                                "comment": "Main code analysis tool",
+                                "updated_at": 2460301.789012,
+                            },
+                        ],
+                        "count": 2,
+                    },
+                },
+                "error": {
+                    "description": "Command failed",
+                    "code": "Error code (e.g., VALIDATION_ERROR, DATABASE_ERROR, LIST_PROJECTS_ERROR)",
+                    "message": "Human-readable error message",
+                    "details": "Additional error details",
+                },
+            },
+        }
+
+    async def execute(
+        self: "ListProjectsMCPCommand",
+        root_dir: str,
+        **kwargs: Any,
+    ) -> SuccessResult | ErrorResult:
+        """
+        Execute list projects command.
+
+        Args:
+            self: Command instance.
+            root_dir: Server root directory.
+            **kwargs: Extra args (unused).
+
+        Returns:
+            SuccessResult with list of projects or ErrorResult on failure.
+        """
+        try:
+            # Validate and normalize root_dir
+            root_path = self._validate_root_dir(root_dir)
+
+            # Open database
+            database = self._open_database(str(root_path), auto_analyze=False)
+            try:
+                # Get all projects
+                projects = database.get_all_projects()
+
+                return SuccessResult(
+                    data={
+                        "projects": projects,
+                        "count": len(projects),
+                    },
+                    message=f"Found {len(projects)} project(s)",
+                )
+            finally:
+                database.close()
+        except Exception as e:
+            return self._handle_error(e, "LIST_PROJECTS_ERROR", "list_projects")
 

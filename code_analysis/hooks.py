@@ -474,17 +474,19 @@ def register_code_analysis_commands(reg: registry) -> None:
             ChangeProjectIdMCPCommand,
             DeleteProjectMCPCommand,
             DeleteUnwatchedProjectsMCPCommand,
+            ListProjectsMCPCommand,
         )
 
         reg.register(ChangeProjectIdMCPCommand, "custom")
         reg.register(DeleteProjectMCPCommand, "custom")
         reg.register(DeleteUnwatchedProjectsMCPCommand, "custom")
+        reg.register(ListProjectsMCPCommand, "custom")
         import logging
 
         logger = logging.getLogger(__name__)
         logger.info(
             "✅ Registered project management commands: "
-            "change_project_id, delete_project, delete_unwatched_projects"
+            "change_project_id, delete_project, delete_unwatched_projects, list_projects"
         )
     except ImportError as e:
         import logging

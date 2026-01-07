@@ -303,6 +303,116 @@ class FaissIndexManager:
         logger.warning("Direct vector retrieval from FAISS not implemented")
         return None
 
+    def check_index_sync(
+        self: "FaissIndexManager",
+        database: CodeDatabase,
+        project_id: str,
+        dataset_id: Optional[str] = None,
+    ) -> Tuple[bool, Dict[str, Any]]:
+        """
+        Check synchronization between database and FAISS index.
+
+        Verifies that all vector_id values from database exist in FAISS index.
+        If any mismatch is found, returns False with details.
+
+        Args:
+            self: Instance.
+            database: CodeDatabase instance.
+            project_id: Project ID to check.
+            dataset_id: Optional dataset ID to filter by.
+
+        Returns:
+            Tuple of (is_synced: bool, details: dict) where details contains:
+            - db_vector_count: Number of chunks with vector_id in database
+            - index_vector_count: Number of vectors in FAISS index
+            - missing_in_index: List of vector_id values in DB but not in index
+            - max_db_vector_id: Maximum vector_id in database
+            - max_index_vector_id: Maximum vector_id in index (ntotal - 1)
+        """
+        if self.index is None:
+            return False, {
+                "error": "FAISS index is not initialized",
+                "db_vector_count": 0,
+                "index_vector_count": 0,
+            }
+
+        # Get all vector_id values from database for this project/dataset
+        if dataset_id:
+            rows = database._fetchall(
+                """
+                SELECT DISTINCT cc.vector_id
+                FROM code_chunks cc
+                INNER JOIN files f ON cc.file_id = f.id
+                WHERE cc.project_id = ?
+                  AND f.dataset_id = ?
+                  AND (f.deleted = 0 OR f.deleted IS NULL)
+                  AND cc.vector_id IS NOT NULL
+                  AND cc.embedding_vector IS NOT NULL
+                ORDER BY cc.vector_id
+                """,
+                (project_id, dataset_id),
+            )
+        else:
+            rows = database._fetchall(
+                """
+                SELECT DISTINCT vector_id
+                FROM code_chunks
+                WHERE project_id = ?
+                  AND vector_id IS NOT NULL
+                  AND embedding_vector IS NOT NULL
+                ORDER BY vector_id
+                """,
+                (project_id,),
+            )
+
+        db_vector_ids = {row["vector_id"] for row in rows if row["vector_id"] is not None}
+        db_vector_count = len(db_vector_ids)
+        index_vector_count = int(self.index.ntotal)
+
+        # Check if index has ID mapping (IndexIDMap2)
+        if hasattr(self.index, "id_map") and self.index.id_map is not None:
+            # Get all IDs from index
+            index_ids = set()
+            try:
+                # For IndexIDMap2, id_map is Int64Vector
+                # Use ntotal to get the number of vectors
+                id_map = self.index.id_map
+                # Convert Int64Vector to set of IDs
+                index_ids = {int(id_map.at(i)) for i in range(index_vector_count)}
+            except Exception as e:
+                logger.warning(f"Failed to get IDs from FAISS index id_map: {e}")
+                # Fallback: assume dense range 0..ntotal-1
+                index_ids = set(range(index_vector_count))
+        else:
+            # No ID mapping - assume dense range 0..ntotal-1
+            index_ids = set(range(index_vector_count))
+
+        # Find missing vectors
+        missing_in_index = db_vector_ids - index_ids
+        extra_in_index = index_ids - db_vector_ids
+
+        max_db_vector_id = max(db_vector_ids) if db_vector_ids else -1
+        max_index_vector_id = max(index_ids) if index_ids else -1
+
+        is_synced = (
+            len(missing_in_index) == 0
+            and len(extra_in_index) == 0
+            and db_vector_count == index_vector_count
+        )
+
+        details = {
+            "db_vector_count": db_vector_count,
+            "index_vector_count": index_vector_count,
+            "missing_in_index": sorted(list(missing_in_index))[:100],  # Limit to first 100
+            "missing_in_index_count": len(missing_in_index),
+            "extra_in_index": sorted(list(extra_in_index))[:100],  # Limit to first 100
+            "extra_in_index_count": len(extra_in_index),
+            "max_db_vector_id": max_db_vector_id,
+            "max_index_vector_id": max_index_vector_id,
+        }
+
+        return is_synced, details
+
     async def rebuild_from_database(
         self: "FaissIndexManager",
         database: CodeDatabase,

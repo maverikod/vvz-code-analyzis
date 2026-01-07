@@ -67,6 +67,17 @@ def get_project(self, project_id: str) -> Optional[Dict[str, Any]]:
     return self._fetchone("SELECT * FROM projects WHERE id = ?", (project_id,))
 
 
+def get_all_projects(self) -> List[Dict[str, Any]]:
+    """
+    Get all projects from database.
+
+    Returns:
+        List of project records as dictionaries with id, root_path, name, comment, updated_at
+    """
+    rows = self._fetchall("SELECT id, root_path, name, comment, updated_at FROM projects ORDER BY name, root_path")
+    return rows if rows else []
+
+
 async def clear_project_data(self, project_id: str) -> None:
     """
     Clear all data for a project and remove the project itself.

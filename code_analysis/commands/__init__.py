@@ -6,6 +6,9 @@ email: vasilyvz@gmail.com
 """
 
 # Import commands for automatic registration
-from .project_management_mcp_commands import ChangeProjectIdMCPCommand  # noqa: F401
+from .project_management_mcp_commands import (  # noqa: F401
+    ChangeProjectIdMCPCommand,
+    ListProjectsMCPCommand,
+)
 
 

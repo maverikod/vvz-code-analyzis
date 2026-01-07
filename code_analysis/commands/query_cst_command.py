@@ -129,3 +129,356 @@ class QueryCSTCommand(Command):
         except Exception as e:
             logger.exception("query_cst failed: %s", e)
             return ErrorResult(message=f"query_cst failed: {e}", code="CST_QUERY_ERROR")
+
+    @classmethod
+    def metadata(cls: type["QueryCSTCommand"]) -> Dict[str, Any]:
+        """
+        Get detailed command metadata for AI models.
+
+        This method provides comprehensive information about the command,
+        including detailed descriptions, usage examples, and edge cases.
+        The metadata should be as detailed and clear as a man page.
+
+        Args:
+            cls: Command class.
+
+        Returns:
+            Dictionary with command metadata.
+        """
+        return {
+            "name": cls.name,
+            "version": cls.version,
+            "description": cls.descr,
+            "category": cls.category,
+            "author": cls.author,
+            "email": cls.email,
+            "detailed_description": (
+                "The query_cst command queries Python source code using CSTQuery selectors "
+                "to locate specific LibCST nodes. It provides a jQuery/XPath-like selector "
+                "language for finding nodes while preserving formatting and comments.\n\n"
+                "Operation flow:\n"
+                "1. Validates root_dir exists and is a directory\n"
+                "2. Resolves file_path (absolute or relative to root_dir)\n"
+                "3. Validates file is a .py file\n"
+                "4. Validates file exists\n"
+                "5. Reads file source code\n"
+                "6. Parses source using LibCST\n"
+                "7. Applies CSTQuery selector to find matching nodes\n"
+                "8. Generates node IDs for each match\n"
+                "9. Optionally includes code snippets\n"
+                "10. Limits results to max_results if specified\n"
+                "11. Returns list of matches with metadata\n\n"
+                "CSTQuery Selector Syntax:\n"
+                "- Selectors are sequences of steps connected by combinators\n"
+                "- Descendant combinator: whitespace (A B finds B inside A)\n"
+                "- Child combinator: > (A > B finds B as direct child of A)\n"
+                "- Each step: TYPE or * with optional predicates and pseudos\n"
+                "- Predicates: [attr OP value] (e.g., [name=\"MyClass\"])\n"
+                "- Pseudos: :first, :last, :nth(N)\n\n"
+                "Supported TYPE Aliases:\n"
+                "- module, class, function, method, stmt, smallstmt, import, node\n"
+                "- LibCST node class names: If, For, Try, With, Return, Assign, Call, etc.\n\n"
+                "Predicate Operators:\n"
+                "- = exact equality\n"
+                "- != not equal\n"
+                "- ~= substring match\n"
+                "- ^= prefix match\n"
+                "- $= suffix match\n\n"
+                "Supported Attributes:\n"
+                "- type: LibCST node type\n"
+                "- kind: Node kind (stmt, smallstmt, class, function, method, etc.)\n"
+                "- name: Node name (for named nodes)\n"
+                "- qualname: Qualified name (for methods: ClassName.method)\n"
+                "- start_line, end_line: Line numbers\n\n"
+                "Node Information:\n"
+                "- node_id: Stable-enough identifier (span-based) for compose_cst_module\n"
+                "- kind: Node kind classification\n"
+                "- type: LibCST node type\n"
+                "- name: Node name (if applicable)\n"
+                "- qualname: Qualified name (if applicable)\n"
+                "- start_line, start_col: Starting position\n"
+                "- end_line, end_col: Ending position\n"
+                "- code: Code snippet (if include_code=True)\n\n"
+                "Use cases:\n"
+                "- Find specific nodes by type or name\n"
+                "- Locate statements, expressions, or declarations\n"
+                "- Discover code patterns\n"
+                "- Find nodes for refactoring operations\n"
+                "- Analyze code structure\n"
+                "- Prepare for compose_cst_module operations\n\n"
+                "Typical Workflow:\n"
+                "1. Use query_cst to find target nodes\n"
+                "2. Get node_id from matches\n"
+                "3. Use compose_cst_module with selector kind='node_id' or kind='cst_query'\n"
+                "4. Preview diff and compile result\n"
+                "5. Apply changes if satisfied\n\n"
+                "Important notes:\n"
+                "- Selector syntax follows CSTQuery rules (see docs/CST_QUERY.md)\n"
+                "- node_id is span-based and stable enough for patch workflows\n"
+                "- Results can be truncated if max_results limit is reached\n"
+                "- include_code=True can make response large for many matches\n"
+                "- Use max_results to limit output size\n"
+                "- Line numbers are 1-based\n"
+                "- Column numbers are 0-based"
+            ),
+            "parameters": {
+                "root_dir": {
+                    "description": (
+                        "Project root directory path. Can be absolute or relative. "
+                        "Used to resolve relative file_path."
+                    ),
+                    "type": "string",
+                    "required": True,
+                    "examples": [
+                        "/home/user/projects/my_project",
+                        ".",
+                        "./code_analysis",
+                    ],
+                },
+                "file_path": {
+                    "description": (
+                        "Target Python file path. Can be absolute or relative to root_dir. "
+                        "Must be a .py file."
+                    ),
+                    "type": "string",
+                    "required": True,
+                    "examples": [
+                        "code_analysis/core/backup_manager.py",
+                        "/home/user/projects/my_project/src/main.py",
+                        "./src/utils.py",
+                    ],
+                },
+                "selector": {
+                    "description": (
+                        "CSTQuery selector string. Uses jQuery/XPath-like syntax to find nodes. "
+                        "Examples:\n"
+                        "- class[name=\"MyClass\"] - Find class by name\n"
+                        "- method[qualname=\"MyClass.my_method\"] - Find method by qualified name\n"
+                        "- smallstmt[type=\"Return\"] - Find all return statements\n"
+                        "- function[name=\"f\"] smallstmt[type=\"Return\"]:first - First return in function f\n"
+                        "See docs/CST_QUERY.md for full syntax documentation."
+                    ),
+                    "type": "string",
+                    "required": True,
+                    "examples": [
+                        'class[name="MyClass"]',
+                        'method[qualname="DataProcessor.process"]',
+                        'smallstmt[type="Return"]',
+                        'function[name="process_data"] smallstmt[type="Return"]:first',
+                    ],
+                },
+                "include_code": {
+                    "description": (
+                        "If True, includes code snippets for each match. "
+                        "Can make response large for many matches. Default is False."
+                    ),
+                    "type": "boolean",
+                    "required": False,
+                    "default": False,
+                    "examples": [False, True],
+                },
+                "max_results": {
+                    "description": (
+                        "Maximum number of matches to return. "
+                        "If more matches found, results are truncated. "
+                        "Default is 200. Use -1 for unlimited (not recommended)."
+                    ),
+                    "type": "integer",
+                    "required": False,
+                    "default": 200,
+                    "examples": [50, 200, 500],
+                },
+            },
+            "usage_examples": [
+                {
+                    "description": "Find class by name",
+                    "command": {
+                        "root_dir": "/home/user/projects/my_project",
+                        "file_path": "src/main.py",
+                        "selector": 'class[name="MyClass"]',
+                    },
+                    "explanation": (
+                        "Finds all classes named 'MyClass' in main.py. "
+                        "Returns node_id that can be used with compose_cst_module."
+                    ),
+                },
+                {
+                    "description": "Find all return statements",
+                    "command": {
+                        "root_dir": "/home/user/projects/my_project",
+                        "file_path": "src/utils.py",
+                        "selector": 'smallstmt[type="Return"]',
+                    },
+                    "explanation": (
+                        "Finds all return statements in utils.py. "
+                        "Useful for analyzing control flow."
+                    ),
+                },
+                {
+                    "description": "Find first return in specific function",
+                    "command": {
+                        "root_dir": "/home/user/projects/my_project",
+                        "file_path": "src/main.py",
+                        "selector": 'function[name="process_data"] smallstmt[type="Return"]:first',
+                        "include_code": True,
+                    },
+                    "explanation": (
+                        "Finds the first return statement in process_data function. "
+                        "Includes code snippet in response."
+                    ),
+                },
+                {
+                    "description": "Find method with code snippets",
+                    "command": {
+                        "root_dir": ".",
+                        "file_path": "code_analysis/core/backup_manager.py",
+                        "selector": 'method[qualname="BackupManager.restore_file"]',
+                        "include_code": True,
+                        "max_results": 10,
+                    },
+                    "explanation": (
+                        "Finds restore_file method in BackupManager class. "
+                        "Includes code snippet and limits to 10 results."
+                    ),
+                },
+            ],
+            "error_cases": {
+                "INVALID_FILE": {
+                    "description": "File is not a Python file",
+                    "message": "Target file must be a .py file",
+                    "solution": "Ensure file_path points to a .py file",
+                },
+                "FILE_NOT_FOUND": {
+                    "description": "File does not exist",
+                    "message": "Target file does not exist",
+                    "solution": "Verify file_path is correct and file exists",
+                },
+                "CST_QUERY_PARSE_ERROR": {
+                    "description": "Invalid selector syntax",
+                    "message": "Invalid selector: {error details}",
+                    "solution": (
+                        "Check selector syntax. Ensure:\n"
+                        "- Proper predicate syntax: [attr OP value]\n"
+                        "- Valid operators: =, !=, ~=, ^=, $=\n"
+                        "- Valid pseudos: :first, :last, :nth(N)\n"
+                        "- Proper combinator usage: whitespace or >\n"
+                        "See docs/CST_QUERY.md for syntax reference."
+                    ),
+                },
+                "CST_QUERY_ERROR": {
+                    "description": "Error during query execution",
+                    "examples": [
+                        {
+                            "case": "Syntax error in source file",
+                            "message": "query_cst failed: SyntaxError",
+                            "solution": (
+                                "Fix syntax errors in the file. "
+                                "LibCST requires valid Python syntax to parse."
+                            ),
+                        },
+                        {
+                            "case": "File encoding error",
+                            "message": "query_cst failed: UnicodeDecodeError",
+                            "solution": (
+                                "Ensure file is UTF-8 encoded. "
+                                "Check file encoding and convert if needed."
+                            ),
+                        },
+                    ],
+                },
+            },
+            "return_value": {
+                "success": {
+                    "description": "Query executed successfully",
+                    "data": {
+                        "success": "Always True on success",
+                        "file_path": "Path to queried file",
+                        "selector": "Selector string that was used",
+                        "truncated": "True if results were truncated due to max_results",
+                        "matches": (
+                            "List of match dictionaries. Each contains:\n"
+                            "- node_id: Stable identifier for compose_cst_module\n"
+                            "- kind: Node kind (stmt, smallstmt, class, function, method, etc.)\n"
+                            "- type: LibCST node type (If, Return, ClassDef, FunctionDef, etc.)\n"
+                            "- name: Node name (if applicable)\n"
+                            "- qualname: Qualified name (if applicable)\n"
+                            "- start_line, start_col: Starting position (1-based line, 0-based col)\n"
+                            "- end_line, end_col: Ending position (1-based line, 0-based col)\n"
+                            "- code: Code snippet (if include_code=True)"
+                        ),
+                    },
+                    "example": {
+                        "success": True,
+                        "file_path": "/home/user/projects/my_project/src/main.py",
+                        "selector": 'class[name="DataProcessor"]',
+                        "truncated": False,
+                        "matches": [
+                            {
+                                "node_id": "class:DataProcessor:30-100",
+                                "kind": "class",
+                                "type": "ClassDef",
+                                "name": "DataProcessor",
+                                "qualname": "DataProcessor",
+                                "start_line": 30,
+                                "start_col": 0,
+                                "end_line": 100,
+                                "end_col": 0,
+                                "code": "class DataProcessor:\n    ...",
+                            }
+                        ],
+                    },
+                    "example_multiple": {
+                        "success": True,
+                        "file_path": "/home/user/projects/my_project/src/utils.py",
+                        "selector": 'smallstmt[type="Return"]',
+                        "truncated": False,
+                        "matches": [
+                            {
+                                "node_id": "smallstmt:Return:15-15",
+                                "kind": "smallstmt",
+                                "type": "Return",
+                                "name": None,
+                                "qualname": None,
+                                "start_line": 15,
+                                "start_col": 4,
+                                "end_line": 15,
+                                "end_col": 12,
+                            },
+                            {
+                                "node_id": "smallstmt:Return:25-25",
+                                "kind": "smallstmt",
+                                "type": "Return",
+                                "name": None,
+                                "qualname": None,
+                                "start_line": 25,
+                                "start_col": 4,
+                                "end_line": 25,
+                                "end_col": 12,
+                            },
+                        ],
+                    },
+                },
+                "error": {
+                    "description": "Command failed",
+                    "code": (
+                        "Error code (e.g., INVALID_FILE, FILE_NOT_FOUND, "
+                        "CST_QUERY_PARSE_ERROR, CST_QUERY_ERROR)"
+                    ),
+                    "message": "Human-readable error message",
+                    "details": "Additional error information (if available)",
+                },
+            },
+            "best_practices": [
+                "Use query_cst to find specific nodes before compose_cst_module",
+                "Save node_id from matches for use in compose_cst_module",
+                "Use include_code=True only when needed (can be large)",
+                "Set max_results to limit output size for broad queries",
+                "Check truncated field to see if results were limited",
+                "Use specific selectors to find exact nodes",
+                "Combine selectors with combinators for complex queries",
+                "Use pseudos (:first, :last, :nth) to select specific matches",
+                "See docs/CST_QUERY.md for selector syntax reference",
+                "Use node_id with compose_cst_module selector kind='node_id'",
+                "Or use selector directly with compose_cst_module kind='cst_query'",
+            ],
+        }

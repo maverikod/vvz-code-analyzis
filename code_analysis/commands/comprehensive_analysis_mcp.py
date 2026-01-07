@@ -248,6 +248,11 @@ class ComprehensiveAnalysisMCPCommand(BaseMCPCommand):
                 "missing_docstrings": [],
                 "summary": {},
             }
+            
+            # Statistics for incremental analysis
+            files_analyzed = 0
+            files_skipped = 0
+            files_total = 0
 
             # Resolve mypy config file path if provided
             mypy_config = None
@@ -263,7 +268,58 @@ class ComprehensiveAnalysisMCPCommand(BaseMCPCommand):
                     db.close()
                     return ErrorResult(message="File not found", code="FILE_NOT_FOUND")
 
+                # Get absolute path for database lookup
+                abs_path = str(file_path_obj.resolve())
                 rel_path = str(file_path_obj.relative_to(root_path))
+                
+                # Get file_id and mtime
+                file_mtime = file_path_obj.stat().st_mtime
+                file_id = None
+                file_project_id = proj_id
+                
+                # Try to find file in database
+                if proj_id:
+                    file_record = db.get_file_by_path(abs_path, proj_id)
+                    if file_record:
+                        file_id = file_record["id"]
+                        file_project_id = proj_id
+                else:
+                    # Try to find file in any project
+                    # Search by absolute path
+                    file_record = db._fetchone(
+                        "SELECT id, project_id FROM files WHERE path = ? AND deleted = 0 LIMIT 1",
+                        (abs_path,),
+                    )
+                    if file_record:
+                        file_id = file_record["id"]
+                        file_project_id = file_record["project_id"]
+                
+                # Check if analysis is up-to-date
+                if file_id and file_project_id:
+                    if db.is_analysis_up_to_date(file_id, file_mtime):
+                        # Get cached results
+                        cached = db.get_comprehensive_analysis_results(file_id, file_mtime)
+                        if cached:
+                            db.close()
+                            if progress_tracker:
+                                progress_tracker.set_status("completed")
+                                progress_tracker.set_description("Analysis completed (cached)")
+                                progress_tracker.set_progress(100)
+                            analysis_logger.info(f"Using cached analysis results for {rel_path}")
+                            # Return cached results with summary including statistics
+                            cached_summary = cached["summary"].copy()
+                            cached_summary["files_analyzed"] = 0
+                            cached_summary["files_skipped"] = 1
+                            cached_summary["files_total"] = 1
+                            return SuccessResult(data={
+                                **cached["results"],
+                                "summary": cached_summary,
+                            })
+                
+                # File needs analysis
+                files_analyzed = 1
+                files_total = 1
+                
                 logger.info(f"Analyzing single file: {rel_path}")
                 analysis_logger.info(f"Starting analysis of single file: {rel_path}")
                 source_code = file_path_obj.read_text(encoding="utf-8")
@@ -331,6 +387,40 @@ class ComprehensiveAnalysisMCPCommand(BaseMCPCommand):
                         d["file_path"] = rel_path
                     results["missing_docstrings"] = missing_docstrings
 
+                # Save results to database if file_id is available
+                if file_id and file_project_id:
+                    try:
+                        file_summary = {
+                            "total_placeholders": len(results["placeholders"]),
+                            "total_stubs": len(results["stubs"]),
+                            "total_empty_methods": len(results["empty_methods"]),
+                            "total_imports_not_at_top": len(results["imports_not_at_top"]),
+                            "total_duplicate_groups": len(results["duplicates"]),
+                            "total_duplicate_occurrences": sum(
+                                len(g["occurrences"]) for g in results["duplicates"]
+                            ),
+                            "total_flake8_errors": sum(
+                                e.get("error_count", 0) for e in results.get("flake8_errors", [])
+                            ),
+                            "files_with_flake8_errors": len(results.get("flake8_errors", [])),
+                            "total_mypy_errors": sum(
+                                e.get("error_count", 0) for e in results.get("mypy_errors", [])
+                            ),
+                            "files_with_mypy_errors": len(results.get("mypy_errors", [])),
+                            "total_missing_docstrings": len(results["missing_docstrings"]),
+                        }
+                        db.save_comprehensive_analysis_results(
+                            file_id=file_id,
+                            project_id=file_project_id,
+                            file_mtime=file_mtime,
+                            results=results,
+                            summary=file_summary,
+                        )
+                        analysis_logger.info(f"Saved analysis results for {rel_path}")
+                    except Exception as e:
+                        logger.error(f"Failed to save analysis results for {rel_path}: {e}")
+                        analysis_logger.error(f"Failed to save analysis results for {rel_path}: {e}")
+
             else:
                 # Analyze multiple files
                 if proj_id:
@@ -346,7 +436,7 @@ class ComprehensiveAnalysisMCPCommand(BaseMCPCommand):
                 else:
                     # Analyze all files in ALL projects
                     files = db._fetchall(
-                        "SELECT id, path, lines FROM files WHERE deleted = 0",
+                        "SELECT id, path, lines, project_id FROM files WHERE deleted = 0",
                     )
                     analysis_logger.info(
                         f"Starting comprehensive analysis for all projects: {len(files)} files to analyze"
@@ -380,8 +470,11 @@ class ComprehensiveAnalysisMCPCommand(BaseMCPCommand):
                 file_records: List[Dict[str, Any]] = []
 
                 last_percent = -1
+                files_analyzed = 0
+                files_skipped = 0
                 for idx, file_record in enumerate(files):
                     file_path_str = file_record["path"]
+                    file_id = file_record["id"]
 
                     # Resolve full path
                     if Path(file_path_str).is_absolute():
@@ -391,6 +484,24 @@ class ComprehensiveAnalysisMCPCommand(BaseMCPCommand):
 
                     if not full_path.exists() or not full_path.is_file():
                         logger.debug(f"Skipping non-existent file: {file_path_str}")
+                        continue
+
+                    # Get file modification time from disk
+                    try:
+                        file_mtime = full_path.stat().st_mtime
+                    except Exception as e:
+                        logger.warning(f"Failed to get mtime for {file_path_str}: {e}")
+                        continue
+
+                    # Check if analysis is up-to-date
+                    if db.is_analysis_up_to_date(file_id, file_mtime):
+                        files_skipped += 1
+                        logger.debug(f"Skipping unchanged file: {file_path_str}")
+                        analysis_logger.debug(f"Skipping unchanged file: {file_path_str}")
+                        # Still add to file_records for long_files check
+                        file_records.append(
+                            {"path": file_path_str, "lines": file_record.get("lines", 0)}
+                        )
                         continue
 
                     try:
@@ -404,8 +515,21 @@ class ComprehensiveAnalysisMCPCommand(BaseMCPCommand):
                     )
 
                     # Log each processed file
+                    files_analyzed += 1
                     logger.info(f"Analyzing file {idx + 1}/{files_total}: {file_path_str}")
                     analysis_logger.info(f"Analyzing file {idx + 1}/{files_total}: {file_path_str}")
+
+                    # Initialize file-specific results
+                    file_results: Dict[str, Any] = {
+                        "placeholders": [],
+                        "stubs": [],
+                        "empty_methods": [],
+                        "imports_not_at_top": [],
+                        "duplicates": [],
+                        "flake8_errors": [],
+                        "mypy_errors": [],
+                        "missing_docstrings": [],
+                    }
 
                     # Run checks
                     if check_placeholders:
@@ -414,12 +538,14 @@ class ComprehensiveAnalysisMCPCommand(BaseMCPCommand):
                         )
                         for p in placeholders:
                             p["file_path"] = file_path_str
+                        file_results["placeholders"] = placeholders
                         all_placeholders.extend(placeholders)
 
                     if check_stubs:
                         stubs = analyzer.find_stubs(full_path, source_code)
                         for s in stubs:
                             s["file_path"] = file_path_str
+                        file_results["stubs"] = stubs
                         all_stubs.extend(stubs)
 
                     if check_empty_methods:
@@ -428,6 +554,7 @@ class ComprehensiveAnalysisMCPCommand(BaseMCPCommand):
                         )
                         for m in empty_methods:
                             m["file_path"] = file_path_str
+                        file_results["empty_methods"] = empty_methods
                         all_empty_methods.extend(empty_methods)
 
                     if check_imports:
@@ -436,6 +563,7 @@ class ComprehensiveAnalysisMCPCommand(BaseMCPCommand):
                         )
                         for imp in imports_not_at_top:
                             imp["file_path"] = file_path_str
+                        file_results["imports_not_at_top"] = imports_not_at_top
                         all_imports_not_at_top.extend(imports_not_at_top)
 
                     if check_duplicates:
@@ -448,18 +576,21 @@ class ComprehensiveAnalysisMCPCommand(BaseMCPCommand):
                         for group in duplicates:
                             for occ in group["occurrences"]:
                                 occ["file_path"] = file_path_str
+                        file_results["duplicates"] = duplicates
                         all_duplicates.extend(duplicates)
 
                     if check_flake8:
                         flake8_result = analyzer.check_flake8(full_path)
                         if not flake8_result["success"]:
                             flake8_result["file_path"] = file_path_str
+                            file_results["flake8_errors"] = [flake8_result]
                             all_flake8_errors.append(flake8_result)
 
                     if check_mypy:
                         mypy_result = analyzer.check_mypy(full_path, mypy_config)
                         if not mypy_result["success"]:
                             mypy_result["file_path"] = file_path_str
+                            file_results["mypy_errors"] = [mypy_result]
                             all_mypy_errors.append(mypy_result)
 
                     if check_docstrings:
@@ -468,7 +599,48 @@ class ComprehensiveAnalysisMCPCommand(BaseMCPCommand):
                         )
                         for d in missing_docstrings:
                             d["file_path"] = file_path_str
+                        file_results["missing_docstrings"] = missing_docstrings
                         all_missing_docstrings.extend(missing_docstrings)
+
+                    # Create file-specific summary
+                    file_summary = {
+                        "total_placeholders": len(file_results["placeholders"]),
+                        "total_stubs": len(file_results["stubs"]),
+                        "total_empty_methods": len(file_results["empty_methods"]),
+                        "total_imports_not_at_top": len(file_results["imports_not_at_top"]),
+                        "total_duplicate_groups": len(file_results["duplicates"]),
+                        "total_duplicate_occurrences": sum(
+                            len(g["occurrences"]) for g in file_results["duplicates"]
+                        ),
+                        "total_flake8_errors": sum(
+                            e.get("error_count", 0) for e in file_results.get("flake8_errors", [])
+                        ),
+                        "files_with_flake8_errors": len(file_results.get("flake8_errors", [])),
+                        "total_mypy_errors": sum(
+                            e.get("error_count", 0) for e in file_results.get("mypy_errors", [])
+                        ),
+                        "files_with_mypy_errors": len(file_results.get("mypy_errors", [])),
+                        "total_missing_docstrings": len(file_results["missing_docstrings"]),
+                    }
+
+                    # Save results to database
+                    # Get project_id: use proj_id if set, otherwise from file_record
+                    file_project_id = proj_id or file_record.get("project_id")
+                    if file_project_id:
+                        try:
+                            db.save_comprehensive_analysis_results(
+                                file_id=file_id,
+                                project_id=file_project_id,
+                                file_mtime=file_mtime,
+                                results=file_results,
+                                summary=file_summary,
+                            )
+                            analysis_logger.debug(f"Saved analysis results for {file_path_str}")
+                        except Exception as e:
+                            logger.error(f"Failed to save analysis results for {file_path_str}: {e}")
+                            analysis_logger.error(f"Failed to save analysis results for {file_path_str}: {e}")
+                    else:
+                        logger.warning(f"Cannot save results for {file_path_str}: project_id not available")
 
                     # Update progress
                     if progress_tracker and files_total > 0:
@@ -492,8 +664,13 @@ class ComprehensiveAnalysisMCPCommand(BaseMCPCommand):
                 if check_long_files:
                     results["long_files"] = analyzer.find_long_files(file_records)
 
+                # Log statistics
+                analysis_logger.info(
+                    f"Analysis complete: {files_analyzed} files analyzed, {files_skipped} files skipped (unchanged)"
+                )
+
             # Create summary
-            results["summary"] = {
+            summary_data = {
                 "total_placeholders": len(results["placeholders"]),
                 "total_stubs": len(results["stubs"]),
                 "total_empty_methods": len(results["empty_methods"]),
@@ -529,6 +706,13 @@ class ComprehensiveAnalysisMCPCommand(BaseMCPCommand):
                     [d for d in results["missing_docstrings"] if d["type"] == "function"]
                 ),
             }
+            
+            # Add incremental analysis statistics
+            summary_data["files_analyzed"] = files_analyzed
+            summary_data["files_skipped"] = files_skipped
+            summary_data["files_total"] = files_total
+            
+            results["summary"] = summary_data
 
             db.close()
 
@@ -604,8 +788,14 @@ class ComprehensiveAnalysisMCPCommand(BaseMCPCommand):
                 "   - Processes files with progress tracking\n"
                 "   - Runs all enabled checks for each file\n"
                 "8. Aggregates results and creates summary statistics\n"
-                "9. Returns comprehensive analysis results\n"
-                "10. Results are NOT saved to database - they are only returned in the response\n\n"
+                "9. Saves results to database (comprehensive_analysis_results table)\n"
+                "10. Returns comprehensive analysis results\n\n"
+                "Incremental Analysis:\n"
+                "- Before analyzing each file, checks file modification time (mtime)\n"
+                "- Compares mtime with stored analysis results in database\n"
+                "- Skips files where mtime matches (analysis is up-to-date)\n"
+                "- Only analyzes changed files (mtime differs)\n"
+                "- For single file mode: returns cached results if file unchanged\n\n"
                 "Analysis Types:\n"
                 "- Placeholders: Finds TODO, FIXME, XXX, HACK, NOTE comments\n"
                 "- Stubs: Finds functions/methods with pass, ellipsis, NotImplementedError\n"
@@ -630,8 +820,10 @@ class ComprehensiveAnalysisMCPCommand(BaseMCPCommand):
                 "- Progress is tracked and logged to logs/comprehensive_analysis.log\n"
                 "- Each check can be enabled/disabled via boolean parameters\n"
                 "- Results include summary statistics for all analysis types\n"
-                "- Results are NOT saved to database - they are only returned in the response\n"
-                "- To persist results, save them externally (e.g., to a file or external database)"
+                "- Results are saved to database (comprehensive_analysis_results table)\n"
+                "- Incremental analysis: only analyzes files that have changed since last analysis\n"
+                "- Files with unchanged mtime are skipped (analysis is up-to-date)\n"
+                "- Single file mode: returns cached results if file unchanged"
             ),
             "parameters": {
                 "root_dir": {
@@ -904,24 +1096,40 @@ class ComprehensiveAnalysisMCPCommand(BaseMCPCommand):
                 "Review summary statistics first, then drill down into specific issues",
                 "Run this command regularly to track code quality over time",
                 "Use custom duplicate settings to focus on significant duplicates",
-                "Save results externally if you need to persist them (results are not saved to database)",
+                "Results are automatically saved to database - incremental analysis improves performance",
+                "Only changed files are analyzed - unchanged files are skipped automatically",
             ],
             "data_persistence": {
-                "results_saved_to_database": False,
+                "results_saved_to_database": True,
                 "description": (
-                    "Results of comprehensive_analysis are NOT saved to the database. "
-                    "They are only returned in the command response. "
-                    "If you need to persist results, save them externally (e.g., to a JSON file or external database)."
+                    "Results of comprehensive_analysis are saved to the database in the "
+                    "comprehensive_analysis_results table. Each file's analysis results are stored "
+                    "with the file's modification time (mtime) to enable incremental analysis."
                 ),
                 "what_is_saved": (
-                    "Nothing is saved. The command only reads from the database to get the list of files to analyze."
+                    "For each analyzed file:\n"
+                    "- File ID and project ID\n"
+                    "- File modification time (mtime) at analysis\n"
+                    "- Complete analysis results (JSON)\n"
+                    "- Summary statistics (JSON)\n"
+                    "- Timestamp of analysis\n"
+                    "Results are stored in comprehensive_analysis_results table with UNIQUE(file_id, file_mtime) constraint."
+                ),
+                "incremental_analysis": (
+                    "Before analyzing a file, the command:\n"
+                    "1. Gets file modification time (mtime) from disk\n"
+                    "2. Checks if analysis results exist in database for this file_id and mtime\n"
+                    "3. If mtime matches (within 0.1s tolerance): skips analysis, uses cached results\n"
+                    "4. If mtime differs: performs analysis and saves new results\n"
+                    "This ensures only changed files are analyzed, improving performance."
                 ),
                 "what_is_returned": (
                     "Complete analysis results including:\n"
                     "- All findings (placeholders, stubs, empty methods, etc.)\n"
                     "- Summary statistics\n"
                     "- All errors and warnings\n"
-                    "All data is returned in the SuccessResult.data dictionary."
+                    "All data is returned in the SuccessResult.data dictionary.\n"
+                    "For single file mode with unchanged file: returns cached results from database."
                 ),
             },
         }

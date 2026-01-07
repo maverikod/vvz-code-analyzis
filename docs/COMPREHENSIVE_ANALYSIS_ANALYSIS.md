@@ -853,15 +853,60 @@ result = await call_server(
 
 ### Results Storage
 
-**Important**: Results of `comprehensive_analysis` are **NOT saved to the database**.
+**Important**: Results of `comprehensive_analysis` are **saved to the database**.
 
-- Results are only returned in the command response (`SuccessResult.data`)
-- No INSERT or UPDATE operations are performed on the database
-- The command only **reads** from the database to get the list of files to analyze
+- Results are stored in `comprehensive_analysis_results` table
+- Each file's analysis is saved with file modification time (mtime)
+- Results are returned in the command response (`SuccessResult.data`)
+- Enables incremental analysis - only changed files are analyzed
+
+### Database Schema
+
+**Table**: `comprehensive_analysis_results`
+
+```sql
+CREATE TABLE comprehensive_analysis_results (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    file_id INTEGER NOT NULL,
+    project_id TEXT NOT NULL,
+    file_mtime REAL NOT NULL,
+    results_json TEXT NOT NULL,
+    summary_json TEXT NOT NULL,
+    created_at REAL DEFAULT (julianday('now')),
+    updated_at REAL DEFAULT (julianday('now')),
+    FOREIGN KEY (file_id) REFERENCES files(id) ON DELETE CASCADE,
+    FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE,
+    UNIQUE(file_id, file_mtime)
+)
+```
 
 ### What is Saved
 
-**Nothing is saved**. The command is read-only regarding analysis results.
+For each analyzed file:
+- File ID and project ID
+- File modification time (mtime) at analysis
+- Complete analysis results (JSON)
+- Summary statistics (JSON)
+- Timestamp of analysis
+
+### Incremental Analysis
+
+The command implements incremental analysis:
+
+1. **Before analyzing each file**:
+   - Gets file modification time (mtime) from disk
+   - Checks if analysis results exist in database for this `file_id` and `mtime`
+   - If mtime matches (within 0.1s tolerance): **skips analysis**, uses cached results
+   - If mtime differs: **performs analysis** and saves new results
+
+2. **Benefits**:
+   - Only changed files are analyzed
+   - Significantly improves performance for large projects
+   - Reduces unnecessary computation
+
+3. **Single File Mode**:
+   - If file unchanged: returns cached results from database immediately
+   - If file changed: performs analysis and saves new results
 
 ### What is Returned
 
@@ -873,13 +918,7 @@ Complete analysis results including:
 
 All data is returned in the `SuccessResult.data` dictionary.
 
-### Persisting Results
-
-If you need to persist results:
-1. Save them to a JSON file
-2. Store them in an external database
-3. Send them to a monitoring/analytics system
-4. Export to a reporting tool
+For single file mode with unchanged file: returns cached results from database.
 
 ## Summary
 
@@ -892,7 +931,8 @@ The `comprehensive_analysis` command is a comprehensive code quality analysis to
 5. **Handles errors gracefully** without stopping entire analysis
 6. **Provides detailed results** with summary statistics
 7. **Supports flexible configuration** via boolean flags and parameters
-8. **Does NOT save results to database** - results are only returned in response
+8. **Saves results to database** - enables incremental analysis and caching
+9. **Incremental analysis** - only analyzes changed files for better performance
 
 It is designed for:
 - Complete code quality audits
@@ -900,6 +940,5 @@ It is designed for:
 - Monitoring code quality over time
 - Finding code quality issues before refactoring
 - Generating code quality reports
-
-**Note**: Results must be saved externally if persistence is required.
+- Regular automated code quality checks (incremental analysis improves performance)
 

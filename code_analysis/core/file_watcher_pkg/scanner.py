@@ -109,24 +109,22 @@ def should_ignore_path(path: Path, ignore_patterns: Optional[List[str]] = None) 
         return path.suffix not in CODE_FILE_EXTENSIONS
 
     return False
-
-
 def scan_directory(
     root_dir: Path,
-    project_root: Optional[Path] = None,
+    watch_dirs: List[Path],
     ignore_patterns: Optional[List[str]] = None,
 ) -> Dict[str, Dict]:
     """
-    Scan directory recursively for code files.
-
-    Implements Step 5 of refactor plan: all file paths are absolute.
-    Returns dictionary with absolute paths as keys.
-
+    Scan directory recursively for code files and discover projects.
+    
+    Implements project discovery: for each file, finds the nearest project root
+    by walking up the directory tree and looking for projectid files.
+    
     Args:
         root_dir: Root directory to scan
-        project_root: Project root directory (unused, kept for compatibility)
+        watch_dirs: List of watched directories for project discovery (REQUIRED)
         ignore_patterns: Glob patterns to ignore
-
+    
     Returns:
         Dictionary mapping absolute file paths to file info:
         {
@@ -134,13 +132,22 @@ def scan_directory(
                 "path": Path("/absolute/path/to/file.py"),
                 "mtime": 1234567890.0,
                 "size": 1024,
+                "project_root": Path("/project/root"),
+                "project_id": "uuid-here",
             }
         }
+        
+        Files without a project (no projectid found) are skipped with a warning.
     """
     from ..project_resolution import normalize_abs_path
-
+    from ..project_discovery import find_project_root, NestedProjectError
+    from typing import Any
+    
     files: Dict[str, Dict] = {}
-
+    
+    # Resolve watch_dirs to absolute paths
+    watch_dirs_resolved = [Path(wd).resolve() for wd in watch_dirs]
+    
     try:
         for item in root_dir.rglob("*"):
             if should_ignore_path(item, ignore_patterns):
@@ -153,11 +160,28 @@ def scan_directory(
                     abs_path = normalize_abs_path(item)
                     path_key = abs_path
 
-                    files[path_key] = {
-                        "path": Path(abs_path),
-                        "mtime": stat.st_mtime,
-                        "size": stat.st_size,
-                    }
+                    # Project discovery: find project root for this file
+                    try:
+                        project_root_obj = find_project_root(Path(abs_path), watch_dirs_resolved)
+                        if project_root_obj is None:
+                            logger.warning(
+                                f"No project found for file {abs_path}, skipping"
+                            )
+                            continue
+                        
+                        file_info: Dict[str, Any] = {
+                            "path": Path(abs_path),
+                            "mtime": stat.st_mtime,
+                            "size": stat.st_size,
+                            "project_root": project_root_obj.root_path,
+                            "project_id": project_root_obj.project_id,
+                        }
+                        files[path_key] = file_info
+                    except NestedProjectError as e:
+                        logger.error(
+                            f"Nested project detected for file {abs_path}: {e}, skipping"
+                        )
+                        continue
                 except OSError as e:
                     logger.debug(f"Error accessing file {item}: {e}")
                     continue

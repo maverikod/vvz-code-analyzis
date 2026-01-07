@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import uuid
 from pathlib import Path
+from typing import Optional, Tuple
 
 
 class ProjectIdError(ValueError):
@@ -118,3 +119,31 @@ def require_matching_project_id(root_dir: str | Path, project_id: str | None) ->
             "project_id mismatch: provided value does not match root_dir/projectid",
         )
     return project_id
+
+
+def find_project_root_for_file(
+    file_path: str | Path, watch_dirs: list[str | Path]
+) -> Optional[Tuple[Path, str]]:
+    """
+    Find project root and project_id for a file.
+
+    Uses project discovery to find the nearest project root containing
+    the file by walking up the directory tree and looking for projectid files.
+
+    Args:
+        file_path: Path to file
+        watch_dirs: List of watched directories (absolute paths)
+
+    Returns:
+        Tuple of (project_root_path, project_id) or None if not found
+
+    Raises:
+        NestedProjectError: If nested projects detected
+    """
+    from .project_discovery import find_project_root
+
+    watch_dirs_resolved = [Path(wd).resolve() for wd in watch_dirs]
+    project_root = find_project_root(Path(file_path), watch_dirs_resolved)
+    if project_root is None:
+        return None
+    return (project_root.root_path, project_root.project_id)

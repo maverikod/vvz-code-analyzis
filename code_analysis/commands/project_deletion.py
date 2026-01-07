@@ -69,8 +69,10 @@ class DeleteProjectCommand:
         root_path = project.get("root_path", "Unknown")
 
         # Get statistics before deletion
-        file_count = len(self.database.get_project_files(self.project_id, include_deleted=True))
-        
+        file_count = len(
+            self.database.get_project_files(self.project_id, include_deleted=True)
+        )
+
         # Count chunks
         chunk_count_row = self.database._fetchone(
             """
@@ -119,7 +121,9 @@ class DeleteProjectCommand:
                 "message": f"Deleted project {project_name} ({self.project_id})",
             }
         except Exception as e:
-            logger.error(f"Failed to delete project {self.project_id}: {e}", exc_info=True)
+            logger.error(
+                f"Failed to delete project {self.project_id}: {e}", exc_info=True
+            )
             return {
                 "success": False,
                 "error": "DELETION_ERROR",
@@ -133,9 +137,9 @@ class DeleteUnwatchedProjectsCommand:
     Command to delete projects that are not in the list of watched directories.
 
     This command:
-    1. Gets the list of watched directories from config
+    1. Discovers all projects in watched directories using project discovery
     2. Finds all projects in the database
-    3. Identifies projects whose root_path is not in the watched directories
+    3. Identifies projects that are not in the discovered list
     4. Deletes those projects
 
     Use with caution - this operation cannot be undone.
@@ -160,77 +164,108 @@ class DeleteUnwatchedProjectsCommand:
         self.database = database
         self.watched_dirs = {Path(d).resolve() for d in watched_dirs}
         self.dry_run = dry_run
-        self.server_root_dir = Path(server_root_dir).resolve() if server_root_dir else None
+        self.server_root_dir = (
+            Path(server_root_dir).resolve() if server_root_dir else None
+        )
 
     async def execute(self) -> Dict[str, Any]:
         """
         Execute deletion of unwatched projects.
 
+        Uses project discovery to find all projects in watched directories,
+        then compares with database projects to find unwatched ones.
+
         Returns:
             Dictionary with deletion results
         """
-        # Get all projects
-        all_projects = self.database._fetchall("SELECT id, root_path, name FROM projects")
-        
+        from ..core.project_discovery import (
+            discover_projects_in_directory,
+            NestedProjectError,
+            DuplicateProjectIdError,
+        )
+
+        # Step 1: Discover all projects in watched directories
+        discovered_project_ids: Set[str] = set()
+        discovery_errors = []
+
+        for watched_dir in self.watched_dirs:
+            try:
+                discovered_projects = discover_projects_in_directory(watched_dir)
+                discovered_project_ids.update(p.project_id for p in discovered_projects)
+                logger.debug(
+                    f"Discovered {len(discovered_projects)} project(s) in {watched_dir}"
+                )
+            except NestedProjectError as e:
+                logger.error(f"Nested project error in {watched_dir}: {e}")
+                discovery_errors.append(f"Nested project in {watched_dir}: {e}")
+            except DuplicateProjectIdError as e:
+                logger.error(f"Duplicate project_id error in {watched_dir}: {e}")
+                discovery_errors.append(f"Duplicate project_id in {watched_dir}: {e}")
+            except Exception as e:
+                logger.error(f"Error discovering projects in {watched_dir}: {e}")
+                discovery_errors.append(f"Error in {watched_dir}: {e}")
+
+        # Step 2: Get all projects from database
+        all_projects = self.database._fetchall(
+            "SELECT id, root_path, name FROM projects"
+        )
+
         projects_to_delete = []
         projects_to_keep = []
 
+        # Step 3: Compare database projects with discovered projects
         for project in all_projects:
             project_id = project["id"]
             root_path = project["root_path"]
             project_name = project.get("name", "Unknown")
-            
+
             # Normalize project root path
             try:
                 project_path = Path(root_path).resolve()
             except Exception as e:
                 logger.warning(f"Invalid project path {root_path}: {e}")
                 # If path is invalid, consider it unwatched
-                projects_to_delete.append({
-                    "project_id": project_id,
-                    "root_path": root_path,
-                    "name": project_name,
-                    "reason": "invalid_path",
-                })
+                projects_to_delete.append(
+                    {
+                        "project_id": project_id,
+                        "root_path": root_path,
+                        "name": project_name,
+                        "reason": "invalid_path",
+                    }
+                )
                 continue
 
             # Protect server root directory from deletion
             if self.server_root_dir and project_path == self.server_root_dir:
-                projects_to_keep.append({
-                    "project_id": project_id,
-                    "root_path": root_path,
-                    "name": project_name,
-                    "reason": "server_root_protected",
-                })
+                projects_to_keep.append(
+                    {
+                        "project_id": project_id,
+                        "root_path": root_path,
+                        "name": project_name,
+                        "reason": "server_root_protected",
+                    }
+                )
                 continue
 
-            # Check if project is in watched directories
-            is_watched = False
-            for watched_dir in self.watched_dirs:
-                try:
-                    # Check if project_path is within watched_dir or matches it
-                    if project_path == watched_dir or project_path.is_relative_to(watched_dir):
-                        is_watched = True
-                        break
-                except Exception:
-                    # If comparison fails, check string equality
-                    if str(project_path) == str(watched_dir):
-                        is_watched = True
-                        break
-
-            if is_watched:
-                projects_to_keep.append({
-                    "project_id": project_id,
-                    "root_path": root_path,
-                    "name": project_name,
-                })
+            # Check if project is in discovered projects
+            if project_id in discovered_project_ids:
+                projects_to_keep.append(
+                    {
+                        "project_id": project_id,
+                        "root_path": root_path,
+                        "name": project_name,
+                        "reason": "discovered_in_watch_dirs",
+                    }
+                )
             else:
-                projects_to_delete.append({
-                    "project_id": project_id,
-                    "root_path": root_path,
-                    "name": project_name,
-                    "reason": "not_in_watched_dirs",
-                })
+                projects_to_delete.append(
+                    {
+                        "project_id": project_id,
+                        "root_path": root_path,
+                        "name": project_name,
+                        "reason": "not_discovered_in_watch_dirs",
+                    }
+                )
 
         if not projects_to_delete:
             return {
@@ -249,7 +284,7 @@ class DeleteUnwatchedProjectsCommand:
 
         for project_info in projects_to_delete:
             project_id = project_info["project_id"]
-            
+
             if self.dry_run:
                 deleted_projects.append(project_info)
             else:
@@ -274,16 +309,16 @@ class DeleteUnwatchedProjectsCommand:
                     )
 
         return {
-            "success": len(errors) == 0,
+            "success": len(errors) == 0 and len(discovery_errors) == 0,
             "dry_run": self.dry_run,
             "deleted_count": len(deleted_projects),
             "kept_count": len(projects_to_keep),
             "projects_deleted": deleted_projects,
             "projects_kept": projects_to_keep,
+            "discovery_errors": discovery_errors if discovery_errors else None,
             "errors": errors if errors else None,
             "message": (
                 f"Deleted {len(deleted_projects)} unwatched project(s), "
                 f"kept {len(projects_to_keep)} watched project(s)"
             ),
         }
-

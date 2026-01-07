@@ -115,7 +115,8 @@
       "crl_file": null,
       "retry_attempts": 3,
       "retry_delay": 5.0,
-      "timeout": 60.0
+      "timeout": 60.0,
+      "check_hostname": false
     },
     "embedding": {
       "enabled": true,
@@ -128,7 +129,8 @@
       "crl_file": null,
       "retry_attempts": 3,
       "retry_delay": 5.0,
-      "timeout": 60.0
+      "timeout": 60.0,
+      "check_hostname": false
     },
     "faiss_index_path": "data/faiss_index.bin",
     "vector_dim": 384,

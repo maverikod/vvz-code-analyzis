@@ -41,40 +41,36 @@ class WorkerStartResult:
 def start_file_watcher_worker(
     *,
     db_path: str,
-    project_id: str,
     watch_dirs: List[str],
     locks_dir: str,
     scan_interval: int = 60,
     version_dir: Optional[str] = None,
     worker_log_path: Optional[str] = None,
-    project_root: Optional[str] = None,
     ignore_patterns: Optional[List[str]] = None,
 ) -> WorkerStartResult:
     """
     Start file watcher worker in a separate process and register it.
 
+    Projects are discovered automatically within each watch_dir by finding
+    projectid files. Multiple projects can exist in one watch_dir.
+
     Args:
         db_path: Path to database file.
-        project_id: Project ID to watch.
-        watch_dirs: Directories to scan.
+        watch_dirs: Directories to scan (projects discovered automatically).
         locks_dir: Service state directory for lock files (from StoragePaths).
         scan_interval: Scan interval seconds.
         version_dir: Version directory for deleted files.
         worker_log_path: Log path for worker process.
-        project_root: Project root for relative paths.
         ignore_patterns: Optional ignore patterns.
 
     Returns:
         WorkerStartResult.
     """
     from .file_watcher_pkg.runner import run_file_watcher_worker
-
-    # Convert to project_watch_dirs format: List[tuple[str, str]] = [(project_id, watch_dir), ...]
-    project_watch_dirs = [(project_id, watch_dir) for watch_dir in watch_dirs]
     
     process = multiprocessing.Process(
         target=run_file_watcher_worker,
-        args=(db_path, project_watch_dirs),
+        args=(db_path, watch_dirs),
         kwargs={
             "locks_dir": locks_dir,
             "scan_interval": int(scan_interval),
@@ -86,9 +82,11 @@ def start_file_watcher_worker(
     )
     process.start()
 
+    # Use first watch_dir as identifier for worker name
+    worker_name = f"file_watcher_{Path(watch_dirs[0]).name if watch_dirs else 'default'}"
     get_worker_manager().register_worker(
         "file_watcher",
-        {"pid": process.pid, "process": process, "name": f"file_watcher_{project_id}"},
+        {"pid": process.pid, "process": process, "name": worker_name},
     )
     return WorkerStartResult(
         success=True,

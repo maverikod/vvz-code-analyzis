@@ -119,12 +119,22 @@ async def clear_project_data(self, project_id: str) -> None:
         f"SELECT id FROM code_content WHERE file_id IN ({placeholders})", tuple(file_ids)
     )
     content_ids = [row["id"] for row in content_rows]
+    # Delete FTS entries in batches to avoid database corruption
+    # If FTS is corrupted, skip it and continue with other deletions
     if content_ids:
-        content_placeholders = ",".join("?" * len(content_ids))
-        self._execute(
-            f"DELETE FROM code_content_fts WHERE rowid IN ({content_placeholders})",
-            tuple(content_ids),
-        )
+        batch_size = 1000
+        for i in range(0, len(content_ids), batch_size):
+            batch = content_ids[i:i + batch_size]
+            batch_placeholders = ",".join("?" * len(batch))
+            try:
+                self._execute(
+                    f"DELETE FROM code_content_fts WHERE rowid IN ({batch_placeholders})",
+                    tuple(batch),
+                )
+            except Exception as e:
+                logger.warning(f"Failed to delete FTS batch {i//batch_size + 1} for project {project_id}: {e}. Skipping FTS deletion.")
+                # If FTS is corrupted, skip remaining batches
+                break
     if class_ids:
         method_placeholders = ",".join("?" * len(class_ids))
         self._execute(

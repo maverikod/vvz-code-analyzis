@@ -503,6 +503,13 @@ class CodeDatabase:
             logger.info("Added binding_level column to code_chunks table")
         except Exception:
             pass
+        try:
+            self._execute(
+                "ALTER TABLE code_chunks ADD COLUMN updated_at REAL DEFAULT (julianday('now'))"
+            )
+            logger.info("Added updated_at column to code_chunks table")
+        except Exception:
+            pass
         # Create code_duplicates table
         self._execute(
             """

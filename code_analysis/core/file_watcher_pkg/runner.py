@@ -78,7 +78,7 @@ def _setup_worker_logging(
 
 def run_file_watcher_worker(
     db_path: str,
-    project_watch_dirs: List[tuple[str, str]],
+    watch_dirs: List[str],
     locks_dir: str,
     scan_interval: int = 60,
     version_dir: Optional[str] = None,
@@ -92,10 +92,13 @@ def run_file_watcher_worker(
     Worker policy:
         This worker must NOT start other processes (including DB worker).
         It connects to an already running DB worker via sqlite_proxy.
+        
+    Projects are discovered automatically within each watch_dir by finding
+    projectid files. Multiple projects can exist in one watch_dir.
 
     Args:
         db_path: Path to database file.
-        project_watch_dirs: List of (project_id, watch_dir) pairs.
+        watch_dirs: List of watch directory paths (projects discovered automatically).
         locks_dir: Service state directory for lock files (from StoragePaths).
         scan_interval: Scan interval seconds.
         version_dir: Version directory for deleted files.
@@ -115,11 +118,11 @@ def run_file_watcher_worker(
     # Setup worker logging first
     _setup_worker_logging(worker_log_path, log_max_bytes, log_backup_count)
 
-    from .multi_project_worker import MultiProjectFileWatcherWorker, build_project_specs
+    from .multi_project_worker import MultiProjectFileWatcherWorker, build_watch_dir_specs
 
     worker = MultiProjectFileWatcherWorker(
         db_path=Path(db_path),
-        projects=build_project_specs(project_watch_dirs),
+        watch_dirs=build_watch_dir_specs(watch_dirs),
         locks_dir=Path(locks_dir),
         scan_interval=int(scan_interval),
         version_dir=version_dir,

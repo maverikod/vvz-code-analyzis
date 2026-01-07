@@ -152,6 +152,7 @@ class SVOClientManager:
         self._chunker_ca_cert_file: Optional[str] = chunker_cfg_dict.get("ca_cert_file")
         self._chunker_crl_file: Optional[str] = chunker_cfg_dict.get("crl_file")
         self._chunker_timeout: Optional[float] = chunker_cfg_dict.get("timeout")
+        self._chunker_check_hostname: bool = bool(chunker_cfg_dict.get("check_hostname", False))
 
         # Embedding client (embed-client - only vectorization)
         self._embedding_client: Optional[Any] = None
@@ -167,6 +168,7 @@ class SVOClientManager:
         self._embedding_ca_cert_file: Optional[str] = emb_cfg_dict.get("ca_cert_file")
         self._embedding_crl_file: Optional[str] = emb_cfg_dict.get("crl_file")
         self._embedding_timeout: Optional[float] = emb_cfg_dict.get("timeout")
+        self._embedding_check_hostname: bool = bool(emb_cfg_dict.get("check_hostname", False))
         
         # Store root path for resolving relative certificate paths
         # Priority: explicit root_dir > infer from config > current working directory
@@ -205,7 +207,7 @@ class SVOClientManager:
                     chunker_kwargs: dict[str, Any] = {
                         "host": self._chunker_url,
                         "port": self._chunker_port,
-                        "check_hostname": False,  # Assuming internal network
+                        "check_hostname": self._chunker_check_hostname,
                     }
                     if self._chunker_timeout:
                         chunker_kwargs["timeout"] = self._chunker_timeout
@@ -307,6 +309,10 @@ class SVOClientManager:
                     else:
                         ssl_enabled = False
 
+                    # Add check_hostname if SSL is enabled
+                    if ssl_enabled:
+                        client_kwargs["verify"] = self._embedding_check_hostname
+                    
                     # Create client
                     self._embedding_client = ClientFactory.create_client(
                         base_url=base_url,

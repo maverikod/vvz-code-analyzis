@@ -20,6 +20,7 @@ except ImportError:
     projects = None
 
 from . import datasets
+from . import chunks
 
 
 def _add_functions_as_methods(target_class: type, source_module: object) -> None:
@@ -36,6 +37,7 @@ _MODULES = [
     datasets,
     files,
     cst,
+    chunks,
 ]
 
 for _m in _MODULES:

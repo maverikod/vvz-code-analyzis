@@ -700,7 +700,14 @@ def main() -> None:
                         "Failed to create CodeDatabase after all retries"
                     )
 
-                # Get or create project for each watch_dir
+                # Discover all projects in watch_dirs using project discovery (Phase 1)
+                from code_analysis.core.project_discovery import (
+                    discover_projects_in_directory,
+                    NestedProjectError,
+                    DuplicateProjectIdError,
+                )
+
+                discovered_project_ids = set()
                 for watch_dir in watch_dirs:
                     watch_dir_path = Path(watch_dir).resolve()
                     if not watch_dir_path.exists():
@@ -709,11 +716,58 @@ def main() -> None:
                         )
                         continue
 
-                    project_id = database.get_or_create_project(
-                        str(watch_dir_path), name=watch_dir_path.name
-                    )
-                    project_ids.append(project_id)
-                    logger.info(f"[STEP 6] Project for {watch_dir_path}: {project_id}")
+                    try:
+                        # Discover projects in this watch_dir
+                        discovered_projects = discover_projects_in_directory(watch_dir_path)
+                        logger.info(
+                            f"[STEP 6] Discovered {len(discovered_projects)} project(s) in {watch_dir_path}"
+                        )
+
+                        # Auto-create projects in database if they don't exist
+                        for project_root_obj in discovered_projects:
+                            project = database.get_project(project_root_obj.project_id)
+                            if not project:
+                                # Create project with ID from projectid file
+                                project_name = project_root_obj.root_path.name
+                                database._execute(
+                                    """
+                                    INSERT INTO projects (id, root_path, name, updated_at)
+                                    VALUES (?, ?, ?, julianday('now'))
+                                    ON CONFLICT(id) DO NOTHING
+                                    """,
+                                    (
+                                        project_root_obj.project_id,
+                                        str(project_root_obj.root_path),
+                                        project_name,
+                                    ),
+                                )
+                                database._commit()
+                                logger.info(
+                                    f"[STEP 6] Auto-created project {project_root_obj.project_id} "
+                                    f"at {project_root_obj.root_path}"
+                                )
+
+                            discovered_project_ids.add(project_root_obj.project_id)
+                    except NestedProjectError as e:
+                        logger.error(
+                            f"Nested project detected in {watch_dir_path}: {e}, skipping"
+                        )
+                        continue
+                    except DuplicateProjectIdError as e:
+                        logger.error(
+                            f"Duplicate project_id detected in {watch_dir_path}: {e}, skipping"
+                        )
+                        continue
+                    except Exception as e:
+                        logger.warning(
+                            f"Error discovering projects in {watch_dir_path}: {e}"
+                        )
+                        continue
+
+                project_ids = list(discovered_project_ids)
+                logger.info(
+                    f"[STEP 6] Total discovered projects: {len(project_ids)}"
+                )
 
                 database.close()
                 logger.info("[STEP 7] Database connection closed")
@@ -1071,84 +1125,21 @@ def main() -> None:
             )
             db_path = storage.db_path
 
-            # Get or create projects for each watch_dir
-            project_watch_dirs: list[tuple[str, str]] = []
-            try:
-                logger.info(f"[STEP 1] Creating driver config for db_path={db_path}")
-                from code_analysis.core.database import CodeDatabase
-                from code_analysis.core.database.base import (
-                    create_driver_config_for_worker,
-                )
-
-                driver_config = create_driver_config_for_worker(
-                    db_path=db_path,
-                    driver_type="sqlite_proxy",
-                )
-                logger.info(
-                    f"[STEP 2] Driver config created: type={driver_config.get('type')}"
-                )
-
-                # Override timeout and poll_interval for proxy driver
-                if driver_config.get("type") == "sqlite_proxy":
-                    driver_config["config"]["worker_config"]["command_timeout"] = 60.0
-                    driver_config["config"]["worker_config"]["poll_interval"] = 1.0
-                    logger.info(
-                        "[STEP 3] Proxy driver config updated: timeout=60.0, poll_interval=1.0"
-                    )
-
-                logger.info(
-                    "[STEP 4] Creating CodeDatabase instance with driver_config (with retry)"
-                )
-                import time
-
-                max_retries = 5
-                retry_delay = 2.0
-                database = None
-                for attempt in range(max_retries):
-                    try:
-                        database = CodeDatabase(driver_config=driver_config)
-                        logger.info(
-                            f"[STEP 5] CodeDatabase created on attempt {attempt + 1}, getting/creating projects for {len(watch_dirs)} directories"
-                        )
-                        break
-                    except Exception as e:
-                        if attempt < max_retries - 1:
-                            logger.warning(
-                                f"⚠️  Failed to create CodeDatabase on attempt {attempt + 1}/{max_retries}: {e}, retrying in {retry_delay}s"
-                            )
-                            time.sleep(retry_delay)
-                        else:
-                            raise
-
-                if not database:
-                    raise RuntimeError(
-                        "Failed to create CodeDatabase after all retries"
-                    )
-
-                for watch_dir in watch_dirs:
-                    watch_dir_path = Path(watch_dir).resolve()
-                    if not watch_dir_path.exists():
-                        logger.warning(
-                            f"⚠️  Watch directory does not exist: {watch_dir_path}, skipping"
-                        )
-                        continue
-
-                    project_id = database.get_or_create_project(
-                        str(watch_dir_path), name=watch_dir_path.name
-                    )
-                    project_watch_dirs.append((project_id, str(watch_dir_path)))
-                    logger.info(f"[STEP 6] Project for {watch_dir_path}: {project_id}")
-
-                database.close()
-                logger.info("[STEP 7] Database connection closed")
-
-                if not project_watch_dirs:
+            # Validate watch_dirs exist
+            valid_watch_dirs: list[str] = []
+            for watch_dir in watch_dirs:
+                watch_dir_path = Path(watch_dir).resolve()
+                if not watch_dir_path.exists():
                     logger.warning(
-                        "⚠️  No valid projects found or created, skipping file watcher worker"
+                        f"⚠️  Watch directory does not exist: {watch_dir_path}, skipping"
                     )
-                    return
-            except Exception as e:
-                logger.error(f"⚠️  Failed to get/create projects: {e}", exc_info=True)
+                    continue
+                valid_watch_dirs.append(str(watch_dir_path))
+
+            if not valid_watch_dirs:
+                logger.warning(
+                    "⚠️  No valid watch directories found, skipping file watcher worker"
+                )
                 return
 
             scan_interval = file_watcher_config.get("scan_interval", 60)
@@ -1160,13 +1151,16 @@ def main() -> None:
             locks_dir = storage.locks_dir
             ensure_storage_dirs(storage)
 
-            projects_count = len(project_watch_dirs)
+            watch_dirs_count = len(valid_watch_dirs)
             print(
-                f"🚀 Starting file watcher worker (single process) for {projects_count} project(s)",
+                f"🚀 Starting file watcher worker (single process) for {watch_dirs_count} watch directory(ies)",
                 flush=True,
             )
             logger.info(
-                f"🚀 Starting file watcher worker (single process) for {projects_count} project(s)"
+                f"🚀 Starting file watcher worker (single process) for {watch_dirs_count} watch directory(ies)"
+            )
+            logger.info(
+                "ℹ️  Projects will be discovered automatically within each watch directory"
             )
             if worker_log_path:
                 logger.info(f"📝 Worker log file: {worker_log_path}")
@@ -1175,7 +1169,7 @@ def main() -> None:
                 target=run_file_watcher_worker,
                 args=(
                     str(db_path),
-                    list(project_watch_dirs),
+                    valid_watch_dirs,
                 ),
                 kwargs={
                     "locks_dir": str(locks_dir),
@@ -1189,11 +1183,11 @@ def main() -> None:
             process.start()
 
             print(
-                f"✅ File watcher worker started with PID {process.pid} for {projects_count} project(s)",
+                f"✅ File watcher worker started with PID {process.pid} for {watch_dirs_count} watch directory(ies)",
                 flush=True,
             )
             logger.info(
-                f"✅ File watcher worker started with PID {process.pid} for {projects_count} project(s)"
+                f"✅ File watcher worker started with PID {process.pid} for {watch_dirs_count} watch directory(ies)"
             )
 
             # Write PID file next to log file (used by get_worker_status)
@@ -1205,7 +1199,7 @@ def main() -> None:
                     logger.exception("Failed to write file watcher PID file")
 
             _db_path_fw_val = str(db_path)
-            _project_watch_dirs_fw_val = list(project_watch_dirs)
+            _project_watch_dirs_fw_val = list(valid_watch_dirs)
             _scan_interval_fw_val = scan_interval
             _locks_dir_fw_val = str(locks_dir)
             _version_dir_fw_val = version_dir
@@ -1255,7 +1249,7 @@ def main() -> None:
 
             worker_manager = get_worker_manager()
             logger.info(
-                f"📝 Registering file_watcher worker in WorkerManager: PID={process.pid}, projects={projects_count}"
+                f"📝 Registering file_watcher worker in WorkerManager: PID={process.pid}, watch_dirs={watch_dirs_count}"
             )
             worker_manager.register_worker(
                 "file_watcher",

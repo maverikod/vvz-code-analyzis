@@ -8,7 +8,7 @@ email: vasilyvz@gmail.com
 This document lists all custom commands available in the code-analysis-server.
 Standard adapter commands (echo, health, queue_*, etc.) are excluded.
 
-**Total custom commands**: 119
+**Total custom commands**: 57
 
 ## Commands by Category
 
@@ -26,6 +26,15 @@ Standard adapter commands (echo, health, queue_*, etc.) are excluded.
 - `list_project_files`
 - `search_ast_nodes`
 
+### Analysis Commands
+
+- `analyze_complexity`
+- `comprehensive_analysis`
+- `find_duplicates`
+- `list_errors_by_category`
+- `list_long_files`
+- `update_indexes`
+
 ### Backup Management
 
 - `clear_all_backups`
@@ -34,31 +43,16 @@ Standard adapter commands (echo, health, queue_*, etc.) are excluded.
 - `list_backup_versions`
 - `restore_backup_file`
 
-### CST Commands
-
-- `compose_cst_module`
-- `list_cst_blocks`
-- `query_cst`
-
-### Code Analysis
-
-- `analyze_complexity`
-- `comprehensive_analysis`
-- `find_duplicates`
-- `update_indexes`
-
 ### Code Quality
 
 - `format_code`
 - `lint_code`
 - `type_check_code`
 
-### Database Management
+### Database Integrity Commands
 
 - `backup_database`
 - `get_database_corruption_status`
-- `get_database_status`
-- `repair_database`
 - `repair_sqlite_database`
 - `restore_database`
 
@@ -66,12 +60,18 @@ Standard adapter commands (echo, health, queue_*, etc.) are excluded.
 
 - `cleanup_deleted_files`
 - `collapse_versions`
+- `repair_database`
 - `unmark_deleted_file`
 
-### Log Management
+### Logging Commands
 
 - `list_worker_logs`
 - `view_worker_logs`
+
+### Monitoring Commands
+
+- `get_database_status`
+- `get_worker_status`
 
 ### Project Management
 
@@ -79,11 +79,20 @@ Standard adapter commands (echo, health, queue_*, etc.) are excluded.
 - `delete_project`
 - `delete_unwatched_projects`
 
-### Refactoring
+### Refactor Commands
 
+- `compose_cst_module`
 - `extract_superclass`
+- `list_cst_blocks`
+- `query_cst`
 - `split_class`
 - `split_file_to_package`
+
+### Repair Worker Commands
+
+- `repair_worker_status`
+- `start_repair_worker`
+- `stop_repair_worker`
 
 ### Search Commands
 
@@ -92,88 +101,15 @@ Standard adapter commands (echo, health, queue_*, etc.) are excluded.
 - `list_class_methods`
 - `semantic_search`
 
-### Vector Operations
+### Vectorization Commands
 
 - `rebuild_faiss`
 - `revectorize`
 
-### Worker Management
+### Worker Management Commands
 
-- `get_worker_status`
-- `repair_worker_status`
-- `start_repair_worker`
 - `start_worker`
-- `stop_repair_worker`
 - `stop_worker`
-
-### Uncategorized Commands
-
-- `addwatchdir`
-- `analyzecomplexit`
-- `analyzefile`
-- `analyzeproject`
-- `aststatistic`
-- `backupdatabas`
-- `bas`
-- `changeprojecti`
-- `checkvectors`
-- `cleanupdeletedfile`
-- `clearallbackup`
-- `collapseversion`
-- `composecstmodule`
-- `comprehensiveanalysi`
-- `delete_project`
-- `delete_unwatched_projects`
-- `deletebacku`
-- `deleteprojec`
-- `deleteunwatchedproject`
-- `exportgrap`
-- `extractsuperclas`
-- `findclasse`
-- `finddependencie`
-- `findduplicate`
-- `findusage`
-- `formatcode`
-- `fulltextsearc`
-- `getas`
-- `getclasshierarch`
-- `getcodeentityinf`
-- `getdatabasecorruptionstatu`
-- `getdatabasestatu`
-- `getimport`
-- `getworkerstatu`
-- `lintcode`
-- `list_errors_by_category`
-- `list_long_files`
-- `listbackupfile`
-- `listbackupversion`
-- `listclassmethod`
-- `listcodeentitie`
-- `listcstblocks`
-- `listerrorsbycategor`
-- `listlongfile`
-- `listprojectfile`
-- `listworkerlog`
-- `querycst`
-- `rebuildfaiss`
-- `removewatchdir`
-- `repairdatabas`
-- `repairsqlitedatabas`
-- `repairworkerstatu`
-- `restorebackupfil`
-- `restoredatabasefromconfi`
-- `searchastnode`
-- `semanticsearc`
-- `splitclas`
-- `splitfiletopackag`
-- `startrepairworke`
-- `startworke`
-- `stoprepairworke`
-- `stopworke`
-- `typecheckcode`
-- `unmarkdeletedfil`
-- `updateindexe`
-- `viewworkerlog`
 
 ## Command Files by Group
 

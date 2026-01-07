@@ -88,6 +88,9 @@ class SVOServiceConfig(BaseModel):
     timeout: Optional[float] = Field(
         default=None, description="Optional timeout for service requests (seconds)"
     )
+    check_hostname: bool = Field(
+        default=False, description="Enable hostname verification for SSL/TLS connections (default: False)"
+    )
 
     @field_validator("protocol")
     @classmethod

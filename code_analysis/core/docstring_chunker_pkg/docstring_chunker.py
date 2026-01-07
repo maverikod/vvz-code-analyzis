@@ -134,23 +134,22 @@ class DocstringChunker:
                                 # Alternative: check for vector attribute
                                 embeddings[i] = first_chunk.vector
                     except Exception as e:
-                        logger.error(
-                            "Failed to get chunks with embeddings for docstring %d in %s: %s",
+                        logger.warning(
+                            "Failed to get chunks with embeddings for docstring %d in %s: %s (continuing without embedding)",
                             i,
                             file_path,
                             e,
-                            exc_info=True,
                         )
-                        raise
+                        # Continue without embedding - chunk will be saved without embedding
+                        embeddings[i] = None
             except Exception as e:
-                # If chunking fails, raise exception - no fallback
-                logger.error(
-                    "Failed to precompute embeddings for docstrings in %s: %s",
+                # If chunking fails, log warning but continue - chunks will be saved without embeddings
+                logger.warning(
+                    "Failed to precompute embeddings for docstrings in %s: %s (continuing without embeddings)",
                     file_path,
                     e,
-                    exc_info=True,
                 )
-                raise
+                # Continue processing - chunks will be saved without embeddings
 
         # Persist items
         written = 0

@@ -38,38 +38,35 @@ class FileWatcherWorker:
     def __init__(
         self,
         db_path: Path,
-        project_id: str,
         watch_dirs: List[Path],
         locks_dir: Path,
         scan_interval: int = 60,
         version_dir: Optional[str] = None,
-        project_root: Optional[Path] = None,
         ignore_patterns: Optional[List[str]] = None,
     ):
         """
         Initialize file watcher worker.
 
+        Projects are discovered automatically within each watch_dir by finding
+        projectid files. Multiple projects can exist in one watch_dir.
+
         Args:
             db_path: Path to database file
-            project_id: Project ID
             watch_dirs: List of root directories to watch (from config).
             locks_dir: Service state directory for lock files (from StoragePaths).
             scan_interval: Interval in seconds between scans (default: 60)
             version_dir: Version directory for deleted files (optional)
-            project_root: Project root directory (for relative paths, optional)
             ignore_patterns: List of glob patterns to ignore (from config, optional)
         """
         self.db_path = db_path
-        self.project_id = project_id
         self.watch_dirs = [Path(d) for d in watch_dirs]
         self.scan_interval = scan_interval
         self.version_dir = version_dir
-        self.project_root = project_root or (
-            self.watch_dirs[0] if self.watch_dirs else None
-        )
         self.ignore_patterns = ignore_patterns or []
 
-        self.lock_manager = LockManager(locks_dir, project_id)
+        # Use first watch_dir as lock key
+        lock_key = str(self.watch_dirs[0].resolve()) if self.watch_dirs else "default"
+        self.lock_manager = LockManager(locks_dir, lock_key)
         self._stop_event = multiprocessing.Event()
         self._pid = os.getpid()
 
@@ -96,7 +93,7 @@ class FileWatcherWorker:
         }
 
         logger.info(
-            f"Starting file watcher worker for project {self.project_id}, "
+            f"Starting file watcher worker, "
             f"scan interval: {self.scan_interval}s, "
             f"watching {len(self.watch_dirs)} directories"
         )
@@ -106,7 +103,11 @@ class FileWatcherWorker:
 
             driver_config = create_driver_config_for_worker(self.db_path)
             database = CodeDatabase(driver_config=driver_config)
-            processor = FileChangeProcessor(database, self.project_id, self.version_dir)
+            processor = FileChangeProcessor(
+                database=database,
+                watch_dirs=self.watch_dirs,
+                version_dir=self.version_dir,
+            )
 
             while not self._stop_event.is_set():
                 cycle_stats = await self._scan_cycle(database, processor)
@@ -189,21 +190,27 @@ class FileWatcherWorker:
                     f"time: {scan_start.strftime('%Y-%m-%d %H:%M:%S')}"
                 )
                 scanned_files = scan_directory(
-                    root_dir, self.project_root, self.ignore_patterns
+                    root_dir=root_dir,
+                    watch_dirs=self.watch_dirs,
+                    ignore_patterns=self.ignore_patterns,
                 )
 
                 # Compute delta (scan phase - no DB writes)
                 delta = processor.compute_delta(root_dir, scanned_files)
                 scan_end = datetime.now()
                 scan_duration = (scan_end - scan_start).total_seconds()
+                
+                # Log scan results (delta is always Dict[str, FileDelta])
+                total_new = sum(len(d.new_files) for d in delta.values())
+                total_changed = sum(len(d.changed_files) for d in delta.values())
+                total_deleted = sum(len(d.deleted_files) for d in delta.values())
                 logger.info(
                     f"[SCAN END] Directory: {root_dir} | "
                     f"time: {scan_end.strftime('%Y-%m-%d %H:%M:%S')} | "
                     f"duration: {scan_duration:.2f}s | "
                     f"files_scanned: {len(scanned_files)} | "
-                    f"delta: new={len(delta.new_files)}, "
-                    f"changed={len(delta.changed_files)}, "
-                    f"deleted={len(delta.deleted_files)}"
+                    f"projects: {len(delta)} | "
+                    f"delta: new={total_new}, changed={total_changed}, deleted={total_deleted}"
                 )
 
                 # Step 3: Queue phase - batch DB operations

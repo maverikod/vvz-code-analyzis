@@ -493,3 +493,99 @@ class ComprehensiveAnalyzer:
             "errors": errors,
             "error_count": len(errors) if errors else 0,
         }
+
+    def find_missing_docstrings(
+        self, file_path: Path, source_code: str
+    ) -> List[Dict[str, Any]]:
+        """
+        Find missing docstrings in code.
+
+        Checks for:
+        - Files without file-level docstrings
+        - Classes without docstrings
+        - Methods/functions without docstrings
+
+        Args:
+            file_path: Path to file.
+            source_code: Source code content.
+
+        Returns:
+            List of missing docstring occurrences.
+        """
+        missing_docstrings: List[Dict[str, Any]] = []
+
+        try:
+            tree = ast.parse(source_code, filename=str(file_path))
+            lines = source_code.split("\n")
+
+            # 1. Check file-level docstring
+            file_docstring = ast.get_docstring(tree)
+            if not file_docstring or not file_docstring.strip():
+                missing_docstrings.append(
+                    {
+                        "type": "file",
+                        "name": str(file_path),
+                        "line": 1,
+                        "context": "File-level docstring is missing",
+                    }
+                )
+
+            # 2. Check classes and methods
+            for node in ast.walk(tree):
+                if isinstance(node, ast.ClassDef):
+                    # Check class docstring
+                    class_docstring = ast.get_docstring(node)
+                    if not class_docstring or not class_docstring.strip():
+                        missing_docstrings.append(
+                            {
+                                "type": "class",
+                                "name": node.name,
+                                "line": node.lineno,
+                                "context": f"Class '{node.name}' is missing docstring",
+                            }
+                        )
+
+                    # Check methods in class
+                    for item in node.body:
+                        if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                            # Skip special methods (__init__, __str__, etc.) if they're empty
+                            # but still check if they have docstrings
+                            method_docstring = ast.get_docstring(item)
+                            if not method_docstring or not method_docstring.strip():
+                                # Skip if it's a property getter/setter/deleter
+                                is_property = any(
+                                    isinstance(d, ast.Name) and d.id == "property"
+                                    for d in item.decorator_list
+                                )
+                                if not is_property:
+                                    missing_docstrings.append(
+                                        {
+                                            "type": "method",
+                                            "name": f"{node.name}.{item.name}",
+                                            "class_name": node.name,
+                                            "line": item.lineno,
+                                            "context": (
+                                                f"Method '{node.name}.{item.name}' "
+                                                f"is missing docstring"
+                                            ),
+                                        }
+                                    )
+
+            # 3. Check top-level functions (not in classes)
+            for node in tree.body:
+                if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    function_docstring = ast.get_docstring(node)
+                    if not function_docstring or not function_docstring.strip():
+                        missing_docstrings.append(
+                            {
+                                "type": "function",
+                                "name": node.name,
+                                "line": node.lineno,
+                                "context": f"Function '{node.name}' is missing docstring",
+                            }
+                        )
+
+        except SyntaxError:
+            pass
+
+        return missing_docstrings

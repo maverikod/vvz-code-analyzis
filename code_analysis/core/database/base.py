@@ -1054,6 +1054,7 @@ class CodeDatabase:
                 INNER JOIN files f ON cc.file_id = f.id
                 WHERE cc.project_id = ?
                   AND f.dataset_id = ?
+                  AND (f.deleted = 0 OR f.deleted IS NULL)
                   AND cc.embedding_vector IS NOT NULL
                   AND cc.vector_id IS NULL
                 ORDER BY cc.id
@@ -1086,6 +1087,7 @@ class CodeDatabase:
                 FROM code_chunks cc
                 INNER JOIN files f ON cc.file_id = f.id
                 WHERE cc.project_id = ?
+                  AND (f.deleted = 0 OR f.deleted IS NULL)
                   AND cc.embedding_vector IS NOT NULL
                   AND cc.vector_id IS NULL
                 ORDER BY cc.id

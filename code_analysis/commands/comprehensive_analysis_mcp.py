@@ -8,6 +8,7 @@ Comprehensive code analysis combining multiple analysis types:
 - Imports not at top of file
 - Long files
 - Code duplicates
+- Missing docstrings (files, classes, methods, functions)
 
 Author: Vasiliy Zdanovskiy
 email: vasilyvz@gmail.com
@@ -32,7 +33,7 @@ class ComprehensiveAnalysisMCPCommand(BaseMCPCommand):
 
     name = "comprehensive_analysis"
     version = "1.0.0"
-    descr = "Comprehensive code analysis (placeholders, stubs, duplicates, long files, etc.)"
+    descr = "Comprehensive code analysis (placeholders, stubs, duplicates, long files, missing docstrings, etc.)"
     category = "analysis"
     author = "Vasiliy Zdanovskiy"
     email = "vasilyvz@gmail.com"
@@ -52,7 +53,7 @@ class ComprehensiveAnalysisMCPCommand(BaseMCPCommand):
             "description": (
                 "Comprehensive code analysis combining multiple analysis types: "
                 "placeholders, stubs, empty methods, imports not at top, long files, "
-                "duplicates, flake8 linting, mypy type checking. "
+                "duplicates, missing docstrings, flake8 linting, mypy type checking. "
                 "This is a long-running command and is executed via queue."
             ),
             "properties": {
@@ -106,6 +107,11 @@ class ComprehensiveAnalysisMCPCommand(BaseMCPCommand):
                     "description": "Check code with mypy type checker",
                     "default": True,
                 },
+                "check_docstrings": {
+                    "type": "boolean",
+                    "description": "Check for missing docstrings (files, classes, methods)",
+                    "default": True,
+                },
                 "duplicate_min_lines": {
                     "type": "integer",
                     "description": "Minimum lines for duplicate detection",
@@ -139,6 +145,7 @@ class ComprehensiveAnalysisMCPCommand(BaseMCPCommand):
         check_duplicates: bool = True,
         check_flake8: bool = True,
         check_mypy: bool = True,
+        check_docstrings: bool = True,
         duplicate_min_lines: int = 5,
         duplicate_min_similarity: float = 0.8,
         mypy_config_file: Optional[str] = None,
@@ -159,6 +166,7 @@ class ComprehensiveAnalysisMCPCommand(BaseMCPCommand):
             check_duplicates: Check for duplicates.
             check_flake8: Check with flake8 linter.
             check_mypy: Check with mypy type checker.
+            check_docstrings: Check for missing docstrings.
             duplicate_min_lines: Minimum lines for duplicates.
             duplicate_min_similarity: Minimum similarity for duplicates.
             mypy_config_file: Optional path to mypy config file.
@@ -228,6 +236,7 @@ class ComprehensiveAnalysisMCPCommand(BaseMCPCommand):
                 "duplicates": [],
                 "flake8_errors": [],
                 "mypy_errors": [],
+                "missing_docstrings": [],
                 "summary": {},
             }
 
@@ -305,11 +314,18 @@ class ComprehensiveAnalysisMCPCommand(BaseMCPCommand):
                         mypy_result["file_path"] = rel_path
                         results["mypy_errors"].append(mypy_result)
 
+                if check_docstrings:
+                    missing_docstrings = analyzer.find_missing_docstrings(
+                        file_path_obj, source_code
+                    )
+                    for d in missing_docstrings:
+                        d["file_path"] = rel_path
+                    results["missing_docstrings"] = missing_docstrings
+
             else:
-                # Analyze all files in project
+                # Analyze all files in ALL projects (not just one project)
                 files = db._fetchall(
-                    "SELECT id, path, lines FROM files WHERE project_id = ? AND deleted = 0",
-                    (proj_id,),
+                    "SELECT id, path, lines FROM files WHERE deleted = 0",
                 )
 
                 files_total = len(files)
@@ -329,6 +345,7 @@ class ComprehensiveAnalysisMCPCommand(BaseMCPCommand):
                 all_duplicates: List[Dict[str, Any]] = []
                 all_flake8_errors: List[Dict[str, Any]] = []
                 all_mypy_errors: List[Dict[str, Any]] = []
+                all_missing_docstrings: List[Dict[str, Any]] = []
                 file_records: List[Dict[str, Any]] = []
 
                 last_percent = -1
@@ -414,6 +431,14 @@ class ComprehensiveAnalysisMCPCommand(BaseMCPCommand):
                             mypy_result["file_path"] = file_path_str
                             all_mypy_errors.append(mypy_result)
 
+                    if check_docstrings:
+                        missing_docstrings = analyzer.find_missing_docstrings(
+                            full_path, source_code
+                        )
+                        for d in missing_docstrings:
+                            d["file_path"] = file_path_str
+                        all_missing_docstrings.extend(missing_docstrings)
+
                     # Update progress
                     if progress_tracker and files_total > 0:
                         percent = int(((idx + 1) / files_total) * 100)
@@ -431,6 +456,7 @@ class ComprehensiveAnalysisMCPCommand(BaseMCPCommand):
                 results["duplicates"] = all_duplicates
                 results["flake8_errors"] = all_flake8_errors
                 results["mypy_errors"] = all_mypy_errors
+                results["missing_docstrings"] = all_missing_docstrings
 
                 if check_long_files:
                     results["long_files"] = analyzer.find_long_files(file_records)
@@ -454,6 +480,23 @@ class ComprehensiveAnalysisMCPCommand(BaseMCPCommand):
                     e.get("error_count", 0) for e in results["mypy_errors"]
                 ),
                 "files_with_mypy_errors": len(results["mypy_errors"]),
+                "total_missing_docstrings": len(results["missing_docstrings"]),
+                "files_without_docstrings": len(
+                    set(
+                        d["file_path"]
+                        for d in results["missing_docstrings"]
+                        if d["type"] == "file"
+                    )
+                ),
+                "classes_without_docstrings": len(
+                    [d for d in results["missing_docstrings"] if d["type"] == "class"]
+                ),
+                "methods_without_docstrings": len(
+                    [d for d in results["missing_docstrings"] if d["type"] == "method"]
+                ),
+                "functions_without_docstrings": len(
+                    [d for d in results["missing_docstrings"] if d["type"] == "function"]
+                ),
             }
 
             db.close()

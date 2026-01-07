@@ -198,12 +198,12 @@ def get_project_files(
     """
     if include_deleted:
         rows = self._fetchall(
-            "SELECT id, path, lines, last_modified, has_docstring, deleted FROM files WHERE project_id = ?",
+            "SELECT id, path, lines, last_modified, has_docstring, deleted, dataset_id FROM files WHERE project_id = ?",
             (project_id,),
         )
     else:
         rows = self._fetchall(
-            "SELECT id, path, lines, last_modified, has_docstring, deleted FROM files WHERE project_id = ? AND (deleted = 0 OR deleted IS NULL)",
+            "SELECT id, path, lines, last_modified, has_docstring, deleted, dataset_id FROM files WHERE project_id = ? AND (deleted = 0 OR deleted IS NULL)",
             (project_id,),
         )
     result = []
@@ -216,6 +216,7 @@ def get_project_files(
                 "last_modified": row["last_modified"],
                 "has_docstring": row["has_docstring"],
                 "deleted": row.get("deleted", 0),
+                "dataset_id": row.get("dataset_id"),
             }
         )
     return result

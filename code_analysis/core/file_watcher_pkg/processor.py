@@ -193,6 +193,74 @@ class FileChangeProcessor:
                     new_files=[], changed_files=[], deleted_files=[]
                 )
         
+        # Also check projects from database that are in this watch_dir but their directories don't exist
+        # This handles the case where a project directory was deleted but files remain in database
+        try:
+            root_dir_resolved = root_dir.resolve()
+            # Get all projects from database
+            all_projects = self.database._fetchall("SELECT id, root_path FROM projects")
+            
+            for project_row in all_projects:
+                db_project_id = project_row["id"]
+                db_root_path_str = project_row["root_path"]
+                
+                # Skip if already processed
+                if db_project_id in deltas:
+                    continue
+                
+                # Check if project root_path is within root_dir
+                try:
+                    db_root_path = Path(db_root_path_str).resolve()
+                    # Check if root_path is within any watch_dir
+                    is_in_watch_dir = False
+                    for watch_dir in self.watch_dirs_resolved:
+                        try:
+                            db_root_path.relative_to(watch_dir)
+                            is_in_watch_dir = True
+                            break
+                        except ValueError:
+                            # Not in this watch_dir, continue
+                            continue
+                    
+                    if not is_in_watch_dir:
+                        continue
+                    
+                    # Check if project root directory exists
+                    if not db_root_path.exists():
+                        logger.info(
+                            f"Project {db_project_id} root_path {db_root_path} does not exist, "
+                            f"checking for deleted files"
+                        )
+                        
+                        # Get all files for this project
+                        db_files = self.database.get_project_files(
+                            db_project_id, include_deleted=False
+                        )
+                        
+                        if db_files:
+                            # All files from this project should be marked as deleted
+                            # since the project directory doesn't exist
+                            deleted_files = [f["path"] for f in db_files]
+                            logger.info(
+                                f"Found {len(deleted_files)} files in database for deleted project "
+                                f"{db_project_id}, marking as deleted"
+                            )
+                            
+                            deltas[db_project_id] = FileDelta(
+                                new_files=[],
+                                changed_files=[],
+                                deleted_files=deleted_files,
+                            )
+                except Exception as e:
+                    logger.debug(
+                        f"Error checking project {db_project_id} root_path {db_root_path_str}: {e}"
+                    )
+                    continue
+        except Exception as e:
+            logger.warning(
+                f"Error checking database projects for deleted directories in {root_dir}: {e}"
+            )
+        
         return deltas
 
     def queue_changes(
@@ -240,18 +308,53 @@ class FileChangeProcessor:
                     continue
                 
                 project_root = Path(project["root_path"])
-                normalized_root = str(normalize_root_dir(project_root))
+                
+                # Normalize root_dir - handle case where directory doesn't exist
+                try:
+                    normalized_root = str(normalize_root_dir(project_root))
+                except (FileNotFoundError, NotADirectoryError):
+                    # Project directory doesn't exist - use path as-is for dataset resolution
+                    # This happens when project was deleted but files remain in database
+                    normalized_root = str(project_root.resolve())
                 
                 # Resolve dataset_id
                 dataset_id = self.dataset_id
                 if not dataset_id:
-                    dataset_id = self.database.get_dataset_id(
-                        project_id, normalized_root
-                    )
-                    if not dataset_id:
-                        dataset_id = self.database.get_or_create_dataset(
+                    # Try to get existing dataset_id first (works even if directory doesn't exist)
+                    try:
+                        dataset_id = self.database.get_dataset_id(
                             project_id, normalized_root
                         )
+                    except (FileNotFoundError, NotADirectoryError):
+                        # Directory doesn't exist - get dataset_id from any existing files
+                        db_files = self.database.get_project_files(
+                            project_id, include_deleted=False
+                        )
+                        if db_files:
+                            # Get dataset_id from first file
+                            dataset_id = db_files[0].get("dataset_id")
+                    
+                    if not dataset_id:
+                        # Try to create dataset, but handle case where directory doesn't exist
+                        try:
+                            dataset_id = self.database.get_or_create_dataset(
+                                project_id, normalized_root
+                            )
+                        except (FileNotFoundError, NotADirectoryError):
+                            # Directory doesn't exist - get dataset_id from any existing files
+                            # or use None (will be handled in _queue_project_delta)
+                            db_files = self.database.get_project_files(
+                                project_id, include_deleted=False
+                            )
+                            if db_files:
+                                # Get dataset_id from first file
+                                dataset_id = db_files[0].get("dataset_id")
+                            if not dataset_id:
+                                logger.warning(
+                                    f"Cannot resolve dataset_id for project {project_id} "
+                                    f"with non-existent root {normalized_root}, "
+                                    "files may not be processed correctly"
+                                )
                 
                 if not dataset_id:
                     logger.error(
@@ -276,7 +379,8 @@ class FileChangeProcessor:
                 
             except Exception as e:
                 logger.error(
-                    f"Error queueing changes for project {project_id} in {root_dir}: {e}"
+                    f"Error queueing changes for project {project_id} in {root_dir}: {e}",
+                    exc_info=True
                 )
                 total_stats["errors"] += (
                     len(delta.new_files)

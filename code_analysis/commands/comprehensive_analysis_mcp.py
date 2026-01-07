@@ -277,22 +277,67 @@ class ComprehensiveAnalysisMCPCommand(BaseMCPCommand):
                 file_id = None
                 file_project_id = proj_id
                 
-                # Try to find file in database
+                # Try to find file in database - ONLY in specified project
                 if proj_id:
-                    file_record = db.get_file_by_path(abs_path, proj_id)
+                    file_record = db.get_file_by_path(abs_path, proj_id, include_deleted=False)
                     if file_record:
                         file_id = file_record["id"]
                         file_project_id = proj_id
+                        analysis_logger.debug(f"Found file in project: file_id={file_id}, project_id={file_project_id}")
+                    else:
+                        # Check if file exists in this project but marked as deleted
+                        file_record_deleted = db.get_file_by_path(abs_path, proj_id, include_deleted=True)
+                        if file_record_deleted and file_record_deleted.get("deleted"):
+                            analysis_logger.warning(
+                                f"File found in project {proj_id} but marked as deleted (file_id={file_record_deleted['id']}). "
+                                f"File exists on disk at {abs_path}. This indicates data inconsistency."
+                            )
+                            # File exists on disk but marked as deleted - this is an inconsistency
+                            # We can still analyze it, but won't save results
+                        else:
+                            # File not found in specified project - check if it exists in another project
+                            # This is a data inconsistency: file should be in correct project or marked as deleted
+                            file_in_wrong_project = db._fetchone(
+                                "SELECT id, project_id, deleted FROM files WHERE path = ? LIMIT 1",
+                                (abs_path,),
+                            )
+                            if file_in_wrong_project:
+                                wrong_file_id = file_in_wrong_project["id"]
+                                wrong_project_id = file_in_wrong_project["project_id"]
+                                is_deleted = file_in_wrong_project.get("deleted", 0)
+                                
+                                analysis_logger.error(
+                                    f"Data inconsistency detected: file exists on disk at {abs_path} "
+                                    f"but is registered in project {wrong_project_id} (not {proj_id}). "
+                                    f"File ID: {wrong_file_id}, deleted={is_deleted}. "
+                                    f"Marking as deleted and clearing all related data."
+                                )
+                                
+                                # Clear all related data for this file
+                                try:
+                                    db.clear_file_data(wrong_file_id)
+                                    analysis_logger.info(f"Cleared all related data for file_id={wrong_file_id}")
+                                    
+                                    # Mark file as deleted in wrong project
+                                    db._execute(
+                                        """
+                                        UPDATE files 
+                                        SET deleted = 1, updated_at = julianday('now')
+                                        WHERE id = ?
+                                        """,
+                                        (wrong_file_id,),
+                                    )
+                                    db._commit()
+                                    analysis_logger.info(f"Marked file_id={wrong_file_id} as deleted in project {wrong_project_id}")
+                                except Exception as e:
+                                    logger.error(f"Failed to clear data and mark file as deleted: {e}", exc_info=True)
+                                    analysis_logger.error(f"Failed to clear data and mark file as deleted: {e}", exc_info=True)
+                            else:
+                                # File not in database at all - this is normal for unindexed files
+                                analysis_logger.info(f"File not found in project {proj_id} database (may be unindexed): {abs_path}")
                 else:
-                    # Try to find file in any project
-                    # Search by absolute path
-                    file_record = db._fetchone(
-                        "SELECT id, project_id FROM files WHERE path = ? AND deleted = 0 LIMIT 1",
-                        (abs_path,),
-                    )
-                    if file_record:
-                        file_id = file_record["id"]
-                        file_project_id = file_record["project_id"]
+                    # No project_id specified - can't look up in database
+                    analysis_logger.info(f"No project_id specified, cannot look up file in database: {abs_path}")
                 
                 # Check if analysis is up-to-date
                 if file_id and file_project_id:
@@ -388,8 +433,10 @@ class ComprehensiveAnalysisMCPCommand(BaseMCPCommand):
                     results["missing_docstrings"] = missing_docstrings
 
                 # Save results to database if file_id is available
-                if file_id and file_project_id:
+                # Only save if file was found in the correct project (file_project_id == proj_id)
+                if file_id and file_project_id and (proj_id is None or file_project_id == proj_id):
                     try:
+                        analysis_logger.info(f"Saving results for file_id={file_id}, project_id={file_project_id}, mtime={file_mtime}")
                         file_summary = {
                             "total_placeholders": len(results["placeholders"]),
                             "total_stubs": len(results["stubs"]),
@@ -418,8 +465,18 @@ class ComprehensiveAnalysisMCPCommand(BaseMCPCommand):
                         )
                         analysis_logger.info(f"Saved analysis results for {rel_path}")
                     except Exception as e:
-                        logger.error(f"Failed to save analysis results for {rel_path}: {e}")
-                        analysis_logger.error(f"Failed to save analysis results for {rel_path}: {e}")
+                        logger.error(f"Failed to save analysis results for {rel_path}: {e}", exc_info=True)
+                        analysis_logger.error(f"Failed to save analysis results for {rel_path}: {e}", exc_info=True)
+                else:
+                    if file_id and file_project_id and proj_id and file_project_id != proj_id:
+                        analysis_logger.error(
+                            f"Data inconsistency detected: file_id={file_id} belongs to project {file_project_id}, "
+                            f"but analysis was requested for project {proj_id}. Results will not be saved."
+                        )
+                    else:
+                        analysis_logger.warning(
+                            f"Cannot save results: file_id={file_id}, file_project_id={file_project_id}, proj_id={proj_id}"
+                        )
 
             else:
                 # Analyze multiple files
@@ -628,6 +685,7 @@ class ComprehensiveAnalysisMCPCommand(BaseMCPCommand):
                     file_project_id = proj_id or file_record.get("project_id")
                     if file_project_id:
                         try:
+                            analysis_logger.info(f"Saving results for file_id={file_id}, project_id={file_project_id}, mtime={file_mtime}, file={file_path_str}")
                             db.save_comprehensive_analysis_results(
                                 file_id=file_id,
                                 project_id=file_project_id,
@@ -635,12 +693,13 @@ class ComprehensiveAnalysisMCPCommand(BaseMCPCommand):
                                 results=file_results,
                                 summary=file_summary,
                             )
-                            analysis_logger.debug(f"Saved analysis results for {file_path_str}")
+                            analysis_logger.info(f"Saved analysis results for {file_path_str}")
                         except Exception as e:
-                            logger.error(f"Failed to save analysis results for {file_path_str}: {e}")
-                            analysis_logger.error(f"Failed to save analysis results for {file_path_str}: {e}")
+                            logger.error(f"Failed to save analysis results for {file_path_str}: {e}", exc_info=True)
+                            analysis_logger.error(f"Failed to save analysis results for {file_path_str}: {e}", exc_info=True)
                     else:
-                        logger.warning(f"Cannot save results for {file_path_str}: project_id not available")
+                        logger.warning(f"Cannot save results for {file_path_str}: project_id not available (proj_id={proj_id}, file_record.project_id={file_record.get('project_id')})")
+                        analysis_logger.warning(f"Cannot save results for {file_path_str}: project_id not available")
 
                     # Update progress
                     if progress_tracker and files_total > 0:

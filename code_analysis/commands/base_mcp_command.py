@@ -370,12 +370,35 @@ class BaseMCPCommand(Command):
                         },
                     )
 
-                # Ensure project exists (create if missing) with this id.
-                return db.get_or_create_project(
-                    str(root_path),
-                    name=root_path.name,
-                    project_id=project_id,
+                # Check if project with this ID exists
+                project = db.get_project(project_id)
+                if project:
+                    # Project exists - verify root_path matches
+                    if project["root_path"] != str(root_path):
+                        raise ValidationError(
+                            "Project ID exists but root_path doesn't match",
+                            field="project_id",
+                            details={
+                                "root_path": str(root_path),
+                                "existing_root_path": project["root_path"],
+                                "provided_project_id": project_id,
+                            },
+                        )
+                    return project_id
+                
+                # Project doesn't exist - check if root_path is registered
+                if existing:
+                    # root_path registered with different ID - error already handled above
+                    return existing
+                
+                # Create project with specified ID
+                project_name = root_path.name
+                db._execute(
+                    "INSERT INTO projects (id, root_path, name, updated_at) VALUES (?, ?, ?, julianday('now'))",
+                    (project_id, str(root_path), project_name),
                 )
+                db._commit()
+                return project_id
 
             # Non-mutating commands may still infer/create.
             return db.get_or_create_project(str(root_path), name=root_path.name)

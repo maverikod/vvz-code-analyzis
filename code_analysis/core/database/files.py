@@ -62,6 +62,9 @@ def add_file(
     Implements Step 5 of refactor plan: all file paths are absolute.
     Files are uniquely identified by (project_id, dataset_id, path).
 
+    **Important**: If file exists in a different project, it will be marked as deleted
+    in the old project and all related data will be cleared before adding to the new project.
+
     Args:
         path: File path (will be normalized to absolute)
         lines: Number of lines in file
@@ -78,18 +81,73 @@ def add_file(
     # Normalize path to absolute (Step 5: absolute paths everywhere)
     abs_path = normalize_abs_path(path)
 
-    self._execute(
-        """
-            INSERT OR REPLACE INTO files
-            (project_id, dataset_id, path, lines, last_modified, has_docstring, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, julianday('now'))
-        """,
-        (project_id, dataset_id, abs_path, lines, last_modified, has_docstring),
+    # Check if file exists in a different project
+    existing_file = self._fetchone(
+        "SELECT id, project_id FROM files WHERE path = ? AND project_id != ? AND (deleted = 0 OR deleted IS NULL) LIMIT 1",
+        (abs_path, project_id),
     )
-    self._commit()
-    result = self._lastrowid()
-    assert result is not None
-    return result
+    
+    if existing_file:
+        wrong_file_id = existing_file["id"]
+        wrong_project_id = existing_file["project_id"]
+        
+        logger.error(
+            f"Data inconsistency detected: file {abs_path} exists in project {wrong_project_id} "
+            f"but is being added to project {project_id}. Marking as deleted in old project and clearing related data."
+        )
+        
+        # Clear all related data for the file in wrong project
+        try:
+            self.clear_file_data(wrong_file_id)
+            logger.info(f"Cleared all related data for file_id={wrong_file_id} in project {wrong_project_id}")
+            
+            # Mark file as deleted in wrong project
+            self._execute(
+                """
+                UPDATE files 
+                SET deleted = 1, updated_at = julianday('now')
+                WHERE id = ?
+                """,
+                (wrong_file_id,),
+            )
+            logger.info(f"Marked file_id={wrong_file_id} as deleted in project {wrong_project_id}")
+        except Exception as e:
+            logger.error(f"Failed to clear data and mark file as deleted: {e}", exc_info=True)
+            # Continue anyway - we'll still add the file to the correct project
+
+    # Check if file already exists in the correct project
+    existing_in_correct_project = self._fetchone(
+        "SELECT id FROM files WHERE path = ? AND project_id = ? AND dataset_id = ?",
+        (abs_path, project_id, dataset_id),
+    )
+    
+    if existing_in_correct_project:
+        # Update existing file
+        file_id = existing_in_correct_project["id"]
+        self._execute(
+            """
+            UPDATE files 
+            SET lines = ?, last_modified = ?, has_docstring = ?, updated_at = julianday('now')
+            WHERE id = ?
+            """,
+            (lines, last_modified, has_docstring, file_id),
+        )
+        self._commit()
+        return file_id
+    else:
+        # Insert new file
+        self._execute(
+            """
+                INSERT INTO files
+                (project_id, dataset_id, path, lines, last_modified, has_docstring, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, julianday('now'))
+            """,
+            (project_id, dataset_id, abs_path, lines, last_modified, has_docstring),
+        )
+        self._commit()
+        result = self._lastrowid()
+        assert result is not None
+        return result
 
 
 def get_file_id(

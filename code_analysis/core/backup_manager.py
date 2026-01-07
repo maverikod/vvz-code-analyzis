@@ -45,7 +45,7 @@ class BackupManager:
         """
         Load index from file.
 
-        Format: UUID|File Path|Timestamp|Command|Related Files
+        Format: UUID|File Path|Timestamp|Command|Related Files|Comment
 
         Returns:
             Dictionary mapping UUID to backup info
@@ -70,11 +70,13 @@ class BackupManager:
                         timestamp = parts[2]
                         command = parts[3] if len(parts) > 3 else ""
                         related_files = parts[4] if len(parts) > 4 else ""
+                        comment = parts[5] if len(parts) > 5 else ""
                         index[backup_uuid] = {
                             "file_path": file_path,
                             "timestamp": timestamp,
                             "command": command,
                             "related_files": related_files,
+                            "comment": comment,
                         }
         except Exception as e:
             _get_logger().error(f"Error loading index: {e}")
@@ -84,7 +86,7 @@ class BackupManager:
         """
         Save index to file.
 
-        Format: UUID|File Path|Timestamp|Command|Related Files
+        Format: UUID|File Path|Timestamp|Command|Related Files|Comment
 
         Args:
             index: Dictionary mapping UUID to backup info
@@ -93,12 +95,13 @@ class BackupManager:
             # Ensure backup directory exists (in case it was deleted)
             self.backup_dir.mkdir(parents=True, exist_ok=True)
             with open(self.index_file, "w", encoding="utf-8") as f:
-                f.write("# UUID|File Path|Timestamp|Command|Related Files\n")
+                f.write("# UUID|File Path|Timestamp|Command|Related Files|Comment\n")
                 for backup_uuid, info in sorted(index.items()):
                     command = info.get("command", "")
                     related_files = info.get("related_files", "")
+                    comment = info.get("comment", "")
                     f.write(
-                        f"{backup_uuid}|{info['file_path']}|{info['timestamp']}|{command}|{related_files}\n"
+                        f"{backup_uuid}|{info['file_path']}|{info['timestamp']}|{command}|{related_files}|{comment}\n"
                     )
         except Exception as e:
             _get_logger().error(f"Error saving index: {e}")
@@ -137,6 +140,7 @@ class BackupManager:
         file_path: Path,
         command: str = "",
         related_files: Optional[List[str]] = None,
+        comment: str = "",
     ) -> Optional[str]:
         """
         Create backup copy of file.
@@ -145,6 +149,7 @@ class BackupManager:
             file_path: Path to file to backup (absolute or relative to root_dir)
             command: Name of command that triggered backup
             related_files: List of related files (e.g., files created from split)
+            comment: Optional comment/message for this backup
 
         Returns:
             UUID of created backup, or None if failed
@@ -191,6 +196,7 @@ class BackupManager:
                 "timestamp": timestamp,
                 "command": command,
                 "related_files": related_files_str,
+                "comment": comment,
             }
             self._save_index(index)
 
@@ -258,6 +264,7 @@ class BackupManager:
                         "size_bytes": size_bytes,
                         "size_lines": size_lines,
                         "command": info.get("command", ""),
+                        "comment": info.get("comment", ""),
                         "related_files": (
                             info.get("related_files", "").split(",")
                             if info.get("related_files")

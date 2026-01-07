@@ -27,6 +27,7 @@ normalize imports to the top of the file, then validate the result by compiling 
 - `create_backup`: if true and apply is true, writes backup into `/.code_mapper_backups/`
 - `return_diff`: include unified diff in response
 - `return_source`: include full resulting source in response (can be large)
+- `commit_message`: optional commit message for git commit. **Required if git repository is detected.**
 
 ### Output
 
@@ -34,6 +35,10 @@ normalize imports to the top of the file, then validate the result by compiling 
 - `diff`: unified diff (if requested)
 - `stats`: `{ replaced, removed, unmatched[] }`
 - `backup_path`: path to backup file (when apply=true)
+- `backup_uuid`: UUID of created backup (when apply=true)
+- `git_commit`: git commit info (if git repository and commit_message provided)
+  - `success`: whether commit was created
+  - `error`: error message if commit failed
 
 ### Notes / limitations
 

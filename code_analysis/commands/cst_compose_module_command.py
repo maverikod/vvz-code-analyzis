@@ -12,12 +12,13 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 
 from .base_mcp_command import BaseMCPCommand
 from ..core.backup_manager import BackupManager
+from ..core.git_integration import is_git_repository, create_git_commit
 from ..core.cst_module import (
     ReplaceOp,
     InsertOp,
@@ -44,11 +45,17 @@ class ComposeCSTModuleCommand(BaseMCPCommand):
     - replace them with new code snippets
     - normalize imports to the top
     - validate via compile()
+    - create git commits automatically (if git repository detected)
+
+    Git Integration:
+    - If root_dir is a git repository, commit_message parameter is REQUIRED
+    - Automatically creates git commit with provided message after successful changes
+    - Backup is created before changes, comment is stored in backup index
     """
 
     name = "compose_cst_module"
     version = "1.0.0"
-    descr = "Replace module-level blocks using LibCST and compile the result"
+    descr = "Replace module-level blocks using LibCST, compile the result, and optionally create git commit"
     category = "refactor"
     author = "Vasiliy Zdanovskiy"
     email = "vasilyvz@gmail.com"
@@ -183,6 +190,16 @@ class ComposeCSTModuleCommand(BaseMCPCommand):
                     "default": True,
                     "description": "If true, return unified diff",
                 },
+                "commit_message": {
+                    "type": "string",
+                    "description": (
+                        "Commit message for git commit. "
+                        "REQUIRED if root_dir is a git repository. "
+                        "If provided and root_dir is a git repository, automatically creates a git commit "
+                        "with this message after successfully applying changes. "
+                        "The message is also stored in backup index for version history tracking."
+                    ),
+                },
             },
             "required": ["root_dir", "file_path", "ops"],
             "additionalProperties": False,
@@ -197,10 +214,20 @@ class ComposeCSTModuleCommand(BaseMCPCommand):
         create_backup: bool = True,
         return_source: bool = False,
         return_diff: bool = True,
+        commit_message: Optional[str] = None,
         **kwargs,
     ) -> SuccessResult:
         try:
             root_path = self._validate_root_dir(root_dir)
+
+            # Check if git repository and validate commit_message
+            is_git = is_git_repository(root_path)
+            if is_git and not commit_message:
+                return ErrorResult(
+                    message="commit_message is required when working in a git repository",
+                    code="COMMIT_MESSAGE_REQUIRED",
+                    details={"root_dir": str(root_path)},
+                )
 
             # Resolve file path (may not exist if creating new file)
             target = Path(file_path)
@@ -379,6 +406,9 @@ class ComposeCSTModuleCommand(BaseMCPCommand):
 
             backup_path = None
             backup_uuid = None
+            git_commit_success = False
+            git_error = None
+            
             if apply and target.exists():
                 # Create backup using BackupManager before applying changes
                 backup_manager = BackupManager(root_path)
@@ -397,6 +427,7 @@ class ComposeCSTModuleCommand(BaseMCPCommand):
                     target,
                     command="compose_cst_module",
                     related_files=related_files if related_files else None,
+                    comment=commit_message or "",
                 )
                 if backup_uuid:
                     logger.info(f"Backup created before CST compose: {backup_uuid}")
@@ -405,6 +436,14 @@ class ComposeCSTModuleCommand(BaseMCPCommand):
                 backup_path = write_with_backup(
                     target, new_source, create_backup=create_backup
                 )
+                
+                # Create git commit if git repository and commit_message provided
+                if is_git and commit_message:
+                    git_commit_success, git_error = create_git_commit(
+                        root_path, target, commit_message
+                    )
+                    if not git_commit_success:
+                        logger.warning(f"Failed to create git commit: {git_error}")
 
             data: dict[str, Any] = {
                 "success": True,
@@ -420,6 +459,13 @@ class ComposeCSTModuleCommand(BaseMCPCommand):
                 "compiled": True,
                 "stats": stats,
             }
+            
+            # Add git commit info if applicable
+            if is_git:
+                data["git_commit"] = {
+                    "success": git_commit_success,
+                    "error": git_error,
+                }
             if return_diff:
                 data["diff"] = unified_diff(old_source, new_source, str(target))
             if return_source:
@@ -428,3 +474,170 @@ class ComposeCSTModuleCommand(BaseMCPCommand):
             return SuccessResult(data=data)
         except Exception as e:
             return self._handle_error(e, "CST_COMPOSE_ERROR", "compose_cst_module")
+
+    @classmethod
+    def metadata(cls: type["ComposeCSTModuleCommand"]) -> Dict[str, Any]:
+        """
+        Get detailed command metadata for AI models.
+
+        This method provides comprehensive information about the command,
+        including detailed descriptions, usage examples, and edge cases.
+        The metadata should be as detailed and clear as a man page.
+
+        Args:
+            cls: Command class.
+
+        Returns:
+            Dictionary with command metadata.
+        """
+        return {
+            "name": cls.name,
+            "version": cls.version,
+            "description": cls.descr,
+            "category": cls.category,
+            "author": cls.author,
+            "email": cls.email,
+            "detailed_description": (
+                "The compose_cst_module command applies module-level block replacements using LibCST "
+                "and validates the result by compiling the resulting module source.\n\n"
+                "Operation flow:\n"
+                "1. Validates root_dir exists and is a directory\n"
+                "2. Resolves file_path (absolute or relative to root_dir)\n"
+                "3. Checks if root_dir is a git repository\n"
+                "4. If git repository detected, validates commit_message is provided\n"
+                "5. Loads existing source code (or empty string for new files)\n"
+                "6. Applies CST operations (replace/insert/create) in order\n"
+                "7. Validates syntax by compiling the result\n"
+                "8. Validates docstrings (file, class, method level)\n"
+                "9. If apply=true:\n"
+                "   - Creates backup with comment (commit_message if provided)\n"
+                "   - Writes new source to file\n"
+                "   - If git repository and commit_message provided, creates git commit\n"
+                "\n"
+                "Git Integration:\n"
+                "- Automatically detects if root_dir is a git repository\n"
+                "- If git repository detected, commit_message parameter becomes REQUIRED\n"
+                "- After successful file changes, automatically stages the file and creates commit\n"
+                "- Commit message is stored in backup index for history tracking\n"
+                "- If git commit fails, operation still succeeds (file is changed, backup created)\n"
+                "- Git commit info is returned in response (success/error status)\n"
+                "\n"
+                "Safety features:\n"
+                "- Automatic syntax validation (compile check)\n"
+                "- Docstring validation (file, class, method)\n"
+                "- Type hint validation\n"
+                "- Automatic backup creation before changes\n"
+                "- Import normalization (moves imports to top)\n"
+                "- Preview mode (apply=false) to see changes before applying\n"
+                "\n"
+                "Important notes:\n"
+                "- commit_message is REQUIRED when working in git repository\n"
+                "- Operations preserve code formatting and comments\n"
+                "- Can create new files from scratch (use selector with kind='module')\n"
+                "- Can delete code blocks (use empty new_code string)\n"
+                "- Backup UUID and git commit status are returned in response\n"
+            ),
+            "parameters": {
+                "root_dir": {
+                    "description": (
+                        "Project root directory path. Can be absolute or relative. "
+                        "If this directory is a git repository, commit_message becomes required."
+                    ),
+                },
+                "file_path": {
+                    "description": (
+                        "Target Python file path. Can be absolute or relative to root_dir. "
+                        "For new files, use selector with kind='module'."
+                    ),
+                },
+                "ops": {
+                    "description": (
+                        "List of CST operations to apply. Operations are applied in order: "
+                        "replace, then insert, then create. Each operation can target different "
+                        "code blocks using selectors."
+                    ),
+                },
+                "apply": {
+                    "description": (
+                        "If true, writes changes to file after successful validation. "
+                        "If false, only returns preview (diff, source) without modifying file."
+                    ),
+                },
+                "create_backup": {
+                    "description": (
+                        "If true and apply=true, creates backup copy in old_code directory. "
+                        "Backup includes comment (commit_message if provided) for history tracking."
+                    ),
+                },
+                "commit_message": {
+                    "description": (
+                        "Commit message for git commit. REQUIRED if root_dir is a git repository. "
+                        "If provided and root_dir is a git repository, automatically creates a git commit "
+                        "with this message after successfully applying changes. "
+                        "The message is also stored in backup index for version history tracking. "
+                        "If root_dir is not a git repository, this parameter is optional and ignored."
+                    ),
+                },
+                "return_diff": {
+                    "description": (
+                        "If true, includes unified diff in response showing changes made to the file."
+                    ),
+                },
+                "return_source": {
+                    "description": (
+                        "If true, includes full resulting source code in response. "
+                        "Can be large for big files."
+                    ),
+                },
+            },
+            "examples": [
+                {
+                    "description": "Preview changes without applying",
+                    "code": {
+                        "root_dir": "/path/to/project",
+                        "file_path": "code_analysis/main.py",
+                        "ops": [{
+                            "selector": {"kind": "function", "name": "my_function"},
+                            "new_code": "def my_function(param: int) -> str:\n    \"\"\"Updated.\"\"\"\n    return str(param)"
+                        }],
+                        "apply": False,
+                        "return_diff": True
+                    }
+                },
+                {
+                    "description": "Apply changes in git repository (commit_message required)",
+                    "code": {
+                        "root_dir": "/path/to/project",
+                        "file_path": "code_analysis/main.py",
+                        "ops": [{
+                            "selector": {"kind": "function", "name": "my_function"},
+                            "new_code": "def my_function(param: int) -> str:\n    \"\"\"Updated.\"\"\"\n    return str(param)"
+                        }],
+                        "apply": True,
+                        "commit_message": "Refactor: update my_function signature"
+                    }
+                },
+                {
+                    "description": "Create new file from scratch",
+                    "code": {
+                        "root_dir": "/path/to/project",
+                        "file_path": "new_module.py",
+                        "ops": [{
+                            "selector": {"kind": "module"},
+                            "file_docstring": "New module description",
+                            "new_code": "class NewClass:\n    \"\"\"Class description.\"\"\"\n    pass"
+                        }],
+                        "apply": True,
+                        "commit_message": "Add new module"
+                    }
+                }
+            ],
+            "error_codes": {
+                "COMMIT_MESSAGE_REQUIRED": "commit_message is required when working in a git repository",
+                "COMPILE_ERROR": "Compilation failed after CST patch",
+                "DOCSTRING_VALIDATION_ERROR": "Docstring validation failed",
+                "FILE_NOT_FOUND": "Target file does not exist (use kind='module' for new files)",
+                "INVALID_FILE": "Target file must be a .py file",
+                "INVALID_OPERATION": "Unknown or invalid operation type",
+            },
+        }

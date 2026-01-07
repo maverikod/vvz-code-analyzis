@@ -124,6 +124,7 @@ class SplitClassMCPCommand(BaseMCPCommand):
                     file_path_obj,
                     command="split_class",
                     related_files=related_files,
+                    comment="",  # Comment can be added later if needed
                 )
                 if backup_uuid:
                     logger.info(f"Backup created before split: {backup_uuid}")
@@ -239,7 +240,11 @@ class ExtractSuperclassMCPCommand(BaseMCPCommand):
                 # Create backup before modification
                 file_path_obj = self._validate_file_path(file_path, root_path)
                 backup_manager = BackupManager(root_path)
-                backup_uuid = backup_manager.create_backup(file_path_obj)
+                backup_uuid = backup_manager.create_backup(
+                    file_path_obj,
+                    command="extract_superclass",
+                    comment="",  # Comment can be added later if needed
+                )
                 if backup_uuid:
                     logger.info(f"Backup created before extraction: {backup_uuid}")
 
@@ -335,6 +340,7 @@ class SplitFileToPackageMCPCommand(BaseMCPCommand):
                 file_path_obj,
                 command="split_file_to_package",
                 related_files=related_files,
+                comment="",  # Comment can be added later if needed
             )
             if backup_uuid:
                 logger.info(

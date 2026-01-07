@@ -101,6 +101,7 @@ preview = mcp_MCP-Proxy-2_call_server(
         "apply": False,  # Preview only
         "return_diff": True,
         "return_source": False
+        # commit_message not needed for preview
     }
 )
 ```
@@ -128,7 +129,8 @@ result = mcp_MCP-Proxy-2_call_server(
         "apply": True,  # Apply changes
         "create_backup": True,  # Create backup
         "return_diff": True,
-        "return_source": False
+        "return_source": False,
+        "commit_message": "Refactor: update my_function"  # Required if git repository
     }
 )
 ```

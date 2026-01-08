@@ -179,6 +179,39 @@ class ClassSplitter(BaseRefactorer):
             new_content = self._perform_split(src_class, config)
             with open(self.file_path, "w", encoding="utf-8") as f:
                 f.write(new_content)
+            
+            # Update database after file write
+            if self.database and self.project_id and self.root_dir:
+                try:
+                    # Get relative path for update_file_data
+                    try:
+                        rel_path = str(self.file_path.relative_to(self.root_dir))
+                    except ValueError:
+                        # File is outside root, use absolute path
+                        rel_path = str(self.file_path)
+                    
+                    update_result = self.database.update_file_data(
+                        file_path=rel_path,
+                        project_id=self.project_id,
+                        root_dir=self.root_dir,
+                    )
+                    if not update_result.get("success"):
+                        logger.warning(
+                            f"Failed to update database after class split: "
+                            f"{update_result.get('error')}"
+                        )
+                    else:
+                        logger.debug(
+                            f"Database updated after class split: "
+                            f"AST={update_result.get('ast_updated')}, "
+                            f"CST={update_result.get('cst_updated')}"
+                        )
+                except Exception as e:
+                    logger.error(
+                        f"Error updating database after class split: {e}",
+                        exc_info=True,
+                    )
+            
             format_success, format_error = format_code_with_black(self.file_path)
             if not format_success:
                 logger.warning(f"Code formatting failed (continuing): {format_error}")

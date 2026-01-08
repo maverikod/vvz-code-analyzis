@@ -27,6 +27,11 @@ async def process_chunks(self, poll_interval: int = 30) -> Dict[str, Any]:
     Runs indefinitely, checking for chunks to vectorize at specified intervals.
     Also requests chunking for files that need chunking.
 
+    Handles database unavailability gracefully:
+    - Checks database availability before each cycle
+    - Logs status changes only (not on every cycle)
+    - Continues working when database becomes available again
+
     Args:
         poll_interval: Interval in seconds between polling cycles (default: 30)
 
@@ -46,11 +51,18 @@ async def process_chunks(self, poll_interval: int = 30) -> Dict[str, Any]:
     from ..database import create_driver_config_for_worker
 
     driver_config = create_driver_config_for_worker(self.db_path)
-    database = CodeDatabase(driver_config=driver_config)
+
+    # Track database availability status
+    db_available = False
+    db_status_logged = False  # Track if we've logged the current status
+
+    database: Any = None
     total_processed = 0
     total_errors = 0
     cycle_count = 0
-    self._log_missing_docstring_files(database)
+
+    backoff = 1.0
+    backoff_max = 60.0
 
     try:
         logger.info(
@@ -61,6 +73,71 @@ async def process_chunks(self, poll_interval: int = 30) -> Dict[str, Any]:
         while not self._stop_event.is_set():
             cycle_count += 1
             cycle_start_time = time.time()
+
+            # Check database availability
+            if database is None or not db_available:
+                try:
+                    database = CodeDatabase(driver_config=driver_config)
+                    # Test connection with a simple query
+                    try:
+                        database.get_project(self.project_id)
+                        # Connection successful
+                        if not db_available:
+                            # Status changed: unavailable -> available
+                            logger.info("✅ Database is now available")
+                            db_available = True
+                            db_status_logged = True
+                            backoff = 1.0  # Reset backoff
+                        else:
+                            db_status_logged = False  # Already logged as available
+                    except Exception as e:
+                        # Connection failed
+                        if db_available:
+                            # Status changed: available -> unavailable
+                            logger.warning(f"⚠️  Database is now unavailable: {e}")
+                            db_available = False
+                            db_status_logged = True
+                        elif not db_status_logged:
+                            # First time logging unavailability
+                            logger.warning(f"⚠️  Database is unavailable: {e}")
+                            db_status_logged = True
+                        else:
+                            # Already logged, don't spam
+                            db_status_logged = False
+
+                        try:
+                            database.close()
+                        except Exception:
+                            pass
+                        database = None
+
+                        # Wait with backoff before retrying
+                        logger.debug(f"Retrying database connection in {backoff:.1f}s...")
+                        await asyncio.sleep(backoff)
+                        backoff = min(backoff * 2.0, backoff_max)
+                        continue
+                except Exception as e:
+                    # Failed to create database connection
+                    if db_available:
+                        # Status changed: available -> unavailable
+                        logger.warning(f"⚠️  Database is now unavailable: {e}")
+                        db_available = False
+                        db_status_logged = True
+                    elif not db_status_logged:
+                        # First time logging unavailability
+                        logger.warning(f"⚠️  Database is unavailable: {e}")
+                        db_status_logged = True
+                    else:
+                        # Already logged, don't spam
+                        db_status_logged = False
+
+                    # Wait with backoff before retrying
+                    logger.debug(f"Retrying database connection in {backoff:.1f}s...")
+                    await asyncio.sleep(backoff)
+                    backoff = min(backoff * 2.0, backoff_max)
+                    continue
+
+            # Database is available, proceed with cycle
             logger.info(f"[CYCLE #{cycle_count}] Starting vectorization cycle")
             cycle_activity = False
 
@@ -79,6 +156,19 @@ async def process_chunks(self, poll_interval: int = 30) -> Dict[str, Any]:
                         logger.info(f"Enqueued {files_enqueued} files from watch_dirs")
                 except Exception as e:
                     logger.error(f"Error enqueuing watch_dirs: {e}", exc_info=True)
+                    # Check if error is due to database unavailability
+                    error_str = str(e).lower()
+                    if "database" in error_str or "db" in error_str or "connection" in error_str:
+                        logger.warning("Database error detected, will reconnect on next cycle")
+                        try:
+                            database.close()
+                        except Exception:
+                            pass
+                        database = None
+                        db_available = False
+                        db_status_logged = False
+                        backoff = 1.0
+                        continue
 
             # Step 1: Request chunking for files that need it
             # Skip chunking requests if circuit breaker is open
@@ -108,6 +198,19 @@ async def process_chunks(self, poll_interval: int = 30) -> Dict[str, Any]:
                             logger.info(f"Requested chunking for {chunked_count} files")
                     except Exception as e:
                         logger.error(f"Error requesting chunking: {e}", exc_info=True)
+                        # Check if error is due to database unavailability
+                        error_str = str(e).lower()
+                        if "database" in error_str or "db" in error_str or "connection" in error_str:
+                            logger.warning("Database error detected, will reconnect on next cycle")
+                            try:
+                                database.close()
+                            except Exception:
+                                pass
+                            database = None
+                            db_available = False
+                            db_status_logged = False
+                            backoff = 1.0
+                            continue
             else:
                 # No SVO client manager, skip chunking
                 logger.debug(
@@ -115,11 +218,29 @@ async def process_chunks(self, poll_interval: int = 30) -> Dict[str, Any]:
                 )
 
             # Step 2: Assign vector_id in FAISS for chunks that already have embeddings.
-            batch_processed, batch_errors = await process_embedding_ready_chunks(
-                self, database
-            )
-            total_processed += batch_processed
-            total_errors += batch_errors
+            try:
+                batch_processed, batch_errors = await process_embedding_ready_chunks(
+                    self, database
+                )
+                total_processed += batch_processed
+                total_errors += batch_errors
+            except Exception as e:
+                logger.error(f"Error processing chunks: {e}", exc_info=True)
+                # Check if error is due to database unavailability
+                error_str = str(e).lower()
+                if "database" in error_str or "db" in error_str or "connection" in error_str:
+                    logger.warning("Database error detected, will reconnect on next cycle")
+                    try:
+                        database.close()
+                    except Exception:
+                        pass
+                    database = None
+                    db_available = False
+                    db_status_logged = False
+                    backoff = 1.0
+                    continue
+                batch_errors = 0
+                batch_processed = 0
 
             cycle_duration = time.time() - cycle_start_time
             if batch_processed > 0 or batch_errors > 0:
@@ -162,7 +283,11 @@ async def process_chunks(self, poll_interval: int = 30) -> Dict[str, Any]:
                     await asyncio.sleep(1)
 
     finally:
-        database.close()
+        if database is not None:
+            try:
+                database.close()
+            except Exception:
+                pass
 
     logger.info(
         f"Vectorization worker stopped: {total_processed} total processed, "

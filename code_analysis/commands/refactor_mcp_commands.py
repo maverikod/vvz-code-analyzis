@@ -427,7 +427,7 @@ class SplitClassMCPCommand(BaseMCPCommand):
                 if backup_uuid:
                     logger.info(f"Backup created before split: {backup_uuid}")
 
-                cmd = InternalRefactorCommand(proj_id)
+                cmd = InternalRefactorCommand(proj_id, database=db, root_dir=root_path)
                 result = await cmd.split_class(str(root_path), file_path, config)
 
                 # Update database after successful split
@@ -883,7 +883,7 @@ class ExtractSuperclassMCPCommand(BaseMCPCommand):
                 if backup_uuid:
                     logger.info(f"Backup created before extraction: {backup_uuid}")
 
-                cmd = InternalRefactorCommand(proj_id)
+                cmd = InternalRefactorCommand(proj_id, database=db, root_dir=root_path)
                 result = await cmd.extract_superclass(str(root_path), file_path, config)
 
                 # Update database after successful extraction
@@ -1293,7 +1293,7 @@ class SplitFileToPackageMCPCommand(BaseMCPCommand):
                     f"Backup created before split_file_to_package: {backup_uuid}"
                 )
 
-            cmd = InternalRefactorCommand(proj_id)
+            cmd = InternalRefactorCommand(proj_id, database=db, root_dir=root_path)
             result = await cmd.split_file_to_package(str(root_path), file_path, config)
 
             # Update database for all created files after successful split

@@ -18,9 +18,11 @@ AST nodes are saved to the database through the `update_indexes` command (`code_
 
 **Process Flow**:
 
-```232:253:code_analysis/commands/code_mapper_mcp_command.py
+```255:280:code_analysis/commands/code_mapper_mcp_command.py
             try:
-                tree = ast.parse(file_content, filename=str(file_path))
+                # Use parse_with_comments to preserve comments in AST
+                from ..core.ast_utils import parse_with_comments
+                tree = parse_with_comments(file_content, filename=str(file_path))
             except SyntaxError as e:
                 logger.warning(f"Syntax error in {rel_path}: {e}")
                 return {"file": rel_path, "status": "syntax_error", "error": str(e)}
@@ -33,7 +35,8 @@ AST nodes are saved to the database through the `update_indexes` command (`code_
             try:
                 # NOTE: save_ast_tree is intentionally synchronous. We must not create
                 # nested event loops inside queue workers / async contexts.
-                database.save_ast_tree(
+                logger.debug(f"Saving AST for {rel_path}, file_id={file_id}, project_id={project_id}")
+                ast_tree_id = database.save_ast_tree(
                     file_id,
                     project_id,
                     ast_json,
@@ -41,13 +44,19 @@ AST nodes are saved to the database through the `update_indexes` command (`code_
                     file_mtime,
                     overwrite=True,
                 )
+                logger.debug(f"AST saved with id={ast_tree_id} for file_id={file_id}")
 ```
 
 **Steps**:
-1. **Parse file content** → `ast.parse(file_content, filename=str(file_path))`
+1. **Parse file content with comments preserved** → `parse_with_comments(file_content, filename=str(file_path))`
+   - Uses `code_analysis/core/ast_utils.py::parse_with_comments()` utility
+   - Comments are preserved as `ast.Expr(ast.Constant(value="# comment"))` nodes
+   - Comments are inserted before the statements they precede
 2. **Serialize AST** → `json.dumps(ast.dump(tree))`
 3. **Calculate hash** → `hashlib.sha256(ast_json.encode()).hexdigest()`
 4. **Save to database** → `database.save_ast_tree(...)`
+
+**Note**: AST now preserves comments using the `parse_with_comments()` utility function. Comments are stored as expression nodes in the AST, allowing them to be restored when needed. This enhancement was added in Phase 5 of the unified implementation plan.
 
 ### 1.2 Database Schema
 
@@ -70,10 +79,17 @@ AST trees are stored in the `ast_trees` table:
 ```
 
 **Key Fields**:
-- `ast_json`: Full AST serialized as JSON
+- `ast_json`: Full AST serialized as JSON (includes comments as expression nodes)
 - `ast_hash`: SHA256 hash of AST for change detection
 - `file_mtime`: File modification time (used for synchronization)
 - `UNIQUE(file_id, ast_hash)`: Prevents duplicate AST trees for the same file
+
+**Comment Preservation**:
+- Comments are preserved in AST using `parse_with_comments()` utility (`code_analysis/core/ast_utils.py`)
+- Comments are stored as `ast.Expr(ast.Constant(value="# comment"))` nodes
+- Comments maintain their position relative to code statements
+- This allows AST-based file restoration with comments preserved
+- Enhancement added in Phase 5 of the unified implementation plan
 
 ### 1.3 When AST Is Saved
 
@@ -121,56 +137,105 @@ CST editing is performed through `compose_cst_module` command (`code_analysis/co
 3. **Write to disk** → `write_with_backup(target, new_source, ...)`
 4. **Git commit** (optional) → If `commit_message` provided
 
-### 2.2 ❌ AST Is NOT Updated After CST Editing
+### 2.2 ✅ AST Is Now Updated After CST Editing
 
-**Critical Finding**: After CST editing, the AST tree in the database is **NOT automatically updated**.
+**Status**: After CST editing, the AST tree in the database is **automatically updated** via `update_file_data()`.
 
-**Evidence**:
-- `compose_cst_module` command does NOT call `update_indexes`
-- `compose_cst_module` does NOT call `save_ast_tree` directly
-- File is written to disk, but database AST remains outdated
+**Implementation** (Phase 3 of unified implementation plan):
+- `compose_cst_module` command now calls `update_file_data()` after writing file to disk
+- `update_file_data()` clears old records and recreates them via `_analyze_file()`
+- `_analyze_file()` parses AST with comments preserved and saves to database
+- AST tree is kept in sync with file content automatically
 
-**Code Analysis**:
-- `compose_cst_module` returns success after writing file to disk
-- No AST parsing or saving occurs in `compose_cst_module`
-- AST tree in database becomes **stale** after CST editing
+**Code Location**:
+```448:487:code_analysis/commands/cst_compose_module_command.py
+                # Update database after file write
+                try:
+                    database = self._open_database(str(root_path), auto_analyze=False)
+                    try:
+                        project_id = self._get_project_id(
+                            database, root_path, kwargs.get("project_id")
+                        )
+                        if project_id:
+                            # Get relative path for update_file_data
+                            try:
+                                rel_path = str(target.relative_to(root_path))
+                            except ValueError:
+                                # File is outside root, use absolute path
+                                rel_path = str(target)
+                            
+                            update_result = database.update_file_data(
+                                file_path=rel_path,
+                                project_id=project_id,
+                                root_dir=root_path,
+                            )
+                            if not update_result.get("success"):
+                                logger.warning(
+                                    f"Failed to update database after CST compose: "
+                                    f"{update_result.get('error')}"
+                                )
+                            else:
+                                logger.info(
+                                    f"Database updated after CST compose: "
+                                    f"AST={update_result.get('ast_updated')}, "
+                                    f"CST={update_result.get('cst_updated')}, "
+                                    f"entities={update_result.get('entities_updated')}"
+                                )
+                    finally:
+                        database.close()
+                except Exception as e:
+                    logger.error(
+                        f"Error updating database after CST compose: {e}",
+                        exc_info=True,
+                    )
+                    # Don't fail the operation, just log the error
+```
+
+**Result**: AST tree in database is now automatically synchronized with file content after CST editing operations.
 
 ### 2.3 File Watcher Behavior
 
-File watcher (`code_analysis/core/file_watcher_pkg/processor.py`) detects file changes:
+File watcher (`code_analysis/core/file_watcher_pkg/processor.py`) detects file changes and automatically updates database:
 
-```504:575:code_analysis/core/file_watcher_pkg/processor.py
-    def _queue_file_for_processing(
-        self, file_path: str, mtime: float, project_id: str, dataset_id: str
-    ) -> bool:
-        
-...
-                # Retry marking for chunking
-                result = self.database.mark_file_needs_chunking(
-                    file_path, project_id
-                )
+```611:637:code_analysis/core/file_watcher_pkg/processor.py
+            # Update all database records for changed file
+            update_result = self.database.update_file_data(
+                file_path=file_path,
+                project_id=project_id,
+                root_dir=root_dir,
+            )
             
-            if result:
-                # Update last_modified if file exists
-                self.database._execute(
-                    """
-                    UPDATE files 
-                    SET last_modified = ?, updated_at = julianday('now')
-                    WHERE project_id = ? AND path = ?
-                    """,
-                    (mtime, project_id, file_path),
+            if update_result.get("success"):
+                logger.debug(
+                    f"[QUEUE] File updated in database: {file_path} | "
+                    f"AST={update_result.get('ast_updated')}, "
+                    f"CST={update_result.get('cst_updated')}"
                 )
-                self.database._commit()
+                
+                # Mark for chunking (vectorization worker will process)
+                # Note: Immediate vectorization is not done here because this is sync context
+                # Worker will handle vectorization in background
+                self.database.mark_file_needs_chunking(file_path, project_id)
+                logger.debug(f"[QUEUE] File marked for worker vectorization: {file_path}")
+                
+                return True
+            else:
+                logger.error(
+                    f"[QUEUE] Failed to update file in database: {file_path} | "
+                    f"Error: {update_result.get('error')}"
+                )
+                return False
 ```
 
-**What File Watcher Does**:
+**What File Watcher Does** (Phase 4 of unified implementation plan):
 - ✅ Detects file changes (compares `mtime` with `last_modified`)
+- ✅ **Updates AST tree** via `update_file_data()`
+- ✅ **Updates CST tree** via `update_file_data()`
+- ✅ **Updates code entities** (classes, functions, methods) via `update_file_data()`
 - ✅ Marks file for chunking (`mark_file_needs_chunking`)
 - ✅ Updates `last_modified` timestamp
-- ❌ **Does NOT update AST tree**
 
-**What File Watcher Does NOT Do**:
-- ❌ Does NOT call `update_indexes`
+**Result**: File watcher now automatically keeps AST/CST/entities in sync with file changes.
 - ❌ Does NOT parse AST
 - ❌ Does NOT save AST to database
 

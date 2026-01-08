@@ -522,21 +522,27 @@ class FileChangeProcessor:
         Returns:
             True if successful, False otherwise
         """
+        from ..project_resolution import normalize_abs_path
+        
         try:
+            # Normalize path to absolute once at the beginning
+            # This ensures consistent path usage throughout the method
+            abs_file_path = normalize_abs_path(file_path)
+            
             # Get project root directory
             root_dir = project_root
             if not root_dir:
-                root_dir = self._get_project_root_dir(project_id, file_path)
+                root_dir = self._get_project_root_dir(project_id, abs_file_path)
                 if not root_dir:
                     logger.warning(
-                        f"Could not determine root_dir for {file_path}, "
+                        f"Could not determine root_dir for {abs_file_path}, "
                         "falling back to mark_file_needs_chunking"
                     )
                     # Fallback to old behavior
-                    result = self.database.mark_file_needs_chunking(file_path, project_id)
+                    result = self.database.mark_file_needs_chunking(abs_file_path, project_id)
                     if not result:
                         # New file: insert/update file record first
-                        path_obj = Path(file_path)
+                        path_obj = Path(abs_file_path)
                         lines = 0
                         has_docstring = False
                         try:
@@ -549,12 +555,12 @@ class FileChangeProcessor:
                                 ) or stripped.startswith("'''")
                         except Exception:
                             logger.debug(
-                                f"[QUEUE] Failed to read file for metadata, using defaults: {file_path}"
+                                f"[QUEUE] Failed to read file for metadata, using defaults: {abs_file_path}"
                             )
                         
                         try:
                             self.database.add_file(
-                                path=file_path,
+                                path=abs_file_path,
                                 lines=lines,
                                 last_modified=mtime,
                                 has_docstring=has_docstring,
@@ -563,21 +569,21 @@ class FileChangeProcessor:
                             )
                         except Exception as e:
                             logger.error(
-                                f"[QUEUE] Failed to add new file record: {file_path} ({e})"
+                                f"[QUEUE] Failed to add new file record: {abs_file_path} ({e})"
                             )
                             return False
                         
                         # Retry marking for chunking
                         result = self.database.mark_file_needs_chunking(
-                            file_path, project_id
+                            abs_file_path, project_id
                         )
                     return result
             
-            # Check if file exists in database
-            file_record = self.database.get_file_by_path(file_path, project_id)
+            # Check if file exists in database (using normalized path)
+            file_record = self.database.get_file_by_path(abs_file_path, project_id)
             if not file_record:
                 # New file: insert/update file record first
-                path_obj = Path(file_path)
+                path_obj = Path(abs_file_path)
                 lines = 0
                 has_docstring = False
                 try:
@@ -590,34 +596,42 @@ class FileChangeProcessor:
                         ) or stripped.startswith("'''")
                 except Exception:
                     logger.debug(
-                        f"[QUEUE] Failed to read file for metadata, using defaults: {file_path}"
+                        f"[QUEUE] Failed to read file for metadata, using defaults: {abs_file_path}"
                     )
                 
                 try:
                     self.database.add_file(
-                        path=file_path,
+                        path=abs_file_path,
                         lines=lines,
                         last_modified=mtime,
                         has_docstring=has_docstring,
                         project_id=project_id,
                         dataset_id=dataset_id,
                     )
+                    # Verify file was added successfully
+                    file_record = self.database.get_file_by_path(abs_file_path, project_id)
+                    if not file_record:
+                        logger.error(
+                            f"[QUEUE] File was added but not found in database: {abs_file_path}. "
+                            "This may indicate a transaction issue."
+                        )
+                        return False
                 except Exception as e:
                     logger.error(
-                        f"[QUEUE] Failed to add new file record: {file_path} ({e})"
+                        f"[QUEUE] Failed to add new file record: {abs_file_path} ({e})"
                     )
                     return False
             
-            # Update all database records for changed file
+            # Update all database records for changed file (using normalized path)
             update_result = self.database.update_file_data(
-                file_path=file_path,
+                file_path=abs_file_path,
                 project_id=project_id,
                 root_dir=root_dir,
             )
             
             if update_result.get("success"):
                 logger.debug(
-                    f"[QUEUE] File updated in database: {file_path} | "
+                    f"[QUEUE] File updated in database: {abs_file_path} | "
                     f"AST={update_result.get('ast_updated')}, "
                     f"CST={update_result.get('cst_updated')}"
                 )
@@ -625,13 +639,13 @@ class FileChangeProcessor:
                 # Mark for chunking (vectorization worker will process)
                 # Note: Immediate vectorization is not done here because this is sync context
                 # Worker will handle vectorization in background
-                self.database.mark_file_needs_chunking(file_path, project_id)
-                logger.debug(f"[QUEUE] File marked for worker vectorization: {file_path}")
+                self.database.mark_file_needs_chunking(abs_file_path, project_id)
+                logger.debug(f"[QUEUE] File marked for worker vectorization: {abs_file_path}")
                 
                 return True
             else:
                 logger.error(
-                    f"[QUEUE] Failed to update file in database: {file_path} | "
+                    f"[QUEUE] Failed to update file in database: {abs_file_path} | "
                     f"Error: {update_result.get('error')}"
                 )
                 return False

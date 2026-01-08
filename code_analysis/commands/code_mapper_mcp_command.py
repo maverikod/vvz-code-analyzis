@@ -253,7 +253,9 @@ class UpdateIndexesMCPCommand(BaseMCPCommand):
                     }
 
             try:
-                tree = ast.parse(file_content, filename=str(file_path))
+                # Use parse_with_comments to preserve comments in AST
+                from ..core.ast_utils import parse_with_comments
+                tree = parse_with_comments(file_content, filename=str(file_path))
             except SyntaxError as e:
                 logger.warning(f"Syntax error in {rel_path}: {e}")
                 return {"file": rel_path, "status": "syntax_error", "error": str(e)}

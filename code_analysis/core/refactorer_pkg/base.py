@@ -9,8 +9,6 @@ import ast
 import shutil
 import subprocess
 import tempfile
-import tokenize
-import io
 import sys
 from pathlib import Path
 from typing import Dict, List, Any, Optional, Tuple
@@ -22,14 +20,31 @@ logger = logging.getLogger(__name__)
 class BaseRefactorer:
     """Base class with common functionality."""
 
-    def __init__(self, file_path: Path) -> None:
-        """Initialize class splitter."""
+    def __init__(
+        self,
+        file_path: Path,
+        database: Optional[Any] = None,
+        project_id: Optional[str] = None,
+        root_dir: Optional[Path] = None,
+    ) -> None:
+        """
+        Initialize refactorer.
+        
+        Args:
+            file_path: Path to file to refactor
+            database: Optional database instance for updating file data
+            project_id: Optional project ID for database operations
+            root_dir: Optional root directory for database operations
+        """
         self.file_path = Path(file_path)
         if not self.file_path.exists():
             raise FileNotFoundError(f"File not found: {file_path}")
         self.backup_path: Optional[Path] = None
         self.original_content: str = ""
         self.tree: Optional[ast.Module] = None
+        self.database = database
+        self.project_id = project_id
+        self.root_dir = root_dir if root_dir else None
 
     def _extract_method_code(self, method_node: Any, indent: str) -> str:
         """
@@ -243,90 +258,17 @@ class BaseRefactorer:
         Comments are added as ast.Expr(ast.Constant(value="# comment")) nodes
         before the statements they precede.
 
+        This method uses the utility function from ast_utils for consistency.
+
         Args:
             source: Python source code string
 
         Returns:
             AST module with comments preserved as string expressions
         """
-        # First, parse normally
-        tree = ast.parse(source, filename=str(self.file_path))
+        from ..ast_utils import parse_with_comments
 
-        # Extract comments using tokenize
-        comments_map: Dict[int, List[Tuple[int, str]]] = (
-            {}
-        )  # line_number -> [(col, comment)]
-        try:
-            tokens = list(tokenize.generate_tokens(io.StringIO(source).readline))
-            for token in tokens:
-                if token.type == tokenize.COMMENT:
-                    line_num = token.start[0]
-                    col = token.start[1]
-                    comment_text = token.string.strip()
-                    if line_num not in comments_map:
-                        comments_map[line_num] = []
-                    comments_map[line_num].append((col, comment_text))
-        except Exception as e:
-            logger.warning(f"Failed to extract comments: {e}")
-            return tree
-
-        # Add comments to AST as string expressions
-        def add_comments_to_node(node: ast.AST, parent_body: List[ast.stmt]) -> None:
-            """Recursively add comments to AST nodes."""
-            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
-                # Add comments before this node
-                node_line = node.lineno
-                if node_line in comments_map:
-                    # Find position in parent body
-                    try:
-                        node_idx = parent_body.index(node)
-                    except ValueError:
-                        return
-
-                    # Add comments before this node
-                    for col, comment_text in sorted(
-                        comments_map[node_line], reverse=True
-                    ):
-                        # Only add if comment is before the node definition
-                        if col < node.col_offset:
-                            comment_node = ast.Expr(ast.Constant(value=comment_text))
-                            comment_node.lineno = node_line
-                            comment_node.col_offset = col
-                            parent_body.insert(node_idx, comment_node)
-
-                    # Remove from map to avoid duplicates
-                    del comments_map[node_line]
-
-                # Process body recursively
-                if hasattr(node, "body") and isinstance(node.body, list):
-                    for i, child in enumerate(node.body[:]):
-                        add_comments_to_node(child, node.body)
-
-            elif isinstance(node, ast.stmt):
-                # Add comments before this statement
-                node_line = node.lineno
-                if node_line in comments_map:
-                    try:
-                        node_idx = parent_body.index(node)
-                    except ValueError:
-                        return
-
-                    for col, comment_text in sorted(
-                        comments_map[node_line], reverse=True
-                    ):
-                        if col < getattr(node, "col_offset", 0):
-                            comment_node = ast.Expr(ast.Constant(value=comment_text))
-                            comment_node.lineno = node_line
-                            comment_node.col_offset = col
-                            parent_body.insert(node_idx, comment_node)
-
-                    del comments_map[node_line]
-
-        # Process all nodes in the tree
-        for node in tree.body:
-            add_comments_to_node(node, tree.body)
-
-        return tree
+        return parse_with_comments(source, filename=str(self.file_path))
 
     def load_file(self) -> None:
         """Load and parse file content with comments preserved."""

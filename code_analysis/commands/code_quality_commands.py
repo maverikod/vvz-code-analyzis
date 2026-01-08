@@ -63,20 +63,29 @@ class FormatCodeCommand(Command):
                     "description": "Path to Python file to format.",
                     "examples": ["/abs/path/to/file.py"],
                 },
+                "root_dir": {
+                    "type": "string",
+                    "description": "Optional project root directory. If provided, database will be updated after formatting.",
+                    "examples": ["/abs/path/to/project"],
+                },
             },
             "required": ["file_path"],
             "additionalProperties": False,
-            "examples": [{"file_path": "/abs/path/to/file.py"}],
+            "examples": [
+                {"file_path": "/abs/path/to/file.py"},
+                {"file_path": "/abs/path/to/file.py", "root_dir": "/abs/path/to/project"},
+            ],
         }
 
     async def execute(
-        self: "FormatCodeCommand", file_path: str, **kwargs: Any
+        self: "FormatCodeCommand", file_path: str, root_dir: Optional[str] = None, **kwargs: Any
     ) -> SuccessResult | ErrorResult:
         """Execute code formatting.
 
         Args:
             self: Command instance.
             file_path: Path to Python file to format.
+            root_dir: Optional project root directory. If provided, database will be updated after formatting.
             **kwargs: Extra args (unused).
 
         Returns:
@@ -98,18 +107,68 @@ class FormatCodeCommand(Command):
 
             success, error = format_code_with_black(path)
 
-            if success:
-                return SuccessResult(
-                    data={
-                        "file_path": str(path),
-                        "formatted": True,
-                        "message": "Code formatted successfully",
-                    }
+            if not success:
+                return ErrorResult(
+                    code="FORMATTING_FAILED",
+                    message=error or "Formatting failed",
                 )
 
-            return ErrorResult(
-                code="FORMATTING_FAILED",
-                message=error or "Formatting failed",
+            # Optional: Update database if root_dir is provided
+            database_updated = False
+            if root_dir:
+                try:
+                    from ..core.database import CodeDatabase
+                    from ..core.project_resolution import get_project_id
+                    from ..core.storage_paths import resolve_storage_paths
+                    from pathlib import Path as PathType
+
+                    root_path = PathType(root_dir)
+                    if not root_path.exists() or not root_path.is_dir():
+                        logger.warning(f"Invalid root_dir: {root_dir}, skipping database update")
+                    else:
+                        # Open database
+                        storage_paths = resolve_storage_paths(root_path)
+                        db_path = storage_paths["database"]
+                        from ..core.database.base import create_driver_config_for_worker
+                        driver_config = create_driver_config_for_worker(db_path)
+                        database = CodeDatabase(driver_config=driver_config)
+
+                        # Get project_id
+                        project_id = get_project_id(root_path)
+                        if project_id:
+                            # Update database after formatting
+                            # Note: Formatting doesn't change code structure, only formatting
+                            # But we update to reflect new file_mtime
+                            update_result = database.update_file_data(
+                                file_path=str(path),
+                                project_id=project_id,
+                                root_dir=root_path,
+                            )
+                            if update_result.get("success"):
+                                database_updated = True
+                                logger.debug(
+                                    f"Database updated after formatting: {file_path} | "
+                                    f"AST={update_result.get('ast_updated')}, "
+                                    f"CST={update_result.get('cst_updated')}"
+                                )
+                            else:
+                                logger.warning(
+                                    f"Failed to update database after formatting: {file_path} | "
+                                    f"Error: {update_result.get('error')}"
+                                )
+                        else:
+                            logger.debug(f"Project ID not found for {root_dir}, skipping database update")
+                except Exception as e:
+                    # Don't fail formatting if database update fails
+                    logger.warning(f"Error updating database after formatting: {e}", exc_info=True)
+
+            return SuccessResult(
+                data={
+                    "file_path": str(path),
+                    "formatted": True,
+                    "database_updated": database_updated,
+                    "message": "Code formatted successfully",
+                }
             )
 
         except Exception as e:

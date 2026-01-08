@@ -176,55 +176,74 @@ def run_vectorization_worker(
             driver_config["config"]["worker_config"]["command_timeout"] = 30.0
             driver_config["config"]["worker_config"]["poll_interval"] = 0.5
 
-        sync_database = CodeDatabase(driver_config=driver_config)
         try:
-            is_synced, sync_details = faiss_manager.check_index_sync(
-                database=sync_database,
-                project_id=project_id,
-                dataset_id=dataset_id,
+            sync_database = CodeDatabase(driver_config=driver_config)
+            # Test connection
+            try:
+                sync_database.get_project(project_id)
+            except Exception as conn_e:
+                logger.warning(
+                    f"⚠️  Database is unavailable during startup sync check: {conn_e}. "
+                    "Skipping index synchronization check. Worker will retry when database becomes available."
+                )
+                sync_database = None
+
+            if sync_database is not None:
+                try:
+                    is_synced, sync_details = faiss_manager.check_index_sync(
+                        database=sync_database,
+                        project_id=project_id,
+                        dataset_id=dataset_id,
+                    )
+
+                    if not is_synced:
+                        logger.warning(
+                            f"⚠️  FAISS index synchronization check failed for {scope_desc}:"
+                        )
+                        logger.warning(
+                            f"   Database vectors: {sync_details['db_vector_count']}, "
+                            f"Index vectors: {sync_details['index_vector_count']}"
+                        )
+                        if sync_details.get("missing_in_index_count", 0) > 0:
+                            logger.warning(
+                                f"   Missing in index: {sync_details['missing_in_index_count']} vectors "
+                                f"(sample: {sync_details['missing_in_index'][:10]})"
+                            )
+                        if sync_details.get("extra_in_index_count", 0) > 0:
+                            logger.warning(
+                                f"   Extra in index: {sync_details['extra_in_index_count']} vectors "
+                                f"(sample: {sync_details['extra_in_index'][:10]})"
+                            )
+
+                        logger.info(
+                            f"🔄 Rebuilding FAISS index from database to fix synchronization issues..."
+                        )
+                        # Rebuild index from database
+                        vectors_count = asyncio.run(
+                            faiss_manager.rebuild_from_database(
+                                database=sync_database,
+                                svo_client_manager=svo_client_manager,
+                                project_id=project_id,
+                                dataset_id=dataset_id,
+                            )
+                        )
+                        logger.info(
+                            f"✅ FAISS index rebuilt: {vectors_count} vectors loaded for {scope_desc}"
+                        )
+                    else:
+                        logger.info(
+                            f"✅ FAISS index is synchronized with database for {scope_desc}: "
+                            f"{sync_details['index_vector_count']} vectors"
+                        )
+                finally:
+                    sync_database.close()
+        except Exception as db_e:
+            logger.warning(
+                f"⚠️  Database is unavailable during startup sync check: {db_e}. "
+                "Skipping index synchronization check. Worker will retry when database becomes available."
             )
-
-            if not is_synced:
-                logger.warning(
-                    f"⚠️  FAISS index synchronization check failed for {scope_desc}:"
-                )
-                logger.warning(
-                    f"   Database vectors: {sync_details['db_vector_count']}, "
-                    f"Index vectors: {sync_details['index_vector_count']}"
-                )
-                if sync_details.get("missing_in_index_count", 0) > 0:
-                    logger.warning(
-                        f"   Missing in index: {sync_details['missing_in_index_count']} vectors "
-                        f"(sample: {sync_details['missing_in_index'][:10]})"
-                    )
-                if sync_details.get("extra_in_index_count", 0) > 0:
-                    logger.warning(
-                        f"   Extra in index: {sync_details['extra_in_index_count']} vectors "
-                        f"(sample: {sync_details['extra_in_index'][:10]})"
-                    )
-
-                logger.info(
-                    f"🔄 Rebuilding FAISS index from database to fix synchronization issues..."
-                )
-                # Rebuild index from database
-                vectors_count = await faiss_manager.rebuild_from_database(
-                    database=sync_database,
-                    svo_client_manager=svo_client_manager,
-                    project_id=project_id,
-                    dataset_id=dataset_id,
-                )
-                logger.info(
-                    f"✅ FAISS index rebuilt: {vectors_count} vectors loaded for {scope_desc}"
-                )
-            else:
-                logger.info(
-                    f"✅ FAISS index is synchronized with database for {scope_desc}: "
-                    f"{sync_details['index_vector_count']} vectors"
-                )
-        finally:
-            sync_database.close()
     except Exception as e:
-        logger.error(
+        logger.warning(
             f"Failed to check FAISS index synchronization: {e}. "
             "Continuing with worker startup, but index may be out of sync.",
             exc_info=True,

@@ -186,15 +186,29 @@ async def process_embedding_ready_chunks(
                         embedding_request_start = time.time()
                         # Use chunker service - it chunks and returns chunks with embeddings
                         chunk_type = chunk.get("chunk_type", "DocBlock")
-                        chunks_with_emb = await self.svo_client_manager.get_chunks(
-                            text=chunk_text, type=chunk_type
-                        )
-                        embedding_request_duration = (
-                            time.time() - embedding_request_start
-                        )
-                        logger.debug(
-                            f"[TIMING] [CHUNK {chunk_id}] Chunker service request took {embedding_request_duration:.3f}s"
-                        )
+                        chunks_with_emb = None
+                        try:
+                            chunks_with_emb = await self.svo_client_manager.get_chunks(
+                                text=chunk_text, type=chunk_type
+                            )
+                            embedding_request_duration = (
+                                time.time() - embedding_request_start
+                            )
+                            logger.debug(
+                                f"[TIMING] [CHUNK {chunk_id}] Chunker service request took {embedding_request_duration:.3f}s"
+                            )
+                        except Exception as svo_e:
+                            # Chunker service error - skip this chunk, continue processing
+                            embedding_request_duration = (
+                                time.time() - embedding_request_start
+                            )
+                            error_str = str(svo_e).lower()
+                            logger.debug(
+                                f"[CHUNK {chunk_id}] Chunker service error after {embedding_request_duration:.3f}s: {svo_e}. "
+                                "Skipping chunk, will retry in next cycle if service becomes available."
+                            )
+                            batch_errors += 1
+                            continue  # Skip this chunk, try next one
 
                         if chunks_with_emb and len(chunks_with_emb) > 0:
                             embedding = getattr(chunks_with_emb[0], "embedding", None)
@@ -246,6 +260,8 @@ async def process_embedding_ready_chunks(
                             )
                             continue
                     except Exception as e:
+                        # This catch handles errors from the outer try block (file reading, etc.)
+                        # SVO errors are already handled in the inner try-except above
                         error_type = type(e).__name__
                         error_msg = str(e)
 

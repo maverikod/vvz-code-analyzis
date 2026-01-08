@@ -136,6 +136,12 @@ class SVOClientManager:
         self._opened_at: Optional[float] = None
         self._half_open_successes: int = 0
 
+        # Track service availability status (for logging only on status change)
+        self._chunker_available: bool = True
+        self._chunker_status_logged: bool = False
+        self._embedding_available: bool = True
+        self._embedding_status_logged: bool = False
+
         # Keep original cfg for client creation
         self._config: dict[str, Any] = cfg
 
@@ -455,14 +461,47 @@ class SVOClientManager:
             # Call chunker service - it returns chunks with embeddings
             chunks = await self._chunker_client.chunk_text(text=text, **kwargs)
             self._record_success()
+            # Service is available
+            if not self._chunker_available:
+                # Status changed: unavailable -> available
+                logger.info("✅ Chunker service is now available")
+                self._chunker_available = True
+                self._chunker_status_logged = True
+            else:
+                self._chunker_status_logged = False  # Already logged as available
             return chunks
         except Exception as e:
             self._record_failure()
-            logger.error(
-                "Failed to get chunks from chunker service: %s",
-                e,
-                exc_info=True,
+            # Check if error indicates service unavailability
+            error_str = str(e).lower()
+            is_unavailable_error = (
+                "model rpc server failed" in error_str
+                or "connection" in error_str
+                or "timeout" in error_str
+                or "unavailable" in error_str
+                or "failed after" in error_str
             )
+            
+            if is_unavailable_error:
+                if self._chunker_available:
+                    # Status changed: available -> unavailable
+                    logger.warning(f"⚠️  Chunker service is now unavailable: {e}")
+                    self._chunker_available = False
+                    self._chunker_status_logged = True
+                elif not self._chunker_status_logged:
+                    # First time logging unavailability
+                    logger.warning(f"⚠️  Chunker service is unavailable: {e}")
+                    self._chunker_status_logged = True
+                else:
+                    # Already logged, don't spam
+                    self._chunker_status_logged = False
+            else:
+                # Other error (not availability-related), log normally
+                logger.error(
+                    "Failed to get chunks from chunker service: %s",
+                    e,
+                    exc_info=True,
+                )
             raise
 
     async def get_embeddings(self, chunks: Iterable[Any], **kwargs: Any) -> List[Any]:
@@ -575,11 +614,35 @@ class SVOClientManager:
 
         except Exception as e:
             self._record_failure()
-            logger.error(
-                "Failed to get embeddings from real service: %s",
-                e,
-                exc_info=True,
+            # Check if error indicates service unavailability
+            error_str = str(e).lower()
+            is_unavailable_error = (
+                "connection" in error_str
+                or "timeout" in error_str
+                or "unavailable" in error_str
+                or "failed after" in error_str
             )
+            
+            if is_unavailable_error:
+                if self._embedding_available:
+                    # Status changed: available -> unavailable
+                    logger.warning(f"⚠️  Embedding service is now unavailable: {e}")
+                    self._embedding_available = False
+                    self._embedding_status_logged = True
+                elif not self._embedding_status_logged:
+                    # First time logging unavailability
+                    logger.warning(f"⚠️  Embedding service is unavailable: {e}")
+                    self._embedding_status_logged = True
+                else:
+                    # Already logged, don't spam
+                    self._embedding_status_logged = False
+            else:
+                # Other error (not availability-related), log normally
+                logger.error(
+                    "Failed to get embeddings from real service: %s",
+                    e,
+                    exc_info=True,
+                )
             raise
 
     # ==========================

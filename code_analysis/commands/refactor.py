@@ -7,7 +7,7 @@ email: vasilyvz@gmail.com
 
 import logging
 from pathlib import Path
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 
 from ..core.refactorer_pkg.splitter import ClassSplitter
 from ..core.refactorer_pkg.extractor import SuperclassExtractor
@@ -22,14 +22,20 @@ logger = logging.getLogger(__name__)
 class RefactorCommand:
     """Commands for code refactoring."""
 
-    def __init__(self, project_id: str):
+    def __init__(
+        self, project_id: str, database: Optional[Any] = None, root_dir: Optional[Path] = None
+    ):
         """
         Initialize refactor command.
 
         Args:
             project_id: Project UUID
+            database: Optional database instance for updating file data
+            root_dir: Optional root directory for database operations
         """
         self.project_id = project_id
+        self.database = database
+        self.root_dir = Path(root_dir) if root_dir else None
 
     async def split_class(
         self, root_dir: str, file_path: str, config: Dict[str, Any]
@@ -53,7 +59,12 @@ class RefactorCommand:
 
         logger.info(f"Using file path: {file_path_obj}")
 
-        splitter = ClassSplitter(file_path_obj)
+        splitter = ClassSplitter(
+            file_path_obj,
+            database=self.database,
+            project_id=self.project_id,
+            root_dir=self.root_dir or Path(root_dir),
+        )
         try:
             success, message = splitter.split_class(config)
             if success:
@@ -98,7 +109,12 @@ class RefactorCommand:
 
         logger.info(f"Using file path: {file_path_obj}")
 
-        extractor = SuperclassExtractor(file_path_obj)
+        extractor = SuperclassExtractor(
+            file_path_obj,
+            database=self.database,
+            project_id=self.project_id,
+            root_dir=self.root_dir or Path(root_dir),
+        )
         try:
             success, message = extractor.extract_superclass(config)
             if success:
@@ -143,7 +159,12 @@ class RefactorCommand:
 
         logger.info(f"Using file path: {file_path_obj}")
 
-        splitter = FileToPackageSplitter(file_path_obj)
+        splitter = FileToPackageSplitter(
+            file_path_obj,
+            database=self.database,
+            project_id=self.project_id,
+            root_dir=self.root_dir or Path(root_dir),
+        )
         try:
             success, message = splitter.split_file_to_package(config)
             if success:

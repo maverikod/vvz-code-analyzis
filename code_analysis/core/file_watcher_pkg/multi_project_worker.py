@@ -122,6 +122,10 @@ class MultiProjectFileWatcherWorker:
         database: Any = None
         # Processors are created dynamically per discovered project
 
+        # Track database availability status
+        db_available = False
+        db_status_logged = False  # Track if we've logged the current status
+
         backoff = 1.0
         backoff_max = 60.0
 
@@ -130,13 +134,63 @@ class MultiProjectFileWatcherWorker:
                 if database is None:
                     try:
                         database = CodeDatabase(driver_config=driver_config)
-                        # Processors are created dynamically per discovered project
-                        backoff = 1.0
+                        # Test connection with a simple query
+                        try:
+                            # Try to get a project to test connection
+                            database._execute("SELECT 1", ())
+                            # Connection successful
+                            if not db_available:
+                                # Status changed: unavailable -> available
+                                logger.info("✅ Database is now available")
+                                db_available = True
+                                db_status_logged = True
+                                backoff = 1.0  # Reset backoff
+                            else:
+                                db_status_logged = False  # Already logged as available
+                        except Exception as conn_e:
+                            # Connection test failed
+                            if db_available:
+                                # Status changed: available -> unavailable
+                                logger.warning(f"⚠️  Database is now unavailable: {conn_e}")
+                                db_available = False
+                                db_status_logged = True
+                            elif not db_status_logged:
+                                # First time logging unavailability
+                                logger.warning(f"⚠️  Database is unavailable: {conn_e}")
+                                db_status_logged = True
+                            else:
+                                # Already logged, don't spam
+                                db_status_logged = False
+
+                            try:
+                                database.close()
+                            except Exception:
+                                pass
+                            database = None
+
+                            # Wait with backoff before retrying
+                            logger.debug(f"Retrying database connection in {backoff:.1f}s...")
+                            await asyncio.sleep(backoff)
+                            backoff = min(backoff * 2.0, backoff_max)
+                            continue
                     except Exception as e:
+                        # Failed to create database connection
                         total_stats["errors"] += 1
-                        logger.warning(
-                            f"DB worker unavailable; retrying in {backoff:.1f}s: {e}"
-                        )
+                        if db_available:
+                            # Status changed: available -> unavailable
+                            logger.warning(f"⚠️  Database is now unavailable: {e}")
+                            db_available = False
+                            db_status_logged = True
+                        elif not db_status_logged:
+                            # First time logging unavailability
+                            logger.warning(f"⚠️  Database is unavailable: {e}")
+                            db_status_logged = True
+                        else:
+                            # Already logged, don't spam
+                            db_status_logged = False
+
+                        # Wait with backoff before retrying
+                        logger.debug(f"Retrying database connection in {backoff:.1f}s...")
                         await asyncio.sleep(backoff)
                         backoff = min(backoff * 2.0, backoff_max)
                         continue
@@ -145,15 +199,27 @@ class MultiProjectFileWatcherWorker:
                     cycle_stats = await self._scan_cycle(database, None)
                 except Exception as e:
                     total_stats["errors"] += 1
-                    logger.error(
-                        f"File watcher cycle failed (will retry after reconnect): {e}",
-                        exc_info=True,
-                    )
+                    error_str = str(e).lower()
+                    # Check if error is due to database unavailability
+                    if "database" in error_str or "db" in error_str or "connection" in error_str:
+                        if db_available:
+                            # Status changed: available -> unavailable
+                            logger.warning(f"⚠️  Database is now unavailable: {e}")
+                            db_available = False
+                            db_status_logged = True
+                        else:
+                            logger.debug(f"Database error during cycle: {e}")
+                    else:
+                        logger.error(
+                            f"File watcher cycle failed (will retry after reconnect): {e}",
+                            exc_info=True,
+                        )
                     try:
                         database.close()
                     except Exception:
                         pass
                     database = None
+                    db_status_logged = False
                     await asyncio.sleep(backoff)
                     backoff = min(backoff * 2.0, backoff_max)
                     continue

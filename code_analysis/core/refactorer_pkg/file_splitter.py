@@ -62,7 +62,8 @@ class FileToPackageSplitter(BaseRefactorer):
                 )
 
             # Split code into modules
-            source_lines = self.source.splitlines(keepends=True)
+            source = self.original_content if hasattr(self, 'original_content') else self.file_path.read_text(encoding="utf-8")
+            source_lines = source.splitlines(keepends=True)
             created_modules = []
 
             for module_name, module_config in modules.items():
@@ -72,6 +73,60 @@ class FileToPackageSplitter(BaseRefactorer):
                 )
                 module_path.write_text(module_content)
                 created_modules.append(module_name)
+                
+                # Update database for new file
+                if self.database and self.project_id and self.root_dir:
+                    try:
+                        # First, add file to database if it doesn't exist
+                        import os
+                        file_mtime = os.path.getmtime(module_path)
+                        lines = len(module_content.splitlines())
+                        has_docstring = module_content.strip().startswith('"""') or module_content.strip().startswith("'''")
+                        
+                        # Get or create dataset
+                        dataset_id = self.database.get_or_create_dataset(
+                            project_id=self.project_id,
+                            root_path=str(self.root_dir),
+                            name=self.root_dir.name,
+                        )
+                        
+                        # Add file to database (or update if exists)
+                        module_file_id = self.database.add_file(
+                            path=str(module_path),
+                            lines=lines,
+                            last_modified=file_mtime,
+                            has_docstring=has_docstring,
+                            project_id=self.project_id,
+                            dataset_id=dataset_id,
+                        )
+                        
+                        # Now update file data (this will parse AST/CST and extract entities)
+                        try:
+                            rel_path = str(module_path.relative_to(self.root_dir))
+                        except ValueError:
+                            rel_path = str(module_path)
+                        
+                        update_result = self.database.update_file_data(
+                            file_path=rel_path,
+                            project_id=self.project_id,
+                            root_dir=self.root_dir,
+                        )
+                        if not update_result.get("success"):
+                            logger.warning(
+                                f"Failed to update database for {module_path}: "
+                                f"{update_result.get('error')}"
+                            )
+                        else:
+                            logger.debug(
+                                f"Database updated for {module_path}: "
+                                f"AST={update_result.get('ast_updated')}, "
+                                f"CST={update_result.get('cst_updated')}"
+                            )
+                    except Exception as e:
+                        logger.error(
+                            f"Error updating database for {module_path}: {e}",
+                            exc_info=True,
+                        )
 
             return (
                 True,

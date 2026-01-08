@@ -429,6 +429,41 @@ class SplitClassMCPCommand(BaseMCPCommand):
 
                 cmd = InternalRefactorCommand(proj_id)
                 result = await cmd.split_class(str(root_path), file_path, config)
+
+                # Update database after successful split
+                if result.get("success"):
+                    try:
+                        # Get relative path for update_file_data
+                        try:
+                            rel_path = str(file_path_obj.relative_to(root_path))
+                        except ValueError:
+                            # File is outside root, use absolute path
+                            rel_path = str(file_path_obj)
+                        
+                        update_result = db.update_file_data(
+                            file_path=rel_path,
+                            project_id=proj_id,
+                            root_dir=root_path,
+                        )
+                        if update_result.get("success"):
+                            logger.info(
+                                f"Database updated after split_class: "
+                                f"AST={update_result.get('ast_updated')}, "
+                                f"CST={update_result.get('cst_updated')}, "
+                                f"entities={update_result.get('entities_updated')}"
+                            )
+                        else:
+                            logger.warning(
+                                f"Failed to update database after split_class: "
+                                f"{update_result.get('error')}"
+                            )
+                    except Exception as e:
+                        logger.error(
+                            f"Error updating database after split_class: {e}",
+                            exc_info=True,
+                        )
+                        # Don't fail the operation, just log the error
+
                 db.close()
 
                 if result.get("success"):
@@ -850,6 +885,42 @@ class ExtractSuperclassMCPCommand(BaseMCPCommand):
 
                 cmd = InternalRefactorCommand(proj_id)
                 result = await cmd.extract_superclass(str(root_path), file_path, config)
+
+                # Update database after successful extraction
+                if result.get("success"):
+                    try:
+                        # Get relative path for update_file_data
+                        file_path_obj = Path(file_path)
+                        try:
+                            rel_path = str(file_path_obj.relative_to(root_path))
+                        except ValueError:
+                            # File is outside root, use absolute path
+                            rel_path = str(file_path_obj)
+                        
+                        update_result = db.update_file_data(
+                            file_path=rel_path,
+                            project_id=proj_id,
+                            root_dir=root_path,
+                        )
+                        if update_result.get("success"):
+                            logger.info(
+                                f"Database updated after extract_superclass: "
+                                f"AST={update_result.get('ast_updated')}, "
+                                f"CST={update_result.get('cst_updated')}, "
+                                f"entities={update_result.get('entities_updated')}"
+                            )
+                        else:
+                            logger.warning(
+                                f"Failed to update database after extract_superclass: "
+                                f"{update_result.get('error')}"
+                            )
+                    except Exception as e:
+                        logger.error(
+                            f"Error updating database after extract_superclass: {e}",
+                            exc_info=True,
+                        )
+                        # Don't fail the operation, just log the error
+                
                 db.close()
 
                 if result.get("success"):
@@ -1224,6 +1295,65 @@ class SplitFileToPackageMCPCommand(BaseMCPCommand):
 
             cmd = InternalRefactorCommand(proj_id)
             result = await cmd.split_file_to_package(str(root_path), file_path, config)
+
+            # Update database for all created files after successful split
+            if result.get("success"):
+                try:
+                    # Get file directory and name to determine package path
+                    file_path_obj_resolved = file_path_obj.resolve()
+                    file_dir = file_path_obj_resolved.parent
+                    file_stem = file_path_obj_resolved.stem
+                    package_dir = file_dir / file_stem
+
+                    # Update database for __init__.py
+                    init_file = package_dir / "__init__.py"
+                    if init_file.exists():
+                        try:
+                            rel_init_path = str(init_file.relative_to(root_path))
+                            update_result = db.update_file_data(
+                                file_path=rel_init_path,
+                                project_id=proj_id,
+                                root_dir=root_path,
+                            )
+                            if update_result.get("success"):
+                                logger.info(
+                                    f"Database updated for {rel_init_path} after split"
+                                )
+                        except Exception as e:
+                            logger.warning(
+                                f"Failed to update database for {init_file}: {e}"
+                            )
+
+                    # Update database for each created module
+                    if isinstance(config, dict):
+                        modules = config.get("modules", {})
+                        for module_name in modules.keys():
+                            module_path = package_dir / f"{module_name}.py"
+                            if module_path.exists():
+                                try:
+                                    rel_module_path = str(
+                                        module_path.relative_to(root_path)
+                                    )
+                                    update_result = db.update_file_data(
+                                        file_path=rel_module_path,
+                                        project_id=proj_id,
+                                        root_dir=root_path,
+                                    )
+                                    if update_result.get("success"):
+                                        logger.info(
+                                            f"Database updated for {rel_module_path} after split"
+                                        )
+                                except Exception as e:
+                                    logger.warning(
+                                        f"Failed to update database for {module_path}: {e}"
+                                    )
+                except Exception as e:
+                    logger.error(
+                        f"Error updating database after split_file_to_package: {e}",
+                        exc_info=True,
+                    )
+                    # Don't fail the operation, just log the error
+
             db.close()
 
             if result.get("success"):

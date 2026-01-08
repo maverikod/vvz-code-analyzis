@@ -130,6 +130,7 @@ class UpdateIndexesMCPCommand(BaseMCPCommand):
         file_path: Path,
         project_id: str,
         root_path: Path,
+        force: bool = False,
     ) -> Dict[str, Any]:
         """Analyze a single Python file and add/update entries in the database.
 
@@ -193,22 +194,43 @@ class UpdateIndexesMCPCommand(BaseMCPCommand):
 
             lines = len(file_content.splitlines())
 
+            # Get or create dataset_id for this root_path
+            from ..core.project_resolution import normalize_root_dir
+            normalized_root = str(normalize_root_dir(root_path))
+            dataset_id = database.get_dataset_id(project_id, normalized_root)
+            if not dataset_id:
+                dataset_id = database.get_or_create_dataset(
+                    project_id, normalized_root, name=root_path.name
+                )
+
+            # Use absolute path for add_file to avoid path resolution issues
+            # add_file normalizes paths internally, but we need to pass absolute path
+            # to ensure it matches existing records
+            abs_file_path = str(file_path.resolve())
+            
             file_record = database.get_file_by_path(rel_path, project_id)
             if file_record:
                 file_id = file_record["id"]
-                if file_record.get("last_modified") != file_mtime:
+                # Update file record if last_modified differs or if force=True
+                # This ensures file metadata is up to date
+                last_modified = file_record.get("last_modified", 0)
+                # Use epsilon comparison for float values
+                epsilon = 0.01  # 10ms tolerance
+                if force or abs(last_modified - file_mtime) > epsilon:
                     try:
                         has_docstring = bool(
                             self._extract_docstring(ast.parse(file_content))
                         )
                     except SyntaxError:
                         has_docstring = False
-                    database.add_file(
-                        rel_path, lines, file_mtime, has_docstring, project_id
+                    # Use absolute path to ensure correct file matching
+                    updated_file_id = database.add_file(
+                        abs_file_path, lines, file_mtime, has_docstring, project_id, dataset_id
                     )
-                    updated_record = database.get_file_by_path(rel_path, project_id)
-                    if updated_record:
-                        file_id = updated_record["id"]
+                    # add_file returns the file_id (may be same or different)
+                    file_id = updated_file_id
+                # Note: Even if last_modified matches and force=False, we still save AST/CST below
+                # This is necessary for normal updates
             else:
                 try:
                     has_docstring = bool(
@@ -216,18 +238,19 @@ class UpdateIndexesMCPCommand(BaseMCPCommand):
                     )
                 except SyntaxError:
                     has_docstring = False
-                database.add_file(
-                    rel_path, lines, file_mtime, has_docstring, project_id
+                # Use absolute path to ensure correct file creation
+                # add_file returns file_id directly, use it
+                file_id = database.add_file(
+                    abs_file_path, lines, file_mtime, has_docstring, project_id, dataset_id
                 )
-                file_record = database.get_file_by_path(rel_path, project_id)
-                if not file_record:
+                # Verify file_id is valid
+                if not file_id:
                     return {
                         "file": rel_path,
                         "status": "error",
                         "error": "Failed to create file record",
                         "error_type": "DatabaseError",
                     }
-                file_id = file_record["id"]
 
             try:
                 tree = ast.parse(file_content, filename=str(file_path))
@@ -243,7 +266,8 @@ class UpdateIndexesMCPCommand(BaseMCPCommand):
             try:
                 # NOTE: save_ast_tree is intentionally synchronous. We must not create
                 # nested event loops inside queue workers / async contexts.
-                database.save_ast_tree(
+                logger.debug(f"Saving AST for {rel_path}, file_id={file_id}, project_id={project_id}")
+                ast_tree_id = database.save_ast_tree(
                     file_id,
                     project_id,
                     ast_json,
@@ -251,6 +275,7 @@ class UpdateIndexesMCPCommand(BaseMCPCommand):
                     file_mtime,
                     overwrite=True,
                 )
+                logger.debug(f"AST saved with id={ast_tree_id} for file_id={file_id}")
             except Exception as e:
                 logger.error(f"Error saving AST for {rel_path}: {e}", exc_info=True)
                 return {
@@ -264,7 +289,8 @@ class UpdateIndexesMCPCommand(BaseMCPCommand):
             try:
                 # NOTE: save_cst_tree is intentionally synchronous. We must not create
                 # nested event loops inside queue workers / async contexts.
-                database.save_cst_tree(
+                logger.debug(f"Saving CST for {rel_path}, file_id={file_id}, project_id={project_id}")
+                cst_tree_id = database.save_cst_tree(
                     file_id,
                     project_id,
                     file_content,
@@ -272,6 +298,7 @@ class UpdateIndexesMCPCommand(BaseMCPCommand):
                     file_mtime,
                     overwrite=True,
                 )
+                logger.debug(f"CST saved with id={cst_tree_id} for file_id={file_id}")
             except Exception as e:
                 logger.error(f"Error saving CST for {rel_path}: {e}", exc_info=True)
                 return {

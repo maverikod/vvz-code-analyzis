@@ -647,6 +647,41 @@ class RepairDatabaseCommand:
             target_path.parent.mkdir(parents=True, exist_ok=True)
             target_path.write_text(cst_code, encoding="utf-8")
 
+            # Update database after restoration
+            try:
+                project_id = file_record.get("project_id")
+                if project_id:
+                    # Determine root_dir - use self.root_dir if file is not deleted
+                    root_dir = self.root_dir
+                    if file_record.get("deleted"):
+                        # For deleted files, try to get project root from database
+                        project = self.database.get_project(project_id)
+                        if project and project.get("root_path"):
+                            root_dir = Path(project["root_path"])
+                    
+                    update_result = self.database.update_file_data(
+                        file_path=file_path,
+                        project_id=project_id,
+                        root_dir=root_dir,
+                    )
+                    if not update_result.get("success"):
+                        logger.warning(
+                            f"Failed to update database after restoration: "
+                            f"{update_result.get('error')}"
+                        )
+                    else:
+                        logger.info(
+                            f"Database updated after restoration: "
+                            f"AST={update_result.get('ast_updated')}, "
+                            f"CST={update_result.get('cst_updated')}"
+                        )
+            except Exception as e:
+                logger.error(
+                    f"Error updating database after restoration: {e}",
+                    exc_info=True,
+                )
+                # Don't fail restoration, just log the error
+
             logger.info(f"Restored file {file_path} from CST to {target_path}")
             return True
 

@@ -329,6 +329,44 @@ class ComprehensiveAnalysisMCPCommand(BaseMCPCommand):
                                     )
                                     db._commit()
                                     analysis_logger.info(f"Marked file_id={wrong_file_id} as deleted in project {wrong_project_id}")
+                                    
+                                    # Try to add file to correct project if it exists on disk
+                                    if file_path_obj.exists() and proj_id:
+                                        try:
+                                            # Check if file is within the correct project's root
+                                            try:
+                                                file_path_obj.relative_to(root_path)
+                                                # File is within project root - add it to correct project
+                                                from code_analysis.core.project_resolution import normalize_root_dir
+                                                normalized_root = str(normalize_root_dir(root_path))
+                                                dataset_id = db.get_dataset_id(proj_id, normalized_root)
+                                                if not dataset_id:
+                                                    dataset_id = db.get_or_create_dataset(proj_id, normalized_root)
+                                                
+                                                # Read file metadata
+                                                text = file_path_obj.read_text(encoding="utf-8", errors="ignore")
+                                                lines = text.count("\n") + (1 if text else 0)
+                                                stripped = text.lstrip()
+                                                has_docstring = stripped.startswith('"""') or stripped.startswith("'''")
+                                                
+                                                # Add file to correct project
+                                                new_file_id = db.add_file(
+                                                    path=abs_path,
+                                                    lines=lines,
+                                                    last_modified=file_mtime,
+                                                    has_docstring=has_docstring,
+                                                    project_id=proj_id,
+                                                    dataset_id=dataset_id,
+                                                )
+                                                file_id = new_file_id
+                                                file_project_id = proj_id
+                                                analysis_logger.info(f"Added file to correct project {proj_id}: file_id={new_file_id}")
+                                            except ValueError:
+                                                # File is not within project root - this is expected for nested projects
+                                                analysis_logger.info(f"File {abs_path} is not within project root {root_path}, skipping addition to project {proj_id}")
+                                        except Exception as e:
+                                            logger.error(f"Failed to add file to correct project: {e}", exc_info=True)
+                                            analysis_logger.error(f"Failed to add file to correct project: {e}", exc_info=True)
                                 except Exception as e:
                                     logger.error(f"Failed to clear data and mark file as deleted: {e}", exc_info=True)
                                     analysis_logger.error(f"Failed to clear data and mark file as deleted: {e}", exc_info=True)

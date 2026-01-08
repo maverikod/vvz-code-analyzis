@@ -12,6 +12,8 @@ import inspect
 from .base import CodeDatabase, create_driver_config_for_worker
 from . import files
 from . import cst
+from . import ast
+from . import entities
 
 # Try to import optional modules
 try:
@@ -38,6 +40,8 @@ _MODULES = [
     datasets,
     files,
     cst,
+    ast,
+    entities,
     chunks,
     comprehensive_analysis,
 ]

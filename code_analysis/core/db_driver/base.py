@@ -23,7 +23,7 @@ class BaseDatabaseDriver(ABC):
         Returns:
             True if driver is thread-safe, False otherwise
         """
-        pass
+        raise NotImplementedError
 
     @abstractmethod
     def connect(self, config: Dict[str, Any]) -> None:
@@ -33,12 +33,12 @@ class BaseDatabaseDriver(ABC):
         Args:
             config: Driver-specific configuration
         """
-        pass
+        raise NotImplementedError
 
     @abstractmethod
     def disconnect(self) -> None:
         """Close database connection."""
-        pass
+        raise NotImplementedError
 
     @abstractmethod
     def execute(self, sql: str, params: Optional[Tuple[Any, ...]] = None) -> None:
@@ -49,7 +49,7 @@ class BaseDatabaseDriver(ABC):
             sql: SQL statement
             params: Optional parameters for parameterized query
         """
-        pass
+        raise NotImplementedError
 
     @abstractmethod
     def fetchone(
@@ -65,7 +65,7 @@ class BaseDatabaseDriver(ABC):
         Returns:
             Dictionary with column names as keys, or None if no rows
         """
-        pass
+        raise NotImplementedError
 
     @abstractmethod
     def fetchall(
@@ -81,17 +81,17 @@ class BaseDatabaseDriver(ABC):
         Returns:
             List of dictionaries with column names as keys
         """
-        pass
+        raise NotImplementedError
 
     @abstractmethod
     def commit(self) -> None:
         """Commit current transaction."""
-        pass
+        raise NotImplementedError
 
     @abstractmethod
     def rollback(self) -> None:
         """Rollback current transaction."""
-        pass
+        raise NotImplementedError
 
     @abstractmethod
     def lastrowid(self) -> Optional[int]:
@@ -101,7 +101,7 @@ class BaseDatabaseDriver(ABC):
         Returns:
             Last inserted row ID or None
         """
-        pass
+        raise NotImplementedError
 
     @abstractmethod
     def create_schema(self, schema_sql: List[str]) -> None:
@@ -111,7 +111,7 @@ class BaseDatabaseDriver(ABC):
         Args:
             schema_sql: List of SQL statements for schema creation
         """
-        pass
+        raise NotImplementedError
 
     @abstractmethod
     def get_table_info(self, table_name: str) -> List[Dict[str, Any]]:
@@ -124,4 +124,4 @@ class BaseDatabaseDriver(ABC):
         Returns:
             List of dictionaries with column information (name, type, etc.)
         """
-        pass
+        raise NotImplementedError

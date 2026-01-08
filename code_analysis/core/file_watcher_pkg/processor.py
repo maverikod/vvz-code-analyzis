@@ -369,7 +369,7 @@ class FileChangeProcessor:
                 
                 # Process files for this project (reuse existing logic)
                 project_stats = self._queue_project_delta(
-                    project_id, delta, dataset_id
+                    project_id, delta, dataset_id, project_root
                 )
                 
                 total_stats["new_files"] += project_stats["new_files"]
@@ -391,7 +391,7 @@ class FileChangeProcessor:
         return total_stats
     
     def _queue_project_delta(
-        self, project_id: str, delta: FileDelta, dataset_id: str
+        self, project_id: str, delta: FileDelta, dataset_id: str, project_root: Path
     ) -> Dict[str, Any]:
         """
         Queue file changes for a single project.
@@ -400,6 +400,7 @@ class FileChangeProcessor:
             project_id: Project ID
             delta: FileDelta for this project
             dataset_id: Dataset ID (already resolved)
+            project_root: Project root directory
         
         Returns:
             Statistics for this project
@@ -423,7 +424,7 @@ class FileChangeProcessor:
                     f"size: {size} bytes"
                 )
                 if self._queue_file_for_processing(
-                    file_path_str, mtime, project_id, dataset_id
+                    file_path_str, mtime, project_id, dataset_id, project_root
                 ):
                     stats["new_files"] += 1
                     logger.info(
@@ -452,7 +453,7 @@ class FileChangeProcessor:
                     f"size: {size} bytes"
                 )
                 if self._queue_file_for_processing(
-                    file_path_str, mtime, project_id, dataset_id
+                    file_path_str, mtime, project_id, dataset_id, project_root
                 ):
                     stats["changed_files"] += 1
                     logger.info(
@@ -502,24 +503,79 @@ class FileChangeProcessor:
         return stats
     
     def _queue_file_for_processing(
-        self, file_path: str, mtime: float, project_id: str, dataset_id: str
+        self, file_path: str, mtime: float, project_id: str, dataset_id: str, project_root: Optional[Path] = None
     ) -> bool:
         """
         Queue file for processing.
+        
+        Updates all database records for a file after it was changed.
+        This replaces the old mark_file_needs_chunking approach with
+        unified update_file_data that ensures AST/CST/entities consistency.
         
         Args:
             file_path: File path (will be normalized to absolute)
             mtime: File modification time
             project_id: Project ID
             dataset_id: Dataset ID (already resolved)
+            project_root: Project root directory (optional, will be resolved if not provided)
         
         Returns:
             True if successful, False otherwise
         """
         try:
-            # Mark file for chunking
-            result = self.database.mark_file_needs_chunking(file_path, project_id)
-            if not result:
+            # Get project root directory
+            root_dir = project_root
+            if not root_dir:
+                root_dir = self._get_project_root_dir(project_id, file_path)
+                if not root_dir:
+                    logger.warning(
+                        f"Could not determine root_dir for {file_path}, "
+                        "falling back to mark_file_needs_chunking"
+                    )
+                    # Fallback to old behavior
+                    result = self.database.mark_file_needs_chunking(file_path, project_id)
+                    if not result:
+                        # New file: insert/update file record first
+                        path_obj = Path(file_path)
+                        lines = 0
+                        has_docstring = False
+                        try:
+                            if path_obj.exists() and path_obj.is_file():
+                                text = path_obj.read_text(encoding="utf-8", errors="ignore")
+                                lines = text.count("\n") + (1 if text else 0)
+                                stripped = text.lstrip()
+                                has_docstring = stripped.startswith(
+                                    '"""'
+                                ) or stripped.startswith("'''")
+                        except Exception:
+                            logger.debug(
+                                f"[QUEUE] Failed to read file for metadata, using defaults: {file_path}"
+                            )
+                        
+                        try:
+                            self.database.add_file(
+                                path=file_path,
+                                lines=lines,
+                                last_modified=mtime,
+                                has_docstring=has_docstring,
+                                project_id=project_id,
+                                dataset_id=dataset_id,
+                            )
+                        except Exception as e:
+                            logger.error(
+                                f"[QUEUE] Failed to add new file record: {file_path} ({e})"
+                            )
+                            return False
+                        
+                        # Retry marking for chunking
+                        result = self.database.mark_file_needs_chunking(
+                            file_path, project_id
+                        )
+                    return result
+            
+            # Check if file exists in database
+            file_record = self.database.get_file_by_path(file_path, project_id)
+            if not file_record:
                 # New file: insert/update file record first
                 path_obj = Path(file_path)
                 lines = 0
@@ -551,33 +607,71 @@ class FileChangeProcessor:
                         f"[QUEUE] Failed to add new file record: {file_path} ({e})"
                     )
                     return False
-                
-                # Retry marking for chunking
-                result = self.database.mark_file_needs_chunking(
-                    file_path, project_id
-                )
             
-            if result:
-                # Update last_modified if file exists
-                self.database._execute(
-                    """
-                    UPDATE files 
-                    SET last_modified = ?, updated_at = julianday('now')
-                    WHERE project_id = ? AND path = ?
-                    """,
-                    (mtime, project_id, file_path),
-                )
-                self.database._commit()
+            # Update all database records for changed file
+            update_result = self.database.update_file_data(
+                file_path=file_path,
+                project_id=project_id,
+                root_dir=root_dir,
+            )
+            
+            if update_result.get("success"):
                 logger.debug(
-                    f"[QUEUE] File queued for chunking: {file_path} | "
-                    f"mtime updated to: {datetime.fromtimestamp(mtime).strftime('%Y-%m-%d %H:%M:%S')}"
+                    f"[QUEUE] File updated in database: {file_path} | "
+                    f"AST={update_result.get('ast_updated')}, "
+                    f"CST={update_result.get('cst_updated')}"
                 )
-            return result
+                
+                # Mark for chunking (vectorization worker will process)
+                # Note: Immediate vectorization is not done here because this is sync context
+                # Worker will handle vectorization in background
+                self.database.mark_file_needs_chunking(file_path, project_id)
+                logger.debug(f"[QUEUE] File marked for worker vectorization: {file_path}")
+                
+                return True
+            else:
+                logger.error(
+                    f"[QUEUE] Failed to update file in database: {file_path} | "
+                    f"Error: {update_result.get('error')}"
+                )
+                return False
         except Exception as e:
             logger.error(
-                f"[QUEUE] ✗ Error queueing file for processing {file_path}: {e}"
+                f"[QUEUE] ✗ Error queueing file for processing {file_path}: {e}",
+                exc_info=True,
             )
             return False
+    
+    def _get_project_root_dir(self, project_id: str, file_path: str) -> Optional[Path]:
+        """
+        Get project root directory for a file.
+        
+        Args:
+            project_id: Project ID
+            file_path: File path (absolute)
+            
+        Returns:
+            Project root directory or None if not found
+        """
+        try:
+            # Get project record
+            project = self.database.get_project(project_id)
+            if project and project.get("root_path"):
+                return Path(project["root_path"])
+            
+            # Fallback: try to find root from watch_dirs
+            abs_path = Path(file_path).resolve()
+            for watch_dir in self.watch_dirs_resolved:
+                try:
+                    abs_path.relative_to(watch_dir)
+                    return watch_dir
+                except ValueError:
+                    continue
+            
+            return None
+        except Exception as e:
+            logger.error(f"Error getting project root dir: {e}", exc_info=True)
+            return None
 
     def process_changes(
         self, root_dir: Path, scanned_files: Dict[str, Dict]

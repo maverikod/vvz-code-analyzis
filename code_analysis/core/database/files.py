@@ -5,6 +5,7 @@ Author: Vasiliy Zdanovskiy
 email: vasilyvz@gmail.com
 """
 
+import ast
 import logging
 from pathlib import Path
 from typing import Dict, List, Any, Optional
@@ -209,6 +210,7 @@ def clear_file_data(self, file_id: int) -> None:
     - dependencies (both as source and target)
     - code_content and FTS index
     - AST trees
+    - CST trees
     - code chunks
     - vector index entries
 
@@ -246,6 +248,7 @@ def clear_file_data(self, file_id: int) -> None:
     )
     self._execute("DELETE FROM code_content WHERE file_id = ?", (file_id,))
     self._execute("DELETE FROM ast_trees WHERE file_id = ?", (file_id,))
+    self._execute("DELETE FROM cst_trees WHERE file_id = ?", (file_id,))
     vector_rows = self._fetchall(
         "SELECT vector_id FROM code_chunks WHERE file_id = ? AND vector_id IS NOT NULL",
         (file_id,),
@@ -269,6 +272,436 @@ def clear_file_data(self, file_id: int) -> None:
             tuple(entity_ids),
         )
     self._commit()
+
+
+def update_file_data(
+    self,
+    file_path: str,
+    project_id: str,
+    root_dir: Path,
+) -> Dict[str, Any]:
+    """
+    Update all database records for a file after it was written.
+
+    This is the unified update mechanism that ensures consistency across
+    all data structures (AST, CST, code entities, chunks).
+
+    Process:
+    1. Find file_id by path
+    2. Clear all old records (including CST trees)
+    3. Call update_indexes to recreate all records:
+       - Parse AST
+       - Save AST tree
+       - Save CST tree
+       - Extract code entities
+    4. Return result
+
+    Args:
+        file_path: File path (relative to root_dir or absolute)
+        project_id: Project ID
+        root_dir: Project root directory
+
+    Returns:
+        Dictionary with update result:
+        {
+            "success": bool,
+            "file_id": int,
+            "file_path": str,
+            "ast_updated": bool,
+            "cst_updated": bool,
+            "entities_updated": int,
+            "error": Optional[str]
+        }
+    """
+    from ..project_resolution import normalize_abs_path
+
+    try:
+        # Normalize path to absolute
+        abs_path = normalize_abs_path(file_path)
+        if not Path(abs_path).is_absolute():
+            abs_path = str((Path(root_dir) / file_path).resolve())
+
+        # Get file record
+        file_record = self.get_file_by_path(abs_path, project_id)
+        if not file_record:
+            return {
+                "success": False,
+                "error": f"File not found in database: {file_path}",
+                "file_path": abs_path,
+            }
+
+        file_id = file_record["id"]
+        
+        # Get current file mtime from disk
+        try:
+            file_path_obj = Path(abs_path)
+            if file_path_obj.exists():
+                current_mtime = file_path_obj.stat().st_mtime
+            else:
+                current_mtime = file_record.get("last_modified", 0)
+        except Exception:
+            current_mtime = file_record.get("last_modified", 0)
+
+        # Clear all old records (including CST trees - fixed in Phase 1)
+        try:
+            self.clear_file_data(file_id)
+        except Exception as e:
+            logger.error(
+                f"Error clearing file data for {file_path}: {e}", exc_info=True
+            )
+            return {
+                "success": False,
+                "error": f"Failed to clear old records: {e}",
+                "file_path": abs_path,
+                "file_id": file_id,
+            }
+        
+        # Update last_modified to be slightly different from file_mtime
+        # This ensures _analyze_file will process the file and save AST/CST
+        # We add a small epsilon to ensure last_modified != file_mtime
+        import time
+        epsilon = 0.001
+        updated_mtime = current_mtime + epsilon
+        try:
+            self._execute(
+                """
+                UPDATE files 
+                SET last_modified = ?, updated_at = julianday('now')
+                WHERE id = ?
+                """,
+                (updated_mtime, file_id),
+            )
+            self._commit()
+        except Exception as e:
+            logger.warning(f"Failed to update last_modified: {e}", exc_info=True)
+
+        # Call _analyze_file to recreate all records
+        try:
+            # Import from commands package (relative to code_analysis root)
+            import sys
+            # Add parent directory to path if needed
+            code_analysis_root = Path(__file__).parent.parent.parent
+            if str(code_analysis_root) not in sys.path:
+                sys.path.insert(0, str(code_analysis_root))
+            from code_analysis.commands.code_mapper_mcp_command import UpdateIndexesMCPCommand
+
+            # Create command instance
+            update_cmd = UpdateIndexesMCPCommand()
+
+            # Call _analyze_file with force=True to ensure AST/CST are saved
+            # even if last_modified matches (after clear_file_data)
+            result = update_cmd._analyze_file(
+                database=self,
+                file_path=Path(abs_path),
+                project_id=project_id,
+                root_path=Path(root_dir),
+                force=True,  # Force update after clear_file_data
+            )
+
+            # Check for errors (including syntax errors)
+            if result.get("status") in ("error", "syntax_error"):
+                return {
+                    "success": False,
+                    "error": result.get("error", "Unknown error"),
+                    "file_path": abs_path,
+                    "file_id": file_id,
+                    "result": result,  # Include full result for debugging
+                }
+            
+            # Log result for debugging
+            if result.get("status") != "success":
+                logger.warning(
+                    f"_analyze_file returned unexpected status: {result.get('status')}, "
+                    f"result: {result}"
+                )
+            
+            # After _analyze_file, file_id might have changed if file was re-added
+            # Get the current file_id (this is critical - file_id can change after add_file)
+            updated_file_record = self.get_file_by_path(abs_path, project_id)
+            if updated_file_record:
+                new_file_id = updated_file_record["id"]
+                if new_file_id != file_id:
+                    logger.debug(
+                        f"File ID changed after _analyze_file: {file_id} -> {new_file_id} for {abs_path}"
+                    )
+                file_id = new_file_id
+            else:
+                # File was not found - this should not happen, but log it
+                logger.warning(
+                    f"File not found after _analyze_file: {abs_path}, "
+                    f"using original file_id: {file_id}"
+                )
+
+            # Check if AST and CST were saved by verifying they exist in database
+            ast_updated = False
+            cst_updated = False
+            try:
+                ast_record = self._fetchone(
+                    "SELECT id FROM ast_trees WHERE file_id = ?", (file_id,)
+                )
+                ast_updated = ast_record is not None
+                if not ast_updated:
+                    logger.warning(
+                        f"AST not found after _analyze_file for file_id={file_id}, "
+                        f"file={abs_path}"
+                    )
+            except Exception as e:
+                logger.warning(f"Error checking AST: {e}", exc_info=True)
+
+            try:
+                cst_record = self._fetchone(
+                    "SELECT id FROM cst_trees WHERE file_id = ?", (file_id,)
+                )
+                cst_updated = cst_record is not None
+                if not cst_updated:
+                    logger.warning(
+                        f"CST not found after _analyze_file for file_id={file_id}, "
+                        f"file={abs_path}"
+                    )
+            except Exception as e:
+                logger.warning(f"Error checking CST: {e}", exc_info=True)
+
+            entities_count = (
+                result.get("classes", 0)
+                + result.get("functions", 0)
+                + result.get("methods", 0)
+            )
+
+            return {
+                "success": True,
+                "file_id": file_id,
+                "file_path": abs_path,
+                "ast_updated": ast_updated,
+                "cst_updated": cst_updated,
+                "entities_updated": entities_count,
+                "result": result,  # Full result from _analyze_file
+            }
+
+        except Exception as e:
+            logger.error(
+                f"Error analyzing file {file_path}: {e}", exc_info=True
+            )
+            return {
+                "success": False,
+                "error": f"Failed to analyze file: {e}",
+                "file_path": abs_path,
+                "file_id": file_id,
+            }
+
+    except Exception as e:
+        logger.error(
+            f"Unexpected error in update_file_data for {file_path}: {e}",
+            exc_info=True,
+        )
+        return {
+            "success": False,
+            "error": f"Unexpected error: {e}",
+            "file_path": str(file_path),
+        }
+
+
+async def vectorize_file_immediately(
+    self,
+    file_id: int,
+    project_id: str,
+    file_path: str,
+    svo_client_manager: Optional[Any] = None,
+    faiss_manager: Optional[Any] = None,
+) -> Dict[str, Any]:
+    """
+    Immediately chunk and vectorize a file after database update.
+    
+    This method attempts to vectorize the file immediately. If SVO client
+    manager is not available or chunking fails, file is marked for worker
+    processing (non-blocking fallback).
+    
+    Process:
+    1. Check if SVO client manager is available
+    2. Read file content and parse AST
+    3. Call DocstringChunker.process_file() to chunk and get embeddings
+    4. If successful, chunks are saved with embeddings
+    5. Worker will add vectors to FAISS in next cycle
+    6. If failed, mark file for worker processing
+    
+    Args:
+        file_id: File ID
+        project_id: Project ID
+        file_path: File path (absolute)
+        svo_client_manager: Optional SVO client manager
+        faiss_manager: Optional FAISS manager
+        
+    Returns:
+        Dictionary with vectorization result:
+        {
+            "success": bool,
+            "chunked": bool,  # True if chunking succeeded
+            "chunks_created": int,
+            "vectorized": bool,  # True if embeddings were created
+            "marked_for_worker": bool,  # True if marked for worker processing
+            "error": Optional[str]
+        }
+    """
+    # If no SVO client manager, mark for worker processing
+    if not svo_client_manager:
+        logger.debug(f"No SVO client manager, marking {file_path} for worker processing")
+        self.mark_file_needs_chunking(file_path, project_id)
+        return {
+            "success": True,
+            "chunked": False,
+            "chunks_created": 0,
+            "vectorized": False,
+            "marked_for_worker": True,
+            "error": None,
+        }
+    
+    try:
+        # Read file content
+        file_path_obj = Path(file_path)
+        if not file_path_obj.exists():
+            logger.warning(f"File not found for vectorization: {file_path}")
+            self.mark_file_needs_chunking(file_path, project_id)
+            return {
+                "success": False,
+                "chunked": False,
+                "chunks_created": 0,
+                "vectorized": False,
+                "marked_for_worker": True,
+                "error": "File not found",
+            }
+        
+        file_content = file_path_obj.read_text(encoding="utf-8")
+        
+        # Parse AST
+        try:
+            tree = ast.parse(file_content, filename=file_path)
+        except SyntaxError as e:
+            logger.warning(f"Syntax error in {file_path}: {e}")
+            self.mark_file_needs_chunking(file_path, project_id)
+            return {
+                "success": False,
+                "chunked": False,
+                "chunks_created": 0,
+                "vectorized": False,
+                "marked_for_worker": True,
+                "error": f"Syntax error: {e}",
+            }
+        
+        # Create chunker and process file
+        from ..docstring_chunker_pkg.docstring_chunker import DocstringChunker
+        
+        chunker = DocstringChunker(
+            database=self,
+            svo_client_manager=svo_client_manager,
+            faiss_manager=faiss_manager,
+            min_chunk_length=30,
+        )
+        
+        chunks_created = await chunker.process_file(
+            file_id=file_id,
+            project_id=project_id,
+            file_path=file_path,
+            tree=tree,
+            file_content=file_content,
+        )
+        
+        logger.info(
+            f"Immediately vectorized file {file_path}: "
+            f"{chunks_created} chunks created"
+        )
+        
+        return {
+            "success": True,
+            "chunked": True,
+            "chunks_created": chunks_created,
+            "vectorized": chunks_created > 0,  # Chunks have embeddings if created
+            "marked_for_worker": False,
+            "error": None,
+        }
+        
+    except Exception as e:
+        logger.error(
+            f"Error during immediate vectorization of {file_path}: {e}",
+            exc_info=True,
+        )
+        # Fallback: mark for worker processing
+        self.mark_file_needs_chunking(file_path, project_id)
+        return {
+            "success": False,
+            "chunked": False,
+            "chunks_created": 0,
+            "vectorized": False,
+            "marked_for_worker": True,
+            "error": str(e),
+        }
+
+
+async def update_and_vectorize_file(
+    self,
+    file_path: str,
+    project_id: str,
+    root_dir: Path,
+    svo_client_manager: Optional[Any] = None,
+    faiss_manager: Optional[Any] = None,
+) -> Dict[str, Any]:
+    """
+    Update database and immediately vectorize file.
+    
+    This is the recommended method for file write operations.
+    It combines update_file_data + vectorize_file_immediately.
+    
+    Args:
+        file_path: File path (relative to root_dir or absolute)
+        project_id: Project ID
+        root_dir: Project root directory
+        svo_client_manager: Optional SVO client manager
+        faiss_manager: Optional FAISS manager
+        
+    Returns:
+        Combined result from update_file_data + vectorize_file_immediately
+    """
+    # Step 1: Update database
+    update_result = self.update_file_data(
+        file_path=file_path,
+        project_id=project_id,
+        root_dir=root_dir,
+    )
+    
+    if not update_result.get("success"):
+        return update_result
+    
+    # Step 2: Try immediate vectorization
+    file_id = update_result.get("file_id")
+    abs_path = update_result.get("file_path")
+    
+    if svo_client_manager:
+        try:
+            vectorization_result = await self.vectorize_file_immediately(
+                file_id=file_id,
+                project_id=project_id,
+                file_path=abs_path,
+                svo_client_manager=svo_client_manager,
+                faiss_manager=faiss_manager,
+            )
+        except Exception as e:
+            logger.warning(f"Immediate vectorization failed: {e}")
+            # Fallback: mark for worker
+            self.mark_file_needs_chunking(abs_path, project_id)
+            vectorization_result = {
+                "chunked": False,
+                "marked_for_worker": True,
+                "error": str(e),
+            }
+    else:
+        # No SVO manager, mark for worker
+        self.mark_file_needs_chunking(abs_path, project_id)
+        vectorization_result = {
+            "chunked": False,
+            "marked_for_worker": True,
+        }
+    
+    # Combine results
+    update_result["vectorization"] = vectorization_result
+    return update_result
 
 
 async def remove_missing_files(

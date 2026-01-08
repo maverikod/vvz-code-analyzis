@@ -445,6 +445,47 @@ class ComposeCSTModuleCommand(BaseMCPCommand):
                     if not git_commit_success:
                         logger.warning(f"Failed to create git commit: {git_error}")
 
+                # Update database after file write
+                try:
+                    database = self._open_database(str(root_path), auto_analyze=False)
+                    try:
+                        project_id = self._get_project_id(
+                            database, root_path, kwargs.get("project_id")
+                        )
+                        if project_id:
+                            # Get relative path for update_file_data
+                            try:
+                                rel_path = str(target.relative_to(root_path))
+                            except ValueError:
+                                # File is outside root, use absolute path
+                                rel_path = str(target)
+                            
+                            update_result = database.update_file_data(
+                                file_path=rel_path,
+                                project_id=project_id,
+                                root_dir=root_path,
+                            )
+                            if not update_result.get("success"):
+                                logger.warning(
+                                    f"Failed to update database after CST compose: "
+                                    f"{update_result.get('error')}"
+                                )
+                            else:
+                                logger.info(
+                                    f"Database updated after CST compose: "
+                                    f"AST={update_result.get('ast_updated')}, "
+                                    f"CST={update_result.get('cst_updated')}, "
+                                    f"entities={update_result.get('entities_updated')}"
+                                )
+                    finally:
+                        database.close()
+                except Exception as e:
+                    logger.error(
+                        f"Error updating database after CST compose: {e}",
+                        exc_info=True,
+                    )
+                    # Don't fail the operation, just log the error
+
             data: dict[str, Any] = {
                 "success": True,
                 "message": (

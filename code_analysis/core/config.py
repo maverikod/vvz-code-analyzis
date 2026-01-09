@@ -14,6 +14,36 @@ from typing import List, Optional, Dict, Any
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
+from .constants import (
+    DEFAULT_SERVER_HOST,
+    DEFAULT_SERVER_PORT,
+    DEFAULT_CHUNKER_PORT,
+    DEFAULT_EMBEDDING_PORT,
+    DEFAULT_LOCALHOST,
+    DEFAULT_MIN_CHUNK_LENGTH,
+    DEFAULT_RETRY_ATTEMPTS,
+    DEFAULT_RETRY_DELAY,
+    DEFAULT_POLL_INTERVAL,
+    DEFAULT_SCAN_INTERVAL,
+    DEFAULT_BATCH_SIZE,
+    DEFAULT_MAX_EMPTY_ITERATIONS,
+    DEFAULT_EMPTY_DELAY,
+    DEFAULT_LOG_MAX_BYTES,
+    DEFAULT_LOG_BACKUP_COUNT,
+    DEFAULT_FAILURE_THRESHOLD,
+    DEFAULT_RECOVERY_TIMEOUT,
+    DEFAULT_SUCCESS_THRESHOLD,
+    DEFAULT_INITIAL_BACKOFF,
+    DEFAULT_MAX_BACKOFF,
+    DEFAULT_BACKOFF_MULTIPLIER,
+    DEFAULT_MAX_SCAN_DURATION,
+    DEFAULT_DYNAMIC_WATCH_FILE,
+    DEFAULT_VECTORIZATION_WORKER_LOG,
+    DEFAULT_FILE_WATCHER_LOG,
+    VERSIONS_DIR_NAME,
+    FILE_WATCHER_IGNORE_PATTERNS,
+)
+
 
 class ProjectDir(BaseModel):
     """Project directory configuration."""
@@ -62,9 +92,9 @@ class SVOServiceConfig(BaseModel):
     model_config = {"extra": "forbid"}  # Reject unknown fields
 
     enabled: bool = Field(default=False, description="Enable SVO service")
-    url: str = Field(default="localhost", description="Service URL or hostname")
-    host: str = Field(default="localhost", description="Alias for url (host)")
-    port: int = Field(default=8009, description="Service port")
+    url: str = Field(default=DEFAULT_LOCALHOST, description="Service URL or hostname")
+    host: str = Field(default=DEFAULT_LOCALHOST, description="Alias for url (host)")
+    port: int = Field(default=DEFAULT_CHUNKER_PORT, description="Service port")
     protocol: str = Field(default="http", description="Protocol: http, https, or mtls")
     cert_file: Optional[str] = Field(
         default=None, description="Path to client certificate file (required for mTLS)"
@@ -79,11 +109,11 @@ class SVOServiceConfig(BaseModel):
         default=None, description="Path to CRL file (optional for mTLS)"
     )
     retry_attempts: int = Field(
-        default=3, description="Number of retry attempts on failure (default: 3)"
+        default=DEFAULT_RETRY_ATTEMPTS, description="Number of retry attempts on failure"
     )
     retry_delay: float = Field(
-        default=5.0,
-        description="Delay in seconds between retry attempts (default: 5.0)",
+        default=DEFAULT_RETRY_DELAY,
+        description="Delay in seconds between retry attempts",
     )
     timeout: Optional[float] = Field(
         default=None, description="Optional timeout for service requests (seconds)"
@@ -134,8 +164,8 @@ class ServerConfig(BaseModel):
 
     model_config = {"extra": "forbid"}  # Reject unknown fields
 
-    host: str = Field(default="0.0.0.0", description="Server host")
-    port: int = Field(default=15000, description="Server port")
+    host: str = Field(default=DEFAULT_SERVER_HOST, description="Server host")
+    port: int = Field(default=DEFAULT_SERVER_PORT, description="Server port")
     log: Optional[str] = Field(default=None, description="Path to log file")
     db_path: Optional[str] = Field(default=None, description="Path to SQLite database")
     dirs: List[ProjectDir] = Field(
@@ -158,42 +188,42 @@ class ServerConfig(BaseModel):
         description="Vector dimension for embeddings (required if using FAISS)",
     )
     min_chunk_length: int = Field(
-        default=30,
-        description="Minimum text length for chunking (default: 30). Shorter texts are grouped by level.",
+        default=DEFAULT_MIN_CHUNK_LENGTH,
+        description="Minimum text length for chunking. Shorter texts are grouped by level.",
     )
     vectorization_retry_attempts: int = Field(
-        default=3,
-        description="Number of retry attempts for vectorization on failure (default: 3)",
+        default=DEFAULT_RETRY_ATTEMPTS,
+        description="Number of retry attempts for vectorization on failure",
     )
     vectorization_retry_delay: float = Field(
-        default=10.0,
-        description="Delay in seconds between vectorization retry attempts (default: 10.0)",
+        default=DEFAULT_RETRY_DELAY,
+        description="Delay in seconds between vectorization retry attempts",
     )
     worker: Optional[Dict[str, Any]] = Field(
         default_factory=lambda: {
             "enabled": True,
-            "poll_interval": 30,
-            "batch_size": 10,
-            "retry_attempts": 3,
-            "retry_delay": 10.0,
+            "poll_interval": DEFAULT_POLL_INTERVAL,
+            "batch_size": DEFAULT_BATCH_SIZE,
+            "retry_attempts": DEFAULT_RETRY_ATTEMPTS,
+            "retry_delay": DEFAULT_RETRY_DELAY,
             "watch_dirs": [],
-            "dynamic_watch_file": "data/dynamic_watch_dirs.json",
-            "log_path": "logs/vectorization_worker.log",
+            "dynamic_watch_file": DEFAULT_DYNAMIC_WATCH_FILE,
+            "log_path": DEFAULT_VECTORIZATION_WORKER_LOG,
             "log_rotation": {
-                "max_bytes": 10485760,  # 10 MB
-                "backup_count": 5,
+                "max_bytes": DEFAULT_LOG_MAX_BYTES,
+                "backup_count": DEFAULT_LOG_BACKUP_COUNT,
             },
             "circuit_breaker": {
-                "failure_threshold": 5,
-                "recovery_timeout": 60.0,
-                "success_threshold": 2,
-                "initial_backoff": 5.0,
-                "max_backoff": 300.0,
-                "backoff_multiplier": 2.0,
+                "failure_threshold": DEFAULT_FAILURE_THRESHOLD,
+                "recovery_timeout": DEFAULT_RECOVERY_TIMEOUT,
+                "success_threshold": DEFAULT_SUCCESS_THRESHOLD,
+                "initial_backoff": DEFAULT_INITIAL_BACKOFF,
+                "max_backoff": DEFAULT_MAX_BACKOFF,
+                "backoff_multiplier": DEFAULT_BACKOFF_MULTIPLIER,
             },
             "batch_processor": {
-                "max_empty_iterations": 3,
-                "empty_delay": 5.0,
+                "max_empty_iterations": DEFAULT_MAX_EMPTY_ITERATIONS,
+                "empty_delay": DEFAULT_EMPTY_DELAY,
             },
         },
         description="Vectorization worker configuration",
@@ -201,21 +231,17 @@ class ServerConfig(BaseModel):
     file_watcher: Optional[Dict[str, Any]] = Field(
         default_factory=lambda: {
             "enabled": True,
-            "scan_interval": 60,
+            "scan_interval": DEFAULT_SCAN_INTERVAL,
             # lock_file_name removed: locks are now stored in locks_dir (service state directory)
             # See Step 4 of REFACTOR_MULTI_PROJECT_INDEXING_PLAN.md
-            "log_path": "logs/file_watcher.log",
+            "log_path": DEFAULT_FILE_WATCHER_LOG,
             "log_rotation": {
-                "max_bytes": 10485760,  # 10 MB
-                "backup_count": 5,
+                "max_bytes": DEFAULT_LOG_MAX_BYTES,
+                "backup_count": DEFAULT_LOG_BACKUP_COUNT,
             },
-            "version_dir": "data/versions",
-            "max_scan_duration": 300,
-            "ignore_patterns": [
-                "**/__pycache__/**",
-                "**/.git/**",
-                "**/node_modules/**",
-            ],
+            "version_dir": VERSIONS_DIR_NAME,
+            "max_scan_duration": DEFAULT_MAX_SCAN_DURATION,
+            "ignore_patterns": FILE_WATCHER_IGNORE_PATTERNS,
         },
         description="File watcher worker configuration",
     )
@@ -279,23 +305,23 @@ class ServerConfig(BaseModel):
 
 
 def generate_config(
-    host: str = "0.0.0.0",
-    port: int = 15000,
+    host: str = DEFAULT_SERVER_HOST,
+    port: int = DEFAULT_SERVER_PORT,
     log: Optional[str] = None,
     db_path: Optional[str] = None,
     dirs: Optional[List[Dict[str, str]]] = None,
-    chunker_host: str = "localhost",
-    chunker_port: int = 8009,
-    embedding_host: str = "localhost",
-    embedding_port: int = 8010,
+    chunker_host: str = DEFAULT_LOCALHOST,
+    chunker_port: int = DEFAULT_CHUNKER_PORT,
+    embedding_host: str = DEFAULT_LOCALHOST,
+    embedding_port: int = DEFAULT_EMBEDDING_PORT,
     mtls_certificates: Optional[Dict[str, str]] = None,
 ) -> Dict[str, Any]:
     """
     Generate server configuration.
 
     Args:
-        host: Server host (default: 0.0.0.0)
-        port: Server port (default: 15000)
+        host: Server host (default from constants)
+        port: Server port (default from constants)
         log: Path to log file (optional)
         db_path: Path to SQLite database (optional)
         dirs: List of directories with 'name' and 'path' keys.

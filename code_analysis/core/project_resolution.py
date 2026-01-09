@@ -122,14 +122,14 @@ def load_project_info(root_dir: str | Path) -> ProjectInfo:
     if not pid_path.exists():
         raise ProjectIdError(
             message=f"Missing projectid file: {pid_path}",
-            projectid_path=str(pid_path),
+            project_id=None,
         )
 
     raw = pid_path.read_text(encoding="utf-8").strip()
     if not raw:
         raise ProjectIdError(
             message=f"Empty projectid file: {pid_path}",
-            projectid_path=str(pid_path),
+            project_id=None,
         )
 
     # Parse as JSON

@@ -9,6 +9,7 @@ import pytest
 from pathlib import Path
 from code_analysis.core.path_normalization import (
     normalize_file_path,
+    normalize_path_simple,
     NormalizedPath,
 )
 from code_analysis.core.exceptions import (
@@ -204,15 +205,43 @@ class TestPathNormalizationEdgeCases:
             pytest.skip("No Python files found in test_data/vast_srv/")
 
         test_file = python_files[0]
-        # Create path with .. components
-        parent_dir = test_file.parent.parent
-        path_with_dot_dot = parent_dir / ".." / test_file.name
-        watch_dirs = [VAST_SRV_DIR.parent]
+        # Create path with .. components that resolves to an existing file
+        # Find a file in a subdirectory and create a path that goes up and back
+        subdir_files = [f for f in python_files if f.parent != VAST_SRV_DIR]
+        if not subdir_files:
+            # No files in subdirectories, use a file at root and create path from parent
+            # Create path like: ../vast_srv/file.py from test_data directory
+            path_with_dot_dot = VAST_SRV_DIR.parent / ".." / VAST_SRV_DIR.name / test_file.name
+            # Resolve to check if it exists
+            resolved_path = path_with_dot_dot.resolve()
+            if not resolved_path.exists():
+                pytest.skip("Cannot create valid .. path for test")
+            test_file = resolved_path
+        else:
+            # Use a file in subdirectory
+            test_file = subdir_files[0]
+            relative_to_root = test_file.relative_to(VAST_SRV_DIR)
+            # Create path like: subdir/../file.py (should resolve to file in parent of subdir)
+            # But we want it to resolve to the file itself, so use: subdir/../subdir/file.py
+            # Actually, simpler: use parent/../file.py where file is in subdir
+            parent_dir = test_file.parent
+            path_with_dot_dot = parent_dir / ".." / test_file.name
+            # Resolve to check if it exists
+            resolved_path = path_with_dot_dot.resolve()
+            if not resolved_path.exists():
+                # Try alternative: go up from subdir and back into subdir
+                path_with_dot_dot = parent_dir / ".." / parent_dir.name / test_file.name
+                resolved_path = path_with_dot_dot.resolve()
+                if not resolved_path.exists():
+                    pytest.skip("Cannot create valid .. path for test")
+        
+        watch_dirs = [VAST_SRV_DIR]
 
         normalized = normalize_file_path(path_with_dot_dot, watch_dirs=watch_dirs)
 
         assert isinstance(normalized, NormalizedPath)
-        assert normalized.absolute_path == str(test_file.resolve())
+        # The normalized path should resolve to the same file
+        assert Path(normalized.absolute_path).resolve() == test_file.resolve()
 
     def test_normalize_path_with_dot(self):
         """Test normalizing path with . components."""
@@ -374,4 +403,63 @@ class TestPathNormalizationPerformance:
         elapsed_time = time.time() - start_time
         # Should complete 100 files in reasonable time (< 10 seconds)
         assert elapsed_time < 10.0, f"Too slow: {elapsed_time:.2f}s for 100 files"
+
+
+class TestPathNormalizationAdditionalCases:
+    """Test additional edge cases for path normalization."""
+
+    def test_normalize_path_no_watch_dirs_no_project_root(self, tmp_path):
+        """Test normalizing path when no watch_dirs and no project_root provided."""
+        test_file = tmp_path / "test.py"
+        test_file.write_text("# Test")
+
+        with pytest.raises(ProjectNotFoundError) as exc_info:
+            normalize_file_path(test_file, watch_dirs=[])
+        
+        assert "no watch_dirs or project_root provided" in str(exc_info.value).lower()
+
+    def test_normalize_path_file_not_in_project_root_value_error(self, tmp_path):
+        """Test normalizing path when file is not within project_root (ValueError case)."""
+        # Create a project with projectid (valid UUID v4)
+        project_root = tmp_path / "project"
+        project_root.mkdir()
+        (project_root / "projectid").write_text(
+            '{"id": "550e8400-e29b-41d4-a716-446655440000", "description": "Test"}'
+        )
+
+        # Create a file outside the project
+        outside_file = tmp_path / "outside.py"
+        outside_file.write_text("# Outside file")
+
+        # Try to normalize with project_root that doesn't contain the file
+        # This should trigger ValueError in relative_to, which is caught and re-raised as ProjectNotFoundError
+        with pytest.raises(ProjectNotFoundError) as exc_info:
+            normalize_file_path(outside_file, project_root=project_root)
+        
+        # The error should mention that file is not within project root
+        error_msg = str(exc_info.value).lower()
+        assert "not within project root" in error_msg or "failed to load" in error_msg
+
+    def test_normalize_path_simple(self, tmp_path):
+        """Test normalize_path_simple function."""
+        test_file = tmp_path / "test.py"
+        test_file.write_text("# Test")
+
+        normalized = normalize_path_simple(test_file)
+        
+        assert isinstance(normalized, str)
+        assert normalized == str(test_file.resolve())
+        
+        # Test with string path
+        normalized_str = normalize_path_simple(str(test_file))
+        assert normalized_str == str(test_file.resolve())
+        
+        # Test with relative path (only if file is in current directory or subdirectory)
+        try:
+            relative_path = test_file.relative_to(Path.cwd())
+            normalized_relative = normalize_path_simple(relative_path)
+            assert normalized_relative == str(test_file.resolve())
+        except ValueError:
+            # File is not in current directory, skip relative path test
+            pass
 

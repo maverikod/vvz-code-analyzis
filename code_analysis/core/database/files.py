@@ -129,13 +129,16 @@ def add_file(
                 # Fallback to simple normalization if file doesn't exist or project not found
                 abs_path = normalize_abs_path(path)
             except ProjectIdMismatchError:
-                # Re-raise project ID mismatch
+                # Re-raise project ID mismatch - this is a critical error
                 raise
         else:
             # Fallback to simple normalization if project_root not found
             abs_path = normalize_abs_path(path)
+    except ProjectIdMismatchError:
+        # Re-raise project ID mismatch - this is a critical error
+        raise
     except Exception as e:
-        # Fallback to simple normalization on any error
+        # Fallback to simple normalization on any other error
         logger.debug(f"[add_file] Using simple normalization due to error: {e}")
         abs_path = normalize_abs_path(path)
     
@@ -601,6 +604,9 @@ def update_file_data(
                 "file_id": file_id,
             }
 
+    except ProjectIdMismatchError:
+        # Re-raise project ID mismatch - this is a critical error that should not be swallowed
+        raise
     except Exception as e:
         logger.error(
             f"Unexpected error in update_file_data for {file_path}: {e}",
@@ -668,6 +674,43 @@ async def vectorize_file_immediately(
         }
     
     try:
+        # Validate file path and project_id using unified normalization
+        # Try to get project root from database for validation
+        project_root = None
+        try:
+            db_project = self.get_project(project_id)
+            if db_project:
+                project_root = Path(db_project["root_path"])
+        except Exception as e:
+            logger.debug(f"Could not get project root from database: {e}")
+        
+        # Use unified path normalization if project_root is available
+        if project_root and project_root.exists():
+            try:
+                from ..path_normalization import normalize_file_path
+                from ..exceptions import ProjectIdMismatchError
+                
+                normalized = normalize_file_path(file_path, project_root=project_root)
+                file_path = normalized.absolute_path
+                
+                # Validate project_id matches
+                if normalized.project_id != project_id:
+                    raise ProjectIdMismatchError(
+                        message=(
+                            f"Project ID mismatch: file {file_path} belongs to project "
+                            f"{normalized.project_id} (from projectid file) "
+                            f"but was provided with project_id {project_id}"
+                        ),
+                        file_project_id=normalized.project_id,
+                        db_project_id=project_id,
+                    )
+            except (ProjectIdMismatchError, FileNotFoundError):
+                # Re-raise critical errors
+                raise
+            except Exception as e:
+                # Log but continue with simple normalization
+                logger.debug(f"Path normalization failed, using simple normalization: {e}")
+        
         # Read file content
         file_path_obj = Path(file_path)
         if not file_path_obj.exists():
@@ -992,8 +1035,46 @@ def mark_file_deleted(
     from pathlib import Path
     from ..project_resolution import normalize_abs_path
 
-    # Normalize path to absolute (Step 5: absolute paths everywhere)
-    abs_path = normalize_abs_path(file_path)
+    # Try to get project root from database for validation
+    project_root = None
+    try:
+        db_project = self.get_project(project_id)
+        if db_project:
+            project_root = Path(db_project["root_path"])
+    except Exception as e:
+        logger.debug(f"Could not get project root from database: {e}")
+
+    # Use unified path normalization if project_root is available
+    abs_path = None
+    if project_root and project_root.exists():
+        try:
+            from ..path_normalization import normalize_file_path
+            from ..exceptions import ProjectIdMismatchError
+            
+            normalized = normalize_file_path(file_path, project_root=project_root)
+            abs_path = normalized.absolute_path
+            
+            # Validate project_id matches
+            if normalized.project_id != project_id:
+                raise ProjectIdMismatchError(
+                    message=(
+                        f"Project ID mismatch: file {abs_path} belongs to project "
+                        f"{normalized.project_id} (from projectid file) "
+                        f"but was provided with project_id {project_id}"
+                    ),
+                    file_project_id=normalized.project_id,
+                    db_project_id=project_id,
+                )
+        except (ProjectIdMismatchError, FileNotFoundError):
+            # Re-raise critical errors
+            raise
+        except Exception as e:
+            # Log but continue with simple normalization
+            logger.debug(f"Path normalization failed, using simple normalization: {e}")
+            abs_path = normalize_abs_path(file_path)
+    else:
+        # Fallback to simple normalization
+        abs_path = normalize_abs_path(file_path)
 
     row = self._fetchone(
         "SELECT id FROM files WHERE project_id = ? AND path = ?",

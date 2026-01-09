@@ -43,6 +43,7 @@ from .constants import (
     VERSIONS_DIR_NAME,
     FILE_WATCHER_IGNORE_PATTERNS,
 )
+from .settings_manager import get_settings
 
 
 class ProjectDir(BaseModel):
@@ -109,10 +110,11 @@ class SVOServiceConfig(BaseModel):
         default=None, description="Path to CRL file (optional for mTLS)"
     )
     retry_attempts: int = Field(
-        default=DEFAULT_RETRY_ATTEMPTS, description="Number of retry attempts on failure"
+        default_factory=lambda: get_settings().get("retry_attempts", DEFAULT_RETRY_ATTEMPTS),
+        description="Number of retry attempts on failure",
     )
     retry_delay: float = Field(
-        default=DEFAULT_RETRY_DELAY,
+        default_factory=lambda: get_settings().get("retry_delay", DEFAULT_RETRY_DELAY),
         description="Delay in seconds between retry attempts",
     )
     timeout: Optional[float] = Field(
@@ -164,8 +166,14 @@ class ServerConfig(BaseModel):
 
     model_config = {"extra": "forbid"}  # Reject unknown fields
 
-    host: str = Field(default=DEFAULT_SERVER_HOST, description="Server host")
-    port: int = Field(default=DEFAULT_SERVER_PORT, description="Server port")
+    host: str = Field(
+        default_factory=lambda: get_settings().get("server_host", DEFAULT_SERVER_HOST),
+        description="Server host",
+    )
+    port: int = Field(
+        default_factory=lambda: get_settings().get("server_port", DEFAULT_SERVER_PORT),
+        description="Server port",
+    )
     log: Optional[str] = Field(default=None, description="Path to log file")
     db_path: Optional[str] = Field(default=None, description="Path to SQLite database")
     dirs: List[ProjectDir] = Field(
@@ -188,42 +196,42 @@ class ServerConfig(BaseModel):
         description="Vector dimension for embeddings (required if using FAISS)",
     )
     min_chunk_length: int = Field(
-        default=DEFAULT_MIN_CHUNK_LENGTH,
+        default_factory=lambda: get_settings().get("min_chunk_length", DEFAULT_MIN_CHUNK_LENGTH),
         description="Minimum text length for chunking. Shorter texts are grouped by level.",
     )
     vectorization_retry_attempts: int = Field(
-        default=DEFAULT_RETRY_ATTEMPTS,
+        default_factory=lambda: get_settings().get("retry_attempts", DEFAULT_RETRY_ATTEMPTS),
         description="Number of retry attempts for vectorization on failure",
     )
     vectorization_retry_delay: float = Field(
-        default=DEFAULT_RETRY_DELAY,
+        default_factory=lambda: get_settings().get("retry_delay", DEFAULT_RETRY_DELAY),
         description="Delay in seconds between vectorization retry attempts",
     )
     worker: Optional[Dict[str, Any]] = Field(
         default_factory=lambda: {
             "enabled": True,
-            "poll_interval": DEFAULT_POLL_INTERVAL,
-            "batch_size": DEFAULT_BATCH_SIZE,
-            "retry_attempts": DEFAULT_RETRY_ATTEMPTS,
-            "retry_delay": DEFAULT_RETRY_DELAY,
+            "poll_interval": get_settings().get("poll_interval", DEFAULT_POLL_INTERVAL),
+            "batch_size": get_settings().get("batch_size", DEFAULT_BATCH_SIZE),
+            "retry_attempts": get_settings().get("retry_attempts", DEFAULT_RETRY_ATTEMPTS),
+            "retry_delay": get_settings().get("retry_delay", DEFAULT_RETRY_DELAY),
             "watch_dirs": [],
-            "dynamic_watch_file": DEFAULT_DYNAMIC_WATCH_FILE,
-            "log_path": DEFAULT_VECTORIZATION_WORKER_LOG,
+            "dynamic_watch_file": get_settings().get("dynamic_watch_file", DEFAULT_DYNAMIC_WATCH_FILE),
+            "log_path": get_settings().get("vectorization_worker_log", DEFAULT_VECTORIZATION_WORKER_LOG),
             "log_rotation": {
-                "max_bytes": DEFAULT_LOG_MAX_BYTES,
-                "backup_count": DEFAULT_LOG_BACKUP_COUNT,
+                "max_bytes": get_settings().get("log_max_bytes", DEFAULT_LOG_MAX_BYTES),
+                "backup_count": get_settings().get("log_backup_count", DEFAULT_LOG_BACKUP_COUNT),
             },
             "circuit_breaker": {
-                "failure_threshold": DEFAULT_FAILURE_THRESHOLD,
-                "recovery_timeout": DEFAULT_RECOVERY_TIMEOUT,
-                "success_threshold": DEFAULT_SUCCESS_THRESHOLD,
-                "initial_backoff": DEFAULT_INITIAL_BACKOFF,
-                "max_backoff": DEFAULT_MAX_BACKOFF,
-                "backoff_multiplier": DEFAULT_BACKOFF_MULTIPLIER,
+                "failure_threshold": get_settings().get("failure_threshold", DEFAULT_FAILURE_THRESHOLD),
+                "recovery_timeout": get_settings().get("recovery_timeout", DEFAULT_RECOVERY_TIMEOUT),
+                "success_threshold": get_settings().get("success_threshold", DEFAULT_SUCCESS_THRESHOLD),
+                "initial_backoff": get_settings().get("initial_backoff", DEFAULT_INITIAL_BACKOFF),
+                "max_backoff": get_settings().get("max_backoff", DEFAULT_MAX_BACKOFF),
+                "backoff_multiplier": get_settings().get("backoff_multiplier", DEFAULT_BACKOFF_MULTIPLIER),
             },
             "batch_processor": {
-                "max_empty_iterations": DEFAULT_MAX_EMPTY_ITERATIONS,
-                "empty_delay": DEFAULT_EMPTY_DELAY,
+                "max_empty_iterations": get_settings().get("max_empty_iterations", DEFAULT_MAX_EMPTY_ITERATIONS),
+                "empty_delay": get_settings().get("empty_delay", DEFAULT_EMPTY_DELAY),
             },
         },
         description="Vectorization worker configuration",
@@ -231,17 +239,17 @@ class ServerConfig(BaseModel):
     file_watcher: Optional[Dict[str, Any]] = Field(
         default_factory=lambda: {
             "enabled": True,
-            "scan_interval": DEFAULT_SCAN_INTERVAL,
+            "scan_interval": get_settings().get("scan_interval", DEFAULT_SCAN_INTERVAL),
             # lock_file_name removed: locks are now stored in locks_dir (service state directory)
             # See Step 4 of REFACTOR_MULTI_PROJECT_INDEXING_PLAN.md
-            "log_path": DEFAULT_FILE_WATCHER_LOG,
+            "log_path": get_settings().get("file_watcher_log", DEFAULT_FILE_WATCHER_LOG),
             "log_rotation": {
-                "max_bytes": DEFAULT_LOG_MAX_BYTES,
-                "backup_count": DEFAULT_LOG_BACKUP_COUNT,
+                "max_bytes": get_settings().get("log_max_bytes", DEFAULT_LOG_MAX_BYTES),
+                "backup_count": get_settings().get("log_backup_count", DEFAULT_LOG_BACKUP_COUNT),
             },
-            "version_dir": VERSIONS_DIR_NAME,
-            "max_scan_duration": DEFAULT_MAX_SCAN_DURATION,
-            "ignore_patterns": FILE_WATCHER_IGNORE_PATTERNS,
+            "version_dir": get_settings().get("versions_dir_name", VERSIONS_DIR_NAME),
+            "max_scan_duration": get_settings().get("max_scan_duration", DEFAULT_MAX_SCAN_DURATION),
+            "ignore_patterns": get_settings().get("file_watcher_ignore_patterns", FILE_WATCHER_IGNORE_PATTERNS),
         },
         description="File watcher worker configuration",
     )

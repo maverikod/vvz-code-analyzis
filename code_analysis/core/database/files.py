@@ -30,11 +30,11 @@ def get_file_by_path(
     Returns:
         File record as dictionary or None if not found
     """
-    from ..project_resolution import normalize_abs_path
+    from ..path_normalization import normalize_path_simple
 
     # Normalize path to absolute (Step 5: absolute paths everywhere)
     # Ensure consistent normalization - use resolve() to handle symlinks and relative paths
-    abs_path = normalize_abs_path(path)
+    abs_path = normalize_path_simple(path)
     
     # Log normalization for debugging path mismatches
     if path != abs_path:
@@ -85,8 +85,7 @@ def add_file(
     Returns:
         File ID
     """
-    from ..path_normalization import normalize_file_path
-    from ..project_resolution import normalize_abs_path
+    from ..path_normalization import normalize_file_path, normalize_path_simple
     from ..exceptions import ProjectIdMismatchError, ProjectNotFoundError
 
     # Try to use unified path normalization if project_root can be found
@@ -127,20 +126,20 @@ def add_file(
                     )
             except (ProjectNotFoundError, FileNotFoundError):
                 # Fallback to simple normalization if file doesn't exist or project not found
-                abs_path = normalize_abs_path(path)
+                abs_path = normalize_path_simple(path)
             except ProjectIdMismatchError:
                 # Re-raise project ID mismatch - this is a critical error
                 raise
         else:
             # Fallback to simple normalization if project_root not found
-            abs_path = normalize_abs_path(path)
+            abs_path = normalize_path_simple(path)
     except ProjectIdMismatchError:
         # Re-raise project ID mismatch - this is a critical error
         raise
     except Exception as e:
         # Fallback to simple normalization on any other error
         logger.debug(f"[add_file] Using simple normalization due to error: {e}")
-        abs_path = normalize_abs_path(path)
+        abs_path = normalize_path_simple(path)
     
     # Log normalization for debugging
     if path != abs_path:
@@ -235,10 +234,10 @@ def get_file_id(
     Returns:
         File ID or None if not found
     """
-    from ..project_resolution import normalize_abs_path
+    from ..path_normalization import normalize_path_simple
 
     # Normalize path to absolute (Step 5: absolute paths everywhere)
-    abs_path = normalize_abs_path(path)
+    abs_path = normalize_path_simple(path)
 
     if include_deleted:
         row = self._fetchone(
@@ -380,11 +379,11 @@ def update_file_data(
             "error": Optional[str]
         }
     """
-    from ..project_resolution import normalize_abs_path
+    from ..path_normalization import normalize_path_simple
 
     try:
         # Normalize path to absolute
-        abs_path = normalize_abs_path(file_path)
+        abs_path = normalize_path_simple(file_path)
         if not Path(abs_path).is_absolute():
             abs_path = str((Path(root_dir) / file_path).resolve())
         
@@ -973,10 +972,10 @@ def mark_file_needs_chunking(self, file_path: str, project_id: str) -> bool:
     Returns:
         True if file was found and processed, False otherwise.
     """
-    from ..project_resolution import normalize_abs_path
+    from ..path_normalization import normalize_path_simple
 
     # Normalize path to absolute (Step 5: absolute paths everywhere)
-    abs_path = normalize_abs_path(file_path)
+    abs_path = normalize_path_simple(file_path)
 
     row = self._fetchone(
         "SELECT id, deleted FROM files WHERE project_id = ? AND path = ?",
@@ -1071,10 +1070,12 @@ def mark_file_deleted(
         except Exception as e:
             # Log but continue with simple normalization
             logger.debug(f"Path normalization failed, using simple normalization: {e}")
-            abs_path = normalize_abs_path(file_path)
+            from ..path_normalization import normalize_path_simple
+            abs_path = normalize_path_simple(file_path)
     else:
         # Fallback to simple normalization
-        abs_path = normalize_abs_path(file_path)
+        from ..path_normalization import normalize_path_simple
+        abs_path = normalize_path_simple(file_path)
 
     row = self._fetchone(
         "SELECT id FROM files WHERE project_id = ? AND path = ?",
@@ -1189,10 +1190,10 @@ def unmark_file_deleted(self, file_path: str, project_id: str) -> bool:
     """
     import shutil
     from pathlib import Path
-    from ..project_resolution import normalize_abs_path
+    from ..path_normalization import normalize_path_simple
 
     # Normalize path to absolute (Step 5: absolute paths everywhere)
-    abs_path = normalize_abs_path(file_path)
+    abs_path = normalize_path_simple(file_path)
 
     # Try to find by current path (in version_dir) or original_path
     row = self._fetchone(
@@ -1346,10 +1347,10 @@ def get_file_versions(self, file_path: str, project_id: str) -> List[Dict[str, A
     Returns:
         List of file versions sorted by last_modified (newest first)
     """
-    from ..project_resolution import normalize_abs_path
+    from ..path_normalization import normalize_path_simple
 
     # Normalize path to absolute (Step 5: absolute paths everywhere)
-    abs_path = normalize_abs_path(file_path)
+    abs_path = normalize_path_simple(file_path)
 
     return self._fetchall(
         """

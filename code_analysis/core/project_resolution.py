@@ -47,8 +47,13 @@ def normalize_root_dir(root_dir: str | Path) -> Path:
     return root_path
 
 
+# DEPRECATED: normalize_abs_path has been removed.
+# Use normalize_path_simple() from path_normalization module instead.
+# This function is kept for backward compatibility but should not be used in new code.
 def normalize_abs_path(path: str | Path) -> str:
     """
+    DEPRECATED: Use normalize_path_simple() from path_normalization module instead.
+    
     Normalize an arbitrary filesystem path into a resolved absolute string path.
 
     Args:
@@ -57,8 +62,14 @@ def normalize_abs_path(path: str | Path) -> str:
     Returns:
         Absolute resolved path as string.
     """
-
-    return str(Path(path).expanduser().resolve())
+    import warnings
+    warnings.warn(
+        "normalize_abs_path is deprecated. Use normalize_path_simple() from path_normalization module instead.",
+        DeprecationWarning,
+        stacklevel=2
+    )
+    from ..path_normalization import normalize_path_simple
+    return normalize_path_simple(path)
 
 
 @dataclass

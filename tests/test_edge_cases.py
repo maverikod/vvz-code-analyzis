@@ -14,7 +14,7 @@ from pathlib import Path
 from code_analysis.core.path_normalization import normalize_file_path
 from code_analysis.core.project_resolution import (
     find_project_root_for_path,
-    normalize_abs_path,
+    normalize_path_simple,
     load_project_info,
 )
 from code_analysis.core.settings_manager import get_settings
@@ -31,12 +31,12 @@ class TestEdgeCasesEmptyPaths:
     def test_normalize_empty_path(self):
         """Test normalizing empty path."""
         with pytest.raises((ValueError, TypeError)):
-            normalize_abs_path("")
+            normalize_path_simple("")
 
     def test_normalize_none_path(self):
         """Test normalizing None path."""
         with pytest.raises((TypeError, AttributeError)):
-            normalize_abs_path(None)
+            normalize_path_simple(None)
 
     def test_find_project_root_empty_path(self):
         """Test finding project root for empty path."""
@@ -63,7 +63,7 @@ class TestEdgeCasesInvalidCharacters:
         for invalid_path in invalid_paths:
             # Should either normalize or raise appropriate error
             try:
-                result = normalize_abs_path(invalid_path)
+                result = normalize_path_simple(invalid_path)
                 # If it doesn't raise, result should be valid
                 assert result is not None
             except (ValueError, OSError):
@@ -87,7 +87,7 @@ class TestEdgeCasesLongPaths:
             test_file.write_text("# Test\n")
 
             # Should handle long path
-            normalized = normalize_abs_path(str(test_file))
+            normalized = normalize_path_simple(str(test_file))
             assert normalized is not None
             assert Path(normalized).exists()
 
@@ -136,7 +136,7 @@ class TestEdgeCasesMultipleDotDot:
             abs_path = (nested / relative_path).resolve()
 
             # Should normalize correctly
-            normalized = normalize_abs_path(str(abs_path))
+            normalized = normalize_path_simple(str(abs_path))
             assert normalized is not None
             assert Path(normalized).exists()
 
@@ -156,7 +156,7 @@ class TestEdgeCasesSymbolicLinks:
 
                 # Should handle symlink (may or may not resolve)
                 try:
-                    normalized = normalize_abs_path(str(link))
+                    normalized = normalize_path_simple(str(link))
                     # If it resolves, should be valid
                     assert normalized is not None
                 except (OSError, FileNotFoundError):
@@ -296,7 +296,7 @@ class TestEdgeCasesMissingDirectories:
             missing_file = Path(tmpdir) / "nonexistent.py"
 
             # Should still normalize (file doesn't need to exist)
-            normalized = normalize_abs_path(str(missing_file))
+            normalized = normalize_path_simple(str(missing_file))
             assert normalized is not None
             assert Path(normalized) == missing_file.resolve()
 

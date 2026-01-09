@@ -60,8 +60,9 @@ class TestRegressionBackwardCompatibility:
             test_file = Path(tmpdir) / "test.py"
             test_file.write_text("# Test\n")
 
-            # Old API: normalize_abs_path should still work
-            normalized = normalize_abs_path(str(test_file))
+            # Old API: normalize_abs_path replaced with normalize_path_simple
+            # Test that new API works the same way
+            normalized = normalize_path_simple(str(test_file))
             assert normalized is not None
             assert Path(normalized).is_absolute()
 

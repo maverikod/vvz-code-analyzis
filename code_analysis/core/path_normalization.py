@@ -17,7 +17,6 @@ from .exceptions import MultipleProjectIdError, ProjectNotFoundError
 from .project_resolution import (
     ProjectInfo,
     find_project_root_for_path,
-    normalize_abs_path,
 )
 
 logger = logging.getLogger(__name__)
@@ -39,6 +38,28 @@ class NormalizedPath:
     project_root: Path
     project_id: str
     relative_path: str
+
+
+def _normalize_path_simple_internal(path: str | Path) -> str:
+    """
+    Internal function for simple path normalization.
+    
+    Normalizes a path to absolute resolved string without project information.
+    This is used internally and should not be called directly from outside this module.
+    Use normalize_path_simple() for public API.
+
+    Args:
+        path: Path to normalize
+
+    Returns:
+        Normalized absolute path as string
+    """
+    path_obj = Path(path)
+    if not path_obj.is_absolute():
+        path_obj = path_obj.expanduser().resolve()
+    else:
+        path_obj = path_obj.resolve()
+    return str(path_obj)
 
 
 def normalize_file_path(
@@ -72,7 +93,7 @@ def normalize_file_path(
         FileNotFoundError: If file path does not exist
     """
     # Normalize to absolute path
-    absolute_path = normalize_abs_path(file_path)
+    absolute_path = _normalize_path_simple_internal(file_path)
     absolute_path_obj = Path(absolute_path)
 
     # Check if file exists
@@ -161,5 +182,5 @@ def normalize_path_simple(path: str | Path) -> str:
     Returns:
         Normalized absolute path as string
     """
-    return normalize_abs_path(path)
+    return _normalize_path_simple_internal(path)
 

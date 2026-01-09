@@ -14,7 +14,7 @@ from pathlib import Path
 from code_analysis.core.path_normalization import normalize_file_path
 from code_analysis.core.project_resolution import (
     find_project_root_for_path,
-    normalize_abs_path,
+    normalize_path_simple,
 )
 from code_analysis.core.project_discovery import discover_projects_in_directory
 from code_analysis.core.settings_manager import get_settings
@@ -144,7 +144,7 @@ class TestPerformancePathNormalization:
         for rel_path in relative_paths:
             try:
                 # Normalize relative path (should convert to absolute)
-                normalized = normalize_abs_path(rel_path)
+                normalized = normalize_path_simple(rel_path)
                 assert normalized is not None
             except Exception:
                 pass

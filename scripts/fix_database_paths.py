@@ -22,7 +22,8 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from code_analysis.core.database import CodeDatabase
 from code_analysis.core.database.base import create_driver_config_for_worker
-from code_analysis.core.project_resolution import normalize_abs_path, normalize_root_dir
+from code_analysis.core.path_normalization import normalize_path_simple
+from code_analysis.core.project_resolution import normalize_root_dir
 from code_analysis.core.project_discovery import find_project_root
 
 logging.basicConfig(
@@ -94,7 +95,7 @@ def check_file_path(
     try:
         # Normalize current path
         current_path = Path(file_path)
-        normalized_path = normalize_abs_path(file_path)
+        normalized_path = normalize_path_simple(file_path)
         
         # Check if path exists
         path_obj = Path(normalized_path)

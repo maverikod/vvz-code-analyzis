@@ -54,7 +54,9 @@ async def process_embedding_ready_chunks(
         # Project-scoped: all chunks in project (datasets EXCLUDED)
         step_start = time.time()
         scope_desc = f"project={self.project_id}"
-        logger.info(f"[TIMING] Step 2: Starting to get non-vectorized chunks from DB ({scope_desc})")
+        logger.info(
+            f"[TIMING] Step 2: Starting to get non-vectorized chunks from DB ({scope_desc})"
+        )
         # get_non_vectorized_chunks is synchronous, returns List[Dict], not a coroutine
         chunks = database.get_non_vectorized_chunks(
             project_id=self.project_id,
@@ -97,16 +99,6 @@ async def process_embedding_ready_chunks(
                 chunk_start_time = time.time()
                 chunk_id = chunk["id"]
                 chunk_text = chunk.get("chunk_text", "")
-                chunk_dataset_id = chunk.get("dataset_id")
-
-                # Validate dataset_id if worker is dataset-scoped
-                if dataset_id and chunk_dataset_id and chunk_dataset_id != dataset_id:
-                    logger.warning(
-                        f"Chunk {chunk_id} belongs to dataset {chunk_dataset_id}, "
-                        f"but worker is processing dataset {dataset_id}, skipping"
-                    )
-                    batch_errors += 1
-                    continue
 
                 # Log chunk text (docstring) for debugging
                 chunk_text_preview = (
@@ -200,7 +192,6 @@ async def process_embedding_ready_chunks(
                             embedding_request_duration = (
                                 time.time() - embedding_request_start
                             )
-                            error_str = str(svo_e).lower()
                             logger.debug(
                                 f"[CHUNK {chunk_id}] Chunker service error after {embedding_request_duration:.3f}s: {svo_e}. "
                                 "Skipping chunk, will retry in next cycle if service becomes available."

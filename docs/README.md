@@ -93,6 +93,68 @@ The tool detects various code quality issues:
 - Invalid imports
 - Imports in the middle of files
 
+## Project Identification and Path Normalization
+
+### Project ID Format
+
+Each project must have a `projectid` file in its root directory. The file uses JSON format:
+
+```json
+{
+    "id": "550e8400-e29b-41d4-a716-446655440000",
+    "description": "Human readable description of project"
+}
+```
+
+**Fields**:
+- `id` (required): UUID4 identifier for the project
+- `description` (optional): Human-readable description
+
+**Migration**: If you have old format projectid files (plain UUID4 string), use the migration script:
+```bash
+python scripts/migrate_projectid_to_json.py
+```
+
+### Path Normalization
+
+The system uses unified path normalization across all components:
+
+- **`normalize_file_path()`**: Main function for normalizing file paths with project information
+  - Returns `NormalizedPath` with absolute path, project root, project ID, and relative path
+  - Validates project ID from projectid file
+  - Handles both absolute and relative paths
+
+- **`find_project_root_for_path()`**: Finds project root for a given file path
+  - Searches for projectid file in parent directories
+  - Returns `ProjectInfo` with project root, ID, and description
+  - Raises `MultipleProjectIdError` if multiple projectid files found in path
+
+- **`normalize_path_simple()`**: Simple path normalization without project information
+  - For cases where only path normalization is needed
+
+### Project Manager
+
+The `ProjectManager` class provides centralized project management:
+
+```python
+from code_analysis.core.project_manager import ProjectManager
+
+manager = ProjectManager()
+
+# Create a new project
+project_info = manager.create_project(
+    root_path=Path("/path/to/project"),
+    description="My project",
+    init_git=True  # Optional: initialize git repository
+)
+
+# Get project information
+info = manager.get_project_info(project_id)
+
+# List all projects
+projects = manager.get_project_list()
+```
+
 ## CST-based module composition (logical blocks)
 
 If you want to refactor by **logical blocks** (preserving comments, moving imports to the top,

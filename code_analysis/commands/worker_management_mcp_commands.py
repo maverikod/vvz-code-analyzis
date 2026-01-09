@@ -285,11 +285,9 @@ class StartWorkerMCPCommand(BaseMCPCommand):
                 "   - Starts file watcher worker process\n"
                 "   - Registers worker in WorkerManager\n"
                 "5. For vectorization:\n"
-                "   - Resolves project_id (creates if doesn't exist)\n"
-                "   - Resolves dataset_id (creates if doesn't exist)\n"
-                "   - Gets dataset-scoped FAISS index path\n"
+                "   - Gets base FAISS directory (project-scoped indexes: {faiss_dir}/{project_id}.bin)\n"
                 "   - Loads SVO config for embedding service\n"
-                "   - Starts vectorization worker process\n"
+                "   - Starts universal vectorization worker process\n"
                 "   - Registers worker in WorkerManager\n"
                 "6. Returns worker start result with PID\n\n"
                 "File Watcher Worker:\n"
@@ -305,8 +303,9 @@ class StartWorkerMCPCommand(BaseMCPCommand):
                 "- Stores vectors in FAISS index\n"
                 "- Polls database at specified poll_interval\n"
                 "   - Processes chunks in batches\n"
-                "   - Uses dataset-scoped FAISS index\n"
-                "   - Filters by project_id and dataset_id\n\n"
+                "   - Uses project-scoped FAISS index ({faiss_dir}/{project_id}.bin)\n"
+                "   - Automatically discovers all projects from database\n"
+                "   - Processes projects sequentially, sorted by pending count\n\n"
                 "Use cases:\n"
                 "- Start file watcher to monitor project changes\n"
                 "- Start vectorization worker to process code chunks\n"
@@ -315,7 +314,8 @@ class StartWorkerMCPCommand(BaseMCPCommand):
                 "- Workers run as daemon processes\n"
                 "- Workers are registered in WorkerManager\n"
                 "- File watcher discovers projects automatically\n"
-                "- Vectorization requires project_id and dataset_id\n"
+                "- Vectorization worker is universal - processes all projects from database automatically\n"
+                "- Vectorization worker uses project-scoped FAISS indexes (no dataset concept)\n"
                 "- Workers write logs to specified log path\n"
                 "- Use stop_worker to stop workers gracefully"
             ),
@@ -333,18 +333,11 @@ class StartWorkerMCPCommand(BaseMCPCommand):
                 "root_dir": {
                     "description": (
                         "Project root directory path. Can be absolute or relative. "
-                        "Must contain data/code_analysis.db file and config.json."
+                        "Must contain data/code_analysis.db file and config.json. "
+                        "Used to resolve storage paths (database, FAISS directory) for vectorization worker."
                     ),
                     "type": "string",
                     "required": True,
-                },
-                "project_id": {
-                    "description": (
-                        "Optional project UUID. For vectorization, will be created if doesn't exist. "
-                        "For file_watcher, not used (projects discovered automatically)."
-                    ),
-                    "type": "string",
-                    "required": False,
                 },
                 "watch_dirs": {
                     "description": (
@@ -391,14 +384,6 @@ class StartWorkerMCPCommand(BaseMCPCommand):
                     "required": False,
                     "default": 384,
                 },
-                "dataset_id": {
-                    "description": (
-                        "Optional dataset UUID (vectorization only). "
-                        "If omitted, resolved from root_dir. Creates dataset if doesn't exist."
-                    ),
-                    "type": "string",
-                    "required": False,
-                },
                 "worker_log_path": {
                     "description": (
                         "Optional log path for worker process. "
@@ -430,8 +415,8 @@ class StartWorkerMCPCommand(BaseMCPCommand):
                         "batch_size": 10,
                     },
                     "explanation": (
-                        "Starts vectorization worker that processes code chunks for embedding. "
-                        "Project and dataset are created if they don't exist."
+                        "Starts universal vectorization worker that processes code chunks for embedding. "
+                        "Worker automatically discovers all projects from database and processes them sequentially."
                     ),
                 },
                 {

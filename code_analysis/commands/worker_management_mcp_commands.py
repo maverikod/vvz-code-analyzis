@@ -29,9 +29,7 @@ from ..core.worker_launcher import (
 from ..core.storage_paths import (
     load_raw_config,
     resolve_storage_paths,
-    get_faiss_index_path,
 )
-from ..core.project_resolution import normalize_root_dir
 
 logger = logging.getLogger(__name__)
 
@@ -87,12 +85,8 @@ class StartWorkerMCPCommand(BaseMCPCommand):
                 },
                 "root_dir": {
                     "type": "string",
-                    "description": "Project root directory (contains data/code_analysis.db).",
+                    "description": "Project root directory (used to resolve storage paths for vectorization worker).",
                     "examples": ["/abs/path/to/project"],
-                },
-                "project_id": {
-                    "type": "string",
-                    "description": "Optional project UUID; if omitted, inferred/created by root_dir.",
                 },
                 "watch_dirs": {
                     "type": "array",
@@ -124,14 +118,10 @@ class StartWorkerMCPCommand(BaseMCPCommand):
                     "default": 384,
                     "examples": [384],
                 },
-                "dataset_id": {
-                    "type": "string",
-                    "description": "Optional dataset UUID (vectorization only); if omitted, resolved from root_dir.",
-                },
                 "worker_log_path": {
                     "type": "string",
                     "description": "Optional log path for the worker process.",
-                    "examples": ["/abs/path/to/logs/file_watcher.log"],
+                    "examples": ["/abs/path/to/logs/vectorization_worker.log"],
                 },
             },
             "required": ["worker_type", "root_dir"],
@@ -159,13 +149,11 @@ class StartWorkerMCPCommand(BaseMCPCommand):
         self: "StartWorkerMCPCommand",
         worker_type: str,
         root_dir: str,
-        project_id: Optional[str] = None,
         watch_dirs: Optional[List[str]] = None,
         scan_interval: int = 60,
         poll_interval: int = 30,
         batch_size: int = 10,
         vector_dim: int = 384,
-        dataset_id: Optional[str] = None,
         worker_log_path: Optional[str] = None,
         **kwargs: Any,
     ) -> SuccessResult | ErrorResult:
@@ -175,8 +163,7 @@ class StartWorkerMCPCommand(BaseMCPCommand):
         Args:
             self: Command instance.
             worker_type: Worker type to start.
-            root_dir: Project root directory.
-            project_id: Optional project id (required for vectorization, not used for file_watcher).
+            root_dir: Project root directory (used to resolve storage paths for vectorization worker).
             watch_dirs: Optional watch dirs for file watcher (projects discovered automatically).
             scan_interval: Scan interval seconds.
             poll_interval: Poll interval seconds.
@@ -198,36 +185,6 @@ class StartWorkerMCPCommand(BaseMCPCommand):
                 config_data=config_data, config_path=config_path
             )
             db_path = storage.db_path
-
-            database = self._open_database(str(root_path), auto_analyze=False)
-            try:
-                # For file_watcher, projects are discovered automatically, project_id not needed
-                # For vectorization, project_id is required
-                resolved_project_id = None
-                resolved_dataset_id = None
-                if worker_type == "vectorization":
-                    resolved_project_id = self._get_project_id(
-                        database, root_path, project_id
-                    )
-                    if not resolved_project_id:
-                        resolved_project_id = database.get_or_create_project(
-                            str(root_path), name=root_path.name
-                        )
-
-                    # Resolve dataset_id from root_dir if not provided
-                    resolved_dataset_id = dataset_id
-                    if resolved_dataset_id is None:
-                        normalized_root = str(normalize_root_dir(root_dir))
-                        resolved_dataset_id = database.get_dataset_id(
-                            resolved_project_id, normalized_root
-                        )
-                        if not resolved_dataset_id:
-                            # Create dataset if it doesn't exist
-                            resolved_dataset_id = database.get_or_create_dataset(
-                                resolved_project_id, normalized_root
-                            )
-            finally:
-                database.close()
 
             if worker_type == "file_watcher":
                 dirs = watch_dirs or [str(root_path)]
@@ -254,10 +211,8 @@ class StartWorkerMCPCommand(BaseMCPCommand):
                     (root_path / "logs" / "vectorization_worker.log").resolve()
                 )
 
-                # Get dataset-scoped FAISS index path
-                index_path = get_faiss_index_path(
-                    storage.faiss_dir, resolved_project_id, resolved_dataset_id
-                )
+                # Get faiss_dir from storage (base directory for project-scoped indexes)
+                faiss_dir = storage.faiss_dir
 
                 # Load SVO config from config_data
                 from code_analysis.core.config import ServerConfig
@@ -277,10 +232,8 @@ class StartWorkerMCPCommand(BaseMCPCommand):
 
                 res = start_vectorization_worker(
                     db_path=str(db_path),
-                    project_id=resolved_project_id,
-                    faiss_index_path=str(index_path),
+                    faiss_dir=str(faiss_dir),
                     vector_dim=vector_dim,
-                    dataset_id=resolved_dataset_id,
                     svo_config=svo_config,
                     batch_size=batch_size,
                     poll_interval=poll_interval,

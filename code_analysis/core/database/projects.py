@@ -194,6 +194,119 @@ async def clear_project_data(self, project_id: str) -> None:
     logger.info(f"Cleared all data and removed project {project_id}")
 
 
+def get_projects_with_vectorization_count(self) -> List[Dict[str, Any]]:
+    """
+    Get projects with count of files/chunks needing vectorization.
+
+    Returns list of projects sorted by pending count (smallest first).
+    Count includes:
+    - Files needing chunking (have docstrings but no chunks)
+    - Chunks needing vectorization (have embeddings but no vector_id)
+
+    **Important**: Deleted files are excluded from counts.
+    Projects with zero pending count are excluded from results.
+
+    Returns:
+        List of dictionaries with keys: project_id, root_path, pending_count
+        Sorted by pending_count ASC (smallest first)
+    """
+    rows = self._fetchall(
+        """
+        SELECT 
+            p.id AS project_id,
+            p.root_path,
+            (
+                -- Count files needing chunking (project-scoped, all files in project)
+                (SELECT COUNT(DISTINCT f.id)
+                 FROM files f
+                 WHERE f.project_id = p.id
+                   AND (f.deleted = 0 OR f.deleted IS NULL)
+                   AND (
+                       f.has_docstring = 1 
+                       OR EXISTS (
+                           SELECT 1 FROM classes c 
+                           WHERE c.file_id = f.id 
+                             AND c.docstring IS NOT NULL 
+                             AND c.docstring != ''
+                       )
+                       OR EXISTS (
+                           SELECT 1 FROM functions fn 
+                           WHERE fn.file_id = f.id 
+                             AND fn.docstring IS NOT NULL 
+                             AND fn.docstring != ''
+                       )
+                       OR EXISTS (
+                           SELECT 1 FROM methods m 
+                           JOIN classes c ON m.class_id = c.id 
+                           WHERE c.file_id = f.id 
+                             AND m.docstring IS NOT NULL 
+                             AND m.docstring != ''
+                       )
+                   )
+                   AND NOT EXISTS (
+                       SELECT 1 FROM code_chunks cc 
+                       WHERE cc.file_id = f.id
+                   ))
+                +
+                -- Count chunks needing vectorization (project-scoped, all chunks in project)
+                (SELECT COUNT(cc.id)
+                 FROM code_chunks cc
+                 INNER JOIN files f ON cc.file_id = f.id
+                 WHERE cc.project_id = p.id
+                   AND (f.deleted = 0 OR f.deleted IS NULL)
+                   AND cc.embedding_vector IS NOT NULL
+                   AND cc.vector_id IS NULL)
+            ) AS pending_count
+        FROM projects p
+        WHERE (
+            -- Count files needing chunking
+            (SELECT COUNT(DISTINCT f.id)
+             FROM files f
+             WHERE f.project_id = p.id
+               AND (f.deleted = 0 OR f.deleted IS NULL)
+               AND (
+                   f.has_docstring = 1 
+                   OR EXISTS (
+                       SELECT 1 FROM classes c 
+                       WHERE c.file_id = f.id 
+                         AND c.docstring IS NOT NULL 
+                         AND c.docstring != ''
+                   )
+                   OR EXISTS (
+                       SELECT 1 FROM functions fn 
+                       WHERE fn.file_id = f.id 
+                         AND fn.docstring IS NOT NULL 
+                         AND fn.docstring != ''
+                   )
+                   OR EXISTS (
+                       SELECT 1 FROM methods m 
+                       JOIN classes c ON m.class_id = c.id 
+                       WHERE c.file_id = f.id 
+                         AND m.docstring IS NOT NULL 
+                         AND m.docstring != ''
+                   )
+               )
+               AND NOT EXISTS (
+                   SELECT 1 FROM code_chunks cc 
+                   WHERE cc.file_id = f.id
+               ))
+            +
+            -- Count chunks needing vectorization
+            (SELECT COUNT(cc.id)
+             FROM code_chunks cc
+             INNER JOIN files f ON cc.file_id = f.id
+             WHERE cc.project_id = p.id
+               AND (f.deleted = 0 OR f.deleted IS NULL)
+               AND cc.embedding_vector IS NOT NULL
+               AND cc.vector_id IS NULL)
+        ) > 0
+        ORDER BY pending_count ASC
+        """,
+        (),
+    )
+    return rows if rows else []
+
+
 def get_project_files(
     self, project_id: str, include_deleted: bool = False
 ) -> List[Dict[str, Any]]:

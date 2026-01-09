@@ -228,7 +228,8 @@ def main() -> None:
                 )
             else:
                 print(
-                    f"\n❌ Configuration validation failed: {summary['errors']} error(s), {summary['warnings']} warning(s)",
+                    f"\n❌ Configuration validation failed: "
+                    f"{summary['errors']} error(s), {summary['warnings']} warning(s)",
                     file=sys.stderr,
                 )
 
@@ -583,17 +584,20 @@ def main() -> None:
 
     # Start vectorization worker on startup
     async def startup_vectorization_worker() -> None:
-        """Start vectorization worker in background process on server startup.
+        """Start universal vectorization worker in background process on server startup.
+
+        Worker operates in universal mode - processes all projects from database.
+        Worker works only with database - no filesystem access, no watch_dirs.
+        Worker automatically discovers projects from database and processes them.
 
         Returns:
             None
         """
-        import multiprocessing
-        from pathlib import Path
-        from code_analysis.core.config import ServerConfig
-        from code_analysis.core.faiss_manager import FaissIndexManager
-
         import logging
+        from pathlib import Path
+
+        from code_analysis.core.config import ServerConfig
+        from code_analysis.core.worker_launcher import start_vectorization_worker
 
         logger = logging.getLogger(__name__)
         logger.info("🔍 startup_vectorization_worker called")
@@ -649,233 +653,44 @@ def main() -> None:
                 config_data=config_data, config_path=config_path
             )
             db_path = storage.db_path
+            faiss_dir = storage.faiss_dir
 
-            # Get watch_dirs from worker config - these are project directories
-            watch_dirs = []
-            if worker_config and isinstance(worker_config, dict):
-                watch_dirs = worker_config.get("watch_dirs", [])
-
-            if not watch_dirs:
-                logger.warning(
-                    "⚠️  No watch_dirs configured, skipping vectorization worker"
-                )
-                return
-
-            # Get or create projects for each watch_dir
-            # Use proxy driver since we're in the main server process, not a worker
-            project_ids = []
-            try:
-                logger.info(f"[STEP 1] Creating driver config for db_path={db_path}")
-                from code_analysis.core.database import CodeDatabase
-                from code_analysis.core.database.base import (
-                    create_driver_config_for_worker,
-                )
-
-                driver_config = create_driver_config_for_worker(
-                    db_path=db_path,
-                    driver_type="sqlite_proxy",
-                )
-                logger.info(
-                    f"[STEP 2] Driver config created: type={driver_config.get('type')}"
-                )
-
-                # Override timeout and poll_interval for proxy driver
-                if driver_config.get("type") == "sqlite_proxy":
-                    driver_config["config"]["worker_config"]["command_timeout"] = 60.0
-                    driver_config["config"]["worker_config"]["poll_interval"] = 1.0
-                    logger.info(
-                        "[STEP 3] Proxy driver config updated: timeout=60.0, poll_interval=1.0"
-                    )
-
-                logger.info(
-                    "[STEP 4] Creating CodeDatabase instance with driver_config (with retry)"
-                )
-                # Retry logic: DB worker may need time to be ready
-                import time
-
-                max_retries = 5
-                retry_delay = 2.0
-                database = None
-                for attempt in range(max_retries):
-                    try:
-                        database = CodeDatabase(driver_config=driver_config)
-                        logger.info(
-                            f"[STEP 5] CodeDatabase created on attempt {attempt + 1}, getting/creating projects for {len(watch_dirs)} directories"
-                        )
-                        break
-                    except Exception as e:
-                        if attempt < max_retries - 1:
-                            logger.warning(
-                                f"⚠️  Failed to create CodeDatabase on attempt {attempt + 1}/{max_retries}: {e}, retrying in {retry_delay}s"
-                            )
-                            time.sleep(retry_delay)
-                        else:
-                            raise
-
-                if not database:
-                    raise RuntimeError(
-                        "Failed to create CodeDatabase after all retries"
-                    )
-
-                # Discover all projects in watch_dirs using project discovery (Phase 1)
-                from code_analysis.core.project_discovery import (
-                    discover_projects_in_directory,
-                    NestedProjectError,
-                    DuplicateProjectIdError,
-                )
-
-                discovered_project_ids = set()
-                for watch_dir in watch_dirs:
-                    watch_dir_path = Path(watch_dir).resolve()
-                    if not watch_dir_path.exists():
-                        logger.warning(
-                            f"⚠️  Watch directory does not exist: {watch_dir_path}, skipping"
-                        )
-                        continue
-
-                    try:
-                        # Discover projects in this watch_dir
-                        discovered_projects = discover_projects_in_directory(
-                            watch_dir_path
-                        )
-                        logger.info(
-                            f"[STEP 6] Discovered {len(discovered_projects)} project(s) in {watch_dir_path}"
-                        )
-
-                        # Auto-create projects in database if they don't exist
-                        for project_root_obj in discovered_projects:
-                            project = database.get_project(project_root_obj.project_id)
-                            if not project:
-                                # Create project with ID from projectid file
-                                project_name = project_root_obj.root_path.name
-                                database._execute(
-                                    """
-                                    INSERT INTO projects (id, root_path, name, updated_at)
-                                    VALUES (?, ?, ?, julianday('now'))
-                                    ON CONFLICT(id) DO NOTHING
-                                    """,
-                                    (
-                                        project_root_obj.project_id,
-                                        str(project_root_obj.root_path),
-                                        project_name,
-                                    ),
-                                )
-                                database._commit()
-                                logger.info(
-                                    f"[STEP 6] Auto-created project {project_root_obj.project_id} "
-                                    f"at {project_root_obj.root_path}"
-                                )
-
-                            discovered_project_ids.add(project_root_obj.project_id)
-                    except NestedProjectError as e:
-                        logger.error(
-                            f"Nested project detected in {watch_dir_path}: {e}, skipping"
-                        )
-                        continue
-                    except DuplicateProjectIdError as e:
-                        logger.error(
-                            f"Duplicate project_id detected in {watch_dir_path}: {e}, skipping"
-                        )
-                        continue
-                    except Exception as e:
-                        logger.warning(
-                            f"Error discovering projects in {watch_dir_path}: {e}"
-                        )
-                        continue
-
-                project_ids = list(discovered_project_ids)
-                logger.info(f"[STEP 6] Total discovered projects: {len(project_ids)}")
-
-                database.close()
-                logger.info("[STEP 7] Database connection closed")
-
-                if not project_ids:
-                    logger.warning(
-                        "⚠️  No valid projects found or created, skipping vectorization worker"
-                    )
-                    return
-            except Exception as e:
-                logger.error(f"⚠️  Failed to get/create projects: {e}", exc_info=True)
-                return
-
-            # Dataset-scoped FAISS: rebuild index for each dataset (Step 2 of refactor plan)
-            vector_dim = server_config.vector_dim or 384
-
-            # Initialize SVO client manager for rebuild (in case embeddings need to be regenerated)
-            try:
-                from code_analysis.core.svo_client_manager import SVOClientManager
-                from code_analysis.core.storage_paths import get_faiss_index_path
-
-                svo_client_manager = SVOClientManager(server_config)
-                await svo_client_manager.initialize()
-
-                # Rebuild FAISS index from database (vectors are stored in database)
-                logger.info(
-                    "🔄 Rebuilding FAISS indexes from database (dataset-scoped)..."
-                )
-                from code_analysis.core.database.base import (
-                    create_driver_config_for_worker,
-                )
-
-                driver_config = create_driver_config_for_worker(db_path)
-                database = CodeDatabase(driver_config=driver_config)
+            # Database auto-creation (for test database, always start fresh)
+            # Check if database exists, delete old and create new for test
+            db_path_obj = Path(db_path)
+            if db_path_obj.exists():
+                # For test database, always start fresh - delete old database
+                logger.info(f"Removed old database at {db_path}")
                 try:
-                    total_vectors = 0
-                    # For each project, rebuild FAISS index for each dataset
-                    for project_id in project_ids:
-                        # Get all datasets for this project
-                        datasets = database.get_project_datasets(project_id)
-                        if not datasets:
-                            logger.warning(
-                                f"⚠️  No datasets found for project {project_id}, skipping FAISS rebuild"
-                            )
-                            continue
+                    db_path_obj.unlink()
+                except Exception as e:
+                    logger.warning(f"Failed to remove old database: {e}")
 
-                        for dataset in datasets:
-                            dataset_id = dataset["id"]
-                            dataset_root = dataset["root_path"]
-                            logger.info(
-                                f"🔄 Rebuilding FAISS index for project={project_id}, "
-                                f"dataset={dataset_id} (root={dataset_root})"
-                            )
-
-                            # Get dataset-scoped FAISS index path
-                            index_path = get_faiss_index_path(
-                                storage.faiss_dir, project_id, dataset_id
-                            )
-
-                            # Initialize FAISS manager for this dataset
-                            faiss_manager = FaissIndexManager(
-                                index_path=str(index_path),
-                                vector_dim=vector_dim,
-                            )
-
-                            # Rebuild index for this dataset
-                            vectors_count = await faiss_manager.rebuild_from_database(
-                                database,
-                                svo_client_manager,
-                                project_id=project_id,
-                                dataset_id=dataset_id,
-                            )
-                            total_vectors += vectors_count
-                            logger.info(
-                                f"✅ FAISS index rebuilt for dataset {dataset_id}: "
-                                f"{vectors_count} vectors loaded"
-                            )
-                            faiss_manager.close()
-
-                    logger.info(
-                        f"✅ All FAISS indexes rebuilt: {total_vectors} total vectors loaded"
+            # Create new database if doesn't exist
+            if not db_path_obj.exists():
+                logger.info(f"Database file not found, creating new database at {db_path}")
+                try:
+                    from code_analysis.core.database import CodeDatabase
+                    from code_analysis.core.database.base import (
+                        create_driver_config_for_worker,
                     )
-                finally:
-                    database.close()
-                    await svo_client_manager.close()
 
-            except Exception as e:
-                logger.warning(
-                    f"⚠️  Failed to rebuild FAISS indexes: {e}", exc_info=True
-                )
-                # Continue anyway - indexes will be empty but worker can still start
+                    # Ensure parent directory exists
+                    db_path_obj.parent.mkdir(parents=True, exist_ok=True)
+
+                    # Create database connection (will automatically create schema)
+                    driver_config = create_driver_config_for_worker(
+                        db_path=db_path_obj,
+                        driver_type="sqlite_proxy",
+                    )
+                    init_database = CodeDatabase(driver_config=driver_config)
+                    init_database.close()
+                    logger.info(f"Created new database at {db_path}")
+                except Exception as e:
+                    logger.warning(
+                        f"Failed to create database: {e}, continuing anyway",
+                        exc_info=True,
+                    )
 
             # Prepare SVO config
             svo_config = (
@@ -890,7 +705,7 @@ def main() -> None:
                 DEFAULT_POLL_INTERVAL,
             )
 
-            worker_config = server_config.worker
+            vector_dim = server_config.vector_dim or 384
             batch_size = DEFAULT_BATCH_SIZE
             poll_interval = DEFAULT_POLL_INTERVAL
             worker_log_path = None  # default
@@ -901,181 +716,40 @@ def main() -> None:
                 )
                 worker_log_path = worker_config.get("log_path")
 
-            # Start worker process for each dataset (dataset-scoped vectorization)
-            from code_analysis.core.storage_paths import get_faiss_index_path
-            from code_analysis.core.vectorization_worker_pkg.runner import (
-                run_vectorization_worker,
+            # Update log file path to universal name (no project_id in name)
+            if worker_log_path:
+                log_path_obj = Path(worker_log_path)
+                worker_log_path = str(
+                    log_path_obj.parent / "vectorization_worker.log"
+                )
+            else:
+                # Default log path
+                worker_log_path = str(storage.config_dir / "logs" / "vectorization_worker.log")
+
+            # Start single universal worker using worker_launcher
+            logger.info("🚀 Starting universal vectorization worker...")
+            print("🚀 Starting universal vectorization worker...", flush=True)
+
+            result = start_vectorization_worker(
+                db_path=str(db_path),
+                faiss_dir=str(faiss_dir),
+                vector_dim=vector_dim,
+                svo_config=svo_config,
+                batch_size=batch_size,
+                poll_interval=poll_interval,
+                worker_log_path=worker_log_path,
             )
 
-            started_processes = []
-            for project_id in project_ids:
-                # Get all datasets for this project
-                driver_config = create_driver_config_for_worker(db_path)
-                database = CodeDatabase(driver_config=driver_config)
-                try:
-                    datasets = database.get_project_datasets(project_id)
-                    if not datasets:
-                        logger.warning(
-                            f"⚠️  No datasets found for project {project_id}, skipping vectorization worker"
-                        )
-                        continue
-
-                    # Start worker for each dataset
-                    for dataset in datasets:
-                        dataset_id = dataset["id"]
-                        dataset_root = dataset["root_path"]
-
-                        # Get dataset-scoped FAISS index path
-                        index_path = get_faiss_index_path(
-                            storage.faiss_dir, project_id, dataset_id
-                        )
-
-                        # Create unique log path for each dataset if base log path is provided
-                        dataset_log_path = None
-                        if worker_log_path:
-                            log_path_obj = Path(worker_log_path)
-                            dataset_log_path = str(
-                                log_path_obj.parent
-                                / f"{log_path_obj.stem}_{project_id[:8]}_{dataset_id[:8]}{log_path_obj.suffix}"
-                            )
-
-                        scope_desc = f"project={project_id}, dataset={dataset_id} (root={dataset_root})"
-                        print(
-                            f"🚀 Starting vectorization worker for {scope_desc}",
-                            flush=True,
-                        )
-                        logger.info(
-                            f"🚀 Starting vectorization worker for {scope_desc}"
-                        )
-                        if dataset_log_path:
-                            logger.info(f"📝 Worker log file: {dataset_log_path}")
-
-                        process = multiprocessing.Process(
-                            target=run_vectorization_worker,
-                            args=(
-                                str(db_path),
-                                project_id,
-                                str(index_path),
-                                vector_dim,
-                                dataset_id,  # Pass dataset_id for dataset-scoped processing
-                            ),
-                            kwargs={
-                                "svo_config": svo_config,
-                                "batch_size": batch_size,
-                                "poll_interval": poll_interval,
-                                "worker_log_path": dataset_log_path,
-                            },
-                            daemon=True,  # Daemon process will be killed when parent exits
-                        )
-                        process.start()
-                        print(
-                            f"✅ Vectorization worker started with PID {process.pid} for {scope_desc}",
-                            flush=True,
-                        )
-                        logger.info(
-                            f"✅ Vectorization worker started with PID {process.pid} for {scope_desc}"
-                        )
-                        started_processes.append(process)
-
-                        # Write PID file next to log file (used by get_worker_status)
-                        if dataset_log_path:
-                            try:
-                                pid_file_path = Path(dataset_log_path).with_suffix(
-                                    ".pid"
-                                )
-                                pid_file_path.write_text(str(process.pid))
-                            except Exception:
-                                logger.exception(
-                                    f"Failed to write vectorization worker PID file for {scope_desc}"
-                                )
-
-                            # Create restart function for this worker (capture values, not references)
-                            _db_path_val = str(db_path)
-                            _project_id_val = project_id
-                            _dataset_id_val = dataset_id
-                            _faiss_index_path_val = str(index_path)
-                            _vector_dim_val = vector_dim
-                            _svo_config_val = svo_config
-                            _batch_size_val = batch_size
-                            _poll_interval_val = poll_interval
-                            _dataset_log_path_val = dataset_log_path
-
-                            def _restart_vectorization_worker() -> dict[str, Any]:
-                                """Restart vectorization worker.
-
-                                Returns:
-                                    Worker registration data for WorkerManager.
-                                """
-                                new_process = multiprocessing.Process(
-                                    target=run_vectorization_worker,
-                                    args=(
-                                        _db_path_val,
-                                        _project_id_val,
-                                        _faiss_index_path_val,
-                                        _vector_dim_val,
-                                        _dataset_id_val,  # Pass dataset_id
-                                    ),
-                                    kwargs={
-                                        "svo_config": _svo_config_val,
-                                        "batch_size": _batch_size_val,
-                                        "poll_interval": _poll_interval_val,
-                                        "worker_log_path": _dataset_log_path_val,
-                                    },
-                                    daemon=True,
-                                )
-                                new_process.start()
-                                if _dataset_log_path_val:
-                                    try:
-                                        pid_file_path = Path(
-                                            _dataset_log_path_val
-                                        ).with_suffix(".pid")
-                                        pid_file_path.write_text(str(new_process.pid))
-                                    except Exception:
-                                        pass
-                                return {
-                                    "pid": new_process.pid,
-                                    "process": new_process,
-                                    "name": f"vectorization_{_project_id_val}_{_dataset_id_val[:8]}",
-                                    "restart_func": _restart_vectorization_worker,
-                                    "restart_args": (),
-                                    "restart_kwargs": {},
-                                }
-
-                            # Register worker in WorkerManager with restart function
-                            from code_analysis.core.worker_manager import (
-                                get_worker_manager,
-                            )
-
-                            worker_manager = get_worker_manager()
-                            worker_name = f"vectorization_{project_id}_{dataset_id[:8]}"
-                            logger.info(
-                                f"📝 Registering vectorization worker in WorkerManager: "
-                                f"PID={process.pid}, {scope_desc}"
-                            )
-                            worker_manager.register_worker(
-                                "vectorization",
-                                {
-                                    "pid": process.pid,
-                                    "process": process,
-                                    "name": worker_name,
-                                    "restart_func": _restart_vectorization_worker,
-                                    "restart_args": (),
-                                    "restart_kwargs": {},
-                                },
-                            )
-                            logger.info(
-                                f"✅ Vectorization worker registered in WorkerManager: "
-                                f"PID={process.pid}, name={worker_name}"
-                            )
-                            started_processes.append((project_id, dataset_id, process))
-                finally:
-                    database.close()
-
-            total_workers = len(started_processes)
-            total_projects = len(project_ids)
-            logger.info(
-                f"✅ Started {total_workers} vectorization worker(s) for {total_projects} project(s)"
-            )
+            if result.success:
+                logger.info(
+                    f"✅ Universal vectorization worker started: {result.message}"
+                )
+                print(f"✅ {result.message}", flush=True)
+            else:
+                logger.warning(
+                    f"⚠️  Failed to start universal vectorization worker: {result.message}"
+                )
+                print(f"⚠️  {result.message}", flush=True)
 
         except Exception as e:
             print(

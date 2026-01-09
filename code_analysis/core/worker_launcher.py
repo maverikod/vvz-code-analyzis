@@ -67,7 +67,7 @@ def start_file_watcher_worker(
         WorkerStartResult.
     """
     from .file_watcher_pkg.runner import run_file_watcher_worker
-    
+
     process = multiprocessing.Process(
         target=run_file_watcher_worker,
         args=(db_path, watch_dirs),
@@ -99,28 +99,23 @@ def start_file_watcher_worker(
 def start_vectorization_worker(
     *,
     db_path: str,
-    project_id: str,
-    faiss_index_path: str,
+    faiss_dir: str,
     vector_dim: int = 384,
-    dataset_id: Optional[str] = None,
     svo_config: Optional[Dict[str, Any]] = None,
     batch_size: int = 10,
     poll_interval: int = 30,
     worker_log_path: Optional[str] = None,
 ) -> WorkerStartResult:
     """
-    Start vectorization worker in a separate process and register it.
+    Start universal vectorization worker in a separate process and register it.
 
-    Implements dataset-scoped vectorization (Step 2 of refactor plan).
-    If dataset_id is provided, processes chunks only for that dataset using dataset-scoped FAISS index.
-    If dataset_id is None, processes chunks for all datasets in project (legacy mode).
+    Worker operates in universal mode - processes all projects from database.
+    Worker works only with database - no filesystem access, no watch_dirs.
 
     Args:
         db_path: Path to database file.
-        project_id: Project ID to process.
-        faiss_index_path: Path to FAISS index file (must be dataset-scoped if dataset_id provided).
+        faiss_dir: Base directory for FAISS index files (project-scoped indexes: {faiss_dir}/{project_id}.bin).
         vector_dim: Embedding vector dimension.
-        dataset_id: Optional dataset ID to filter by (for dataset-scoped processing).
         svo_config: Optional SVO config dict.
         batch_size: Batch size.
         poll_interval: Poll interval seconds.
@@ -129,11 +124,43 @@ def start_vectorization_worker(
     Returns:
         WorkerStartResult.
     """
+    import logging
+    import os
+    from pathlib import Path
+
+    logger = logging.getLogger(__name__)
+
     from .vectorization_worker_pkg.runner import run_vectorization_worker
+
+    # PID file check (before starting worker)
+    pid_file_path = Path("logs") / "vectorization_worker.pid"
+    if pid_file_path.exists():
+        try:
+            with open(pid_file_path, "r") as f:
+                pid = int(f.read().strip())
+            # Check if process is alive
+            try:
+                os.kill(pid, 0)  # Signal 0 just checks if process exists
+                # Process is alive, worker already running
+                return WorkerStartResult(
+                    success=False,
+                    worker_type="vectorization",
+                    pid=pid,
+                    message="Vectorization worker already running",
+                )
+            except OSError:
+                # Process is dead, remove stale PID file
+                pid_file_path.unlink()
+        except Exception as e:
+            logger.warning(f"Error checking PID file: {e}, removing stale file")
+            try:
+                pid_file_path.unlink()
+            except Exception:
+                pass
 
     process = multiprocessing.Process(
         target=run_vectorization_worker,
-        args=(db_path, project_id, faiss_index_path, int(vector_dim), dataset_id),
+        args=(db_path, faiss_dir, int(vector_dim)),
         kwargs={
             "svo_config": svo_config,
             "batch_size": int(batch_size),
@@ -144,9 +171,17 @@ def start_vectorization_worker(
     )
     process.start()
 
+    # Write PID file after worker starts
+    try:
+        pid_file_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(pid_file_path, "w") as f:
+            f.write(str(process.pid))
+    except Exception as e:
+        logger.warning(f"Failed to write PID file: {e}")
+
     get_worker_manager().register_worker(
         "vectorization",
-        {"pid": process.pid, "process": process, "name": f"vectorization_{project_id}"},
+        {"pid": process.pid, "process": process, "name": "vectorization_universal"},
     )
     return WorkerStartResult(
         success=True,
@@ -168,5 +203,3 @@ def stop_worker_type(worker_type: str, *, timeout: float = 10.0) -> Dict[str, An
         Stop result dict.
     """
     return get_worker_manager().stop_worker_type(worker_type, timeout=timeout)
-
-

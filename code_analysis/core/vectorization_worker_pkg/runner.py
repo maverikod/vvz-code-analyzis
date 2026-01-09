@@ -78,10 +78,8 @@ def _setup_worker_logging(
 
 def run_vectorization_worker(
     db_path: str,
-    project_id: str,
-    faiss_index_path: str,
+    faiss_dir: str,
     vector_dim: int,
-    dataset_id: Optional[str] = None,
     svo_config: Optional[Dict[str, Any]] = None,
     batch_size: int = 10,
     poll_interval: int = 30,
@@ -92,21 +90,19 @@ def run_vectorization_worker(
     log_backup_count: int = 5,
 ) -> Dict[str, Any]:
     """
-    Run vectorization worker in separate process with continuous polling.
+    Run universal vectorization worker in separate process with continuous polling.
 
-    Implements dataset-scoped vectorization (Step 2 of refactor plan).
-    If dataset_id is provided, processes chunks only for that dataset using dataset-scoped FAISS index.
-    If dataset_id is None, processes chunks for all datasets in project (legacy mode).
+    Worker operates in universal mode - processes all projects from database.
+    Worker works only with database - no filesystem access, no watch_dirs.
+    Worker periodically queries database to discover projects with files/chunks needing vectorization.
 
     This function is designed to be called from multiprocessing.Process.
     It runs indefinitely, checking for chunks to vectorize at specified intervals.
 
     Args:
         db_path: Path to database file
-        project_id: Project ID to process (REQUIRED)
-        faiss_index_path: Path to FAISS index file (must be dataset-scoped if dataset_id provided)
+        faiss_dir: Base directory for FAISS index files (project-scoped indexes: {faiss_dir}/{project_id}.bin)
         vector_dim: Vector dimension
-        dataset_id: Optional dataset ID to filter by (for dataset-scoped processing)
         svo_config: SVO client configuration (optional)
         batch_size: Batch size for processing
         poll_interval: Interval in seconds between polling cycles (default: 30)
@@ -124,12 +120,36 @@ def run_vectorization_worker(
     # Setup worker logging first
     _setup_worker_logging(worker_log_path, log_max_bytes, log_backup_count)
 
-    scope_desc = f"project={project_id}, dataset={dataset_id}" if dataset_id else f"project={project_id}"
     logger.info(
-        f"Starting continuous vectorization worker for {scope_desc}, "
+        f"Starting universal vectorization worker, "
         f"poll interval: {poll_interval}s, "
-        f"FAISS index: {faiss_index_path}"
+        f"FAISS directory: {faiss_dir}"
     )
+
+    # Database auto-creation (if database doesn't exist, create it)
+    from ..database import CodeDatabase
+    from ..database.base import create_driver_config_for_worker
+    
+    db_path_obj = Path(db_path)
+    
+    # Ensure parent directory exists
+    db_path_obj.parent.mkdir(parents=True, exist_ok=True)
+    
+    # Create database connection (will automatically create schema if doesn't exist)
+    driver_config = create_driver_config_for_worker(
+        db_path=db_path_obj,
+        driver_type="sqlite_proxy",
+    )
+    
+    # Check if database exists, create if not
+    if not db_path_obj.exists():
+        logger.info(f"Database file not found, creating new database at {db_path}")
+        try:
+            init_database = CodeDatabase(driver_config=driver_config)
+            init_database.close()
+            logger.info(f"Created new database at {db_path}")
+        except Exception as e:
+            logger.warning(f"Failed to create database: {e}, continuing anyway")
 
     # Initialize SVO client manager if config provided
     svo_client_manager = None
@@ -149,28 +169,9 @@ def run_vectorization_worker(
     else:
         logger.warning("No svo_config provided, SVO client manager will not be initialized")
 
-    # Initialize FAISS manager
+    # FAISS index sync check for all projects at startup
     try:
-        faiss_manager = FaissIndexManager(
-            index_path=faiss_index_path,
-            vector_dim=vector_dim,
-        )
-    except Exception as e:
-        logger.error(f"Failed to initialize FAISS manager: {e}")
-        if svo_client_manager:
-            asyncio.run(svo_client_manager.close())
-        return {"processed": 0, "errors": 1}
-
-    # Check index synchronization with database
-    try:
-        from ..database import CodeDatabase
-        from ..database.base import create_driver_config_for_worker
-
-        logger.info("Checking FAISS index synchronization with database...")
-        driver_config = create_driver_config_for_worker(
-            db_path=Path(db_path),
-            driver_type="sqlite_proxy",
-        )
+        logger.info("Checking FAISS index synchronization with database for all projects...")
         # Override timeout for sync check
         if driver_config.get("type") == "sqlite_proxy":
             driver_config["config"]["worker_config"]["command_timeout"] = 30.0
@@ -178,65 +179,84 @@ def run_vectorization_worker(
 
         try:
             sync_database = CodeDatabase(driver_config=driver_config)
-            # Test connection
-            try:
-                sync_database.get_project(project_id)
-            except Exception as conn_e:
-                logger.warning(
-                    f"⚠️  Database is unavailable during startup sync check: {conn_e}. "
-                    "Skipping index synchronization check. Worker will retry when database becomes available."
-                )
-                sync_database = None
-
-            if sync_database is not None:
-                try:
-                    is_synced, sync_details = faiss_manager.check_index_sync(
-                        database=sync_database,
-                        project_id=project_id,
-                        dataset_id=dataset_id,
-                    )
-
-                    if not is_synced:
-                        logger.warning(
-                            f"⚠️  FAISS index synchronization check failed for {scope_desc}:"
+            # Get all projects from database
+            all_projects = sync_database.get_all_projects()
+            
+            if not all_projects:
+                logger.info("No projects found in database, skipping FAISS sync check")
+            else:
+                logger.info(f"Checking FAISS index sync for {len(all_projects)} projects...")
+                faiss_dir_path = Path(faiss_dir)
+                
+                for project in all_projects:
+                    project_id = project["id"]
+                    project_path = project.get("root_path", "unknown")
+                    
+                    # Get project-scoped FAISS index path
+                    index_path = faiss_dir_path / f"{project_id}.bin"
+                    
+                    try:
+                        # Create FAISS manager for this project
+                        faiss_manager = FaissIndexManager(
+                            index_path=str(index_path),
+                            vector_dim=vector_dim,
                         )
-                        logger.warning(
-                            f"   Database vectors: {sync_details['db_vector_count']}, "
-                            f"Index vectors: {sync_details['index_vector_count']}"
+                        
+                        # Check sync (datasets EXCLUDED)
+                        is_synced, sync_details = faiss_manager.check_index_sync(
+                            database=sync_database,
+                            project_id=project_id,
                         )
-                        if sync_details.get("missing_in_index_count", 0) > 0:
+                        
+                        if not is_synced:
                             logger.warning(
-                                f"   Missing in index: {sync_details['missing_in_index_count']} vectors "
-                                f"(sample: {sync_details['missing_in_index'][:10]})"
+                                f"⚠️  FAISS index synchronization check failed for project {project_id} ({project_path}):"
                             )
-                        if sync_details.get("extra_in_index_count", 0) > 0:
                             logger.warning(
-                                f"   Extra in index: {sync_details['extra_in_index_count']} vectors "
-                                f"(sample: {sync_details['extra_in_index'][:10]})"
+                                f"   Database vectors: {sync_details['db_vector_count']}, "
+                                f"Index vectors: {sync_details['index_vector_count']}"
                             )
-
-                        logger.info(
-                            f"🔄 Rebuilding FAISS index from database to fix synchronization issues..."
-                        )
-                        # Rebuild index from database
-                        vectors_count = asyncio.run(
-                            faiss_manager.rebuild_from_database(
-                                database=sync_database,
-                                svo_client_manager=svo_client_manager,
-                                project_id=project_id,
-                                dataset_id=dataset_id,
+                            if sync_details.get("missing_in_index_count", 0) > 0:
+                                logger.warning(
+                                    f"   Missing in index: {sync_details['missing_in_index_count']} vectors "
+                                    f"(sample: {sync_details['missing_in_index'][:10]})"
+                                )
+                            if sync_details.get("extra_in_index_count", 0) > 0:
+                                logger.warning(
+                                    f"   Extra in index: {sync_details['extra_in_index_count']} vectors "
+                                    f"(sample: {sync_details['extra_in_index'][:10]})"
+                                )
+                            
+                            logger.info(
+                                f"🔄 Rebuilding FAISS index from database for project {project_id}..."
                             )
+                            # Rebuild index from database (datasets EXCLUDED)
+                            vectors_count = asyncio.run(
+                                faiss_manager.rebuild_from_database(
+                                    database=sync_database,
+                                    svo_client_manager=svo_client_manager,
+                                    project_id=project_id,
+                                )
+                            )
+                            logger.info(
+                                f"✅ FAISS index rebuilt: {vectors_count} vectors loaded for project {project_id}"
+                            )
+                        else:
+                            logger.info(
+                                f"✅ FAISS index is synchronized with database for project {project_id}: "
+                                f"{sync_details['index_vector_count']} vectors"
+                            )
+                        
+                        # Close FAISS manager
+                        faiss_manager = None
+                    except Exception as project_e:
+                        logger.warning(
+                            f"Failed to check/rebuild FAISS index for project {project_id}: {project_e}",
+                            exc_info=True,
                         )
-                        logger.info(
-                            f"✅ FAISS index rebuilt: {vectors_count} vectors loaded for {scope_desc}"
-                        )
-                    else:
-                        logger.info(
-                            f"✅ FAISS index is synchronized with database for {scope_desc}: "
-                            f"{sync_details['index_vector_count']} vectors"
-                        )
-                finally:
-                    sync_database.close()
+                        # Continue with next project
+                
+            sync_database.close()
         except Exception as db_e:
             logger.warning(
                 f"⚠️  Database is unavailable during startup sync check: {db_e}. "
@@ -245,10 +265,10 @@ def run_vectorization_worker(
     except Exception as e:
         logger.warning(
             f"Failed to check FAISS index synchronization: {e}. "
-            "Continuing with worker startup, but index may be out of sync.",
+            "Continuing with worker startup, but indexes may be out of sync.",
             exc_info=True,
         )
-        # Continue anyway - worker can still function, but index may need manual rebuild
+        # Continue anyway - worker can still function, but indexes may need manual rebuild
 
     # Get retry config, min_chunk_length, and batch_processor config from svo_config if available
     min_chunk_length = 30  # default
@@ -283,13 +303,12 @@ def run_vectorization_worker(
         except Exception:
             pass  # Use defaults
 
-    # Create and run worker
+    # Create and run worker (universal mode - no project_id, no faiss_manager at init)
     worker = VectorizationWorker(
         db_path=Path(db_path),
-        project_id=project_id,
-        dataset_id=dataset_id,
+        faiss_dir=Path(faiss_dir),
+        vector_dim=vector_dim,
         svo_client_manager=svo_client_manager,
-        faiss_manager=faiss_manager,
         batch_size=batch_size,
         retry_attempts=retry_attempts,
         retry_delay=retry_delay,

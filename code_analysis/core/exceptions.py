@@ -141,3 +141,263 @@ class ConfigurationError(CodeAnalysisError):
         """
         super().__init__(message, code="CONFIGURATION_ERROR", details=details)
         self.config_key = config_key
+
+
+# Project-related exceptions
+
+
+class ProjectIdError(CodeAnalysisError):
+    """Raised when project_id cannot be loaded or validated."""
+
+    def __init__(self, message: str, project_id: str = None, details: dict = None):
+        """
+        Initialize project ID error.
+
+        Args:
+            message: Error message
+            project_id: Optional project ID that caused the error
+            details: Optional additional details
+        """
+        super().__init__(message, code="PROJECT_ID_ERROR", details=details)
+        self.project_id = project_id
+
+
+class MultipleProjectIdError(CodeAnalysisError):
+    """Raised when multiple projectid files are found in the path."""
+
+    def __init__(
+        self,
+        message: str,
+        projectid_paths: list = None,
+        details: dict = None,
+    ):
+        """
+        Initialize multiple project ID error.
+
+        Args:
+            message: Error message
+            projectid_paths: Optional list of paths to projectid files
+            details: Optional additional details
+        """
+        super().__init__(message, code="MULTIPLE_PROJECT_ID_ERROR", details=details)
+        self.projectid_paths = projectid_paths or []
+
+
+class ProjectIdMismatchError(CodeAnalysisError):
+    """Raised when project_id from file does not match project_id from database."""
+
+    def __init__(
+        self,
+        message: str,
+        file_project_id: str = None,
+        db_project_id: str = None,
+        details: dict = None,
+    ):
+        """
+        Initialize project ID mismatch error.
+
+        Args:
+            message: Error message
+            file_project_id: Optional project ID from file
+            db_project_id: Optional project ID from database
+            details: Optional additional details
+        """
+        super().__init__(message, code="PROJECT_ID_MISMATCH_ERROR", details=details)
+        self.file_project_id = file_project_id
+        self.db_project_id = db_project_id
+
+
+class ProjectNotFoundError(CodeAnalysisError):
+    """Raised when project is not found."""
+
+    def __init__(self, message: str, project_id: str = None, details: dict = None):
+        """
+        Initialize project not found error.
+
+        Args:
+            message: Error message
+            project_id: Optional project ID that was not found
+            details: Optional additional details
+        """
+        super().__init__(message, code="PROJECT_NOT_FOUND_ERROR", details=details)
+        self.project_id = project_id
+
+
+class InvalidProjectIdFormatError(CodeAnalysisError):
+    """Raised when projectid file has invalid format."""
+
+    def __init__(
+        self,
+        message: str,
+        projectid_path: str = None,
+        details: dict = None,
+    ):
+        """
+        Initialize invalid project ID format error.
+
+        Args:
+            message: Error message
+            projectid_path: Optional path to projectid file
+            details: Optional additional details
+        """
+        super().__init__(
+            message, code="INVALID_PROJECT_ID_FORMAT_ERROR", details=details
+        )
+        self.projectid_path = projectid_path
+
+
+class NestedProjectError(CodeAnalysisError):
+    """Raised when nested projects are detected."""
+
+    def __init__(
+        self,
+        message: str,
+        child_project: str = None,
+        parent_project: str = None,
+        details: dict = None,
+    ):
+        """
+        Initialize nested project error.
+
+        Args:
+            message: Error message
+            child_project: Optional path to child project root
+            parent_project: Optional path to parent project root
+            details: Optional additional details
+        """
+        super().__init__(message, code="NESTED_PROJECT_ERROR", details=details)
+        self.child_project = child_project
+        self.parent_project = parent_project
+
+
+class DuplicateProjectIdError(CodeAnalysisError):
+    """Raised when duplicate project_id is detected in different directories."""
+
+    def __init__(
+        self,
+        message: str,
+        project_id: str = None,
+        existing_root: str = None,
+        duplicate_root: str = None,
+        details: dict = None,
+    ):
+        """
+        Initialize duplicate project ID error.
+
+        Args:
+            message: Error message
+            project_id: Optional project ID that is duplicated
+            existing_root: Optional path to existing project root
+            duplicate_root: Optional path to duplicate project root
+            details: Optional additional details
+        """
+        super().__init__(
+            message, code="DUPLICATE_PROJECT_ID_ERROR", details=details
+        )
+        self.project_id = project_id
+        self.existing_root = existing_root
+        self.duplicate_root = duplicate_root
+
+
+# Git-related exceptions
+
+
+class GitOperationError(CodeAnalysisError):
+    """Raised when git operations fail."""
+
+    def __init__(
+        self,
+        message: str,
+        operation: str = None,
+        git_command: str = None,
+        details: dict = None,
+    ):
+        """
+        Initialize git operation error.
+
+        Args:
+            message: Error message
+            operation: Optional git operation name
+            git_command: Optional git command that failed
+            details: Optional additional details
+        """
+        super().__init__(message, code="GIT_OPERATION_ERROR", details=details)
+        self.operation = operation
+        self.git_command = git_command
+
+
+# CST-related exceptions
+
+
+class CSTModulePatchError(CodeAnalysisError):
+    """Raised when a CST patch cannot be applied safely."""
+
+    def __init__(
+        self,
+        message: str,
+        patch_type: str = None,
+        file_path: str = None,
+        details: dict = None,
+    ):
+        """
+        Initialize CST module patch error.
+
+        Args:
+            message: Error message
+            patch_type: Optional type of patch that failed
+            file_path: Optional path to file being patched
+            details: Optional additional details
+        """
+        super().__init__(message, code="CST_MODULE_PATCH_ERROR", details=details)
+        self.patch_type = patch_type
+        self.file_path = file_path
+
+
+class DocstringValidationError(CSTModulePatchError):
+    """Raised when docstring validation fails."""
+
+    def __init__(
+        self,
+        message: str,
+        file_path: str = None,
+        validation_errors: list = None,
+        details: dict = None,
+    ):
+        """
+        Initialize docstring validation error.
+
+        Args:
+            message: Error message
+            file_path: Optional path to file with validation errors
+            validation_errors: Optional list of validation error messages
+            details: Optional additional details
+        """
+        super().__init__(message, patch_type="docstring", file_path=file_path, details=details)
+        self.validation_errors = validation_errors or []
+
+
+# Query-related exceptions
+
+
+class QueryParseError(CodeAnalysisError):
+    """Raised when CSTQuery selector parsing fails."""
+
+    def __init__(
+        self,
+        message: str,
+        query_string: str = None,
+        parse_position: int = None,
+        details: dict = None,
+    ):
+        """
+        Initialize query parse error.
+
+        Args:
+            message: Error message
+            query_string: Optional query string that failed to parse
+            parse_position: Optional position in query string where error occurred
+            details: Optional additional details
+        """
+        super().__init__(message, code="QUERY_PARSE_ERROR", details=details)
+        self.query_string = query_string
+        self.parse_position = parse_position

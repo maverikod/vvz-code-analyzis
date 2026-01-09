@@ -33,7 +33,15 @@ def get_file_by_path(
     from ..project_resolution import normalize_abs_path
 
     # Normalize path to absolute (Step 5: absolute paths everywhere)
+    # Ensure consistent normalization - use resolve() to handle symlinks and relative paths
     abs_path = normalize_abs_path(path)
+    
+    # Log normalization for debugging path mismatches
+    if path != abs_path:
+        logger.debug(
+            f"[get_file_by_path] Path normalized: {path!r} -> {abs_path!r} | "
+            f"project_id={project_id} | include_deleted={include_deleted}"
+        )
 
     if include_deleted:
         row = self._fetchone(
@@ -80,7 +88,15 @@ def add_file(
     from ..project_resolution import normalize_abs_path
 
     # Normalize path to absolute (Step 5: absolute paths everywhere)
+    # Ensure consistent normalization - use resolve() to handle symlinks and relative paths
     abs_path = normalize_abs_path(path)
+    
+    # Log normalization for debugging
+    if path != abs_path:
+        logger.debug(
+            f"[add_file] Path normalized: {path!r} -> {abs_path!r} | "
+            f"project_id={project_id} | dataset_id={dataset_id}"
+        )
 
     # Check if file exists in a different project
     existing_file = self._fetchone(
@@ -320,10 +336,34 @@ def update_file_data(
         abs_path = normalize_abs_path(file_path)
         if not Path(abs_path).is_absolute():
             abs_path = str((Path(root_dir) / file_path).resolve())
+        
+        # Log normalization for debugging
+        if file_path != abs_path:
+            logger.debug(
+                f"[update_file_data] Path normalized: {file_path!r} -> {abs_path!r} | "
+                f"project_id={project_id} | root_dir={root_dir}"
+            )
 
         # Get file record
         file_record = self.get_file_by_path(abs_path, project_id)
         if not file_record:
+            # Try to find file by searching all files in project (fallback for debugging)
+            logger.warning(
+                f"[update_file_data] File not found by path: {abs_path} | "
+                f"project_id={project_id}. Searching in project..."
+            )
+            # Try to find by filename only (last resort)
+            filename = Path(abs_path).name
+            all_files = self._fetchall(
+                "SELECT id, path FROM files WHERE project_id = ? AND path LIKE ? AND (deleted = 0 OR deleted IS NULL)",
+                (project_id, f"%{filename}"),
+            )
+            if all_files:
+                logger.warning(
+                    f"[update_file_data] Found {len(all_files)} files with same name. "
+                    f"Expected: {abs_path}, Found: {[f['path'] for f in all_files[:3]]}"
+                )
+            
             return {
                 "success": False,
                 "error": f"File not found in database: {file_path}",

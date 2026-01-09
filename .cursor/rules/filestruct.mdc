@@ -65,3 +65,4 @@ When adding new files, ensure they are placed in the correct directory:
 - ✅ Tests (pytest) → `tests/`
 - ✅ Source code → `code_analysis/`
 
+test_data - directory contain test data for testing purposes. Each dataset musk be palcewd to their directory. Each test project's subdirectory must have their projectid  file

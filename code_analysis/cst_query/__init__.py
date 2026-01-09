@@ -13,7 +13,7 @@ Author: Vasiliy Zdanovskiy
 email: vasilyvz@gmail.com
 """
 
-from .errors import QueryParseError
+from ..core.exceptions import QueryParseError
 from .ast import (
     Combinator,
     Predicate,

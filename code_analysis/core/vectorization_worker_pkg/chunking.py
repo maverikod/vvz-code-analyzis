@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import ast
 import logging
+import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict, List
 
@@ -46,35 +47,42 @@ async def _request_chunking_for_files(
         if self._stop_event.is_set():
             break
 
+        file_start_time = time.time()
         try:
             file_id = file_record["id"]
             file_path = file_record["path"]
             project_id = file_record["project_id"]
 
-            logger.info(f"Requesting chunking for file {file_path} (id={file_id})")
+            logger.info(f"[FILE {file_id}] Starting chunking for file {file_path}")
 
             # Check if file exists on disk before attempting to read
             file_path_obj = Path(file_path)
             if not file_path_obj.exists():
                 logger.debug(
-                    f"Skipping missing file (may have been split/refactored): {file_path}"
+                    f"[FILE {file_id}] Skipping missing file (may have been split/refactored): {file_path}"
                 )
                 continue
 
+            logger.debug(f"[FILE {file_id}] Reading file from disk...")
             try:
                 file_content = file_path_obj.read_text(encoding="utf-8")
+                logger.debug(f"[FILE {file_id}] File read: {len(file_content)} bytes")
             except Exception as e:
-                logger.warning(f"Failed to read file {file_path}: {e}")
+                logger.warning(f"[FILE {file_id}] Failed to read file {file_path}: {e}")
                 continue
 
             # Parse AST
+            logger.debug(f"[FILE {file_id}] Parsing AST...")
             try:
                 tree = ast.parse(file_content, filename=file_path)
+                logger.debug(f"[FILE {file_id}] AST parsed successfully")
             except Exception as e:
-                logger.warning(f"Failed to parse AST for {file_path}: {e}")
+                logger.warning(f"[FILE {file_id}] Failed to parse AST for {file_path}: {e}")
                 continue
 
             # Process file with chunker
+            logger.info(f"[FILE {file_id}] Processing file with chunker...")
+            chunking_start_time = time.time()
             await chunker.process_file(
                 file_id=file_id,
                 project_id=project_id,
@@ -82,9 +90,12 @@ async def _request_chunking_for_files(
                 tree=tree,
                 file_content=file_content,
             )
+            chunking_duration = time.time() - chunking_start_time
+            logger.info(f"[FILE {file_id}] Chunking completed in {chunking_duration:.3f}s")
 
             chunked_count += 1
-            logger.info(f"Successfully chunked file {file_path}")
+            file_duration = time.time() - file_start_time
+            logger.info(f"[FILE {file_id}] Successfully chunked file {file_path} in {file_duration:.3f}s total")
 
         except Exception as e:
             logger.error(

@@ -140,7 +140,8 @@ def scan_directory(
         Files without a project (no projectid found) are skipped with a warning.
     """
     from ..project_resolution import normalize_abs_path
-    from ..project_discovery import find_project_root, NestedProjectError
+    from ..project_discovery import find_project_root
+    from ..exceptions import NestedProjectError
     from typing import Any
     
     files: Dict[str, Dict] = {}

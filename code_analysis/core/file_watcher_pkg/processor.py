@@ -580,6 +580,34 @@ class FileChangeProcessor:
                     return result
             
             # Check if file exists in database (using normalized path)
+            # Normalize path consistently - ensure we use the same normalization everywhere
+            # Path should be absolute and resolved (symlinks resolved, relative parts resolved)
+            from ..project_resolution import normalize_abs_path as norm_path
+            normalized_path = norm_path(abs_file_path)
+            if normalized_path != abs_file_path:
+                logger.debug(
+                    f"[QUEUE] Path re-normalized: {abs_file_path} -> {normalized_path}"
+                )
+                abs_file_path = normalized_path
+            
+            # Verify that file path is within project root (safety check)
+            if root_dir:
+                try:
+                    file_path_obj = Path(abs_file_path)
+                    project_root_obj = Path(root_dir).resolve()
+                    # Check if file is within project root
+                    file_path_obj.relative_to(project_root_obj)
+                    logger.debug(
+                        f"[QUEUE] File path verified within project root: "
+                        f"file={abs_file_path}, project_root={project_root_obj}"
+                    )
+                except ValueError:
+                    logger.warning(
+                        f"[QUEUE] File path is outside project root: "
+                        f"file={abs_file_path}, project_root={root_dir}"
+                    )
+                    # Continue anyway - file might be in a different location
+            
             file_record = self.database.get_file_by_path(abs_file_path, project_id)
             if not file_record:
                 # New file: insert/update file record first
@@ -600,7 +628,8 @@ class FileChangeProcessor:
                     )
                 
                 try:
-                    self.database.add_file(
+                    # Add file and get file_id (add_file returns file_id on success)
+                    file_id = self.database.add_file(
                         path=abs_file_path,
                         lines=lines,
                         last_modified=mtime,
@@ -608,21 +637,57 @@ class FileChangeProcessor:
                         project_id=project_id,
                         dataset_id=dataset_id,
                     )
-                    # Verify file was added successfully
-                    file_record = self.database.get_file_by_path(abs_file_path, project_id)
+                    logger.debug(
+                        f"[QUEUE] File added to database: {abs_file_path} | "
+                        f"file_id={file_id} | project_id={project_id} | dataset_id={dataset_id}"
+                    )
+                    
+                    # Verify file was added successfully by checking file_id
+                    # Use get_file_by_id instead of get_file_by_path to avoid path normalization issues
+                    file_record = self.database.get_file_by_id(file_id)
                     if not file_record:
                         logger.error(
-                            f"[QUEUE] File was added but not found in database: {abs_file_path}. "
+                            f"[QUEUE] File was added (file_id={file_id}) but not found in database: {abs_file_path}. "
                             "This may indicate a transaction issue."
                         )
-                        return False
+                        # Try to get by path as fallback for debugging
+                        file_record_by_path = self.database.get_file_by_path(abs_file_path, project_id)
+                        if file_record_by_path:
+                            logger.warning(
+                                f"[QUEUE] File found by path but not by id: file_id={file_id}, "
+                                f"found_file_id={file_record_by_path.get('id')}, path={abs_file_path}"
+                            )
+                            file_record = file_record_by_path
+                        else:
+                            # Log detailed debug info
+                            logger.error(
+                                f"[QUEUE] File not found by path either. "
+                                f"Normalized path: {abs_file_path}, project_id: {project_id}"
+                            )
+                            return False
+                    else:
+                        logger.debug(
+                            f"[QUEUE] File verified in database: file_id={file_id}, "
+                            f"path={file_record.get('path')}, project_id={file_record.get('project_id')}"
+                        )
                 except Exception as e:
                     logger.error(
-                        f"[QUEUE] Failed to add new file record: {abs_file_path} ({e})"
+                        f"[QUEUE] Failed to add new file record: {abs_file_path} ({e})",
+                        exc_info=True
                     )
                     return False
             
             # Update all database records for changed file (using normalized path)
+            # Use file_id if available to avoid path lookup issues
+            if file_record and file_record.get("id"):
+                # File already exists - use file_id for update
+                # But update_file_data requires path, so we still pass it
+                # However, we ensure the path is correctly normalized
+                logger.debug(
+                    f"[QUEUE] Updating file data: file_id={file_record.get('id')}, "
+                    f"path={abs_file_path}, project_id={project_id}"
+                )
+            
             update_result = self.database.update_file_data(
                 file_path=abs_file_path,
                 project_id=project_id,

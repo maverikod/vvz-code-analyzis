@@ -14,7 +14,7 @@ from libcst.metadata import MetadataWrapper, PositionProvider
 
 from ...cst_query import query_source
 from .blocks import list_cst_blocks
-from .errors import CSTModulePatchError
+from ..exceptions import CSTModulePatchError
 from .models import BlockInfo, InsertOp, Selector
 from .patcher import _parse_node_id, _parse_snippet_as_module_body
 from .utils import move_module_imports_to_top

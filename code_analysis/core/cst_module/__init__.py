@@ -8,13 +8,13 @@ Author: Vasiliy Zdanovskiy
 email: vasilyvz@gmail.com
 """
 
-from .errors import CSTModulePatchError
+from ..exceptions import CSTModulePatchError, DocstringValidationError
 from .models import BlockInfo, ReplaceOp, InsertOp, CreateOp, Selector
 from .blocks import list_cst_blocks
 from .patcher import apply_replace_ops
 from .patcher_insert import apply_insert_ops
 from .patcher_create import apply_create_ops
-from .docstring_validator import validate_module_docstrings, DocstringValidationError
+from .docstring_validator import validate_module_docstrings
 from .utils import (
     compile_module,
     move_module_imports_to_top,

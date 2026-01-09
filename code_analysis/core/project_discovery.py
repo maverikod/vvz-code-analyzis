@@ -16,48 +16,14 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import List, Optional
 
-from .project_resolution import ProjectIdError, load_project_id
+from .exceptions import (
+    DuplicateProjectIdError,
+    NestedProjectError,
+    ProjectIdError,
+)
+from .project_resolution import load_project_id
 
 logger = logging.getLogger(__name__)
-
-
-class NestedProjectError(ValueError):
-    """Raised when nested projects are detected."""
-
-    def __init__(self, child_project: Path, parent_project: Path):
-        """
-        Initialize nested project error.
-
-        Args:
-            child_project: Path to child project root (contains projectid)
-            parent_project: Path to parent project root (contains projectid)
-        """
-        self.child_project = child_project
-        self.parent_project = parent_project
-        super().__init__(
-            f"Nested projects detected: {child_project} is inside {parent_project}"
-        )
-
-
-class DuplicateProjectIdError(ValueError):
-    """Raised when duplicate project_id is detected in different directories."""
-
-    def __init__(self, project_id: str, existing_root: Path, duplicate_root: Path):
-        """
-        Initialize duplicate project ID error.
-
-        Args:
-            project_id: Project ID that is duplicated
-            existing_root: Path to existing project root with this ID
-            duplicate_root: Path to duplicate project root with same ID
-        """
-        self.project_id = project_id
-        self.existing_root = existing_root
-        self.duplicate_root = duplicate_root
-        super().__init__(
-            f"Duplicate project_id {project_id} detected: "
-            f"already used in {existing_root}, found again in {duplicate_root}"
-        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -207,7 +173,11 @@ def validate_no_nested_projects(project_root: Path, watch_dir: Path) -> None:
         projectid_path = current / "projectid"
         if projectid_path.exists() and projectid_path.is_file():
             # Found nested project
-            raise NestedProjectError(child_project=project_root, parent_project=current)
+            raise NestedProjectError(
+                message=f"Nested projects detected: {project_root} is inside {current}",
+                child_project=str(project_root),
+                parent_project=str(current),
+            )
 
         # Move up one level
         parent = current.parent
@@ -237,9 +207,13 @@ def validate_no_duplicate_project_ids(
         if existing:
             if existing.root_path != project.root_path:
                 raise DuplicateProjectIdError(
+                    message=(
+                        f"Duplicate project_id {project.project_id} detected: "
+                        f"already used in {existing.root_path}, found again in {project.root_path}"
+                    ),
                     project_id=project.project_id,
-                    existing_root=existing.root_path,
-                    duplicate_root=project.root_path,
+                    existing_root=str(existing.root_path),
+                    duplicate_root=str(project.root_path),
                 )
         else:
             project_id_map[project.project_id] = project

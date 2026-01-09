@@ -19,6 +19,7 @@ import ast
 import hashlib
 import json
 import logging
+import time
 import uuid
 from dataclasses import dataclass
 from typing import Any, Iterable, Optional
@@ -103,25 +104,40 @@ class DocstringChunker:
         Returns:
             Number of chunks inserted/updated.
         """
+        process_start_time = time.time()
+        logger.info(f"[FILE {file_id}] Starting process_file for {file_path}")
 
         if not isinstance(tree, ast.Module):
             logger.debug("Skipping non-module AST for %s", file_path)
             return 0
 
         items = list(self._extract_docstrings(tree, file_content))
+        logger.info(f"[FILE {file_id}] Extracted {len(items)} docstrings from {file_path}")
         if not items:
             return 0
 
         # Precompute embeddings using chunker service (SVO - chunks and vectorizes)
         embeddings: list[Optional[list[float]]] = [None] * len(items)
         if self.svo_client_manager:
+            logger.info(f"[FILE {file_id}] Requesting embeddings for {len(items)} docstrings from chunker service...")
+            embedding_start_time = time.time()
             try:
                 # Use chunker service for each docstring - it returns chunks with embeddings
                 for i, item in enumerate(items):
+                    docstring_start_time = time.time()
+                    logger.debug(
+                        f"[FILE {file_id}] [DOCSTRING {i+1}/{len(items)}] Requesting embedding for docstring at line {item.line} "
+                        f"(text length: {len(item.text)}, type: {item.ast_node_type})"
+                    )
                     try:
                         # Call chunker service - it chunks and vectorizes
                         chunks = await self.svo_client_manager.get_chunks(
                             text=item.text, type="DocBlock"
+                        )
+                        docstring_duration = time.time() - docstring_start_time
+                        logger.debug(
+                            f"[FILE {file_id}] [DOCSTRING {i+1}/{len(items)}] Received {len(chunks) if chunks else 0} chunks "
+                            f"in {docstring_duration:.3f}s"
                         )
                         # Extract embedding from first chunk (chunker returns chunks with embeddings)
                         if chunks and len(chunks) > 0:
@@ -130,34 +146,58 @@ class DocstringChunker:
                             emb = getattr(first_chunk, "embedding", None)
                             if isinstance(emb, list) and emb:
                                 embeddings[i] = emb
+                                logger.debug(
+                                    f"[FILE {file_id}] [DOCSTRING {i+1}/{len(items)}] Embedding extracted: {len(emb)} dimensions"
+                                )
                             elif hasattr(first_chunk, "vector") and first_chunk.vector:
                                 # Alternative: check for vector attribute
                                 embeddings[i] = first_chunk.vector
+                                logger.debug(
+                                    f"[FILE {file_id}] [DOCSTRING {i+1}/{len(items)}] Embedding extracted from vector attribute: "
+                                    f"{len(first_chunk.vector)} dimensions"
+                                )
+                            else:
+                                logger.debug(
+                                    f"[FILE {file_id}] [DOCSTRING {i+1}/{len(items)}] No embedding found in chunk"
+                                )
+                        else:
+                            # Empty chunks list - text is too short for chunker (below min_chunk_length)
+                            # Will be saved to DB without embedding
+                            logger.debug(
+                                f"[FILE {file_id}] [DOCSTRING {i+1}/{len(items)}] Text too short for chunker "
+                                f"(length: {len(item.text)}), will save to DB without embedding"
+                            )
+                            embeddings[i] = None
                     except Exception as e:
+                        docstring_duration = time.time() - docstring_start_time
                         logger.warning(
-                            "Failed to get chunks with embeddings for docstring %d in %s: %s (continuing without embedding)",
-                            i,
-                            file_path,
-                            e,
+                            f"[FILE {file_id}] [DOCSTRING {i+1}/{len(items)}] Failed to get chunks with embeddings "
+                            f"after {docstring_duration:.3f}s: {e} (continuing without embedding)"
                         )
                         # Continue without embedding - chunk will be saved without embedding
                         embeddings[i] = None
             except Exception as e:
+                embedding_duration = time.time() - embedding_start_time
                 # If chunking fails, log warning but continue - chunks will be saved without embeddings
                 logger.warning(
-                    "Failed to precompute embeddings for docstrings in %s: %s (continuing without embeddings)",
-                    file_path,
-                    e,
+                    f"[FILE {file_id}] Failed to precompute embeddings for docstrings after {embedding_duration:.3f}s: {e} "
+                    "(continuing without embeddings)"
                 )
                 # Continue processing - chunks will be saved without embeddings
+            else:
+                embedding_duration = time.time() - embedding_start_time
+                logger.info(
+                    f"[FILE {file_id}] Completed embedding requests for {len(items)} docstrings in {embedding_duration:.3f}s"
+                )
 
         # Persist items
+        logger.info(f"[FILE {file_id}] Persisting {len(items)} docstring chunks to database...")
+        persist_start_time = time.time()
         written = 0
         ordinal = 0
         for it, emb in zip(items, embeddings):
             ordinal += 1
-            if len(it.text) < self.min_chunk_length:
-                continue
+            # All items are persisted, including short ones (they will have emb=None)
 
             # Stable UUID to avoid duplicating chunks across repeated worker cycles.
             # This allows `add_or_update_code_chunk` to update instead of always inserting.
@@ -195,13 +235,19 @@ class DocstringChunker:
                 written += 1
             except Exception as e:
                 logger.warning(
-                    "Failed to persist docstring chunk for %s (line=%s): %s",
-                    file_path,
-                    it.line,
-                    e,
+                    f"[FILE {file_id}] Failed to persist docstring chunk for {file_path} (line={it.line}): {e}",
                     exc_info=True,
                 )
 
+        persist_duration = time.time() - persist_start_time
+        logger.info(
+            f"[FILE {file_id}] Persisted {written} docstring chunks to database in {persist_duration:.3f}s"
+        )
+        total_duration = time.time() - process_start_time
+        logger.info(
+            f"[FILE {file_id}] Completed process_file for {file_path} in {total_duration:.3f}s "
+            f"(wrote {written} chunks)"
+        )
         return written
 
     def _extract_docstrings(

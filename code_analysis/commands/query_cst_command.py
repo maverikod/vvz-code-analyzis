@@ -20,7 +20,8 @@ from typing import Any, Dict
 from mcp_proxy_adapter.commands.base import Command
 from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 
-from ..cst_query import QueryParseError, query_source
+from ..core.exceptions import QueryParseError
+from ..cst_query import query_source
 
 logger = logging.getLogger(__name__)
 

@@ -26,6 +26,61 @@ from typing import Any, Iterable, List, Optional
 
 logger = logging.getLogger(__name__)
 
+# Separate logger for chunker requests
+_chunker_logger: Optional[logging.Logger] = None
+
+
+def _get_chunker_logger(root_dir: Optional[Path] = None) -> logging.Logger:
+    """
+    Get or create logger for chunker requests.
+    
+    Args:
+        root_dir: Optional root directory path. If not provided, will try to infer
+            from current working directory or use "logs/" relative path.
+    
+    Returns:
+        Logger instance configured to write to logs/chunker_requests.log
+    """
+    global _chunker_logger
+    
+    if _chunker_logger is None:
+        _chunker_logger = logging.getLogger("code_analysis.chunker_requests")
+        _chunker_logger.setLevel(logging.INFO)
+        
+        # Don't propagate to root logger
+        _chunker_logger.propagate = False
+        
+        # Create file handler if not exists
+        if not _chunker_logger.handlers:
+            # Determine log directory
+            if root_dir:
+                log_dir = Path(root_dir) / "logs"
+            else:
+                # Try to find project root by looking for config.json or use current dir
+                current_path = Path.cwd()
+                if (current_path / "config.json").exists():
+                    log_dir = current_path / "logs"
+                else:
+                    # Fallback to relative path
+                    log_dir = Path("logs")
+            
+            log_dir.mkdir(parents=True, exist_ok=True)
+            log_file = log_dir / "chunker_requests.log"
+            
+            handler = logging.FileHandler(log_file, encoding="utf-8")
+            handler.setLevel(logging.INFO)
+            
+            # Format: timestamp | level | message
+            formatter = logging.Formatter(
+                "%(asctime)s | %(levelname)s | %(message)s",
+                datefmt="%Y-%m-%d %H:%M:%S"
+            )
+            handler.setFormatter(formatter)
+            
+            _chunker_logger.addHandler(handler)
+    
+    return _chunker_logger
+
 # Try to import embed_client (vectorization only)
 try:
     from embed_client.async_client import EmbeddingServiceAsyncClient
@@ -92,7 +147,9 @@ class SVOClientManager:
             root_dir: Optional root directory path for resolving relative certificate paths.
                 If not provided, will try to infer from config (db_path or log path).
         """
-
+        # Store root_dir for chunker logger
+        self._root_dir = Path(root_dir) if root_dir else None
+        
         cfg = self._to_dict(server_config)
         
         # Handle both formats: full config dict with "code_analysis" key, or ServerConfig object
@@ -141,6 +198,10 @@ class SVOClientManager:
         self._chunker_status_logged: bool = False
         self._embedding_available: bool = True
         self._embedding_status_logged: bool = False
+        
+        # Chunk size limits from chunker service (fetched dynamically)
+        self._min_chunk_length: Optional[int] = None
+        self._max_chunk_length: Optional[int] = None
 
         # Keep original cfg for client creation
         self._config: dict[str, Any] = cfg
@@ -239,6 +300,9 @@ class SVOClientManager:
                     # Create ChunkerClient and enter context manager
                     self._chunker_client = ChunkerClient(**chunker_kwargs)
                     await self._chunker_client.__aenter__()
+                    
+                    # Fetch chunk size limits from chunker service
+                    await self._fetch_chunk_limits()
 
                     logger.info(
                         "SVOClientManager initialized with real chunker service "
@@ -457,20 +521,75 @@ class SVOClientManager:
             )
             raise RuntimeError(error_msg)
 
+        # Check text length against chunker limits
+        text_length = len(text)
+        if self._min_chunk_length is not None and text_length < self._min_chunk_length:
+            # Short texts should be saved to database without chunker processing
+            logger.debug(
+                f"Text length ({text_length}) is below chunker minimum "
+                f"({self._min_chunk_length} characters). Skipping chunker, will save to DB without embedding."
+            )
+            return []  # Return empty list - caller should save to DB without embedding
+        
+        if self._max_chunk_length is not None and text_length > self._max_chunk_length:
+            logger.debug(
+                f"Text length ({text_length}) exceeds chunker maximum "
+                f"({self._max_chunk_length} characters). Chunker will split the text."
+            )  # Not an error, chunker will handle splitting
+
+        # Log request details to separate file
+        chunker_log = _get_chunker_logger(self._root_dir)
+        request_start_time = time.time()
+        text_preview = text[:200] + "..." if len(text) > 200 else text
+        chunker_log.info(
+            f"REQUEST | text_length={len(text)} | text_preview={text_preview!r} | "
+            f"kwargs={kwargs}"
+        )
+        
         try:
             # Call chunker service - it returns chunks with embeddings
             chunks = await self._chunker_client.chunk_text(text=text, **kwargs)
+            request_duration = time.time() - request_start_time
+            
+            # Log success
+            chunks_count = len(chunks) if chunks else 0
+            has_embeddings = False
+            if chunks and len(chunks) > 0:
+                first_chunk = chunks[0]
+                emb = getattr(first_chunk, "embedding", None)
+                has_embeddings = emb is not None and (
+                    (isinstance(emb, list) and len(emb) > 0) or
+                    (hasattr(first_chunk, "vector") and first_chunk.vector is not None)
+                )
+            
+            chunker_log.info(
+                f"SUCCESS | duration={request_duration:.3f}s | "
+                f"chunks_count={chunks_count} | has_embeddings={has_embeddings}"
+            )
+            
+            was_unavailable = not self._chunker_available
             self._record_success()
             # Service is available
-            if not self._chunker_available:
+            if was_unavailable:
                 # Status changed: unavailable -> available
                 logger.info("✅ Chunker service is now available")
                 self._chunker_available = True
                 self._chunker_status_logged = True
+                # Refetch chunk limits after service recovery
+                asyncio.create_task(self._fetch_chunk_limits())
             else:
                 self._chunker_status_logged = False  # Already logged as available
             return chunks
         except Exception as e:
+            request_duration = time.time() - request_start_time
+            
+            # Log error
+            error_type = type(e).__name__
+            error_msg = str(e)
+            chunker_log.error(
+                f"ERROR | duration={request_duration:.3f}s | "
+                f"error_type={error_type} | error={error_msg}"
+            )
             self._record_failure()
             # Check if error indicates service unavailability
             error_str = str(e).lower()
@@ -691,6 +810,65 @@ class SVOClientManager:
         if (time.time() - self._opened_at) >= self.recovery_timeout:
             self._state = "half_open"
             self._half_open_successes = 0
+
+    async def _fetch_chunk_limits(self) -> None:
+        """
+        Fetch chunk size limits from chunker service.
+        
+        Called during initialization and after service recovery.
+        """
+        if not self._chunker_client:
+            return
+        
+        try:
+            config_result = await self._chunker_client.get_chunk_config()
+            
+            if isinstance(config_result, dict):
+                # Try different response formats:
+                # 1. Direct format: {"config": {...}, "descriptions": {...}}
+                config = config_result.get("config")
+                
+                # 2. Wrapped format: {"success": True, "data": {"config": {...}, "descriptions": {...}}}
+                if config is None:
+                    data = config_result.get("data", {})
+                    if isinstance(data, dict):
+                        config = data.get("config")
+                
+                # 3. MCP double-wrapped: {"success": True, "result": {"success": True, "data": {...}}}
+                if config is None:
+                    result = config_result.get("result", {})
+                    if isinstance(result, dict):
+                        data = result.get("data", {})
+                        if isinstance(data, dict):
+                            config = data.get("config")
+                
+                if config and isinstance(config, dict):
+                    chunk_size = config.get("chunk_size", {})
+                    if isinstance(chunk_size, dict):
+                        self._min_chunk_length = chunk_size.get("min_chunk_length")
+                        self._max_chunk_length = chunk_size.get("max_chunk_length")
+                        
+                        logger.info(
+                            f"Chunker limits fetched: min={self._min_chunk_length}, "
+                            f"max={self._max_chunk_length}"
+                        )
+                    else:
+                        logger.warning(
+                            f"chunk_size is not a dict: {type(chunk_size)}"
+                        )
+                else:
+                    logger.warning(
+                        f"Could not extract config from get_chunk_config response. "
+                        f"Keys: {list(config_result.keys())}"
+                    )
+            else:
+                logger.warning(f"get_chunk_config returned non-dict: {type(config_result)}")
+        except Exception as e:
+            logger.warning(
+                f"Failed to fetch chunk limits from chunker service: {e}. "
+                "Using defaults or previously cached values.",
+                exc_info=True,
+            )
 
     @staticmethod
     def _get_chunk_text(chunk: Any) -> str:

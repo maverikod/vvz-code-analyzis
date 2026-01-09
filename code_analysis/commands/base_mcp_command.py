@@ -13,8 +13,13 @@ from mcp_proxy_adapter.commands.base import Command
 from mcp_proxy_adapter.commands.result import ErrorResult
 
 from ..core.database import CodeDatabase
-from ..core.exceptions import CodeAnalysisError, DatabaseError, ValidationError
-from ..core.project_resolution import ProjectIdError, normalize_root_dir
+from ..core.exceptions import (
+    CodeAnalysisError,
+    DatabaseError,
+    ProjectIdError,
+    ValidationError,
+)
+from ..core.project_resolution import normalize_root_dir
 from ..core.project_resolution import require_matching_project_id
 from ..core.storage_paths import (
     ensure_storage_dirs,

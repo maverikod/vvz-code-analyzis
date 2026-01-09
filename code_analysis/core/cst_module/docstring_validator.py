@@ -13,13 +13,7 @@ import ast
 import re
 from typing import List, Tuple, Optional
 
-from .errors import CSTModulePatchError
-
-
-class DocstringValidationError(CSTModulePatchError):
-    """Error raised when docstring validation fails."""
-
-    pass
+from ..exceptions import CSTModulePatchError, DocstringValidationError
 
 
 def validate_module_docstrings(source: str) -> Tuple[bool, Optional[str], List[str]]:

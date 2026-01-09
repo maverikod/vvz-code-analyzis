@@ -31,7 +31,7 @@ from .ast import (
     Query,
     SelectorStep,
 )
-from .errors import QueryParseError
+from ..core.exceptions import QueryParseError
 
 
 _GRAMMAR = r"""

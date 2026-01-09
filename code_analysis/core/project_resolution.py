@@ -15,9 +15,7 @@ import uuid
 from pathlib import Path
 from typing import Optional, Tuple
 
-
-class ProjectIdError(ValueError):
-    """Raised when project_id cannot be loaded or validated."""
+from .exceptions import ProjectIdError
 
 
 def normalize_root_dir(root_dir: str | Path) -> Path:

@@ -113,7 +113,9 @@ async def process_chunks(self, poll_interval: int = 30) -> Dict[str, Any]:
                         database = None
 
                         # Wait with backoff before retrying
-                        logger.debug(f"Retrying database connection in {backoff:.1f}s...")
+                        logger.debug(
+                            f"Retrying database connection in {backoff:.1f}s..."
+                        )
                         await asyncio.sleep(backoff)
                         backoff = min(backoff * 2.0, backoff_max)
                         continue
@@ -146,23 +148,25 @@ async def process_chunks(self, poll_interval: int = 30) -> Dict[str, Any]:
             try:
                 projects = database.get_projects_with_vectorization_count()
                 if not projects:
-                    logger.info(f"[CYCLE #{cycle_count}] No projects with pending items found")
+                    logger.info(
+                        f"[CYCLE #{cycle_count}] No projects with pending items found"
+                    )
                 else:
                     logger.info(
                         f"[CYCLE #{cycle_count}] Found {len(projects)} projects with pending items: "
                         f"{[(p['project_id'], p['pending_count']) for p in projects]}"
                     )
-                    
+
                     # Process each project sequentially
                     for project in projects:
                         project_id = project["project_id"]
                         root_path = project["root_path"]
                         pending_count = project["pending_count"]
-                        
+
                         logger.info(
                             f"Processing project {project_id} ({root_path}) with {pending_count} pending items"
                         )
-                        
+
                         try:
                             # Create project-scoped FAISS manager
                             index_path = self.faiss_dir / f"{project_id}.bin"
@@ -170,22 +174,28 @@ async def process_chunks(self, poll_interval: int = 30) -> Dict[str, Any]:
                                 index_path=str(index_path),
                                 vector_dim=self.vector_dim,
                             )
-                            
+
                             # Step 1: Request chunking for files that need it
                             # Skip chunking requests if circuit breaker is open
                             if self.svo_client_manager:
-                                circuit_state = self.svo_client_manager.get_circuit_state()
+                                circuit_state = (
+                                    self.svo_client_manager.get_circuit_state()
+                                )
                                 if circuit_state == "open":
-                                    backoff_delay = self.svo_client_manager.get_backoff_delay()
+                                    backoff_delay = (
+                                        self.svo_client_manager.get_backoff_delay()
+                                    )
                                     logger.debug(
                                         f"Skipping chunking requests for project {project_id} - "
                                         f"circuit breaker is OPEN (backoff: {backoff_delay:.1f}s)"
                                     )
                                 else:
                                     try:
-                                        files_to_chunk = database.get_files_needing_chunking(
-                                            project_id=project_id,
-                                            limit=5,  # Process 5 files per cycle
+                                        files_to_chunk = (
+                                            database.get_files_needing_chunking(
+                                                project_id=project_id,
+                                                limit=5,  # Process 5 files per cycle
+                                            )
                                         )
 
                                         if files_to_chunk:
@@ -193,8 +203,10 @@ async def process_chunks(self, poll_interval: int = 30) -> Dict[str, Any]:
                                                 f"Found {len(files_to_chunk)} files needing chunking in project {project_id}, "
                                                 "requesting chunking..."
                                             )
-                                            chunked_count = await self._request_chunking_for_files(
-                                                database, files_to_chunk
+                                            chunked_count = (
+                                                await self._request_chunking_for_files(
+                                                    database, files_to_chunk
+                                                )
                                             )
                                             logger.info(
                                                 f"Requested chunking for {chunked_count} files in project {project_id}"
@@ -212,25 +224,27 @@ async def process_chunks(self, poll_interval: int = 30) -> Dict[str, Any]:
 
                             # Step 2: Assign vector_id in FAISS for chunks that already have embeddings.
                             # Temporarily set faiss_manager for batch processor
-                            original_faiss_manager = getattr(self, "faiss_manager", None)
+                            original_faiss_manager = getattr(
+                                self, "faiss_manager", None
+                            )
                             original_project_id = getattr(self, "project_id", None)
                             self.faiss_manager = faiss_manager
                             self.project_id = project_id
-                            
+
                             try:
-                                batch_processed, batch_errors = await process_embedding_ready_chunks(
-                                    self, database
+                                batch_processed, batch_errors = (
+                                    await process_embedding_ready_chunks(self, database)
                                 )
                                 total_processed += batch_processed
                                 total_errors += batch_errors
-                                
+
                                 if batch_processed > 0:
                                     cycle_activity = True
                             finally:
                                 # Restore original values
                                 self.faiss_manager = original_faiss_manager
                                 self.project_id = original_project_id
-                                
+
                         except Exception as e:
                             logger.error(
                                 f"Error processing project {project_id}: {e}",
@@ -244,22 +258,26 @@ async def process_chunks(self, poll_interval: int = 30) -> Dict[str, Any]:
                                     faiss_manager = None
                             except Exception:
                                 pass
-                    
+
                     # Step 3: Rebuild FAISS indexes for all projects at end of cycle
-                    logger.info(f"[CYCLE #{cycle_count}] Rebuilding FAISS indexes for all projects...")
+                    logger.info(
+                        f"[CYCLE #{cycle_count}] Rebuilding FAISS indexes for all projects..."
+                    )
                     all_projects = database.get_all_projects()
                     for project in all_projects:
                         project_id = project["id"]
                         project_path = project.get("root_path", "unknown")
-                        
+
                         try:
                             index_path = self.faiss_dir / f"{project_id}.bin"
                             faiss_manager = FaissIndexManager(
                                 index_path=str(index_path),
                                 vector_dim=self.vector_dim,
                             )
-                            
-                            logger.info(f"Rebuilding FAISS index for project {project_id} ({project_path})...")
+
+                            logger.info(
+                                f"Rebuilding FAISS index for project {project_id} ({project_path})..."
+                            )
                             vectors_count = await faiss_manager.rebuild_from_database(
                                 database=database,
                                 svo_client_manager=self.svo_client_manager,
@@ -278,8 +296,14 @@ async def process_chunks(self, poll_interval: int = 30) -> Dict[str, Any]:
                 logger.error(f"Error processing projects: {e}", exc_info=True)
                 # Check if error is due to database unavailability
                 error_str = str(e).lower()
-                if "database" in error_str or "db" in error_str or "connection" in error_str:
-                    logger.warning("Database error detected, will reconnect on next cycle")
+                if (
+                    "database" in error_str
+                    or "db" in error_str
+                    or "connection" in error_str
+                ):
+                    logger.warning(
+                        "Database error detected, will reconnect on next cycle"
+                    )
                     try:
                         database.close()
                     except Exception:
@@ -305,7 +329,6 @@ async def process_chunks(self, poll_interval: int = 30) -> Dict[str, Any]:
                 logger.info(
                     f"[CYCLE #{cycle_count}] No activity in {cycle_duration:.3f}s"
                 )
-
 
             # Wait for next cycle (with early exit check)
             # Increase poll interval if services are unavailable (circuit breaker)

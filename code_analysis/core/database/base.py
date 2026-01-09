@@ -199,7 +199,20 @@ class CodeDatabase:
         """
         if self._transaction_active:
             raise RuntimeError("Transaction already active")
-        self._execute("BEGIN TRANSACTION")
+
+        # For SQLite Proxy driver, create transaction_id and set it in driver
+        if self._driver_type == "sqlite_proxy":
+            transaction_id = str(uuid.uuid4())
+            if hasattr(self.driver, "_transaction_id"):
+                self.driver._transaction_id = transaction_id
+            # Send begin_transaction command to worker
+            self.driver._execute_operation(
+                "begin_transaction", transaction_id=transaction_id
+            )
+        else:
+            # For direct SQLite driver, use standard BEGIN TRANSACTION
+            self._execute("BEGIN TRANSACTION")
+
         self._transaction_active = True
         logger.debug("Transaction started")
 
@@ -212,7 +225,17 @@ class CodeDatabase:
         """
         if not self._transaction_active:
             raise RuntimeError("No active transaction")
+
+        # For SQLite Proxy driver, commit is handled by driver.commit()
+        # which uses transaction_id
         self._commit()
+
+        # Clear transaction_id in proxy driver if exists
+        if self._driver_type == "sqlite_proxy" and hasattr(
+            self.driver, "_transaction_id"
+        ):
+            self.driver._transaction_id = None
+
         self._transaction_active = False
         logger.debug("Transaction committed")
 
@@ -225,7 +248,17 @@ class CodeDatabase:
         """
         if not self._transaction_active:
             raise RuntimeError("No active transaction")
+
+        # For SQLite Proxy driver, rollback is handled by driver.rollback()
+        # which uses transaction_id
         self._rollback()
+
+        # Clear transaction_id in proxy driver if exists
+        if self._driver_type == "sqlite_proxy" and hasattr(
+            self.driver, "_transaction_id"
+        ):
+            self.driver._transaction_id = None
+
         self._transaction_active = False
         logger.debug("Transaction rolled back")
 

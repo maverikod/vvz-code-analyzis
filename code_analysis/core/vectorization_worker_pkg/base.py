@@ -9,10 +9,9 @@ from __future__ import annotations
 
 import multiprocessing
 from pathlib import Path
-from typing import TYPE_CHECKING, List, Optional
+from typing import TYPE_CHECKING, Optional
 
 if TYPE_CHECKING:
-    from ..faiss_manager import FaissIndexManager
     from ..svo_client_manager import SVOClientManager
 
 

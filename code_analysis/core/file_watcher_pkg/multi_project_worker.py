@@ -151,7 +151,9 @@ class MultiProjectFileWatcherWorker:
                             # Connection test failed
                             if db_available:
                                 # Status changed: available -> unavailable
-                                logger.warning(f"⚠️  Database is now unavailable: {conn_e}")
+                                logger.warning(
+                                    f"⚠️  Database is now unavailable: {conn_e}"
+                                )
                                 db_available = False
                                 db_status_logged = True
                             elif not db_status_logged:
@@ -169,7 +171,9 @@ class MultiProjectFileWatcherWorker:
                             database = None
 
                             # Wait with backoff before retrying
-                            logger.debug(f"Retrying database connection in {backoff:.1f}s...")
+                            logger.debug(
+                                f"Retrying database connection in {backoff:.1f}s..."
+                            )
                             await asyncio.sleep(backoff)
                             backoff = min(backoff * 2.0, backoff_max)
                             continue
@@ -190,7 +194,9 @@ class MultiProjectFileWatcherWorker:
                             db_status_logged = False
 
                         # Wait with backoff before retrying
-                        logger.debug(f"Retrying database connection in {backoff:.1f}s...")
+                        logger.debug(
+                            f"Retrying database connection in {backoff:.1f}s..."
+                        )
                         await asyncio.sleep(backoff)
                         backoff = min(backoff * 2.0, backoff_max)
                         continue
@@ -201,7 +207,11 @@ class MultiProjectFileWatcherWorker:
                     total_stats["errors"] += 1
                     error_str = str(e).lower()
                     # Check if error is due to database unavailability
-                    if "database" in error_str or "db" in error_str or "connection" in error_str:
+                    if (
+                        "database" in error_str
+                        or "db" in error_str
+                        or "connection" in error_str
+                    ):
                         if db_available:
                             # Status changed: available -> unavailable
                             logger.warning(f"⚠️  Database is now unavailable: {e}")
@@ -260,9 +270,7 @@ class MultiProjectFileWatcherWorker:
 
         return total_stats
 
-    async def _scan_cycle(
-        self, database: Any, processors: Any
-    ) -> Dict[str, Any]:
+    async def _scan_cycle(self, database: Any, processors: Any) -> Dict[str, Any]:
         """
         Perform one scan cycle for all watched directories.
 
@@ -330,9 +338,7 @@ class MultiProjectFileWatcherWorker:
 
         watch_dir = spec.watch_dir
         if not watch_dir.exists():
-            logger.warning(
-                f"Watched directory does not exist: {watch_dir}"
-            )
+            logger.warning(f"Watched directory does not exist: {watch_dir}")
             return stats
 
         # Create LockManager for this watch_dir (use watch_dir path as lock key)
@@ -340,9 +346,7 @@ class MultiProjectFileWatcherWorker:
         lock_manager = LockManager(self.locks_dir, lock_key)
 
         if not lock_manager.acquire_lock(watch_dir, self._pid):
-            logger.warning(
-                f"Could not acquire lock for {watch_dir}, skipping"
-            )
+            logger.warning(f"Could not acquire lock for {watch_dir}, skipping")
             stats["errors"] += 1
             return stats
 
@@ -371,9 +375,7 @@ class MultiProjectFileWatcherWorker:
                 return stats
 
             if not discovered_projects:
-                logger.debug(
-                    f"No projects found in watched directory: {watch_dir}"
-                )
+                logger.debug(f"No projects found in watched directory: {watch_dir}")
                 return stats
 
             # Auto-create projects in database if they don't exist (Phase 3.1)
@@ -392,7 +394,25 @@ class MultiProjectFileWatcherWorker:
                             )
                             stats["errors"] += 1
                             continue
-                        # Project exists with correct root_path
+                        # Project exists with correct root_path - update description if changed
+                        current_comment = project.get("comment")
+                        if current_comment != project_root_obj.description:
+                            database._execute(
+                                """
+                                UPDATE projects 
+                                SET comment = ?, updated_at = julianday('now')
+                                WHERE id = ?
+                                """,
+                                (
+                                    project_root_obj.description,
+                                    project_root_obj.project_id,
+                                ),
+                            )
+                            database._commit()
+                            logger.debug(
+                                f"Updated description for project {project_root_obj.project_id}: "
+                                f"{current_comment} -> {project_root_obj.description}"
+                            )
                     else:
                         # Check if project exists with different ID (by root_path)
                         existing_project_id = database.get_project_id(
@@ -405,20 +425,26 @@ class MultiProjectFileWatcherWorker:
                                     f"different ID ({existing_project_id}) than projectid file "
                                     f"({project_root_obj.project_id}), updating"
                                 )
-                                # Update project ID to match projectid file
+                                # Update project ID and description to match projectid file
                                 database._execute(
                                     """
                                     UPDATE projects 
-                                    SET id = ?, updated_at = julianday('now')
+                                    SET id = ?, comment = ?, updated_at = julianday('now')
                                     WHERE id = ?
                                     """,
-                                    (project_root_obj.project_id, existing_project_id),
+                                    (
+                                        project_root_obj.project_id,
+                                        project_root_obj.description,
+                                        existing_project_id,
+                                    ),
                                 )
                                 database._commit()
                             # Project exists with correct ID
                         else:
                             # Check if project_id is used by another root_path
-                            existing_project = database.get_project(project_root_obj.project_id)
+                            existing_project = database.get_project(
+                                project_root_obj.project_id
+                            )
                             if existing_project:
                                 logger.error(
                                     f"Project ID {project_root_obj.project_id} already exists "
@@ -428,24 +454,27 @@ class MultiProjectFileWatcherWorker:
                                 )
                                 stats["errors"] += 1
                                 continue
-                            
+
                             # Create project with ID from projectid file
                             project_name = project_root_obj.root_path.name
+                            project_description = project_root_obj.description
                             database._execute(
                                 """
-                                INSERT INTO projects (id, root_path, name, updated_at)
-                                VALUES (?, ?, ?, julianday('now'))
+                                INSERT INTO projects (id, root_path, name, comment, updated_at)
+                                VALUES (?, ?, ?, ?, julianday('now'))
                                 """,
                                 (
                                     project_root_obj.project_id,
                                     str(project_root_obj.root_path),
                                     project_name,
+                                    project_description,
                                 ),
                             )
                             database._commit()
                             logger.info(
                                 f"Auto-created project {project_root_obj.project_id} "
-                                f"at {project_root_obj.root_path}"
+                                f"at {project_root_obj.root_path} "
+                                f"with description: {project_description}"
                             )
                 except Exception as e:
                     logger.warning(

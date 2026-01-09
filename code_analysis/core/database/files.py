@@ -1428,3 +1428,374 @@ def collapse_file_versions(
         "deleted_count": deleted_count,
         "collapsed_files": collapsed_files,
     }
+
+
+def update_file_data_atomic(
+    self,
+    file_path: str,
+    project_id: str,
+    root_dir: Path,
+    source_code: str,
+) -> Dict[str, Any]:
+    """
+    Atomically update all file data in a transaction.
+
+    IMPORTANT: Must be called within an active transaction.
+    This method updates AST, CST, and entities for a file using source_code directly.
+
+    Process:
+    1. Find file_id by path
+    2. Clear all old records (AST, CST, entities) in transaction
+    3. Parse entire file from source_code
+    4. Save AST tree in transaction
+    5. Save CST tree in transaction
+    6. Extract and save entities (classes, functions, methods, imports) in transaction
+    7. Return result
+
+    Args:
+        file_path: File path (relative to root_dir or absolute)
+        project_id: Project ID
+        root_dir: Project root directory
+        source_code: Full source code of the file (for parsing entire file)
+
+    Returns:
+        Dictionary with update result:
+        {
+            "success": bool,
+            "file_id": int,
+            "file_path": str,
+            "ast_updated": bool,
+            "cst_updated": bool,
+            "entities_updated": int,
+            "error": Optional[str]
+        }
+
+    Raises:
+        RuntimeError: If not called within an active transaction
+    """
+    from ..path_normalization import normalize_path_simple
+    from ..exceptions import ProjectIdMismatchError
+
+    # Check that we're in a transaction
+    if not self._in_transaction():
+        raise RuntimeError(
+            "update_file_data_atomic must be called within a transaction"
+        )
+
+    try:
+        # Normalize path to absolute
+        abs_path = normalize_path_simple(file_path)
+
+        # Get file record
+        file_record = self.get_file_by_path(abs_path, project_id)
+        if not file_record:
+            return {
+                "success": False,
+                "error": f"File not found in database: {file_path}",
+                "file_path": abs_path,
+            }
+
+        file_id = file_record["id"]
+
+        # Clear all old records in transaction
+        try:
+            self.clear_file_data(file_id)
+        except Exception as e:
+            logger.error(
+                f"Error clearing file data for {file_path}: {e}", exc_info=True
+            )
+            return {
+                "success": False,
+                "error": f"Failed to clear old records: {e}",
+                "file_path": abs_path,
+                "file_id": file_id,
+            }
+
+        # Parse AST from source_code
+        try:
+            from ..core.ast_utils import parse_with_comments
+
+            tree = parse_with_comments(source_code, filename=abs_path)
+        except SyntaxError as e:
+            logger.warning(f"Syntax error in {file_path}: {e}")
+            return {
+                "success": False,
+                "error": f"Syntax error: {e}",
+                "file_path": abs_path,
+                "file_id": file_id,
+            }
+        except Exception as e:
+            logger.error(f"Error parsing AST for {file_path}: {e}", exc_info=True)
+            return {
+                "success": False,
+                "error": f"Failed to parse AST: {e}",
+                "file_path": abs_path,
+                "file_id": file_id,
+            }
+
+        # Calculate file metadata
+        lines = len(source_code.splitlines())
+        import time
+
+        file_mtime = time.time()  # Use current time as mtime for atomic update
+
+        # Save AST tree in transaction
+        import hashlib
+        import json
+
+        ast_json = json.dumps(ast.dump(tree))
+        ast_hash = hashlib.sha256(ast_json.encode()).hexdigest()
+
+        try:
+            ast_tree_id = self.save_ast_tree(
+                file_id,
+                project_id,
+                ast_json,
+                ast_hash,
+                file_mtime,
+                overwrite=True,
+            )
+            logger.debug(f"AST saved with id={ast_tree_id} for file_id={file_id}")
+        except Exception as e:
+            logger.error(f"Error saving AST for {file_path}: {e}", exc_info=True)
+            return {
+                "success": False,
+                "error": f"Failed to save AST: {e}",
+                "file_path": abs_path,
+                "file_id": file_id,
+            }
+
+        # Save CST tree in transaction
+        cst_hash = hashlib.sha256(source_code.encode()).hexdigest()
+        try:
+            cst_tree_id = self.save_cst_tree(
+                file_id,
+                project_id,
+                source_code,
+                cst_hash,
+                file_mtime,
+                overwrite=True,
+            )
+            logger.debug(f"CST saved with id={cst_tree_id} for file_id={file_id}")
+        except Exception as e:
+            logger.error(f"Error saving CST for {file_path}: {e}", exc_info=True)
+            return {
+                "success": False,
+                "error": f"Failed to save CST: {e}",
+                "file_path": abs_path,
+                "file_id": file_id,
+            }
+
+        # Extract and save entities in transaction
+        # Use helper methods from UpdateIndexesMCPCommand
+        from ..commands.code_mapper_mcp_command import UpdateIndexesMCPCommand
+
+        update_cmd = UpdateIndexesMCPCommand()
+
+        classes_added = 0
+        functions_added = 0
+        methods_added = 0
+        imports_added = 0
+
+        class_nodes: Dict[ast.ClassDef, int] = {}
+
+        # Add module-level content to full-text search
+        try:
+            module_docstring = ast.get_docstring(tree)
+        except Exception:
+            module_docstring = None
+        try:
+            self.add_code_content(
+                file_id=file_id,
+                entity_type="file",
+                entity_name=str(abs_path),
+                content=source_code,
+                docstring=module_docstring,
+                entity_id=file_id,
+            )
+        except Exception as e:
+            logger.warning(
+                f"Failed to add file content to FTS for {abs_path}: {e}",
+                exc_info=True,
+            )
+
+        # Extract classes and methods
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ClassDef):
+                docstring = update_cmd._extract_docstring(node)
+                bases: List[str] = []
+                for base in node.bases:
+                    if isinstance(base, ast.Name):
+                        bases.append(base.id)
+                    else:
+                        try:
+                            bases.append(ast.unparse(base))
+                        except AttributeError:
+                            bases.append(str(base))
+                class_id = self.add_class(
+                    file_id, node.name, node.lineno, docstring, bases
+                )
+                classes_added += 1
+                class_nodes[node] = class_id
+
+                # Store class content for full-text search
+                try:
+                    class_src = ast.get_source_segment(source_code, node)
+                    self.add_code_content(
+                        file_id=file_id,
+                        entity_type="class",
+                        entity_name=node.name,
+                        content=class_src or "",
+                        docstring=docstring,
+                        entity_id=class_id,
+                    )
+                except Exception as e:
+                    logger.debug(
+                        f"Failed to add class content to FTS ({abs_path}.{node.name}): {e}",
+                        exc_info=True,
+                    )
+
+                # Extract methods from class
+                for item in node.body:
+                    if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                        method_docstring = update_cmd._extract_docstring(item)
+                        method_args = update_cmd._extract_args(item)
+                        # Calculate cyclomatic complexity
+                        try:
+                            from ..core.complexity import calculate_complexity
+
+                            method_complexity = calculate_complexity(item)
+                        except Exception as e:
+                            logger.debug(
+                                f"Failed to calculate complexity for method {node.name}.{item.name}: {e}",
+                                exc_info=True,
+                            )
+                            method_complexity = None
+                        method_id = self.add_method(
+                            class_id,
+                            item.name,
+                            item.lineno,
+                            method_args,
+                            method_docstring,
+                            complexity=method_complexity,
+                        )
+                        methods_added += 1
+
+                        # Store method content for full-text search
+                        try:
+                            method_src = ast.get_source_segment(source_code, item)
+                            self.add_code_content(
+                                file_id=file_id,
+                                entity_type="method",
+                                entity_name=f"{node.name}.{item.name}",
+                                content=method_src or "",
+                                docstring=method_docstring,
+                                entity_id=method_id,
+                            )
+                        except Exception as e:
+                            logger.debug(
+                                f"Failed to add method content to FTS ({abs_path}.{node.name}.{item.name}): {e}",
+                                exc_info=True,
+                            )
+
+        # Extract top-level functions
+        for node in ast.walk(tree):
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                is_method = False
+                for parent in ast.walk(tree):
+                    if isinstance(parent, ast.ClassDef):
+                        if any(
+                            node == item
+                            for item in parent.body
+                            if isinstance(
+                                item, (ast.FunctionDef, ast.AsyncFunctionDef)
+                            )
+                        ):
+                            is_method = True
+                            break
+
+                if not is_method:
+                    docstring = update_cmd._extract_docstring(node)
+                    args = update_cmd._extract_args(node)
+                    # Calculate cyclomatic complexity
+                    try:
+                        from ..core.complexity import calculate_complexity
+
+                        function_complexity = calculate_complexity(node)
+                    except Exception as e:
+                        logger.debug(
+                            f"Failed to calculate complexity for function {node.name}: {e}",
+                            exc_info=True,
+                        )
+                        function_complexity = None
+                    function_id = self.add_function(
+                        file_id,
+                        node.name,
+                        node.lineno,
+                        args,
+                        docstring,
+                        complexity=function_complexity,
+                    )
+                    functions_added += 1
+
+                    # Store function content for full-text search
+                    try:
+                        function_src = ast.get_source_segment(source_code, node)
+                        self.add_code_content(
+                            file_id=file_id,
+                            entity_type="function",
+                            entity_name=node.name,
+                            content=function_src or "",
+                            docstring=docstring,
+                            entity_id=function_id,
+                        )
+                    except Exception as e:
+                        logger.debug(
+                            f"Failed to add function content to FTS ({abs_path}.{node.name}): {e}",
+                            exc_info=True,
+                        )
+
+        # Extract imports
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                for alias in node.names:
+                    import_id = self.add_import(
+                        file_id, alias.name, None, "import", node.lineno
+                    )
+                    imports_added += 1
+            elif isinstance(node, ast.ImportFrom):
+                module = node.module or ""
+                for alias in node.names:
+                    import_id = self.add_import(
+                        file_id, alias.name, module, "from", node.lineno
+                    )
+                    imports_added += 1
+
+        entities_count = classes_added + functions_added + methods_added
+
+        return {
+            "success": True,
+            "file_id": file_id,
+            "file_path": abs_path,
+            "ast_updated": True,
+            "cst_updated": True,
+            "entities_updated": entities_count,
+            "classes": classes_added,
+            "functions": functions_added,
+            "methods": methods_added,
+            "imports": imports_added,
+        }
+
+    except ProjectIdMismatchError:
+        # Re-raise project ID mismatch - this is a critical error
+        raise
+    except Exception as e:
+        logger.error(
+            f"Unexpected error in update_file_data_atomic for {file_path}: {e}",
+            exc_info=True,
+        )
+        return {
+            "success": False,
+            "error": f"Unexpected error: {e}",
+            "file_path": str(file_path),
+        }

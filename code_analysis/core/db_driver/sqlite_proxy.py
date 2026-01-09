@@ -55,6 +55,9 @@ class SQLiteDriverProxy(BaseDatabaseDriver):
         self.worker_log_path: Optional[str] = None
         self._lastrowid: Optional[int] = None
         self._socket_timeout: float = 5.0  # Socket connection timeout
+        self._transaction_id: Optional[str] = (
+            None  # Transaction ID for tracking transactions
+        )
         logger.debug(
             f"[SQLITE_PROXY] __init__ completed, poll_interval={self.poll_interval}"
         )
@@ -306,6 +309,7 @@ class SQLiteDriverProxy(BaseDatabaseDriver):
         sql: Optional[str] = None,
         params: Optional[Tuple[Any, ...]] = None,
         table_name: Optional[str] = None,
+        transaction_id: Optional[str] = None,
     ) -> Any:
         """
         Execute database operation via worker process.
@@ -343,6 +347,9 @@ class SQLiteDriverProxy(BaseDatabaseDriver):
             submit_request["params"] = params
         if table_name is not None:
             submit_request["table_name"] = table_name
+        # Pass transaction_id if provided (for transaction support)
+        if transaction_id is not None:
+            submit_request["transaction_id"] = transaction_id
 
         try:
             submit_response = self._send_request(submit_request)
@@ -506,7 +513,10 @@ class SQLiteDriverProxy(BaseDatabaseDriver):
 
     def execute(self, sql: str, params: Optional[Tuple[Any, ...]] = None) -> None:
         """Execute SQL statement."""
-        result = self._execute_operation("execute", sql=sql, params=params)
+        transaction_id = getattr(self, "_transaction_id", None)
+        result = self._execute_operation(
+            "execute", sql=sql, params=params, transaction_id=transaction_id
+        )
         # Store lastrowid from result
         try:
             if isinstance(result, dict) and "lastrowid" in result:
@@ -519,7 +529,10 @@ class SQLiteDriverProxy(BaseDatabaseDriver):
         self, sql: str, params: Optional[Tuple[Any, ...]] = None
     ) -> Optional[Dict[str, Any]]:
         """Execute SELECT query and return first row."""
-        result = self._execute_operation("fetchone", sql=sql, params=params)
+        transaction_id = getattr(self, "_transaction_id", None)
+        result = self._execute_operation(
+            "fetchone", sql=sql, params=params, transaction_id=transaction_id
+        )
         if isinstance(result, dict):
             return result
         return None
@@ -528,18 +541,31 @@ class SQLiteDriverProxy(BaseDatabaseDriver):
         self, sql: str, params: Optional[Tuple[Any, ...]] = None
     ) -> List[Dict[str, Any]]:
         """Execute SELECT query and return all rows."""
-        result = self._execute_operation("fetchall", sql=sql, params=params)
+        transaction_id = getattr(self, "_transaction_id", None)
+        result = self._execute_operation(
+            "fetchall", sql=sql, params=params, transaction_id=transaction_id
+        )
         return result if result is not None else []
 
     def commit(self) -> None:
         """Commit current transaction."""
-        # No-op: worker auto-commits each execute().
-        return None
+        transaction_id = getattr(self, "_transaction_id", None)
+        if transaction_id:
+            # Commit transaction in worker
+            self._execute_operation("commit_transaction", transaction_id=transaction_id)
+            self._transaction_id = None
+        # If no transaction_id, no-op (backward compatibility)
 
     def rollback(self) -> None:
         """Rollback current transaction."""
-        # No-op: worker auto-commits each execute().
-        return None
+        transaction_id = getattr(self, "_transaction_id", None)
+        if transaction_id:
+            # Rollback transaction in worker
+            self._execute_operation(
+                "rollback_transaction", transaction_id=transaction_id
+            )
+            self._transaction_id = None
+        # If no transaction_id, no-op (backward compatibility)
 
     def lastrowid(self) -> Optional[int]:
         """Get last inserted row ID."""

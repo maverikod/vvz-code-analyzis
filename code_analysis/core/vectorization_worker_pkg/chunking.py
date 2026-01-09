@@ -77,7 +77,9 @@ async def _request_chunking_for_files(
                 tree = ast.parse(file_content, filename=file_path)
                 logger.debug(f"[FILE {file_id}] AST parsed successfully")
             except Exception as e:
-                logger.warning(f"[FILE {file_id}] Failed to parse AST for {file_path}: {e}")
+                logger.warning(
+                    f"[FILE {file_id}] Failed to parse AST for {file_path}: {e}"
+                )
                 continue
 
             # Process file with chunker
@@ -91,11 +93,15 @@ async def _request_chunking_for_files(
                 file_content=file_content,
             )
             chunking_duration = time.time() - chunking_start_time
-            logger.info(f"[FILE {file_id}] Chunking completed in {chunking_duration:.3f}s")
+            logger.info(
+                f"[FILE {file_id}] Chunking completed in {chunking_duration:.3f}s"
+            )
 
             chunked_count += 1
             file_duration = time.time() - file_start_time
-            logger.info(f"[FILE {file_id}] Successfully chunked file {file_path} in {file_duration:.3f}s total")
+            logger.info(
+                f"[FILE {file_id}] Successfully chunked file {file_path} in {file_duration:.3f}s total"
+            )
 
         except Exception as e:
             logger.error(
@@ -105,8 +111,6 @@ async def _request_chunking_for_files(
             continue
 
     return chunked_count
-
-
 
 
 def _log_missing_docstring_files(

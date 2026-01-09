@@ -80,9 +80,16 @@ def _setup_worker_logging(
     # Also add console handler for immediate feedback
     console_handler = logging.StreamHandler(sys.stdout)
     console_handler.setLevel(logging.INFO)
-    formatter = logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
+    formatter = logging.Formatter(
+        "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+    )
     console_handler.setFormatter(formatter)
     logging.getLogger().addHandler(console_handler)
+
+
+# Global dictionary to store transaction connections
+# Key: transaction_id, Value: sqlite3.Connection
+_transaction_connections: Dict[str, Any] = {}
 
 
 def _execute_operation(
@@ -91,6 +98,7 @@ def _execute_operation(
     sql: Optional[str] = None,
     params: Optional[tuple] = None,
     table_name: Optional[str] = None,
+    transaction_id: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
     Execute database operation.
@@ -110,120 +118,167 @@ def _execute_operation(
     # Ensure parent directory exists
     db_path_obj.parent.mkdir(parents=True, exist_ok=True)
 
-    try:
+    # Get or create connection for transaction
+    conn: Optional[sqlite3.Connection] = None
+    use_transaction_connection = False
+
+    # Handle begin_transaction separately - create connection and store it
+    if operation == "begin_transaction":
+        if not transaction_id:
+            raise ValueError("transaction_id is required for begin_transaction")
+        if transaction_id in _transaction_connections:
+            raise ValueError(f"Transaction {transaction_id} already exists")
+        # Create new connection for transaction
         conn = sqlite3.connect(str(db_path_obj), check_same_thread=False)
         conn.row_factory = sqlite3.Row
-        # Enable foreign keys
         conn.execute("PRAGMA foreign_keys = ON")
-        # Use WAL for better concurrency
         try:
             conn.execute("PRAGMA journal_mode = WAL")
         except Exception:
-            pass  # WAL may be unavailable on some filesystems
+            pass
+        # Begin transaction
+        conn.execute("BEGIN TRANSACTION")
+        _transaction_connections[transaction_id] = conn
+        use_transaction_connection = True
+        return {"success": True, "result": {"success": True}, "error": None}
 
-        try:
-            result: Union[Dict[str, Any], List[Dict[str, Any]], None] = None
-
-            if operation == "execute":
-                if not sql:
-                    raise ValueError("sql parameter is required for execute operation")
-                cursor = conn.cursor()
-                if params:
-                    cursor.execute(sql, params)
-                else:
-                    cursor.execute(sql)
-                conn.commit()
-                result = {
-                    "lastrowid": cursor.lastrowid,
-                    "rowcount": cursor.rowcount,
-                }
-
-            elif operation == "fetchone":
-                if not sql:
-                    raise ValueError("sql parameter is required for fetchone operation")
-                cursor = conn.cursor()
-                if params:
-                    cursor.execute(sql, params)
-                else:
-                    cursor.execute(sql)
-                row = cursor.fetchone()
-                if row:
-                    result = dict(zip(row.keys(), row))
-                else:
-                    result = None
-
-            elif operation == "fetchall":
-                if not sql:
-                    raise ValueError("sql parameter is required for fetchall operation")
-                cursor = conn.cursor()
-                if params:
-                    cursor.execute(sql, params)
-                else:
-                    cursor.execute(sql)
-                rows = cursor.fetchall()
-                result = [dict(zip(row.keys(), row)) for row in rows]
-
-            elif operation == "commit":
-                conn.commit()
-                result = None
-
-            elif operation == "rollback":
-                conn.rollback()
-                result = None
-
-            elif operation == "lastrowid":
-                # Not supported with per-operation connections
-                result = None
-
-            elif operation == "get_table_info":
-                if not table_name:
-                    raise ValueError(
-                        "table_name parameter is required for get_table_info operation"
-                    )
-                cursor = conn.cursor()
-                cursor.execute(f"PRAGMA table_info({table_name})")
-                rows = cursor.fetchall()
-                columns = ["cid", "name", "type", "notnull", "dflt_value", "pk"]
-                result = [dict(zip(columns, row)) for row in rows]
-
-            else:
-                raise ValueError(f"Unknown operation: {operation}")
-
-            return {"success": True, "result": result, "error": None}
-
-        except Exception as e:
-            logger.error(
-                f"Database operation '{operation}' failed: {e}",
-                exc_info=True,
-                extra={
-                    "operation": operation,
-                    "db_path": db_path,
-                    "sql": sql[:200] if sql else None,
-                },
+    # For other operations, get or create connection
+    if transaction_id:
+        # Use transaction connection if exists
+        if transaction_id in _transaction_connections:
+            conn = _transaction_connections[transaction_id]
+            use_transaction_connection = True
+        else:
+            raise ValueError(
+                f"Transaction {transaction_id} not found. Call begin_transaction first."
             )
-            return {
-                "success": False,
-                "result": None,
-                "error": {
-                    "type": type(e).__name__,
-                    "message": str(e),
-                    "sql": sql[:200] if sql else None,
-                },
+    else:
+        # Create new connection for this operation (non-transaction mode)
+        conn = sqlite3.connect(str(db_path_obj), check_same_thread=False)
+        conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA foreign_keys = ON")
+        try:
+            conn.execute("PRAGMA journal_mode = WAL")
+        except Exception:
+            pass
+
+    try:
+        result: Union[Dict[str, Any], List[Dict[str, Any]], None] = None
+
+        if operation == "commit_transaction":
+            if transaction_id and transaction_id in _transaction_connections:
+                conn = _transaction_connections[transaction_id]
+                conn.commit()
+                conn.close()
+                del _transaction_connections[transaction_id]
+                result = {"success": True}
+            else:
+                raise ValueError(f"Transaction {transaction_id} not found")
+
+        elif operation == "rollback_transaction":
+            if transaction_id and transaction_id in _transaction_connections:
+                conn = _transaction_connections[transaction_id]
+                conn.rollback()
+                conn.close()
+                del _transaction_connections[transaction_id]
+                result = {"success": True}
+            else:
+                raise ValueError(f"Transaction {transaction_id} not found")
+
+        elif operation == "execute":
+            if not sql:
+                raise ValueError("sql parameter is required for execute operation")
+            cursor = conn.cursor()
+            if params:
+                cursor.execute(sql, params)
+            else:
+                cursor.execute(sql)
+            # Only commit if not in transaction
+            if not use_transaction_connection:
+                conn.commit()
+            result = {
+                "lastrowid": cursor.lastrowid,
+                "rowcount": cursor.rowcount,
             }
 
-        finally:
-            conn.close()
+        elif operation == "fetchone":
+            if not sql:
+                raise ValueError("sql parameter is required for fetchone operation")
+            cursor = conn.cursor()
+            if params:
+                cursor.execute(sql, params)
+            else:
+                cursor.execute(sql)
+            row = cursor.fetchone()
+            if row:
+                result = dict(zip(row.keys(), row))
+            else:
+                result = None
+
+        elif operation == "fetchall":
+            if not sql:
+                raise ValueError("sql parameter is required for fetchall operation")
+            cursor = conn.cursor()
+            if params:
+                cursor.execute(sql, params)
+            else:
+                cursor.execute(sql)
+            rows = cursor.fetchall()
+            result = [dict(zip(row.keys(), row)) for row in rows]
+
+        elif operation == "commit":
+            conn.commit()
+            result = None
+
+        elif operation == "rollback":
+            conn.rollback()
+            result = None
+
+        elif operation == "lastrowid":
+            # Not supported with per-operation connections
+            result = None
+
+        elif operation == "get_table_info":
+            if not table_name:
+                raise ValueError(
+                    "table_name parameter is required for get_table_info operation"
+                )
+            cursor = conn.cursor()
+            cursor.execute(f"PRAGMA table_info({table_name})")
+            rows = cursor.fetchall()
+            columns = ["cid", "name", "type", "notnull", "dflt_value", "pk"]
+            result = [dict(zip(columns, row)) for row in rows]
+
+        else:
+            raise ValueError(f"Unknown operation: {operation}")
+
+        return {"success": True, "result": result, "error": None}
 
     except Exception as e:
-        logger.error(f"Failed to connect to database: {e}", exc_info=True)
+        logger.error(
+            f"Database operation '{operation}' failed: {e}",
+            exc_info=True,
+            extra={
+                "operation": operation,
+                "db_path": db_path,
+                "sql": sql[:200] if sql else None,
+            },
+        )
         return {
             "success": False,
             "result": None,
             "error": {
                 "type": type(e).__name__,
                 "message": str(e),
+                "sql": sql[:200] if sql else None,
             },
         }
+
+    finally:
+        # Only close connection if not in transaction
+        # Transaction connections are closed in commit_transaction/rollback_transaction
+        if not use_transaction_connection and conn:
+            conn.close()
 
 
 def _send_response(sock: socket.socket, response: Dict[str, Any]) -> None:
@@ -235,14 +290,16 @@ def _send_response(sock: socket.socket, response: Dict[str, Any]) -> None:
         response: Response dictionary to send
     """
     try:
-        data = json.dumps(response).encode('utf-8')
-        length = struct.pack('!I', len(data))
+        data = json.dumps(response).encode("utf-8")
+        length = struct.pack("!I", len(data))
         sock.sendall(length + data)
     except Exception as e:
         logger.error(f"Failed to send response: {e}", exc_info=True)
 
 
-def _receive_request(sock: socket.socket, timeout: float = 5.0) -> Optional[Dict[str, Any]]:
+def _receive_request(
+    sock: socket.socket, timeout: float = 5.0
+) -> Optional[Dict[str, Any]]:
     """
     Receive JSON request from socket.
 
@@ -256,24 +313,24 @@ def _receive_request(sock: socket.socket, timeout: float = 5.0) -> Optional[Dict
     try:
         sock.settimeout(timeout)
         # Receive length (4 bytes)
-        length_data = b''
+        length_data = b""
         while len(length_data) < 4:
             chunk = sock.recv(4 - len(length_data))
             if not chunk:
                 return None
             length_data += chunk
 
-        length = struct.unpack('!I', length_data)[0]
-        
+        length = struct.unpack("!I", length_data)[0]
+
         # Receive data
-        data = b''
+        data = b""
         while len(data) < length:
             chunk = sock.recv(length - len(data))
             if not chunk:
                 return None
             data += chunk
 
-        return json.loads(data.decode('utf-8'))
+        return json.loads(data.decode("utf-8"))
     except socket.timeout:
         return None
     except Exception as e:
@@ -304,7 +361,7 @@ def _handle_client_connection(
             return
 
         command = request.get("command")
-        
+
         if command == "submit":
             # Submit new job
             job_id = request.get("job_id")
@@ -312,15 +369,23 @@ def _handle_client_connection(
             sql = request.get("sql")
             params = request.get("params")
             table_name = request.get("table_name")
+            transaction_id = request.get(
+                "transaction_id"
+            )  # Get transaction_id from request
 
             if not job_id:
-                _send_response(client_sock, {
-                    "success": False,
-                    "error": "Missing job_id",
-                })
+                _send_response(
+                    client_sock,
+                    {
+                        "success": False,
+                        "error": "Missing job_id",
+                    },
+                )
                 return
 
-            logger.debug(f"Received job submission: job_id={job_id}, operation={operation}")
+            logger.debug(
+                f"Received job submission: job_id={job_id}, operation={operation}"
+            )
 
             # Add job to queue (will be processed asynchronously)
             with jobs_lock:
@@ -341,107 +406,148 @@ def _handle_client_connection(
                         sql=sql,
                         params=params,
                         table_name=table_name,
+                        transaction_id=transaction_id,  # Pass transaction_id
                     )
                     with jobs_lock:
                         if job_id in jobs:
-                            jobs[job_id].update({
-                                "status": "completed",
-                                "result": result.get("result"),
-                                "error": result.get("error"),
-                                "success": result.get("success", False),
-                            })
+                            jobs[job_id].update(
+                                {
+                                    "status": "completed",
+                                    "result": result.get("result"),
+                                    "error": result.get("error"),
+                                    "success": result.get("success", False),
+                                }
+                            )
                 except Exception as e:
                     logger.error(f"Error executing job {job_id}: {e}", exc_info=True)
                     with jobs_lock:
                         if job_id in jobs:
-                            jobs[job_id].update({
-                                "status": "failed",
-                                "error": {"type": type(e).__name__, "message": str(e)},
-                                "success": False,
-                            })
+                            jobs[job_id].update(
+                                {
+                                    "status": "failed",
+                                    "error": {
+                                        "type": type(e).__name__,
+                                        "message": str(e),
+                                    },
+                                    "success": False,
+                                }
+                            )
 
             thread = threading.Thread(target=execute_job, daemon=True)
             thread.start()
 
             # Send job_id back to client
-            _send_response(client_sock, {
-                "success": True,
-                "job_id": job_id,
-            })
+            _send_response(
+                client_sock,
+                {
+                    "success": True,
+                    "job_id": job_id,
+                },
+            )
 
         elif command == "poll":
             # Poll for job result
             job_id = request.get("job_id")
             if not job_id:
-                _send_response(client_sock, {
-                    "success": False,
-                    "error": "Missing job_id",
-                })
+                _send_response(
+                    client_sock,
+                    {
+                        "success": False,
+                        "error": "Missing job_id",
+                    },
+                )
                 return
 
             with jobs_lock:
                 job = jobs.get(job_id)
                 if not job:
-                    _send_response(client_sock, {
-                        "success": False,
-                        "error": "Job not found",
-                    })
+                    _send_response(
+                        client_sock,
+                        {
+                            "success": False,
+                            "error": "Job not found",
+                        },
+                    )
                     return
 
                 status = job.get("status")
                 if status == "pending":
-                    _send_response(client_sock, {
-                        "success": True,
-                        "status": "pending",
-                    })
+                    _send_response(
+                        client_sock,
+                        {
+                            "success": True,
+                            "status": "pending",
+                        },
+                    )
                 elif status in ("completed", "failed"):
-                    _send_response(client_sock, {
-                        "success": job.get("success", False),
-                        "status": status,
-                        "result": job.get("result"),
-                        "error": job.get("error"),
-                    })
+                    _send_response(
+                        client_sock,
+                        {
+                            "success": job.get("success", False),
+                            "status": status,
+                            "result": job.get("result"),
+                            "error": job.get("error"),
+                        },
+                    )
                 else:
-                    _send_response(client_sock, {
-                        "success": False,
-                        "error": f"Unknown job status: {status}",
-                    })
+                    _send_response(
+                        client_sock,
+                        {
+                            "success": False,
+                            "error": f"Unknown job status: {status}",
+                        },
+                    )
 
         elif command == "delete":
             # Delete job from queue
             job_id = request.get("job_id")
             if not job_id:
-                _send_response(client_sock, {
-                    "success": False,
-                    "error": "Missing job_id",
-                })
+                _send_response(
+                    client_sock,
+                    {
+                        "success": False,
+                        "error": "Missing job_id",
+                    },
+                )
                 return
 
             with jobs_lock:
                 if job_id in jobs:
                     del jobs[job_id]
-                    _send_response(client_sock, {
-                        "success": True,
-                    })
+                    _send_response(
+                        client_sock,
+                        {
+                            "success": True,
+                        },
+                    )
                 else:
-                    _send_response(client_sock, {
-                        "success": False,
-                        "error": "Job not found",
-                    })
+                    _send_response(
+                        client_sock,
+                        {
+                            "success": False,
+                            "error": "Job not found",
+                        },
+                    )
 
         else:
-            _send_response(client_sock, {
-                "success": False,
-                "error": f"Unknown command: {command}",
-            })
+            _send_response(
+                client_sock,
+                {
+                    "success": False,
+                    "error": f"Unknown command: {command}",
+                },
+            )
 
     except Exception as e:
         logger.error(f"Error handling client connection: {e}", exc_info=True)
         try:
-            _send_response(client_sock, {
-                "success": False,
-                "error": str(e),
-            })
+            _send_response(
+                client_sock,
+                {
+                    "success": False,
+                    "error": str(e),
+                },
+            )
         except Exception:
             pass
     finally:
@@ -549,7 +655,9 @@ def run_db_worker(
     try:
         while not shutdown_event:
             try:
-                client_sock, _ = server_sock.accept()  # addr is not used for Unix sockets
+                client_sock, _ = (
+                    server_sock.accept()
+                )  # addr is not used for Unix sockets
                 # Handle client in separate thread
                 thread = threading.Thread(
                     target=_handle_client_connection,
@@ -579,4 +687,3 @@ def run_db_worker(
                 socket_file.unlink()
             except Exception:
                 pass
-

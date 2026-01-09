@@ -80,7 +80,9 @@ class CodeDatabase:
         Raises:
             ValueError: If driver_config is missing or invalid.
         """
-        logger.info(f"[CodeDatabase] __init__ called with driver_config type={driver_config.get('type') if driver_config else None}")
+        logger.info(
+            f"[CodeDatabase] __init__ called with driver_config type={driver_config.get('type') if driver_config else None}"
+        )
         if not driver_config:
             raise ValueError("driver_config is required. No backward compatibility.")
 
@@ -89,17 +91,32 @@ class CodeDatabase:
             raise ValueError("driver_config must contain 'type' key")
 
         driver_cfg = driver_config.get("config", {})
-        logger.info(f"[CodeDatabase] Creating driver: type={driver_type}, config_keys={list(driver_cfg.keys())}")
-        print(f"[CodeDatabase] Creating driver: type={driver_type}, config_keys={list(driver_cfg.keys())}", flush=True)
+        logger.info(
+            f"[CodeDatabase] Creating driver: type={driver_type}, config_keys={list(driver_cfg.keys())}"
+        )
+        print(
+            f"[CodeDatabase] Creating driver: type={driver_type}, config_keys={list(driver_cfg.keys())}",
+            flush=True,
+        )
 
         try:
             logger.info(f"[CodeDatabase] Calling create_driver({driver_type}, ...)")
-            print(f"[CodeDatabase] Calling create_driver({driver_type}, ...)", flush=True)
+            print(
+                f"[CodeDatabase] Calling create_driver({driver_type}, ...)", flush=True
+            )
             self.driver = create_driver(driver_type, driver_cfg)
-            logger.info(f"[CodeDatabase] Database driver '{driver_type}' loaded successfully")
-            print(f"[CodeDatabase] Database driver '{driver_type}' loaded successfully", flush=True)
+            logger.info(
+                f"[CodeDatabase] Database driver '{driver_type}' loaded successfully"
+            )
+            print(
+                f"[CodeDatabase] Database driver '{driver_type}' loaded successfully",
+                flush=True,
+            )
         except Exception as e:
-            logger.error(f"[CodeDatabase] Failed to load database driver '{driver_type}': {e}", exc_info=True)
+            logger.error(
+                f"[CodeDatabase] Failed to load database driver '{driver_type}': {e}",
+                exc_info=True,
+            )
             raise
 
         # Store driver type for logging
@@ -112,6 +129,9 @@ class CodeDatabase:
             self._lock = _get_db_lock(lock_key)
         else:
             self._lock = None
+
+        # Transaction state tracking
+        self._transaction_active: bool = False
 
         self._create_schema()
 
@@ -168,6 +188,54 @@ class CodeDatabase:
                 self.driver.rollback()
         else:
             self.driver.rollback()
+
+    def begin_transaction(self) -> None:
+        """
+        Begin database transaction.
+
+        Raises:
+            RuntimeError: If transaction is already active.
+        """
+        if self._transaction_active:
+            raise RuntimeError("Transaction already active")
+        self._execute("BEGIN TRANSACTION")
+        self._transaction_active = True
+        logger.debug("Transaction started")
+
+    def commit_transaction(self) -> None:
+        """
+        Commit database transaction.
+
+        Raises:
+            RuntimeError: If no active transaction.
+        """
+        if not self._transaction_active:
+            raise RuntimeError("No active transaction")
+        self._commit()
+        self._transaction_active = False
+        logger.debug("Transaction committed")
+
+    def rollback_transaction(self) -> None:
+        """
+        Rollback database transaction.
+
+        Raises:
+            RuntimeError: If no active transaction.
+        """
+        if not self._transaction_active:
+            raise RuntimeError("No active transaction")
+        self._rollback()
+        self._transaction_active = False
+        logger.debug("Transaction rolled back")
+
+    def _in_transaction(self) -> bool:
+        """
+        Check if transaction is currently active.
+
+        Returns:
+            True if transaction is active, False otherwise.
+        """
+        return getattr(self, "_transaction_active", False)
 
     def _lastrowid(self) -> Optional[int]:
         """Get last row ID with optional locking."""
@@ -754,7 +822,12 @@ class CodeDatabase:
                         INSERT OR IGNORE INTO datasets (id, project_id, root_path, name)
                         VALUES (?, ?, ?, ?)
                     """,
-                        (dataset_id, project_id, root_path, f"Default dataset for {root_path}"),
+                        (
+                            dataset_id,
+                            project_id,
+                            root_path,
+                            f"Default dataset for {root_path}",
+                        ),
                     )
 
                 # Add dataset_id column
@@ -1153,4 +1226,3 @@ class CodeDatabase:
                 (vector_id, chunk_id),
             )
         self._commit()
-

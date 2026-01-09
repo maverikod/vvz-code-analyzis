@@ -17,7 +17,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional, Tuple
 
-from .exceptions import InvalidProjectIdFormatError, ProjectIdError
+from .exceptions import (
+    InvalidProjectIdFormatError,
+    MultipleProjectIdError,
+    ProjectIdError,
+)
 
 
 def normalize_root_dir(root_dir: str | Path) -> Path:
@@ -59,8 +63,9 @@ def normalize_abs_path(path: str | Path) -> str:
 
 @dataclass
 class ProjectInfo:
-    """Information about project from projectid file."""
+    """Information about project root."""
 
+    root_path: Path  # Absolute path to project root
     project_id: str  # UUID4 identifier
     description: str  # Human-readable description
 
@@ -166,7 +171,9 @@ def load_project_info(root_dir: str | Path) -> ProjectInfo:
             projectid_path=str(pid_path),
         )
 
-    return ProjectInfo(project_id=project_id, description=description)
+    return ProjectInfo(
+        root_path=root_path, project_id=project_id, description=description
+    )
 
 
 def require_matching_project_id(root_dir: str | Path, project_id: str | None) -> str:
@@ -196,11 +203,85 @@ def require_matching_project_id(root_dir: str | Path, project_id: str | None) ->
     return project_id
 
 
+def find_project_root_for_path(
+    file_path: str | Path, watch_dirs: list[str | Path]
+) -> Optional[ProjectInfo]:
+    """
+    Find project root for a file path and return full project information.
+
+    Uses project discovery to find the nearest project root containing
+    the file by walking up the directory tree and looking for projectid files.
+    Checks for multiple projectid files in the path and raises error if found.
+
+    Args:
+        file_path: Path to file
+        watch_dirs: List of watched directories (absolute paths)
+
+    Returns:
+        ProjectInfo with root_path, project_id, and description, or None if not found
+
+    Raises:
+        MultipleProjectIdError: If multiple projectid files found in path
+        NestedProjectError: If nested projects detected
+    """
+    from .project_discovery import find_project_root
+
+    file_path_resolved = Path(file_path).resolve()
+    watch_dirs_resolved = [Path(wd).resolve() for wd in watch_dirs]
+
+    # Check for multiple projectid files in path
+    projectid_files = []
+    current = file_path_resolved.parent if file_path_resolved.is_file() else file_path_resolved
+    for watch_dir in watch_dirs_resolved:
+        try:
+            current.relative_to(watch_dir)
+        except ValueError:
+            continue
+
+        # Walk up from current to watch_dir
+        search_path = current
+        while True:
+            try:
+                search_path.relative_to(watch_dir)
+            except ValueError:
+                break
+
+            projectid_path = search_path / "projectid"
+            if projectid_path.exists() and projectid_path.is_file():
+                projectid_files.append(projectid_path)
+
+            parent = search_path.parent
+            if parent == search_path:
+                break
+            search_path = parent
+
+    if len(projectid_files) > 1:
+        raise MultipleProjectIdError(
+            message=f"Multiple projectid files found in path: {[str(p) for p in projectid_files]}",
+            projectid_paths=[str(p) for p in projectid_files],
+        )
+
+    # Use existing find_project_root logic
+    project_root = find_project_root(file_path_resolved, watch_dirs_resolved)
+    if project_root is None:
+        return None
+
+    # Load full project info
+    project_info = load_project_info(project_root.root_path)
+    return ProjectInfo(
+        root_path=project_root.root_path,
+        project_id=project_info.project_id,
+        description=project_info.description,
+    )
+
+
 def find_project_root_for_file(
     file_path: str | Path, watch_dirs: list[str | Path]
 ) -> Optional[Tuple[Path, str]]:
     """
     Find project root and project_id for a file.
+
+    Deprecated: Use find_project_root_for_path() instead.
 
     Uses project discovery to find the nearest project root containing
     the file by walking up the directory tree and looking for projectid files.
@@ -213,12 +294,10 @@ def find_project_root_for_file(
         Tuple of (project_root_path, project_id) or None if not found
 
     Raises:
+        MultipleProjectIdError: If multiple projectid files found in path
         NestedProjectError: If nested projects detected
     """
-    from .project_discovery import find_project_root
-
-    watch_dirs_resolved = [Path(wd).resolve() for wd in watch_dirs]
-    project_root = find_project_root(Path(file_path), watch_dirs_resolved)
-    if project_root is None:
+    project_info = find_project_root_for_path(file_path, watch_dirs)
+    if project_info is None:
         return None
-    return (project_root.root_path, project_root.project_id)
+    return (project_info.root_path, project_info.project_id)

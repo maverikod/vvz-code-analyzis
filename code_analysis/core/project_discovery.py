@@ -34,11 +34,13 @@ class ProjectRoot:
     Attributes:
         root_path: Absolute path to project root directory (contains projectid file)
         project_id: Project ID (UUID4 string) loaded from projectid file
+        description: Human-readable description of the project
         watch_dir: The watch_dir that contains this project (absolute path)
     """
 
     root_path: Path
     project_id: str
+    description: str
     watch_dir: Path
 
 
@@ -109,14 +111,17 @@ def find_project_root(file_path: Path, watch_dirs: List[Path]) -> Optional[Proje
         projectid_path = search_path / "projectid"
         if projectid_path.exists() and projectid_path.is_file():
             try:
-                # Load and validate project_id
-                project_id = load_project_id(search_path)
+                # Load and validate project info
+                from .project_resolution import load_project_info
+
+                project_info = load_project_info(search_path)
                 # Validate no nested projects
                 validate_no_nested_projects(search_path, containing_watch_dir)
                 # Found valid project root
                 return ProjectRoot(
                     root_path=search_path,
-                    project_id=project_id,
+                    project_id=project_info.project_id,
+                    description=project_info.description,
                     watch_dir=containing_watch_dir,
                 )
             except ProjectIdError as e:
@@ -266,14 +271,17 @@ def discover_projects_in_directory(watch_dir: Path) -> List[ProjectRoot]:
         project_root = projectid_path.parent.resolve()
 
         try:
-            # Load and validate project_id
-            project_id = load_project_id(project_root)
+            # Load and validate project info
+            from .project_resolution import load_project_info
+
+            project_info = load_project_info(project_root)
             # Validate no nested projects
             validate_no_nested_projects(project_root, watch_dir)
             # Create ProjectRoot
             project = ProjectRoot(
                 root_path=project_root,
-                project_id=project_id,
+                project_id=project_info.project_id,
+                description=project_info.description,
                 watch_dir=watch_dir,
             )
             discovered_projects.append(project)

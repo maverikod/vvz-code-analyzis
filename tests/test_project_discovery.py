@@ -378,11 +378,13 @@ class TestProjectRoot:
         root = ProjectRoot(
             root_path=project_root,
             project_id=project_id,
+            description="Test project",
             watch_dir=temp_dir,
         )
 
         assert root.root_path == project_root.resolve()
         assert root.project_id == project_id
+        assert root.description == "Test project"
         assert root.watch_dir == temp_dir.resolve()
 
     def test_project_root_immutable(self, temp_dir, project_id):

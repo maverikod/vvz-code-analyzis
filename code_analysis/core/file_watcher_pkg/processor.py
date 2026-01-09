@@ -601,6 +601,30 @@ class FileChangeProcessor:
                         f"[QUEUE] File path verified within project root: "
                         f"file={abs_file_path}, project_root={project_root_obj}"
                     )
+                    
+                    # Validate project_id: check if project_id from parameter matches projectid file
+                    # This is a safety gate to prevent data inconsistency
+                    try:
+                        from ..project_resolution import load_project_id
+                        from ..exceptions import ProjectIdMismatchError
+
+                        file_project_id = load_project_id(project_root_obj)
+                        if file_project_id != project_id:
+                            raise ProjectIdMismatchError(
+                                message=(
+                                    f"Project ID mismatch: file {abs_file_path} belongs to project "
+                                    f"{file_project_id} (from projectid file at {project_root_obj}) "
+                                    f"but was provided with project_id {project_id}"
+                                ),
+                                file_project_id=file_project_id,
+                                db_project_id=project_id,
+                            )
+                    except ProjectIdMismatchError:
+                        # Re-raise project ID mismatch
+                        raise
+                    except Exception as e:
+                        # Log but don't fail - validation is a safety check
+                        logger.warning(f"[QUEUE] Failed to validate project_id for {abs_file_path}: {e}")
                 except ValueError:
                     logger.warning(
                         f"[QUEUE] File path is outside project root: "

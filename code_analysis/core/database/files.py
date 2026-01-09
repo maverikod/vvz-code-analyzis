@@ -98,6 +98,50 @@ def add_file(
             f"project_id={project_id} | dataset_id={dataset_id}"
         )
 
+    # Validate project_id: check if project_id from parameter matches projectid file
+    # This is a safety gate to prevent data inconsistency
+    try:
+        from ..project_resolution import find_project_root_for_path
+        from ..exceptions import ProjectIdMismatchError
+
+        # Try to find project root for this file
+        # Note: This requires watch_dirs, but we don't have them in this context
+        # So we'll validate by checking if file path contains a projectid file
+        abs_path_obj = Path(abs_path)
+        current = abs_path_obj.parent if abs_path_obj.is_file() else abs_path_obj
+        
+        # Walk up to find projectid file
+        project_root = None
+        for parent in [current] + list(current.parents):
+            projectid_path = parent / "projectid"
+            if projectid_path.exists() and projectid_path.is_file():
+                project_root = parent
+                break
+        
+        if project_root:
+            from ..project_resolution import load_project_id
+            
+            file_project_id = load_project_id(project_root)
+            if file_project_id != project_id:
+                raise ProjectIdMismatchError(
+                    message=(
+                        f"Project ID mismatch: file {abs_path} belongs to project "
+                        f"{file_project_id} (from projectid file) but was provided "
+                        f"with project_id {project_id}"
+                    ),
+                    file_project_id=file_project_id,
+                    db_project_id=project_id,
+                )
+    except (FileNotFoundError, ValueError):
+        # File doesn't exist or path issues - skip validation
+        logger.debug(f"[add_file] Skipping project_id validation for {abs_path}: file not found or path issues")
+    except ProjectIdMismatchError:
+        # Re-raise project ID mismatch
+        raise
+    except Exception as e:
+        # Log but don't fail - validation is a safety check
+        logger.warning(f"[add_file] Failed to validate project_id for {abs_path}: {e}")
+
     # Check if file exists in a different project
     existing_file = self._fetchone(
         "SELECT id, project_id FROM files WHERE path = ? AND project_id != ? AND (deleted = 0 OR deleted IS NULL) LIMIT 1",
@@ -343,6 +387,31 @@ def update_file_data(
                 f"[update_file_data] Path normalized: {file_path!r} -> {abs_path!r} | "
                 f"project_id={project_id} | root_dir={root_dir}"
             )
+
+        # Validate project_id: check if project_id from parameter matches projectid file
+        # This is a safety gate to prevent data inconsistency
+        try:
+            from ..project_resolution import load_project_id
+            from ..exceptions import ProjectIdMismatchError
+
+            root_dir_path = Path(root_dir).resolve()
+            file_project_id = load_project_id(root_dir_path)
+            if file_project_id != project_id:
+                raise ProjectIdMismatchError(
+                    message=(
+                        f"Project ID mismatch: file {abs_path} belongs to project "
+                        f"{file_project_id} (from projectid file at {root_dir_path}) "
+                        f"but was provided with project_id {project_id}"
+                    ),
+                    file_project_id=file_project_id,
+                    db_project_id=project_id,
+                )
+        except ProjectIdMismatchError:
+            # Re-raise project ID mismatch
+            raise
+        except Exception as e:
+            # Log but don't fail - validation is a safety check
+            logger.warning(f"[update_file_data] Failed to validate project_id for {abs_path}: {e}")
 
         # Get file record
         file_record = self.get_file_by_path(abs_path, project_id)

@@ -10,6 +10,7 @@ from typing import Any, Dict, Optional
 
 from mcp_proxy_adapter.commands.result import SuccessResult, ErrorResult
 
+from ..core.constants import DEFAULT_MAX_FILE_LINES
 from .base_mcp_command import BaseMCPCommand
 from .code_mapper_commands import ListLongFilesCommand, ListErrorsByCategoryCommand
 
@@ -58,7 +59,7 @@ class ListLongFilesMCPCommand(BaseMCPCommand):
     async def execute(
         self,
         root_dir: str,
-        max_lines: int = 400,
+        max_lines: int = DEFAULT_MAX_FILE_LINES,
         project_id: Optional[str] = None,
         **kwargs,
     ) -> SuccessResult | ErrorResult:
@@ -181,9 +182,7 @@ class ListLongFilesMCPCommand(BaseMCPCommand):
                         "root_dir": "/home/user/projects/my_project",
                         "max_lines": 500,
                     },
-                    "explanation": (
-                        "Lists all files exceeding 500 lines."
-                    ),
+                    "explanation": ("Lists all files exceeding 500 lines."),
                 },
             ],
             "error_cases": {
@@ -229,7 +228,7 @@ class ListLongFilesMCPCommand(BaseMCPCommand):
                 },
             },
             "best_practices": [
-                "Use default max_lines=400 to follow project standards",
+                f"Use default max_lines={DEFAULT_MAX_FILE_LINES} to follow project standards",
                 "Run this command regularly to monitor file sizes",
                 "Use split_file_to_package to split large files",
                 "Combine with comprehensive_analysis for complete code quality overview",
@@ -426,7 +425,11 @@ class ListErrorsByCategoryMCPCommand(BaseMCPCommand):
                     "example": {
                         "categories": {
                             "missing_docstring": [
-                                {"file_path": "src/main.py", "line": 10, "type": "class"},
+                                {
+                                    "file_path": "src/main.py",
+                                    "line": 10,
+                                    "type": "class",
+                                },
                             ],
                             "long_file": [
                                 {"file_path": "src/utils.py", "lines": 450},

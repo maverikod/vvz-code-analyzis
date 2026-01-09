@@ -22,6 +22,7 @@ from typing import Any, Dict, List, Optional
 from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 
 from ..core.comprehensive_analyzer import ComprehensiveAnalyzer
+from ..core.constants import DEFAULT_MAX_FILE_LINES
 from ..core.duplicate_detector import DuplicateDetector
 from .base_mcp_command import BaseMCPCommand
 
@@ -38,7 +39,6 @@ class ComprehensiveAnalysisMCPCommand(BaseMCPCommand):
     author = "Vasiliy Zdanovskiy"
     email = "vasilyvz@gmail.com"
     use_queue = True
-
 
     @classmethod
     def get_schema(cls) -> Dict[str, Any]:
@@ -136,7 +136,7 @@ class ComprehensiveAnalysisMCPCommand(BaseMCPCommand):
         root_dir: str,
         file_path: Optional[str] = None,
         project_id: Optional[str] = None,
-        max_lines: int = 400,
+        max_lines: int = DEFAULT_MAX_FILE_LINES,
         check_placeholders: bool = True,
         check_stubs: bool = True,
         check_empty_methods: bool = True,
@@ -183,15 +183,15 @@ class ComprehensiveAnalysisMCPCommand(BaseMCPCommand):
         # Setup dedicated log file for comprehensive analysis
         analysis_logger = logging.getLogger("comprehensive_analysis")
         analysis_logger.setLevel(logging.INFO)
-        
+
         # Remove existing handlers to avoid duplicates
         analysis_logger.handlers = []
-        
+
         # Create logs directory if it doesn't exist
         root_path = self._validate_root_dir(root_dir)
         logs_dir = root_path / "logs"
         logs_dir.mkdir(exist_ok=True)
-        
+
         # Create rotating file handler for comprehensive_analysis.log
         log_file = logs_dir / "comprehensive_analysis.log"
         file_handler = RotatingFileHandler(
@@ -211,7 +211,7 @@ class ComprehensiveAnalysisMCPCommand(BaseMCPCommand):
 
         try:
             db = self._open_database(root_dir)
-            
+
             # Resolve project_id: if explicitly provided, use it; otherwise infer from root_dir
             # If project_id is None and we can't infer it, we'll analyze all projects
             proj_id = None
@@ -248,7 +248,7 @@ class ComprehensiveAnalysisMCPCommand(BaseMCPCommand):
                 "missing_docstrings": [],
                 "summary": {},
             }
-            
+
             # Statistics for incremental analysis
             files_analyzed = 0
             files_skipped = 0
@@ -271,22 +271,28 @@ class ComprehensiveAnalysisMCPCommand(BaseMCPCommand):
                 # Get absolute path for database lookup
                 abs_path = str(file_path_obj.resolve())
                 rel_path = str(file_path_obj.relative_to(root_path))
-                
+
                 # Get file_id and mtime
                 file_mtime = file_path_obj.stat().st_mtime
                 file_id = None
                 file_project_id = proj_id
-                
+
                 # Try to find file in database - ONLY in specified project
                 if proj_id:
-                    file_record = db.get_file_by_path(abs_path, proj_id, include_deleted=False)
+                    file_record = db.get_file_by_path(
+                        abs_path, proj_id, include_deleted=False
+                    )
                     if file_record:
                         file_id = file_record["id"]
                         file_project_id = proj_id
-                        analysis_logger.debug(f"Found file in project: file_id={file_id}, project_id={file_project_id}")
+                        analysis_logger.debug(
+                            f"Found file in project: file_id={file_id}, project_id={file_project_id}"
+                        )
                     else:
                         # Check if file exists in this project but marked as deleted
-                        file_record_deleted = db.get_file_by_path(abs_path, proj_id, include_deleted=True)
+                        file_record_deleted = db.get_file_by_path(
+                            abs_path, proj_id, include_deleted=True
+                        )
                         if file_record_deleted and file_record_deleted.get("deleted"):
                             analysis_logger.warning(
                                 f"File found in project {proj_id} but marked as deleted (file_id={file_record_deleted['id']}). "
@@ -305,19 +311,21 @@ class ComprehensiveAnalysisMCPCommand(BaseMCPCommand):
                                 wrong_file_id = file_in_wrong_project["id"]
                                 wrong_project_id = file_in_wrong_project["project_id"]
                                 is_deleted = file_in_wrong_project.get("deleted", 0)
-                                
+
                                 analysis_logger.error(
                                     f"Data inconsistency detected: file exists on disk at {abs_path} "
                                     f"but is registered in project {wrong_project_id} (not {proj_id}). "
                                     f"File ID: {wrong_file_id}, deleted={is_deleted}. "
                                     f"Marking as deleted and clearing all related data."
                                 )
-                                
+
                                 # Clear all related data for this file
                                 try:
                                     db.clear_file_data(wrong_file_id)
-                                    analysis_logger.info(f"Cleared all related data for file_id={wrong_file_id}")
-                                    
+                                    analysis_logger.info(
+                                        f"Cleared all related data for file_id={wrong_file_id}"
+                                    )
+
                                     # Mark file as deleted in wrong project
                                     db._execute(
                                         """
@@ -328,8 +336,10 @@ class ComprehensiveAnalysisMCPCommand(BaseMCPCommand):
                                         (wrong_file_id,),
                                     )
                                     db._commit()
-                                    analysis_logger.info(f"Marked file_id={wrong_file_id} as deleted in project {wrong_project_id}")
-                                    
+                                    analysis_logger.info(
+                                        f"Marked file_id={wrong_file_id} as deleted in project {wrong_project_id}"
+                                    )
+
                                     # Try to add file to correct project if it exists on disk
                                     if file_path_obj.exists() and proj_id:
                                         try:
@@ -337,18 +347,35 @@ class ComprehensiveAnalysisMCPCommand(BaseMCPCommand):
                                             try:
                                                 file_path_obj.relative_to(root_path)
                                                 # File is within project root - add it to correct project
-                                                from code_analysis.core.project_resolution import normalize_root_dir
-                                                normalized_root = str(normalize_root_dir(root_path))
-                                                dataset_id = db.get_dataset_id(proj_id, normalized_root)
+                                                from code_analysis.core.project_resolution import (
+                                                    normalize_root_dir,
+                                                )
+
+                                                normalized_root = str(
+                                                    normalize_root_dir(root_path)
+                                                )
+                                                dataset_id = db.get_dataset_id(
+                                                    proj_id, normalized_root
+                                                )
                                                 if not dataset_id:
-                                                    dataset_id = db.get_or_create_dataset(proj_id, normalized_root)
-                                                
+                                                    dataset_id = (
+                                                        db.get_or_create_dataset(
+                                                            proj_id, normalized_root
+                                                        )
+                                                    )
+
                                                 # Read file metadata
-                                                text = file_path_obj.read_text(encoding="utf-8", errors="ignore")
-                                                lines = text.count("\n") + (1 if text else 0)
+                                                text = file_path_obj.read_text(
+                                                    encoding="utf-8", errors="ignore"
+                                                )
+                                                lines = text.count("\n") + (
+                                                    1 if text else 0
+                                                )
                                                 stripped = text.lstrip()
-                                                has_docstring = stripped.startswith('"""') or stripped.startswith("'''")
-                                                
+                                                has_docstring = stripped.startswith(
+                                                    '"""'
+                                                ) or stripped.startswith("'''")
+
                                                 # Add file to correct project
                                                 new_file_id = db.add_file(
                                                     path=abs_path,
@@ -360,49 +387,77 @@ class ComprehensiveAnalysisMCPCommand(BaseMCPCommand):
                                                 )
                                                 file_id = new_file_id
                                                 file_project_id = proj_id
-                                                analysis_logger.info(f"Added file to correct project {proj_id}: file_id={new_file_id}")
+                                                analysis_logger.info(
+                                                    f"Added file to correct project {proj_id}: file_id={new_file_id}"
+                                                )
                                             except ValueError:
                                                 # File is not within project root - this is expected for nested projects
-                                                analysis_logger.info(f"File {abs_path} is not within project root {root_path}, skipping addition to project {proj_id}")
+                                                analysis_logger.info(
+                                                    f"File {abs_path} is not within project root {root_path}, skipping addition to project {proj_id}"
+                                                )
                                         except Exception as e:
-                                            logger.error(f"Failed to add file to correct project: {e}", exc_info=True)
-                                            analysis_logger.error(f"Failed to add file to correct project: {e}", exc_info=True)
+                                            logger.error(
+                                                f"Failed to add file to correct project: {e}",
+                                                exc_info=True,
+                                            )
+                                            analysis_logger.error(
+                                                f"Failed to add file to correct project: {e}",
+                                                exc_info=True,
+                                            )
                                 except Exception as e:
-                                    logger.error(f"Failed to clear data and mark file as deleted: {e}", exc_info=True)
-                                    analysis_logger.error(f"Failed to clear data and mark file as deleted: {e}", exc_info=True)
+                                    logger.error(
+                                        f"Failed to clear data and mark file as deleted: {e}",
+                                        exc_info=True,
+                                    )
+                                    analysis_logger.error(
+                                        f"Failed to clear data and mark file as deleted: {e}",
+                                        exc_info=True,
+                                    )
                             else:
                                 # File not in database at all - this is normal for unindexed files
-                                analysis_logger.info(f"File not found in project {proj_id} database (may be unindexed): {abs_path}")
+                                analysis_logger.info(
+                                    f"File not found in project {proj_id} database (may be unindexed): {abs_path}"
+                                )
                 else:
                     # No project_id specified - can't look up in database
-                    analysis_logger.info(f"No project_id specified, cannot look up file in database: {abs_path}")
-                
+                    analysis_logger.info(
+                        f"No project_id specified, cannot look up file in database: {abs_path}"
+                    )
+
                 # Check if analysis is up-to-date
                 if file_id and file_project_id:
                     if db.is_analysis_up_to_date(file_id, file_mtime):
                         # Get cached results
-                        cached = db.get_comprehensive_analysis_results(file_id, file_mtime)
+                        cached = db.get_comprehensive_analysis_results(
+                            file_id, file_mtime
+                        )
                         if cached:
                             db.close()
                             if progress_tracker:
                                 progress_tracker.set_status("completed")
-                                progress_tracker.set_description("Analysis completed (cached)")
+                                progress_tracker.set_description(
+                                    "Analysis completed (cached)"
+                                )
                                 progress_tracker.set_progress(100)
-                            analysis_logger.info(f"Using cached analysis results for {rel_path}")
+                            analysis_logger.info(
+                                f"Using cached analysis results for {rel_path}"
+                            )
                             # Return cached results with summary including statistics
                             cached_summary = cached["summary"].copy()
                             cached_summary["files_analyzed"] = 0
                             cached_summary["files_skipped"] = 1
                             cached_summary["files_total"] = 1
-                            return SuccessResult(data={
-                                **cached["results"],
-                                "summary": cached_summary,
-                            })
-                
+                            return SuccessResult(
+                                data={
+                                    **cached["results"],
+                                    "summary": cached_summary,
+                                }
+                            )
+
                 # File needs analysis
                 files_analyzed = 1
                 files_total = 1
-                
+
                 logger.info(f"Analyzing single file: {rel_path}")
                 analysis_logger.info(f"Starting analysis of single file: {rel_path}")
                 source_code = file_path_obj.read_text(encoding="utf-8")
@@ -472,27 +527,43 @@ class ComprehensiveAnalysisMCPCommand(BaseMCPCommand):
 
                 # Save results to database if file_id is available
                 # Only save if file was found in the correct project (file_project_id == proj_id)
-                if file_id and file_project_id and (proj_id is None or file_project_id == proj_id):
+                if (
+                    file_id
+                    and file_project_id
+                    and (proj_id is None or file_project_id == proj_id)
+                ):
                     try:
-                        analysis_logger.info(f"Saving results for file_id={file_id}, project_id={file_project_id}, mtime={file_mtime}")
+                        analysis_logger.info(
+                            f"Saving results for file_id={file_id}, project_id={file_project_id}, mtime={file_mtime}"
+                        )
                         file_summary = {
                             "total_placeholders": len(results["placeholders"]),
                             "total_stubs": len(results["stubs"]),
                             "total_empty_methods": len(results["empty_methods"]),
-                            "total_imports_not_at_top": len(results["imports_not_at_top"]),
+                            "total_imports_not_at_top": len(
+                                results["imports_not_at_top"]
+                            ),
                             "total_duplicate_groups": len(results["duplicates"]),
                             "total_duplicate_occurrences": sum(
                                 len(g["occurrences"]) for g in results["duplicates"]
                             ),
                             "total_flake8_errors": sum(
-                                e.get("error_count", 0) for e in results.get("flake8_errors", [])
+                                e.get("error_count", 0)
+                                for e in results.get("flake8_errors", [])
                             ),
-                            "files_with_flake8_errors": len(results.get("flake8_errors", [])),
+                            "files_with_flake8_errors": len(
+                                results.get("flake8_errors", [])
+                            ),
                             "total_mypy_errors": sum(
-                                e.get("error_count", 0) for e in results.get("mypy_errors", [])
+                                e.get("error_count", 0)
+                                for e in results.get("mypy_errors", [])
                             ),
-                            "files_with_mypy_errors": len(results.get("mypy_errors", [])),
-                            "total_missing_docstrings": len(results["missing_docstrings"]),
+                            "files_with_mypy_errors": len(
+                                results.get("mypy_errors", [])
+                            ),
+                            "total_missing_docstrings": len(
+                                results["missing_docstrings"]
+                            ),
                         }
                         db.save_comprehensive_analysis_results(
                             file_id=file_id,
@@ -503,10 +574,21 @@ class ComprehensiveAnalysisMCPCommand(BaseMCPCommand):
                         )
                         analysis_logger.info(f"Saved analysis results for {rel_path}")
                     except Exception as e:
-                        logger.error(f"Failed to save analysis results for {rel_path}: {e}", exc_info=True)
-                        analysis_logger.error(f"Failed to save analysis results for {rel_path}: {e}", exc_info=True)
+                        logger.error(
+                            f"Failed to save analysis results for {rel_path}: {e}",
+                            exc_info=True,
+                        )
+                        analysis_logger.error(
+                            f"Failed to save analysis results for {rel_path}: {e}",
+                            exc_info=True,
+                        )
                 else:
-                    if file_id and file_project_id and proj_id and file_project_id != proj_id:
+                    if (
+                        file_id
+                        and file_project_id
+                        and proj_id
+                        and file_project_id != proj_id
+                    ):
                         analysis_logger.error(
                             f"Data inconsistency detected: file_id={file_id} belongs to project {file_project_id}, "
                             f"but analysis was requested for project {proj_id}. Results will not be saved."
@@ -592,10 +674,15 @@ class ComprehensiveAnalysisMCPCommand(BaseMCPCommand):
                     if db.is_analysis_up_to_date(file_id, file_mtime):
                         files_skipped += 1
                         logger.debug(f"Skipping unchanged file: {file_path_str}")
-                        analysis_logger.debug(f"Skipping unchanged file: {file_path_str}")
+                        analysis_logger.debug(
+                            f"Skipping unchanged file: {file_path_str}"
+                        )
                         # Still add to file_records for long_files check
                         file_records.append(
-                            {"path": file_path_str, "lines": file_record.get("lines", 0)}
+                            {
+                                "path": file_path_str,
+                                "lines": file_record.get("lines", 0),
+                            }
                         )
                         continue
 
@@ -611,8 +698,12 @@ class ComprehensiveAnalysisMCPCommand(BaseMCPCommand):
 
                     # Log each processed file
                     files_analyzed += 1
-                    logger.info(f"Analyzing file {idx + 1}/{files_total}: {file_path_str}")
-                    analysis_logger.info(f"Analyzing file {idx + 1}/{files_total}: {file_path_str}")
+                    logger.info(
+                        f"Analyzing file {idx + 1}/{files_total}: {file_path_str}"
+                    )
+                    analysis_logger.info(
+                        f"Analyzing file {idx + 1}/{files_total}: {file_path_str}"
+                    )
 
                     # Initialize file-specific results
                     file_results: Dict[str, Any] = {
@@ -702,20 +793,30 @@ class ComprehensiveAnalysisMCPCommand(BaseMCPCommand):
                         "total_placeholders": len(file_results["placeholders"]),
                         "total_stubs": len(file_results["stubs"]),
                         "total_empty_methods": len(file_results["empty_methods"]),
-                        "total_imports_not_at_top": len(file_results["imports_not_at_top"]),
+                        "total_imports_not_at_top": len(
+                            file_results["imports_not_at_top"]
+                        ),
                         "total_duplicate_groups": len(file_results["duplicates"]),
                         "total_duplicate_occurrences": sum(
                             len(g["occurrences"]) for g in file_results["duplicates"]
                         ),
                         "total_flake8_errors": sum(
-                            e.get("error_count", 0) for e in file_results.get("flake8_errors", [])
+                            e.get("error_count", 0)
+                            for e in file_results.get("flake8_errors", [])
                         ),
-                        "files_with_flake8_errors": len(file_results.get("flake8_errors", [])),
+                        "files_with_flake8_errors": len(
+                            file_results.get("flake8_errors", [])
+                        ),
                         "total_mypy_errors": sum(
-                            e.get("error_count", 0) for e in file_results.get("mypy_errors", [])
+                            e.get("error_count", 0)
+                            for e in file_results.get("mypy_errors", [])
                         ),
-                        "files_with_mypy_errors": len(file_results.get("mypy_errors", [])),
-                        "total_missing_docstrings": len(file_results["missing_docstrings"]),
+                        "files_with_mypy_errors": len(
+                            file_results.get("mypy_errors", [])
+                        ),
+                        "total_missing_docstrings": len(
+                            file_results["missing_docstrings"]
+                        ),
                     }
 
                     # Save results to database
@@ -723,7 +824,9 @@ class ComprehensiveAnalysisMCPCommand(BaseMCPCommand):
                     file_project_id = proj_id or file_record.get("project_id")
                     if file_project_id:
                         try:
-                            analysis_logger.info(f"Saving results for file_id={file_id}, project_id={file_project_id}, mtime={file_mtime}, file={file_path_str}")
+                            analysis_logger.info(
+                                f"Saving results for file_id={file_id}, project_id={file_project_id}, mtime={file_mtime}, file={file_path_str}"
+                            )
                             db.save_comprehensive_analysis_results(
                                 file_id=file_id,
                                 project_id=file_project_id,
@@ -731,13 +834,25 @@ class ComprehensiveAnalysisMCPCommand(BaseMCPCommand):
                                 results=file_results,
                                 summary=file_summary,
                             )
-                            analysis_logger.info(f"Saved analysis results for {file_path_str}")
+                            analysis_logger.info(
+                                f"Saved analysis results for {file_path_str}"
+                            )
                         except Exception as e:
-                            logger.error(f"Failed to save analysis results for {file_path_str}: {e}", exc_info=True)
-                            analysis_logger.error(f"Failed to save analysis results for {file_path_str}: {e}", exc_info=True)
+                            logger.error(
+                                f"Failed to save analysis results for {file_path_str}: {e}",
+                                exc_info=True,
+                            )
+                            analysis_logger.error(
+                                f"Failed to save analysis results for {file_path_str}: {e}",
+                                exc_info=True,
+                            )
                     else:
-                        logger.warning(f"Cannot save results for {file_path_str}: project_id not available (proj_id={proj_id}, file_record.project_id={file_record.get('project_id')})")
-                        analysis_logger.warning(f"Cannot save results for {file_path_str}: project_id not available")
+                        logger.warning(
+                            f"Cannot save results for {file_path_str}: project_id not available (proj_id={proj_id}, file_record.project_id={file_record.get('project_id')})"
+                        )
+                        analysis_logger.warning(
+                            f"Cannot save results for {file_path_str}: project_id not available"
+                        )
 
                     # Update progress
                     if progress_tracker and files_total > 0:
@@ -800,15 +915,19 @@ class ComprehensiveAnalysisMCPCommand(BaseMCPCommand):
                     [d for d in results["missing_docstrings"] if d["type"] == "method"]
                 ),
                 "functions_without_docstrings": len(
-                    [d for d in results["missing_docstrings"] if d["type"] == "function"]
+                    [
+                        d
+                        for d in results["missing_docstrings"]
+                        if d["type"] == "function"
+                    ]
                 ),
             }
-            
+
             # Add incremental analysis statistics
             summary_data["files_analyzed"] = files_analyzed
             summary_data["files_skipped"] = files_skipped
             summary_data["files_total"] = files_total
-            
+
             results["summary"] = summary_data
 
             db.close()
@@ -822,7 +941,7 @@ class ComprehensiveAnalysisMCPCommand(BaseMCPCommand):
             analysis_logger.info(
                 f"Comprehensive analysis completed. Summary: {results['summary']}"
             )
-            
+
             # Clean up handler
             for handler in analysis_logger.handlers[:]:
                 handler.close()
@@ -832,12 +951,12 @@ class ComprehensiveAnalysisMCPCommand(BaseMCPCommand):
         except Exception as e:
             # Log error to analysis log
             analysis_logger.error(f"Comprehensive analysis failed: {e}", exc_info=True)
-            
+
             # Clean up handler
             for handler in analysis_logger.handlers[:]:
                 handler.close()
                 analysis_logger.removeHandler(handler)
-            
+
             return self._handle_error(
                 e, "COMPREHENSIVE_ANALYSIS_ERROR", "comprehensive_analysis"
             )
@@ -990,17 +1109,13 @@ class ComprehensiveAnalysisMCPCommand(BaseMCPCommand):
                     "default": True,
                 },
                 "check_duplicates": {
-                    "description": (
-                        "Check for code duplicates. Default is True."
-                    ),
+                    "description": ("Check for code duplicates. Default is True."),
                     "type": "boolean",
                     "required": False,
                     "default": True,
                 },
                 "check_flake8": {
-                    "description": (
-                        "Check code with flake8 linter. Default is True."
-                    ),
+                    "description": ("Check code with flake8 linter. Default is True."),
                     "type": "boolean",
                     "required": False,
                     "default": True,
@@ -1162,10 +1277,20 @@ class ComprehensiveAnalysisMCPCommand(BaseMCPCommand):
                     },
                     "example": {
                         "placeholders": [
-                            {"file_path": "src/main.py", "line": 42, "type": "TODO", "text": "TODO: refactor"},
+                            {
+                                "file_path": "src/main.py",
+                                "line": 42,
+                                "type": "TODO",
+                                "text": "TODO: refactor",
+                            },
                         ],
                         "stubs": [
-                            {"file_path": "src/utils.py", "line": 10, "name": "stub_function", "type": "function"},
+                            {
+                                "file_path": "src/utils.py",
+                                "line": 10,
+                                "name": "stub_function",
+                                "type": "function",
+                            },
                         ],
                         "summary": {
                             "total_placeholders": 1,

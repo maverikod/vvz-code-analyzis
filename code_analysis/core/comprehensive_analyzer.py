@@ -16,6 +16,8 @@ from io import StringIO
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from ..core.constants import DEFAULT_MAX_FILE_LINES, PLACEHOLDER_PATTERNS
+
 logger = logging.getLogger(__name__)
 
 
@@ -34,7 +36,7 @@ class ComprehensiveAnalyzer:
 
     def __init__(
         self,
-        max_lines: int = 400,
+        max_lines: int = DEFAULT_MAX_FILE_LINES,
         placeholder_patterns: Optional[List[str]] = None,
         ignore_abstract: bool = True,
     ) -> None:
@@ -50,18 +52,7 @@ class ComprehensiveAnalyzer:
         self.ignore_abstract = ignore_abstract
 
         if placeholder_patterns is None:
-            self.placeholder_patterns = [
-                "TODO",
-                "FIXME",
-                "XXX",
-                "HACK",
-                "NOTE",
-                "BUG",
-                "OPTIMIZE",
-                "PLACEHOLDER",
-                "STUB",
-                "NOT IMPLEMENTED",
-            ]
+            self.placeholder_patterns = PLACEHOLDER_PATTERNS
         else:
             self.placeholder_patterns = placeholder_patterns
 
@@ -516,7 +507,6 @@ class ComprehensiveAnalyzer:
 
         try:
             tree = ast.parse(source_code, filename=str(file_path))
-            lines = source_code.split("\n")
 
             # 1. Check file-level docstring
             file_docstring = ast.get_docstring(tree)

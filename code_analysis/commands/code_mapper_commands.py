@@ -8,6 +8,7 @@ email: vasilyvz@gmail.com
 import logging
 from typing import Dict, List, Any, Optional
 
+from ..core.constants import DEFAULT_MAX_FILE_LINES
 from ..core.database import CodeDatabase
 
 logger = logging.getLogger(__name__)
@@ -20,7 +21,12 @@ class ListLongFilesCommand:
     This is equivalent to old code_mapper functionality for finding oversized files.
     """
 
-    def __init__(self, database: CodeDatabase, project_id: str, max_lines: int = 400):
+    def __init__(
+        self,
+        database: CodeDatabase,
+        project_id: str,
+        max_lines: int = DEFAULT_MAX_FILE_LINES,
+    ):
         """
         Initialize command.
 

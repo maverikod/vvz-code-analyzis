@@ -16,6 +16,12 @@ from typing import Any, Dict, Optional
 from mcp_proxy_adapter.commands.result import SuccessResult, ErrorResult
 
 from ..core.complexity_analyzer import calculate_complexity
+from ..core.constants import (
+    DATA_DIR_NAME,
+    DEFAULT_IGNORE_PATTERNS,
+    DEFAULT_MAX_FILE_LINES,
+    LOGS_DIR_NAME,
+)
 from .base_mcp_command import BaseMCPCommand
 
 logger = logging.getLogger(__name__)
@@ -196,6 +202,7 @@ class UpdateIndexesMCPCommand(BaseMCPCommand):
 
             # Get or create dataset_id for this root_path
             from ..core.project_resolution import normalize_root_dir
+
             normalized_root = str(normalize_root_dir(root_path))
             dataset_id = database.get_dataset_id(project_id, normalized_root)
             if not dataset_id:
@@ -207,7 +214,7 @@ class UpdateIndexesMCPCommand(BaseMCPCommand):
             # add_file normalizes paths internally, but we need to pass absolute path
             # to ensure it matches existing records
             abs_file_path = str(file_path.resolve())
-            
+
             file_record = database.get_file_by_path(rel_path, project_id)
             if file_record:
                 file_id = file_record["id"]
@@ -225,7 +232,12 @@ class UpdateIndexesMCPCommand(BaseMCPCommand):
                         has_docstring = False
                     # Use absolute path to ensure correct file matching
                     updated_file_id = database.add_file(
-                        abs_file_path, lines, file_mtime, has_docstring, project_id, dataset_id
+                        abs_file_path,
+                        lines,
+                        file_mtime,
+                        has_docstring,
+                        project_id,
+                        dataset_id,
                     )
                     # add_file returns the file_id (may be same or different)
                     file_id = updated_file_id
@@ -241,7 +253,12 @@ class UpdateIndexesMCPCommand(BaseMCPCommand):
                 # Use absolute path to ensure correct file creation
                 # add_file returns file_id directly, use it
                 file_id = database.add_file(
-                    abs_file_path, lines, file_mtime, has_docstring, project_id, dataset_id
+                    abs_file_path,
+                    lines,
+                    file_mtime,
+                    has_docstring,
+                    project_id,
+                    dataset_id,
                 )
                 # Verify file_id is valid
                 if not file_id:
@@ -255,6 +272,7 @@ class UpdateIndexesMCPCommand(BaseMCPCommand):
             try:
                 # Use parse_with_comments to preserve comments in AST
                 from ..core.ast_utils import parse_with_comments
+
                 tree = parse_with_comments(file_content, filename=str(file_path))
             except SyntaxError as e:
                 logger.warning(f"Syntax error in {rel_path}: {e}")
@@ -268,7 +286,9 @@ class UpdateIndexesMCPCommand(BaseMCPCommand):
             try:
                 # NOTE: save_ast_tree is intentionally synchronous. We must not create
                 # nested event loops inside queue workers / async contexts.
-                logger.debug(f"Saving AST for {rel_path}, file_id={file_id}, project_id={project_id}")
+                logger.debug(
+                    f"Saving AST for {rel_path}, file_id={file_id}, project_id={project_id}"
+                )
                 ast_tree_id = database.save_ast_tree(
                     file_id,
                     project_id,
@@ -291,7 +311,9 @@ class UpdateIndexesMCPCommand(BaseMCPCommand):
             try:
                 # NOTE: save_cst_tree is intentionally synchronous. We must not create
                 # nested event loops inside queue workers / async contexts.
-                logger.debug(f"Saving CST for {rel_path}, file_id={file_id}, project_id={project_id}")
+                logger.debug(
+                    f"Saving CST for {rel_path}, file_id={file_id}, project_id={project_id}"
+                )
                 cst_tree_id = database.save_cst_tree(
                     file_id,
                     project_id,
@@ -528,7 +550,7 @@ class UpdateIndexesMCPCommand(BaseMCPCommand):
     async def execute(
         self: "UpdateIndexesMCPCommand",
         root_dir: str,
-        max_lines: int = 400,
+        max_lines: int | None = None,
         **kwargs: Any,
     ) -> SuccessResult | ErrorResult:
         """Execute code index update.
@@ -543,11 +565,15 @@ class UpdateIndexesMCPCommand(BaseMCPCommand):
             self: Command instance.
             root_dir: Root directory to analyze.
             max_lines: Maximum lines per file threshold (for reporting).
+                If None, uses DEFAULT_MAX_FILE_LINES from constants.
             **kwargs: Extra parameters (may include 'context' with ProgressTracker).
 
         Returns:
             SuccessResult with update results or ErrorResult on failure.
         """
+        if max_lines is None:
+            max_lines = DEFAULT_MAX_FILE_LINES
+
         from ..core.db_integrity import (
             backup_sqlite_files,
             check_sqlite_integrity,
@@ -639,13 +665,13 @@ class UpdateIndexesMCPCommand(BaseMCPCommand):
                     )
 
                 python_files: list[Path] = []
+                # Build ignore set from constants
+                ignore_dirs = DEFAULT_IGNORE_PATTERNS | {DATA_DIR_NAME, LOGS_DIR_NAME}
                 for walk_root, dirs, files in os.walk(root_path):
                     dirs[:] = [
                         d
                         for d in dirs
-                        if not d.startswith(".")
-                        and d
-                        not in ["__pycache__", "node_modules", ".git", "data", "logs"]
+                        if not d.startswith(".") and d not in ignore_dirs
                     ]
                     for file in files:
                         if file.endswith(".py"):

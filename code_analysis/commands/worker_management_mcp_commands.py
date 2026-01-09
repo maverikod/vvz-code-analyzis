@@ -16,6 +16,11 @@ from typing import Any, Dict, List, Optional
 from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 
 from .base_mcp_command import BaseMCPCommand
+from ..core.constants import (
+    DATA_DIR_NAME,
+    DEFAULT_IGNORE_PATTERNS,
+    LOGS_DIR_NAME,
+)
 from ..core.worker_launcher import (
     start_file_watcher_worker,
     start_vectorization_worker,
@@ -237,7 +242,9 @@ class StartWorkerMCPCommand(BaseMCPCommand):
                         (storage.config_dir / "data" / "versions").resolve()
                     ),
                     worker_log_path=log_path,
-                    ignore_patterns=[".git", "__pycache__", "data", "logs"],
+                    ignore_patterns=list(
+                        DEFAULT_IGNORE_PATTERNS | {DATA_DIR_NAME, LOGS_DIR_NAME}
+                    ),
                     locks_dir=str(storage.locks_dir),
                 )
                 return SuccessResult(data=res.__dict__)
@@ -479,7 +486,10 @@ class StartWorkerMCPCommand(BaseMCPCommand):
                     "command": {
                         "worker_type": "file_watcher",
                         "root_dir": "/home/user/projects",
-                        "watch_dirs": ["/home/user/projects/proj1", "/home/user/projects/proj2"],
+                        "watch_dirs": [
+                            "/home/user/projects/proj1",
+                            "/home/user/projects/proj2",
+                        ],
                     },
                     "explanation": (
                         "Starts file watcher that monitors multiple directories. "

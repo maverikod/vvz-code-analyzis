@@ -266,11 +266,13 @@ class BaseMCPCommand(Command):
                             loop = asyncio.new_event_loop()
                             asyncio.set_event_loop(loop)
 
+                        from ..core.constants import DEFAULT_MAX_FILE_LINES
+
                         cmd = UpdateIndexesMCPCommand()
                         result = loop.run_until_complete(
                             cmd.execute(
                                 root_dir=str(root_path),
-                                max_lines=400,
+                                max_lines=DEFAULT_MAX_FILE_LINES,
                             )
                         )
 
@@ -390,12 +392,12 @@ class BaseMCPCommand(Command):
                             },
                         )
                     return project_id
-                
+
                 # Project doesn't exist - check if root_path is registered
                 if existing:
                     # root_path registered with different ID - error already handled above
                     return existing
-                
+
                 # Create project with specified ID
                 project_name = root_path.name
                 db._execute(

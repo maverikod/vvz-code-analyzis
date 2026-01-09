@@ -23,6 +23,7 @@ from typing import Any, Dict, Iterable
 from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 
 from .base_mcp_command import BaseMCPCommand
+from ..core.constants import DEFAULT_MAX_FILE_LINES
 from ..core.database import CodeDatabase
 from ..core.db_integrity import (
     backup_sqlite_files,
@@ -75,13 +76,11 @@ def _iter_python_files(root_path: Path) -> Iterable[Path]:
     Yields:
         Paths to .py files.
     """
+    from ..core.constants import DATA_DIR_NAME, DEFAULT_IGNORE_PATTERNS, LOGS_DIR_NAME
+
+    ignore_dirs = DEFAULT_IGNORE_PATTERNS | {DATA_DIR_NAME, LOGS_DIR_NAME}
     for walk_root, dirs, files in os.walk(root_path):
-        dirs[:] = [
-            d
-            for d in dirs
-            if not d.startswith(".")
-            and d not in ["__pycache__", "node_modules", ".git", "data", "logs"]
-        ]
+        dirs[:] = [d for d in dirs if not d.startswith(".") and d not in ignore_dirs]
         for fn in files:
             if fn.endswith(".py"):
                 yield Path(walk_root) / fn
@@ -165,7 +164,7 @@ class RestoreDatabaseFromConfigMCPCommand(BaseMCPCommand):
         self: "RestoreDatabaseFromConfigMCPCommand",
         root_dir: str,
         config_file: str = "config.json",
-        max_lines: int = 400,
+        max_lines: int | None = None,
         dry_run: bool = False,
         **kwargs: Any,
     ) -> SuccessResult | ErrorResult:
@@ -177,12 +176,16 @@ class RestoreDatabaseFromConfigMCPCommand(BaseMCPCommand):
             root_dir: Server/project root directory (DB location).
             config_file: JSON config path.
             max_lines: Maximum lines per file threshold (for reporting).
+                If None, uses DEFAULT_MAX_FILE_LINES from constants.
             dry_run: If True, do not modify DB.
             **kwargs: Extra args (unused).
 
         Returns:
             SuccessResult with restore summary or ErrorResult on failure.
         """
+        if max_lines is None:
+            max_lines = DEFAULT_MAX_FILE_LINES
+
         try:
             server_root = self._validate_root_dir(root_dir)
             cfg_path = Path(config_file)
@@ -520,8 +523,8 @@ class RestoreDatabaseFromConfigMCPCommand(BaseMCPCommand):
                     ),
                     "solution": (
                         "Add directories array to config file:\n"
-                        "- code_analysis.dirs: [\"/path/to/dir1\", \"/path/to/dir2\"]\n"
-                        "- OR code_analysis.worker.watch_dirs: [\"/path/to/dir1\"]"
+                        '- code_analysis.dirs: ["/path/to/dir1", "/path/to/dir2"]\n'
+                        '- OR code_analysis.worker.watch_dirs: ["/path/to/dir1"]'
                     ),
                 },
                 "RESTORE_DATABASE_ERROR": {

@@ -89,42 +89,149 @@ class FindUsagesMCPCommand(BaseMCPCommand):
                 )
 
             # Find usages from database
-            query = "SELECT * FROM usages WHERE file_id IN (SELECT id FROM files WHERE project_id = ?)"
+            # Uses multiple sources for comprehensive results:
+            # - usages table: actual function calls, method calls, class instantiations
+            # - imports table: module/class/function imports
+            # - classes table: inheritance relationships (bases)
+            usages = []
+            import json
+            
+            # Search in imports table for class/function usages
+            if target_type in ("class", "function", None):
+                import_query = """
+                    SELECT i.*, f.path as file_path, f.id as file_id
+                    FROM imports i
+                    JOIN files f ON i.file_id = f.id
+                    WHERE f.project_id = ? AND i.name = ?
+                """
+                import_params = [proj_id, target_name]
+                
+                if file_path:
+                    file_record = db.get_file_by_path(file_path, proj_id)
+                    if file_record:
+                        import_query += " AND i.file_id = ?"
+                        import_params.append(file_record["id"])
+                
+                import_query += " ORDER BY f.path, i.line"
+                if limit:
+                    import_query += f" LIMIT {limit}"
+                if offset:
+                    import_query += f" OFFSET {offset}"
+                
+                import_rows = db._fetchall(import_query, tuple(import_params))
+                for row in import_rows:
+                    usages.append({
+                        "file_id": row["file_id"],
+                        "file_path": row["file_path"],
+                        "line": row["line"],
+                        "target_name": row["name"],
+                        "target_type": target_type or "import",
+                        "target_class": None,
+                        "usage_type": "import",
+                        "module": row.get("module"),
+                        "import_type": row["import_type"],
+                    })
+            
+            # For classes: search for inheritance (classes that inherit from target)
+            if target_type in ("class", None):
+                inheritance_query = """
+                    SELECT c.*, f.path as file_path, f.id as file_id
+                    FROM classes c
+                    JOIN files f ON c.file_id = f.id
+                    WHERE f.project_id = ? AND c.bases LIKE ?
+                """
+                inheritance_params = [proj_id, f"%{target_name}%"]
+                
+                if file_path:
+                    file_record = db.get_file_by_path(file_path, proj_id)
+                    if file_record:
+                        inheritance_query += " AND c.file_id = ?"
+                        inheritance_params.append(file_record["id"])
+                
+                inheritance_query += " ORDER BY f.path, c.line"
+                if limit:
+                    inheritance_query += f" LIMIT {limit * 2}"  # Get more to account for imports
+                if offset:
+                    inheritance_query += f" OFFSET {offset}"
+                
+                inheritance_rows = db._fetchall(inheritance_query, tuple(inheritance_params))
+                for row in inheritance_rows:
+                    # Parse bases JSON to check if target_name is in bases
+                    bases = []
+                    if row.get("bases"):
+                        try:
+                            bases = json.loads(row["bases"])
+                        except (json.JSONDecodeError, TypeError):
+                            bases = []
+                    
+                    if target_name in bases:
+                        usages.append({
+                            "file_id": row["file_id"],
+                            "file_path": row["file_path"],
+                            "line": row["line"],
+                            "target_name": target_name,
+                            "target_type": "class",
+                            "target_class": None,
+                            "usage_type": "inheritance",
+                            "class_name": row["name"],
+                            "bases": bases,
+                        })
+            
+            # Also try usages table (may be empty, but check anyway)
+            query = """
+                SELECT u.*, f.path as file_path, f.id as file_id
+                FROM usages u
+                JOIN files f ON u.file_id = f.id
+                WHERE f.project_id = ?
+            """
             params = [proj_id]
             
             if target_name:
-                query += " AND target_name = ?"
+                query += " AND u.target_name = ?"
                 params.append(target_name)
             
             if target_type:
-                query += " AND target_type = ?"
+                query += " AND u.target_type = ?"
                 params.append(target_type)
             
             if target_class:
-                query += " AND target_class = ?"
+                query += " AND u.target_class = ?"
                 params.append(target_class)
             
             if file_path:
                 file_record = db.get_file_by_path(file_path, proj_id)
                 if file_record:
-                    query = "SELECT * FROM usages WHERE file_id = ?"
-                    params = [file_record["id"]]
-                    if target_name:
-                        query += " AND target_name = ?"
-                        params.append(target_name)
+                    query += " AND u.file_id = ?"
+                    params.append(file_record["id"])
             
-            query += " ORDER BY file_id, line"
+            query += " ORDER BY f.path, u.line"
             
             if limit:
                 query += f" LIMIT {limit}"
             if offset:
                 query += f" OFFSET {offset}"
             
-            rows = db._fetchall(query, tuple(params))
+            usage_rows = db._fetchall(query, tuple(params))
+            for row in usage_rows:
+                usages.append({
+                    "file_id": row["file_id"],
+                    "file_path": row["file_path"],
+                    "line": row["line"],
+                    "target_name": row["target_name"],
+                    "target_type": row["target_type"],
+                    "target_class": row.get("target_class"),
+                    "usage_type": row.get("usage_type", "usage"),
+                    "context": row.get("context"),
+                })
             
-            usages = rows
+            # Apply limit and offset to final results
+            if limit:
+                usages = usages[offset:offset + limit]
+            elif offset:
+                usages = usages[offset:]
+            
             db.close()
-
+            
             return SuccessResult(
                 data={
                     "success": True,

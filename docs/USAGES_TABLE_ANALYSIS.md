@@ -173,16 +173,43 @@ This provides **partial functionality** but doesn't track actual code usage (fun
 ## Current Status
 
 - ✅ Table schema exists
-- ✅ Commands work with workarounds (imports, inheritance)
-- ❌ No function to add usages
-- ❌ No AST visitor to track usages
-- ❌ Usage tracking not integrated into indexing
+- ✅ Function `add_usage()` implemented in `entities.py`
+- ✅ `UsageTracker` AST visitor created in `usage_tracker.py`
+- ✅ Usage tracking integrated into `_analyze_file` method
+- ✅ Commands work with real usage data from `usages` table
+- ✅ Commands also use workarounds (imports, inheritance) for comprehensive results
+
+## Implementation Details
+
+### UsageTracker Class
+
+Created in `code_analysis/core/usage_tracker.py`:
+- Tracks function calls (`ast.Call` with `ast.Name`)
+- Tracks method calls (`ast.Call` with `ast.Attribute`)
+- Tracks class instantiations (uppercase names in calls)
+- Maintains context (current class, current function)
+- Records usage type, target type, target name, and context
+
+### Integration
+
+Integrated into `code_analysis/commands/code_mapper_mcp_command.py`:
+- Runs after extracting classes, functions, methods, and imports
+- Uses callback pattern to add usages to database
+- Handles errors gracefully (continues even if usage tracking fails)
+- Adds `usages_added` count to indexing results
+
+### What is Tracked
+
+1. **Function Calls**: `func_name()` → usage of function `func_name`
+2. **Method Calls**: `obj.method()` → usage of method `method` (with class context if `self.method()`)
+3. **Class Instantiations**: `ClassName()` → usage of class `ClassName`
+4. **Context Information**: Tracks which class/function the usage occurs in
 
 ## Next Steps
 
-1. Implement `add_usage()` function
-2. Create `UsageTracker` AST visitor
-3. Integrate into indexing process
-4. Test with sample projects
-5. Update commands to use real usage data
+1. ✅ Implement `add_usage()` function - **DONE**
+2. ✅ Create `UsageTracker` AST visitor - **DONE**
+3. ✅ Integrate into indexing process - **DONE**
+4. ⏳ Test with sample projects - **TODO**
+5. ✅ Commands use real usage data - **DONE** (commands already updated to use usages table)
 

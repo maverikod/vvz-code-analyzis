@@ -84,11 +84,77 @@ class FindDependenciesMCPCommand(BaseMCPCommand):
                 )
 
             # Find dependencies from database
-            # Dependencies table stores file-to-file dependencies
-            # For entity dependencies, we search through usages and imports
+            # Uses multiple sources for comprehensive results:
+            # - usages table: actual function calls, method calls, class instantiations
+            # - imports table: module/class/function imports
+            # - classes table: inheritance relationships (bases)
             results = []
+            import json
             
-            # Search in usages table for entity usages
+            # Search in imports table for class/function/module dependencies
+            if entity_type in ("class", "function", "module", None):
+                import_query = """
+                    SELECT i.*, f.path as file_path
+                    FROM imports i
+                    JOIN files f ON i.file_id = f.id
+                    WHERE f.project_id = ? AND (i.name = ? OR i.module LIKE ?)
+                """
+                import_params = [proj_id, entity_name, f"%{entity_name}%"]
+                
+                import_query += " ORDER BY f.path, i.line"
+                if limit:
+                    import_query += f" LIMIT {limit}"
+                if offset:
+                    import_query += f" OFFSET {offset}"
+                
+                import_rows = db._fetchall(import_query, tuple(import_params))
+                for row in import_rows:
+                    results.append({
+                        "type": "import",
+                        "file_path": row["file_path"],
+                        "line": row["line"],
+                        "module": row.get("module"),
+                        "name": row["name"],
+                        "import_type": row["import_type"],
+                    })
+            
+            # For classes: also search for inheritance (classes that inherit from this class)
+            if entity_type in ("class", None):
+                inheritance_query = """
+                    SELECT c.*, f.path as file_path
+                    FROM classes c
+                    JOIN files f ON c.file_id = f.id
+                    WHERE f.project_id = ? AND c.bases LIKE ?
+                """
+                inheritance_params = [proj_id, f"%{entity_name}%"]
+                
+                inheritance_query += " ORDER BY f.path, c.line"
+                if limit:
+                    # Apply limit to total results, not just this query
+                    inheritance_query += f" LIMIT {limit * 2}"  # Get more to account for imports
+                if offset:
+                    inheritance_query += f" OFFSET {offset}"
+                
+                inheritance_rows = db._fetchall(inheritance_query, tuple(inheritance_params))
+                for row in inheritance_rows:
+                    # Parse bases JSON to check if entity_name is in bases
+                    bases = []
+                    if row.get("bases"):
+                        try:
+                            bases = json.loads(row["bases"])
+                        except (json.JSONDecodeError, TypeError):
+                            bases = []
+                    
+                    if entity_name in bases:
+                        results.append({
+                            "type": "inheritance",
+                            "file_path": row["file_path"],
+                            "line": row["line"],
+                            "class_name": row["name"],
+                            "bases": bases,
+                        })
+            
+            # Also try usages table (may be empty, but check anyway)
             if entity_type in ("class", "function", "method", None):
                 usage_query = """
                     SELECT u.*, f.path as file_path
@@ -123,32 +189,11 @@ class FindDependenciesMCPCommand(BaseMCPCommand):
                         "target_class": row.get("target_class"),
                     })
             
-            # Search in imports table for module dependencies
-            if entity_type in ("module", None):
-                import_query = """
-                    SELECT i.*, f.path as file_path
-                    FROM imports i
-                    JOIN files f ON i.file_id = f.id
-                    WHERE f.project_id = ? AND (i.name = ? OR i.module LIKE ?)
-                """
-                import_params = [proj_id, entity_name, f"%{entity_name}%"]
-                
-                import_query += " ORDER BY f.path, i.line"
-                if limit:
-                    import_query += f" LIMIT {limit}"
-                if offset:
-                    import_query += f" OFFSET {offset}"
-                
-                import_rows = db._fetchall(import_query, tuple(import_params))
-                for row in import_rows:
-                    results.append({
-                        "type": "import",
-                        "file_path": row["file_path"],
-                        "line": row["line"],
-                        "module": row.get("module"),
-                        "name": row["name"],
-                        "import_type": row["import_type"],
-                    })
+            # Apply limit and offset to final results
+            if limit:
+                results = results[offset:offset + limit]
+            elif offset:
+                results = results[offset:]
             
             db.close()
             

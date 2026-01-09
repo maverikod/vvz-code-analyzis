@@ -126,8 +126,8 @@ class GetASTMCPCommand(BaseMCPCommand):
                     code="FILE_NOT_FOUND",
                 )
 
-            # Get AST from database
-            ast_data = await db.get_ast_tree(file_record["id"])
+            # Get AST from database (synchronous method, no await needed)
+            ast_data = db.get_ast_tree(file_record["id"])
             db.close()
 
             if ast_data:

@@ -522,12 +522,35 @@ class FileChangeProcessor:
         Returns:
             True if successful, False otherwise
         """
-        from ..project_resolution import normalize_abs_path
-        
+        from ..path_normalization import normalize_file_path
+        from ..exceptions import ProjectIdMismatchError
+            
         try:
-            # Normalize path to absolute once at the beginning
-            # This ensures consistent path usage throughout the method
-            abs_file_path = normalize_abs_path(file_path)
+            # Use unified path normalization method
+            # This ensures consistent path usage and project validation
+            normalized = normalize_file_path(
+                file_path,
+                watch_dirs=self.watch_dirs_resolved if hasattr(self, 'watch_dirs_resolved') else None,
+                project_root=project_root
+            )
+            abs_file_path = normalized.absolute_path
+            
+            # Validate that provided project_id matches the one from projectid file
+            if normalized.project_id != project_id:
+                raise ProjectIdMismatchError(
+                    message=(
+                        f"Project ID mismatch: file {abs_file_path} belongs to project "
+                        f"{normalized.project_id} (from projectid file) "
+                        f"but was provided with project_id {project_id}"
+                    ),
+                    file_project_id=normalized.project_id,
+                    db_project_id=project_id,
+                )
+            
+            # Use validated project_root from normalization
+            if project_root is None:
+                project_root = normalized.project_root
+            root_dir = project_root
             
             # Get project root directory
             root_dir = project_root
@@ -579,58 +602,17 @@ class FileChangeProcessor:
                         )
                     return result
             
-            # Check if file exists in database (using normalized path)
-            # Normalize path consistently - ensure we use the same normalization everywhere
-            # Path should be absolute and resolved (symlinks resolved, relative parts resolved)
-            from ..project_resolution import normalize_abs_path as norm_path
-            normalized_path = norm_path(abs_file_path)
-            if normalized_path != abs_file_path:
-                logger.debug(
-                    f"[QUEUE] Path re-normalized: {abs_file_path} -> {normalized_path}"
-                )
-                abs_file_path = normalized_path
+            # Path is already normalized by normalize_file_path above
+            # No need to re-normalize
             
-            # Verify that file path is within project root (safety check)
+            # Project validation is already done by normalize_file_path
+            # No need to re-validate here
+            root_dir = project_root
             if root_dir:
-                try:
-                    file_path_obj = Path(abs_file_path)
-                    project_root_obj = Path(root_dir).resolve()
-                    # Check if file is within project root
-                    file_path_obj.relative_to(project_root_obj)
-                    logger.debug(
-                        f"[QUEUE] File path verified within project root: "
-                        f"file={abs_file_path}, project_root={project_root_obj}"
-                    )
-                    
-                    # Validate project_id: check if project_id from parameter matches projectid file
-                    # This is a safety gate to prevent data inconsistency
-                    try:
-                        from ..project_resolution import load_project_id
-                        from ..exceptions import ProjectIdMismatchError
-
-                        file_project_id = load_project_id(project_root_obj)
-                        if file_project_id != project_id:
-                            raise ProjectIdMismatchError(
-                                message=(
-                                    f"Project ID mismatch: file {abs_file_path} belongs to project "
-                                    f"{file_project_id} (from projectid file at {project_root_obj}) "
-                                    f"but was provided with project_id {project_id}"
-                                ),
-                                file_project_id=file_project_id,
-                                db_project_id=project_id,
-                            )
-                    except ProjectIdMismatchError:
-                        # Re-raise project ID mismatch
-                        raise
-                    except Exception as e:
-                        # Log but don't fail - validation is a safety check
-                        logger.warning(f"[QUEUE] Failed to validate project_id for {abs_file_path}: {e}")
-                except ValueError:
-                    logger.warning(
-                        f"[QUEUE] File path is outside project root: "
-                        f"file={abs_file_path}, project_root={root_dir}"
-                    )
-                    # Continue anyway - file might be in a different location
+                logger.debug(
+                    f"[QUEUE] File path normalized and validated: "
+                    f"file={abs_file_path}, project_root={root_dir}, project_id={project_id}"
+                )
             
             file_record = self.database.get_file_by_path(abs_file_path, project_id)
             if not file_record:

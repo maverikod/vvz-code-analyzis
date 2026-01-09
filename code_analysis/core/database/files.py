@@ -85,11 +85,59 @@ def add_file(
     Returns:
         File ID
     """
+    from ..path_normalization import normalize_file_path
     from ..project_resolution import normalize_abs_path
+    from ..exceptions import ProjectIdMismatchError, ProjectNotFoundError
 
-    # Normalize path to absolute (Step 5: absolute paths everywhere)
-    # Ensure consistent normalization - use resolve() to handle symlinks and relative paths
-    abs_path = normalize_abs_path(path)
+    # Try to use unified path normalization if project_root can be found
+    abs_path = None
+    project_root = None
+    
+    try:
+        # Try to find project root by walking up the directory tree
+        path_obj = Path(path)
+        if not path_obj.is_absolute():
+            path_obj = path_obj.resolve()
+        
+        current = path_obj.parent if path_obj.is_file() else path_obj
+        
+        # Walk up to find projectid file
+        for parent in [current] + list(current.parents):
+            projectid_path = parent / "projectid"
+            if projectid_path.exists() and projectid_path.is_file():
+                project_root = parent
+                break
+        
+        # If project_root found, use unified normalization
+        if project_root and path_obj.exists():
+            try:
+                normalized = normalize_file_path(path_obj, project_root=project_root)
+                abs_path = normalized.absolute_path
+                
+                # Validate project_id matches
+                if normalized.project_id != project_id:
+                    raise ProjectIdMismatchError(
+                        message=(
+                            f"Project ID mismatch: file {abs_path} belongs to project "
+                            f"{normalized.project_id} (from projectid file) but was provided "
+                            f"with project_id {project_id}"
+                        ),
+                        file_project_id=normalized.project_id,
+                        db_project_id=project_id,
+                    )
+            except (ProjectNotFoundError, FileNotFoundError):
+                # Fallback to simple normalization if file doesn't exist or project not found
+                abs_path = normalize_abs_path(path)
+            except ProjectIdMismatchError:
+                # Re-raise project ID mismatch
+                raise
+        else:
+            # Fallback to simple normalization if project_root not found
+            abs_path = normalize_abs_path(path)
+    except Exception as e:
+        # Fallback to simple normalization on any error
+        logger.debug(f"[add_file] Using simple normalization due to error: {e}")
+        abs_path = normalize_abs_path(path)
     
     # Log normalization for debugging
     if path != abs_path:
@@ -97,50 +145,6 @@ def add_file(
             f"[add_file] Path normalized: {path!r} -> {abs_path!r} | "
             f"project_id={project_id} | dataset_id={dataset_id}"
         )
-
-    # Validate project_id: check if project_id from parameter matches projectid file
-    # This is a safety gate to prevent data inconsistency
-    try:
-        from ..project_resolution import find_project_root_for_path
-        from ..exceptions import ProjectIdMismatchError
-
-        # Try to find project root for this file
-        # Note: This requires watch_dirs, but we don't have them in this context
-        # So we'll validate by checking if file path contains a projectid file
-        abs_path_obj = Path(abs_path)
-        current = abs_path_obj.parent if abs_path_obj.is_file() else abs_path_obj
-        
-        # Walk up to find projectid file
-        project_root = None
-        for parent in [current] + list(current.parents):
-            projectid_path = parent / "projectid"
-            if projectid_path.exists() and projectid_path.is_file():
-                project_root = parent
-                break
-        
-        if project_root:
-            from ..project_resolution import load_project_id
-            
-            file_project_id = load_project_id(project_root)
-            if file_project_id != project_id:
-                raise ProjectIdMismatchError(
-                    message=(
-                        f"Project ID mismatch: file {abs_path} belongs to project "
-                        f"{file_project_id} (from projectid file) but was provided "
-                        f"with project_id {project_id}"
-                    ),
-                    file_project_id=file_project_id,
-                    db_project_id=project_id,
-                )
-    except (FileNotFoundError, ValueError):
-        # File doesn't exist or path issues - skip validation
-        logger.debug(f"[add_file] Skipping project_id validation for {abs_path}: file not found or path issues")
-    except ProjectIdMismatchError:
-        # Re-raise project ID mismatch
-        raise
-    except Exception as e:
-        # Log but don't fail - validation is a safety check
-        logger.warning(f"[add_file] Failed to validate project_id for {abs_path}: {e}")
 
     # Check if file exists in a different project
     existing_file = self._fetchone(

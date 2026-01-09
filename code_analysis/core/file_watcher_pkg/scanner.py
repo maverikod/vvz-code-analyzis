@@ -12,24 +12,18 @@ import logging
 from pathlib import Path
 from typing import Dict, List, Optional, Set
 
+from ..settings_manager import get_settings
+
 logger = logging.getLogger(__name__)
 
-# File extensions to process
-CODE_FILE_EXTENSIONS = {".py", ".json", ".yaml", ".yml", ".toml", ".ini", ".cfg"}
+# Get settings from SettingsManager
+settings = get_settings()
 
-# Default patterns to ignore (always applied)
-DEFAULT_IGNORE_PATTERNS = {
-    "__pycache__",
-    ".git",
-    ".pytest_cache",
-    ".mypy_cache",
-    "node_modules",
-    ".venv",
-    "venv",
-    "data/versions",  # Version directory for deleted files
-    "data/versions/**",  # All subdirectories in versions
-    "*.pyc",
-}
+# File extensions to process (from settings)
+CODE_FILE_EXTENSIONS = set(settings.get("code_file_extensions"))
+
+# Default patterns to ignore (from settings)
+DEFAULT_IGNORE_PATTERNS = set(settings.get("default_ignore_patterns"))
 
 
 def should_ignore_path(path: Path, ignore_patterns: Optional[List[str]] = None) -> bool:
@@ -139,9 +133,8 @@ def scan_directory(
         
         Files without a project (no projectid found) are skipped with a warning.
     """
-    from ..project_resolution import normalize_abs_path
-    from ..project_discovery import find_project_root
-    from ..exceptions import NestedProjectError
+    from ..path_normalization import normalize_file_path
+    from ..exceptions import NestedProjectError, ProjectNotFoundError
     from typing import Any
     
     files: Dict[str, Dict] = {}
@@ -157,31 +150,26 @@ def scan_directory(
             if item.is_file():
                 try:
                     stat = item.stat()
-                    # Always use absolute resolved path (Step 5: absolute paths everywhere)
-                    abs_path = normalize_abs_path(item)
-                    path_key = abs_path
-
-                    # Project discovery: find project root for this file
+                    # Use unified path normalization method
                     try:
-                        project_root_obj = find_project_root(Path(abs_path), watch_dirs_resolved)
-                        if project_root_obj is None:
-                            logger.warning(
-                                f"No project found for file {abs_path}, skipping"
-                            )
-                            continue
+                        normalized = normalize_file_path(item, watch_dirs=watch_dirs_resolved)
+                        path_key = normalized.absolute_path
                         
                         file_info: Dict[str, Any] = {
-                            "path": Path(abs_path),
+                            "path": Path(normalized.absolute_path),
                             "mtime": stat.st_mtime,
                             "size": stat.st_size,
-                            "project_root": project_root_obj.root_path,
-                            "project_id": project_root_obj.project_id,
+                            "project_root": normalized.project_root,
+                            "project_id": normalized.project_id,
                         }
                         files[path_key] = file_info
-                    except NestedProjectError as e:
-                        logger.error(
-                            f"Nested project detected for file {abs_path}: {e}, skipping"
+                    except (ProjectNotFoundError, NestedProjectError) as e:
+                        logger.warning(
+                            f"No project found for file {item}: {e}, skipping"
                         )
+                        continue
+                    except Exception as e:
+                        logger.debug(f"Error normalizing path for {item}: {e}")
                         continue
                 except OSError as e:
                     logger.debug(f"Error accessing file {item}: {e}")

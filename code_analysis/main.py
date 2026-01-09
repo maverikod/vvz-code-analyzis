@@ -86,6 +86,19 @@ def main() -> None:
         help="Server port (overrides config)",
     )
     args = parser.parse_args()
+    
+    # Initialize SettingsManager and set CLI overrides
+    from code_analysis.core.settings_manager import get_settings
+    
+    settings = get_settings()
+    cli_overrides = {}
+    if args.host:
+        cli_overrides["server_host"] = args.host
+    if args.port:
+        cli_overrides["server_port"] = args.port
+    if cli_overrides:
+        settings.set_cli_overrides(cli_overrides)
+    
     import logging
     import signal
 
@@ -249,14 +262,15 @@ def main() -> None:
         print(f"❌ Failed to load configuration: {e}", file=sys.stderr)
         sys.exit(1)
 
-    # Override host/port from CLI if provided
+    # Override host/port from CLI if provided (also set in SettingsManager above)
     if args.host:
         simple_config.model.server.host = args.host
     if args.port:
         simple_config.model.server.port = args.port
 
-    server_host = args.host or model.server.host
-    server_port = args.port or model.server.port
+    # Use SettingsManager for host/port (CLI > ENV > Constants)
+    server_host = settings.get("server_host") or args.host or model.server.host
+    server_port = settings.get("server_port") or args.port or model.server.port
 
     # Merge SimpleConfig sections back into raw config (preserve custom sections)
     app_config = simple_config.to_dict()

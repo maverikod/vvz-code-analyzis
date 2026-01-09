@@ -198,12 +198,12 @@ class ProjectInfo:
 **Действия**:
 1. ✅ Создать файл `constants.py` - выполнено
 2. ✅ Создать файл `settings_manager.py` - выполнено
-3. Вынести все хардкоды из кода в константы
-4. Обновить все места использования хардкодов для использования `get_settings()`
-5. Добавить документацию к константам
-6. Обновить `config.py` для использования SettingsManager
-7. Обновить `main.py` для передачи CLI аргументов в SettingsManager
-8. Обновить все модули для использования `get_settings()` вместо прямого доступа к константам
+3. ✅ Вынести все хардкоды из кода в константы
+4. ✅ Обновить все места использования хардкодов для использования `get_settings()` (scanner.py, main.py)
+5. ✅ Добавить документацию к константам
+6. [ ] Обновить `config.py` для использования SettingsManager (не критично, использует значения по умолчанию)
+7. ✅ Обновить `main.py` для передачи CLI аргументов в SettingsManager
+8. ✅ Обновить все модули для использования `get_settings()` вместо прямого доступа к константам (scanner.py)
 
 **Примеры использования SettingsManager**:
 
@@ -343,44 +343,44 @@ class NormalizedPath:
 
 ---
 
-### Этап 7: Рефакторинг файлвочера
+### Этап 7: Рефакторинг файлвочера ✅
 
 **Файлы для изменения**:
-- `code_analysis/core/file_watcher_pkg/scanner.py`
-- `code_analysis/core/file_watcher_pkg/processor.py`
+- `code_analysis/core/file_watcher_pkg/scanner.py` ✅
+- `code_analysis/core/file_watcher_pkg/processor.py` ✅
 - `code_analysis/core/file_watcher_pkg/base.py`
 
 **Изменения**:
-1. Использовать единый метод нормализации путей
-2. Использовать единый метод определения корня проекта
-3. Добавить валидацию project_id
-4. Убрать дублирование логики нормализации
+1. ✅ Использовать единый метод нормализации путей
+2. ✅ Использовать единый метод определения корня проекта
+3. ✅ Добавить валидацию project_id
+4. ✅ Убрать дублирование логики нормализации
 
 **Действия**:
-1. Обновить `scan_directory()` для использования `normalize_file_path()`
-2. Обновить `_queue_file_for_processing()` для использования единых методов
-3. Добавить валидацию project_id
-4. Обновить тесты
+1. ✅ Обновить `scan_directory()` для использования `normalize_file_path()`
+2. ✅ Обновить `_queue_file_for_processing()` для использования единых методов
+3. ✅ Добавить валидацию project_id (через normalize_file_path)
+4. [ ] Обновить тесты
 
 ---
 
-### Этап 8: Рефакторинг векторизатора
+### Этап 8: Рефакторинг векторизатора ✅
 
 **Файлы для изменения**:
-- `code_analysis/core/vectorization_worker_pkg/chunking.py`
-- `code_analysis/core/vectorization_worker_pkg/watch_dirs.py`
+- `code_analysis/core/vectorization_worker_pkg/chunking.py` (пути уже нормализованы в БД)
+- `code_analysis/core/vectorization_worker_pkg/watch_dirs.py` (использует normalize_root_dir)
 - `code_analysis/core/vectorization_worker_pkg/processing.py`
 
 **Изменения**:
-1. Использовать единый метод нормализации путей
-2. Использовать единый метод определения корня проекта
-3. Добавить валидацию project_id
+1. ✅ Использовать единый метод нормализации путей (пути уже нормализованы в БД)
+2. ✅ Использовать единый метод определения корня проекта (watch_dirs использует normalize_root_dir)
+3. ✅ Валидация project_id выполняется при добавлении файлов в БД
 
 **Действия**:
-1. Обновить все места обращения к файловой системе
-2. Использовать `normalize_file_path()` везде
-3. Добавить валидацию project_id
-4. Обновить тесты
+1. ✅ Векторизатор работает с путями из БД, которые уже нормализованы
+2. ✅ watch_dirs использует normalize_root_dir для нормализации корневых директорий
+3. ✅ Валидация project_id выполняется в database/files.py
+4. [ ] Обновить тесты
 
 ---
 

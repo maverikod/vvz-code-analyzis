@@ -196,7 +196,25 @@ class SQLiteDriverProxy(BaseDatabaseDriver):
     def _ensure_worker_running(self) -> None:
         """Ensure worker process is running."""
         if not self._worker_initialized or not self._socket_path:
-            raise RuntimeError("Worker not initialized. Ensure connect() was called.")
+            # Try to reconnect instead of failing immediately
+            logger.warning(
+                "[SQLITE_PROXY] Worker not initialized, attempting to reconnect..."
+            )
+            try:
+                self._start_worker()
+            except Exception as e:
+                logger.error(
+                    f"[SQLITE_PROXY] Failed to reconnect worker: {e}",
+                    exc_info=True,
+                )
+                raise RuntimeError(
+                    "Worker not initialized. Ensure connect() was called."
+                ) from e
+            # Verify reconnection was successful
+            if not self._worker_initialized or not self._socket_path:
+                raise RuntimeError(
+                    "Worker not initialized. Ensure connect() was called."
+                )
 
         # Check if socket file exists
         if not Path(self._socket_path).exists():
@@ -223,10 +241,28 @@ class SQLiteDriverProxy(BaseDatabaseDriver):
 
         # Ensure worker is running before sending request
         if not self._worker_initialized or not self._socket_path:
-            logger.error(
-                f"[SQLITE_PROXY] Worker not initialized! initialized: {self._worker_initialized}, socket_path: {self._socket_path}"
+            # Try to reconnect instead of failing immediately
+            logger.warning(
+                f"[SQLITE_PROXY] Worker not initialized! initialized: {self._worker_initialized}, socket_path: {self._socket_path}, attempting to reconnect..."
             )
-            raise RuntimeError("Worker not initialized. Ensure connect() was called.")
+            try:
+                self._start_worker()
+            except Exception as e:
+                logger.error(
+                    f"[SQLITE_PROXY] Failed to reconnect worker: {e}",
+                    exc_info=True,
+                )
+                raise RuntimeError(
+                    "Worker not initialized. Ensure connect() was called."
+                ) from e
+            # Verify reconnection was successful
+            if not self._worker_initialized or not self._socket_path:
+                logger.error(
+                    f"[SQLITE_PROXY] Worker still not initialized after reconnect attempt! initialized: {self._worker_initialized}, socket_path: {self._socket_path}"
+                )
+                raise RuntimeError(
+                    "Worker not initialized. Ensure connect() was called."
+                )
 
         # Verify socket file exists before attempting connection
         socket_file = Path(self._socket_path)

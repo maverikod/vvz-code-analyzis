@@ -336,6 +336,7 @@ class UpdateIndexesMCPCommand(BaseMCPCommand):
             functions_added = 0
             methods_added = 0
             imports_added = 0
+            usages_added = 0
 
             class_nodes: dict[ast.ClassDef, int] = {}
 
@@ -520,6 +521,43 @@ class UpdateIndexesMCPCommand(BaseMCPCommand):
                         )
                         imports_added += 1
 
+            # Track usages (function calls, method calls, class instantiations)
+            try:
+                from ..core.usage_tracker import UsageTracker
+
+                def add_usage_callback(usage_record: Dict[str, Any]) -> None:
+                    """Callback to add usage record to database."""
+                    nonlocal usages_added
+                    try:
+                        database.add_usage(
+                            file_id=file_id,
+                            line=usage_record["line"],
+                            usage_type=usage_record["usage_type"],
+                            target_type=usage_record["target_type"],
+                            target_name=usage_record["target_name"],
+                            target_class=usage_record.get("target_class"),
+                            context=usage_record.get("context"),
+                        )
+                        usages_added += 1
+                    except Exception as e:
+                        logger.debug(
+                            f"Failed to add usage for {usage_record.get('target_name')} "
+                            f"at line {usage_record.get('line')}: {e}",
+                            exc_info=True,
+                        )
+
+                usage_tracker = UsageTracker(add_usage_callback)
+                usage_tracker.visit(tree)
+                logger.debug(
+                    f"Tracked {usages_added} usages in {rel_path}",
+                )
+            except Exception as e:
+                logger.warning(
+                    f"Failed to track usages for {rel_path}: {e}",
+                    exc_info=True,
+                )
+                # Continue even if usage tracking fails
+
             database.mark_file_needs_chunking(rel_path, project_id)
 
             return {
@@ -529,6 +567,7 @@ class UpdateIndexesMCPCommand(BaseMCPCommand):
                 "functions": functions_added,
                 "methods": methods_added,
                 "imports": imports_added,
+                "usages": usages_added,
             }
 
         except Exception as e:

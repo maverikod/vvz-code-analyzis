@@ -349,3 +349,41 @@ def search_methods(
     
     return results
 
+
+def add_usage(
+    self,
+    file_id: int,
+    line: int,
+    usage_type: str,
+    target_type: str,
+    target_name: str,
+    target_class: Optional[str] = None,
+    context: Optional[str] = None,
+) -> int:
+    """
+    Add usage record to database.
+
+    Args:
+        file_id: File ID where usage occurs
+        line: Line number where usage occurs
+        usage_type: Type of usage ('call', 'instantiation', 'attribute', 'inheritance')
+        target_type: Type of target ('class', 'function', 'method', 'property')
+        target_name: Name of target entity
+        target_class: Optional class name (for methods/properties)
+        context: Optional context information
+
+    Returns:
+        Usage ID
+    """
+    self._execute(
+        """
+        INSERT INTO usages (file_id, line, usage_type, target_type, target_name, target_class, context)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+        """,
+        (file_id, line, usage_type, target_type, target_name, target_class, context),
+    )
+    self._commit()
+    result = self._lastrowid()
+    assert result is not None
+    return result
+

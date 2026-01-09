@@ -8,6 +8,7 @@ email: vasilyvz@gmail.com
 import uuid
 from pathlib import Path
 from typing import Dict, List, Any, Optional
+from contextlib import contextmanager
 import logging
 import threading
 
@@ -236,6 +237,26 @@ class CodeDatabase:
             True if transaction is active, False otherwise.
         """
         return getattr(self, "_transaction_active", False)
+
+    @contextmanager
+    def transaction(self):
+        """
+        Context manager for database transactions.
+
+        Automatically commits on success and rolls back on exception.
+
+        Example:
+            with database.transaction():
+                database._execute("INSERT INTO ...")
+                database._execute("UPDATE ...")
+        """
+        self.begin_transaction()
+        try:
+            yield
+            self.commit_transaction()
+        except Exception:
+            self.rollback_transaction()
+            raise
 
     def _lastrowid(self) -> Optional[int]:
         """Get last row ID with optional locking."""

@@ -1513,7 +1513,7 @@ def update_file_data_atomic(
 
         # Parse AST from source_code
         try:
-            from ..core.ast_utils import parse_with_comments
+            from ..ast_utils import parse_with_comments
 
             tree = parse_with_comments(source_code, filename=abs_path)
         except SyntaxError as e:
@@ -1588,7 +1588,7 @@ def update_file_data_atomic(
 
         # Extract and save entities in transaction
         # Use helper methods from UpdateIndexesMCPCommand
-        from ..commands.code_mapper_mcp_command import UpdateIndexesMCPCommand
+        from ...commands.code_mapper_mcp_command import UpdateIndexesMCPCommand
 
         update_cmd = UpdateIndexesMCPCommand()
 

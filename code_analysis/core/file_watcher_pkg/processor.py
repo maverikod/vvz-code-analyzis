@@ -227,30 +227,21 @@ class FileChangeProcessor:
                     
                     # Check if project root directory exists
                     if not db_root_path.exists():
-                        logger.info(
-                            f"Project {db_project_id} root_path {db_root_path} does not exist, "
-                            f"checking for deleted files"
+                        logger.warning(
+                            f"Project {db_project_id} root_path {db_root_path} does not exist. "
+                            f"This may be temporary (e.g., during project reupload). "
+                            f"Skipping automatic deletion to prevent data loss. "
+                            f"Files will be checked again in next scan cycle."
                         )
-                        
-                        # Get all files for this project
-                        db_files = self.database.get_project_files(
-                            db_project_id, include_deleted=False
-                        )
-                        
-                        if db_files:
-                            # All files from this project should be marked as deleted
-                            # since the project directory doesn't exist
-                            deleted_files = [f["path"] for f in db_files]
-                            logger.info(
-                                f"Found {len(deleted_files)} files in database for deleted project "
-                                f"{db_project_id}, marking as deleted"
-                            )
-                            
-                            deltas[db_project_id] = FileDelta(
-                                new_files=[],
-                                changed_files=[],
-                                deleted_files=deleted_files,
-                            )
+                        # CRITICAL FIX: Do NOT mark all files as deleted if project directory
+                        # doesn't exist. This prevents accidental deletion during:
+                        # - Project reupload
+                        # - Temporary directory removal
+                        # - Path normalization issues
+                        # Files will be properly detected as deleted in next scan if they
+                        # are still missing after project directory is restored.
+                        # If project is permanently deleted, use explicit cleanup command.
+                        continue
                 except Exception as e:
                     logger.debug(
                         f"Error checking project {db_project_id} root_path {db_root_path_str}: {e}"

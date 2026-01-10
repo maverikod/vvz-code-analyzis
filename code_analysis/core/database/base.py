@@ -7,7 +7,7 @@ email: vasilyvz@gmail.com
 
 import uuid
 from pathlib import Path
-from typing import Dict, List, Any, Optional
+from typing import Dict, List, Any, Optional, Callable
 from contextlib import contextmanager
 import logging
 import threading
@@ -15,6 +15,21 @@ import threading
 from ..db_driver import create_driver
 
 logger = logging.getLogger(__name__)
+
+# Schema version constant
+SCHEMA_VERSION = "1.0.0"  # Current schema version
+
+# Migration methods registry: version -> migration function
+# Each migration function receives driver instance and performs version-specific migrations
+# Migration functions are called in order when upgrading from old version to new version
+# Example usage:
+#   MIGRATION_METHODS["1.0.0"] = lambda driver: driver._migrate_to_uuid_projects()
+#   MIGRATION_METHODS["1.1.0"] = lambda driver: driver._migrate_add_datasets_table()
+MIGRATION_METHODS: Dict[str, Callable[[Any], None]] = {
+    # Register migration methods here
+    # Format: "version": lambda driver: driver._migration_method_name()
+    # Note: Methods are defined in SQLiteDriver, registry is here for centralization
+}
 
 
 def create_driver_config_for_worker(
@@ -134,7 +149,11 @@ class CodeDatabase:
         # Transaction state tracking
         self._transaction_active: bool = False
 
-        self._create_schema()
+        # Store driver_config for sync_schema()
+        self.driver_config = driver_config
+
+        # DO NOT call _create_schema() here
+        # Schema creation happens via sync_schema() in driver
 
     def __getattr__(self, name: str) -> Any:
         """
@@ -453,20 +472,6 @@ class CodeDatabase:
                     FOREIGN KEY (class_id) REFERENCES classes(id) ON DELETE CASCADE,
                     FOREIGN KEY (function_id) REFERENCES functions(id) ON DELETE CASCADE,
                     FOREIGN KEY (method_id) REFERENCES methods(id) ON DELETE CASCADE
-                )
-            """
-        )
-        self._execute(
-            """
-                CREATE TABLE IF NOT EXISTS dependencies (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    source_file_id INTEGER NOT NULL,
-                    target_file_id INTEGER NOT NULL,
-                    dependency_type TEXT,
-                    created_at REAL DEFAULT (julianday('now')),
-                    FOREIGN KEY (source_file_id) REFERENCES files(id) ON DELETE CASCADE,
-                    FOREIGN KEY (target_file_id) REFERENCES files(id) ON DELETE CASCADE,
-                    UNIQUE(source_file_id, target_file_id)
                 )
             """
         )
@@ -1280,3 +1285,160 @@ class CodeDatabase:
                 (vector_id, chunk_id),
             )
         self._commit()
+
+    def _get_schema_definition(self) -> Dict[str, Any]:
+        """
+        Get structured schema definition for synchronization.
+        
+        This method returns a structured dictionary representation of the schema,
+        not SQL statements. This is used by SchemaComparator to compare and migrate schemas.
+        
+        Returns:
+            Dictionary with schema definition containing:
+            - version: Schema version string
+            - tables: Dict of table definitions with columns, foreign keys, constraints
+            - indexes: List of index definitions
+            - virtual_tables: List of virtual table definitions (FTS5)
+            - migration_methods: Registry of migration methods
+        """
+        return {
+            "version": SCHEMA_VERSION,
+            "tables": {
+                "db_settings": {
+                    "columns": [
+                        {"name": "key", "type": "TEXT", "not_null": True, "primary_key": True},
+                        {"name": "value", "type": "TEXT", "not_null": True},
+                        {"name": "updated_at", "type": "REAL", "not_null": False, "default": "julianday('now')"},
+                    ],
+                    "foreign_keys": [],
+                    "unique_constraints": [],
+                    "check_constraints": [],
+                },
+                "projects": {
+                    "columns": [
+                        {"name": "id", "type": "TEXT", "not_null": True, "primary_key": True},
+                        {"name": "root_path", "type": "TEXT", "not_null": True},
+                        {"name": "name", "type": "TEXT", "not_null": False},
+                        {"name": "comment", "type": "TEXT", "not_null": False},
+                        {"name": "created_at", "type": "REAL", "not_null": False, "default": "julianday('now')"},
+                        {"name": "updated_at", "type": "REAL", "not_null": False, "default": "julianday('now')"},
+                    ],
+                    "foreign_keys": [],
+                    "unique_constraints": [{"columns": ["root_path"]}],
+                    "check_constraints": [],
+                },
+                "datasets": {
+                    "columns": [
+                        {"name": "id", "type": "TEXT", "not_null": True, "primary_key": True},
+                        {"name": "project_id", "type": "TEXT", "not_null": True},
+                        {"name": "root_path", "type": "TEXT", "not_null": True},
+                        {"name": "name", "type": "TEXT", "not_null": False},
+                        {"name": "created_at", "type": "REAL", "not_null": False, "default": "julianday('now')"},
+                        {"name": "updated_at", "type": "REAL", "not_null": False, "default": "julianday('now')"},
+                    ],
+                    "foreign_keys": [
+                        {
+                            "columns": ["project_id"],
+                            "references_table": "projects",
+                            "references_columns": ["id"],
+                            "on_delete": "CASCADE"
+                        }
+                    ],
+                    "unique_constraints": [{"columns": ["project_id", "root_path"]}],
+                    "check_constraints": [],
+                },
+                "files": {
+                    "columns": [
+                        {"name": "id", "type": "INTEGER", "not_null": True, "primary_key": True, "autoincrement": True},
+                        {"name": "project_id", "type": "TEXT", "not_null": True},
+                        {"name": "dataset_id", "type": "TEXT", "not_null": True},
+                        {"name": "path", "type": "TEXT", "not_null": True},
+                        {"name": "lines", "type": "INTEGER", "not_null": False},
+                        {"name": "last_modified", "type": "REAL", "not_null": False},
+                        {"name": "has_docstring", "type": "BOOLEAN", "not_null": False},
+                        {"name": "deleted", "type": "BOOLEAN", "not_null": False, "default": "0"},
+                        {"name": "original_path", "type": "TEXT", "not_null": False},
+                        {"name": "version_dir", "type": "TEXT", "not_null": False},
+                        {"name": "created_at", "type": "REAL", "not_null": False, "default": "julianday('now')"},
+                        {"name": "updated_at", "type": "REAL", "not_null": False, "default": "julianday('now')"},
+                    ],
+                    "foreign_keys": [
+                        {
+                            "columns": ["project_id"],
+                            "references_table": "projects",
+                            "references_columns": ["id"],
+                            "on_delete": "CASCADE"
+                        },
+                        {
+                            "columns": ["dataset_id"],
+                            "references_table": "datasets",
+                            "references_columns": ["id"],
+                            "on_delete": "CASCADE"
+                        }
+                    ],
+                    "unique_constraints": [{"columns": ["project_id", "dataset_id", "path"]}],
+                    "check_constraints": [],
+                },
+                # Note: Other tables (classes, methods, functions, etc.) will be added in next iteration
+                # For now, this is a minimal implementation to get Phase 1 working
+            },
+            "indexes": [
+                {
+                    "name": "idx_files_deleted",
+                    "table": "files",
+                    "columns": ["deleted"],
+                    "unique": False,
+                    "where_clause": "deleted = 1"
+                },
+                # Note: Other indexes will be added in next iteration
+            ],
+            "virtual_tables": [
+                {
+                    "name": "code_content_fts",
+                    "type": "fts5",
+                    "columns": ["entity_type", "entity_name", "content", "docstring"],
+                    "options": {
+                        "content_rowid": "rowid",
+                        "content": "code_content"
+                    }
+                }
+            ],
+            "migration_methods": MIGRATION_METHODS
+        }
+
+    def sync_schema(self) -> Dict[str, Any]:
+        """
+        Synchronize database schema via driver.
+        
+        Gets schema definition and backup_dir from config, delegates to driver.
+        This method should be called after driver connection is established.
+        
+        Returns:
+            Dict with sync results from driver:
+            {
+                "success": bool,
+                "backup_uuid": Optional[str],
+                "changes_applied": List[str],
+                "error": Optional[str]
+            }
+        
+        Raises:
+            RuntimeError: If schema sync fails (connection is blocked)
+        """
+        schema_definition = self._get_schema_definition()
+        
+        # Get backup_dir from driver config (should be set from StoragePaths)
+        backup_dir = self.driver_config.get("config", {}).get("backup_dir")
+        if not backup_dir:
+            # Fallback: infer from db_path
+            db_path = self.driver_config.get("config", {}).get("path")
+            if db_path:
+                db_path_obj = Path(db_path)
+                if db_path_obj.parent.name == "data":
+                    backup_dir = str(db_path_obj.parent.parent / "backups")
+                else:
+                    backup_dir = str(db_path_obj.parent / "backups")
+            else:
+                raise RuntimeError("Cannot determine backup_dir for schema sync")
+        
+        return self.driver.sync_schema(schema_definition, Path(backup_dir))

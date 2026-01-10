@@ -83,7 +83,7 @@ async def clear_project_data(self, project_id: str) -> None:
     Clear all data for a project and remove the project itself.
 
     Removes all files, classes, functions, imports, issues, usages,
-    dependencies, code_content, ast_trees, code_chunks, vector_index entries,
+    code_content, ast_trees, code_chunks, vector_index entries,
     code_duplicates, duplicate_occurrences, datasets, and the project record itself.
 
     Args:
@@ -166,11 +166,6 @@ async def clear_project_data(self, project_id: str) -> None:
     if file_ids:
         self._execute(
             f"DELETE FROM issues WHERE file_id IN ({placeholders})", tuple(file_ids)
-        )
-    if file_ids:
-        self._execute(
-            f"\n                DELETE FROM dependencies \n                WHERE source_file_id IN ({placeholders}) \n                OR target_file_id IN ({placeholders})\n            ",
-            tuple(file_ids + file_ids),
         )
     if file_ids:
         self._execute(

@@ -273,7 +273,6 @@ def clear_file_data(self, file_id: int) -> None:
     - imports
     - issues
     - usages
-    - dependencies (both as source and target)
     - code_content and FTS index
     - AST trees
     - CST trees
@@ -308,10 +307,6 @@ def clear_file_data(self, file_id: int) -> None:
     self._execute("DELETE FROM imports WHERE file_id = ?", (file_id,))
     self._execute("DELETE FROM issues WHERE file_id = ?", (file_id,))
     self._execute("DELETE FROM usages WHERE file_id = ?", (file_id,))
-    self._execute(
-        "DELETE FROM dependencies WHERE source_file_id = ? OR target_file_id = ?",
-        (file_id, file_id),
-    )
     self._execute("DELETE FROM code_content WHERE file_id = ?", (file_id,))
     self._execute("DELETE FROM ast_trees WHERE file_id = ?", (file_id,))
     self._execute("DELETE FROM cst_trees WHERE file_id = ?", (file_id,))
@@ -1596,6 +1591,7 @@ def update_file_data_atomic(
         functions_added = 0
         methods_added = 0
         imports_added = 0
+        usages_added = 0
 
         class_nodes: Dict[ast.ClassDef, int] = {}
 
@@ -1771,6 +1767,43 @@ def update_file_data_atomic(
                     )
                     imports_added += 1
 
+        # Track usages (function calls, method calls, class instantiations)
+        try:
+            from ..core.usage_tracker import UsageTracker
+
+            def add_usage_callback(usage_record: Dict[str, Any]) -> None:
+                """Callback to add usage record to database."""
+                nonlocal usages_added
+                try:
+                    self.add_usage(
+                        file_id=file_id,
+                        line=usage_record["line"],
+                        usage_type=usage_record["usage_type"],
+                        target_type=usage_record["target_type"],
+                        target_name=usage_record["target_name"],
+                        target_class=usage_record.get("target_class"),
+                        context=usage_record.get("context"),
+                    )
+                    usages_added += 1
+                except Exception as e:
+                    logger.debug(
+                        f"Failed to add usage for {usage_record.get('target_name')} "
+                        f"at line {usage_record.get('line')}: {e}",
+                        exc_info=True,
+                    )
+
+            usage_tracker = UsageTracker(add_usage_callback)
+            usage_tracker.visit(tree)
+            logger.debug(
+                f"Tracked {usages_added} usages in {abs_path}",
+            )
+        except Exception as e:
+            logger.warning(
+                f"Failed to track usages for {abs_path}: {e}",
+                exc_info=True,
+            )
+            # Continue even if usage tracking fails
+
         entities_count = classes_added + functions_added + methods_added
 
         return {
@@ -1784,6 +1817,7 @@ def update_file_data_atomic(
             "functions": functions_added,
             "methods": methods_added,
             "imports": imports_added,
+            "usages": usages_added,
         }
 
     except ProjectIdMismatchError:

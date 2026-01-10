@@ -197,22 +197,65 @@ def _set_schema_version(self, version: str) -> None:
 
 ---
 
-### Phase 2: BackupManager Database Backup
+### Phase 2: Database Backup Support
 
 **Files to modify**:
-- `code_analysis/core/backup_manager.py`
+- `code_analysis/core/backup_manager.py` (add database backup method)
+- `code_analysis/core/storage_paths.py` (add backup_dir to StoragePaths)
 
 **Steps**:
-1. Add `create_database_backup()` method
-2. Backup database file + sidecar files (-wal, -shm, -journal)
-3. Store in `old_code/` directory with UUID
-4. Add entry to index with special marker
+1. Add `backup_dir` to `StoragePaths` dataclass
+2. Resolve backup directory from config: `code_analysis.storage.backup_dir`
+3. Default: `{project_root}/backups` (infer project root from db_path or config_dir)
+4. Add `create_database_backup()` method to BackupManager
+5. Backup database file + sidecar files (-wal, -shm, -journal)
+6. Only create backup if database is not empty (has tables with data)
 
-**Code**:
+**Code in storage_paths.py**:
+```python
+@dataclass(frozen=True)
+class StoragePaths:
+    config_dir: Path
+    db_path: Path
+    faiss_dir: Path
+    locks_dir: Path
+    queue_dir: Optional[Path]
+    backup_dir: Path  # NEW: Directory for database backups
+
+def resolve_storage_paths(...) -> StoragePaths:
+    # ... existing code ...
+    
+    # Resolve backup directory
+    backup_dir_val = storage_cfg.get("backup_dir")
+    if isinstance(backup_dir_val, str) and backup_dir_val.strip():
+        backup_dir = _resolve_path(config_dir, backup_dir_val)
+    else:
+        # Default: {project_root}/backups
+        # Try to infer project root from db_path
+        # If db_path is in data/ subdirectory, use parent as project root
+        if db_path.parent.name == "data":
+            project_root = db_path.parent.parent
+        else:
+            # Fallback to config_dir
+            project_root = config_dir
+        backup_dir = project_root / "backups"
+    
+    return StoragePaths(
+        config_dir=config_dir,
+        db_path=db_path,
+        faiss_dir=faiss_dir,
+        locks_dir=locks_dir,
+        queue_dir=queue_dir,
+        backup_dir=backup_dir,  # NEW
+    )
+```
+
+**Code in backup_manager.py**:
 ```python
 def create_database_backup(
     self,
     db_path: Path,
+    backup_dir: Path,
     comment: str = "Schema synchronization backup",
 ) -> Optional[str]:
     """
@@ -220,6 +263,7 @@ def create_database_backup(
     
     Args:
         db_path: Path to database file
+        backup_dir: Directory where to store backups
         comment: Optional comment for backup
         
     Returns:
@@ -230,12 +274,22 @@ def create_database_backup(
         if not db_path.exists():
             _get_logger().warning(f"Database file not found: {db_path}")
             return None
+        
+        # Check if database is empty (no tables with data)
+        # If empty, no backup needed
+        if self._is_database_empty(db_path):
+            _get_logger().info("Database is empty, skipping backup")
+            return None
             
+        backup_dir = Path(backup_dir).resolve()
+        backup_dir.mkdir(parents=True, exist_ok=True)
+        
         backup_uuid = str(uuid.uuid4())
+        timestamp = datetime.now().strftime("%Y-%m-%dT%H-%M-%S")
         
         # Backup main database file
-        backup_filename = f"database-{db_path.name}-{backup_uuid}.db"
-        backup_path = self.backup_dir / backup_filename
+        backup_filename = f"database-{db_path.stem}-{timestamp}-{backup_uuid}.db"
+        backup_path = backup_dir / backup_filename
         shutil.copy2(db_path, backup_path)
         
         # Backup sidecar files if they exist
@@ -244,28 +298,56 @@ def create_database_backup(
         for ext in sidecar_extensions:
             sidecar_path = db_path.with_suffix(db_path.suffix + ext)
             if sidecar_path.exists():
-                sidecar_backup = self.backup_dir / f"{backup_filename}{ext}"
+                sidecar_backup = backup_dir / f"{backup_filename}{ext}"
                 shutil.copy2(sidecar_path, sidecar_backup)
                 sidecar_files.append(str(sidecar_backup.name))
         
-        # Update index
-        index = self._load_index()
-        timestamp = datetime.now().strftime("%Y-%m-%dT%H-%M-%S")
-        index[backup_uuid] = {
-            "file_path": f"[DATABASE]{db_path.name}",
-            "timestamp": timestamp,
-            "command": "schema_sync",
-            "related_files": ",".join(sidecar_files),
-            "comment": comment,
-        }
-        self._save_index(index)
-        
-        _get_logger().info(f"Database backup created: {backup_uuid}")
+        _get_logger().info(f"Database backup created: {backup_path} (UUID: {backup_uuid})")
         return backup_uuid
         
     except Exception as e:
         _get_logger().error(f"Failed to create database backup: {e}", exc_info=True)
         return None
+
+def _is_database_empty(self, db_path: Path) -> bool:
+    """
+    Check if database is empty (no tables or no data).
+    
+    Args:
+        db_path: Path to database file
+        
+    Returns:
+        True if database is empty, False otherwise
+    """
+    try:
+        import sqlite3
+        conn = sqlite3.connect(str(db_path))
+        cursor = conn.cursor()
+        
+        # Check if any tables exist
+        cursor.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'"
+        )
+        tables = cursor.fetchall()
+        
+        if not tables:
+            conn.close()
+            return True
+        
+        # Check if any table has data
+        for (table_name,) in tables:
+            cursor.execute(f"SELECT COUNT(*) FROM {table_name}")
+            count = cursor.fetchone()[0]
+            if count > 0:
+                conn.close()
+                return False
+        
+        conn.close()
+        return True
+    except Exception as e:
+        _get_logger().warning(f"Failed to check if database is empty: {e}")
+        # If we can't check, assume not empty (safer)
+        return False
 ```
 
 ---
@@ -372,10 +454,23 @@ def sync_schema(self) -> Dict[str, Any]:
             result["success"] = True
             return result
         
-        # Schema changes needed - create backup
-        backup_manager = BackupManager(self.db_path.parent.parent)  # root_dir
+        # Schema changes needed - create backup (only if DB is not empty)
+        # Get backup_dir from config or use default
+        from ..storage_paths import resolve_storage_paths, load_raw_config
+        from pathlib import Path
+        
+        # Try to get backup_dir from config
+        # For now, infer from db_path (will be improved in Phase 2)
+        if self.db_path.parent.name == "data":
+            project_root = self.db_path.parent.parent
+            backup_dir = project_root / "backups"
+        else:
+            backup_dir = self.db_path.parent / "backups"
+        
+        backup_manager = BackupManager(backup_dir.parent)  # root_dir for BackupManager
         backup_uuid = backup_manager.create_database_backup(
             self.db_path,
+            backup_dir=backup_dir,
             comment=f"Schema sync: {current_version} -> {code_version}"
         )
         result["backup_uuid"] = backup_uuid

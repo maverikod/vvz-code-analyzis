@@ -275,17 +275,65 @@ except Exception as e:
 
 **Recommendation**: Extract to helper or use decorator.
 
-## 3. Code Metrics
+## 3. Additional Duplications Found
+
+### 3.1 Process Creation Duplication
+
+**Location**: `code_analysis/main.py` (lines 868-883) vs `code_analysis/core/worker_launcher.py` (lines 71-83)
+
+The file watcher worker Process creation is **duplicated** between `main.py` and `worker_launcher.py`:
+
+```python
+# main.py (lines 868-883) - DIRECT CREATION
+process = multiprocessing.Process(
+    target=run_file_watcher_worker,
+    args=(str(db_path), valid_watch_dirs),
+    kwargs={
+        "locks_dir": str(locks_dir),
+        "scan_interval": scan_interval,
+        "version_dir": version_dir,
+        "worker_log_path": worker_log_path,
+        "ignore_patterns": ignore_patterns,
+    },
+    daemon=True,
+)
+process.start()
+
+# worker_launcher.py (lines 71-83) - UNUSED FUNCTION
+process = multiprocessing.Process(
+    target=run_file_watcher_worker,
+    args=(db_path, watch_dirs),
+    kwargs={
+        "locks_dir": locks_dir,
+        "scan_interval": int(scan_interval),
+        "version_dir": version_dir,
+        "worker_log_path": worker_log_path,
+        "ignore_patterns": ignore_patterns or [],
+    },
+    daemon=True,
+)
+process.start()
+```
+
+**Impact**: 
+- ~15 lines duplicated
+- `worker_launcher.start_file_watcher_worker()` exists but is **not used**
+- Inconsistency: vectorization uses launcher, file watcher doesn't
+
+**Recommendation**: Use `worker_launcher.start_file_watcher_worker()` in `main.py` instead of direct Process creation.
+
+## 4. Code Metrics
 
 ### Duplication Statistics
 
-| Category | Lines Duplicated | Functions Affected |
-|----------|------------------|-------------------|
-| Config Loading | ~40 | 2 |
-| Storage Resolution | ~7 | 2 |
-| Enabled Checks | ~15 | 2 |
-| Error Handling | ~6 | 2 |
-| **Total** | **~68** | **2** |
+| Category | Lines Duplicated | Functions Affected | Files Affected |
+|----------|------------------|-------------------|----------------|
+| Config Loading | ~40 | 2 | main.py |
+| Storage Resolution | ~7 | 2 | main.py |
+| Enabled Checks | ~15 | 2 | main.py |
+| Error Handling | ~6 | 2 | main.py |
+| Process Creation | ~15 | 1 | main.py, worker_launcher.py |
+| **Total** | **~83** | **2** | **2** |
 
 ### Refactoring Impact
 

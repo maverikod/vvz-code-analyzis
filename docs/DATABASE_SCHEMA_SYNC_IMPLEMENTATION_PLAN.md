@@ -151,7 +151,7 @@ CREATE TABLE IF NOT EXISTS db_settings (
 **Code**:
 ```python
 # In base.py
-SCHEMA_VERSION = "1.0.0"
+SCHEMA_VERSION = "0.0.0"  # Initial version, will be updated after first sync
 
 def _create_schema(self) -> None:
     # ... existing tables ...
@@ -417,6 +417,13 @@ def sync_schema(self) -> Dict[str, Any]:
     """
     Synchronize database schema with code schema.
     
+    Blocks database during synchronization using file lock.
+    Validates data compatibility before making changes.
+    Rolls back on error.
+    
+    Raises:
+        RuntimeError: If schema sync fails (blocks connection)
+        
     Returns:
         Dict with sync results:
         {
@@ -426,6 +433,8 @@ def sync_schema(self) -> Dict[str, Any]:
             "error": Optional[str]
         }
     """
+    import fcntl
+    from pathlib import Path
     from ..database.schema_sync import SchemaComparator
     from ..backup_manager import BackupManager
     from ..database.base import SCHEMA_VERSION
@@ -437,9 +446,18 @@ def sync_schema(self) -> Dict[str, Any]:
         "error": None,
     }
     
+    # Lock file for schema synchronization
+    lock_file = Path(str(self.db_path) + ".schema_sync.lock")
+    lock_fd = None
+    
     try:
-        # Get current schema version
-        current_version = self._get_schema_version()
+        # Acquire lock before synchronization
+        lock_fd = open(lock_file, "w")
+        fcntl.flock(lock_fd.fileno(), fcntl.LOCK_EX)
+        logger.info("Schema sync lock acquired")
+        
+        # Get current schema version (defaults to "0.0.0" if not set)
+        current_version = self._get_schema_version() or "0.0.0"
         code_version = SCHEMA_VERSION
         
         # Compare schemas
@@ -451,23 +469,26 @@ def sync_schema(self) -> Dict[str, Any]:
             if current_version != code_version:
                 # Update version only
                 self._set_schema_version(code_version)
+                self.commit()
             result["success"] = True
             return result
         
-        # Schema changes needed - create backup (only if DB is not empty)
-        # Get backup_dir from config or use default
-        from ..storage_paths import resolve_storage_paths, load_raw_config
-        from pathlib import Path
+        # Validate data compatibility BEFORE making changes
+        logger.info("Validating data compatibility before schema changes...")
+        validation_result = comparator.validate_data_compatibility(diff)
+        if not validation_result["compatible"]:
+            error_msg = f"Data compatibility check failed: {validation_result['error']}"
+            logger.error(error_msg)
+            raise RuntimeError(error_msg)
         
-        # Try to get backup_dir from config
-        # For now, infer from db_path (will be improved in Phase 2)
+        # Schema changes needed - create backup (only if DB is not empty)
         if self.db_path.parent.name == "data":
             project_root = self.db_path.parent.parent
             backup_dir = project_root / "backups"
         else:
             backup_dir = self.db_path.parent / "backups"
         
-        backup_manager = BackupManager(backup_dir.parent)  # root_dir for BackupManager
+        backup_manager = BackupManager(backup_dir.parent)
         backup_uuid = backup_manager.create_database_backup(
             self.db_path,
             backup_dir=backup_dir,
@@ -475,35 +496,63 @@ def sync_schema(self) -> Dict[str, Any]:
         )
         result["backup_uuid"] = backup_uuid
         
-        # Generate and apply migration SQL
-        migration_sql = comparator.generate_migration_sql(diff)
-        for sql in migration_sql:
-            self.execute(sql)
-            result["changes_applied"].append(sql)
-        
-        # Update schema version
-        self._set_schema_version(code_version)
-        self.commit()
-        
-        result["success"] = True
-        return result
+        # Begin transaction for atomic schema changes
+        self.begin_transaction()
+        try:
+            # Generate and apply migration SQL
+            migration_sql = comparator.generate_migration_sql(diff)
+            for sql in migration_sql:
+                self.execute(sql)
+                result["changes_applied"].append(sql)
+            
+            # Update schema version
+            self._set_schema_version(code_version)
+            self.commit()
+            
+            result["success"] = True
+            logger.info(f"Schema synchronized: {len(result['changes_applied'])} changes applied")
+            return result
+            
+        except Exception as e:
+            # Rollback on error
+            self.rollback()
+            raise RuntimeError(f"Schema sync failed during migration: {e}") from e
         
     except Exception as e:
         result["error"] = str(e)
         logger.error(f"Schema sync failed: {e}", exc_info=True)
-        return result
+        # Re-raise to block connection
+        raise RuntimeError(f"Schema synchronization failed: {e}") from e
+        
+    finally:
+        # Release lock
+        if lock_fd:
+            try:
+                fcntl.flock(lock_fd.fileno(), fcntl.LOCK_UN)
+                lock_fd.close()
+                logger.info("Schema sync lock released")
+            except Exception:
+                pass
 
 def connect(self, config: Dict[str, Any]) -> None:
-    """Connect to database and sync schema."""
+    """
+    Connect to database and sync schema.
+    
+    Raises:
+        RuntimeError: If schema sync fails (blocks connection)
+    """
     # ... existing connection logic ...
     
-    # Sync schema after connection
-    sync_result = self.sync_schema()
-    if not sync_result["success"]:
-        logger.warning(f"Schema sync had issues: {sync_result.get('error')}")
-    else:
+    # Sync schema after connection (blocks if fails)
+    try:
+        sync_result = self.sync_schema()
         if sync_result["changes_applied"]:
             logger.info(f"Schema synchronized: {len(sync_result['changes_applied'])} changes applied")
+    except RuntimeError as e:
+        # Schema sync failed - block connection
+        logger.error(f"Schema sync failed, blocking connection: {e}")
+        self.disconnect()  # Close connection
+        raise  # Re-raise to prevent connection
 ```
 
 ---

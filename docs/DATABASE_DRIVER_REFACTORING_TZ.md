@@ -43,12 +43,18 @@ Command → CodeDatabase → create_driver() → SQLiteDriverProxy → DB Worker
 
 **New Chain**:
 ```
-Command → UniversalDriver → CodeDatabase → SpecificDriver (SQLiteDriver/MySQLDriver/etc.)
+Command → UniversalDriver → CodeDatabase → SQLiteDriverProxy → DB Worker Process → SQLiteDriver
                                     ↓
-                            DBWorkerManager (for SQLite)
+                            DBWorkerManager (manages DB worker)
                                     ↓
-                            DB Worker Process (for SQLite)
+                            WorkerManager (unified worker management)
 ```
+
+**Important**: 
+- Commands NEVER use SQLiteDriver directly
+- SQLiteDriver is ONLY used inside DB worker process
+- Commands use SQLiteDriverProxy which communicates with DB worker via Unix socket
+- For future databases (MySQL, PostgreSQL), direct drivers may be used (no worker needed)
 
 ### 3.2 Component Responsibilities
 
@@ -114,7 +120,18 @@ class CodeDatabase:
         """
 ```
 
-#### 3.2.3 Specific Drivers (SQLiteDriver, etc.)
+#### 3.2.3 Specific Drivers (SQLiteDriver, SQLiteDriverProxy, etc.)
+
+**SQLite Architecture**:
+- `SQLiteDriver`: Direct SQLite access **ONLY inside DB worker process**
+  - Used by DB worker to execute actual SQL queries
+  - Never used directly by commands or other processes
+  - Communicates with SQLite file directly
+  
+- `SQLiteDriverProxy`: Proxy driver for client processes
+  - Used by commands, workers, and all non-DB-worker processes
+  - Communicates with DB worker via Unix socket
+  - Translates driver calls to worker requests
 
 **Responsibilities**:
 - Implement BaseDatabaseDriver interface
@@ -123,13 +140,13 @@ class CodeDatabase:
 - **Do NOT** handle file existence or schema creation (handled by UniversalDriver)
 
 **Current Drivers**:
-- `SQLiteDriver`: Direct SQLite access (only in DB worker)
-- `SQLiteDriverProxy`: Proxy to DB worker (for client processes)
+- `SQLiteDriver`: Direct SQLite access (only in DB worker process)
+- `SQLiteDriverProxy`: Proxy to DB worker (for all client processes)
 
 **Future Drivers**:
-- `MySQLDriver`: Direct MySQL access
-- `PostgreSQLDriver`: Direct PostgreSQL access
-- `MySQLProxy`: Proxy to MySQL worker (if needed)
+- `MySQLDriver`: Direct MySQL access (may not need worker)
+- `PostgreSQLDriver`: Direct PostgreSQL access (may not need worker)
+- Other database drivers as needed
 
 #### 3.2.4 DBWorkerManager (Refactored)
 
@@ -174,13 +191,20 @@ def register_db_worker(self, db_path: str, worker_info: Dict[str, Any]) -> None:
    ↓
 5. For SQLite: DBWorkerManager starts DB worker process
    ↓
-6. DBWorkerManager registers with WorkerManager
+6. DB Worker Process:
+   - Sets CODE_ANALYSIS_DB_WORKER=1 environment variable
+   - Uses SQLiteDriver (direct driver) to access SQLite file
+   - Listens on Unix socket for requests from SQLiteDriverProxy
    ↓
-7. WorkerManager starts other workers (vectorization, file_watcher)
+7. DBWorkerManager registers DB worker with WorkerManager
    ↓
-8. All workers use worker_launcher functions
+8. WorkerManager starts other workers (vectorization, file_watcher)
    ↓
-9. All workers registered with WorkerManager
+9. All workers use worker_launcher functions
+   ↓
+10. All workers registered with WorkerManager
+   ↓
+11. Commands use UniversalDriver → CodeDatabase → SQLiteDriverProxy → DB Worker
 ```
 
 ## 4. Implementation Plan
@@ -373,6 +397,10 @@ def ensure_worker_running(self, db_path: str, db_type: str) -> Dict[str, Any]:
 - CodeDatabase to focus on operations
 - Easy addition of new database types
 
+**Clarified**: For SQLite, the chain is:
+- UniversalDriver → CodeDatabase → SQLiteDriverProxy → DB Worker → SQLiteDriver
+- SQLiteDriver is NEVER used directly by commands
+
 **Q2**: Should `DBWorkerManager` be merged into `WorkerManager` or kept separate?
 
 **Current Understanding**: Keep separate but integrate:
@@ -399,9 +427,12 @@ def ensure_worker_running(self, db_path: str, db_type: str) -> Dict[str, Any]:
 
 **Current Understanding**:
 - SQLite: Requires DB worker process (file-based, needs single writer)
+  - Commands use SQLiteDriverProxy → DB Worker → SQLiteDriver
+  - SQLiteDriver is ONLY in DB worker process
 - MySQL/PostgreSQL: May use connection pooling, no separate worker process needed
+  - Commands use MySQLDriver/PostgreSQLDriver directly (no proxy)
 - UniversalDriver determines if worker is needed based on database type
-- DBWorkerManager only starts workers for databases that need them
+- DBWorkerManager only starts workers for databases that need them (currently only SQLite)
 
 ### 7.2 Implementation Questions
 

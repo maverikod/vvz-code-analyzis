@@ -11,7 +11,7 @@ from typing import Any, Dict, Optional
 from mcp_proxy_adapter.commands.result import SuccessResult, ErrorResult
 
 from .base_mcp_command import BaseMCPCommand
-from .worker_status import WorkerStatusCommand, DatabaseStatusCommand
+from .worker_status import WorkerStatusCommand
 
 logger = logging.getLogger(__name__)
 
@@ -407,13 +407,195 @@ class GetDatabaseStatusMCPCommand(BaseMCPCommand):
             SuccessResult with database status or ErrorResult on failure
         """
         try:
-            root_path = self._validate_root_dir(root_dir)
-            data_dir = root_path / "data"
-            db_path = data_dir / "code_analysis.db"
+            from datetime import datetime
+            from pathlib import Path
 
-            command = DatabaseStatusCommand(db_path=str(db_path))
-            result = await command.execute()
-            return SuccessResult(data=result)
+            root_path = self._validate_root_dir(root_dir)
+            
+            # Get database path from config (same way as _open_database does)
+            from ..core.storage_paths import load_raw_config, resolve_storage_paths, ensure_storage_dirs
+            
+            config_path = self._resolve_config_path()
+            config_data = load_raw_config(config_path)
+            storage = resolve_storage_paths(config_data=config_data, config_path=config_path)
+            ensure_storage_dirs(storage)
+            db_path = storage.db_path
+            
+            # Use unified database access method (not direct path construction)
+            db = self._open_database(root_dir, auto_analyze=False)
+            
+            try:
+                
+                result = {
+                    "db_path": str(db_path),
+                    "timestamp": datetime.now().isoformat(),
+                    "exists": db_path.exists() if db_path else False,
+                    "file_size_mb": (
+                        db_path.stat().st_size / 1024 / 1024
+                        if db_path and db_path.exists()
+                        else 0
+                    ),
+                    "projects": {},
+                    "files": {},
+                    "chunks": {},
+                    "recent_activity": {},
+                }
+
+                # Project statistics
+                project_count_row = db._fetchone(
+                    "SELECT COUNT(*) as count FROM projects"
+                )
+                project_count = project_count_row["count"] if project_count_row else 0
+                projects = db._fetchall("SELECT id, name FROM projects LIMIT 10")
+                result["projects"] = {
+                    "total": project_count,
+                    "sample": [{"id": p["id"], "name": p["name"]} for p in projects],
+                }
+
+                # File statistics
+                total_files_row = db._fetchone("SELECT COUNT(*) as count FROM files")
+                total_files = total_files_row["count"] if total_files_row else 0
+
+                deleted_files_row = db._fetchone(
+                    "SELECT COUNT(*) as count FROM files WHERE deleted = 1"
+                )
+                deleted_files = deleted_files_row["count"] if deleted_files_row else 0
+
+                files_with_docstring_row = db._fetchone(
+                    "SELECT COUNT(*) as count FROM files WHERE has_docstring = 1"
+                )
+                files_with_docstring = (
+                    files_with_docstring_row["count"] if files_with_docstring_row else 0
+                )
+
+                files_needing_chunking_row = db._fetchone(
+                    """
+                    SELECT COUNT(*) as count FROM files 
+                    WHERE (deleted = 0 OR deleted IS NULL)
+                    AND NOT EXISTS (SELECT 1 FROM code_chunks WHERE code_chunks.file_id = files.id)
+                    """
+                )
+                files_needing_chunking = (
+                    files_needing_chunking_row["count"]
+                    if files_needing_chunking_row
+                    else 0
+                )
+
+                result["files"] = {
+                    "total": total_files,
+                    "deleted": deleted_files,
+                    "active": total_files - deleted_files,
+                    "with_docstring": files_with_docstring,
+                    "needing_chunking": files_needing_chunking,
+                }
+
+                # Chunk statistics - use vector_id (not embedding_vector) for consistency
+                total_chunks_row = db._fetchone(
+                    "SELECT COUNT(*) as count FROM code_chunks"
+                )
+                total_chunks = total_chunks_row["count"] if total_chunks_row else 0
+
+                vectorized_chunks_row = db._fetchone(
+                    "SELECT COUNT(*) as count FROM code_chunks WHERE vector_id IS NOT NULL"
+                )
+                vectorized_chunks = (
+                    vectorized_chunks_row["count"] if vectorized_chunks_row else 0
+                )
+
+                not_vectorized_chunks_row = db._fetchone(
+                    "SELECT COUNT(*) as count FROM code_chunks WHERE vector_id IS NULL"
+                )
+                not_vectorized_chunks = (
+                    not_vectorized_chunks_row["count"]
+                    if not_vectorized_chunks_row
+                    else 0
+                )
+
+                result["chunks"] = {
+                    "total": total_chunks,
+                    "vectorized": vectorized_chunks,
+                    "not_vectorized": not_vectorized_chunks,
+                    "vectorization_percent": (
+                        (vectorized_chunks / total_chunks * 100)
+                        if total_chunks > 0
+                        else 0
+                    ),
+                }
+
+                # Recent activity (last 24 hours)
+                files_updated_24h_row = db._fetchone(
+                    """
+                    SELECT COUNT(*) as count FROM files 
+                    WHERE updated_at > julianday('now', '-1 day')
+                    """
+                )
+                files_updated_24h = (
+                    files_updated_24h_row["count"] if files_updated_24h_row else 0
+                )
+
+                chunks_updated_24h_row = db._fetchone(
+                    """
+                    SELECT COUNT(*) as count FROM code_chunks 
+                    WHERE created_at > julianday('now', '-1 day')
+                    """
+                )
+                chunks_updated_24h = (
+                    chunks_updated_24h_row["count"] if chunks_updated_24h_row else 0
+                )
+
+                result["recent_activity"] = {
+                    "files_updated_24h": files_updated_24h,
+                    "chunks_updated_24h": chunks_updated_24h,
+                }
+
+                # Get files needing chunking (sample)
+                files_needing_chunking_sample = db._fetchall(
+                    """
+                    SELECT f.id, f.path, f.has_docstring, f.last_modified
+                    FROM files f
+                    WHERE (f.deleted = 0 OR f.deleted IS NULL)
+                    AND NOT EXISTS (SELECT 1 FROM code_chunks WHERE code_chunks.file_id = f.id)
+                    ORDER BY f.updated_at DESC
+                    LIMIT 10
+                    """
+                )
+                result["files"]["needing_chunking_sample"] = [
+                    {
+                        "id": f["id"],
+                        "path": f["path"],
+                        "has_docstring": bool(f["has_docstring"]),
+                        "last_modified": f["last_modified"],
+                    }
+                    for f in files_needing_chunking_sample
+                ]
+
+                # Get chunks needing vectorization (sample) - use vector_id
+                chunks_needing_vectorization = db._fetchall(
+                    """
+                    SELECT id, file_id, chunk_text, created_at
+                    FROM code_chunks
+                    WHERE vector_id IS NULL
+                    ORDER BY id DESC
+                    LIMIT 10
+                    """
+                )
+                result["chunks"]["needing_vectorization_sample"] = [
+                    {
+                        "id": c["id"],
+                        "file_id": c["file_id"],
+                        "chunk_preview": (
+                            (c["chunk_text"][:100] + "...")
+                            if c["chunk_text"] and len(c["chunk_text"]) > 100
+                            else c["chunk_text"]
+                        ),
+                        "created_at": c["created_at"],
+                    }
+                    for c in chunks_needing_vectorization
+                ]
+
+                return SuccessResult(data=result)
+            finally:
+                db.close()
         except Exception as e:
             return self._handle_error(e, "DATABASE_STATUS_ERROR", "get_database_status")
 

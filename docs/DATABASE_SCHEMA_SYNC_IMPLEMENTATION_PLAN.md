@@ -36,8 +36,8 @@
 ### 3. Worker Startup Flow
 
 **Decision**: 
-- **WorkerManager does NOT automatically start DB worker**
-- SQLiteDriverProxy requests worker startup via DBWorkerManager on connect()
+- **WorkerManager is passive ONLY for DB worker** (other workers start automatically)
+- SQLiteDriverProxy requests DB worker startup via DBWorkerManager on connect()
 - DB worker receives database path as initialization string
 - DB worker creates empty database without schema if missing
 - SQLiteDriver (in worker) performs schema sync on connect()
@@ -46,7 +46,11 @@
 ```
 Server Startup
   ↓
-WorkerManager reads config (but does NOT start DB worker)
+WorkerManager reads config
+  ↓
+WorkerManager starts other workers automatically (file_watcher, vectorization, etc.)
+  ↓
+WorkerManager does NOT start DB worker (passive for DB worker only)
   ↓
 SQLiteDriverProxy.connect() is called
   ↓
@@ -70,7 +74,7 @@ SQLiteDriver.sync_schema()  # Called automatically on connect
   - Apply changes
 ```
 
-**Key Point**: WorkerManager is passive - it only starts DB worker when explicitly requested by SQLiteDriverProxy.
+**Key Point**: WorkerManager is passive ONLY for DB worker - it starts other workers (file_watcher, vectorization, etc.) automatically on server startup, but DB worker is started lazily only when SQLiteDriverProxy requests it.
 
 ### 4. Schema Version Management
 
@@ -597,11 +601,13 @@ def connect(self, config: Dict[str, Any]) -> None:
 
 ## Important Architecture Note
 
-**WorkerManager is Passive**: 
+**WorkerManager is Passive ONLY for DB Worker**: 
+- WorkerManager automatically starts other workers (file_watcher, vectorization, etc.) on server startup
 - WorkerManager does NOT automatically start DB worker on server startup
 - DB worker is started only when SQLiteDriverProxy requests it via `get_or_start_worker()`
-- This ensures lazy initialization and allows driver to control worker lifecycle
-- WorkerManager acts as a factory/registry, not an auto-starter
+- This ensures lazy initialization for DB worker and allows driver to control DB worker lifecycle
+- For DB worker, WorkerManager acts as a factory/registry, not an auto-starter
+- For other workers, WorkerManager is active and starts them automatically
 
 ## Checklist
 

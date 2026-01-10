@@ -441,15 +441,64 @@ class GetDatabaseStatusMCPCommand(BaseMCPCommand):
                     "recent_activity": {},
                 }
 
-                # Project statistics
+                # Project statistics with file and chunk counts
                 project_count_row = db._fetchone(
                     "SELECT COUNT(*) as count FROM projects"
                 )
                 project_count = project_count_row["count"] if project_count_row else 0
-                projects = db._fetchall("SELECT id, name FROM projects LIMIT 10")
+                
+                # Get projects with detailed statistics
+                projects_with_stats = db._fetchall(
+                    """
+                    SELECT 
+                        p.id,
+                        p.name,
+                        (SELECT COUNT(*) FROM files WHERE project_id = p.id AND (deleted = 0 OR deleted IS NULL)) as file_count,
+                        (SELECT COUNT(DISTINCT f.id) 
+                         FROM files f
+                         WHERE f.project_id = p.id 
+                         AND (f.deleted = 0 OR f.deleted IS NULL)
+                         AND EXISTS (SELECT 1 FROM code_chunks WHERE code_chunks.file_id = f.id)) as chunked_files,
+                        (SELECT COUNT(*) FROM code_chunks WHERE project_id = p.id) as chunk_count,
+                        (SELECT COUNT(*) FROM code_chunks WHERE project_id = p.id AND vector_id IS NOT NULL) as vectorized_chunks
+                    FROM projects p
+                    ORDER BY p.name
+                    LIMIT 10
+                    """
+                )
+                
+                project_list = []
+                for p in projects_with_stats:
+                    file_count = p["file_count"] or 0
+                    chunked_files = p["chunked_files"] or 0
+                    chunk_count = p["chunk_count"] or 0
+                    vectorized_chunks = p["vectorized_chunks"] or 0
+                    
+                    chunked_percent = (
+                        round((chunked_files / file_count * 100), 2)
+                        if file_count > 0
+                        else 0
+                    )
+                    vectorized_percent = (
+                        round((vectorized_chunks / chunk_count * 100), 2)
+                        if chunk_count > 0
+                        else 0
+                    )
+                    
+                    project_list.append({
+                        "id": p["id"],
+                        "name": p["name"],
+                        "file_count": file_count,
+                        "chunked_files": chunked_files,
+                        "chunked_percent": chunked_percent,
+                        "chunk_count": chunk_count,
+                        "vectorized_chunks": vectorized_chunks,
+                        "vectorized_percent": vectorized_percent,
+                    })
+                
                 result["projects"] = {
                     "total": project_count,
-                    "sample": [{"id": p["id"], "name": p["name"]} for p in projects],
+                    "sample": project_list,
                 }
 
                 # File statistics
@@ -481,12 +530,33 @@ class GetDatabaseStatusMCPCommand(BaseMCPCommand):
                     else 0
                 )
 
+                # Files that have been chunked (have chunks)
+                files_with_chunks_row = db._fetchone(
+                    """
+                    SELECT COUNT(DISTINCT f.id) as count FROM files f
+                    WHERE (f.deleted = 0 OR f.deleted IS NULL)
+                    AND EXISTS (SELECT 1 FROM code_chunks WHERE code_chunks.file_id = f.id)
+                    """
+                )
+                files_with_chunks = (
+                    files_with_chunks_row["count"] if files_with_chunks_row else 0
+                )
+
+                active_files = total_files - deleted_files
+                chunked_percent = (
+                    round((files_with_chunks / active_files * 100), 2)
+                    if active_files > 0
+                    else 0
+                )
+
                 result["files"] = {
                     "total": total_files,
                     "deleted": deleted_files,
-                    "active": total_files - deleted_files,
+                    "active": active_files,
                     "with_docstring": files_with_docstring,
                     "needing_chunking": files_needing_chunking,
+                    "chunked": files_with_chunks,
+                    "chunked_percent": chunked_percent,
                 }
 
                 # Chunk statistics - use vector_id (not embedding_vector) for consistency
@@ -511,15 +581,17 @@ class GetDatabaseStatusMCPCommand(BaseMCPCommand):
                     else 0
                 )
 
+                vectorization_percent = (
+                    round((vectorized_chunks / total_chunks * 100), 2)
+                    if total_chunks > 0
+                    else 0
+                )
+
                 result["chunks"] = {
                     "total": total_chunks,
                     "vectorized": vectorized_chunks,
                     "not_vectorized": not_vectorized_chunks,
-                    "vectorization_percent": (
-                        (vectorized_chunks / total_chunks * 100)
-                        if total_chunks > 0
-                        else 0
-                    ),
+                    "vectorization_percent": vectorization_percent,
                 }
 
                 # Recent activity (last 24 hours)

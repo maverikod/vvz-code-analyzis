@@ -144,6 +144,15 @@ class DocstringChunker:
                             first_chunk = chunks[0]
                             # SemanticChunk from svo_client has embedding attribute
                             emb = getattr(first_chunk, "embedding", None)
+                            # Also extract embedding_model if available
+                            chunk_embedding_model = getattr(first_chunk, "embedding_model", None)
+                            if chunk_embedding_model and not self.embedding_model:
+                                # Use embedding_model from chunk if not set in chunker
+                                self.embedding_model = chunk_embedding_model
+                                logger.debug(
+                                    f"[FILE {file_id}] [DOCSTRING {i+1}/{len(items)}] Using embedding_model from chunk: {chunk_embedding_model}"
+                                )
+                            
                             if isinstance(emb, list) and emb:
                                 embeddings[i] = emb
                                 logger.debug(

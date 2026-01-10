@@ -177,45 +177,60 @@ async def process_chunks(self, poll_interval: int = 30) -> Dict[str, Any]:
 
                             # Step 1: Request chunking for files that need it
                             # Skip chunking requests if circuit breaker is open
-                            if self.svo_client_manager:
-                                circuit_state = (
-                                    self.svo_client_manager.get_circuit_state()
-                                )
-                                if circuit_state == "open":
-                                    backoff_delay = (
-                                        self.svo_client_manager.get_backoff_delay()
+                            # Temporarily set faiss_manager for chunking
+                            original_faiss_manager_chunking = getattr(
+                                self, "faiss_manager", None
+                            )
+                            self.faiss_manager = faiss_manager
+                            
+                            try:
+                                if self.svo_client_manager:
+                                    circuit_state = (
+                                        self.svo_client_manager.get_circuit_state()
                                     )
-                                    logger.debug(
-                                        f"Skipping chunking requests for project {project_id} - "
-                                        f"circuit breaker is OPEN (backoff: {backoff_delay:.1f}s)"
-                                    )
-                                else:
-                                    try:
-                                        files_to_chunk = (
-                                            database.get_files_needing_chunking(
-                                                project_id=project_id,
-                                                limit=5,  # Process 5 files per cycle
-                                            )
+                                    if circuit_state == "open":
+                                        backoff_delay = (
+                                            self.svo_client_manager.get_backoff_delay()
                                         )
-
-                                        if files_to_chunk:
-                                            logger.info(
-                                                f"Found {len(files_to_chunk)} files needing chunking in project {project_id}, "
-                                                "requesting chunking..."
-                                            )
-                                            chunked_count = (
-                                                await self._request_chunking_for_files(
-                                                    database, files_to_chunk
+                                        logger.debug(
+                                            f"Skipping chunking requests for project {project_id} - "
+                                            f"circuit breaker is OPEN (backoff: {backoff_delay:.1f}s)"
+                                        )
+                                    else:
+                                        try:
+                                            files_to_chunk = (
+                                                database.get_files_needing_chunking(
+                                                    project_id=project_id,
+                                                    limit=5,  # Process 5 files per cycle
                                                 )
                                             )
-                                            logger.info(
-                                                f"Requested chunking for {chunked_count} files in project {project_id}"
+
+                                            if files_to_chunk:
+                                                logger.info(
+                                                    f"Found {len(files_to_chunk)} files needing chunking in project {project_id}, "
+                                                    "requesting chunking..."
+                                                )
+                                                chunked_count = (
+                                                    await self._request_chunking_for_files(
+                                                        database, files_to_chunk
+                                                    )
+                                                )
+                                                logger.info(
+                                                    f"Requested chunking for {chunked_count} files in project {project_id}"
+                                                )
+                                        except Exception as e:
+                                            logger.error(
+                                                f"Error requesting chunking for project {project_id}: {e}",
+                                                exc_info=True,
                                             )
-                                    except Exception as e:
-                                        logger.error(
-                                            f"Error requesting chunking for project {project_id}: {e}",
-                                            exc_info=True,
-                                        )
+                                else:
+                                    # No SVO client manager, skip chunking
+                                    logger.debug(
+                                        f"SVO client manager not available, skipping chunking requests for project {project_id}"
+                                    )
+                            finally:
+                                # Restore original faiss_manager
+                                self.faiss_manager = original_faiss_manager_chunking
                             else:
                                 # No SVO client manager, skip chunking
                                 logger.debug(

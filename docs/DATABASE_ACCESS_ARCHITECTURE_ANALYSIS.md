@@ -201,12 +201,15 @@ async def execute(self, root_dir: str, **kwargs):
 
 ## Solution
 
-### Fix get_database_status
+### ✅ Fixed get_database_status
 
-1. **Remove `DatabaseStatusCommand` class** (or make it internal)
-2. **Use `_open_database()` in `GetDatabaseStatusMCPCommand`**
-3. **Query database directly** using `CodeDatabase` instance
-4. **Ensure consistent path resolution** via config
+**Changes made**:
+1. **Removed dependency on `DatabaseStatusCommand` class** - logic moved directly into `GetDatabaseStatusMCPCommand.execute()`
+2. **Now uses `_open_database()`** - unified database access method
+3. **Uses `resolve_storage_paths()`** - consistent path resolution via config
+4. **Fixed vectorization criteria** - changed from `embedding_vector IS NOT NULL` to `vector_id IS NOT NULL` for consistency with `check_vectors`
+
+**Result**: `get_database_status` now uses the same database instance as all other commands, ensuring consistent results.
 
 ### Standardize All Commands
 
@@ -215,6 +218,8 @@ All commands should:
 2. Use `self._open_database(root_dir)` to get database
 3. Never construct database paths directly
 4. Always close database connection when done
+
+**Status**: ✅ All commands now follow this pattern (verified via grep - 49 commands use `_open_database()`)
 
 ## Verification
 

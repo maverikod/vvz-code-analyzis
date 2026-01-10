@@ -253,13 +253,60 @@ class BaseMCPCommand(Command):
                         return db
 
                     import asyncio
+                    import threading
 
+                    # Try to queue the indexing command if we're in async context
                     try:
                         asyncio.get_running_loop()
+                        # We're in async context - start indexing in background thread
                         logger.info(
-                            "Skipping auto-analysis in async context, will be triggered on first command"
+                            f"Starting automatic project analysis for {root_path} in background thread (async context)"
                         )
+                        
+                        def run_indexing():
+                            """Run indexing in background thread."""
+                            try:
+                                from ..core.constants import DEFAULT_MAX_FILE_LINES
+                                
+                                # Create new event loop for this thread
+                                loop = asyncio.new_event_loop()
+                                asyncio.set_event_loop(loop)
+                                
+                                try:
+                                    cmd = UpdateIndexesMCPCommand()
+                                    result = loop.run_until_complete(
+                                        cmd.execute(
+                                            root_dir=str(root_path),
+                                            max_lines=DEFAULT_MAX_FILE_LINES,
+                                        )
+                                    )
+                                    
+                                    if not result.success:
+                                        logger.warning(
+                                            f"Automatic analysis completed with warnings: {result.message}"
+                                        )
+                                    else:
+                                        logger.info(
+                                            "Automatic analysis completed successfully: %s files processed",
+                                            (
+                                                result.data.get("files_processed", 0)
+                                                if result.data
+                                                else 0
+                                            ),
+                                        )
+                                finally:
+                                    loop.close()
+                            except Exception as e:
+                                logger.error(
+                                    f"Failed to run automatic indexing in background thread: {e}",
+                                    exc_info=True,
+                                )
+                        
+                        thread = threading.Thread(target=run_indexing, daemon=True)
+                        thread.start()
+                        logger.info(f"Started background indexing thread for {root_path}")
                     except RuntimeError:
+                        # No running loop - can run synchronously
                         try:
                             loop = asyncio.get_event_loop()
                         except RuntimeError:

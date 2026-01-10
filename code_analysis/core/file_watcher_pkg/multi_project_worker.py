@@ -476,6 +476,60 @@ class MultiProjectFileWatcherWorker:
                                 f"at {project_root_obj.root_path} "
                                 f"with description: {project_description}"
                             )
+                            
+                            # Start automatic indexing for newly created project in background thread
+                            try:
+                                import threading
+                                import asyncio
+                                from code_analysis.core.constants import DEFAULT_MAX_FILE_LINES
+                                from code_analysis.commands.code_mapper_mcp_command import UpdateIndexesMCPCommand
+                                
+                                def run_indexing():
+                                    """Run indexing in background thread."""
+                                    try:
+                                        # Create new event loop for this thread
+                                        loop = asyncio.new_event_loop()
+                                        asyncio.set_event_loop(loop)
+                                        
+                                        try:
+                                            cmd = UpdateIndexesMCPCommand()
+                                            result = loop.run_until_complete(
+                                                cmd.execute(
+                                                    root_dir=str(project_root_obj.root_path),
+                                                    max_lines=DEFAULT_MAX_FILE_LINES,
+                                                )
+                                            )
+                                            
+                                            if not result.success:
+                                                logger.warning(
+                                                    f"Auto-indexing for new project {project_root_obj.project_id} "
+                                                    f"completed with warnings: {result.message}"
+                                                )
+                                            else:
+                                                logger.info(
+                                                    f"Auto-indexing for new project {project_root_obj.project_id} "
+                                                    f"completed: {result.data.get('files_processed', 0) if result.data else 0} files processed"
+                                                )
+                                        finally:
+                                            loop.close()
+                                    except Exception as e:
+                                        logger.error(
+                                            f"Failed to run auto-indexing for new project "
+                                            f"{project_root_obj.project_id}: {e}",
+                                            exc_info=True,
+                                        )
+                                
+                                thread = threading.Thread(target=run_indexing, daemon=True)
+                                thread.start()
+                                logger.info(
+                                    f"Started background indexing thread for newly created project "
+                                    f"{project_root_obj.project_id}"
+                                )
+                            except Exception as e:
+                                logger.warning(
+                                    f"Failed to start auto-indexing for new project "
+                                    f"{project_root_obj.project_id}: {e}"
+                                )
                 except Exception as e:
                     logger.warning(
                         f"Failed to get/create project {project_root_obj.project_id}: {e}"

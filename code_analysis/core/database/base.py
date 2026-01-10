@@ -33,7 +33,7 @@ MIGRATION_METHODS: Dict[str, Callable[[Any], None]] = {
 
 
 def create_driver_config_for_worker(
-    db_path: Path, driver_type: str = "sqlite_proxy"
+    db_path: Path, driver_type: str = "sqlite_proxy", backup_dir: Optional[Path] = None
 ) -> Dict[str, Any]:
     """
     Create driver configuration for worker processes.
@@ -41,30 +41,37 @@ def create_driver_config_for_worker(
     Args:
         db_path: Path to database file
         driver_type: Driver type (default: "sqlite_proxy")
+        backup_dir: Optional backup directory path (if None, will be inferred from db_path in sync_schema)
 
     Returns:
         Driver configuration dict with 'type' and 'config' keys
     """
     resolved_path = Path(db_path).resolve()
 
+    config_dict: Dict[str, Any] = {
+        "path": str(resolved_path),
+    }
+
+    # Add backup_dir if provided
+    if backup_dir:
+        config_dict["backup_dir"] = str(Path(backup_dir).resolve())
+
     if driver_type == "sqlite_proxy":
+        config_dict["worker_config"] = {
+            # Default worker config - can be overridden by caller
+            "command_timeout": 30.0,
+            "poll_interval": 0.1,  # Polling interval in seconds (100ms default)
+        }
         return {
             "type": "sqlite_proxy",
-            "config": {
-                "path": str(resolved_path),
-                "worker_config": {
-                    # Default worker config - can be overridden by caller
-                    "command_timeout": 30.0,
-                    "poll_interval": 0.1,  # Polling interval in seconds (100ms default)
-                },
-            },
+            "config": config_dict,
         }
     else:
         # For other driver types (mysql, postgres, etc.), use provided type
         # Config structure depends on driver type
         return {
             "type": driver_type,
-            "config": {"path": str(resolved_path)},
+            "config": config_dict,
         }
 
 
@@ -154,6 +161,30 @@ class CodeDatabase:
 
         # DO NOT call _create_schema() here
         # Schema creation happens via sync_schema() in driver
+
+        # Connect driver before schema sync (required for SQLiteDriverProxy to initialize worker)
+        try:
+            logger.info(f"[CodeDatabase] Connecting driver: type={driver_type}")
+            self.driver.connect(driver_cfg)
+            logger.info("[CodeDatabase] Driver connected successfully")
+        except Exception as e:
+            logger.error(
+                f"[CodeDatabase] Failed to connect driver '{driver_type}': {e}",
+                exc_info=True,
+            )
+            raise
+
+        # Sync schema after connection (replaces _create_schema() call)
+        try:
+            sync_result = self.sync_schema()
+            if sync_result.get("changes_applied"):
+                logger.info(
+                    f"Schema synchronized: {len(sync_result['changes_applied'])} changes applied"
+                )
+        except RuntimeError as e:
+            # Schema sync failed - connection is blocked
+            logger.error(f"Schema sync failed, connection blocked: {e}")
+            raise  # Re-raise to prevent database usage
 
     def __getattr__(self, name: str) -> Any:
         """
@@ -835,7 +866,7 @@ class CodeDatabase:
         """
         # Check if datasets table exists, if not create it
         try:
-            table_info = self._get_table_info("datasets")
+            self._get_table_info("datasets")
             datasets_exists = True
         except Exception:
             datasets_exists = False
@@ -1289,10 +1320,10 @@ class CodeDatabase:
     def _get_schema_definition(self) -> Dict[str, Any]:
         """
         Get structured schema definition for synchronization.
-        
+
         This method returns a structured dictionary representation of the schema,
         not SQL statements. This is used by SchemaComparator to compare and migrate schemas.
-        
+
         Returns:
             Dictionary with schema definition containing:
             - version: Schema version string
@@ -1306,9 +1337,19 @@ class CodeDatabase:
             "tables": {
                 "db_settings": {
                     "columns": [
-                        {"name": "key", "type": "TEXT", "not_null": True, "primary_key": True},
+                        {
+                            "name": "key",
+                            "type": "TEXT",
+                            "not_null": True,
+                            "primary_key": True,
+                        },
                         {"name": "value", "type": "TEXT", "not_null": True},
-                        {"name": "updated_at", "type": "REAL", "not_null": False, "default": "julianday('now')"},
+                        {
+                            "name": "updated_at",
+                            "type": "REAL",
+                            "not_null": False,
+                            "default": "julianday('now')",
+                        },
                     ],
                     "foreign_keys": [],
                     "unique_constraints": [],
@@ -1316,12 +1357,27 @@ class CodeDatabase:
                 },
                 "projects": {
                     "columns": [
-                        {"name": "id", "type": "TEXT", "not_null": True, "primary_key": True},
+                        {
+                            "name": "id",
+                            "type": "TEXT",
+                            "not_null": True,
+                            "primary_key": True,
+                        },
                         {"name": "root_path", "type": "TEXT", "not_null": True},
                         {"name": "name", "type": "TEXT", "not_null": False},
                         {"name": "comment", "type": "TEXT", "not_null": False},
-                        {"name": "created_at", "type": "REAL", "not_null": False, "default": "julianday('now')"},
-                        {"name": "updated_at", "type": "REAL", "not_null": False, "default": "julianday('now')"},
+                        {
+                            "name": "created_at",
+                            "type": "REAL",
+                            "not_null": False,
+                            "default": "julianday('now')",
+                        },
+                        {
+                            "name": "updated_at",
+                            "type": "REAL",
+                            "not_null": False,
+                            "default": "julianday('now')",
+                        },
                     ],
                     "foreign_keys": [],
                     "unique_constraints": [{"columns": ["root_path"]}],
@@ -1329,19 +1385,34 @@ class CodeDatabase:
                 },
                 "datasets": {
                     "columns": [
-                        {"name": "id", "type": "TEXT", "not_null": True, "primary_key": True},
+                        {
+                            "name": "id",
+                            "type": "TEXT",
+                            "not_null": True,
+                            "primary_key": True,
+                        },
                         {"name": "project_id", "type": "TEXT", "not_null": True},
                         {"name": "root_path", "type": "TEXT", "not_null": True},
                         {"name": "name", "type": "TEXT", "not_null": False},
-                        {"name": "created_at", "type": "REAL", "not_null": False, "default": "julianday('now')"},
-                        {"name": "updated_at", "type": "REAL", "not_null": False, "default": "julianday('now')"},
+                        {
+                            "name": "created_at",
+                            "type": "REAL",
+                            "not_null": False,
+                            "default": "julianday('now')",
+                        },
+                        {
+                            "name": "updated_at",
+                            "type": "REAL",
+                            "not_null": False,
+                            "default": "julianday('now')",
+                        },
                     ],
                     "foreign_keys": [
                         {
                             "columns": ["project_id"],
                             "references_table": "projects",
                             "references_columns": ["id"],
-                            "on_delete": "CASCADE"
+                            "on_delete": "CASCADE",
                         }
                     ],
                     "unique_constraints": [{"columns": ["project_id", "root_path"]}],
@@ -1349,70 +1420,938 @@ class CodeDatabase:
                 },
                 "files": {
                     "columns": [
-                        {"name": "id", "type": "INTEGER", "not_null": True, "primary_key": True, "autoincrement": True},
+                        {
+                            "name": "id",
+                            "type": "INTEGER",
+                            "not_null": True,
+                            "primary_key": True,
+                            "autoincrement": True,
+                        },
                         {"name": "project_id", "type": "TEXT", "not_null": True},
                         {"name": "dataset_id", "type": "TEXT", "not_null": True},
                         {"name": "path", "type": "TEXT", "not_null": True},
                         {"name": "lines", "type": "INTEGER", "not_null": False},
                         {"name": "last_modified", "type": "REAL", "not_null": False},
                         {"name": "has_docstring", "type": "BOOLEAN", "not_null": False},
-                        {"name": "deleted", "type": "BOOLEAN", "not_null": False, "default": "0"},
+                        {
+                            "name": "deleted",
+                            "type": "BOOLEAN",
+                            "not_null": False,
+                            "default": "0",
+                        },
                         {"name": "original_path", "type": "TEXT", "not_null": False},
                         {"name": "version_dir", "type": "TEXT", "not_null": False},
-                        {"name": "created_at", "type": "REAL", "not_null": False, "default": "julianday('now')"},
-                        {"name": "updated_at", "type": "REAL", "not_null": False, "default": "julianday('now')"},
+                        {
+                            "name": "created_at",
+                            "type": "REAL",
+                            "not_null": False,
+                            "default": "julianday('now')",
+                        },
+                        {
+                            "name": "updated_at",
+                            "type": "REAL",
+                            "not_null": False,
+                            "default": "julianday('now')",
+                        },
                     ],
                     "foreign_keys": [
                         {
                             "columns": ["project_id"],
                             "references_table": "projects",
                             "references_columns": ["id"],
-                            "on_delete": "CASCADE"
+                            "on_delete": "CASCADE",
                         },
                         {
                             "columns": ["dataset_id"],
                             "references_table": "datasets",
                             "references_columns": ["id"],
-                            "on_delete": "CASCADE"
-                        }
+                            "on_delete": "CASCADE",
+                        },
                     ],
-                    "unique_constraints": [{"columns": ["project_id", "dataset_id", "path"]}],
+                    "unique_constraints": [
+                        {"columns": ["project_id", "dataset_id", "path"]}
+                    ],
                     "check_constraints": [],
                 },
-                # Note: Other tables (classes, methods, functions, etc.) will be added in next iteration
-                # For now, this is a minimal implementation to get Phase 1 working
+                "classes": {
+                    "columns": [
+                        {
+                            "name": "id",
+                            "type": "INTEGER",
+                            "not_null": True,
+                            "primary_key": True,
+                            "autoincrement": True,
+                        },
+                        {"name": "file_id", "type": "INTEGER", "not_null": True},
+                        {"name": "name", "type": "TEXT", "not_null": True},
+                        {"name": "line", "type": "INTEGER", "not_null": True},
+                        {"name": "docstring", "type": "TEXT", "not_null": False},
+                        {"name": "bases", "type": "TEXT", "not_null": False},
+                        {
+                            "name": "created_at",
+                            "type": "REAL",
+                            "not_null": False,
+                            "default": "julianday('now')",
+                        },
+                    ],
+                    "foreign_keys": [
+                        {
+                            "columns": ["file_id"],
+                            "references_table": "files",
+                            "references_columns": ["id"],
+                            "on_delete": "CASCADE",
+                        }
+                    ],
+                    "unique_constraints": [{"columns": ["file_id", "name", "line"]}],
+                    "check_constraints": [],
+                },
+                "methods": {
+                    "columns": [
+                        {
+                            "name": "id",
+                            "type": "INTEGER",
+                            "not_null": True,
+                            "primary_key": True,
+                            "autoincrement": True,
+                        },
+                        {"name": "class_id", "type": "INTEGER", "not_null": True},
+                        {"name": "name", "type": "TEXT", "not_null": True},
+                        {"name": "line", "type": "INTEGER", "not_null": True},
+                        {"name": "args", "type": "TEXT", "not_null": False},
+                        {"name": "docstring", "type": "TEXT", "not_null": False},
+                        {
+                            "name": "is_abstract",
+                            "type": "BOOLEAN",
+                            "not_null": False,
+                            "default": "0",
+                        },
+                        {
+                            "name": "has_pass",
+                            "type": "BOOLEAN",
+                            "not_null": False,
+                            "default": "0",
+                        },
+                        {
+                            "name": "has_not_implemented",
+                            "type": "BOOLEAN",
+                            "not_null": False,
+                            "default": "0",
+                        },
+                        {"name": "complexity", "type": "INTEGER", "not_null": False},
+                        {
+                            "name": "created_at",
+                            "type": "REAL",
+                            "not_null": False,
+                            "default": "julianday('now')",
+                        },
+                    ],
+                    "foreign_keys": [
+                        {
+                            "columns": ["class_id"],
+                            "references_table": "classes",
+                            "references_columns": ["id"],
+                            "on_delete": "CASCADE",
+                        }
+                    ],
+                    "unique_constraints": [{"columns": ["class_id", "name", "line"]}],
+                    "check_constraints": [],
+                },
+                "functions": {
+                    "columns": [
+                        {
+                            "name": "id",
+                            "type": "INTEGER",
+                            "not_null": True,
+                            "primary_key": True,
+                            "autoincrement": True,
+                        },
+                        {"name": "file_id", "type": "INTEGER", "not_null": True},
+                        {"name": "name", "type": "TEXT", "not_null": True},
+                        {"name": "line", "type": "INTEGER", "not_null": True},
+                        {"name": "args", "type": "TEXT", "not_null": False},
+                        {"name": "docstring", "type": "TEXT", "not_null": False},
+                        {"name": "complexity", "type": "INTEGER", "not_null": False},
+                        {
+                            "name": "created_at",
+                            "type": "REAL",
+                            "not_null": False,
+                            "default": "julianday('now')",
+                        },
+                    ],
+                    "foreign_keys": [
+                        {
+                            "columns": ["file_id"],
+                            "references_table": "files",
+                            "references_columns": ["id"],
+                            "on_delete": "CASCADE",
+                        }
+                    ],
+                    "unique_constraints": [{"columns": ["file_id", "name", "line"]}],
+                    "check_constraints": [],
+                },
+                "imports": {
+                    "columns": [
+                        {
+                            "name": "id",
+                            "type": "INTEGER",
+                            "not_null": True,
+                            "primary_key": True,
+                            "autoincrement": True,
+                        },
+                        {"name": "file_id", "type": "INTEGER", "not_null": True},
+                        {"name": "name", "type": "TEXT", "not_null": True},
+                        {"name": "module", "type": "TEXT", "not_null": False},
+                        {"name": "import_type", "type": "TEXT", "not_null": True},
+                        {"name": "line", "type": "INTEGER", "not_null": True},
+                        {
+                            "name": "created_at",
+                            "type": "REAL",
+                            "not_null": False,
+                            "default": "julianday('now')",
+                        },
+                    ],
+                    "foreign_keys": [
+                        {
+                            "columns": ["file_id"],
+                            "references_table": "files",
+                            "references_columns": ["id"],
+                            "on_delete": "CASCADE",
+                        }
+                    ],
+                    "unique_constraints": [],
+                    "check_constraints": [],
+                },
+                "issues": {
+                    "columns": [
+                        {
+                            "name": "id",
+                            "type": "INTEGER",
+                            "not_null": True,
+                            "primary_key": True,
+                            "autoincrement": True,
+                        },
+                        {"name": "file_id", "type": "INTEGER", "not_null": False},
+                        {"name": "project_id", "type": "TEXT", "not_null": False},
+                        {"name": "class_id", "type": "INTEGER", "not_null": False},
+                        {"name": "function_id", "type": "INTEGER", "not_null": False},
+                        {"name": "method_id", "type": "INTEGER", "not_null": False},
+                        {"name": "issue_type", "type": "TEXT", "not_null": True},
+                        {"name": "line", "type": "INTEGER", "not_null": False},
+                        {"name": "description", "type": "TEXT", "not_null": False},
+                        {"name": "metadata", "type": "TEXT", "not_null": False},
+                        {
+                            "name": "created_at",
+                            "type": "REAL",
+                            "not_null": False,
+                            "default": "julianday('now')",
+                        },
+                    ],
+                    "foreign_keys": [
+                        {
+                            "columns": ["file_id"],
+                            "references_table": "files",
+                            "references_columns": ["id"],
+                            "on_delete": "CASCADE",
+                        },
+                        {
+                            "columns": ["project_id"],
+                            "references_table": "projects",
+                            "references_columns": ["id"],
+                            "on_delete": "CASCADE",
+                        },
+                        {
+                            "columns": ["class_id"],
+                            "references_table": "classes",
+                            "references_columns": ["id"],
+                            "on_delete": "CASCADE",
+                        },
+                        {
+                            "columns": ["function_id"],
+                            "references_table": "functions",
+                            "references_columns": ["id"],
+                            "on_delete": "CASCADE",
+                        },
+                        {
+                            "columns": ["method_id"],
+                            "references_table": "methods",
+                            "references_columns": ["id"],
+                            "on_delete": "CASCADE",
+                        },
+                    ],
+                    "unique_constraints": [],
+                    "check_constraints": [],
+                },
+                "usages": {
+                    "columns": [
+                        {
+                            "name": "id",
+                            "type": "INTEGER",
+                            "not_null": True,
+                            "primary_key": True,
+                            "autoincrement": True,
+                        },
+                        {"name": "file_id", "type": "INTEGER", "not_null": True},
+                        {"name": "line", "type": "INTEGER", "not_null": True},
+                        {"name": "usage_type", "type": "TEXT", "not_null": True},
+                        {"name": "target_type", "type": "TEXT", "not_null": True},
+                        {"name": "target_class", "type": "TEXT", "not_null": False},
+                        {"name": "target_name", "type": "TEXT", "not_null": True},
+                        {"name": "context", "type": "TEXT", "not_null": False},
+                        {
+                            "name": "created_at",
+                            "type": "REAL",
+                            "not_null": False,
+                            "default": "julianday('now')",
+                        },
+                    ],
+                    "foreign_keys": [
+                        {
+                            "columns": ["file_id"],
+                            "references_table": "files",
+                            "references_columns": ["id"],
+                            "on_delete": "CASCADE",
+                        }
+                    ],
+                    "unique_constraints": [],
+                    "check_constraints": [],
+                },
+                "code_content": {
+                    "columns": [
+                        {
+                            "name": "id",
+                            "type": "INTEGER",
+                            "not_null": True,
+                            "primary_key": True,
+                            "autoincrement": True,
+                        },
+                        {"name": "file_id", "type": "INTEGER", "not_null": True},
+                        {"name": "entity_type", "type": "TEXT", "not_null": True},
+                        {"name": "entity_id", "type": "INTEGER", "not_null": False},
+                        {"name": "entity_name", "type": "TEXT", "not_null": False},
+                        {"name": "content", "type": "TEXT", "not_null": True},
+                        {"name": "docstring", "type": "TEXT", "not_null": False},
+                        {
+                            "name": "created_at",
+                            "type": "REAL",
+                            "not_null": False,
+                            "default": "julianday('now')",
+                        },
+                    ],
+                    "foreign_keys": [
+                        {
+                            "columns": ["file_id"],
+                            "references_table": "files",
+                            "references_columns": ["id"],
+                            "on_delete": "CASCADE",
+                        }
+                    ],
+                    "unique_constraints": [],
+                    "check_constraints": [],
+                },
+                "ast_trees": {
+                    "columns": [
+                        {
+                            "name": "id",
+                            "type": "INTEGER",
+                            "not_null": True,
+                            "primary_key": True,
+                            "autoincrement": True,
+                        },
+                        {"name": "file_id", "type": "INTEGER", "not_null": True},
+                        {"name": "project_id", "type": "TEXT", "not_null": True},
+                        {"name": "ast_json", "type": "TEXT", "not_null": True},
+                        {"name": "ast_hash", "type": "TEXT", "not_null": True},
+                        {"name": "file_mtime", "type": "REAL", "not_null": True},
+                        {
+                            "name": "created_at",
+                            "type": "REAL",
+                            "not_null": False,
+                            "default": "julianday('now')",
+                        },
+                        {
+                            "name": "updated_at",
+                            "type": "REAL",
+                            "not_null": False,
+                            "default": "julianday('now')",
+                        },
+                    ],
+                    "foreign_keys": [
+                        {
+                            "columns": ["file_id"],
+                            "references_table": "files",
+                            "references_columns": ["id"],
+                            "on_delete": "CASCADE",
+                        },
+                        {
+                            "columns": ["project_id"],
+                            "references_table": "projects",
+                            "references_columns": ["id"],
+                            "on_delete": "CASCADE",
+                        },
+                    ],
+                    "unique_constraints": [{"columns": ["file_id", "ast_hash"]}],
+                    "check_constraints": [],
+                },
+                "cst_trees": {
+                    "columns": [
+                        {
+                            "name": "id",
+                            "type": "INTEGER",
+                            "not_null": True,
+                            "primary_key": True,
+                            "autoincrement": True,
+                        },
+                        {"name": "file_id", "type": "INTEGER", "not_null": True},
+                        {"name": "project_id", "type": "TEXT", "not_null": True},
+                        {"name": "cst_code", "type": "TEXT", "not_null": True},
+                        {"name": "cst_hash", "type": "TEXT", "not_null": True},
+                        {"name": "file_mtime", "type": "REAL", "not_null": True},
+                        {
+                            "name": "created_at",
+                            "type": "REAL",
+                            "not_null": False,
+                            "default": "julianday('now')",
+                        },
+                        {
+                            "name": "updated_at",
+                            "type": "REAL",
+                            "not_null": False,
+                            "default": "julianday('now')",
+                        },
+                    ],
+                    "foreign_keys": [
+                        {
+                            "columns": ["file_id"],
+                            "references_table": "files",
+                            "references_columns": ["id"],
+                            "on_delete": "CASCADE",
+                        },
+                        {
+                            "columns": ["project_id"],
+                            "references_table": "projects",
+                            "references_columns": ["id"],
+                            "on_delete": "CASCADE",
+                        },
+                    ],
+                    "unique_constraints": [{"columns": ["file_id", "cst_hash"]}],
+                    "check_constraints": [],
+                },
+                "vector_index": {
+                    "columns": [
+                        {
+                            "name": "id",
+                            "type": "INTEGER",
+                            "not_null": True,
+                            "primary_key": True,
+                            "autoincrement": True,
+                        },
+                        {"name": "project_id", "type": "TEXT", "not_null": True},
+                        {"name": "entity_type", "type": "TEXT", "not_null": True},
+                        {"name": "entity_id", "type": "INTEGER", "not_null": True},
+                        {"name": "vector_id", "type": "INTEGER", "not_null": True},
+                        {"name": "vector_dim", "type": "INTEGER", "not_null": True},
+                        {"name": "embedding_model", "type": "TEXT", "not_null": False},
+                        {
+                            "name": "created_at",
+                            "type": "REAL",
+                            "not_null": False,
+                            "default": "julianday('now')",
+                        },
+                    ],
+                    "foreign_keys": [
+                        {
+                            "columns": ["project_id"],
+                            "references_table": "projects",
+                            "references_columns": ["id"],
+                            "on_delete": "CASCADE",
+                        }
+                    ],
+                    "unique_constraints": [
+                        {"columns": ["project_id", "entity_type", "entity_id"]}
+                    ],
+                    "check_constraints": [],
+                },
+                "code_chunks": {
+                    "columns": [
+                        {
+                            "name": "id",
+                            "type": "INTEGER",
+                            "not_null": True,
+                            "primary_key": True,
+                            "autoincrement": True,
+                        },
+                        {"name": "file_id", "type": "INTEGER", "not_null": True},
+                        {"name": "project_id", "type": "TEXT", "not_null": True},
+                        {"name": "chunk_uuid", "type": "TEXT", "not_null": True},
+                        {"name": "chunk_type", "type": "TEXT", "not_null": True},
+                        {"name": "chunk_text", "type": "TEXT", "not_null": True},
+                        {"name": "chunk_ordinal", "type": "INTEGER", "not_null": False},
+                        {"name": "vector_id", "type": "INTEGER", "not_null": False},
+                        {"name": "embedding_model", "type": "TEXT", "not_null": False},
+                        {"name": "bm25_score", "type": "REAL", "not_null": False},
+                        {"name": "embedding_vector", "type": "TEXT", "not_null": False},
+                        {"name": "class_id", "type": "INTEGER", "not_null": False},
+                        {"name": "function_id", "type": "INTEGER", "not_null": False},
+                        {"name": "method_id", "type": "INTEGER", "not_null": False},
+                        {"name": "line", "type": "INTEGER", "not_null": False},
+                        {"name": "ast_node_type", "type": "TEXT", "not_null": False},
+                        {"name": "source_type", "type": "TEXT", "not_null": False},
+                        {
+                            "name": "binding_level",
+                            "type": "INTEGER",
+                            "not_null": False,
+                            "default": "0",
+                        },
+                        {
+                            "name": "created_at",
+                            "type": "REAL",
+                            "not_null": False,
+                            "default": "julianday('now')",
+                        },
+                        {
+                            "name": "updated_at",
+                            "type": "REAL",
+                            "not_null": False,
+                            "default": "julianday('now')",
+                        },
+                    ],
+                    "foreign_keys": [
+                        {
+                            "columns": ["file_id"],
+                            "references_table": "files",
+                            "references_columns": ["id"],
+                            "on_delete": "CASCADE",
+                        },
+                        {
+                            "columns": ["project_id"],
+                            "references_table": "projects",
+                            "references_columns": ["id"],
+                            "on_delete": "CASCADE",
+                        },
+                        {
+                            "columns": ["class_id"],
+                            "references_table": "classes",
+                            "references_columns": ["id"],
+                            "on_delete": "CASCADE",
+                        },
+                        {
+                            "columns": ["function_id"],
+                            "references_table": "functions",
+                            "references_columns": ["id"],
+                            "on_delete": "CASCADE",
+                        },
+                        {
+                            "columns": ["method_id"],
+                            "references_table": "methods",
+                            "references_columns": ["id"],
+                            "on_delete": "CASCADE",
+                        },
+                    ],
+                    "unique_constraints": [{"columns": ["chunk_uuid"]}],
+                    "check_constraints": [],
+                },
+                "code_duplicates": {
+                    "columns": [
+                        {
+                            "name": "id",
+                            "type": "INTEGER",
+                            "not_null": True,
+                            "primary_key": True,
+                            "autoincrement": True,
+                        },
+                        {"name": "project_id", "type": "TEXT", "not_null": True},
+                        {"name": "duplicate_hash", "type": "TEXT", "not_null": True},
+                        {"name": "similarity", "type": "REAL", "not_null": True},
+                        {
+                            "name": "created_at",
+                            "type": "REAL",
+                            "not_null": False,
+                            "default": "julianday('now')",
+                        },
+                    ],
+                    "foreign_keys": [
+                        {
+                            "columns": ["project_id"],
+                            "references_table": "projects",
+                            "references_columns": ["id"],
+                            "on_delete": "CASCADE",
+                        }
+                    ],
+                    "unique_constraints": [
+                        {"columns": ["project_id", "duplicate_hash"]}
+                    ],
+                    "check_constraints": [],
+                },
+                "duplicate_occurrences": {
+                    "columns": [
+                        {
+                            "name": "id",
+                            "type": "INTEGER",
+                            "not_null": True,
+                            "primary_key": True,
+                            "autoincrement": True,
+                        },
+                        {"name": "duplicate_id", "type": "INTEGER", "not_null": True},
+                        {"name": "file_id", "type": "INTEGER", "not_null": True},
+                        {"name": "start_line", "type": "INTEGER", "not_null": True},
+                        {"name": "end_line", "type": "INTEGER", "not_null": True},
+                        {"name": "code_snippet", "type": "TEXT", "not_null": False},
+                        {"name": "ast_node_id", "type": "INTEGER", "not_null": False},
+                        {
+                            "name": "created_at",
+                            "type": "REAL",
+                            "not_null": False,
+                            "default": "julianday('now')",
+                        },
+                    ],
+                    "foreign_keys": [
+                        {
+                            "columns": ["duplicate_id"],
+                            "references_table": "code_duplicates",
+                            "references_columns": ["id"],
+                            "on_delete": "CASCADE",
+                        },
+                        {
+                            "columns": ["file_id"],
+                            "references_table": "files",
+                            "references_columns": ["id"],
+                            "on_delete": "CASCADE",
+                        },
+                    ],
+                    "unique_constraints": [],
+                    "check_constraints": [],
+                },
+                "comprehensive_analysis_results": {
+                    "columns": [
+                        {
+                            "name": "id",
+                            "type": "INTEGER",
+                            "not_null": True,
+                            "primary_key": True,
+                            "autoincrement": True,
+                        },
+                        {"name": "file_id", "type": "INTEGER", "not_null": True},
+                        {"name": "project_id", "type": "TEXT", "not_null": True},
+                        {"name": "file_mtime", "type": "REAL", "not_null": True},
+                        {"name": "results_json", "type": "TEXT", "not_null": True},
+                        {"name": "summary_json", "type": "TEXT", "not_null": True},
+                        {
+                            "name": "created_at",
+                            "type": "REAL",
+                            "not_null": False,
+                            "default": "julianday('now')",
+                        },
+                        {
+                            "name": "updated_at",
+                            "type": "REAL",
+                            "not_null": False,
+                            "default": "julianday('now')",
+                        },
+                    ],
+                    "foreign_keys": [
+                        {
+                            "columns": ["file_id"],
+                            "references_table": "files",
+                            "references_columns": ["id"],
+                            "on_delete": "CASCADE",
+                        },
+                        {
+                            "columns": ["project_id"],
+                            "references_table": "projects",
+                            "references_columns": ["id"],
+                            "on_delete": "CASCADE",
+                        },
+                    ],
+                    "unique_constraints": [{"columns": ["file_id", "file_mtime"]}],
+                    "check_constraints": [],
+                },
             },
             "indexes": [
+                {
+                    "name": "idx_projects_root_path",
+                    "table": "projects",
+                    "columns": ["root_path"],
+                    "unique": False,
+                    "where_clause": None,
+                },
+                {
+                    "name": "idx_datasets_project",
+                    "table": "datasets",
+                    "columns": ["project_id"],
+                    "unique": False,
+                    "where_clause": None,
+                },
+                {
+                    "name": "idx_datasets_root_path",
+                    "table": "datasets",
+                    "columns": ["root_path"],
+                    "unique": False,
+                    "where_clause": None,
+                },
+                {
+                    "name": "idx_files_project",
+                    "table": "files",
+                    "columns": ["project_id"],
+                    "unique": False,
+                    "where_clause": None,
+                },
+                {
+                    "name": "idx_files_dataset",
+                    "table": "files",
+                    "columns": ["dataset_id"],
+                    "unique": False,
+                    "where_clause": None,
+                },
+                {
+                    "name": "idx_files_path",
+                    "table": "files",
+                    "columns": ["path"],
+                    "unique": False,
+                    "where_clause": None,
+                },
                 {
                     "name": "idx_files_deleted",
                     "table": "files",
                     "columns": ["deleted"],
                     "unique": False,
-                    "where_clause": "deleted = 1"
+                    "where_clause": "deleted = 1",
                 },
-                # Note: Other indexes will be added in next iteration
+                {
+                    "name": "idx_classes_name",
+                    "table": "classes",
+                    "columns": ["name"],
+                    "unique": False,
+                    "where_clause": None,
+                },
+                {
+                    "name": "idx_classes_file",
+                    "table": "classes",
+                    "columns": ["file_id"],
+                    "unique": False,
+                    "where_clause": None,
+                },
+                {
+                    "name": "idx_methods_name",
+                    "table": "methods",
+                    "columns": ["name"],
+                    "unique": False,
+                    "where_clause": None,
+                },
+                {
+                    "name": "idx_methods_class",
+                    "table": "methods",
+                    "columns": ["class_id"],
+                    "unique": False,
+                    "where_clause": None,
+                },
+                {
+                    "name": "idx_functions_name",
+                    "table": "functions",
+                    "columns": ["name"],
+                    "unique": False,
+                    "where_clause": None,
+                },
+                {
+                    "name": "idx_functions_file",
+                    "table": "functions",
+                    "columns": ["file_id"],
+                    "unique": False,
+                    "where_clause": None,
+                },
+                {
+                    "name": "idx_imports_file",
+                    "table": "imports",
+                    "columns": ["file_id"],
+                    "unique": False,
+                    "where_clause": None,
+                },
+                {
+                    "name": "idx_imports_name",
+                    "table": "imports",
+                    "columns": ["name"],
+                    "unique": False,
+                    "where_clause": None,
+                },
+                {
+                    "name": "idx_issues_type",
+                    "table": "issues",
+                    "columns": ["issue_type"],
+                    "unique": False,
+                    "where_clause": None,
+                },
+                {
+                    "name": "idx_issues_file",
+                    "table": "issues",
+                    "columns": ["file_id"],
+                    "unique": False,
+                    "where_clause": None,
+                },
+                {
+                    "name": "idx_issues_project",
+                    "table": "issues",
+                    "columns": ["project_id"],
+                    "unique": False,
+                    "where_clause": None,
+                },
+                {
+                    "name": "idx_usages_file",
+                    "table": "usages",
+                    "columns": ["file_id"],
+                    "unique": False,
+                    "where_clause": None,
+                },
+                {
+                    "name": "idx_usages_target",
+                    "table": "usages",
+                    "columns": ["target_type", "target_name"],
+                    "unique": False,
+                    "where_clause": None,
+                },
+                {
+                    "name": "idx_usages_class_name",
+                    "table": "usages",
+                    "columns": ["target_class", "target_name"],
+                    "unique": False,
+                    "where_clause": None,
+                },
+                {
+                    "name": "idx_code_content_file",
+                    "table": "code_content",
+                    "columns": ["file_id"],
+                    "unique": False,
+                    "where_clause": None,
+                },
+                {
+                    "name": "idx_code_content_entity",
+                    "table": "code_content",
+                    "columns": ["entity_type", "entity_id"],
+                    "unique": False,
+                    "where_clause": None,
+                },
+                {
+                    "name": "idx_ast_trees_file",
+                    "table": "ast_trees",
+                    "columns": ["file_id"],
+                    "unique": False,
+                    "where_clause": None,
+                },
+                {
+                    "name": "idx_ast_trees_project",
+                    "table": "ast_trees",
+                    "columns": ["project_id"],
+                    "unique": False,
+                    "where_clause": None,
+                },
+                {
+                    "name": "idx_ast_trees_hash",
+                    "table": "ast_trees",
+                    "columns": ["ast_hash"],
+                    "unique": False,
+                    "where_clause": None,
+                },
+                {
+                    "name": "idx_vector_index_project",
+                    "table": "vector_index",
+                    "columns": ["project_id"],
+                    "unique": False,
+                    "where_clause": None,
+                },
+                {
+                    "name": "idx_vector_index_entity",
+                    "table": "vector_index",
+                    "columns": ["entity_type", "entity_id"],
+                    "unique": False,
+                    "where_clause": None,
+                },
+                {
+                    "name": "idx_vector_index_vector_id",
+                    "table": "vector_index",
+                    "columns": ["vector_id"],
+                    "unique": False,
+                    "where_clause": None,
+                },
+                {
+                    "name": "idx_code_chunks_file",
+                    "table": "code_chunks",
+                    "columns": ["file_id"],
+                    "unique": False,
+                    "where_clause": None,
+                },
+                {
+                    "name": "idx_code_chunks_project",
+                    "table": "code_chunks",
+                    "columns": ["project_id"],
+                    "unique": False,
+                    "where_clause": None,
+                },
+                {
+                    "name": "idx_code_chunks_uuid",
+                    "table": "code_chunks",
+                    "columns": ["chunk_uuid"],
+                    "unique": False,
+                    "where_clause": None,
+                },
+                {
+                    "name": "idx_code_chunks_vector",
+                    "table": "code_chunks",
+                    "columns": ["vector_id"],
+                    "unique": False,
+                    "where_clause": None,
+                },
+                {
+                    "name": "idx_code_chunks_not_vectorized",
+                    "table": "code_chunks",
+                    "columns": ["project_id", "id"],
+                    "unique": False,
+                    "where_clause": "vector_id IS NULL",
+                },
+                {
+                    "name": "idx_code_duplicates_project",
+                    "table": "code_duplicates",
+                    "columns": ["project_id"],
+                    "unique": False,
+                    "where_clause": None,
+                },
+                {
+                    "name": "idx_code_duplicates_hash",
+                    "table": "code_duplicates",
+                    "columns": ["duplicate_hash"],
+                    "unique": False,
+                    "where_clause": None,
+                },
+                {
+                    "name": "idx_duplicate_occurrences_duplicate",
+                    "table": "duplicate_occurrences",
+                    "columns": ["duplicate_id"],
+                    "unique": False,
+                    "where_clause": None,
+                },
+                {
+                    "name": "idx_duplicate_occurrences_file",
+                    "table": "duplicate_occurrences",
+                    "columns": ["file_id"],
+                    "unique": False,
+                    "where_clause": None,
+                },
             ],
             "virtual_tables": [
                 {
                     "name": "code_content_fts",
                     "type": "fts5",
                     "columns": ["entity_type", "entity_name", "content", "docstring"],
-                    "options": {
-                        "content_rowid": "rowid",
-                        "content": "code_content"
-                    }
+                    "options": {"content_rowid": "rowid", "content": "code_content"},
                 }
             ],
-            "migration_methods": MIGRATION_METHODS
+            "migration_methods": MIGRATION_METHODS,
         }
 
     def sync_schema(self) -> Dict[str, Any]:
         """
         Synchronize database schema via driver.
-        
+
         Gets schema definition and backup_dir from config, delegates to driver.
         This method should be called after driver connection is established.
-        
+
         Returns:
             Dict with sync results from driver:
             {
@@ -1421,12 +2360,12 @@ class CodeDatabase:
                 "changes_applied": List[str],
                 "error": Optional[str]
             }
-        
+
         Raises:
             RuntimeError: If schema sync fails (connection is blocked)
         """
         schema_definition = self._get_schema_definition()
-        
+
         # Get backup_dir from driver config (should be set from StoragePaths)
         backup_dir = self.driver_config.get("config", {}).get("backup_dir")
         if not backup_dir:
@@ -1440,5 +2379,5 @@ class CodeDatabase:
                     backup_dir = str(db_path_obj.parent / "backups")
             else:
                 raise RuntimeError("Cannot determine backup_dir for schema sync")
-        
+
         return self.driver.sync_schema(schema_definition, Path(backup_dir))

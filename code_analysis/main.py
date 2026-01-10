@@ -655,18 +655,8 @@ def main() -> None:
             db_path = storage.db_path
             faiss_dir = storage.faiss_dir
 
-            # Database auto-creation (for test database, always start fresh)
-            # Check if database exists, delete old and create new for test
+            # Database auto-creation (only if database doesn't exist)
             db_path_obj = Path(db_path)
-            if db_path_obj.exists():
-                # For test database, always start fresh - delete old database
-                logger.info(f"Removed old database at {db_path}")
-                try:
-                    db_path_obj.unlink()
-                except Exception as e:
-                    logger.warning(f"Failed to remove old database: {e}")
-
-            # Create new database if doesn't exist
             if not db_path_obj.exists():
                 logger.info(f"Database file not found, creating new database at {db_path}")
                 try:

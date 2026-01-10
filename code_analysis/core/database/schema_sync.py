@@ -406,6 +406,10 @@ class SchemaComparator:
         """
         Generate SQL to recreate virtual table (FTS5) with data preservation.
 
+        For FTS5 tables with external content (content='table_name'), data is stored
+        in the content table, not in the FTS5 table itself. SQLite will automatically
+        rebuild the index from the content table when the FTS5 table is recreated.
+
         Args:
             table_name: Name of virtual table
             virtual_table_def: Virtual table definition from schema
@@ -414,31 +418,50 @@ class SchemaComparator:
             List of SQL statements for recreation with data preservation
         """
         statements = []
-        temp_table = f"temp_{table_name}"
-
-        # Backup data
-        statements.append(
-            f"CREATE TEMP TABLE {temp_table} AS SELECT * FROM {table_name}"
-        )
-
-        # Drop virtual table
-        statements.append(f"DROP TABLE IF EXISTS {table_name}")
-
-        # Create new virtual table
-        columns = ", ".join(virtual_table_def["columns"])
         options = virtual_table_def.get("options", {})
-        options_str = ", ".join([f"{k}='{v}'" for k, v in options.items()])
-        if options_str:
-            create_sql = f"CREATE VIRTUAL TABLE {table_name} USING {virtual_table_def['type']}({columns}, {options_str})"
+        has_external_content = "content" in options
+
+        if has_external_content:
+            # For FTS5 with external content, data is in the content table
+            # We just need to drop and recreate - SQLite will rebuild index automatically
+            statements.append(f"DROP TABLE IF EXISTS {table_name}")
+
+            # Create new virtual table
+            columns = ", ".join(virtual_table_def["columns"])
+            options_str = ", ".join([f"{k}='{v}'" for k, v in options.items()])
+            if options_str:
+                create_sql = f"CREATE VIRTUAL TABLE {table_name} USING {virtual_table_def['type']}({columns}, {options_str})"
+            else:
+                create_sql = f"CREATE VIRTUAL TABLE {table_name} USING {virtual_table_def['type']}({columns})"
+            statements.append(create_sql)
+            # Note: SQLite will automatically rebuild the FTS5 index from the content table
         else:
-            create_sql = f"CREATE VIRTUAL TABLE {table_name} USING {virtual_table_def['type']}({columns})"
-        statements.append(create_sql)
+            # For FTS5 without external content, data is stored in the FTS5 table itself
+            # We need to backup and restore data
+            temp_table = f"temp_{table_name}"
 
-        # Restore data
-        statements.append(f"INSERT INTO {table_name} SELECT * FROM {temp_table}")
+            # Backup data
+            statements.append(
+                f"CREATE TEMP TABLE {temp_table} AS SELECT * FROM {table_name}"
+            )
 
-        # Drop temp table
-        statements.append(f"DROP TABLE {temp_table}")
+            # Drop virtual table
+            statements.append(f"DROP TABLE IF EXISTS {table_name}")
+
+            # Create new virtual table
+            columns = ", ".join(virtual_table_def["columns"])
+            options_str = ", ".join([f"{k}='{v}'" for k, v in options.items()])
+            if options_str:
+                create_sql = f"CREATE VIRTUAL TABLE {table_name} USING {virtual_table_def['type']}({columns}, {options_str})"
+            else:
+                create_sql = f"CREATE VIRTUAL TABLE {table_name} USING {virtual_table_def['type']}({columns})"
+            statements.append(create_sql)
+
+            # Restore data
+            statements.append(f"INSERT INTO {table_name} SELECT * FROM {temp_table}")
+
+            # Drop temp table
+            statements.append(f"DROP TABLE {temp_table}")
 
         return statements
 

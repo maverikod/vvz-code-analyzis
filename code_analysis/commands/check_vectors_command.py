@@ -517,14 +517,14 @@ class CheckVectorsCommand(BaseMCPCommand):
             # Build sample data
             sample_data = []
             for sample in samples:
-                (
-                    chunk_id,
-                    chunk_type,
-                    chunk_text,
-                    vector_id,
-                    embedding_model,
-                    source_type,
-                ) = sample
+                # sample is a dict, not a tuple
+                chunk_id = sample["id"]
+                chunk_type = sample["chunk_type"]
+                chunk_text = sample["chunk_text"]
+                vector_id = sample["vector_id"]
+                embedding_model = sample["embedding_model"]
+                source_type = sample["source_type"]
+                
                 preview = (
                     chunk_text[:100] + "..."
                     if chunk_text and len(chunk_text) > 100

@@ -36,28 +36,29 @@
 ### 3. Worker Startup Flow
 
 **Decision**: 
-- WorkerManager reads config
-- If SQLite driver type, WorkerManager starts DB worker
+- **WorkerManager does NOT automatically start DB worker**
+- SQLiteDriverProxy requests worker startup via DBWorkerManager on connect()
 - DB worker receives database path as initialization string
 - DB worker creates empty database without schema if missing
-- SQLiteDriver requests worker startup via DBWorkerManager
-- SQLiteDriver performs schema sync on connect()
+- SQLiteDriver (in worker) performs schema sync on connect()
 
 **Flow**:
 ```
 Server Startup
   ↓
-WorkerManager reads config
+WorkerManager reads config (but does NOT start DB worker)
   ↓
-If driver_type == "sqlite_proxy":
+SQLiteDriverProxy.connect() is called
   ↓
-  WorkerManager calls DBWorkerManager.get_or_start_worker(db_path)
+SQLiteDriverProxy requests worker via DBWorkerManager.get_or_start_worker(db_path)
   ↓
-  DBWorkerManager starts DB worker process
+DBWorkerManager starts DB worker process (only if not already running)
   ↓
-  DB worker creates empty DB if missing (no schema)
+DB worker creates empty DB if missing (no schema)
   ↓
-SQLiteDriverProxy.connect()
+SQLiteDriverProxy establishes connection to worker
+  ↓
+SQLiteDriverProxy delegates sync_schema() to worker
   ↓
 SQLiteDriver (in worker) connects to DB
   ↓
@@ -68,6 +69,8 @@ SQLiteDriver.sync_schema()  # Called automatically on connect
   - Create backup if changes needed
   - Apply changes
 ```
+
+**Key Point**: WorkerManager is passive - it only starts DB worker when explicitly requested by SQLiteDriverProxy.
 
 ### 4. Schema Version Management
 
@@ -476,38 +479,63 @@ def sync_schema(self) -> Dict[str, Any]:
 
 ---
 
-### Phase 7: Worker Manager Integration
+### Phase 7: SQLiteDriverProxy Worker Request
 
 **Files to modify**:
-- `code_analysis/core/db_worker_manager.py`
-- `code_analysis/main.py`
+- `code_analysis/core/db_driver/sqlite_proxy.py`
 
 **Steps**:
-1. WorkerManager reads config
-2. If SQLite, starts DB worker
-3. SQLiteDriverProxy requests worker via DBWorkerManager
+1. SQLiteDriverProxy requests worker startup on connect()
+2. Worker is started only when needed (lazy initialization)
+3. No automatic startup in main.py or WorkerManager
 
-**Code in main.py**:
+**Code in sqlite_proxy.py**:
 ```python
-def startup_database_worker(config_data: Dict[str, Any]) -> None:
-    """Start database worker if SQLite driver is configured."""
-    from ..core.storage_paths import resolve_storage_paths
-    from ..core.db_worker_manager import get_db_worker_manager
+def connect(self, config: Dict[str, Any]) -> None:
+    """
+    Establish connection to worker process.
     
-    storage = resolve_storage_paths(config_data=config_data, ...)
-    db_path = storage.db_path
+    Requests worker startup via DBWorkerManager if not already running.
+    """
+    logger.info("[SQLITE_PROXY] connect() called")
+    if "path" not in config:
+        raise ValueError("SQLite proxy driver requires 'path' in config")
+
+    self.db_path = Path(config["path"]).resolve()
+    self.db_path.parent.mkdir(parents=True, exist_ok=True)
+
+    # Get worker config
+    worker_config = config.get("worker_config", {})
+    self.command_timeout = worker_config.get("command_timeout", 30.0)
+    self.poll_interval = worker_config.get("poll_interval", 0.1)
+    self.worker_log_path = worker_config.get("worker_log_path")
+
+    # Request worker startup via DBWorkerManager (lazy initialization)
+    # WorkerManager does NOT start worker automatically - only on request
+    worker_manager = get_db_worker_manager()
+    worker_info = worker_manager.get_or_start_worker(
+        db_path=str(self.db_path),
+        worker_log_path=self.worker_log_path
+    )
     
-    # Check if SQLite driver is used
-    driver_type = config_data.get("database", {}).get("driver_type", "sqlite_proxy")
-    if driver_type == "sqlite_proxy":
-        # Start DB worker
-        worker_manager = get_db_worker_manager()
-        worker_info = worker_manager.get_or_start_worker(
-            db_path=str(db_path),
-            worker_log_path=str(storage.log_path / "db_worker.log")
-        )
-        logger.info(f"Database worker started: {worker_info['socket_path']}")
+    self._socket_path = worker_info["socket_path"]
+    self._worker_initialized = True
+    
+    logger.info(f"[SQLITE_PROXY] Connected to worker at {self._socket_path}")
+    
+    # Delegate schema sync to worker
+    try:
+        sync_result = self.sync_schema()
+        if sync_result.get("changes_applied"):
+            logger.info(f"Schema synchronized: {len(sync_result['changes_applied'])} changes")
+    except Exception as e:
+        logger.warning(f"Schema sync failed (non-critical): {e}")
 ```
+
+**Important**: 
+- WorkerManager is passive - it only starts workers when explicitly requested
+- No automatic DB worker startup in main.py
+- Worker startup happens lazily when SQLiteDriverProxy.connect() is called
 
 ---
 
@@ -567,6 +595,14 @@ def startup_database_worker(config_data: Dict[str, Any]) -> None:
    - Schema sync will update to current version
    - Backup will be created before any changes
 
+## Important Architecture Note
+
+**WorkerManager is Passive**: 
+- WorkerManager does NOT automatically start DB worker on server startup
+- DB worker is started only when SQLiteDriverProxy requests it via `get_or_start_worker()`
+- This ensures lazy initialization and allows driver to control worker lifecycle
+- WorkerManager acts as a factory/registry, not an auto-starter
+
 ## Checklist
 
 - [ ] Phase 1: Database Settings Table
@@ -575,7 +611,7 @@ def startup_database_worker(config_data: Dict[str, Any]) -> None:
 - [ ] Phase 4: SQLiteDriver Schema Sync
 - [ ] Phase 5: DB Worker Empty Database Creation
 - [ ] Phase 6: SQLiteDriverProxy Schema Sync Delegation
-- [ ] Phase 7: Worker Manager Integration
+- [ ] Phase 7: SQLiteDriverProxy Worker Request (lazy initialization)
 - [ ] Unit Tests
 - [ ] Integration Tests
 - [ ] Documentation Update

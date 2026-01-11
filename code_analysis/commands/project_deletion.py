@@ -28,6 +28,10 @@ class DeleteProjectCommand:
     - All datasets
     - The project record itself
 
+    Optionally can also delete from disk:
+    - Project root directory (if delete_from_disk=True)
+    - All files from version directory for this project (if delete_from_disk=True)
+
     Use with caution - this operation cannot be undone.
     """
 
@@ -36,6 +40,8 @@ class DeleteProjectCommand:
         database: CodeDatabase,
         project_id: str,
         dry_run: bool = False,
+        delete_from_disk: bool = False,
+        version_dir: Optional[str] = None,
     ):
         """
         Initialize delete project command.
@@ -44,10 +50,14 @@ class DeleteProjectCommand:
             database: CodeDatabase instance
             project_id: Project ID to delete
             dry_run: If True, only show what would be deleted
+            delete_from_disk: If True, also delete project directory and version files from disk
+            version_dir: Version directory path (if None, will try to get from config)
         """
         self.database = database
         self.project_id = project_id
         self.dry_run = dry_run
+        self.delete_from_disk = delete_from_disk
+        self.version_dir = version_dir
 
     async def execute(self) -> Dict[str, Any]:
         """
@@ -89,8 +99,27 @@ class DeleteProjectCommand:
         datasets = self.database.get_project_datasets(self.project_id)
         dataset_count = len(datasets)
 
+        # Get version directory if needed
+        version_dir_path = None
+        if self.delete_from_disk:
+            if self.version_dir:
+                version_dir_path = Path(self.version_dir).resolve()
+            else:
+                # Try to get from database config or use default
+                # Default: data/versions relative to database location
+                db_path = getattr(self.database, "_db_path", None)
+                if db_path:
+                    db_path_obj = Path(db_path)
+                    if db_path_obj.parent.name == "data":
+                        version_dir_path = db_path_obj.parent / "versions"
+                    else:
+                        version_dir_path = db_path_obj.parent / "data" / "versions"
+                else:
+                    # Fallback to default
+                    version_dir_path = Path("data/versions").resolve()
+
         if self.dry_run:
-            return {
+            result = {
                 "success": True,
                 "dry_run": True,
                 "project_id": self.project_id,
@@ -99,17 +128,63 @@ class DeleteProjectCommand:
                 "files_count": file_count,
                 "chunks_count": chunk_count,
                 "datasets_count": dataset_count,
+                "delete_from_disk": self.delete_from_disk,
                 "message": f"Would delete project {project_name} ({self.project_id})",
             }
+            if self.delete_from_disk:
+                result["version_dir"] = (
+                    str(version_dir_path) if version_dir_path else None
+                )
+                root_path_obj = Path(root_path)
+                result["would_delete_root_dir"] = root_path_obj.exists()
+                if version_dir_path:
+                    project_version_dir = version_dir_path / self.project_id
+                    result["would_delete_version_dir"] = project_version_dir.exists()
+            return result
 
         # Perform deletion
         try:
+            disk_deletion_errors = []
+
+            # Delete from disk if requested
+            if self.delete_from_disk:
+                # Delete version directory for this project
+                if version_dir_path:
+                    project_version_dir = version_dir_path / self.project_id
+                    if project_version_dir.exists():
+                        try:
+                            import shutil
+
+                            shutil.rmtree(project_version_dir)
+                            logger.info(
+                                f"Deleted version directory for project {self.project_id}: {project_version_dir}"
+                            )
+                        except Exception as e:
+                            error_msg = f"Failed to delete version directory {project_version_dir}: {e}"
+                            logger.error(error_msg, exc_info=True)
+                            disk_deletion_errors.append(error_msg)
+
+                # Delete project root directory
+                root_path_obj = Path(root_path)
+                if root_path_obj.exists():
+                    try:
+                        import shutil
+
+                        shutil.rmtree(root_path_obj)
+                        logger.info(f"Deleted project root directory: {root_path_obj}")
+                    except Exception as e:
+                        error_msg = f"Failed to delete project root directory {root_path_obj}: {e}"
+                        logger.error(error_msg, exc_info=True)
+                        disk_deletion_errors.append(error_msg)
+
+            # Delete from database
             await self.database.clear_project_data(self.project_id)
             logger.info(
-                f"Deleted project {self.project_id} ({project_name}): "
+                f"Deleted project {self.project_id} ({project_name}) from database: "
                 f"{file_count} files, {chunk_count} chunks, {dataset_count} datasets"
             )
-            return {
+
+            result = {
                 "success": True,
                 "dry_run": False,
                 "project_id": self.project_id,
@@ -118,8 +193,21 @@ class DeleteProjectCommand:
                 "files_count": file_count,
                 "chunks_count": chunk_count,
                 "datasets_count": dataset_count,
+                "delete_from_disk": self.delete_from_disk,
                 "message": f"Deleted project {project_name} ({self.project_id})",
             }
+
+            if self.delete_from_disk:
+                result["version_dir"] = (
+                    str(version_dir_path) if version_dir_path else None
+                )
+                if disk_deletion_errors:
+                    result["disk_deletion_errors"] = disk_deletion_errors
+                    result[
+                        "message"
+                    ] += f" (with {len(disk_deletion_errors)} disk deletion error(s))"
+
+            return result
         except Exception as e:
             logger.error(
                 f"Failed to delete project {self.project_id}: {e}", exc_info=True

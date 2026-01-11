@@ -15,13 +15,10 @@ from typing import Any, Dict, List, Optional
 from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 
 from .base_mcp_command import BaseMCPCommand
-from ..core.database import CodeDatabase
 from ..core.exceptions import DatabaseError, ValidationError
 from ..core.project_resolution import (
     ProjectIdError,
     load_project_id,
-    normalize_root_dir,
-    require_matching_project_id,
 )
 
 logger = logging.getLogger(__name__)
@@ -463,10 +460,9 @@ class ChangeProjectIdMCPCommand(BaseMCPCommand):
                     )
 
                     config_data = load_raw_config(config_path)
-                    storage = resolve_storage_paths(
+                    resolve_storage_paths(
                         config_data=config_data, config_path=config_path
                     )
-                    db_path = storage.db_path
 
                     # Open database
                     database = self._open_database(str(root_path), auto_analyze=False)
@@ -607,6 +603,14 @@ class DeleteProjectMCPCommand(BaseMCPCommand):
                     ),
                     "default": False,
                 },
+                "delete_from_disk": {
+                    "type": "boolean",
+                    "description": (
+                        "If True, also delete project root directory and all files from version directory. "
+                        "If False, only delete from database. Default: False."
+                    ),
+                    "default": False,
+                },
             },
             "required": ["root_dir"],
             "additionalProperties": False,
@@ -617,6 +621,7 @@ class DeleteProjectMCPCommand(BaseMCPCommand):
         root_dir: str,
         project_id: Optional[str] = None,
         dry_run: bool = False,
+        delete_from_disk: bool = False,
         **kwargs: Any,
     ) -> SuccessResult | ErrorResult:
         """
@@ -627,6 +632,7 @@ class DeleteProjectMCPCommand(BaseMCPCommand):
             root_dir: Project root directory.
             project_id: Optional project ID.
             dry_run: If True, only show what would be deleted.
+            delete_from_disk: If True, also delete from disk and version directory.
             **kwargs: Extra args (unused).
 
         Returns:
@@ -653,6 +659,22 @@ class DeleteProjectMCPCommand(BaseMCPCommand):
                             "delete_project",
                         )
 
+                # Get version_dir from config if delete_from_disk is True
+                version_dir = None
+                if delete_from_disk:
+                    config_path = self._resolve_config_path()
+                    from ..core.storage_paths import load_raw_config
+
+                    config_data = load_raw_config(config_path)
+                    file_watcher_config = config_data.get("code_analysis", {}).get(
+                        "file_watcher", {}
+                    )
+                    version_dir = file_watcher_config.get("version_dir")
+                    if not version_dir:
+                        # Default: data/versions relative to config_dir
+                        config_dir = Path(config_path).parent
+                        version_dir = str(config_dir / "data" / "versions")
+
                 # Import and execute command
                 from .project_deletion import DeleteProjectCommand
 
@@ -660,6 +682,8 @@ class DeleteProjectMCPCommand(BaseMCPCommand):
                     database=database,
                     project_id=project_id,
                     dry_run=dry_run,
+                    delete_from_disk=delete_from_disk,
+                    version_dir=version_dir,
                 )
                 result = await cmd.execute()
 
@@ -705,6 +729,7 @@ class DeleteProjectMCPCommand(BaseMCPCommand):
             "email": cls.email,
             "detailed_description": (
                 "The delete_project command completely removes a project and all its data from the database. "
+                "Optionally, it can also delete the project directory and version files from disk. "
                 "This is a destructive operation that cannot be undone.\n\n"
                 "Operation flow:\n"
                 "1. Validates root_dir exists and is a directory\n"
@@ -713,18 +738,23 @@ class DeleteProjectMCPCommand(BaseMCPCommand):
                 "4. Retrieves project information and statistics\n"
                 "5. If dry_run=True:\n"
                 "   - Returns statistics about what would be deleted\n"
+                "   - Shows what would be deleted from disk (if delete_from_disk=True)\n"
                 "   - Does not perform actual deletion\n"
                 "6. If dry_run=False:\n"
-                "   - Deletes all project data from database:\n"
-                "     * All files and their associated data (classes, functions, methods, imports, usages)\n"
-                "     * All chunks and removes from FAISS vector index\n"
-                "     * All duplicates\n"
-                "     * All datasets\n"
-                "     * All AST trees\n"
-                "     * All CST trees\n"
-                "     * The project record itself\n"
+                "   a. If delete_from_disk=True:\n"
+                "      * Deletes project root directory from disk (recursively)\n"
+                "      * Deletes all files from version directory for this project ({version_dir}/{project_id}/)\n"
+                "      * Continues even if disk deletion fails (errors are logged)\n"
+                "   b. Deletes all project data from database:\n"
+                "      * All files and their associated data (classes, functions, methods, imports, usages)\n"
+                "      * All chunks and removes from FAISS vector index\n"
+                "      * All duplicates\n"
+                "      * All datasets\n"
+                "      * All AST trees\n"
+                "      * All CST trees\n"
+                "      * The project record itself\n"
                 "7. Returns deletion summary\n\n"
-                "Deleted Data:\n"
+                "Deleted Data (Database):\n"
                 "- Files: All file records and metadata\n"
                 "- Code entities: All classes, functions, methods\n"
                 "- Imports: All import records\n"
@@ -734,17 +764,24 @@ class DeleteProjectMCPCommand(BaseMCPCommand):
                 "- Datasets: All dataset records\n"
                 "- AST/CST: All AST and CST trees\n"
                 "- Project record: The project itself\n\n"
+                "Deleted Data (Disk, if delete_from_disk=True):\n"
+                "- Project root directory: Entire project directory tree is removed\n"
+                "- Version directory: All files in {version_dir}/{project_id}/ are removed\n"
+                "  Version directory is typically 'data/versions' relative to config directory\n\n"
                 "Use cases:\n"
-                "- Remove projects that are no longer needed\n"
+                "- Remove projects that are no longer needed (database only)\n"
+                "- Completely remove projects including files from disk\n"
                 "- Clean up test projects\n"
-                "- Free up database space\n"
+                "- Free up database and disk space\n"
                 "- Remove orphaned projects\n\n"
                 "Important notes:\n"
                 "- This operation is PERMANENT and cannot be undone\n"
                 "- Always use dry_run=True first to preview what will be deleted\n"
-                "- Project files on disk are NOT deleted (only database records)\n"
-                "- All related data is cascaded and removed\n"
-                "- Use with extreme caution"
+                "- By default (delete_from_disk=False), only database records are deleted\n"
+                "- If delete_from_disk=True, project files and version directory are also deleted\n"
+                "- Disk deletion errors are logged but do not stop database deletion\n"
+                "- All related data is cascaded and removed from database\n"
+                "- Use with extreme caution, especially with delete_from_disk=True"
             ),
             "parameters": {
                 "root_dir": {
@@ -806,6 +843,17 @@ class DeleteProjectMCPCommand(BaseMCPCommand):
                         "Useful when you want to ensure correct project is deleted."
                     ),
                 },
+                {
+                    "description": "Delete project from database and disk",
+                    "command": {
+                        "root_dir": "/home/user/projects/my_project",
+                        "delete_from_disk": True,
+                    },
+                    "explanation": (
+                        "Permanently deletes project from database AND removes project directory and "
+                        "version files from disk. WARNING: This is irreversible."
+                    ),
+                },
             ],
             "error_cases": {
                 "PROJECT_NOT_FOUND": {
@@ -837,6 +885,9 @@ class DeleteProjectMCPCommand(BaseMCPCommand):
                         "files_count": "Number of files that were deleted",
                         "chunks_count": "Number of chunks that were deleted",
                         "datasets_count": "Number of datasets that were deleted",
+                        "delete_from_disk": "Whether disk deletion was requested",
+                        "version_dir": "Version directory path (if delete_from_disk=True)",
+                        "disk_deletion_errors": "List of disk deletion errors (if any)",
                         "message": "Status message",
                     },
                     "example_dry_run": {
@@ -1530,3 +1581,392 @@ class ListProjectsMCPCommand(BaseMCPCommand):
                 database.close()
         except Exception as e:
             return self._handle_error(e, "LIST_PROJECTS_ERROR", "list_projects")
+
+
+class CreateProjectMCPCommand(BaseMCPCommand):
+    """
+    Create or register a new project.
+
+    This command:
+    1. Validates that watched directory exists and does not contain projectid file
+    2. Validates that project directory exists
+    3. Checks if project is already registered in database
+    4. Creates projectid file with UUID4 and description
+    5. Registers project in database
+
+    Returns project ID, whether project already existed, and description.
+
+    Attributes:
+        name: MCP command name.
+        version: Command version.
+        descr: Short description.
+        category: Command category.
+        author: Command author.
+        email: Author email.
+        use_queue: Whether to run in the background queue.
+    """
+
+    name = "create_project"
+    version = "1.0.0"
+    descr = (
+        "Create or register a new project. "
+        "Creates projectid file and registers project in database."
+    )
+    category = "project_management"
+    author = "Vasiliy Zdanovskiy"
+    email = "vasilyvz@gmail.com"
+    use_queue = False
+
+    @classmethod
+    def get_schema(
+        cls: type["CreateProjectMCPCommand"],
+    ) -> Dict[str, Any]:
+        """
+        Get JSON schema for command parameters.
+
+        Args:
+            cls: Command class.
+
+        Returns:
+            JSON schema dict.
+        """
+        return {
+            "type": "object",
+            "description": (
+                "Create or register a new project. "
+                "Creates projectid file and registers project in database."
+            ),
+            "properties": {
+                "root_dir": {
+                    "type": "string",
+                    "description": (
+                        "Server root directory (contains config.json and data/code_analysis.db). "
+                        "Must be an absolute path or relative to current working directory."
+                    ),
+                },
+                "watched_dir": {
+                    "type": "string",
+                    "description": (
+                        "Watched directory path. Must exist and must NOT contain projectid file. "
+                        "Must be an absolute path or relative to current working directory."
+                    ),
+                },
+                "project_dir": {
+                    "type": "string",
+                    "description": (
+                        "Project directory path. Must exist. "
+                        "If already registered in database, returns existing project info. "
+                        "Must be an absolute path or relative to current working directory."
+                    ),
+                },
+                "description": {
+                    "type": "string",
+                    "description": (
+                        "Human-readable description of the project. "
+                        "If projectid file already exists, its description is used instead. "
+                        "Default: empty string or project directory name."
+                    ),
+                    "default": "",
+                },
+            },
+            "required": ["root_dir", "watched_dir", "project_dir"],
+            "additionalProperties": False,
+        }
+
+    async def execute(
+        self: "CreateProjectMCPCommand",
+        root_dir: str,
+        watched_dir: str,
+        project_dir: str,
+        description: str = "",
+        **kwargs: Any,
+    ) -> SuccessResult | ErrorResult:
+        """
+        Execute create project command.
+
+        Args:
+            self: Command instance.
+            root_dir: Server root directory.
+            watched_dir: Watched directory path.
+            project_dir: Project directory path.
+            description: Optional project description.
+            **kwargs: Extra args (unused).
+
+        Returns:
+            SuccessResult with project info or ErrorResult on failure.
+        """
+        try:
+            # Validate and normalize root_dir
+            root_path = self._validate_root_dir(root_dir)
+
+            # Open database
+            database = self._open_database(str(root_path), auto_analyze=False)
+            try:
+                # Import and execute command
+                from .project_creation import CreateProjectCommand
+
+                cmd = CreateProjectCommand(
+                    database=database,
+                    watched_dir=watched_dir,
+                    project_dir=project_dir,
+                    description=description,
+                )
+                result = await cmd.execute()
+
+                if not result.get("success"):
+                    error_code = result.get("error", "CREATE_PROJECT_ERROR")
+                    return self._handle_error(
+                        ValidationError(
+                            result.get("message", "Failed to create project"),
+                            field="project_dir",
+                            details=result,
+                        ),
+                        error_code,
+                        "create_project",
+                    )
+
+                return SuccessResult(
+                    data=result,
+                    message=result.get("message", "Project created successfully"),
+                )
+            finally:
+                database.close()
+        except Exception as e:
+            return self._handle_error(e, "CREATE_PROJECT_ERROR", "create_project")
+
+    @classmethod
+    def metadata(cls: type["CreateProjectMCPCommand"]) -> Dict[str, Any]:
+        """
+        Get detailed command metadata for AI models.
+
+        This method provides comprehensive information about the command,
+        including detailed descriptions, usage examples, and edge cases.
+        The metadata should be as detailed and clear as a man page.
+
+        Args:
+            cls: Command class.
+
+        Returns:
+            Dictionary with command metadata.
+        """
+        return {
+            "name": cls.name,
+            "version": cls.version,
+            "description": cls.descr,
+            "category": cls.category,
+            "author": cls.author,
+            "email": cls.email,
+            "detailed_description": (
+                "The create_project command creates or registers a new project in the system. "
+                "It validates prerequisites, creates a projectid file with UUID4 identifier, "
+                "and registers the project in the database.\n\n"
+                "Operation flow:\n"
+                "1. Validates root_dir exists and is a directory\n"
+                "2. Opens database connection\n"
+                "3. Validates watched_dir exists and is a directory\n"
+                "4. Checks if watched_dir contains projectid file (raises error if found)\n"
+                "5. Validates project_dir exists and is a directory\n"
+                "6. Checks if project_dir is already registered in database:\n"
+                "   - If registered: Returns existing project info (already_existed=True)\n"
+                "   - If not registered: Continues to creation\n"
+                "7. Checks if projectid file exists in project_dir:\n"
+                "   - If exists and valid: Registers in database using existing ID\n"
+                "   - If exists but invalid: Recreates projectid file\n"
+                "   - If not exists: Creates new projectid file with UUID4\n"
+                "8. Registers project in database\n"
+                "9. Returns project information\n\n"
+                "Project ID File Format:\n"
+                "The projectid file is created in JSON format:\n"
+                "{\n"
+                '  "id": "550e8400-e29b-41d4-a716-446655440000",\n'
+                '  "description": "Human readable description"\n'
+                "}\n\n"
+                "Validation Rules:\n"
+                "- watched_dir must exist and be a directory\n"
+                "- watched_dir must NOT contain projectid file\n"
+                "- project_dir must exist and be a directory\n"
+                "- project_dir must NOT be already registered in database (unless projectid exists)\n"
+                "- description is optional (defaults to project directory name)\n\n"
+                "Return Values:\n"
+                "- project_id: UUID4 identifier of the project\n"
+                "- already_existed: True if project was already registered, False if newly created\n"
+                "- description: Project description (from file if existed, or provided)\n"
+                "- old_description: Previous description if projectid file was recreated\n"
+                "- message: Status message\n\n"
+                "Use cases:\n"
+                "- Register a new project for code analysis\n"
+                "- Register an existing project that has projectid file but not in database\n"
+                "- Create a new project from scratch\n"
+                "- Re-register a project after database cleanup"
+            ),
+            "parameters": {
+                "root_dir": {
+                    "description": (
+                        "Server root directory path. Contains config.json and data/code_analysis.db. "
+                        "Can be absolute or relative. Used to locate database."
+                    ),
+                    "type": "string",
+                    "required": True,
+                },
+                "watched_dir": {
+                    "description": (
+                        "Watched directory path. Must exist and be a directory. "
+                        "Must NOT contain projectid file. This is the parent directory "
+                        "that will be monitored for projects. Can be absolute or relative."
+                    ),
+                    "type": "string",
+                    "required": True,
+                },
+                "project_dir": {
+                    "description": (
+                        "Project directory path. Must exist and be a directory. "
+                        "If already registered in database, returns existing project info. "
+                        "If projectid file exists, uses its ID. Otherwise creates new project. "
+                        "Can be absolute or relative."
+                    ),
+                    "type": "string",
+                    "required": True,
+                },
+                "description": {
+                    "description": (
+                        "Human-readable description of the project. Optional. "
+                        "If projectid file already exists, its description takes precedence. "
+                        "If not provided and no existing description, defaults to project directory name."
+                    ),
+                    "type": "string",
+                    "required": False,
+                    "default": "",
+                },
+            },
+            "usage_examples": [
+                {
+                    "description": "Create new project",
+                    "command": {
+                        "root_dir": "/home/user/projects/tools/code_analysis",
+                        "watched_dir": "/home/user/projects/test_data",
+                        "project_dir": "/home/user/projects/test_data/my_project",
+                        "description": "My new project for testing",
+                    },
+                    "explanation": (
+                        "Creates a new project in /home/user/projects/test_data/my_project. "
+                        "Creates projectid file with UUID4 and registers in database."
+                    ),
+                },
+                {
+                    "description": "Register existing project with projectid file",
+                    "command": {
+                        "root_dir": "/home/user/projects/tools/code_analysis",
+                        "watched_dir": "/home/user/projects/test_data",
+                        "project_dir": "/home/user/projects/test_data/existing_project",
+                    },
+                    "explanation": (
+                        "Registers an existing project that already has projectid file. "
+                        "Uses existing project ID from file."
+                    ),
+                },
+                {
+                    "description": "Get existing project info",
+                    "command": {
+                        "root_dir": "/home/user/projects/tools/code_analysis",
+                        "watched_dir": "/home/user/projects/test_data",
+                        "project_dir": "/home/user/projects/test_data/registered_project",
+                    },
+                    "explanation": (
+                        "If project is already registered in database, returns existing project info "
+                        "without creating new projectid file."
+                    ),
+                },
+            ],
+            "error_cases": {
+                "WATCHED_DIR_NOT_FOUND": {
+                    "description": "Watched directory does not exist",
+                    "example": "watched_dir='/path/to/missing'",
+                    "solution": "Verify watched directory path exists and is accessible.",
+                },
+                "WATCHED_DIR_NOT_DIRECTORY": {
+                    "description": "Watched path is not a directory",
+                    "example": "watched_dir='/path/to/file.txt'",
+                    "solution": "Ensure watched_dir points to a directory, not a file.",
+                },
+                "PROJECTID_EXISTS_IN_WATCHED_DIR": {
+                    "description": "Watched directory already contains projectid file",
+                    "example": "watched_dir='/path' contains projectid file",
+                    "solution": (
+                        "Watched directory should not contain projectid file. "
+                        "Use a parent directory as watched_dir, or remove projectid file if not needed."
+                    ),
+                },
+                "PROJECT_DIR_NOT_FOUND": {
+                    "description": "Project directory does not exist",
+                    "example": "project_dir='/path/to/missing'",
+                    "solution": "Verify project directory path exists and is accessible.",
+                },
+                "PROJECT_DIR_NOT_DIRECTORY": {
+                    "description": "Project path is not a directory",
+                    "example": "project_dir='/path/to/file.txt'",
+                    "solution": "Ensure project_dir points to a directory, not a file.",
+                },
+                "PROJECTID_WRITE_ERROR": {
+                    "description": "Failed to write projectid file",
+                    "example": "Permission denied or disk full",
+                    "solution": (
+                        "Check file permissions, ensure directory is writable, "
+                        "verify disk space is available."
+                    ),
+                },
+                "DATABASE_REGISTRATION_ERROR": {
+                    "description": "Failed to register project in database",
+                    "example": "Database locked, constraint violation, or connection error",
+                    "solution": (
+                        "Check database integrity, ensure database is not locked, "
+                        "verify database connection is working."
+                    ),
+                },
+                "CREATE_PROJECT_ERROR": {
+                    "description": "General error during project creation",
+                    "example": "Unexpected error in validation or creation process",
+                    "solution": "Check error message for specific details and resolve accordingly.",
+                },
+            },
+            "return_value": {
+                "success": {
+                    "description": "Command executed successfully",
+                    "data": {
+                        "success": "Whether operation was successful (always True)",
+                        "project_id": "UUID4 identifier of the project",
+                        "already_existed": "Whether project was already registered (True) or newly created (False)",
+                        "description": "Project description (from file if existed, or provided)",
+                        "old_description": "Previous description if projectid file was recreated, empty otherwise",
+                        "message": "Status message",
+                    },
+                    "example_new": {
+                        "success": True,
+                        "project_id": "550e8400-e29b-41d4-a716-446655440000",
+                        "already_existed": False,
+                        "description": "My new project",
+                        "old_description": "",
+                        "message": "Created and registered new project: 550e8400-e29b-41d4-a716-446655440000",
+                    },
+                    "example_existing": {
+                        "success": True,
+                        "project_id": "928bcf10-db1c-47a3-8341-f60a6d997fe7",
+                        "already_existed": True,
+                        "description": "Existing project description",
+                        "old_description": "Previous description",
+                        "message": "Project already registered: 928bcf10-db1c-47a3-8341-f60a6d997fe7",
+                    },
+                },
+                "error": {
+                    "description": "Command failed",
+                    "code": "Error code (e.g., WATCHED_DIR_NOT_FOUND, PROJECTID_EXISTS_IN_WATCHED_DIR)",
+                    "message": "Human-readable error message",
+                },
+            },
+            "best_practices": [
+                "Ensure watched_dir exists and does not contain projectid file",
+                "Use descriptive project descriptions for better organization",
+                "If project already has projectid file, it will be used (not recreated)",
+                "If project is already registered, command returns existing info without error",
+                "Always check already_existed flag to know if project was created or already existed",
+            ],
+        }

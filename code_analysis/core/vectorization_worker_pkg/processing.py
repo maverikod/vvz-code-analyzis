@@ -73,7 +73,6 @@ async def process_chunks(self, poll_interval: int = 30) -> Dict[str, Any]:
 
         while not self._stop_event.is_set():
             cycle_count += 1
-            cycle_start_time = time.time()
 
             # Check database availability
             if database is None or not db_available:
@@ -142,11 +141,11 @@ async def process_chunks(self, poll_interval: int = 30) -> Dict[str, Any]:
 
             # Database is available, proceed with cycle
             logger.info(f"[CYCLE #{cycle_count}] Starting vectorization cycle")
-            
+
             # Start worker statistics cycle
             cycle_id = database.start_vectorization_cycle()
             cycle_start_time = time.time()
-            
+
             cycle_activity = False
 
             # Get projects with files/chunks needing vectorization (sorted by count, smallest first)
@@ -155,6 +154,14 @@ async def process_chunks(self, poll_interval: int = 30) -> Dict[str, Any]:
                 if not projects:
                     logger.info(
                         f"[CYCLE #{cycle_count}] No projects with pending items found"
+                    )
+                    # Update statistics even if no projects (0 processed)
+                    database.update_vectorization_stats(
+                        cycle_id=cycle_id,
+                        chunks_processed=0,
+                        chunks_skipped=0,
+                        chunks_failed=0,
+                        processing_time_seconds=0.0,
                     )
                 else:
                     logger.info(
@@ -187,7 +194,7 @@ async def process_chunks(self, poll_interval: int = 30) -> Dict[str, Any]:
                                 self, "faiss_manager", None
                             )
                             self.faiss_manager = faiss_manager
-                            
+
                             try:
                                 if self.svo_client_manager:
                                     circuit_state = (
@@ -203,11 +210,9 @@ async def process_chunks(self, poll_interval: int = 30) -> Dict[str, Any]:
                                         )
                                     else:
                                         try:
-                                            files_to_chunk = (
-                                                database.get_files_needing_chunking(
-                                                    project_id=project_id,
-                                                    limit=5,  # Process 5 files per cycle
-                                                )
+                                            files_to_chunk = database.get_files_needing_chunking(
+                                                project_id=project_id,
+                                                limit=5,  # Process 5 files per cycle
                                             )
 
                                             if files_to_chunk:
@@ -215,10 +220,8 @@ async def process_chunks(self, poll_interval: int = 30) -> Dict[str, Any]:
                                                     f"Found {len(files_to_chunk)} files needing chunking in project {project_id}, "
                                                     "requesting chunking..."
                                                 )
-                                                chunked_count = (
-                                                    await self._request_chunking_for_files(
-                                                        database, files_to_chunk
-                                                    )
+                                                chunked_count = await self._request_chunking_for_files(
+                                                    database, files_to_chunk
                                                 )
                                                 logger.info(
                                                     f"Requested chunking for {chunked_count} files in project {project_id}"
@@ -252,13 +255,13 @@ async def process_chunks(self, poll_interval: int = 30) -> Dict[str, Any]:
                                     await process_embedding_ready_chunks(self, database)
                                 )
                                 batch_duration = time.time() - batch_start_time
-                                
+
                                 total_processed += batch_processed
                                 total_errors += batch_errors
 
                                 if batch_processed > 0:
                                     cycle_activity = True
-                                
+
                                 # Update statistics
                                 database.update_vectorization_stats(
                                     cycle_id=cycle_id,
@@ -344,7 +347,7 @@ async def process_chunks(self, poll_interval: int = 30) -> Dict[str, Any]:
 
             # End cycle
             database.end_vectorization_cycle(cycle_id)
-            
+
             cycle_duration = time.time() - cycle_start_time
             if cycle_activity:
                 logger.info(

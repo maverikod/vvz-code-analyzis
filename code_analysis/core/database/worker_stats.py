@@ -31,8 +31,17 @@ def start_file_watcher_cycle(self, cycle_id: Optional[str] = None) -> str:
 
     cycle_start_time = time.time()
 
-    # Clear previous cycle statistics (only one active cycle at a time)
-    self._execute("DELETE FROM file_watcher_stats")
+    # Don't delete previous cycles - keep history
+    # Only ensure we don't have multiple active cycles (shouldn't happen, but just in case)
+    # Mark any old active cycles as ended (with current time as end_time)
+    self._execute(
+        """
+        UPDATE file_watcher_stats
+        SET cycle_end_time = ?, last_updated = julianday('now')
+        WHERE cycle_end_time IS NULL
+        """,
+        (cycle_start_time,),
+    )
 
     # Get total files count at start
     result = self._fetchone(
@@ -161,9 +170,14 @@ def get_file_watcher_stats(self) -> Optional[Dict[str, Any]]:
     """
     Get current file watcher cycle statistics.
 
+    Returns the most recent cycle (completed or active).
+    If current cycle is active (cycle_end_time is NULL), returns it.
+    Otherwise returns the last completed cycle.
+
     Returns:
-        Dictionary with statistics or None if no active cycle
+        Dictionary with statistics or None if no cycles exist
     """
+    # First try to get active cycle (cycle_end_time is NULL)
     result = self._fetchone(
         """
         SELECT
@@ -182,10 +196,38 @@ def get_file_watcher_stats(self) -> Optional[Dict[str, Any]]:
             current_project_id,
             last_updated
         FROM file_watcher_stats
+        WHERE cycle_end_time IS NULL
         ORDER BY cycle_start_time DESC
         LIMIT 1
         """
     )
+
+    # If no active cycle, get last completed cycle
+    if not result:
+        result = self._fetchone(
+            """
+            SELECT
+                cycle_id,
+                cycle_start_time,
+                cycle_end_time,
+                files_total_at_start,
+                files_added,
+                files_processed,
+                files_skipped,
+                files_failed,
+                files_changed,
+                files_deleted,
+                total_processing_time_seconds,
+                average_processing_time_seconds,
+                current_project_id,
+                last_updated
+            FROM file_watcher_stats
+            WHERE cycle_end_time IS NOT NULL
+            ORDER BY cycle_start_time DESC
+            LIMIT 1
+            """
+        )
+
     if not result:
         return None
 

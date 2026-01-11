@@ -287,6 +287,38 @@ class MultiProjectFileWatcherWorker:
 
         return total_stats
 
+    def _count_files_on_disk(self) -> int:
+        """
+        Count total number of code files on disk across all watched directories.
+
+        This method uses the same scanning logic as _scan_watch_dir to ensure
+        consistent file detection. It scans each watch_dir and counts all discovered files.
+
+        Returns:
+            Total number of code files found on disk
+        """
+        total_files = 0
+
+        for spec in self.watch_dirs:
+            watch_dir = spec.watch_dir
+            if not watch_dir.exists():
+                continue
+
+            try:
+                # Use scan_directory with same parameters as _scan_watch_dir
+                # This ensures we count files using the same logic
+                scanned_files = scan_directory(
+                    root_dir=watch_dir,
+                    watch_dirs=[spec.watch_dir],
+                    ignore_patterns=self.ignore_patterns,
+                )
+                total_files += len(scanned_files)
+            except Exception as e:
+                logger.debug(f"Error counting files in {watch_dir}: {e}")
+                continue
+
+        return total_files
+
     async def _scan_cycle(self, database: Any, processors: Any) -> Dict[str, Any]:
         """
         Perform one scan cycle for all watched directories.
@@ -302,8 +334,15 @@ class MultiProjectFileWatcherWorker:
         """
         import time
 
-        # Start worker statistics cycle
-        cycle_id = database.start_file_watcher_cycle()
+        # Count total files on disk before starting cycle
+        logger.info("Counting total files on disk across all projects...")
+        files_total_on_disk = self._count_files_on_disk()
+        logger.info(f"Total files on disk: {files_total_on_disk}")
+
+        # Start worker statistics cycle with disk file count
+        cycle_id = database.start_file_watcher_cycle(
+            files_total_at_start=files_total_on_disk
+        )
 
         cycle_stats: Dict[str, Any] = {
             "scanned_dirs": 0,

@@ -16,12 +16,16 @@ from typing import Any, Dict, Optional
 logger = logging.getLogger(__name__)
 
 
-def start_file_watcher_cycle(self, cycle_id: Optional[str] = None) -> str:
+def start_file_watcher_cycle(
+    self, cycle_id: Optional[str] = None, files_total_at_start: Optional[int] = None
+) -> str:
     """
     Start a new file watcher cycle and clear previous statistics.
 
     Args:
         cycle_id: Optional cycle ID (UUID4). If not provided, will be generated.
+        files_total_at_start: Optional total files count on disk at cycle start.
+            If not provided, will count from database.
 
     Returns:
         Cycle ID string
@@ -44,10 +48,13 @@ def start_file_watcher_cycle(self, cycle_id: Optional[str] = None) -> str:
     )
 
     # Get total files count at start
-    result = self._fetchone(
-        "SELECT COUNT(*) as count FROM files WHERE (deleted = 0 OR deleted IS NULL)"
-    )
-    files_total_at_start = result["count"] if result else 0
+    # If files_total_at_start is provided (counted from disk), use it
+    # Otherwise, count from database (backward compatibility)
+    if files_total_at_start is None:
+        result = self._fetchone(
+            "SELECT COUNT(*) as count FROM files WHERE (deleted = 0 OR deleted IS NULL)"
+        )
+        files_total_at_start = result["count"] if result else 0
 
     # Insert new cycle record
     self._execute(

@@ -104,6 +104,17 @@ class GetWorkerStatusMCPCommand(BaseMCPCommand):
                                         )
                                 else:
                                     stats["processing_speed_files_per_second"] = None
+
+                                # Calculate percentage of processed files
+                                files_total = stats.get("files_total_at_start", 0)
+                                files_processed = stats.get("files_processed", 0)
+                                if files_total and files_total > 0:
+                                    stats["files_processed_percent"] = round(
+                                        (files_processed / files_total) * 100, 2
+                                    )
+                                else:
+                                    stats["files_processed_percent"] = None
+
                                 result["cycle_stats"] = stats
                         elif worker_type == "vectorization":
                             stats = db.get_vectorization_stats()
@@ -698,6 +709,17 @@ class GetDatabaseStatusMCPCommand(BaseMCPCommand):
                 else:
                     if file_watcher_stats:
                         file_watcher_stats["processing_speed_files_per_second"] = None
+
+                # Calculate percentage of processed files
+                if file_watcher_stats:
+                    files_total = file_watcher_stats.get("files_total_at_start", 0)
+                    files_processed = file_watcher_stats.get("files_processed", 0)
+                    if files_total and files_total > 0:
+                        file_watcher_stats["files_processed_percent"] = round(
+                            (files_processed / files_total) * 100, 2
+                        )
+                    else:
+                        file_watcher_stats["files_processed_percent"] = None
 
                 if vectorization_stats and vectorization_stats.get(
                     "average_processing_time_seconds"

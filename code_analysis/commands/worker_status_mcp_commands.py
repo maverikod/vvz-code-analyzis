@@ -529,7 +529,13 @@ class GetDatabaseStatusMCPCommand(BaseMCPCommand):
                          AND (f.deleted = 0 OR f.deleted IS NULL)
                          AND EXISTS (SELECT 1 FROM code_chunks WHERE code_chunks.file_id = f.id)) as chunked_files,
                         (SELECT COUNT(*) FROM code_chunks WHERE project_id = p.id) as chunk_count,
-                        (SELECT COUNT(*) FROM code_chunks WHERE project_id = p.id AND vector_id IS NOT NULL) as vectorized_chunks
+                        (SELECT COUNT(*) FROM code_chunks WHERE project_id = p.id AND vector_id IS NOT NULL) as vectorized_chunks,
+                        (SELECT COUNT(DISTINCT f.id)
+                         FROM files f
+                         INNER JOIN code_chunks cc ON f.id = cc.file_id
+                         WHERE f.project_id = p.id
+                         AND (f.deleted = 0 OR f.deleted IS NULL)
+                         AND cc.vector_id IS NOT NULL) as files_vectorized
                     FROM projects p
                     ORDER BY p.name
                     LIMIT 10
@@ -542,7 +548,13 @@ class GetDatabaseStatusMCPCommand(BaseMCPCommand):
                     chunked_files = p["chunked_files"] or 0
                     chunk_count = p["chunk_count"] or 0
                     vectorized_chunks = p["vectorized_chunks"] or 0
+                    files_vectorized = p["files_vectorized"] or 0
 
+                    # Files processed by file_watcher = all active files in project
+                    # (if file is in database and not deleted, it was processed by watcher)
+                    files_processed_by_watcher = file_count
+
+                    # Calculate percentages
                     chunked_percent = (
                         round((chunked_files / file_count * 100), 2)
                         if file_count > 0
@@ -553,12 +565,25 @@ class GetDatabaseStatusMCPCommand(BaseMCPCommand):
                         if chunk_count > 0
                         else 0
                     )
+                    # Percentage of processed files = 100% if file_count > 0
+                    # (all files in database are considered processed by watcher)
+                    files_processed_percent = 100.0 if file_count > 0 else 0.0
+                    # Percentage of vectorized files
+                    files_vectorized_percent = (
+                        round((files_vectorized / file_count * 100), 2)
+                        if file_count > 0
+                        else 0
+                    )
 
                     project_list.append(
                         {
                             "id": p["id"],
                             "name": p["name"],
                             "file_count": file_count,
+                            "files_processed_by_watcher": files_processed_by_watcher,
+                            "files_processed_percent": files_processed_percent,
+                            "files_vectorized": files_vectorized,
+                            "files_vectorized_percent": files_vectorized_percent,
                             "chunked_files": chunked_files,
                             "chunked_percent": chunked_percent,
                             "chunk_count": chunk_count,

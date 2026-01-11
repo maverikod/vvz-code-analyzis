@@ -247,6 +247,19 @@ class DeleteUnwatchedProjectsCommand:
                 )
                 continue
 
+            # Check if project root path exists on disk
+            if not project_path.exists():
+                # Project root doesn't exist on disk - mark for deletion
+                projects_to_delete.append(
+                    {
+                        "project_id": project_id,
+                        "root_path": root_path,
+                        "name": project_name,
+                        "reason": "root_path_not_exists_on_disk",
+                    }
+                )
+                continue
+
             # Check if project is in discovered projects
             if project_id in discovered_project_ids:
                 projects_to_keep.append(
@@ -258,12 +271,14 @@ class DeleteUnwatchedProjectsCommand:
                     }
                 )
             else:
-                projects_to_delete.append(
+                # Project exists on disk but not in watched directories
+                # Keep it (it's a valid project, just not in current watch_dirs config)
+                projects_to_keep.append(
                     {
                         "project_id": project_id,
                         "root_path": root_path,
                         "name": project_name,
-                        "reason": "not_discovered_in_watch_dirs",
+                        "reason": "exists_on_disk_but_not_in_watch_dirs",
                     }
                 )
 

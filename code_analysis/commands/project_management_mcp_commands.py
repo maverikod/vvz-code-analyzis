@@ -391,7 +391,10 @@ class ChangeProjectIdMCPCommand(BaseMCPCommand):
                     ValidationError(
                         f"projectid file not found: {projectid_path}",
                         field="root_dir",
-                        details={"root_dir": str(root_dir), "projectid_path": str(projectid_path)},
+                        details={
+                            "root_dir": str(root_dir),
+                            "projectid_path": str(projectid_path),
+                        },
                     ),
                     "PROJECTID_FILE_NOT_FOUND",
                     "change_project_id",
@@ -438,7 +441,10 @@ class ChangeProjectIdMCPCommand(BaseMCPCommand):
                     ValidationError(
                         f"Failed to write projectid file: {str(e)}",
                         field="root_dir",
-                        details={"projectid_path": str(projectid_path), "error": str(e)},
+                        details={
+                            "projectid_path": str(projectid_path),
+                            "error": str(e),
+                        },
                     ),
                     "PROJECTID_WRITE_ERROR",
                     "change_project_id",
@@ -451,7 +457,10 @@ class ChangeProjectIdMCPCommand(BaseMCPCommand):
                 try:
                     # Resolve database path from config
                     config_path = self._resolve_config_path()
-                    from ..core.storage_paths import load_raw_config, resolve_storage_paths
+                    from ..core.storage_paths import (
+                        load_raw_config,
+                        resolve_storage_paths,
+                    )
 
                     config_data = load_raw_config(config_path)
                     storage = resolve_storage_paths(
@@ -490,7 +499,9 @@ class ChangeProjectIdMCPCommand(BaseMCPCommand):
                         else:
                             # Project doesn't exist in database, create it with new ID
                             database.get_or_create_project(
-                                str(root_path), name=root_path.name, project_id=new_project_id
+                                str(root_path),
+                                name=root_path.name,
+                                project_id=new_project_id,
                             )
                             database_updated = True
                             database_project_id = new_project_id
@@ -501,7 +512,8 @@ class ChangeProjectIdMCPCommand(BaseMCPCommand):
                         database.close()
                 except Exception as e:
                     logger.warning(
-                        f"Failed to update database (file was updated): {str(e)}", exc_info=True
+                        f"Failed to update database (file was updated): {str(e)}",
+                        exc_info=True,
                     )
                     # Don't fail the command if database update fails - file was already updated
 
@@ -653,7 +665,9 @@ class DeleteProjectMCPCommand(BaseMCPCommand):
 
                 if not result.get("success"):
                     return self._handle_error(
-                        DatabaseError(result.get("message", "Failed to delete project")),
+                        DatabaseError(
+                            result.get("message", "Failed to delete project")
+                        ),
                         result.get("error", "DELETION_ERROR"),
                         "delete_project",
                     )
@@ -977,8 +991,19 @@ class DeleteUnwatchedProjectsMCPCommand(BaseMCPCommand):
 
                 config_data = load_raw_config(config_path)
                 worker_config = config_data.get("code_analysis", {}).get("worker", {})
-                watched_dirs = worker_config.get("watch_dirs", [])
-                
+                config_watch_dirs = worker_config.get("watch_dirs", [])
+
+                # Extract paths from watch_dirs config (can be list of dicts or list of strings)
+                watched_dirs = []
+                for item in config_watch_dirs:
+                    if isinstance(item, dict):
+                        # New format: {"id": "uuid", "path": "/path"}
+                        if "path" in item:
+                            watched_dirs.append(item["path"])
+                    elif isinstance(item, str):
+                        # Old format: just string path
+                        watched_dirs.append(item)
+
                 # Also check dynamic_watch_file
                 dynamic_watch_file = worker_config.get("dynamic_watch_file")
                 if dynamic_watch_file:
@@ -986,10 +1011,16 @@ class DeleteUnwatchedProjectsMCPCommand(BaseMCPCommand):
                     if dynamic_path.exists():
                         try:
                             import json
+
                             with open(dynamic_path, "r", encoding="utf-8") as f:
                                 dynamic_dirs = json.load(f)
                                 if isinstance(dynamic_dirs, list):
-                                    watched_dirs.extend(dynamic_dirs)
+                                    # Extract paths from dynamic_dirs if they are dicts
+                                    for item in dynamic_dirs:
+                                        if isinstance(item, dict) and "path" in item:
+                                            watched_dirs.append(item["path"])
+                                        elif isinstance(item, str):
+                                            watched_dirs.append(item)
                         except Exception as e:
                             logger.warning(f"Failed to load dynamic watch dirs: {e}")
 
@@ -1025,7 +1056,9 @@ class DeleteUnwatchedProjectsMCPCommand(BaseMCPCommand):
             finally:
                 database.close()
         except Exception as e:
-            return self._handle_error(e, "DELETE_UNWATCHED_PROJECTS_ERROR", "delete_unwatched_projects")
+            return self._handle_error(
+                e, "DELETE_UNWATCHED_PROJECTS_ERROR", "delete_unwatched_projects"
+            )
 
     @classmethod
     def metadata(cls: type["DeleteUnwatchedProjectsMCPCommand"]) -> Dict[str, Any]:
@@ -1497,4 +1530,3 @@ class ListProjectsMCPCommand(BaseMCPCommand):
                 database.close()
         except Exception as e:
             return self._handle_error(e, "LIST_PROJECTS_ERROR", "list_projects")
-

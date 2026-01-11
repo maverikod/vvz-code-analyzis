@@ -48,23 +48,103 @@ class WorkerManager:
     - Register workers when they start
     - Track worker processes by type and PID
     - Gracefully shut down all workers on server shutdown
-    - Provide status information about all workers
-    - Start workers as separate processes (multiprocessing.Process)
-    - Guarantee process termination: if a process doesn't stop within timeout,
-      it will be forcefully killed (SIGKILL)
-
-    Process Control:
-    - All workers are started as separate processes (not threads, not async tasks)
-    - This prevents conflicts with Hypercorn's event loop
-    - WorkerManager has full control over worker processes
-    - If a process doesn't stop gracefully within timeout, it is forcefully killed
-    - Multiple fallback mechanisms ensure processes are terminated:
-      1. SIGTERM (graceful shutdown)
-      2. Wait for timeout
-      3. SIGKILL via process.kill()
-      4. If still alive, SIGKILL via psutil.Process.kill()
-      5. Final verification and error logging if process persists
     """
+
+    def _check_and_cleanup_pid_file(
+        self,
+        pid_file_path: Path,
+        worker_type: str,
+        process_name_pattern: Optional[str] = None,
+    ) -> Optional[int]:
+        """
+        Check PID file and verify that process exists and is the correct worker.
+
+        If PID file exists:
+        1. Read PID from file
+        2. Check if process with that PID exists
+        3. Optionally verify process name matches pattern
+        4. If process doesn't exist or doesn't match, remove stale PID file
+        5. Return PID if process is alive and valid, None otherwise
+
+        Args:
+            pid_file_path: Path to PID file
+            worker_type: Worker type for logging
+            process_name_pattern: Optional pattern to match in process cmdline
+                                 (e.g., "vectorization" or "file_watcher")
+
+        Returns:
+            PID if process is alive and valid, None if PID file should be ignored
+        """
+        if not pid_file_path.exists():
+            return None
+
+        try:
+            with open(pid_file_path, "r") as f:
+                pid = int(f.read().strip())
+        except (ValueError, IOError) as e:
+            logger.warning(
+                f"Error reading PID file {pid_file_path} for {worker_type}: {e}, removing stale file"
+            )
+            try:
+                pid_file_path.unlink()
+            except Exception:
+                pass
+            return None
+
+        # Check if process exists
+        try:
+            os.kill(pid, 0)  # Signal 0 just checks if process exists
+        except OSError:
+            # Process doesn't exist, remove stale PID file
+            logger.info(
+                f"Process {pid} from PID file {pid_file_path} doesn't exist, removing stale file"
+            )
+            try:
+                pid_file_path.unlink()
+            except Exception:
+                pass
+            return None
+
+        # Optionally verify process name matches expected pattern
+        if process_name_pattern:
+            try:
+                import psutil
+
+                process = psutil.Process(pid)
+                cmdline = " ".join(process.cmdline())
+                if process_name_pattern.lower() not in cmdline.lower():
+                    logger.warning(
+                        f"Process {pid} exists but doesn't match pattern '{process_name_pattern}', "
+                        f"removing stale PID file. Cmdline: {cmdline}"
+                    )
+                    try:
+                        pid_file_path.unlink()
+                    except Exception:
+                        pass
+                    return None
+            except (psutil.NoSuchProcess, psutil.AccessDenied, ImportError) as e:
+                # Process disappeared, psutil not available, or access denied
+                # If psutil not available, skip name check but keep PID
+                if isinstance(e, ImportError):
+                    logger.debug(
+                        f"psutil not available, skipping process name verification for {worker_type}"
+                    )
+                    return pid
+                # Process disappeared or access denied - remove stale PID file
+                logger.info(
+                    f"Process {pid} from PID file {pid_file_path} is not accessible, removing stale file"
+                )
+                try:
+                    pid_file_path.unlink()
+                except Exception:
+                    pass
+                return None
+
+        # Process exists and matches (if pattern provided)
+        logger.debug(
+            f"Process {pid} from PID file {pid_file_path} is alive and valid for {worker_type}"
+        )
+        return pid
 
     _instance: Optional["WorkerManager"] = None
     _lock = threading.Lock()
@@ -373,7 +453,9 @@ class WorkerManager:
                                         f"{worker_type} worker {name} (PID: {pid}) did not stop within {timeout}s, sending SIGKILL"
                                     )
                                     process.kill()
-                                    process.join(timeout=2.0)  # Wait up to 2s for kill to take effect
+                                    process.join(
+                                        timeout=2.0
+                                    )  # Wait up to 2s for kill to take effect
 
                                 # Verify process is actually dead - use multiple methods
                                 process_dead = False
@@ -411,7 +493,10 @@ class WorkerManager:
                                                     f"Force killed {worker_type} process via PID fallback: {name} (PID: {pid})"
                                                 )
                                             result["stopped"] += 1
-                                        except (psutil.NoSuchProcess, psutil.AccessDenied):
+                                        except (
+                                            psutil.NoSuchProcess,
+                                            psutil.AccessDenied,
+                                        ):
                                             # Process is dead or we can't access it
                                             result["stopped"] += 1
                                         except Exception as e:
@@ -444,7 +529,10 @@ class WorkerManager:
                                                     f"Force killed {worker_type} process via PID after process.kill() failed: {name} (PID: {pid})"
                                                 )
                                             result["stopped"] += 1
-                                        except (psutil.NoSuchProcess, psutil.AccessDenied):
+                                        except (
+                                            psutil.NoSuchProcess,
+                                            psutil.AccessDenied,
+                                        ):
                                             # Process is dead or we can't access it
                                             result["stopped"] += 1
                                         except Exception as e:
@@ -780,6 +868,20 @@ class WorkerManager:
         """
         from .file_watcher_pkg.runner import run_file_watcher_worker
 
+        # PID file check (before starting worker)
+        pid_file_path = Path("logs") / "file_watcher_worker.pid"
+        existing_pid = self._check_and_cleanup_pid_file(
+            pid_file_path, "file_watcher", "file_watcher"
+        )
+        if existing_pid is not None:
+            # Process is alive, worker already running
+            return WorkerStartResult(
+                success=False,
+                worker_type="file_watcher",
+                pid=existing_pid,
+                message="File watcher worker already running",
+            )
+
         # Create process (NOT thread, NOT async task)
         process = multiprocessing.Process(
             target=run_file_watcher_worker,
@@ -795,9 +897,21 @@ class WorkerManager:
         )
         process.start()
 
+        # Write PID file after worker starts
+        try:
+            pid_file_path.parent.mkdir(parents=True, exist_ok=True)
+            with open(pid_file_path, "w") as f:
+                f.write(str(process.pid))
+        except Exception as e:
+            logger.warning(f"Failed to write PID file: {e}")
+
         # Use first watch_dir as identifier for worker name
         first_watch_dir = watch_dirs[0] if watch_dirs else {}
-        first_path = first_watch_dir.get("path", "default") if isinstance(first_watch_dir, dict) else str(first_watch_dir)
+        first_path = (
+            first_watch_dir.get("path", "default")
+            if isinstance(first_watch_dir, dict)
+            else str(first_watch_dir)
+        )
         worker_name = f"file_watcher_{Path(first_path).name}"
         self.register_worker(
             "file_watcher",
@@ -846,29 +960,17 @@ class WorkerManager:
 
         # PID file check (before starting worker)
         pid_file_path = Path("logs") / "vectorization_worker.pid"
-        if pid_file_path.exists():
-            try:
-                with open(pid_file_path, "r") as f:
-                    pid = int(f.read().strip())
-                # Check if process is alive
-                try:
-                    os.kill(pid, 0)  # Signal 0 just checks if process exists
-                    # Process is alive, worker already running
-                    return WorkerStartResult(
-                        success=False,
-                        worker_type="vectorization",
-                        pid=pid,
-                        message="Vectorization worker already running",
-                    )
-                except OSError:
-                    # Process is dead, remove stale PID file
-                    pid_file_path.unlink()
-            except Exception as e:
-                logger.warning(f"Error checking PID file: {e}, removing stale file")
-                try:
-                    pid_file_path.unlink()
-                except Exception:
-                    pass
+        existing_pid = self._check_and_cleanup_pid_file(
+            pid_file_path, "vectorization", "vectorization"
+        )
+        if existing_pid is not None:
+            # Process is alive, worker already running
+            return WorkerStartResult(
+                success=False,
+                worker_type="vectorization",
+                pid=existing_pid,
+                message="Vectorization worker already running",
+            )
 
         # Create process (NOT thread, NOT async task)
         process = multiprocessing.Process(

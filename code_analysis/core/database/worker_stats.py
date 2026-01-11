@@ -331,7 +331,10 @@ def start_vectorization_cycle(self, cycle_id: Optional[str] = None) -> str:
     self._commit()
 
     logger.debug(
-        f"Started vectorization cycle {cycle_id}, chunks_total_at_start={chunks_total_at_start}"
+        f"Started vectorization cycle {cycle_id}, "
+        f"chunks_total_at_start={chunks_total_at_start}, "
+        f"files_total_at_start={files_total_at_start}, "
+        f"files_vectorized={files_vectorized}"
     )
     return cycle_id
 

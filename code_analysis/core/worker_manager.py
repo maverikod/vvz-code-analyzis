@@ -256,11 +256,15 @@ class WorkerManager:
                                         proc.terminate()
                                         try:
                                             proc.wait(timeout=timeout)
-                                        except Exception:
+                                            logger.info(
+                                                f"Stopped {worker_type} process via PID fallback: {name} (PID: {pid})"
+                                            )
+                                        except (psutil.TimeoutExpired, Exception):
+                                            # Force kill if still running after timeout
                                             proc.kill()
-                                    logger.info(
-                                        f"Stopped {worker_type} process via PID fallback: {name} (PID: {pid})"
-                                    )
+                                            logger.warning(
+                                                f"Force killed {worker_type} process via PID fallback after timeout: {name} (PID: {pid})"
+                                            )
                                     result["stopped"] += 1
                                 except Exception as e:
                                     error_msg = f"Failed to stop {worker_type} process via PID fallback {name} (PID: {pid}): {e}"
@@ -277,8 +281,10 @@ class WorkerManager:
                             try:
                                 # Send SIGTERM for graceful shutdown
                                 process.terminate()
-                                logger.info(f"Sent SIGTERM to {worker_type} worker {name} (PID: {pid})")
-                                
+                                logger.info(
+                                    f"Sent SIGTERM to {worker_type} worker {name} (PID: {pid})"
+                                )
+
                                 # Wait for graceful shutdown with timeout
                                 process.join(timeout=timeout)
 
@@ -300,7 +306,7 @@ class WorkerManager:
                                                 logger.info(
                                                     f"Stopped {worker_type} process via PID fallback after parent mismatch: {name} (PID: {pid})"
                                                 )
-                                            except Exception:
+                                            except (psutil.TimeoutExpired, Exception):
                                                 # Force kill if still running after timeout
                                                 proc.kill()
                                                 logger.warning(
@@ -344,6 +350,7 @@ class WorkerManager:
                                     if pid:
                                         try:
                                             import psutil
+
                                             proc = psutil.Process(pid)
                                             if proc.is_running():
                                                 proc.kill()
@@ -396,10 +403,11 @@ class WorkerManager:
                                         f"Stopped {worker_type} process (PID: {pid})"
                                     )
                                     result["stopped"] += 1
-                                except Exception:
+                                except (psutil.TimeoutExpired, Exception):
+                                    # Force kill if still running after timeout
                                     proc.kill()
                                     logger.warning(
-                                        f"Force killed {worker_type} process (PID: {pid})"
+                                        f"Force killed {worker_type} process (PID: {pid}) after timeout"
                                     )
                                     result["stopped"] += 1
                             else:
@@ -438,7 +446,7 @@ class WorkerManager:
             Dictionary with stop results
         """
         self._shutdown_requested = True
-        
+
         # Stop monitoring thread first
         self.stop_monitoring()
 
@@ -533,7 +541,7 @@ class WorkerManager:
         logger.info("Stopping worker monitoring thread...")
         self._monitor_stop_event.set()
         self._monitor_thread.join(timeout=timeout)
-        
+
         if self._monitor_thread.is_alive():
             logger.warning("Worker monitoring thread did not stop within timeout")
         else:
@@ -542,24 +550,24 @@ class WorkerManager:
     def _monitor_workers_loop(self) -> None:
         """Background loop to monitor worker processes."""
         logger.info("Worker monitoring loop started")
-        
+
         while not self._monitor_stop_event.is_set():
             try:
                 if self._shutdown_requested:
                     break
-                
+
                 self._check_and_restart_workers()
-                
+
                 # Wait for interval or stop event
                 if self._monitor_stop_event.wait(timeout=self._monitor_interval):
                     break
-                    
+
             except Exception as e:
                 logger.error(f"Error in worker monitoring loop: {e}", exc_info=True)
                 # Wait a bit before retrying
                 if self._monitor_stop_event.wait(timeout=5.0):
                     break
-        
+
         logger.info("Worker monitoring loop stopped")
 
     def _check_and_restart_workers(self) -> None:
@@ -587,10 +595,11 @@ class WorkerManager:
                         except (ValueError, AssertionError):
                             # Process handle invalid, check by PID
                             is_alive = False
-                    
+
                     if not is_alive and pid:
                         try:
                             import psutil
+
                             proc = psutil.Process(pid)
                             is_alive = proc.is_running()
                         except (psutil.NoSuchProcess, psutil.AccessDenied):
@@ -600,15 +609,19 @@ class WorkerManager:
                         logger.warning(
                             f"Worker {worker_type} {name} (PID: {pid}) is dead, attempting restart..."
                         )
-                        
+
                         # Unregister dead worker
                         self.unregister_worker(worker_type, pid)
-                        
+
                         # Restart if restart function is available
                         if restart_func:
                             try:
-                                logger.info(f"Restarting {worker_type} worker {name}...")
-                                new_worker_info = restart_func(*restart_args, **restart_kwargs)
+                                logger.info(
+                                    f"Restarting {worker_type} worker {name}..."
+                                )
+                                new_worker_info = restart_func(
+                                    *restart_args, **restart_kwargs
+                                )
                                 if new_worker_info:
                                     self.register_worker(worker_type, new_worker_info)
                                     logger.info(
@@ -616,7 +629,9 @@ class WorkerManager:
                                         f"(new PID: {new_worker_info.get('pid')})"
                                     )
                                 else:
-                                    logger.error(f"Failed to restart {worker_type} worker {name}: restart function returned None")
+                                    logger.error(
+                                        f"Failed to restart {worker_type} worker {name}: restart function returned None"
+                                    )
                             except Exception as e:
                                 logger.error(
                                     f"Failed to restart {worker_type} worker {name}: {e}",
@@ -626,7 +641,7 @@ class WorkerManager:
                             logger.warning(
                                 f"Cannot restart {worker_type} worker {name}: no restart function provided"
                             )
-                            
+
                 except Exception as e:
                     logger.error(
                         f"Error checking {worker_type} worker: {e}",

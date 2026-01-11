@@ -520,7 +520,7 @@ def main() -> None:
     # Registration happens automatically via AppFactory if auto_on_startup is enabled
 
     # Start vectorization worker on startup
-    async def startup_vectorization_worker() -> None:
+    def startup_vectorization_worker() -> None:
         """Start universal vectorization worker in background process on server startup.
 
         Worker operates in universal mode - processes all projects from database.
@@ -595,7 +595,9 @@ def main() -> None:
             # Database auto-creation (only if database doesn't exist)
             db_path_obj = Path(db_path)
             if not db_path_obj.exists():
-                logger.info(f"Database file not found, creating new database at {db_path}")
+                logger.info(
+                    f"Database file not found, creating new database at {db_path}"
+                )
                 try:
                     from code_analysis.core.database import CodeDatabase
                     from code_analysis.core.database.base import (
@@ -647,12 +649,12 @@ def main() -> None:
             # Update log file path to universal name (no project_id in name)
             if worker_log_path:
                 log_path_obj = Path(worker_log_path)
-                worker_log_path = str(
-                    log_path_obj.parent / "vectorization_worker.log"
-                )
+                worker_log_path = str(log_path_obj.parent / "vectorization_worker.log")
             else:
                 # Default log path
-                worker_log_path = str(storage.config_dir / "logs" / "vectorization_worker.log")
+                worker_log_path = str(
+                    storage.config_dir / "logs" / "vectorization_worker.log"
+                )
 
             # Start single universal worker using worker_launcher
             logger.info("🚀 Starting universal vectorization worker...")
@@ -687,7 +689,7 @@ def main() -> None:
             )
             logger.error(f"❌ Failed to start vectorization worker: {e}", exc_info=True)
 
-    async def startup_file_watcher_worker() -> None:
+    def startup_file_watcher_worker() -> None:
         """Start file watcher worker in background process on server startup.
 
         Returns:
@@ -1008,8 +1010,15 @@ def main() -> None:
         Returns:
             None
         """
+        import os
+        import signal as signal_module
+
         main_logger.info(f"Received signal {signum}, stopping all workers...")
         cleanup_workers()
+
+        # If process doesn't exit gracefully, it will be killed by external process manager
+        # (e.g., systemd, supervisor, or server_manager_cli with _kill_process_group)
+        # This handler ensures workers are stopped before exit
         sys.exit(0)
 
     # Register handlers (before server starts, after app creation)
@@ -1019,7 +1028,6 @@ def main() -> None:
 
     # Start workers directly before server starts (startup events may not be called)
     # This ensures workers start regardless of FastAPI event system
-    import asyncio
     import logging
 
     worker_logger = logging.getLogger(__name__)
@@ -1030,101 +1038,53 @@ def main() -> None:
         # DB worker is now started lazily by SQLiteDriverProxy.connect()
         # No automatic startup needed - worker will be started when database connection is requested
 
-        # Start vectorization and file watcher workers in background
-        # IMPORTANT: do not set/close the global event loop in the main thread
-        # (Hypercorn will manage its own asyncio loop).
-        async def _start_non_db_workers() -> None:
-            """Start non-DB workers with error handling.
-
-            Returns:
-                None
-            """
-            worker_logger.info(
-                "🔍 [MAIN] Entering _start_non_db_workers async function"
-            )
-
-            # DB worker is started lazily by SQLiteDriverProxy.connect()
-            # No need to check or start it here
-            worker_logger.info(
-                "🔍 [MAIN] DB worker will be started lazily when database connection is requested"
-            )
-            
-            # Just log that we're starting non-DB workers
-            worker_logger.info(
-                "🔍 [MAIN] Starting non-DB workers (file_watcher, vectorization)"
-            )
-            
-            # Start non-DB workers
-            try:
-                worker_logger.info("🚀 [MAIN] Starting vectorization worker...")
-                await startup_vectorization_worker()
-                worker_logger.info(
-                    "✅ [MAIN] Vectorization worker started successfully"
-                )
-            except Exception as e:
-                worker_logger.error(
-                    f"❌ [MAIN] Failed to start vectorization worker: {e}",
-                    exc_info=True,
-                )
-                print(
-                    f"❌ [MAIN] Failed to start vectorization worker: {e}",
-                    flush=True,
-                    file=sys.stderr,
-                )
-
-            try:
-                worker_logger.info("🚀 [MAIN] Starting file watcher worker...")
-                await startup_file_watcher_worker()
-                worker_logger.info("✅ [MAIN] File watcher worker started successfully")
-            except Exception as e:
-                worker_logger.error(
-                    f"❌ [MAIN] Failed to start file watcher worker: {e}",
-                    exc_info=True,
-                )
-                print(
-                    f"❌ [MAIN] Failed to start file watcher worker: {e}",
-                    flush=True,
-                    file=sys.stderr,
-                )
-
-            worker_logger.info("✅ [MAIN] _start_non_db_workers completed")
-
-        import threading
-
-        def _start_non_db_workers_thread() -> None:
-            """Start non-DB workers in background thread.
-
-            Returns:
-                None
-            """
-            worker_logger.info("🔍 [THREAD] Entering _start_non_db_workers_thread")
-            try:
-                worker_logger.info(
-                    "🔍 [THREAD] Calling asyncio.run(_start_non_db_workers)..."
-                )
-                asyncio.run(_start_non_db_workers())
-                worker_logger.info("✅ [THREAD] asyncio.run completed successfully")
-            except Exception as e:
-                worker_logger.error(
-                    f"❌ [THREAD] Failed to start non-DB workers: {e}",
-                    exc_info=True,
-                )
-                print(
-                    f"❌ [THREAD] Failed to start non-DB workers: {e}",
-                    flush=True,
-                    file=sys.stderr,
-                )
-
-        worker_logger.info("🔍 Creating background thread for non-DB workers...")
-        thread = threading.Thread(target=_start_non_db_workers_thread, daemon=True)
-        thread.start()
-        worker_logger.info(f"✅ Background thread started: {thread.is_alive()}")
-
+        # Start vectorization and file watcher workers synchronously
+        # Workers are separate processes (multiprocessing.Process), so no need for async/await
+        # This avoids asyncio.run() conflicts with Hypercorn's event loop
         worker_logger.info(
-            "✅ DB worker started, non-DB workers starting in background thread"
+            "🔍 Starting non-DB workers (file_watcher, vectorization) synchronously"
         )
+
+        # DB worker is started lazily by SQLiteDriverProxy.connect()
+        # No need to check or start it here
+        worker_logger.info(
+            "🔍 DB worker will be started lazily when database connection is requested"
+        )
+
+        # Start non-DB workers synchronously (they are separate processes)
+        try:
+            worker_logger.info("🚀 Starting vectorization worker...")
+            startup_vectorization_worker()
+            worker_logger.info("✅ Vectorization worker started successfully")
+        except Exception as e:
+            worker_logger.error(
+                f"❌ Failed to start vectorization worker: {e}",
+                exc_info=True,
+            )
+            print(
+                f"❌ Failed to start vectorization worker: {e}",
+                flush=True,
+                file=sys.stderr,
+            )
+
+        try:
+            worker_logger.info("🚀 Starting file watcher worker...")
+            startup_file_watcher_worker()
+            worker_logger.info("✅ File watcher worker started successfully")
+        except Exception as e:
+            worker_logger.error(
+                f"❌ Failed to start file watcher worker: {e}",
+                exc_info=True,
+            )
+            print(
+                f"❌ Failed to start file watcher worker: {e}",
+                flush=True,
+                file=sys.stderr,
+            )
+
+        worker_logger.info("✅ Non-DB workers startup completed")
         print(
-            "✅ DB worker started, non-DB workers starting in background thread",
+            "✅ DB worker started, non-DB workers started",
             flush=True,
         )
     except Exception as e:

@@ -304,16 +304,17 @@ class DBWorkerManager:
                     # Wait for graceful shutdown
                     process.join(timeout=5.0)
 
-                    # Force terminate if still alive
+                    # Force kill if still alive after timeout
                     try:
                         if process.is_alive():
-                            process.terminate()
+                            logger.warning(
+                                f"DB worker (PID: {pid}) did not stop within 5.0s, sending SIGKILL"
+                            )
+                            process.kill()
                             process.join(timeout=1.0)
-                            try:
-                                if process.is_alive():
-                                    process.kill()
-                            except (ValueError, AssertionError):
-                                pass  # Process already terminated
+                            logger.warning(
+                                f"Force killed DB worker process (PID: {pid})"
+                            )
                     except (ValueError, AssertionError):
                         pass  # Process already terminated
 

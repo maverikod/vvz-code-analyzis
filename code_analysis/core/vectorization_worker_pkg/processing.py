@@ -231,11 +231,6 @@ async def process_chunks(self, poll_interval: int = 30) -> Dict[str, Any]:
                             finally:
                                 # Restore original faiss_manager
                                 self.faiss_manager = original_faiss_manager_chunking
-                            else:
-                                # No SVO client manager, skip chunking
-                                logger.debug(
-                                    f"SVO client manager not available, skipping chunking requests for project {project_id}"
-                                )
 
                             # Step 2: Assign vector_id in FAISS for chunks that already have embeddings.
                             # Temporarily set faiss_manager for batch processor

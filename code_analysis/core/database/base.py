@@ -17,9 +17,7 @@ from ..db_driver import create_driver
 logger = logging.getLogger(__name__)
 
 # Schema version constant
-SCHEMA_VERSION = (
-    "1.2.0"  # Current schema version (added current_project_id to file_watcher_stats)
-)
+SCHEMA_VERSION = "1.3.0"  # Current schema version (added files_total_at_start and files_vectorized to vectorization_stats)
 
 # Migration methods registry: version -> migration function
 # Each migration function receives driver instance and performs version-specific migrations
@@ -792,6 +790,8 @@ class CodeDatabase:
                     chunks_processed INTEGER NOT NULL DEFAULT 0,
                     chunks_skipped INTEGER NOT NULL DEFAULT 0,
                     chunks_failed INTEGER NOT NULL DEFAULT 0,
+                    files_total_at_start INTEGER NOT NULL DEFAULT 0,
+                    files_vectorized INTEGER NOT NULL DEFAULT 0,
                     total_processing_time_seconds REAL NOT NULL DEFAULT 0.0,
                     average_processing_time_seconds REAL,
                     last_updated REAL DEFAULT (julianday('now'))
@@ -1115,6 +1115,34 @@ class CodeDatabase:
             # Table might not exist yet, that's OK
             logger.debug(
                 f"Could not check/add current_project_id to file_watcher_stats: {e}"
+            )
+
+        # Migration: Add files_total_at_start and files_vectorized columns to vectorization_stats table
+        try:
+            vectorization_stats_table_info = self._get_table_info("vectorization_stats")
+            vectorization_stats_columns = {
+                col["name"]: col["type"] for col in vectorization_stats_table_info
+            }
+            if "files_total_at_start" not in vectorization_stats_columns:
+                logger.info(
+                    "Migrating vectorization_stats table: adding files_total_at_start column"
+                )
+                self._execute(
+                    "ALTER TABLE vectorization_stats ADD COLUMN files_total_at_start INTEGER NOT NULL DEFAULT 0"
+                )
+                self._commit()
+            if "files_vectorized" not in vectorization_stats_columns:
+                logger.info(
+                    "Migrating vectorization_stats table: adding files_vectorized column"
+                )
+                self._execute(
+                    "ALTER TABLE vectorization_stats ADD COLUMN files_vectorized INTEGER NOT NULL DEFAULT 0"
+                )
+                self._commit()
+        except Exception as e:
+            # Table might not exist yet, that's OK
+            logger.debug(
+                f"Could not check/add files columns to vectorization_stats: {e}"
             )
 
         if "original_path" not in files_columns:
@@ -2360,6 +2388,18 @@ class CodeDatabase:
                         },
                         {
                             "name": "chunks_failed",
+                            "type": "INTEGER",
+                            "not_null": True,
+                            "default": "0",
+                        },
+                        {
+                            "name": "files_total_at_start",
+                            "type": "INTEGER",
+                            "not_null": True,
+                            "default": "0",
+                        },
+                        {
+                            "name": "files_vectorized",
                             "type": "INTEGER",
                             "not_null": True,
                             "default": "0",

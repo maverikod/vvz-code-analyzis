@@ -289,17 +289,44 @@ def start_vectorization_cycle(self, cycle_id: Optional[str] = None) -> str:
     )
     chunks_total_at_start = result["count"] if result else 0
 
+    # Get total files count at start (active files in all projects)
+    files_result = self._fetchone(
+        "SELECT COUNT(*) as count FROM files WHERE (deleted = 0 OR deleted IS NULL)"
+    )
+    files_total_at_start = files_result["count"] if files_result else 0
+
+    # Get vectorized files count (files with at least one chunk that has vector_id)
+    vectorized_files_result = self._fetchone(
+        """
+        SELECT COUNT(DISTINCT f.id) as count
+        FROM files f
+        INNER JOIN code_chunks cc ON f.id = cc.file_id
+        WHERE (f.deleted = 0 OR f.deleted IS NULL)
+        AND cc.vector_id IS NOT NULL
+        """
+    )
+    files_vectorized = (
+        vectorized_files_result["count"] if vectorized_files_result else 0
+    )
+
     # Insert new cycle record
     self._execute(
         """
         INSERT INTO vectorization_stats (
             cycle_id, cycle_start_time, chunks_total_at_start,
             chunks_processed, chunks_skipped, chunks_failed,
+            files_total_at_start, files_vectorized,
             total_processing_time_seconds, average_processing_time_seconds,
             last_updated
-        ) VALUES (?, ?, ?, 0, 0, 0, 0.0, NULL, julianday('now'))
+        ) VALUES (?, ?, ?, 0, 0, 0, ?, ?, 0.0, NULL, julianday('now'))
         """,
-        (cycle_id, cycle_start_time, chunks_total_at_start),
+        (
+            cycle_id,
+            cycle_start_time,
+            chunks_total_at_start,
+            files_total_at_start,
+            files_vectorized,
+        ),
     )
     self._commit()
 
@@ -362,6 +389,29 @@ def update_vectorization_stats(
         """,
         (cycle_id,),
     )
+
+    # Update files_vectorized count (recalculate from database)
+    vectorized_files_result = self._fetchone(
+        """
+        SELECT COUNT(DISTINCT f.id) as count
+        FROM files f
+        INNER JOIN code_chunks cc ON f.id = cc.file_id
+        WHERE (f.deleted = 0 OR f.deleted IS NULL)
+        AND cc.vector_id IS NOT NULL
+        """
+    )
+    files_vectorized = (
+        vectorized_files_result["count"] if vectorized_files_result else 0
+    )
+    self._execute(
+        """
+        UPDATE vectorization_stats
+        SET files_vectorized = ?
+        WHERE cycle_id = ?
+        """,
+        (files_vectorized, cycle_id),
+    )
+
     self._commit()
 
 
@@ -407,6 +457,8 @@ def get_vectorization_stats(self) -> Optional[Dict[str, Any]]:
             chunks_processed,
             chunks_skipped,
             chunks_failed,
+            files_total_at_start,
+            files_vectorized,
             total_processing_time_seconds,
             average_processing_time_seconds,
             last_updated
@@ -429,6 +481,8 @@ def get_vectorization_stats(self) -> Optional[Dict[str, Any]]:
                 chunks_processed,
                 chunks_skipped,
                 chunks_failed,
+                files_total_at_start,
+                files_vectorized,
                 total_processing_time_seconds,
                 average_processing_time_seconds,
                 last_updated
@@ -442,6 +496,13 @@ def get_vectorization_stats(self) -> Optional[Dict[str, Any]]:
     if not result:
         return None
 
+    # Calculate percentage of vectorized files
+    files_total = result.get("files_total_at_start", 0) or 0
+    files_vectorized = result.get("files_vectorized", 0) or 0
+    files_vectorized_percent = None
+    if files_total and files_total > 0:
+        files_vectorized_percent = round((files_vectorized / files_total) * 100, 2)
+
     return {
         "cycle_id": result["cycle_id"],
         "cycle_start_time": result["cycle_start_time"],
@@ -450,6 +511,9 @@ def get_vectorization_stats(self) -> Optional[Dict[str, Any]]:
         "chunks_processed": result["chunks_processed"],
         "chunks_skipped": result["chunks_skipped"],
         "chunks_failed": result["chunks_failed"],
+        "files_total_at_start": files_total,
+        "files_vectorized": files_vectorized,
+        "files_vectorized_percent": files_vectorized_percent,
         "total_processing_time_seconds": result["total_processing_time_seconds"],
         "average_processing_time_seconds": result["average_processing_time_seconds"],
         "last_updated": result["last_updated"],

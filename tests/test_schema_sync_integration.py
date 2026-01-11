@@ -135,7 +135,7 @@ class TestDriverIntegration:
         os.environ["CODE_ANALYSIS_DB_WORKER"] = "1"
 
         try:
-            # Create database with old schema
+            # Create database with old schema and add some data
             conn = sqlite3.connect(str(temp_db_path))
             cursor = conn.cursor()
             cursor.execute(
@@ -145,6 +145,12 @@ class TestDriverIntegration:
                     value TEXT NOT NULL
                 )
                 """
+            )
+            cursor.execute(
+                "INSERT INTO db_settings (key, value) VALUES ('test', 'value')"
+            )
+            cursor.execute(
+                "INSERT INTO db_settings (key, value) VALUES ('schema_version', '0.9.0')"
             )
             conn.commit()
             conn.close()

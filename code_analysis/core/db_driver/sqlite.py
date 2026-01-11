@@ -271,7 +271,9 @@ class SQLiteDriver(BaseDatabaseDriver):
             logger.info("Validating data compatibility before schema changes...")
             validation_result = comparator.validate_data_compatibility(diff)
             if not validation_result["compatible"]:
-                error_msg = f"Data compatibility check failed: {validation_result['error']}"
+                error_msg = (
+                    f"Data compatibility check failed: {validation_result['error']}"
+                )
                 logger.error(error_msg)
                 # Leave database unchanged, block connection
                 raise RuntimeError(error_msg)

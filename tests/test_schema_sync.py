@@ -102,7 +102,7 @@ def minimal_schema_definition():
                         "name": "updated_at",
                         "type": "REAL",
                         "not_null": False,
-                        "default": "julianday('now')",
+                        "default": "(julianday('now'))",
                     },
                 ],
                 "foreign_keys": [],
@@ -124,14 +124,24 @@ class TestSchemaVersionManagement:
         version = sqlite_driver._get_schema_version()
         assert version is None
 
-    def test_set_schema_version(self, sqlite_driver):
+    def test_set_schema_version(
+        self, sqlite_driver, temp_backup_dir, minimal_schema_definition
+    ):
         """Test setting schema version."""
+        # First create db_settings table via sync_schema
+        sqlite_driver.sync_schema(minimal_schema_definition, temp_backup_dir)
+        # Now we can set version
         sqlite_driver._set_schema_version("1.0.0")
         version = sqlite_driver._get_schema_version()
         assert version == "1.0.0"
 
-    def test_update_schema_version(self, sqlite_driver):
+    def test_update_schema_version(
+        self, sqlite_driver, temp_backup_dir, minimal_schema_definition
+    ):
         """Test updating schema version."""
+        # First create db_settings table via sync_schema
+        sqlite_driver.sync_schema(minimal_schema_definition, temp_backup_dir)
+        # Now we can set version
         sqlite_driver._set_schema_version("1.0.0")
         sqlite_driver._set_schema_version("1.1.0")
         version = sqlite_driver._get_schema_version()
@@ -324,7 +334,7 @@ class TestSchemaSync:
         self, sqlite_driver, temp_backup_dir, minimal_schema_definition
     ):
         """Test sync with outdated schema."""
-        # Create table with old structure (missing column)
+        # Create table with old structure (missing column) and add some data
         sqlite_driver.execute(
             """
             CREATE TABLE db_settings (
@@ -332,6 +342,9 @@ class TestSchemaSync:
                 value TEXT NOT NULL
             )
             """
+        )
+        sqlite_driver.execute(
+            "INSERT INTO db_settings (key, value) VALUES ('test', 'value')"
         )
         sqlite_driver.commit()
 

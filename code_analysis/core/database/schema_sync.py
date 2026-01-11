@@ -437,7 +437,9 @@ class SchemaComparator:
         except Exception:
             return []
 
-    def _get_current_unique_constraints(self, table_name: str) -> List[Dict[str, List[str]]]:
+    def _get_current_unique_constraints(
+        self, table_name: str
+    ) -> List[Dict[str, List[str]]]:
         """Get current unique constraints for a table."""
         try:
             # Get unique indexes (excluding auto-generated ones)
@@ -620,7 +622,21 @@ class SchemaComparator:
             if col.get("not_null") and not col.get("primary_key"):
                 col_sql += " NOT NULL"
             if col.get("default"):
-                col_sql += f" DEFAULT {col['default']}"
+                default_val = col["default"]
+                # For function-based defaults (like julianday('now')), wrap in parentheses
+                # SQLite requires DEFAULT (function()) syntax for functions
+                # Check if it's a function call (contains parentheses or function name)
+                if "julianday" in default_val or "(" in default_val:
+                    # If it already has parentheses, use as is
+                    if default_val.strip().startswith(
+                        "("
+                    ) and default_val.strip().endswith(")"):
+                        # Already wrapped in parentheses
+                        pass
+                    elif not default_val.strip().startswith("("):
+                        # Function call without parentheses - add them
+                        default_val = f"({default_val})"
+                col_sql += f" DEFAULT {default_val}"
             col_defs.append(col_sql)
 
         # Add foreign keys
@@ -737,12 +753,25 @@ class SchemaComparator:
                 )
             else:
                 # Add missing columns (handles ALTER TABLE logic)
+                # Note: SQLite doesn't support DEFAULT with functions in ALTER TABLE ADD COLUMN
+                # So we skip DEFAULT for function-based defaults (like julianday('now'))
                 for col_def in table_diff.missing_columns:
                     col_sql = f"{col_def.name} {col_def.type}"
                     if col_def.not_null:
                         col_sql += " NOT NULL"
+                    # Only add DEFAULT if it's a constant value (not a function call)
+                    # Function-based defaults (like "julianday('now')" or "(julianday('now'))") are skipped
                     if col_def.default:
-                        col_sql += f" DEFAULT {col_def.default}"
+                        default_val = col_def.default.strip()
+                        # Check if it's a function call (contains function name or parentheses)
+                        is_function = (
+                            "julianday" in default_val
+                            or default_val.startswith("(")
+                            or "(" in default_val
+                        )
+                        if not is_function:
+                            # Only add DEFAULT for constant values
+                            col_sql += f" DEFAULT {col_def.default}"
                     statements.append(f"ALTER TABLE {table_name} ADD COLUMN {col_sql}")
 
         # Handle virtual tables (FTS5)

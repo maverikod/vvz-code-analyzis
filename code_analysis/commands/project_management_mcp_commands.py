@@ -44,10 +44,10 @@ class ChangeProjectIdMCPCommand(BaseMCPCommand):
     """
 
     name = "change_project_id"
-    version = "1.0.0"
+    version = "1.1.0"
     descr = (
-        "Change project identifier: update projectid file and database record. "
-        "New project_id must be a valid UUID v4."
+        "Change project identifier and/or description: update projectid file and database record. "
+        "New project_id must be a valid UUID v4. Description is optional."
     )
     category = "project_management"
     author = "Vasiliy Zdanovskiy"
@@ -73,9 +73,10 @@ class ChangeProjectIdMCPCommand(BaseMCPCommand):
         return {
             "type": "object",
             "description": (
-                "Change project identifier. Updates the projectid file in the project root "
+                "Change project identifier and/or description. Updates the projectid file in the project root "
                 "and the project record in the database (if exists). "
-                "The new project_id must be a valid UUID v4 format."
+                "The new project_id must be a valid UUID v4 format. "
+                "Description is optional and can be updated independently or together with project_id."
             ),
             "properties": {
                 "root_dir": {
@@ -103,6 +104,16 @@ class ChangeProjectIdMCPCommand(BaseMCPCommand):
                         "This prevents accidental changes if the projectid file was modified externally."
                     ),
                     "examples": ["61d708de-e9fe-11f0-b3c3-2ba372fd1d94"],
+                },
+                "description": {
+                    "type": "string",
+                    "description": (
+                        "Optional new project description. If provided, updates the description "
+                        "in both projectid file and database. If not provided, existing description is preserved. "
+                        "Can be updated independently of project_id."
+                    ),
+                    "default": None,
+                    "examples": ["My project description", "Production codebase"],
                 },
                 "update_database": {
                     "type": "boolean",
@@ -153,26 +164,43 @@ class ChangeProjectIdMCPCommand(BaseMCPCommand):
             "author": cls.author,
             "email": cls.email,
             "detailed_description": (
-                "The change_project_id command updates the project identifier for a project. "
+                "The change_project_id command updates the project identifier and/or description for a project. "
                 "This is a critical operation that affects both the projectid file and the database. "
-                "\n\n"
+                "You can change project_id, description, or both in a single operation.\n\n"
                 "Operation flow:\n"
                 "1. Validates root_dir exists and is a directory\n"
                 "2. Validates new_project_id is a valid UUID v4 format\n"
                 "3. If old_project_id is provided, validates it matches current projectid file\n"
-                "4. Updates projectid file in root_dir with new_project_id\n"
-                "5. If update_database is True, updates project record in database (if exists)\n"
+                "4. Loads current project information from projectid file (if exists)\n"
+                "5. Updates projectid file in JSON format with:\n"
+                "   - new_project_id (always updated)\n"
+                "   - description (updated if provided, otherwise preserved from existing file)\n"
+                "6. If update_database is True, updates project record in database (if exists):\n"
+                "   - Updates project id (if changed)\n"
+                "   - Updates comment field (description) if provided\n"
                 "\n"
+                "Project ID File Format:\n"
+                "The projectid file is stored in JSON format:\n"
+                "{\n"
+                '  "id": "550e8400-e29b-41d4-a716-446655440000",\n'
+                '  "description": "Human readable description"\n'
+                "}\n\n"
+                "Description Handling:\n"
+                "- If description parameter is provided: Updates description in both file and database\n"
+                "- If description parameter is not provided: Preserves existing description from projectid file\n"
+                "- If projectid file doesn't exist: Uses empty string as default description\n"
+                "- Description can be updated independently of project_id\n\n"
                 "Safety features:\n"
                 "- Validates new_project_id format (must be UUID v4)\n"
                 "- Optional old_project_id validation prevents accidental changes\n"
                 "- Database update is optional (can update only file)\n"
-                "\n"
+                "- Preserves existing description if not explicitly provided\n\n"
                 "Important notes:\n"
                 "- This command modifies project identity - use with caution\n"
                 "- If database has existing project with old_project_id, it will be updated\n"
                 "- If database has no project record, only file is updated\n"
                 "- All future commands will use the new project_id\n"
+                "- Description update is optional and can be done separately from project_id change\n"
             ),
             "parameters": {
                 "root_dir": {
@@ -220,6 +248,24 @@ class ChangeProjectIdMCPCommand(BaseMCPCommand):
                     "examples": [
                         "61d708de-e9fe-11f0-b3c3-2ba372fd1d94",
                         None,
+                    ],
+                },
+                "description": {
+                    "description": (
+                        "Optional new project description. Human-readable text describing the project. "
+                        "If provided, this description will replace the existing description in both "
+                        "the projectid file and the database (comment field). "
+                        "If not provided, the existing description from the projectid file is preserved. "
+                        "You can update description independently of project_id by providing the same "
+                        "new_project_id as the current one and a new description."
+                    ),
+                    "type": "string",
+                    "required": False,
+                    "default": None,
+                    "examples": [
+                        "My production codebase",
+                        "Test project for development",
+                        "Legacy system maintenance",
                     ],
                 },
                 "update_database": {
@@ -272,6 +318,30 @@ class ChangeProjectIdMCPCommand(BaseMCPCommand):
                         "Useful when database doesn't exist yet or you want to update file separately."
                     ),
                 },
+                {
+                    "description": "Change both project_id and description",
+                    "command": {
+                        "root_dir": "/home/user/projects/my_project",
+                        "new_project_id": "8772a086-688d-4198-a0c4-f03817cc0e6c",
+                        "description": "Updated project description",
+                    },
+                    "explanation": (
+                        "Updates both project_id and description in projectid file and database. "
+                        "Both fields are updated in a single operation."
+                    ),
+                },
+                {
+                    "description": "Update only description (keep same project_id)",
+                    "command": {
+                        "root_dir": "/home/user/projects/my_project",
+                        "new_project_id": "8772a086-688d-4198-a0c4-f03817cc0e6c",
+                        "description": "New description for existing project",
+                    },
+                    "explanation": (
+                        "Updates only the description while keeping the same project_id. "
+                        "Provide the current project_id as new_project_id and the new description."
+                    ),
+                },
             ],
             "error_cases": {
                 "INVALID_UUID_FORMAT": {
@@ -317,9 +387,20 @@ class ChangeProjectIdMCPCommand(BaseMCPCommand):
                     "data": {
                         "old_project_id": "Previous project_id from projectid file",
                         "new_project_id": "New project_id that was set",
+                        "old_description": "Previous description from projectid file (if existed)",
+                        "new_description": "New description that was set (if provided)",
                         "projectid_file_path": "Path to updated projectid file",
                         "database_updated": "Whether database was updated (True/False)",
                         "database_project_id": "New project_id in database (if updated)",
+                    },
+                    "example": {
+                        "old_project_id": "61d708de-e9fe-11f0-b3c3-2ba372fd1d94",
+                        "new_project_id": "8772a086-688d-4198-a0c4-f03817cc0e6c",
+                        "old_description": "Old project description",
+                        "new_description": "New project description",
+                        "projectid_file_path": "/home/user/projects/my_project/projectid",
+                        "database_updated": True,
+                        "database_project_id": "8772a086-688d-4198-a0c4-f03817cc0e6c",
                     },
                 },
                 "error": {
@@ -336,17 +417,19 @@ class ChangeProjectIdMCPCommand(BaseMCPCommand):
         root_dir: str,
         new_project_id: str,
         old_project_id: Optional[str] = None,
+        description: Optional[str] = None,
         update_database: bool = True,
         **kwargs: Any,
     ) -> SuccessResult | ErrorResult:
         """
-        Execute change project ID command.
+        Execute change project ID and/or description command.
 
         Args:
             self: Command instance.
             root_dir: Project root directory.
             new_project_id: New project identifier (UUID v4).
             old_project_id: Optional current project_id for validation.
+            description: Optional new project description.
             update_database: Whether to update database (default: True).
             **kwargs: Extra args (unused).
 
@@ -382,36 +465,56 @@ class ChangeProjectIdMCPCommand(BaseMCPCommand):
                     "change_project_id",
                 )
 
-            # Step 3: Load current project_id from file
+            # Step 3: Load current project information from file
+            current_description = ""
             if not projectid_path.exists():
-                return self._handle_error(
-                    ValidationError(
-                        f"projectid file not found: {projectid_path}",
-                        field="root_dir",
-                        details={
-                            "root_dir": str(root_dir),
-                            "projectid_path": str(projectid_path),
-                        },
-                    ),
-                    "PROJECTID_FILE_NOT_FOUND",
-                    "change_project_id",
-                )
+                # If file doesn't exist, we'll create it
+                current_project_id = None
+            else:
+                try:
+                    from ..core.project_resolution import load_project_info
 
-            try:
-                current_project_id = load_project_id(root_path)
-            except ProjectIdError as e:
-                return self._handle_error(
-                    ValidationError(
-                        f"Failed to load current project_id: {str(e)}",
-                        field="root_dir",
-                        details={"root_dir": str(root_dir), "error": str(e)},
-                    ),
-                    "PROJECTID_LOAD_ERROR",
-                    "change_project_id",
-                )
+                    project_info = load_project_info(root_path)
+                    current_project_id = project_info.project_id
+                    current_description = project_info.description
+                except ProjectIdError as e:
+                    # File exists but is invalid - we'll recreate it
+                    logger.warning(
+                        f"Invalid projectid file at {projectid_path}, will recreate: {e}"
+                    )
+                    current_project_id = None
+                    current_description = ""
+                except Exception as e:
+                    # Try to load just the ID if description loading fails
+                    try:
+                        current_project_id = load_project_id(root_path)
+                        current_description = ""
+                    except Exception:
+                        return self._handle_error(
+                            ValidationError(
+                                f"Failed to load current project_id: {str(e)}",
+                                field="root_dir",
+                                details={"root_dir": str(root_dir), "error": str(e)},
+                            ),
+                            "PROJECTID_LOAD_ERROR",
+                            "change_project_id",
+                        )
 
             # Step 4: Validate old_project_id if provided
             if old_project_id is not None:
+                if current_project_id is None:
+                    return self._handle_error(
+                        ValidationError(
+                            "old_project_id provided but projectid file doesn't exist",
+                            field="old_project_id",
+                            details={
+                                "old_project_id": old_project_id,
+                                "projectid_path": str(projectid_path),
+                            },
+                        ),
+                        "PROJECTID_FILE_NOT_FOUND",
+                        "change_project_id",
+                    )
                 if old_project_id != current_project_id:
                     return self._handle_error(
                         ValidationError(
@@ -426,12 +529,27 @@ class ChangeProjectIdMCPCommand(BaseMCPCommand):
                         "change_project_id",
                     )
 
-            # Step 5: Update projectid file
+            # Step 5: Determine new description
+            new_description = (
+                description if description is not None else current_description
+            )
+
+            # Step 6: Update projectid file in JSON format
             try:
-                projectid_path.write_text(new_project_id + "\n", encoding="utf-8")
+                import json
+
+                project_data = {
+                    "id": new_project_id,
+                    "description": new_description,
+                }
+                projectid_path.write_text(
+                    json.dumps(project_data, indent=4, ensure_ascii=False) + "\n",
+                    encoding="utf-8",
+                )
                 logger.info(
                     f"Updated projectid file: {projectid_path} "
-                    f"(old: {current_project_id}, new: {new_project_id})"
+                    f"(old_id: {current_project_id}, new_id: {new_project_id}, "
+                    f"old_desc: {current_description}, new_desc: {new_description})"
                 )
             except Exception as e:
                 return self._handle_error(
@@ -447,7 +565,7 @@ class ChangeProjectIdMCPCommand(BaseMCPCommand):
                     "change_project_id",
                 )
 
-            # Step 6: Update database if requested
+            # Step 7: Update database if requested
             database_updated = False
             database_project_id = None
             if update_database:
@@ -467,42 +585,122 @@ class ChangeProjectIdMCPCommand(BaseMCPCommand):
                     # Open database
                     database = self._open_database(str(root_path), auto_analyze=False)
                     try:
-                        # Check if project exists with old ID
+                        # Check if project exists with old ID or by root_path
                         existing_project_id = database.get_project_id(str(root_path))
                         if existing_project_id:
-                            if existing_project_id == current_project_id:
-                                # Update project record
-                                database._execute(
-                                    """
-                                    UPDATE projects 
-                                    SET id = ?, updated_at = julianday('now')
-                                    WHERE id = ?
-                                    """,
-                                    (new_project_id, current_project_id),
-                                )
+                            if (
+                                current_project_id
+                                and existing_project_id == current_project_id
+                            ):
+                                # Update project record (both ID and description if changed)
+                                if description is not None:
+                                    # Update both ID and description
+                                    database._execute(
+                                        """
+                                        UPDATE projects 
+                                        SET id = ?, comment = ?, updated_at = julianday('now')
+                                        WHERE id = ?
+                                        """,
+                                        (
+                                            new_project_id,
+                                            new_description,
+                                            current_project_id,
+                                        ),
+                                    )
+                                else:
+                                    # Update only ID
+                                    database._execute(
+                                        """
+                                        UPDATE projects 
+                                        SET id = ?, updated_at = julianday('now')
+                                        WHERE id = ?
+                                        """,
+                                        (new_project_id, current_project_id),
+                                    )
                                 database._commit()
                                 database_updated = True
                                 database_project_id = new_project_id
                                 logger.info(
                                     f"Updated project record in database: "
                                     f"{current_project_id} -> {new_project_id}"
+                                    + (
+                                        f", description: {new_description}"
+                                        if description
+                                        else ""
+                                    )
+                                )
+                            elif existing_project_id != new_project_id:
+                                # Update existing project with different ID
+                                if description is not None:
+                                    database._execute(
+                                        """
+                                        UPDATE projects 
+                                        SET id = ?, comment = ?, updated_at = julianday('now')
+                                        WHERE id = ?
+                                        """,
+                                        (
+                                            new_project_id,
+                                            new_description,
+                                            existing_project_id,
+                                        ),
+                                    )
+                                else:
+                                    database._execute(
+                                        """
+                                        UPDATE projects 
+                                        SET id = ?, updated_at = julianday('now')
+                                        WHERE id = ?
+                                        """,
+                                        (new_project_id, existing_project_id),
+                                    )
+                                database._commit()
+                                database_updated = True
+                                database_project_id = new_project_id
+                                logger.info(
+                                    f"Updated project record in database: "
+                                    f"{existing_project_id} -> {new_project_id}"
+                                    + (
+                                        f", description: {new_description}"
+                                        if description
+                                        else ""
+                                    )
                                 )
                             else:
-                                logger.warning(
-                                    f"Project in database has different ID ({existing_project_id}) "
-                                    f"than projectid file ({current_project_id}), skipping database update"
-                                )
+                                # Same ID, only update description if provided
+                                if description is not None:
+                                    database._execute(
+                                        """
+                                        UPDATE projects 
+                                        SET comment = ?, updated_at = julianday('now')
+                                        WHERE id = ?
+                                        """,
+                                        (new_description, existing_project_id),
+                                    )
+                                    database._commit()
+                                    database_updated = True
+                                    logger.info(
+                                        f"Updated project description in database: {new_description}"
+                                    )
                         else:
-                            # Project doesn't exist in database, create it with new ID
-                            database.get_or_create_project(
-                                str(root_path),
-                                name=root_path.name,
-                                project_id=new_project_id,
+                            # Project doesn't exist in database, create it with new ID and description
+                            database._execute(
+                                """
+                                INSERT INTO projects (id, root_path, name, comment, updated_at)
+                                VALUES (?, ?, ?, ?, julianday('now'))
+                                """,
+                                (
+                                    new_project_id,
+                                    str(root_path),
+                                    root_path.name,
+                                    new_description,
+                                ),
                             )
+                            database._commit()
                             database_updated = True
                             database_project_id = new_project_id
                             logger.info(
-                                f"Created new project record in database with ID: {new_project_id}"
+                                f"Created new project record in database with ID: {new_project_id}, "
+                                f"description: {new_description}"
                             )
                     finally:
                         database.close()
@@ -513,15 +711,30 @@ class ChangeProjectIdMCPCommand(BaseMCPCommand):
                     )
                     # Don't fail the command if database update fails - file was already updated
 
+            # Build result message
+            message_parts = []
+            if current_project_id != new_project_id:
+                message_parts.append(
+                    f"Project ID: {current_project_id or 'none'} -> {new_project_id}"
+                )
+            if description is not None and current_description != new_description:
+                message_parts.append(
+                    f"Description: '{current_description}' -> '{new_description}'"
+                )
+            if not message_parts:
+                message_parts.append("Project updated (no changes detected)")
+
             return SuccessResult(
                 data={
                     "old_project_id": current_project_id,
                     "new_project_id": new_project_id,
+                    "old_description": current_description,
+                    "new_description": new_description,
                     "projectid_file_path": str(projectid_path),
                     "database_updated": database_updated,
                     "database_project_id": database_project_id,
                 },
-                message=f"Project ID changed: {current_project_id} -> {new_project_id}",
+                message="; ".join(message_parts),
             )
         except Exception as e:
             return self._handle_error(e, "CHANGE_PROJECT_ID_ERROR", "change_project_id")

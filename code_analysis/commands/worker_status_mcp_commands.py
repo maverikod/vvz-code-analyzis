@@ -46,6 +46,10 @@ class GetWorkerStatusMCPCommand(BaseMCPCommand):
                     "type": "string",
                     "description": "Path to lock file (optional, for file_watcher)",
                 },
+                "root_dir": {
+                    "type": "string",
+                    "description": "Root directory for database access (optional, for worker cycle stats)",
+                },
             },
             "required": ["worker_type"],
             "additionalProperties": False,
@@ -56,6 +60,7 @@ class GetWorkerStatusMCPCommand(BaseMCPCommand):
         worker_type: str,
         log_path: Optional[str] = None,
         lock_file_path: Optional[str] = None,
+        root_dir: Optional[str] = None,
         **kwargs,
     ) -> SuccessResult | ErrorResult:
         """
@@ -65,6 +70,7 @@ class GetWorkerStatusMCPCommand(BaseMCPCommand):
             worker_type: Type of worker (file_watcher or vectorization)
             log_path: Path to worker log file
             lock_file_path: Path to lock file (for file_watcher)
+            root_dir: Optional root directory for database access (for worker stats)
 
         Returns:
             SuccessResult with worker status or ErrorResult on failure
@@ -76,6 +82,26 @@ class GetWorkerStatusMCPCommand(BaseMCPCommand):
                 lock_file_path=lock_file_path,
             )
             result = await command.execute()
+            
+            # Add worker statistics from database if root_dir provided
+            if root_dir:
+                try:
+                    db = self._open_database(root_dir, auto_analyze=False)
+                    try:
+                        if worker_type == "file_watcher":
+                            stats = db.get_file_watcher_stats()
+                            if stats:
+                                result["cycle_stats"] = stats
+                        elif worker_type == "vectorization":
+                            stats = db.get_vectorization_stats()
+                            if stats:
+                                result["cycle_stats"] = stats
+                    finally:
+                        db.close()
+                except Exception as e:
+                    logger.warning(f"Failed to get worker stats from database: {e}")
+                    # Don't fail the command if stats are unavailable
+            
             return SuccessResult(data=result)
         except Exception as e:
             return self._handle_error(e, "WORKER_STATUS_ERROR", "get_worker_status")
@@ -439,6 +465,7 @@ class GetDatabaseStatusMCPCommand(BaseMCPCommand):
                     "files": {},
                     "chunks": {},
                     "recent_activity": {},
+                    "worker_stats": {},
                 }
 
                 # Project statistics with file and chunk counts
@@ -618,6 +645,15 @@ class GetDatabaseStatusMCPCommand(BaseMCPCommand):
                 result["recent_activity"] = {
                     "files_updated_24h": files_updated_24h,
                     "chunks_updated_24h": chunks_updated_24h,
+                }
+
+                # Get worker statistics
+                file_watcher_stats = db.get_file_watcher_stats()
+                vectorization_stats = db.get_vectorization_stats()
+                
+                result["worker_stats"] = {
+                    "file_watcher": file_watcher_stats,
+                    "vectorization": vectorization_stats,
                 }
 
                 # Get files needing chunking (sample)

@@ -21,11 +21,7 @@ from ..core.constants import (
     DEFAULT_IGNORE_PATTERNS,
     LOGS_DIR_NAME,
 )
-from ..core.worker_launcher import (
-    start_file_watcher_worker,
-    start_vectorization_worker,
-    stop_worker_type,
-)
+from ..core.worker_manager import get_worker_manager
 from ..core.storage_paths import (
     load_raw_config,
     resolve_storage_paths,
@@ -191,7 +187,8 @@ class StartWorkerMCPCommand(BaseMCPCommand):
                 log_path = worker_log_path or str(
                     (root_path / "logs" / "file_watcher.log").resolve()
                 )
-                res = start_file_watcher_worker(
+                worker_manager = get_worker_manager()
+                res = worker_manager.start_file_watcher_worker(
                     db_path=str(db_path),
                     watch_dirs=dirs,
                     scan_interval=scan_interval,
@@ -230,7 +227,8 @@ class StartWorkerMCPCommand(BaseMCPCommand):
                     except Exception as e:
                         logger.warning(f"Failed to load SVO config: {e}")
 
-                res = start_vectorization_worker(
+                worker_manager = get_worker_manager()
+                res = worker_manager.start_vectorization_worker(
                     db_path=str(db_path),
                     faiss_dir=str(faiss_dir),
                     vector_dim=vector_dim,
@@ -558,7 +556,8 @@ class StopWorkerMCPCommand(BaseMCPCommand):
             SuccessResult with stop summary or ErrorResult on failure.
         """
         try:
-            result = stop_worker_type(worker_type, timeout=float(timeout))
+            worker_manager = get_worker_manager()
+            result = worker_manager.stop_worker_type(worker_type, timeout=float(timeout))
             return SuccessResult(data=result)
         except Exception as e:
             return self._handle_error(e, "WORKER_STOP_ERROR", "stop_worker")

@@ -36,9 +36,11 @@ class WatchDirSpec:
 
     Attributes:
         watch_dir: Directory to scan for projects
+        watch_dir_id: UUID4 identifier for this watch directory
     """
 
     watch_dir: Path
+    watch_dir_id: str
 
 
 class MultiProjectFileWatcherWorker:
@@ -116,6 +118,7 @@ class MultiProjectFileWatcherWorker:
 
         from ..database import CodeDatabase
         from ..database.base import create_driver_config_for_worker
+        from ..path_normalization import normalize_path_simple
 
         driver_config = create_driver_config_for_worker(self.db_path)
 
@@ -128,6 +131,9 @@ class MultiProjectFileWatcherWorker:
 
         backoff = 1.0
         backoff_max = 60.0
+
+        # Initialize watch_dirs on first successful database connection
+        watch_dirs_initialized = False
 
         try:
             while not self._stop_event.is_set():
@@ -145,6 +151,18 @@ class MultiProjectFileWatcherWorker:
                                 db_available = True
                                 db_status_logged = True
                                 backoff = 1.0  # Reset backoff
+                                
+                                # Initialize watch_dirs on first connection
+                                if not watch_dirs_initialized:
+                                    try:
+                                        self._initialize_watch_dirs(database)
+                                        watch_dirs_initialized = True
+                                    except Exception as init_e:
+                                        logger.error(
+                                            f"Failed to initialize watch_dirs: {init_e}",
+                                            exc_info=True,
+                                        )
+                                        # Continue anyway - will retry on next cycle
                             else:
                                 db_status_logged = False  # Already logged as available
                         except Exception as conn_e:
@@ -283,6 +301,11 @@ class MultiProjectFileWatcherWorker:
         Returns:
             Dictionary with cycle statistics.
         """
+        import time
+        
+        # Start worker statistics cycle
+        cycle_id = database.start_file_watcher_cycle()
+        
         cycle_stats: Dict[str, Any] = {
             "scanned_dirs": 0,
             "new_files": 0,
@@ -298,17 +321,38 @@ class MultiProjectFileWatcherWorker:
             version_dir=self.version_dir,
         )
 
+        total_processing_time = 0.0
+        
         for spec in self.watch_dirs:
             if self._stop_event.is_set():
                 break
 
+            watch_dir_start = time.time()
             watch_dir_stats = self._scan_watch_dir(spec, processor, database)
+            watch_dir_duration = time.time() - watch_dir_start
+            total_processing_time += watch_dir_duration
+            
             cycle_stats["scanned_dirs"] += watch_dir_stats.get("scanned_dirs", 0)
             cycle_stats["new_files"] += watch_dir_stats.get("new_files", 0)
             cycle_stats["changed_files"] += watch_dir_stats.get("changed_files", 0)
             cycle_stats["deleted_files"] += watch_dir_stats.get("deleted_files", 0)
             cycle_stats["errors"] += watch_dir_stats.get("errors", 0)
+            
+            # Update statistics after each watch_dir
+            database.update_file_watcher_stats(
+                cycle_id=cycle_id,
+                files_added=watch_dir_stats.get("new_files", 0),
+                files_processed=watch_dir_stats.get("new_files", 0) + watch_dir_stats.get("changed_files", 0),
+                files_skipped=0,  # Skipped files are tracked separately if needed
+                files_failed=watch_dir_stats.get("errors", 0),
+                files_changed=watch_dir_stats.get("changed_files", 0),
+                files_deleted=watch_dir_stats.get("deleted_files", 0),
+                processing_time_seconds=watch_dir_duration,
+            )
 
+        # End cycle
+        database.end_file_watcher_cycle(cycle_id)
+        
         return cycle_stats
 
     def _scan_watch_dir(
@@ -394,24 +438,39 @@ class MultiProjectFileWatcherWorker:
                             )
                             stats["errors"] += 1
                             continue
-                        # Project exists with correct root_path - update description if changed
+                        # Project exists with correct root_path - update description and watch_dir_id if changed
                         current_comment = project.get("comment")
+                        current_watch_dir_id = project.get("watch_dir_id")
+                        watch_dir_id = spec.watch_dir_id
+                        needs_update = False
+                        update_fields = []
+                        update_values = []
+                        
                         if current_comment != project_root_obj.description:
+                            needs_update = True
+                            update_fields.append("comment = ?")
+                            update_values.append(project_root_obj.description)
+                        
+                        if current_watch_dir_id != watch_dir_id:
+                            needs_update = True
+                            update_fields.append("watch_dir_id = ?")
+                            update_values.append(watch_dir_id)
+                        
+                        if needs_update:
+                            update_values.append(project_root_obj.project_id)
                             database._execute(
-                                """
+                                f"""
                                 UPDATE projects 
-                                SET comment = ?, updated_at = julianday('now')
+                                SET {', '.join(update_fields)}, updated_at = julianday('now')
                                 WHERE id = ?
                                 """,
-                                (
-                                    project_root_obj.description,
-                                    project_root_obj.project_id,
-                                ),
+                                tuple(update_values),
                             )
                             database._commit()
                             logger.debug(
-                                f"Updated description for project {project_root_obj.project_id}: "
-                                f"{current_comment} -> {project_root_obj.description}"
+                                f"Updated project {project_root_obj.project_id}: "
+                                f"comment={current_comment} -> {project_root_obj.description}, "
+                                f"watch_dir_id={current_watch_dir_id} -> {watch_dir_id}"
                             )
                     else:
                         # Check if project exists with different ID (by root_path)
@@ -458,23 +517,27 @@ class MultiProjectFileWatcherWorker:
                             # Create project with ID from projectid file
                             project_name = project_root_obj.root_path.name
                             project_description = project_root_obj.description
+                            # Get watch_dir_id from spec
+                            watch_dir_id = spec.watch_dir_id
                             database._execute(
                                 """
-                                INSERT INTO projects (id, root_path, name, comment, updated_at)
-                                VALUES (?, ?, ?, ?, julianday('now'))
+                                INSERT INTO projects (id, root_path, name, comment, watch_dir_id, updated_at)
+                                VALUES (?, ?, ?, ?, ?, julianday('now'))
                                 """,
                                 (
                                     project_root_obj.project_id,
                                     str(project_root_obj.root_path),
                                     project_name,
                                     project_description,
+                                    watch_dir_id,
                                 ),
                             )
                             database._commit()
                             logger.info(
                                 f"Auto-created project {project_root_obj.project_id} "
                                 f"at {project_root_obj.root_path} "
-                                f"with description: {project_description}"
+                                f"with description: {project_description} "
+                                f"and watch_dir_id: {watch_dir_id}"
                             )
                             
                             # Start automatic indexing for newly created project in background thread
@@ -531,8 +594,10 @@ class MultiProjectFileWatcherWorker:
                                     f"{project_root_obj.project_id}: {e}"
                                 )
                 except Exception as e:
-                    logger.warning(
-                        f"Failed to get/create project {project_root_obj.project_id}: {e}"
+                    logger.error(
+                        f"Failed to get/create project {project_root_obj.project_id} "
+                        f"at {project_root_obj.root_path}: {e}",
+                        exc_info=True,  # Include full traceback for debugging
                     )
                     stats["errors"] += 1
 
@@ -599,21 +664,138 @@ class MultiProjectFileWatcherWorker:
 
         return stats
 
+    def _initialize_watch_dirs(self, database: Any) -> None:
+        """
+        Initialize watch directories from config.
+
+        This method:
+        1. Creates/updates watch_dirs entries for each spec
+        2. Updates watch_dir_paths with absolute normalized paths
+        3. Sets NULL paths for watch_dirs not found in config or on disk
+        4. Discovers projects and creates/updates them with watch_dir_id
+
+        Args:
+            database: CodeDatabase instance
+        """
+        from ..path_normalization import normalize_path_simple
+        from ..project_discovery import discover_projects_in_directory
+
+        logger.info("Initializing watch directories...")
+
+        # Step 1: Create/update watch_dirs and watch_dir_paths from specs
+        config_watch_dir_ids = set()
+        for spec in self.watch_dirs:
+            watch_dir_id = spec.watch_dir_id
+            watch_dir_path = spec.watch_dir.resolve()
+            config_watch_dir_ids.add(watch_dir_id)
+
+            # Create/update watch_dir entry
+            database.create_watch_dir(
+                watch_dir_id=watch_dir_id,
+                name=watch_dir_path.name,
+            )
+
+            # Update watch_dir_paths
+            if watch_dir_path.exists():
+                normalized_path = normalize_path_simple(str(watch_dir_path))
+                database.update_watch_dir_path(watch_dir_id, normalized_path)
+                logger.debug(
+                    f"Updated watch_dir_path: {watch_dir_id} -> {normalized_path}"
+                )
+
+                # Step 2: Discover projects in this watch_dir
+                try:
+                    discovered_projects = discover_projects_in_directory(watch_dir_path)
+                    for project_root_obj in discovered_projects:
+                        # Check if project exists
+                        project = database.get_project(project_root_obj.project_id)
+                        if project:
+                            # Update watch_dir_id if needed
+                            if project.get("watch_dir_id") != watch_dir_id:
+                                database._execute(
+                                    """
+                                    UPDATE projects 
+                                    SET watch_dir_id = ?, updated_at = julianday('now')
+                                    WHERE id = ?
+                                    """,
+                                    (watch_dir_id, project_root_obj.project_id),
+                                )
+                                database._commit()
+                                logger.debug(
+                                    f"Updated project {project_root_obj.project_id} "
+                                    f"watch_dir_id to {watch_dir_id}"
+                                )
+                        else:
+                            # Create new project
+                            project_name = project_root_obj.root_path.name
+                            database._execute(
+                                """
+                                INSERT INTO projects (id, root_path, name, comment, watch_dir_id, updated_at)
+                                VALUES (?, ?, ?, ?, ?, julianday('now'))
+                                """,
+                                (
+                                    project_root_obj.project_id,
+                                    str(project_root_obj.root_path),
+                                    project_name,
+                                    project_root_obj.description,
+                                    watch_dir_id,
+                                ),
+                            )
+                            database._commit()
+                            logger.info(
+                                f"Created project {project_root_obj.project_id} "
+                                f"at {project_root_obj.root_path} "
+                                f"with watch_dir_id: {watch_dir_id}"
+                            )
+                except Exception as e:
+                    logger.error(
+                        f"Error discovering projects in {watch_dir_path}: {e}",
+                        exc_info=True,
+                    )
+            else:
+                # Path doesn't exist on disk - set NULL
+                database.update_watch_dir_path(watch_dir_id, None)
+                logger.warning(
+                    f"Watch dir path does not exist: {watch_dir_path}, "
+                    f"setting NULL for watch_dir_id: {watch_dir_id}"
+                )
+
+        # Step 3: Set NULL paths for watch_dirs in DB but not in config
+        all_db_watch_dirs = database.get_all_watch_dirs()
+        for db_watch_dir in all_db_watch_dirs:
+            db_watch_dir_id = db_watch_dir["id"]
+            if db_watch_dir_id not in config_watch_dir_ids:
+                # Not in config - set path to NULL
+                database.update_watch_dir_path(db_watch_dir_id, None)
+                logger.debug(
+                    f"Watch dir {db_watch_dir_id} not in config, setting path to NULL"
+                )
+
+        logger.info("Watch directories initialization completed")
+
 
 def build_watch_dir_specs(
-    watch_dirs: Sequence[str],
+    watch_dirs: Sequence[Dict[str, str]],
 ) -> List[WatchDirSpec]:
     """
-    Build `WatchDirSpec` list from watch directory paths.
+    Build `WatchDirSpec` list from watch directory config.
 
     Args:
-        watch_dirs: Sequence of watch directory paths.
+        watch_dirs: Sequence of watch directory configs with 'id' and 'path' keys.
 
     Returns:
         List of watch directory specs.
     """
     specs: List[WatchDirSpec] = []
-    for watch_dir in watch_dirs:
-        watch_path = Path(watch_dir).resolve()
-        specs.append(WatchDirSpec(watch_dir=watch_path))
+    for watch_dir_config in watch_dirs:
+        if isinstance(watch_dir_config, str):
+            # Old format (should not happen, but handle gracefully)
+            raise ValueError(
+                "Old watch_dirs format (string array) is not supported. "
+                "Use format: [{'id': 'uuid4', 'path': '/path'}]"
+            )
+        watch_dir_id = watch_dir_config["id"]
+        watch_dir_path = watch_dir_config["path"]
+        watch_path = Path(watch_dir_path).resolve()
+        specs.append(WatchDirSpec(watch_dir=watch_path, watch_dir_id=watch_dir_id))
     return specs

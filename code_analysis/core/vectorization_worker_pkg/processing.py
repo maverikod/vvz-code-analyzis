@@ -142,6 +142,11 @@ async def process_chunks(self, poll_interval: int = 30) -> Dict[str, Any]:
 
             # Database is available, proceed with cycle
             logger.info(f"[CYCLE #{cycle_count}] Starting vectorization cycle")
+            
+            # Start worker statistics cycle
+            cycle_id = database.start_vectorization_cycle()
+            cycle_start_time = time.time()
+            
             cycle_activity = False
 
             # Get projects with files/chunks needing vectorization (sorted by count, smallest first)
@@ -242,14 +247,25 @@ async def process_chunks(self, poll_interval: int = 30) -> Dict[str, Any]:
                             self.project_id = project_id
 
                             try:
+                                batch_start_time = time.time()
                                 batch_processed, batch_errors = (
                                     await process_embedding_ready_chunks(self, database)
                                 )
+                                batch_duration = time.time() - batch_start_time
+                                
                                 total_processed += batch_processed
                                 total_errors += batch_errors
 
                                 if batch_processed > 0:
                                     cycle_activity = True
+                                
+                                # Update statistics
+                                database.update_vectorization_stats(
+                                    cycle_id=cycle_id,
+                                    chunks_processed=batch_processed,
+                                    chunks_failed=batch_errors,
+                                    processing_time_seconds=batch_duration,
+                                )
                             finally:
                                 # Restore original values
                                 self.faiss_manager = original_faiss_manager
@@ -326,6 +342,9 @@ async def process_chunks(self, poll_interval: int = 30) -> Dict[str, Any]:
                 batch_errors = 0
                 batch_processed = 0
 
+            # End cycle
+            database.end_vectorization_cycle(cycle_id)
+            
             cycle_duration = time.time() - cycle_start_time
             if cycle_activity:
                 logger.info(

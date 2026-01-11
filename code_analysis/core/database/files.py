@@ -68,14 +68,14 @@ def add_file(
     """
     Add or update file record. Returns file_id.
 
-    Implements Step 5 of refactor plan: all file paths are absolute.
+    Files are stored with relative_path from project root.
     Files are uniquely identified by (project_id, dataset_id, path).
 
     **Important**: If file exists in a different project, it will be marked as deleted
     in the old project and all related data will be cleared before adding to the new project.
 
     Args:
-        path: File path (will be normalized to absolute)
+        path: File path (will be normalized to absolute, then converted to relative)
         lines: Number of lines in file
         last_modified: Last modification timestamp
         has_docstring: Whether file has docstring
@@ -88,70 +88,56 @@ def add_file(
     from ..path_normalization import normalize_file_path, normalize_path_simple
     from ..exceptions import ProjectIdMismatchError, ProjectNotFoundError
 
-    # Try to use unified path normalization if project_root can be found
-    abs_path = None
-    project_root = None
-    
+    # Get project to find project root and watch_dir_id
+    project = self.get_project(project_id)
+    if not project:
+        raise ValueError(f"Project {project_id} not found")
+
+    project_root = Path(project["root_path"]).resolve()
+    watch_dir_id = project.get("watch_dir_id")
+
+    # Normalize input path to absolute
+    abs_path = normalize_path_simple(path)
+    abs_path_obj = Path(abs_path)
+
+    # Calculate relative path from project root
     try:
-        # Try to find project root by walking up the directory tree
-        path_obj = Path(path)
-        if not path_obj.is_absolute():
-            path_obj = path_obj.resolve()
-        
-        current = path_obj.parent if path_obj.is_file() else path_obj
-        
-        # Walk up to find projectid file
-        for parent in [current] + list(current.parents):
-            projectid_path = parent / "projectid"
-            if projectid_path.exists() and projectid_path.is_file():
-                project_root = parent
-                break
-        
-        # If project_root found, use unified normalization
-        if project_root and path_obj.exists():
-            try:
-                normalized = normalize_file_path(path_obj, project_root=project_root)
-                abs_path = normalized.absolute_path
-                
-                # Validate project_id matches
-                if normalized.project_id != project_id:
-                    raise ProjectIdMismatchError(
-                        message=(
-                            f"Project ID mismatch: file {abs_path} belongs to project "
-                            f"{normalized.project_id} (from projectid file) but was provided "
-                            f"with project_id {project_id}"
-                        ),
-                        file_project_id=normalized.project_id,
-                        db_project_id=project_id,
-                    )
-            except (ProjectNotFoundError, FileNotFoundError):
-                # Fallback to simple normalization if file doesn't exist or project not found
-                abs_path = normalize_path_simple(path)
-            except ProjectIdMismatchError:
-                # Re-raise project ID mismatch - this is a critical error
-                raise
-        else:
-            # Fallback to simple normalization if project_root not found
-            abs_path = normalize_path_simple(path)
+        relative_path = abs_path_obj.relative_to(project_root)
+    except ValueError:
+        raise ValueError(
+            f"File {abs_path} is not within project root {project_root}"
+        )
+
+    # Validate project_id matches (if projectid file exists)
+    try:
+        normalized = normalize_file_path(abs_path_obj, project_root=project_root)
+        if normalized.project_id != project_id:
+            raise ProjectIdMismatchError(
+                message=(
+                    f"Project ID mismatch: file {abs_path} belongs to project "
+                    f"{normalized.project_id} (from projectid file) but was provided "
+                    f"with project_id {project_id}"
+                ),
+                file_project_id=normalized.project_id,
+                db_project_id=project_id,
+            )
+    except (ProjectNotFoundError, FileNotFoundError):
+        # File doesn't exist or project not found - continue anyway
+        pass
     except ProjectIdMismatchError:
         # Re-raise project ID mismatch - this is a critical error
         raise
-    except Exception as e:
-        # Fallback to simple normalization on any other error
-        logger.debug(f"[add_file] Using simple normalization due to error: {e}")
-        abs_path = normalize_path_simple(path)
-    
-    # Log normalization for debugging
-    if path != abs_path:
-        logger.debug(
-            f"[add_file] Path normalized: {path!r} -> {abs_path!r} | "
-            f"project_id={project_id} | dataset_id={dataset_id}"
-        )
 
-    # Check if file exists in a different project
+    # Check if file exists in a different project (by relative_path or path)
     existing_file = self._fetchone(
-        "SELECT id, project_id FROM files WHERE path = ? AND project_id != ? AND (deleted = 0 OR deleted IS NULL) LIMIT 1",
-        (abs_path, project_id),
+        """
+        SELECT id, project_id FROM files 
+        WHERE (relative_path = ? OR path = ?) 
+        AND project_id != ? 
+        AND (deleted = 0 OR deleted IS NULL) 
+        LIMIT 1
+        """,
+        (str(relative_path), abs_path, project_id),
     )
     
     if existing_file:
@@ -182,34 +168,39 @@ def add_file(
             logger.error(f"Failed to clear data and mark file as deleted: {e}", exc_info=True)
             # Continue anyway - we'll still add the file to the correct project
 
-    # Check if file already exists in the correct project
+    # Check if file already exists in the correct project (by relative_path or path)
     existing_in_correct_project = self._fetchone(
-        "SELECT id FROM files WHERE path = ? AND project_id = ? AND dataset_id = ?",
-        (abs_path, project_id, dataset_id),
+        """
+        SELECT id FROM files 
+        WHERE project_id = ? AND dataset_id = ? 
+        AND (relative_path = ? OR path = ?)
+        """,
+        (project_id, dataset_id, str(relative_path), abs_path),
     )
     
     if existing_in_correct_project:
-        # Update existing file
+        # Update existing file (including relative_path and watch_dir_id)
         file_id = existing_in_correct_project["id"]
         self._execute(
             """
             UPDATE files 
-            SET lines = ?, last_modified = ?, has_docstring = ?, updated_at = julianday('now')
+            SET watch_dir_id = ?, path = ?, relative_path = ?, lines = ?, 
+                last_modified = ?, has_docstring = ?, updated_at = julianday('now')
             WHERE id = ?
             """,
-            (lines, last_modified, has_docstring, file_id),
+            (watch_dir_id, abs_path, str(relative_path), lines, last_modified, has_docstring, file_id),
         )
         self._commit()
         return file_id
     else:
-        # Insert new file
+        # Insert new file with relative_path and watch_dir_id
         self._execute(
             """
                 INSERT INTO files
-                (project_id, dataset_id, path, lines, last_modified, has_docstring, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, julianday('now'))
+                (project_id, dataset_id, watch_dir_id, path, relative_path, lines, last_modified, has_docstring, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, julianday('now'))
             """,
-            (project_id, dataset_id, abs_path, lines, last_modified, has_docstring),
+            (project_id, dataset_id, watch_dir_id, abs_path, str(relative_path), lines, last_modified, has_docstring),
         )
         self._commit()
         result = self._lastrowid()

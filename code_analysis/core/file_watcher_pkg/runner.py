@@ -78,7 +78,7 @@ def _setup_worker_logging(
 
 def run_file_watcher_worker(
     db_path: str,
-    watch_dirs: List[str],
+    watch_dirs: List[Dict[str, str]],
     locks_dir: str,
     scan_interval: int = 60,
     version_dir: Optional[str] = None,
@@ -98,7 +98,8 @@ def run_file_watcher_worker(
 
     Args:
         db_path: Path to database file.
-        watch_dirs: List of watch directory paths (projects discovered automatically).
+        watch_dirs: List of watch directory configs with 'id' and 'path' keys.
+                    Format: [{'id': 'uuid4', 'path': '/absolute/path'}]
         locks_dir: Service state directory for lock files (from StoragePaths).
         scan_interval: Scan interval seconds.
         version_dir: Version directory for deleted files.

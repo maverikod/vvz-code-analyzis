@@ -11,11 +11,33 @@ email: vasilyvz@gmail.com
 
 import asyncio
 import logging
+import multiprocessing
+import os
 import threading
 import time
+from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class WorkerStartResult:
+    """
+    Result of starting a worker process.
+
+    Attributes:
+        success: Whether the worker started.
+        worker_type: Worker type string.
+        pid: PID of spawned process if any.
+        message: Human-readable message.
+    """
+
+    success: bool
+    worker_type: str
+    pid: Optional[int]
+    message: str
 
 
 class WorkerManager:
@@ -27,6 +49,21 @@ class WorkerManager:
     - Track worker processes by type and PID
     - Gracefully shut down all workers on server shutdown
     - Provide status information about all workers
+    - Start workers as separate processes (multiprocessing.Process)
+    - Guarantee process termination: if a process doesn't stop within timeout,
+      it will be forcefully killed (SIGKILL)
+
+    Process Control:
+    - All workers are started as separate processes (not threads, not async tasks)
+    - This prevents conflicts with Hypercorn's event loop
+    - WorkerManager has full control over worker processes
+    - If a process doesn't stop gracefully within timeout, it is forcefully killed
+    - Multiple fallback mechanisms ensure processes are terminated:
+      1. SIGTERM (graceful shutdown)
+      2. Wait for timeout
+      3. SIGKILL via process.kill()
+      4. If still alive, SIGKILL via psutil.Process.kill()
+      5. Final verification and error logging if process persists
     """
 
     _instance: Optional["WorkerManager"] = None
@@ -262,6 +299,12 @@ class WorkerManager:
                                         except (psutil.TimeoutExpired, Exception):
                                             # Force kill if still running after timeout
                                             proc.kill()
+                                            try:
+                                                proc.wait(timeout=2.0)
+                                            except psutil.TimeoutExpired:
+                                                logger.error(
+                                                    f"CRITICAL: {worker_type} process {name} (PID: {pid}) did not die after SIGKILL via PID fallback"
+                                                )
                                             logger.warning(
                                                 f"Force killed {worker_type} process via PID fallback after timeout: {name} (PID: {pid})"
                                             )
@@ -309,6 +352,12 @@ class WorkerManager:
                                             except (psutil.TimeoutExpired, Exception):
                                                 # Force kill if still running after timeout
                                                 proc.kill()
+                                                try:
+                                                    proc.wait(timeout=2.0)
+                                                except psutil.TimeoutExpired:
+                                                    logger.error(
+                                                        f"CRITICAL: {worker_type} process {name} (PID: {pid}) did not die after SIGKILL via PID fallback (parent mismatch)"
+                                                    )
                                                 logger.warning(
                                                     f"Force killed {worker_type} process via PID fallback after timeout: {name} (PID: {pid})"
                                                 )
@@ -324,29 +373,60 @@ class WorkerManager:
                                         f"{worker_type} worker {name} (PID: {pid}) did not stop within {timeout}s, sending SIGKILL"
                                     )
                                     process.kill()
-                                    process.join(timeout=1.0)
-                                    logger.warning(
-                                        f"Force killed {worker_type} process: {name} (PID: {pid})"
-                                    )
+                                    process.join(timeout=2.0)  # Wait up to 2s for kill to take effect
 
+                                # Verify process is actually dead - use multiple methods
+                                process_dead = False
                                 try:
                                     is_alive_after = process.is_alive()
+                                    if is_alive_after is False:
+                                        process_dead = True
                                 except AssertionError:
+                                    # Process handle invalid - check via PID
                                     is_alive_after = None
 
-                                if is_alive_after is False:
+                                # If process handle says it's dead, we're done
+                                if process_dead:
                                     logger.info(
                                         f"Stopped {worker_type} process: {name} (PID: {pid})"
                                     )
                                     result["stopped"] += 1
                                 elif is_alive_after is None:
-                                    # Treat as stopped: we no longer have a valid parent handle here.
-                                    logger.info(
-                                        f"Stopped {worker_type} process (parent handle invalid in this PID): {name} (PID: {pid})"
-                                    )
-                                    result["stopped"] += 1
+                                    # Process handle invalid - verify via PID
+                                    if pid:
+                                        try:
+                                            import psutil
+
+                                            proc = psutil.Process(pid)
+                                            if proc.is_running():
+                                                # Still running - force kill via PID
+                                                proc.kill()
+                                                try:
+                                                    proc.wait(timeout=2.0)
+                                                except psutil.TimeoutExpired:
+                                                    logger.error(
+                                                        f"CRITICAL: {worker_type} process {name} (PID: {pid}) did not die after SIGKILL"
+                                                    )
+                                                logger.warning(
+                                                    f"Force killed {worker_type} process via PID fallback: {name} (PID: {pid})"
+                                                )
+                                            result["stopped"] += 1
+                                        except (psutil.NoSuchProcess, psutil.AccessDenied):
+                                            # Process is dead or we can't access it
+                                            result["stopped"] += 1
+                                        except Exception as e:
+                                            error_msg = f"Failed to verify/kill {worker_type} process via PID {name} (PID: {pid}): {e}"
+                                            logger.error(error_msg)
+                                            result["errors"].append(error_msg)
+                                            result["failed"] += 1
+                                    else:
+                                        # No PID available - treat as stopped
+                                        logger.info(
+                                            f"Stopped {worker_type} process (parent handle invalid, no PID): {name}"
+                                        )
+                                        result["stopped"] += 1
                                 else:
-                                    # Still alive after kill - try PID-based kill
+                                    # Process handle says it's still alive - force kill via PID
                                     if pid:
                                         try:
                                             import psutil
@@ -354,18 +434,29 @@ class WorkerManager:
                                             proc = psutil.Process(pid)
                                             if proc.is_running():
                                                 proc.kill()
+                                                try:
+                                                    proc.wait(timeout=2.0)
+                                                except psutil.TimeoutExpired:
+                                                    logger.error(
+                                                        f"CRITICAL: {worker_type} process {name} (PID: {pid}) did not die after SIGKILL"
+                                                    )
                                                 logger.warning(
-                                                    f"Force killed {worker_type} process via PID after kill failed: {name} (PID: {pid})"
+                                                    f"Force killed {worker_type} process via PID after process.kill() failed: {name} (PID: {pid})"
                                                 )
                                             result["stopped"] += 1
-                                        except Exception:
-                                            raise RuntimeError(
-                                                f"Process {pid} still alive after kill"
-                                            )
+                                        except (psutil.NoSuchProcess, psutil.AccessDenied):
+                                            # Process is dead or we can't access it
+                                            result["stopped"] += 1
+                                        except Exception as e:
+                                            error_msg = f"Failed to kill {worker_type} process via PID {name} (PID: {pid}): {e}"
+                                            logger.error(error_msg)
+                                            result["errors"].append(error_msg)
+                                            result["failed"] += 1
                                     else:
-                                        raise RuntimeError(
-                                            f"Process {pid} still alive after kill"
-                                        )
+                                        error_msg = f"Cannot kill {worker_type} process {name}: process still alive but no PID available"
+                                        logger.error(error_msg)
+                                        result["errors"].append(error_msg)
+                                        result["failed"] += 1
                             except Exception as e:
                                 error_msg = f"Failed to stop {worker_type} process {name} (PID: {pid}): {e}"
                                 logger.error(error_msg)
@@ -406,6 +497,12 @@ class WorkerManager:
                                 except (psutil.TimeoutExpired, Exception):
                                     # Force kill if still running after timeout
                                     proc.kill()
+                                    try:
+                                        proc.wait(timeout=2.0)
+                                    except psutil.TimeoutExpired:
+                                        logger.error(
+                                            f"CRITICAL: {worker_type} process (PID: {pid}) did not die after SIGKILL"
+                                        )
                                     logger.warning(
                                         f"Force killed {worker_type} process (PID: {pid}) after timeout"
                                     )
@@ -647,6 +744,164 @@ class WorkerManager:
                         f"Error checking {worker_type} worker: {e}",
                         exc_info=True,
                     )
+
+    def start_file_watcher_worker(
+        self,
+        *,
+        db_path: str,
+        watch_dirs: List[Dict[str, str]],
+        locks_dir: str,
+        scan_interval: int = 60,
+        version_dir: Optional[str] = None,
+        worker_log_path: Optional[str] = None,
+        ignore_patterns: Optional[List[str]] = None,
+    ) -> WorkerStartResult:
+        """
+        Start file watcher worker in a separate process and register it.
+
+        Projects are discovered automatically within each watch_dir by finding
+        projectid files. Multiple projects can exist in one watch_dir.
+
+        CRITICAL: Uses multiprocessing.Process, not threading.Thread or async.
+        This ensures workers don't conflict with Hypercorn's event loop.
+
+        Args:
+            db_path: Path to database file.
+            watch_dirs: List of watch directory configs with 'id' and 'path' keys.
+                       Format: [{'id': 'uuid4', 'path': '/absolute/path'}]
+            locks_dir: Service state directory for lock files (from StoragePaths).
+            scan_interval: Scan interval seconds.
+            version_dir: Version directory for deleted files.
+            worker_log_path: Log path for worker process.
+            ignore_patterns: Optional ignore patterns.
+
+        Returns:
+            WorkerStartResult.
+        """
+        from .file_watcher_pkg.runner import run_file_watcher_worker
+
+        # Create process (NOT thread, NOT async task)
+        process = multiprocessing.Process(
+            target=run_file_watcher_worker,
+            args=(db_path, watch_dirs),
+            kwargs={
+                "locks_dir": locks_dir,
+                "scan_interval": int(scan_interval),
+                "version_dir": version_dir,
+                "worker_log_path": worker_log_path,
+                "ignore_patterns": ignore_patterns or [],
+            },
+            daemon=True,  # Daemon process for background workers
+        )
+        process.start()
+
+        # Use first watch_dir as identifier for worker name
+        first_watch_dir = watch_dirs[0] if watch_dirs else {}
+        first_path = first_watch_dir.get("path", "default") if isinstance(first_watch_dir, dict) else str(first_watch_dir)
+        worker_name = f"file_watcher_{Path(first_path).name}"
+        self.register_worker(
+            "file_watcher",
+            {"pid": process.pid, "process": process, "name": worker_name},
+        )
+        return WorkerStartResult(
+            success=True,
+            worker_type="file_watcher",
+            pid=process.pid,
+            message=f"File watcher started (PID {process.pid})",
+        )
+
+    def start_vectorization_worker(
+        self,
+        *,
+        db_path: str,
+        faiss_dir: str,
+        vector_dim: int = 384,
+        svo_config: Optional[Dict[str, Any]] = None,
+        batch_size: int = 10,
+        poll_interval: int = 30,
+        worker_log_path: Optional[str] = None,
+    ) -> WorkerStartResult:
+        """
+        Start universal vectorization worker in a separate process and register it.
+
+        Worker operates in universal mode - processes all projects from database.
+        Worker works only with database - no filesystem access, no watch_dirs.
+
+        CRITICAL: Uses multiprocessing.Process, not threading.Thread or async.
+        This ensures workers don't conflict with Hypercorn's event loop.
+
+        Args:
+            db_path: Path to database file.
+            faiss_dir: Base directory for FAISS index files (project-scoped indexes: {faiss_dir}/{project_id}.bin).
+            vector_dim: Embedding vector dimension.
+            svo_config: Optional SVO config dict.
+            batch_size: Batch size.
+            poll_interval: Poll interval seconds.
+            worker_log_path: Log path for worker process.
+
+        Returns:
+            WorkerStartResult.
+        """
+        from .vectorization_worker_pkg.runner import run_vectorization_worker
+
+        # PID file check (before starting worker)
+        pid_file_path = Path("logs") / "vectorization_worker.pid"
+        if pid_file_path.exists():
+            try:
+                with open(pid_file_path, "r") as f:
+                    pid = int(f.read().strip())
+                # Check if process is alive
+                try:
+                    os.kill(pid, 0)  # Signal 0 just checks if process exists
+                    # Process is alive, worker already running
+                    return WorkerStartResult(
+                        success=False,
+                        worker_type="vectorization",
+                        pid=pid,
+                        message="Vectorization worker already running",
+                    )
+                except OSError:
+                    # Process is dead, remove stale PID file
+                    pid_file_path.unlink()
+            except Exception as e:
+                logger.warning(f"Error checking PID file: {e}, removing stale file")
+                try:
+                    pid_file_path.unlink()
+                except Exception:
+                    pass
+
+        # Create process (NOT thread, NOT async task)
+        process = multiprocessing.Process(
+            target=run_vectorization_worker,
+            args=(db_path, faiss_dir, int(vector_dim)),
+            kwargs={
+                "svo_config": svo_config,
+                "batch_size": int(batch_size),
+                "poll_interval": int(poll_interval),
+                "worker_log_path": worker_log_path,
+            },
+            daemon=True,  # Daemon process for background workers
+        )
+        process.start()
+
+        # Write PID file after worker starts
+        try:
+            pid_file_path.parent.mkdir(parents=True, exist_ok=True)
+            with open(pid_file_path, "w") as f:
+                f.write(str(process.pid))
+        except Exception as e:
+            logger.warning(f"Failed to write PID file: {e}")
+
+        self.register_worker(
+            "vectorization",
+            {"pid": process.pid, "process": process, "name": "vectorization_universal"},
+        )
+        return WorkerStartResult(
+            success=True,
+            worker_type="vectorization",
+            pid=process.pid,
+            message=f"Vectorization worker started (PID {process.pid})",
+        )
 
 
 # Global instance access

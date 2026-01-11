@@ -605,85 +605,66 @@ class FileChangeProcessor:
                     f"file={abs_file_path}, project_root={root_dir}, project_id={project_id}"
                 )
             
-            file_record = self.database.get_file_by_path(abs_file_path, project_id)
-            if not file_record:
-                # New file: insert/update file record first
-                path_obj = Path(abs_file_path)
-                lines = 0
-                has_docstring = False
-                try:
-                    if path_obj.exists() and path_obj.is_file():
-                        text = path_obj.read_text(encoding="utf-8", errors="ignore")
-                        lines = text.count("\n") + (1 if text else 0)
-                        stripped = text.lstrip()
-                        has_docstring = stripped.startswith(
-                            '"""'
-                        ) or stripped.startswith("'''")
-                except Exception:
-                    logger.debug(
-                        f"[QUEUE] Failed to read file for metadata, using defaults: {abs_file_path}"
-                    )
+            # Always call add_file to ensure relative_path and watch_dir_id are set/updated
+            # This handles both new files (INSERT) and existing files (UPDATE)
+            path_obj = Path(abs_file_path)
+            lines = 0
+            has_docstring = False
+            try:
+                if path_obj.exists() and path_obj.is_file():
+                    text = path_obj.read_text(encoding="utf-8", errors="ignore")
+                    lines = text.count("\n") + (1 if text else 0)
+                    stripped = text.lstrip()
+                    has_docstring = stripped.startswith(
+                        '"""'
+                    ) or stripped.startswith("'''")
+            except Exception:
+                logger.debug(
+                    f"[QUEUE] Failed to read file for metadata, using defaults: {abs_file_path}"
+                )
+            
+            try:
+                # Add/update file and get file_id (add_file handles both INSERT and UPDATE)
+                # This ensures relative_path and watch_dir_id are always set correctly
+                file_id = self.database.add_file(
+                    path=abs_file_path,
+                    lines=lines,
+                    last_modified=mtime,
+                    has_docstring=has_docstring,
+                    project_id=project_id,
+                    dataset_id=dataset_id,
+                )
+                logger.debug(
+                    f"[QUEUE] File added/updated in database: {abs_file_path} | "
+                    f"file_id={file_id} | project_id={project_id} | dataset_id={dataset_id}"
+                )
                 
-                try:
-                    # Add file and get file_id (add_file returns file_id on success)
-                    file_id = self.database.add_file(
-                        path=abs_file_path,
-                        lines=lines,
-                        last_modified=mtime,
-                        has_docstring=has_docstring,
-                        project_id=project_id,
-                        dataset_id=dataset_id,
-                    )
-                    logger.debug(
-                        f"[QUEUE] File added to database: {abs_file_path} | "
-                        f"file_id={file_id} | project_id={project_id} | dataset_id={dataset_id}"
-                    )
-                    
-                    # Verify file was added successfully by checking file_id
-                    # Use get_file_by_id instead of get_file_by_path to avoid path normalization issues
-                    file_record = self.database.get_file_by_id(file_id)
-                    if not file_record:
-                        logger.error(
-                            f"[QUEUE] File was added (file_id={file_id}) but not found in database: {abs_file_path}. "
-                            "This may indicate a transaction issue."
-                        )
-                        # Try to get by path as fallback for debugging
-                        file_record_by_path = self.database.get_file_by_path(abs_file_path, project_id)
-                        if file_record_by_path:
-                            logger.warning(
-                                f"[QUEUE] File found by path but not by id: file_id={file_id}, "
-                                f"found_file_id={file_record_by_path.get('id')}, path={abs_file_path}"
-                            )
-                            file_record = file_record_by_path
-                        else:
-                            # Log detailed debug info
-                            logger.error(
-                                f"[QUEUE] File not found by path either. "
-                                f"Normalized path: {abs_file_path}, project_id: {project_id}"
-                            )
-                            return False
-                    else:
-                        logger.debug(
-                            f"[QUEUE] File verified in database: file_id={file_id}, "
-                            f"path={file_record.get('path')}, project_id={file_record.get('project_id')}"
-                        )
-                except Exception as e:
+                # Verify file was added/updated successfully by checking file_id
+                file_record = self.database.get_file_by_id(file_id)
+                if not file_record:
                     logger.error(
-                        f"[QUEUE] Failed to add new file record: {abs_file_path} ({e})",
-                        exc_info=True
+                        f"[QUEUE] File was added/updated (file_id={file_id}) but not found in database: {abs_file_path}. "
+                        "This may indicate a transaction issue."
                     )
                     return False
+                else:
+                    logger.debug(
+                        f"[QUEUE] File verified in database: file_id={file_id}, "
+                        f"path={file_record.get('path')}, relative_path={file_record.get('relative_path')}, "
+                        f"watch_dir_id={file_record.get('watch_dir_id')}, project_id={file_record.get('project_id')}"
+                    )
+            except Exception as e:
+                logger.error(
+                    f"[QUEUE] Failed to add/update file in database: {abs_file_path} ({e})",
+                    exc_info=True
+                )
+                return False
             
             # Update all database records for changed file (using normalized path)
-            # Use file_id if available to avoid path lookup issues
-            if file_record and file_record.get("id"):
-                # File already exists - use file_id for update
-                # But update_file_data requires path, so we still pass it
-                # However, we ensure the path is correctly normalized
-                logger.debug(
-                    f"[QUEUE] Updating file data: file_id={file_record.get('id')}, "
-                    f"path={abs_file_path}, project_id={project_id}"
-                )
+            logger.debug(
+                f"[QUEUE] Updating file data: file_id={file_id}, "
+                f"path={abs_file_path}, project_id={project_id}"
+            )
             
             update_result = self.database.update_file_data(
                 file_path=abs_file_path,

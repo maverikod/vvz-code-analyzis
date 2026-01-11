@@ -534,7 +534,7 @@ def main() -> None:
         from pathlib import Path
 
         from code_analysis.core.config import ServerConfig
-        from code_analysis.core.worker_launcher import start_vectorization_worker
+        from code_analysis.core.worker_manager import get_worker_manager
 
         logger = logging.getLogger(__name__)
         logger.info("🔍 startup_vectorization_worker called")
@@ -656,11 +656,12 @@ def main() -> None:
                     storage.config_dir / "logs" / "vectorization_worker.log"
                 )
 
-            # Start single universal worker using worker_launcher
+            # Start single universal worker using WorkerManager
             logger.info("🚀 Starting universal vectorization worker...")
             print("🚀 Starting universal vectorization worker...", flush=True)
 
-            result = start_vectorization_worker(
+            worker_manager = get_worker_manager()
+            result = worker_manager.start_vectorization_worker(
                 db_path=str(db_path),
                 faiss_dir=str(faiss_dir),
                 vector_dim=vector_dim,
@@ -699,7 +700,7 @@ def main() -> None:
         from pathlib import Path
 
         from code_analysis.core.config import ServerConfig
-        from code_analysis.core.worker_launcher import start_file_watcher_worker
+        from code_analysis.core.worker_manager import get_worker_manager
 
         logger = logging.getLogger(__name__)
         logger.info("🔍 startup_file_watcher_worker called")
@@ -744,15 +745,24 @@ def main() -> None:
                 logger.info("ℹ️  File watcher worker is disabled in config, skipping")
                 return
 
-            # Get watch_dirs from worker config (same as vectorization worker)
+            # Get watch_dirs from worker config (new format: list of dicts with 'id' and 'path')
             worker_config = server_config.worker
-            watch_dirs: list[str] = []
+            watch_dirs_config: list[dict[str, str]] = []
             if worker_config and isinstance(worker_config, dict):
-                watch_dirs = worker_config.get("watch_dirs", [])
+                watch_dirs_raw = worker_config.get("watch_dirs", [])
+                # Validate format: must be list of dicts with 'id' and 'path'
+                for wd in watch_dirs_raw:
+                    if isinstance(wd, dict) and "id" in wd and "path" in wd:
+                        watch_dirs_config.append(wd)
+                    else:
+                        logger.error(
+                            f"Invalid watch_dir format: {wd}. "
+                            "Expected: {{'id': 'uuid4', 'path': '/absolute/path'}}"
+                        )
 
-            if not watch_dirs:
+            if not watch_dirs_config:
                 logger.warning(
-                    "⚠️  No watch_dirs configured, skipping file watcher worker"
+                    "⚠️  No valid watch_dirs configured, skipping file watcher worker"
                 )
                 return
 
@@ -764,16 +774,22 @@ def main() -> None:
             )
             db_path = storage.db_path
 
-            # Validate watch_dirs exist
-            valid_watch_dirs: list[str] = []
-            for watch_dir in watch_dirs:
-                watch_dir_path = Path(watch_dir).resolve()
+            # Validate watch_dirs exist and normalize paths
+            valid_watch_dirs: list[dict[str, str]] = []
+            for watch_dir_config in watch_dirs_config:
+                watch_dir_id = watch_dir_config["id"]
+                watch_dir_path_str = watch_dir_config["path"]
+                watch_dir_path = Path(watch_dir_path_str).resolve()
                 if not watch_dir_path.exists():
                     logger.warning(
                         f"⚠️  Watch directory does not exist: {watch_dir_path}, skipping"
                     )
                     continue
-                valid_watch_dirs.append(str(watch_dir_path))
+                # Use normalized absolute path
+                valid_watch_dirs.append({
+                    "id": watch_dir_id,
+                    "path": str(watch_dir_path),
+                })
 
             if not valid_watch_dirs:
                 logger.warning(
@@ -804,8 +820,9 @@ def main() -> None:
             if worker_log_path:
                 logger.info(f"📝 Worker log file: {worker_log_path}")
 
-            # Start file watcher worker using worker_launcher (registers in WorkerManager)
-            result = start_file_watcher_worker(
+            # Start file watcher worker using WorkerManager
+            worker_manager = get_worker_manager()
+            result = worker_manager.start_file_watcher_worker(
                 db_path=str(db_path),
                 watch_dirs=valid_watch_dirs,
                 locks_dir=str(locks_dir),

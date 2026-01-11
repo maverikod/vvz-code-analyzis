@@ -620,7 +620,7 @@ class UpdateIndexesMCPCommand(BaseMCPCommand):
             write_corruption_marker,
         )
         from ..core.progress_tracker import get_progress_tracker_from_context
-        from ..core.worker_launcher import stop_worker_type
+        from ..core.worker_manager import get_worker_manager
 
         progress_tracker = get_progress_tracker_from_context(
             kwargs.get("context") or {}
@@ -663,8 +663,9 @@ class UpdateIndexesMCPCommand(BaseMCPCommand):
                         f"Database corrupted ({db_check.message}); creating backup and entering safe mode..."
                     )
 
-                stop_worker_type("file_watcher", timeout=5.0)
-                stop_worker_type("vectorization", timeout=5.0)
+                worker_manager = get_worker_manager()
+                worker_manager.stop_worker_type("file_watcher", timeout=5.0)
+                worker_manager.stop_worker_type("vectorization", timeout=5.0)
 
                 backup_paths = list(backup_sqlite_files(db_path, backup_dir=data_dir))
                 marker_path = write_corruption_marker(

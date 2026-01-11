@@ -17,7 +17,7 @@ from ..db_driver import create_driver
 logger = logging.getLogger(__name__)
 
 # Schema version constant
-SCHEMA_VERSION = "1.0.0"  # Current schema version
+SCHEMA_VERSION = "1.1.0"  # Current schema version (added worker_stats tables)
 
 # Migration methods registry: version -> migration function
 # Each migration function receives driver instance and performs version-specific migrations
@@ -360,7 +360,33 @@ class CodeDatabase:
     def _create_schema(self) -> None:
         """Create database schema if it doesn't exist."""
         # All operations use driver interface - no direct connection access
-        # Create projects table first (other tables reference it)
+        
+        # Create watch_dirs table first (projects reference it)
+        self._execute(
+            """
+                CREATE TABLE IF NOT EXISTS watch_dirs (
+                    id TEXT PRIMARY KEY,
+                    name TEXT,
+                    created_at REAL DEFAULT (julianday('now')),
+                    updated_at REAL DEFAULT (julianday('now'))
+                )
+            """
+        )
+        
+        # Create watch_dir_paths table (maps watch_dir_id to absolute path)
+        self._execute(
+            """
+                CREATE TABLE IF NOT EXISTS watch_dir_paths (
+                    watch_dir_id TEXT PRIMARY KEY,
+                    absolute_path TEXT,
+                    created_at REAL DEFAULT (julianday('now')),
+                    updated_at REAL DEFAULT (julianday('now')),
+                    FOREIGN KEY (watch_dir_id) REFERENCES watch_dirs(id) ON DELETE CASCADE
+                )
+            """
+        )
+        
+        # Create projects table (references watch_dirs)
         self._execute(
             """
                 CREATE TABLE IF NOT EXISTS projects (
@@ -368,11 +394,23 @@ class CodeDatabase:
                     root_path TEXT UNIQUE NOT NULL,
                     name TEXT,
                     comment TEXT,
+                    watch_dir_id TEXT,
                     created_at REAL DEFAULT (julianday('now')),
-                    updated_at REAL DEFAULT (julianday('now'))
+                    updated_at REAL DEFAULT (julianday('now')),
+                    FOREIGN KEY (watch_dir_id) REFERENCES watch_dirs(id) ON DELETE SET NULL
                 )
             """
         )
+        # Create index on watch_dir_id for performance
+        try:
+            self._execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_projects_watch_dir_id 
+                ON projects(watch_dir_id)
+                """
+            )
+        except Exception:
+            pass  # Index might already exist
         # Create datasets table (Step 1.1 of refactor plan)
         # datasets table supports multi-root indexing within a project
         self._execute(
@@ -389,15 +427,17 @@ class CodeDatabase:
                 )
             """
         )
-        # Update files table to include dataset_id (Step 1.1 of refactor plan)
-        # Files now have UNIQUE(project_id, dataset_id, path) constraint
+        # Update files table to include dataset_id, watch_dir_id, and relative_path
+        # Files now store relative_path from project root, not absolute path
         self._execute(
             """
                 CREATE TABLE IF NOT EXISTS files (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     project_id TEXT NOT NULL,
                     dataset_id TEXT NOT NULL,
+                    watch_dir_id TEXT,
                     path TEXT NOT NULL,
+                    relative_path TEXT,
                     lines INTEGER,
                     last_modified REAL,
                     has_docstring BOOLEAN,
@@ -408,6 +448,7 @@ class CodeDatabase:
                     updated_at REAL DEFAULT (julianday('now')),
                     FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE,
                     FOREIGN KEY (dataset_id) REFERENCES datasets(id) ON DELETE CASCADE,
+                    FOREIGN KEY (watch_dir_id) REFERENCES watch_dirs(id) ON DELETE SET NULL,
                     UNIQUE(project_id, dataset_id, path)
                 )
             """
@@ -717,6 +758,43 @@ class CodeDatabase:
                 )
             """
         )
+        # Create file_watcher_stats table for tracking file watcher cycle statistics
+        self._execute(
+            """
+                CREATE TABLE IF NOT EXISTS file_watcher_stats (
+                    cycle_id TEXT PRIMARY KEY,
+                    cycle_start_time REAL NOT NULL,
+                    cycle_end_time REAL,
+                    files_total_at_start INTEGER NOT NULL DEFAULT 0,
+                    files_added INTEGER NOT NULL DEFAULT 0,
+                    files_processed INTEGER NOT NULL DEFAULT 0,
+                    files_skipped INTEGER NOT NULL DEFAULT 0,
+                    files_failed INTEGER NOT NULL DEFAULT 0,
+                    files_changed INTEGER NOT NULL DEFAULT 0,
+                    files_deleted INTEGER NOT NULL DEFAULT 0,
+                    total_processing_time_seconds REAL NOT NULL DEFAULT 0.0,
+                    average_processing_time_seconds REAL,
+                    last_updated REAL DEFAULT (julianday('now'))
+                )
+            """
+        )
+        # Create vectorization_stats table for tracking vectorization cycle statistics
+        self._execute(
+            """
+                CREATE TABLE IF NOT EXISTS vectorization_stats (
+                    cycle_id TEXT PRIMARY KEY,
+                    cycle_start_time REAL NOT NULL,
+                    cycle_end_time REAL,
+                    chunks_total_at_start INTEGER NOT NULL DEFAULT 0,
+                    chunks_processed INTEGER NOT NULL DEFAULT 0,
+                    chunks_skipped INTEGER NOT NULL DEFAULT 0,
+                    chunks_failed INTEGER NOT NULL DEFAULT 0,
+                    total_processing_time_seconds REAL NOT NULL DEFAULT 0.0,
+                    average_processing_time_seconds REAL,
+                    last_updated REAL DEFAULT (julianday('now'))
+                )
+            """
+        )
         self._commit()
         self._migrate_to_uuid_projects()
         self._migrate_schema()
@@ -759,6 +837,8 @@ class CodeDatabase:
             "CREATE INDEX IF NOT EXISTS idx_code_duplicates_hash ON code_duplicates(duplicate_hash)",
             "CREATE INDEX IF NOT EXISTS idx_duplicate_occurrences_duplicate ON duplicate_occurrences(duplicate_id)",
             "CREATE INDEX IF NOT EXISTS idx_duplicate_occurrences_file ON duplicate_occurrences(file_id)",
+            "CREATE INDEX IF NOT EXISTS idx_file_watcher_stats_start_time ON file_watcher_stats(cycle_start_time)",
+            "CREATE INDEX IF NOT EXISTS idx_vectorization_stats_start_time ON vectorization_stats(cycle_start_time)",
         ]
         for index_sql in indexes:
             self._execute(index_sql)
@@ -1355,7 +1435,7 @@ class CodeDatabase:
                     "unique_constraints": [],
                     "check_constraints": [],
                 },
-                "projects": {
+                "watch_dirs": {
                     "columns": [
                         {
                             "name": "id",
@@ -1363,9 +1443,7 @@ class CodeDatabase:
                             "not_null": True,
                             "primary_key": True,
                         },
-                        {"name": "root_path", "type": "TEXT", "not_null": True},
                         {"name": "name", "type": "TEXT", "not_null": False},
-                        {"name": "comment", "type": "TEXT", "not_null": False},
                         {
                             "name": "created_at",
                             "type": "REAL",
@@ -1380,6 +1458,75 @@ class CodeDatabase:
                         },
                     ],
                     "foreign_keys": [],
+                    "unique_constraints": [],
+                    "check_constraints": [],
+                },
+                "watch_dir_paths": {
+                    "columns": [
+                        {
+                            "name": "watch_dir_id",
+                            "type": "TEXT",
+                            "not_null": True,
+                            "primary_key": True,
+                        },
+                        {"name": "absolute_path", "type": "TEXT", "not_null": False},
+                        {
+                            "name": "created_at",
+                            "type": "REAL",
+                            "not_null": False,
+                            "default": "julianday('now')",
+                        },
+                        {
+                            "name": "updated_at",
+                            "type": "REAL",
+                            "not_null": False,
+                            "default": "julianday('now')",
+                        },
+                    ],
+                    "foreign_keys": [
+                        {
+                            "columns": ["watch_dir_id"],
+                            "references_table": "watch_dirs",
+                            "references_columns": ["id"],
+                            "on_delete": "CASCADE",
+                        }
+                    ],
+                    "unique_constraints": [],
+                    "check_constraints": [],
+                },
+                "projects": {
+                    "columns": [
+                        {
+                            "name": "id",
+                            "type": "TEXT",
+                            "not_null": True,
+                            "primary_key": True,
+                        },
+                        {"name": "root_path", "type": "TEXT", "not_null": True},
+                        {"name": "name", "type": "TEXT", "not_null": False},
+                        {"name": "comment", "type": "TEXT", "not_null": False},
+                        {"name": "watch_dir_id", "type": "TEXT", "not_null": False},
+                        {
+                            "name": "created_at",
+                            "type": "REAL",
+                            "not_null": False,
+                            "default": "julianday('now')",
+                        },
+                        {
+                            "name": "updated_at",
+                            "type": "REAL",
+                            "not_null": False,
+                            "default": "julianday('now')",
+                        },
+                    ],
+                    "foreign_keys": [
+                        {
+                            "columns": ["watch_dir_id"],
+                            "references_table": "watch_dirs",
+                            "references_columns": ["id"],
+                            "on_delete": "SET NULL",
+                        }
+                    ],
                     "unique_constraints": [{"columns": ["root_path"]}],
                     "check_constraints": [],
                 },
@@ -1429,7 +1576,9 @@ class CodeDatabase:
                         },
                         {"name": "project_id", "type": "TEXT", "not_null": True},
                         {"name": "dataset_id", "type": "TEXT", "not_null": True},
+                        {"name": "watch_dir_id", "type": "TEXT", "not_null": False},
                         {"name": "path", "type": "TEXT", "not_null": True},
+                        {"name": "relative_path", "type": "TEXT", "not_null": False},
                         {"name": "lines", "type": "INTEGER", "not_null": False},
                         {"name": "last_modified", "type": "REAL", "not_null": False},
                         {"name": "has_docstring", "type": "BOOLEAN", "not_null": False},
@@ -1466,6 +1615,12 @@ class CodeDatabase:
                             "references_table": "datasets",
                             "references_columns": ["id"],
                             "on_delete": "CASCADE",
+                        },
+                        {
+                            "columns": ["watch_dir_id"],
+                            "references_table": "watch_dirs",
+                            "references_columns": ["id"],
+                            "on_delete": "SET NULL",
                         },
                     ],
                     "unique_constraints": [
@@ -2065,6 +2220,144 @@ class CodeDatabase:
                     "unique_constraints": [{"columns": ["file_id", "file_mtime"]}],
                     "check_constraints": [],
                 },
+                "file_watcher_stats": {
+                    "columns": [
+                        {
+                            "name": "cycle_id",
+                            "type": "TEXT",
+                            "not_null": True,
+                            "primary_key": True,
+                        },
+                        {
+                            "name": "cycle_start_time",
+                            "type": "REAL",
+                            "not_null": True,
+                        },
+                        {"name": "cycle_end_time", "type": "REAL", "not_null": False},
+                        {
+                            "name": "files_total_at_start",
+                            "type": "INTEGER",
+                            "not_null": True,
+                            "default": "0",
+                        },
+                        {
+                            "name": "files_added",
+                            "type": "INTEGER",
+                            "not_null": True,
+                            "default": "0",
+                        },
+                        {
+                            "name": "files_processed",
+                            "type": "INTEGER",
+                            "not_null": True,
+                            "default": "0",
+                        },
+                        {
+                            "name": "files_skipped",
+                            "type": "INTEGER",
+                            "not_null": True,
+                            "default": "0",
+                        },
+                        {
+                            "name": "files_failed",
+                            "type": "INTEGER",
+                            "not_null": True,
+                            "default": "0",
+                        },
+                        {
+                            "name": "files_changed",
+                            "type": "INTEGER",
+                            "not_null": True,
+                            "default": "0",
+                        },
+                        {
+                            "name": "files_deleted",
+                            "type": "INTEGER",
+                            "not_null": True,
+                            "default": "0",
+                        },
+                        {
+                            "name": "total_processing_time_seconds",
+                            "type": "REAL",
+                            "not_null": True,
+                            "default": "0.0",
+                        },
+                        {
+                            "name": "average_processing_time_seconds",
+                            "type": "REAL",
+                            "not_null": False,
+                        },
+                        {
+                            "name": "last_updated",
+                            "type": "REAL",
+                            "not_null": False,
+                            "default": "julianday('now')",
+                        },
+                    ],
+                    "foreign_keys": [],
+                    "unique_constraints": [],
+                    "check_constraints": [],
+                },
+                "vectorization_stats": {
+                    "columns": [
+                        {
+                            "name": "cycle_id",
+                            "type": "TEXT",
+                            "not_null": True,
+                            "primary_key": True,
+                        },
+                        {
+                            "name": "cycle_start_time",
+                            "type": "REAL",
+                            "not_null": True,
+                        },
+                        {"name": "cycle_end_time", "type": "REAL", "not_null": False},
+                        {
+                            "name": "chunks_total_at_start",
+                            "type": "INTEGER",
+                            "not_null": True,
+                            "default": "0",
+                        },
+                        {
+                            "name": "chunks_processed",
+                            "type": "INTEGER",
+                            "not_null": True,
+                            "default": "0",
+                        },
+                        {
+                            "name": "chunks_skipped",
+                            "type": "INTEGER",
+                            "not_null": True,
+                            "default": "0",
+                        },
+                        {
+                            "name": "chunks_failed",
+                            "type": "INTEGER",
+                            "not_null": True,
+                            "default": "0",
+                        },
+                        {
+                            "name": "total_processing_time_seconds",
+                            "type": "REAL",
+                            "not_null": True,
+                            "default": "0.0",
+                        },
+                        {
+                            "name": "average_processing_time_seconds",
+                            "type": "REAL",
+                            "not_null": False,
+                        },
+                        {
+                            "name": "last_updated",
+                            "type": "REAL",
+                            "not_null": False,
+                            "default": "julianday('now')",
+                        },
+                    ],
+                    "foreign_keys": [],
+                    "unique_constraints": [],
+                    "check_constraints": [],
+                },
             },
             "indexes": [
                 {
@@ -2330,6 +2623,20 @@ class CodeDatabase:
                     "name": "idx_duplicate_occurrences_file",
                     "table": "duplicate_occurrences",
                     "columns": ["file_id"],
+                    "unique": False,
+                    "where_clause": None,
+                },
+                {
+                    "name": "idx_file_watcher_stats_start_time",
+                    "table": "file_watcher_stats",
+                    "columns": ["cycle_start_time"],
+                    "unique": False,
+                    "where_clause": None,
+                },
+                {
+                    "name": "idx_vectorization_stats_start_time",
+                    "table": "vectorization_stats",
+                    "columns": ["cycle_start_time"],
                     "unique": False,
                     "where_clause": None,
                 },

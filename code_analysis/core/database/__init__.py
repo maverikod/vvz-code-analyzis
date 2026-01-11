@@ -24,6 +24,8 @@ except ImportError:
 from . import datasets
 from . import chunks
 from . import comprehensive_analysis
+from . import watch_dirs
+from . import worker_stats
 
 
 def _add_functions_as_methods(target_class: type, source_module: object) -> None:
@@ -41,9 +43,11 @@ _MODULES = [
     files,
     cst,
     ast,
+    watch_dirs,
     entities,
     chunks,
     comprehensive_analysis,
+    worker_stats,
 ]
 
 for _m in _MODULES:

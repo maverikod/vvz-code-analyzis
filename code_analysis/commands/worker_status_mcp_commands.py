@@ -82,7 +82,7 @@ class GetWorkerStatusMCPCommand(BaseMCPCommand):
                 lock_file_path=lock_file_path,
             )
             result = await command.execute()
-            
+
             # Add worker statistics from database if root_dir provided
             if root_dir:
                 try:
@@ -91,17 +91,43 @@ class GetWorkerStatusMCPCommand(BaseMCPCommand):
                         if worker_type == "file_watcher":
                             stats = db.get_file_watcher_stats()
                             if stats:
+                                # Calculate processing speed (files per second)
+                                if stats.get("average_processing_time_seconds"):
+                                    avg_time = stats["average_processing_time_seconds"]
+                                    if avg_time and avg_time > 0:
+                                        stats["processing_speed_files_per_second"] = (
+                                            round(1.0 / avg_time, 2)
+                                        )
+                                    else:
+                                        stats["processing_speed_files_per_second"] = (
+                                            None
+                                        )
+                                else:
+                                    stats["processing_speed_files_per_second"] = None
                                 result["cycle_stats"] = stats
                         elif worker_type == "vectorization":
                             stats = db.get_vectorization_stats()
                             if stats:
+                                # Calculate processing speed (chunks per second)
+                                if stats.get("average_processing_time_seconds"):
+                                    avg_time = stats["average_processing_time_seconds"]
+                                    if avg_time and avg_time > 0:
+                                        stats["processing_speed_chunks_per_second"] = (
+                                            round(1.0 / avg_time, 2)
+                                        )
+                                    else:
+                                        stats["processing_speed_chunks_per_second"] = (
+                                            None
+                                        )
+                                else:
+                                    stats["processing_speed_chunks_per_second"] = None
                                 result["cycle_stats"] = stats
                     finally:
                         db.close()
                 except Exception as e:
                     logger.warning(f"Failed to get worker stats from database: {e}")
                     # Don't fail the command if stats are unavailable
-            
+
             return SuccessResult(data=result)
         except Exception as e:
             return self._handle_error(e, "WORKER_STATUS_ERROR", "get_worker_status")
@@ -434,24 +460,29 @@ class GetDatabaseStatusMCPCommand(BaseMCPCommand):
         """
         try:
             from datetime import datetime
-            from pathlib import Path
 
-            root_path = self._validate_root_dir(root_dir)
-            
+            self._validate_root_dir(root_dir)
+
             # Get database path from config (same way as _open_database does)
-            from ..core.storage_paths import load_raw_config, resolve_storage_paths, ensure_storage_dirs
-            
+            from ..core.storage_paths import (
+                load_raw_config,
+                resolve_storage_paths,
+                ensure_storage_dirs,
+            )
+
             config_path = self._resolve_config_path()
             config_data = load_raw_config(config_path)
-            storage = resolve_storage_paths(config_data=config_data, config_path=config_path)
+            storage = resolve_storage_paths(
+                config_data=config_data, config_path=config_path
+            )
             ensure_storage_dirs(storage)
             db_path = storage.db_path
-            
+
             # Use unified database access method (not direct path construction)
             db = self._open_database(root_dir, auto_analyze=False)
-            
+
             try:
-                
+
                 result = {
                     "db_path": str(db_path),
                     "timestamp": datetime.now().isoformat(),
@@ -473,7 +504,7 @@ class GetDatabaseStatusMCPCommand(BaseMCPCommand):
                     "SELECT COUNT(*) as count FROM projects"
                 )
                 project_count = project_count_row["count"] if project_count_row else 0
-                
+
                 # Get projects with detailed statistics
                 projects_with_stats = db._fetchall(
                     """
@@ -493,14 +524,14 @@ class GetDatabaseStatusMCPCommand(BaseMCPCommand):
                     LIMIT 10
                     """
                 )
-                
+
                 project_list = []
                 for p in projects_with_stats:
                     file_count = p["file_count"] or 0
                     chunked_files = p["chunked_files"] or 0
                     chunk_count = p["chunk_count"] or 0
                     vectorized_chunks = p["vectorized_chunks"] or 0
-                    
+
                     chunked_percent = (
                         round((chunked_files / file_count * 100), 2)
                         if file_count > 0
@@ -511,18 +542,20 @@ class GetDatabaseStatusMCPCommand(BaseMCPCommand):
                         if chunk_count > 0
                         else 0
                     )
-                    
-                    project_list.append({
-                        "id": p["id"],
-                        "name": p["name"],
-                        "file_count": file_count,
-                        "chunked_files": chunked_files,
-                        "chunked_percent": chunked_percent,
-                        "chunk_count": chunk_count,
-                        "vectorized_chunks": vectorized_chunks,
-                        "vectorized_percent": vectorized_percent,
-                    })
-                
+
+                    project_list.append(
+                        {
+                            "id": p["id"],
+                            "name": p["name"],
+                            "file_count": file_count,
+                            "chunked_files": chunked_files,
+                            "chunked_percent": chunked_percent,
+                            "chunk_count": chunk_count,
+                            "vectorized_chunks": vectorized_chunks,
+                            "vectorized_percent": vectorized_percent,
+                        }
+                    )
+
                 result["projects"] = {
                     "total": project_count,
                     "sample": project_list,
@@ -650,7 +683,36 @@ class GetDatabaseStatusMCPCommand(BaseMCPCommand):
                 # Get worker statistics
                 file_watcher_stats = db.get_file_watcher_stats()
                 vectorization_stats = db.get_vectorization_stats()
-                
+
+                # Calculate processing speed (files/chunks per second) from average time
+                if file_watcher_stats and file_watcher_stats.get(
+                    "average_processing_time_seconds"
+                ):
+                    avg_time = file_watcher_stats["average_processing_time_seconds"]
+                    if avg_time and avg_time > 0:
+                        file_watcher_stats["processing_speed_files_per_second"] = round(
+                            1.0 / avg_time, 2
+                        )
+                    else:
+                        file_watcher_stats["processing_speed_files_per_second"] = None
+                else:
+                    if file_watcher_stats:
+                        file_watcher_stats["processing_speed_files_per_second"] = None
+
+                if vectorization_stats and vectorization_stats.get(
+                    "average_processing_time_seconds"
+                ):
+                    avg_time = vectorization_stats["average_processing_time_seconds"]
+                    if avg_time and avg_time > 0:
+                        vectorization_stats["processing_speed_chunks_per_second"] = (
+                            round(1.0 / avg_time, 2)
+                        )
+                    else:
+                        vectorization_stats["processing_speed_chunks_per_second"] = None
+                else:
+                    if vectorization_stats:
+                        vectorization_stats["processing_speed_chunks_per_second"] = None
+
                 result["worker_stats"] = {
                     "file_watcher": file_watcher_stats,
                     "vectorization": vectorization_stats,
@@ -896,8 +958,14 @@ class GetDatabaseStatusMCPCommand(BaseMCPCommand):
                         "projects": {
                             "total": 3,
                             "sample": [
-                                {"id": "123e4567-e89b-12d3-a456-426614174000", "name": "project1"},
-                                {"id": "223e4567-e89b-12d3-a456-426614174001", "name": "project2"},
+                                {
+                                    "id": "123e4567-e89b-12d3-a456-426614174000",
+                                    "name": "project1",
+                                },
+                                {
+                                    "id": "223e4567-e89b-12d3-a456-426614174001",
+                                    "name": "project2",
+                                },
                             ],
                         },
                         "files": {

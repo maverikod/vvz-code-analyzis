@@ -48,8 +48,8 @@ def start_file_watcher_cycle(self, cycle_id: Optional[str] = None) -> str:
             files_added, files_processed, files_skipped, files_failed,
             files_changed, files_deleted,
             total_processing_time_seconds, average_processing_time_seconds,
-            last_updated
-        ) VALUES (?, ?, ?, 0, 0, 0, 0, 0, 0, 0.0, NULL, julianday('now'))
+            current_project_id, last_updated
+        ) VALUES (?, ?, ?, 0, 0, 0, 0, 0, 0, 0.0, NULL, NULL, julianday('now'))
         """,
         (cycle_id, cycle_start_time, files_total_at_start),
     )
@@ -71,6 +71,7 @@ def update_file_watcher_stats(
     files_changed: int = 0,
     files_deleted: int = 0,
     processing_time_seconds: float = 0.0,
+    current_project_id: Optional[str] = None,
 ) -> None:
     """
     Update file watcher cycle statistics.
@@ -84,10 +85,10 @@ def update_file_watcher_stats(
         files_changed: Number of files changed (increment)
         files_deleted: Number of files deleted (increment)
         processing_time_seconds: Processing time for this batch (add to total)
+        current_project_id: Optional project ID currently being processed
     """
     # Update statistics with increments
-    self._execute(
-        """
+    update_sql = """
         UPDATE file_watcher_stats
         SET
             files_added = files_added + ?,
@@ -98,19 +99,26 @@ def update_file_watcher_stats(
             files_deleted = files_deleted + ?,
             total_processing_time_seconds = total_processing_time_seconds + ?,
             last_updated = julianday('now')
-        WHERE cycle_id = ?
-        """,
-        (
-            files_added,
-            files_processed,
-            files_skipped,
-            files_failed,
-            files_changed,
-            files_deleted,
-            processing_time_seconds,
-            cycle_id,
-        ),
-    )
+    """
+    update_params = [
+        files_added,
+        files_processed,
+        files_skipped,
+        files_failed,
+        files_changed,
+        files_deleted,
+        processing_time_seconds,
+    ]
+
+    # Update current_project_id if provided
+    if current_project_id is not None:
+        update_sql += ", current_project_id = ?"
+        update_params.append(current_project_id)
+
+    update_sql += " WHERE cycle_id = ?"
+    update_params.append(cycle_id)
+
+    self._execute(update_sql, tuple(update_params))
 
     # Calculate and update average processing time
     # Average = total_time / (files_processed + files_failed) if > 0
@@ -171,6 +179,7 @@ def get_file_watcher_stats(self) -> Optional[Dict[str, Any]]:
             files_deleted,
             total_processing_time_seconds,
             average_processing_time_seconds,
+            current_project_id,
             last_updated
         FROM file_watcher_stats
         ORDER BY cycle_start_time DESC
@@ -193,6 +202,7 @@ def get_file_watcher_stats(self) -> Optional[Dict[str, Any]]:
         "files_deleted": result["files_deleted"],
         "total_processing_time_seconds": result["total_processing_time_seconds"],
         "average_processing_time_seconds": result["average_processing_time_seconds"],
+        "current_project_id": result.get("current_project_id"),
         "last_updated": result["last_updated"],
     }
 

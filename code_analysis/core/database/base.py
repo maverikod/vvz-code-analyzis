@@ -17,7 +17,9 @@ from ..db_driver import create_driver
 logger = logging.getLogger(__name__)
 
 # Schema version constant
-SCHEMA_VERSION = "1.1.0"  # Current schema version (added worker_stats tables)
+SCHEMA_VERSION = (
+    "1.2.0"  # Current schema version (added current_project_id to file_watcher_stats)
+)
 
 # Migration methods registry: version -> migration function
 # Each migration function receives driver instance and performs version-specific migrations
@@ -360,7 +362,7 @@ class CodeDatabase:
     def _create_schema(self) -> None:
         """Create database schema if it doesn't exist."""
         # All operations use driver interface - no direct connection access
-        
+
         # Create watch_dirs table first (projects reference it)
         self._execute(
             """
@@ -372,7 +374,7 @@ class CodeDatabase:
                 )
             """
         )
-        
+
         # Create watch_dir_paths table (maps watch_dir_id to absolute path)
         self._execute(
             """
@@ -385,7 +387,7 @@ class CodeDatabase:
                 )
             """
         )
-        
+
         # Create projects table (references watch_dirs)
         self._execute(
             """
@@ -774,6 +776,7 @@ class CodeDatabase:
                     files_deleted INTEGER NOT NULL DEFAULT 0,
                     total_processing_time_seconds REAL NOT NULL DEFAULT 0.0,
                     average_processing_time_seconds REAL,
+                    current_project_id TEXT,
                     last_updated REAL DEFAULT (julianday('now'))
                 )
             """
@@ -1093,6 +1096,26 @@ class CodeDatabase:
                 self._commit()
             except Exception as e:
                 logger.warning(f"Could not add deleted column to files: {e}")
+
+        # Migration: Add current_project_id column to file_watcher_stats table if it doesn't exist
+        try:
+            file_watcher_stats_table_info = self._get_table_info("file_watcher_stats")
+            file_watcher_stats_columns = {
+                col["name"]: col["type"] for col in file_watcher_stats_table_info
+            }
+            if "current_project_id" not in file_watcher_stats_columns:
+                logger.info(
+                    "Migrating file_watcher_stats table: adding current_project_id column"
+                )
+                self._execute(
+                    "ALTER TABLE file_watcher_stats ADD COLUMN current_project_id TEXT"
+                )
+                self._commit()
+        except Exception as e:
+            # Table might not exist yet, that's OK
+            logger.debug(
+                f"Could not check/add current_project_id to file_watcher_stats: {e}"
+            )
 
         if "original_path" not in files_columns:
             try:
@@ -2292,6 +2315,11 @@ class CodeDatabase:
                             "type": "REAL",
                             "not_null": False,
                             "default": "julianday('now')",
+                        },
+                        {
+                            "name": "current_project_id",
+                            "type": "TEXT",
+                            "not_null": False,
                         },
                     ],
                     "foreign_keys": [],

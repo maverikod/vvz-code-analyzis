@@ -17,7 +17,7 @@ import multiprocessing
 import os
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from typing import Any, Dict, List, Optional, Sequence
 
 from .lock_manager import LockManager
 from .processor import FileChangeProcessor
@@ -118,7 +118,6 @@ class MultiProjectFileWatcherWorker:
 
         from ..database import CodeDatabase
         from ..database.base import create_driver_config_for_worker
-        from ..path_normalization import normalize_path_simple
 
         driver_config = create_driver_config_for_worker(self.db_path)
 
@@ -151,7 +150,7 @@ class MultiProjectFileWatcherWorker:
                                 db_available = True
                                 db_status_logged = True
                                 backoff = 1.0  # Reset backoff
-                                
+
                                 # Initialize watch_dirs on first connection
                                 if not watch_dirs_initialized:
                                     try:
@@ -302,10 +301,10 @@ class MultiProjectFileWatcherWorker:
             Dictionary with cycle statistics.
         """
         import time
-        
+
         # Start worker statistics cycle
         cycle_id = database.start_file_watcher_cycle()
-        
+
         cycle_stats: Dict[str, Any] = {
             "scanned_dirs": 0,
             "new_files": 0,
@@ -322,7 +321,7 @@ class MultiProjectFileWatcherWorker:
         )
 
         total_processing_time = 0.0
-        
+
         for spec in self.watch_dirs:
             if self._stop_event.is_set():
                 break
@@ -331,18 +330,19 @@ class MultiProjectFileWatcherWorker:
             watch_dir_stats = self._scan_watch_dir(spec, processor, database)
             watch_dir_duration = time.time() - watch_dir_start
             total_processing_time += watch_dir_duration
-            
+
             cycle_stats["scanned_dirs"] += watch_dir_stats.get("scanned_dirs", 0)
             cycle_stats["new_files"] += watch_dir_stats.get("new_files", 0)
             cycle_stats["changed_files"] += watch_dir_stats.get("changed_files", 0)
             cycle_stats["deleted_files"] += watch_dir_stats.get("deleted_files", 0)
             cycle_stats["errors"] += watch_dir_stats.get("errors", 0)
-            
+
             # Update statistics after each watch_dir
             database.update_file_watcher_stats(
                 cycle_id=cycle_id,
                 files_added=watch_dir_stats.get("new_files", 0),
-                files_processed=watch_dir_stats.get("new_files", 0) + watch_dir_stats.get("changed_files", 0),
+                files_processed=watch_dir_stats.get("new_files", 0)
+                + watch_dir_stats.get("changed_files", 0),
                 files_skipped=0,  # Skipped files are tracked separately if needed
                 files_failed=watch_dir_stats.get("errors", 0),
                 files_changed=watch_dir_stats.get("changed_files", 0),
@@ -352,7 +352,7 @@ class MultiProjectFileWatcherWorker:
 
         # End cycle
         database.end_file_watcher_cycle(cycle_id)
-        
+
         return cycle_stats
 
     def _scan_watch_dir(
@@ -445,17 +445,17 @@ class MultiProjectFileWatcherWorker:
                         needs_update = False
                         update_fields = []
                         update_values = []
-                        
+
                         if current_comment != project_root_obj.description:
                             needs_update = True
                             update_fields.append("comment = ?")
                             update_values.append(project_root_obj.description)
-                        
+
                         if current_watch_dir_id != watch_dir_id:
                             needs_update = True
                             update_fields.append("watch_dir_id = ?")
                             update_values.append(watch_dir_id)
-                        
+
                         if needs_update:
                             update_values.append(project_root_obj.project_id)
                             database._execute(
@@ -539,30 +539,36 @@ class MultiProjectFileWatcherWorker:
                                 f"with description: {project_description} "
                                 f"and watch_dir_id: {watch_dir_id}"
                             )
-                            
+
                             # Start automatic indexing for newly created project in background thread
                             try:
                                 import threading
                                 import asyncio
-                                from code_analysis.core.constants import DEFAULT_MAX_FILE_LINES
-                                from code_analysis.commands.code_mapper_mcp_command import UpdateIndexesMCPCommand
-                                
+                                from code_analysis.core.constants import (
+                                    DEFAULT_MAX_FILE_LINES,
+                                )
+                                from code_analysis.commands.code_mapper_mcp_command import (
+                                    UpdateIndexesMCPCommand,
+                                )
+
                                 def run_indexing():
                                     """Run indexing in background thread."""
                                     try:
                                         # Create new event loop for this thread
                                         loop = asyncio.new_event_loop()
                                         asyncio.set_event_loop(loop)
-                                        
+
                                         try:
                                             cmd = UpdateIndexesMCPCommand()
                                             result = loop.run_until_complete(
                                                 cmd.execute(
-                                                    root_dir=str(project_root_obj.root_path),
+                                                    root_dir=str(
+                                                        project_root_obj.root_path
+                                                    ),
                                                     max_lines=DEFAULT_MAX_FILE_LINES,
                                                 )
                                             )
-                                            
+
                                             if not result.success:
                                                 logger.warning(
                                                     f"Auto-indexing for new project {project_root_obj.project_id} "
@@ -581,8 +587,10 @@ class MultiProjectFileWatcherWorker:
                                             f"{project_root_obj.project_id}: {e}",
                                             exc_info=True,
                                         )
-                                
-                                thread = threading.Thread(target=run_indexing, daemon=True)
+
+                                thread = threading.Thread(
+                                    target=run_indexing, daemon=True
+                                )
                                 thread.start()
                                 logger.info(
                                     f"Started background indexing thread for newly created project "
@@ -645,6 +653,28 @@ class MultiProjectFileWatcherWorker:
                 f"changed: {dir_stats.get('changed_files', 0)} | "
                 f"deleted: {dir_stats.get('deleted_files', 0)}"
             )
+
+            # Update current_project_id for each project being processed
+            # delta keys are project_ids
+            if delta:
+                # Get the last project being processed (or first if only one)
+                # In practice, we track the most recent project
+                current_project_id = list(delta.keys())[-1] if delta else None
+                if current_project_id:
+                    # Update statistics with current project ID
+                    # Note: cycle_id is available from _scan_cycle context
+                    # We'll need to pass it or get it from database
+                    try:
+                        # Get current cycle_id from database
+                        cycle_stats = database.get_file_watcher_stats()
+                        if cycle_stats:
+                            cycle_id = cycle_stats["cycle_id"]
+                            database.update_file_watcher_stats(
+                                cycle_id=cycle_id,
+                                current_project_id=current_project_id,
+                            )
+                    except Exception as e:
+                        logger.debug(f"Could not update current_project_id: {e}")
 
             stats["scanned_dirs"] += 1
             stats["new_files"] += int(dir_stats.get("new_files", 0))

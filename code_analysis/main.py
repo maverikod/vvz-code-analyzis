@@ -696,11 +696,10 @@ def main() -> None:
             None
         """
         import logging
-        import multiprocessing
         from pathlib import Path
 
         from code_analysis.core.config import ServerConfig
-        from code_analysis.core.file_watcher_pkg import run_file_watcher_worker
+        from code_analysis.core.worker_launcher import start_file_watcher_worker
 
         logger = logging.getLogger(__name__)
         logger.info("🔍 startup_file_watcher_worker called")
@@ -805,106 +804,27 @@ def main() -> None:
             if worker_log_path:
                 logger.info(f"📝 Worker log file: {worker_log_path}")
 
-            process = multiprocessing.Process(
-                target=run_file_watcher_worker,
-                args=(
-                    str(db_path),
-                    valid_watch_dirs,
-                ),
-                kwargs={
-                    "locks_dir": str(locks_dir),
-                    "scan_interval": scan_interval,
-                    "version_dir": version_dir,
-                    "worker_log_path": worker_log_path,
-                    "ignore_patterns": ignore_patterns,
-                },
-                daemon=True,
-            )
-            process.start()
-
-            print(
-                f"✅ File watcher worker started with PID {process.pid} for {watch_dirs_count} watch directory(ies)",
-                flush=True,
-            )
-            logger.info(
-                f"✅ File watcher worker started with PID {process.pid} for {watch_dirs_count} watch directory(ies)"
+            # Start file watcher worker using worker_launcher (registers in WorkerManager)
+            result = start_file_watcher_worker(
+                db_path=str(db_path),
+                watch_dirs=valid_watch_dirs,
+                locks_dir=str(locks_dir),
+                scan_interval=scan_interval,
+                version_dir=version_dir,
+                worker_log_path=worker_log_path,
+                ignore_patterns=ignore_patterns,
             )
 
-            # Write PID file next to log file (used by get_worker_status)
-            if worker_log_path:
-                try:
-                    pid_file_path = Path(worker_log_path).with_suffix(".pid")
-                    pid_file_path.write_text(str(process.pid))
-                except Exception:
-                    logger.exception("Failed to write file watcher PID file")
-
-            _db_path_fw_val = str(db_path)
-            _project_watch_dirs_fw_val = list(valid_watch_dirs)
-            _scan_interval_fw_val = scan_interval
-            _locks_dir_fw_val = str(locks_dir)
-            _version_dir_fw_val = version_dir
-            _worker_log_path_fw_val = worker_log_path
-            _ignore_patterns_fw_val = ignore_patterns
-
-            def _restart_file_watcher_worker() -> dict[str, Any]:
-                """Restart file watcher worker.
-
-                Returns:
-                    Worker registration data for WorkerManager.
-                """
-                new_process = multiprocessing.Process(
-                    target=run_file_watcher_worker,
-                    args=(
-                        _db_path_fw_val,
-                        list(_project_watch_dirs_fw_val),
-                    ),
-                    kwargs={
-                        "locks_dir": _locks_dir_fw_val,
-                        "scan_interval": _scan_interval_fw_val,
-                        "version_dir": _version_dir_fw_val,
-                        "worker_log_path": _worker_log_path_fw_val,
-                        "ignore_patterns": _ignore_patterns_fw_val,
-                    },
-                    daemon=True,
+            if result.success:
+                logger.info(
+                    f"✅ File watcher worker started: {result.message} for {watch_dirs_count} watch directory(ies)"
                 )
-                new_process.start()
-                if _worker_log_path_fw_val:
-                    try:
-                        pid_file_path = Path(_worker_log_path_fw_val).with_suffix(
-                            ".pid"
-                        )
-                        pid_file_path.write_text(str(new_process.pid))
-                    except Exception:
-                        pass
-                return {
-                    "pid": new_process.pid,
-                    "process": new_process,
-                    "name": "file_watcher_multi",
-                    "restart_func": _restart_file_watcher_worker,
-                    "restart_args": (),
-                    "restart_kwargs": {},
-                }
-
-            from code_analysis.core.worker_manager import get_worker_manager
-
-            worker_manager = get_worker_manager()
-            logger.info(
-                f"📝 Registering file_watcher worker in WorkerManager: PID={process.pid}, watch_dirs={watch_dirs_count}"
-            )
-            worker_manager.register_worker(
-                "file_watcher",
-                {
-                    "pid": process.pid,
-                    "process": process,
-                    "name": "file_watcher_multi",
-                    "restart_func": _restart_file_watcher_worker,
-                    "restart_args": (),
-                    "restart_kwargs": {},
-                },
-            )
-            logger.info(
-                f"✅ File watcher worker registered in WorkerManager: PID={process.pid}"
-            )
+                print(f"✅ {result.message}", flush=True)
+            else:
+                logger.warning(
+                    f"⚠️  Failed to start file watcher worker: {result.message}"
+                )
+                print(f"⚠️  {result.message}", flush=True)
 
         except Exception as e:
             print(

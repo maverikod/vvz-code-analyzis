@@ -603,6 +603,51 @@ class SQLiteDriverProxy(BaseDatabaseDriver):
             self._transaction_id = None
         # If no transaction_id, no-op (backward compatibility)
 
+    def sync_schema(
+        self, schema_definition: Dict[str, Any], backup_dir: Path
+    ) -> Dict[str, Any]:
+        """
+        Synchronize database schema via worker.
+
+        Args:
+            schema_definition: Schema definition from CodeDatabase._get_schema_definition()
+            backup_dir: Directory for database backups (from StoragePaths)
+
+        Returns:
+            Dict with sync results from worker:
+            {
+                "success": bool,
+                "backup_uuid": Optional[str],
+                "changes_applied": List[str],
+                "error": Optional[str]
+            }
+
+        Raises:
+            DatabaseOperationError: If schema sync fails
+        """
+        if not self._worker_initialized or not self._socket_path:
+            raise RuntimeError("Worker not initialized")
+
+        # Ensure backup_dir is passed as string for JSON serialization
+        backup_dir_str = str(backup_dir)
+
+        request = {
+            "command": "sync_schema",
+            "params": {
+                "schema_definition": schema_definition,
+                "backup_dir": backup_dir_str,
+            },
+        }
+
+        response = self._send_request(request)
+        if not response.get("success"):
+            raise DatabaseOperationError(
+                f"Schema sync failed: {response.get('error')}",
+                operation="sync_schema",
+            )
+
+        return response.get("result", {})
+
     def lastrowid(self) -> Optional[int]:
         """Get last inserted row ID."""
         return self._lastrowid

@@ -27,6 +27,7 @@ class StoragePaths:
         faiss_dir: Directory for FAISS index files.
         locks_dir: Directory for lock files (no locks in watched directories).
         queue_dir: Optional directory for persisted queue state.
+        backup_dir: Directory for database backups.
     """
 
     config_dir: Path
@@ -34,6 +35,7 @@ class StoragePaths:
     faiss_dir: Path
     locks_dir: Path
     queue_dir: Optional[Path]
+    backup_dir: Path  # NEW: Directory for database backups
 
 
 def _resolve_path(config_dir: Path, value: str) -> Path:
@@ -130,12 +132,28 @@ def resolve_storage_paths(
     if isinstance(queue_dir_val, str) and queue_dir_val.strip():
         queue_dir = _resolve_path(config_dir, queue_dir_val)
 
+    # Resolve backup directory
+    backup_dir_val = storage_cfg.get("backup_dir")
+    if isinstance(backup_dir_val, str) and backup_dir_val.strip():
+        backup_dir = _resolve_path(config_dir, backup_dir_val)
+    else:
+        # Default: {project_root}/backups
+        # Try to infer project root from db_path
+        # If db_path is in data/ subdirectory, use parent as project root
+        if db_path.parent.name == "data":
+            project_root = db_path.parent.parent
+        else:
+            # Fallback to config_dir
+            project_root = config_dir
+        backup_dir = project_root / "backups"
+
     return StoragePaths(
         config_dir=config_dir,
         db_path=db_path,
         faiss_dir=faiss_dir,
         locks_dir=locks_dir,
         queue_dir=queue_dir,
+        backup_dir=backup_dir,  # NEW
     )
 
 
@@ -150,6 +168,7 @@ def ensure_storage_dirs(paths: StoragePaths) -> None:
     paths.db_path.parent.mkdir(parents=True, exist_ok=True)
     paths.faiss_dir.mkdir(parents=True, exist_ok=True)
     paths.locks_dir.mkdir(parents=True, exist_ok=True)
+    paths.backup_dir.mkdir(parents=True, exist_ok=True)  # NEW
     if paths.queue_dir is not None:
         paths.queue_dir.mkdir(parents=True, exist_ok=True)
 

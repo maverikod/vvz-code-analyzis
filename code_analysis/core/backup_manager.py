@@ -387,3 +387,103 @@ class BackupManager:
         except Exception as e:
             _get_logger().error(f"Error clearing backups: {e}")
             return (False, str(e))
+
+    def create_database_backup(
+        self,
+        db_path: Path,
+        backup_dir: Path,
+        comment: str = "Schema synchronization backup",
+    ) -> Optional[str]:
+        """
+        Create backup of database file and sidecar files.
+
+        Args:
+            db_path: Path to database file
+            backup_dir: Directory where to store backups
+            comment: Optional comment for backup
+
+        Returns:
+            UUID of created backup, or None if failed
+        """
+        try:
+            db_path = Path(db_path).resolve()
+            if not db_path.exists():
+                _get_logger().warning(f"Database file not found: {db_path}")
+                return None
+
+            # Check if database is empty (no tables with data)
+            # If empty, no backup needed
+            if self._is_database_empty(db_path):
+                _get_logger().info("Database is empty, skipping backup")
+                return None
+
+            backup_dir = Path(backup_dir).resolve()
+            backup_dir.mkdir(parents=True, exist_ok=True)
+
+            backup_uuid = str(uuid.uuid4())
+            timestamp = datetime.now().strftime("%Y-%m-%dT%H-%M-%S")
+
+            # Backup main database file
+            backup_filename = f"database-{db_path.stem}-{timestamp}-{backup_uuid}.db"
+            backup_path = backup_dir / backup_filename
+            shutil.copy2(db_path, backup_path)
+
+            # Backup sidecar files if they exist
+            sidecar_extensions = [".wal", ".shm", ".journal"]
+            sidecar_files = []
+            for ext in sidecar_extensions:
+                sidecar_path = db_path.with_suffix(db_path.suffix + ext)
+                if sidecar_path.exists():
+                    sidecar_backup = backup_dir / f"{backup_filename}{ext}"
+                    shutil.copy2(sidecar_path, sidecar_backup)
+                    sidecar_files.append(str(sidecar_backup.name))
+
+            _get_logger().info(
+                f"Database backup created: {backup_path} (UUID: {backup_uuid})"
+            )
+            return backup_uuid
+
+        except Exception as e:
+            _get_logger().error(f"Failed to create database backup: {e}", exc_info=True)
+            return None
+
+    def _is_database_empty(self, db_path: Path) -> bool:
+        """
+        Check if database is empty (no tables or no data).
+
+        Args:
+            db_path: Path to database file
+
+        Returns:
+            True if database is empty, False otherwise
+        """
+        try:
+            import sqlite3
+
+            conn = sqlite3.connect(str(db_path))
+            cursor = conn.cursor()
+
+            # Check if any tables exist
+            cursor.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'"
+            )
+            tables = cursor.fetchall()
+
+            if not tables:
+                conn.close()
+                return True
+
+            # Check if any table has data
+            for (table_name,) in tables:
+                cursor.execute(f"SELECT COUNT(*) FROM {table_name}")
+                count = cursor.fetchone()[0]
+                if count > 0:
+                    conn.close()
+                    return False
+
+            conn.close()
+            return True
+        except Exception as e:
+            _get_logger().warning(f"Failed to check if database is empty: {e}")
+            # If we can't check, assume not empty (safer)
+            return False

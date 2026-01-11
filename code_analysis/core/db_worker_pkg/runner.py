@@ -362,7 +362,62 @@ def _handle_client_connection(
 
         command = request.get("command")
 
-        if command == "submit":
+        if command == "sync_schema":
+            # Handle schema synchronization
+            params = request.get("params", {})
+            schema_definition = params.get("schema_definition")
+            backup_dir_str = params.get("backup_dir")
+
+            if not schema_definition:
+                _send_response(
+                    client_sock,
+                    {
+                        "success": False,
+                        "error": "Missing schema_definition",
+                    },
+                )
+                return
+
+            # Create SQLiteDriver instance in worker process
+            from ..db_driver.sqlite import SQLiteDriver
+
+            driver = SQLiteDriver()
+            driver.connect({"path": db_path})
+
+            try:
+                backup_dir = Path(backup_dir_str) if backup_dir_str else None
+                if not backup_dir:
+                    # Infer from db_path
+                    db_path_obj = Path(db_path)
+                    if db_path_obj.parent.name == "data":
+                        project_root = db_path_obj.parent.parent
+                        backup_dir = project_root / "backups"
+                    else:
+                        backup_dir = db_path_obj.parent / "backups"
+
+                # Call sync_schema in driver (runs in same process)
+                sync_result = driver.sync_schema(schema_definition, backup_dir)
+
+                _send_response(
+                    client_sock,
+                    {
+                        "success": True,
+                        "result": sync_result,
+                    },
+                )
+            except Exception as e:
+                logger.error(f"Schema sync failed: {e}", exc_info=True)
+                _send_response(
+                    client_sock,
+                    {
+                        "success": False,
+                        "error": str(e),
+                    },
+                )
+            finally:
+                driver.disconnect()
+
+        elif command == "submit":
             # Submit new job
             job_id = request.get("job_id")
             operation = request.get("operation")
@@ -611,6 +666,19 @@ def run_db_worker(
     _setup_worker_logging(worker_log_path)
 
     logger.info(f"🚀 DB worker started for database: {db_path}, socket: {socket_path}")
+
+    # Create empty database if missing (without schema)
+    # Driver always assumes database exists - worker ensures it
+    # Empty DB will be populated by sync_schema() in driver
+    db_path_obj = Path(db_path)
+    if not db_path_obj.exists():
+        logger.info(f"Creating empty database at {db_path}")
+        db_path_obj.parent.mkdir(parents=True, exist_ok=True)
+        # Create empty SQLite file (no schema, just empty file)
+        conn = sqlite3.connect(str(db_path_obj))
+        conn.close()
+        logger.info(f"Empty database created at {db_path}")
+        # Note: No backup needed for empty database - sync_schema() will create schema
 
     # Setup signal handlers for graceful shutdown
     shutdown_event = False

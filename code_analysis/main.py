@@ -317,40 +317,8 @@ def main() -> None:
         logger = logging.getLogger(__name__)
         logger.info("🚀 Server startup: initializing workers...")
 
-        # Start DB worker first (required for other workers)
-        try:
-            from mcp_proxy_adapter.config import get_config
-
-            cfg = get_config()
-            app_config_lifespan = getattr(cfg, "config_data", {})
-            if not app_config_lifespan:
-                if hasattr(cfg, "config_path") and cfg.config_path:
-                    import json
-
-                    with open(cfg.config_path, "r", encoding="utf-8") as f:
-                        app_config_lifespan = json.load(f)
-
-            from code_analysis.core.constants import DEFAULT_DB_PATH, LOGS_DIR_NAME
-
-            code_analysis_config = app_config_lifespan.get("code_analysis", {})
-            if code_analysis_config:
-                root_dir = Path.cwd()
-                db_path = root_dir / DEFAULT_DB_PATH
-
-                log_dir = Path(
-                    app_config_lifespan.get("server", {}).get("log_dir", LOGS_DIR_NAME)
-                )
-                worker_log_path = str(log_dir / "db_worker.log")
-
-                logger.info(f"🚀 Starting DB worker for database: {db_path}")
-                db_worker_manager = get_db_worker_manager()
-                worker_info = db_worker_manager.get_or_start_worker(
-                    str(db_path),
-                    worker_log_path,
-                )
-                logger.info(f"✅ DB worker started (PID: {worker_info['pid']})")
-        except Exception as e:
-            logger.error(f"❌ Failed to start DB worker: {e}", exc_info=True)
+        # DB worker is now started lazily by SQLiteDriverProxy.connect()
+        # No automatic startup needed - worker will be started when database connection is requested
 
         # Start vectorization and file watcher workers
         await startup_vectorization_worker()
@@ -438,39 +406,8 @@ def main() -> None:
         # We must NOT block here, otherwise the server won't bind the port and
         # proxy registration/health checks will fail.
         try:
-            # Start DB worker first
-            from pathlib import Path
-            from code_analysis.core.db_worker_manager import get_db_worker_manager
-
-            from mcp_proxy_adapter.config import get_config
-
-            cfg = get_config()
-            app_config_lifespan = getattr(cfg, "config_data", {})
-            if not app_config_lifespan:
-                if hasattr(cfg, "config_path") and cfg.config_path:
-                    import json
-
-                    with open(cfg.config_path, "r", encoding="utf-8") as f:
-                        app_config_lifespan = json.load(f)
-
-            from code_analysis.core.constants import DEFAULT_DB_PATH, LOGS_DIR_NAME
-
-            code_analysis_config = app_config_lifespan.get("code_analysis", {})
-            if code_analysis_config:
-                root_dir = Path.cwd()
-                db_path = root_dir / DEFAULT_DB_PATH
-                log_dir = Path(
-                    app_config_lifespan.get("server", {}).get("log_dir", LOGS_DIR_NAME)
-                )
-                worker_log_path = str(log_dir / "db_worker.log")
-
-                logger.info(f"🚀 Starting DB worker for database: {db_path}")
-                db_worker_manager = get_db_worker_manager()
-                worker_info = db_worker_manager.get_or_start_worker(
-                    str(db_path),
-                    worker_log_path,
-                )
-                logger.info(f"✅ DB worker started (PID: {worker_info['pid']})")
+            # DB worker is now started lazily by SQLiteDriverProxy.connect()
+            # No automatic startup needed - worker will be started when database connection is requested
 
             # Start vectorization and file watcher workers in background (non-blocking)
             import threading
@@ -672,6 +609,7 @@ def main() -> None:
                     driver_config = create_driver_config_for_worker(
                         db_path=db_path_obj,
                         driver_type="sqlite_proxy",
+                        backup_dir=storage.backup_dir,
                     )
                     init_database = CodeDatabase(driver_config=driver_config)
                     init_database.close()
@@ -1089,71 +1027,8 @@ def main() -> None:
     print("🚀 Starting workers directly before server start...", flush=True)
 
     try:
-        # Start DB worker first
-        from code_analysis.core.db_worker_manager import get_db_worker_manager
-
-        # Resolve DB path from config using resolve_storage_paths
-        storage = resolve_storage_paths(config_data=app_config, config_path=config_path)
-        ensure_storage_dirs(storage)
-        db_path = storage.db_path
-
-        log_dir = Path(app_config.get("server", {}).get("log_dir", "./logs"))
-        if not log_dir.is_absolute():
-            log_dir = (storage.config_dir / log_dir).resolve()
-        worker_log_path = str(log_dir / "db_worker.log")
-
-        worker_logger.info(f"🚀 Starting DB worker for database: {db_path}")
-        print(f"🚀 Starting DB worker for database: {db_path}", flush=True)
-        db_worker_manager = get_db_worker_manager()
-        worker_info = db_worker_manager.get_or_start_worker(
-            str(db_path),
-            worker_log_path,
-        )
-        worker_logger.info(f"✅ DB worker started (PID: {worker_info['pid']})")
-        print(f"✅ DB worker started (PID: {worker_info['pid']})", flush=True)
-
-        # Wait for DB worker to be ready before starting other workers
-        # Note: get_or_start_worker already waits for socket file to exist,
-        # but we add additional delay to ensure worker is fully initialized
-        import time
-
-        socket_path = worker_info.get("socket_path")
-        worker_logger.info(f"🔍 DB worker socket_path: {socket_path}")
-        if socket_path:
-            worker_logger.info(
-                f"⏳ Waiting for DB worker to initialize (socket: {socket_path})"
-            )
-            socket_file = Path(socket_path)
-            # Wait for socket file to exist (with timeout)
-            max_wait = 5.0  # Maximum wait time in seconds
-            wait_interval = 0.1  # Check every 100ms
-            waited = 0.0
-            while not socket_file.exists() and waited < max_wait:
-                time.sleep(wait_interval)
-                waited += wait_interval
-
-            if socket_file.exists():
-                worker_logger.info(
-                    f"✅ DB worker socket file exists after {waited:.1f}s"
-                )
-                # Additional wait to ensure worker is accepting connections
-                time.sleep(1.0)  # Give worker time to start listening
-                worker_logger.info(
-                    "✅ DB worker socket exists, waiting additional 1s for initialization"
-                )
-            else:
-                worker_logger.warning(
-                    f"⚠️  DB worker socket not created after {waited:.1f}s, continuing anyway"
-                )
-        else:
-            worker_logger.warning(
-                "⚠️  No socket_path in worker_info, waiting 3s as fallback"
-            )
-            time.sleep(3.0)
-
-        worker_logger.info(
-            "✅ DB worker initialization wait completed, proceeding to start other workers"
-        )
+        # DB worker is now started lazily by SQLiteDriverProxy.connect()
+        # No automatic startup needed - worker will be started when database connection is requested
 
         # Start vectorization and file watcher workers in background
         # IMPORTANT: do not set/close the global event loop in the main thread
@@ -1168,54 +1043,18 @@ def main() -> None:
                 "🔍 [MAIN] Entering _start_non_db_workers async function"
             )
 
-            # Check DB worker status before starting
+            # DB worker is started lazily by SQLiteDriverProxy.connect()
+            # No need to check or start it here
             worker_logger.info(
-                "🔍 [MAIN] Checking DB worker status before starting other workers..."
+                "🔍 [MAIN] DB worker will be started lazily when database connection is requested"
             )
-            try:
-                from code_analysis.core.db_worker_manager import get_db_worker_manager
-
-                db_worker_manager_check = get_db_worker_manager()
-                worker_info_check = db_worker_manager_check.get_or_start_worker(
-                    str(db_path),
-                    str(log_dir / "db_worker.log"),
-                )
-                socket_path_check = worker_info_check.get("socket_path")
-                worker_logger.info(
-                    f"🔍 [MAIN] DB worker socket_path: {socket_path_check}"
-                )
-                if socket_path_check:
-                    socket_file_check = Path(socket_path_check)
-                    exists = socket_file_check.exists()
-                    worker_logger.info(f"🔍 [MAIN] Socket file exists: {exists}")
-                    if exists:
-                        stat = socket_file_check.stat()
-                        worker_logger.info(
-                            f"🔍 [MAIN] Socket file size: {stat.st_size}, mode: {oct(stat.st_mode)}"
-                        )
-                    else:
-                        worker_logger.warning(
-                            "⚠️  [MAIN] Socket file does not exist, waiting longer..."
-                        )
-                        await asyncio.sleep(3.0)
-                        exists_after_wait = socket_file_check.exists()
-                        worker_logger.info(
-                            f"🔍 [MAIN] Socket file exists after wait: {exists_after_wait}"
-                        )
-            except Exception as e:
-                worker_logger.error(
-                    f"❌ [MAIN] Failed to check DB worker: {e}", exc_info=True
-                )
-
-            # Additional wait in async context to ensure DB worker is fully ready
-            import asyncio
-
-            worker_logger.info("⏳ [MAIN] Waiting 2s before starting workers...")
-            await asyncio.sleep(2.0)
+            
+            # Just log that we're starting non-DB workers
             worker_logger.info(
-                "✅ [MAIN] Wait completed, starting vectorization worker..."
+                "🔍 [MAIN] Starting non-DB workers (file_watcher, vectorization)"
             )
-
+            
+            # Start non-DB workers
             try:
                 worker_logger.info("🚀 [MAIN] Starting vectorization worker...")
                 await startup_vectorization_worker()

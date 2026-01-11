@@ -10,6 +10,7 @@ email: vasilyvz@gmail.com
 from dataclasses import dataclass
 from typing import Dict, List, Set, Any, Optional, Tuple
 import logging
+import re
 
 logger = logging.getLogger(__name__)
 
@@ -361,10 +362,149 @@ class SchemaComparator:
         return extra
 
     def _compare_constraints(self) -> Dict[str, List[str]]:
-        """Compare constraints (PK, FK, unique, check)."""
-        # Simplified: return empty dict for now
-        # Full implementation would compare PK, FK, unique, check constraints
-        return {}
+        """
+        Compare constraints (PK, FK, unique, check).
+
+        Returns:
+            Dictionary mapping table names to lists of constraint change descriptions.
+            Empty dict if no constraint changes detected.
+        """
+        constraint_diffs: Dict[str, List[str]] = {}
+        expected_tables = self.schema_definition.get("tables", {})
+
+        for table_name in expected_tables:
+            changes = []
+
+            # Compare primary keys
+            expected_pk_cols = [
+                col["name"]
+                for col in expected_tables[table_name]["columns"]
+                if col.get("primary_key", False)
+            ]
+            try:
+                current_cols = self._get_table_columns(table_name)
+                current_pk_cols = [
+                    col_name
+                    for col_name, col_info in current_cols.items()
+                    if col_info.get("primary_key", False)
+                ]
+                if set(expected_pk_cols) != set(current_pk_cols):
+                    changes.append(
+                        f"Primary key changed: {current_pk_cols} -> {expected_pk_cols}"
+                    )
+            except Exception:
+                # Table might not exist yet
+                pass
+
+            # Compare foreign keys
+            expected_fks = expected_tables[table_name].get("foreign_keys", [])
+            try:
+                current_fks = self._get_current_foreign_keys(table_name)
+                if not self._foreign_keys_match(expected_fks, current_fks):
+                    changes.append("Foreign key constraints changed")
+            except Exception:
+                pass
+
+            # Compare unique constraints
+            expected_unique = expected_tables[table_name].get("unique_constraints", [])
+            try:
+                current_unique = self._get_current_unique_constraints(table_name)
+                if not self._unique_constraints_match(expected_unique, current_unique):
+                    changes.append("Unique constraints changed")
+            except Exception:
+                pass
+
+            if changes:
+                constraint_diffs[table_name] = changes
+
+        return constraint_diffs
+
+    def _get_current_foreign_keys(self, table_name: str) -> List[Dict[str, Any]]:
+        """Get current foreign keys for a table using PRAGMA foreign_key_list."""
+        try:
+            fk_list = self.driver.fetchall(f"PRAGMA foreign_key_list({table_name})")
+            fks = []
+            for row in fk_list:
+                fks.append(
+                    {
+                        "columns": [row["from"]],
+                        "references_table": row["table"],
+                        "references_columns": [row["to"]],
+                        "on_delete": row.get("on_delete", ""),
+                    }
+                )
+            return fks
+        except Exception:
+            return []
+
+    def _get_current_unique_constraints(self, table_name: str) -> List[Dict[str, List[str]]]:
+        """Get current unique constraints for a table."""
+        try:
+            # Get unique indexes (excluding auto-generated ones)
+            index_list = self.driver.fetchall(f"PRAGMA index_list({table_name})")
+            unique_constraints = []
+
+            for idx_row in index_list:
+                idx_name = idx_row["name"]
+                # Skip auto-generated indexes
+                if idx_name.startswith("sqlite_autoindex_"):
+                    continue
+
+                # Check if unique
+                if idx_row.get("unique", 0):
+                    # Get index columns
+                    idx_info = self.driver.fetchall(f"PRAGMA index_info({idx_name})")
+                    columns = [row["name"] for row in idx_info]
+                    if columns:
+                        unique_constraints.append({"columns": columns})
+
+            return unique_constraints
+        except Exception:
+            return []
+
+    def _foreign_keys_match(
+        self, expected: List[Dict[str, Any]], current: List[Dict[str, Any]]
+    ) -> bool:
+        """Check if foreign key constraints match."""
+        if len(expected) != len(current):
+            return False
+
+        # Normalize and compare
+        expected_normalized = []
+        for fk in expected:
+            expected_normalized.append(
+                {
+                    "columns": tuple(sorted(fk["columns"])),
+                    "references_table": fk["references_table"],
+                    "references_columns": tuple(sorted(fk["references_columns"])),
+                    "on_delete": fk.get("on_delete", ""),
+                }
+            )
+
+        current_normalized = []
+        for fk in current:
+            current_normalized.append(
+                {
+                    "columns": tuple(sorted(fk["columns"])),
+                    "references_table": fk["references_table"],
+                    "references_columns": tuple(sorted(fk["references_columns"])),
+                    "on_delete": fk.get("on_delete", ""),
+                }
+            )
+
+        return sorted(expected_normalized) == sorted(current_normalized)
+
+    def _unique_constraints_match(
+        self, expected: List[Dict[str, List[str]]], current: List[Dict[str, List[str]]]
+    ) -> bool:
+        """Check if unique constraints match."""
+        if len(expected) != len(current):
+            return False
+
+        expected_sets = {tuple(sorted(uc["columns"])) for uc in expected}
+        current_sets = {tuple(sorted(uc["columns"])) for uc in current}
+
+        return expected_sets == current_sets
 
     def validate_data_compatibility(self, diff: SchemaDiff) -> Dict[str, Any]:
         """
@@ -501,7 +641,7 @@ class SchemaComparator:
         return f"CREATE TABLE IF NOT EXISTS {table_name} ({', '.join(col_defs)})"
 
     def _generate_recreate_table_sql(
-        self, table_name: str, table_diff: TableDiff
+        self, table_name: str, table_diff: TableDiff, current_columns: Set[str]
     ) -> List[str]:
         """
         Generate SQL to recreate table with data migration.
@@ -509,6 +649,7 @@ class SchemaComparator:
         Args:
             table_name: Table name (new table will be created with this name)
             table_diff: Table differences
+            current_columns: Set of current column names (before migration)
 
         Returns:
             List of SQL statements
@@ -516,35 +657,14 @@ class SchemaComparator:
         statements = []
         temp_table = f"temp_{table_name}"
 
-        # Get current columns from original table (before rename)
-        # This is called after ALTER TABLE RENAME, so we need to get columns from temp_table
-        # But we can't query during SQL generation, so we get them from the driver
-        # However, since this is called during SQL generation (not execution),
-        # we need to get columns from the original table name before it was renamed
-        # Actually, the rename happens in generate_migration_sql before calling this method,
-        # so at SQL generation time, the table is still named {table_name}
-        # But we can't execute queries during SQL generation.
-        # Solution: Get columns from current schema (before migration)
-        # We'll use a placeholder approach - get columns from expected schema
-        # and assume all columns that exist in both schemas will be copied
-
         # Get expected columns from schema definition
         expected_cols = {
             col["name"]
             for col in self.schema_definition["tables"][table_name]["columns"]
         }
 
-        # Get current columns from database (query original table before rename)
-        # Note: This is called during SQL generation, so we can query the current state
-        try:
-            current_cols = set(self._get_table_columns(table_name).keys())
-        except Exception:
-            # If table doesn't exist or query fails, use empty set
-            # This can happen if table was just created
-            current_cols = set()
-
         # Find common columns (columns that exist in both old and new schema)
-        common_cols = expected_cols & current_cols
+        common_cols = expected_cols & current_columns
 
         # Create new table with correct structure
         new_table_sql = self._generate_create_table_sql(table_name)

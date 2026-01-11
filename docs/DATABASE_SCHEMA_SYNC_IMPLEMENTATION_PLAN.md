@@ -1415,13 +1415,43 @@ def sync_schema(self) -> Dict[str, Any]:
 
 ## Checklist
 
-- [ ] Phase 1: Database Settings Table
-- [ ] Phase 2: BackupManager Database Backup
-- [ ] Phase 3: Schema Comparison Logic
-- [ ] Phase 4: SQLiteDriver Schema Sync
-- [ ] Phase 5: DB Worker Empty Database Creation
-- [ ] Phase 6: SQLiteDriverProxy Schema Sync Delegation
-- [ ] Phase 7: SQLiteDriverProxy Worker Request (lazy initialization)
+- [x] Phase 1: Database Settings Table and Schema Definition
+  - [x] Added SCHEMA_VERSION constant
+  - [x] Added MIGRATION_METHODS registry
+  - [x] Added _get_schema_definition() with all tables and indexes
+  - [x] Added sync_schema() method in CodeDatabase
+  - [x] Removed _create_schema() call from __init__
+- [x] Phase 2: BackupManager Database Backup
+  - [x] Added backup_dir to StoragePaths
+  - [x] Added create_database_backup() to BackupManager
+  - [x] Added _is_database_empty() check
+- [x] Phase 3: Schema Comparison Logic
+  - [x] Created SchemaComparator class
+  - [x] Implemented compare_schemas() with all table/index comparisons
+  - [x] Implemented validate_data_compatibility()
+  - [x] Implemented generate_migration_sql()
+  - [x] **FIXED**: Implemented _compare_constraints() method (was returning empty dict)
+  - [x] **FIXED**: Fixed _generate_recreate_table_sql() signature to accept current_columns parameter
+- [x] Phase 4: SQLiteDriver Schema Sync
+  - [x] Added sync_schema() method
+  - [x] Added _get_schema_version() and _set_schema_version()
+  - [x] Implemented backup creation and validation
+  - [x] Implemented migration execution with rollback
+- [x] Phase 5: DB Worker Empty Database Creation
+  - [x] Worker creates empty DB if missing
+  - [x] No schema creation in worker
+- [x] Phase 6: SQLiteDriverProxy Schema Sync Delegation
+  - [x] Added sync_schema() method to proxy
+  - [x] Added sync_schema command handler in worker
+- [x] Phase 7: SQLiteDriverProxy Worker Request (lazy initialization)
+  - [x] Removed automatic DB worker startup from main.py
+  - [x] Proxy requests worker via get_or_start_worker() on connect()
+  - [x] Added backup_dir to create_driver_config_for_worker()
+- [x] **Code Quality Fixes** (2026-01-10)
+  - [x] Fixed _generate_recreate_table_sql() method signature - added current_columns parameter
+  - [x] Implemented full _compare_constraints() method with PK, FK, and unique constraint comparison
+  - [x] Verified all tables are included in _get_schema_definition()
+  - [x] Verified sync_schema() in sqlite.py is fully implemented
 - [ ] Unit Tests
 - [ ] Integration Tests
 - [ ] Documentation Update

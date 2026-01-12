@@ -177,7 +177,13 @@
       "ignore_patterns": [
         "**/__pycache__/**",
         "**/.git/**",
-        "**/node_modules/**"
+        "**/node_modules/**",
+        "**/.venv/**",
+        "**/venv/**",
+        "**/env/**",
+        "**/ENV/**",
+        "**/env.bak/**",
+        "**/venv.bak/**"
       ],
       "log_rotation": {
         "max_bytes": 10485760,

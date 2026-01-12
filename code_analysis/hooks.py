@@ -76,6 +76,37 @@ def register_code_analysis_commands(reg: registry) -> None:
     except ImportError:
         pass
 
+    # New CST tree commands
+    try:
+        from .commands.cst_load_file_command import CSTLoadFileCommand
+        from .commands.cst_modify_tree_command import CSTModifyTreeCommand
+        from .commands.cst_save_tree_command import CSTSaveTreeCommand
+        from .commands.cst_find_node_command import CSTFindNodeCommand
+        from .commands.cst_get_node_info_command import CSTGetNodeInfoCommand
+
+        reg.register(CSTLoadFileCommand, "custom")
+        reg.register(CSTModifyTreeCommand, "custom")
+        reg.register(CSTSaveTreeCommand, "custom")
+        reg.register(CSTFindNodeCommand, "custom")
+        reg.register(CSTGetNodeInfoCommand, "custom")
+        import logging
+
+        logger = logging.getLogger(__name__)
+        logger.info(
+            "✅ Registered CST tree commands: "
+            "cst_load_file, cst_modify_tree, cst_save_tree, cst_find_node, cst_get_node_info"
+        )
+    except ImportError as e:
+        import logging
+
+        logger = logging.getLogger(__name__)
+        logger.warning(f"Failed to import CST tree commands: {e}")
+    except Exception as e:
+        import logging
+
+        logger = logging.getLogger(__name__)
+        logger.error(f"Failed to register CST tree commands: {e}", exc_info=True)
+
     try:
         from .commands.ast_mcp_commands import (
             ASTStatisticsMCPCommand,
@@ -515,6 +546,11 @@ register_auto_import_module("code_analysis.commands.check_vectors_command")
 register_auto_import_module("code_analysis.commands.cst_compose_module_command")
 register_auto_import_module("code_analysis.commands.list_cst_blocks_command")
 register_auto_import_module("code_analysis.commands.query_cst_command")
+register_auto_import_module("code_analysis.commands.cst_load_file_command")
+register_auto_import_module("code_analysis.commands.cst_modify_tree_command")
+register_auto_import_module("code_analysis.commands.cst_save_tree_command")
+register_auto_import_module("code_analysis.commands.cst_find_node_command")
+register_auto_import_module("code_analysis.commands.cst_get_node_info_command")
 register_auto_import_module("code_analysis.commands.ast_mcp_commands")
 register_auto_import_module("code_analysis.commands.vector_commands")
 register_auto_import_module("code_analysis.commands.semantic_search_mcp")

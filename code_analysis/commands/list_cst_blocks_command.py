@@ -12,17 +12,18 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 from mcp_proxy_adapter.commands.base import Command
 from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 
+from .base_mcp_command import BaseMCPCommand
 from ..core.cst_module import list_cst_blocks
 
 logger = logging.getLogger(__name__)
 
 
-class ListCSTBlocksCommand(Command):
+class ListCSTBlocksCommand(BaseMCPCommand):
     name = "list_cst_blocks"
     version = "1.0.0"
     descr = "List replaceable CST logical blocks (functions/classes/methods) with ids and ranges"
@@ -36,22 +37,34 @@ class ListCSTBlocksCommand(Command):
         return {
             "type": "object",
             "properties": {
-                "root_dir": {"type": "string", "description": "Project root directory"},
+                "project_id": {
+                    "type": "string",
+                    "description": "Project ID (UUID4). If provided, root_dir will be resolved from database. Either project_id or root_dir must be provided.",
+                },
+                "root_dir": {
+                    "type": "string",
+                    "description": "Project root directory. Required if project_id is not provided.",
+                },
                 "file_path": {
                     "type": "string",
-                    "description": "Target python file path (absolute or relative to root_dir)",
+                    "description": "Target python file path (relative to project root)",
                 },
             },
-            "required": ["root_dir", "file_path"],
+            "required": ["file_path"],
             "additionalProperties": False,
         }
 
-    async def execute(self, root_dir: str, file_path: str, **kwargs) -> SuccessResult:
+    async def execute(
+        self,
+        file_path: str,
+        project_id: Optional[str] = None,
+        root_dir: Optional[str] = None,
+        **kwargs,
+    ) -> SuccessResult:
         try:
-            root = Path(root_dir).resolve()
-            target = Path(file_path)
-            if not target.is_absolute():
-                target = (root / target).resolve()
+            root_path = self._resolve_project_root(project_id=project_id, root_dir=root_dir)
+            target = root_path / file_path
+            target = target.resolve()
 
             if target.suffix != ".py":
                 return ErrorResult(

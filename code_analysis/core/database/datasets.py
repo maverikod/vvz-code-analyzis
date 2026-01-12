@@ -56,7 +56,9 @@ def get_or_create_dataset(
         """,
         (dataset_id, project_id, normalized_root, dataset_name),
     )
-    self._commit()
+    # Only commit if not in a transaction (transaction will commit all changes)
+    if not self._in_transaction():
+        self._commit()
     logger.info(
         f"Created dataset {dataset_id} for project {project_id} at {normalized_root}"
     )

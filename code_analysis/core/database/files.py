@@ -190,7 +190,9 @@ def add_file(
             """,
             (watch_dir_id, abs_path, str(relative_path), lines, last_modified, has_docstring, file_id),
         )
-        self._commit()
+        # Only commit if not in a transaction (transaction will commit all changes)
+        if not self._in_transaction():
+            self._commit()
         return file_id
     else:
         # Insert new file with relative_path and watch_dir_id
@@ -202,7 +204,9 @@ def add_file(
             """,
             (project_id, dataset_id, watch_dir_id, abs_path, str(relative_path), lines, last_modified, has_docstring),
         )
-        self._commit()
+        # Only commit if not in a transaction (transaction will commit all changes)
+        if not self._in_transaction():
+            self._commit()
         result = self._lastrowid()
         assert result is not None
         return result
@@ -1422,6 +1426,7 @@ def update_file_data_atomic(
     project_id: str,
     root_dir: Path,
     source_code: str,
+    file_id: Optional[int] = None,
 ) -> Dict[str, Any]:
     """
     Atomically update all file data in a transaction.
@@ -1469,19 +1474,30 @@ def update_file_data_atomic(
         )
 
     try:
-        # Normalize path to absolute
-        abs_path = normalize_path_simple(file_path)
+        # If file_id is provided, use it directly (useful when file was just added in transaction)
+        if file_id is not None:
+            file_record = self.get_file_by_id(file_id)
+            if not file_record:
+                return {
+                    "success": False,
+                    "error": f"File not found in database by file_id: {file_id}",
+                    "file_path": file_path,
+                }
+            abs_path = file_record.get("path") or file_path
+        else:
+            # Normalize path to absolute
+            abs_path = normalize_path_simple(file_path)
 
-        # Get file record
-        file_record = self.get_file_by_path(abs_path, project_id)
-        if not file_record:
-            return {
-                "success": False,
-                "error": f"File not found in database: {file_path}",
-                "file_path": abs_path,
-            }
+            # Get file record
+            file_record = self.get_file_by_path(abs_path, project_id)
+            if not file_record:
+                return {
+                    "success": False,
+                    "error": f"File not found in database: {file_path}",
+                    "file_path": abs_path,
+                }
 
-        file_id = file_record["id"]
+            file_id = file_record["id"]
 
         # Clear all old records in transaction
         try:

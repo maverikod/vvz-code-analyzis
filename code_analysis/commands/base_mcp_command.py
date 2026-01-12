@@ -451,6 +451,72 @@ class BaseMCPCommand(Command):
             ) from e
 
     @staticmethod
+    def _resolve_project_root(
+        project_id: Optional[str] = None, root_dir: Optional[str] = None
+    ) -> Path:
+        """
+        Resolve project root directory from project_id or root_dir.
+
+        Args:
+            project_id: Optional project ID (UUID4). If provided, root_dir will be resolved from database.
+            root_dir: Optional project root directory. Required if project_id is not provided.
+
+        Returns:
+            Resolved absolute Path to project root.
+
+        Raises:
+            ValidationError: If neither project_id nor root_dir is provided, or if project not found.
+        """
+        from ..core.exceptions import ValidationError
+        from ..core.project_resolution import normalize_root_dir
+
+        if project_id:
+            # Resolve root_dir from project_id via database
+            # Use server root_dir to open database
+            from ..core.storage_paths import (
+                load_raw_config,
+                resolve_storage_paths,
+            )
+
+            config_path = BaseMCPCommand._resolve_config_path()
+            config_data = load_raw_config(config_path)
+            storage = resolve_storage_paths(
+                config_data=config_data, config_path=config_path
+            )
+            db_path = storage.db_path
+
+            from ..core.database import CodeDatabase
+            from ..core.database.base import create_driver_config_for_worker
+
+            driver_config = create_driver_config_for_worker(db_path)
+            db = CodeDatabase(driver_config=driver_config)
+
+            project = db.get_project(project_id)
+            if not project:
+                raise ValidationError(
+                    f"Project with ID {project_id} not found in database",
+                    field="project_id",
+                    details={"project_id": project_id},
+                )
+
+            root_path = Path(project["root_path"])
+            if not root_path.exists():
+                raise ValidationError(
+                    f"Project root path does not exist: {root_path}",
+                    field="project_id",
+                    details={"project_id": project_id, "root_path": str(root_path)},
+                )
+            return root_path
+        elif root_dir:
+            return normalize_root_dir(root_dir)
+        else:
+            raise ValidationError(
+                "Either project_id or root_dir must be provided",
+                field="project_id",
+                details={},
+            )
+
+    @staticmethod
     def _validate_root_dir(root_dir: str) -> Path:
         """
         Validate and resolve root directory.

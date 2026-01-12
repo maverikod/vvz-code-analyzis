@@ -18,7 +18,7 @@ This document defines rules for AI models on how to use the code analysis and re
 **IF server is available:**
 
 1. **Python code operations → SERVER TOOLS ONLY (MANDATORY)**
-   - ✅ Editing existing Python code → `compose_cst_module` (via MCP)
+   - ✅ Editing existing Python code → `compose_cst_module` OR `cst_load_file` → `cst_modify_tree` → `cst_save_tree` (via MCP)
    - ✅ Splitting files → `split_file_to_package` (via MCP)
    - ✅ Code analysis → `comprehensive_analysis`, `get_code_entity_info` (via MCP)
    - ✅ Code quality → `format_code`, `lint_code`, `type_check_code` (via MCP)
@@ -41,10 +41,19 @@ This document defines rules for AI models on how to use the code analysis and re
    - ✅ When server fails AND user explicitly approves fallback
 
 **Workflow for existing Python code (when server available):**
+
+**Traditional (single operation):**
 1. `list_cst_blocks` → discover structure
 2. `compose_cst_module` with `apply=false` → preview
 3. `compose_cst_module` with `apply=true` → apply
 4. `comprehensive_analysis` → validate quality
+
+**Tree-based (multiple operations):**
+1. `cst_load_file` → load file into tree
+2. `cst_find_node` → find nodes to modify
+3. `cst_modify_tree` → apply multiple operations atomically
+4. `cst_save_tree` → atomically save with backup
+5. `comprehensive_analysis` → validate quality
 
 **Remember**: Server tools = 9/10 reliability. Direct tools = 4/10 reliability. When server is available, using direct tools for Python code is a violation.
 
@@ -249,11 +258,26 @@ python -m code_analysis.cli.server_manager_cli --config config.json restart
 - ✅ **When preserving comments/formatting is critical**
 - ✅ **Any change to existing `.py` files**
 
-**CST Workflow**:
+**Two CST Approaches**:
+
+**1. Traditional File-based CST (simpler for single operations)**:
 1. **Discover**: Use `list_cst_blocks` to find blocks with stable IDs
 2. **Query** (optional): Use `query_cst` for complex selectors
 3. **Preview**: Use `compose_cst_module` with `apply=false` and `return_diff=true`
 4. **Apply**: Use `compose_cst_module` with `apply=true` and `create_backup=true`
+
+**2. In-Memory Tree-based CST (better for multiple operations)** - **NEW**:
+1. **Load**: Use `cst_load_file` to load file into tree (returns tree_id)
+2. **Explore**: Use `cst_find_node` to find nodes (simple or XPath search)
+3. **Inspect**: Use `cst_get_node_info` to get node details
+4. **Modify**: Use `cst_modify_tree` to apply multiple operations atomically
+5. **Save**: Use `cst_save_tree` to atomically save all changes with backup
+
+**When to use Tree-based approach**:
+- ✅ Multiple related operations on the same file
+- ✅ Complex refactoring requiring exploration before changes
+- ✅ When you need atomicity across multiple modifications
+- ✅ When you want to validate all changes together before saving
 
 **Example - Replacing existing method**:
 ```python
@@ -644,9 +668,28 @@ result = mcp_MCP-Proxy-2_call_server(
 
 ### 6.5 CST Commands
 
+**Traditional CST Commands (File-based)**:
 - `list_cst_blocks` - List logical blocks with stable IDs
 - `query_cst` - Query using CSTQuery selectors
-- `compose_cst_module` - Apply CST patches
+- `compose_cst_module` - Apply CST patches to files directly
+
+**CST Tree Commands (In-Memory Tree-based)** - **NEW**:
+- `cst_load_file` - Load Python file into in-memory CST tree (returns tree_id)
+- `cst_find_node` - Find nodes in loaded tree (simple or XPath search)
+- `cst_get_node_info` - Get detailed information about a node (with code, children, parent)
+- `cst_modify_tree` - Atomically modify tree in memory (replace, insert, delete operations)
+- `cst_save_tree` - Atomically save modified tree to file (with backup, validation, DB update)
+
+**When to use Tree Commands**:
+- ✅ Multiple operations on the same file (load once, modify multiple times, save once)
+- ✅ Complex refactoring requiring multiple related changes
+- ✅ When you need to explore tree structure before making changes
+- ✅ When atomicity across multiple operations is critical
+
+**When to use Traditional CST Commands**:
+- ✅ Single operation on a file (compose_cst_module is simpler)
+- ✅ Quick edits without needing tree exploration
+- ✅ When you don't need to keep tree in memory
 
 ### 6.6 Code Quality Commands
 
@@ -820,6 +863,10 @@ mcp_MCP-Proxy-2_call_server(
 
 **ALWAYS use CST tools for existing code. Never use `search_replace` or direct editing.**
 
+**Two approaches available:**
+1. **Traditional file-based CST** (simpler for single operations) - see below
+2. **In-memory tree-based CST** (better for multiple operations) - see section 9.2.1
+
 ```python
 # Step 1: Discover blocks to understand structure
 blocks_result = mcp_MCP-Proxy-2_call_server(
@@ -928,6 +975,150 @@ if comprehensive_result.get("result", {}).get("queued"):
 run_terminal_cmd("cd /path && source .venv/bin/activate && python -m code_analysis.cli.server_manager_cli --config config.json restart")
 ```
 
+### 9.2.1 Modifying Existing Code with In-Memory CST Trees (NEW)
+
+**Use tree-based approach when:**
+- ✅ Multiple related operations on the same file
+- ✅ Need to explore tree structure before making changes
+- ✅ Want atomicity across all modifications
+- ✅ Complex refactoring requiring multiple steps
+
+**Workflow**:
+```python
+# Step 1: Load file into CST tree
+load_result = mcp_MCP-Proxy-2_call_server(
+    server_id="code-analysis-server",
+    command="cst_load_file",
+    params={
+        "root_dir": "/path",
+        "file_path": "file.py",
+        "include_children": True,  # Include children in metadata
+        "node_types": ["FunctionDef", "ClassDef"],  # Optional: filter by types
+        "max_depth": 3  # Optional: limit depth
+    }
+)
+tree_id = load_result["result"]["data"]["tree_id"]
+
+# Step 2: Find nodes to modify (optional - can use node_id from load_result)
+find_result = mcp_MCP-Proxy-2_call_server(
+    server_id="code-analysis-server",
+    command="cst_find_node",
+    params={
+        "tree_id": tree_id,
+        "search_type": "xpath",  # or "simple"
+        "query": "function[name='my_func']"  # XPath selector
+        # OR for simple search:
+        # "search_type": "simple",
+        # "node_type": "FunctionDef",
+        # "name": "my_func"
+    }
+)
+node_id = find_result["result"]["data"]["matches"][0]["node_id"]
+
+# Step 3: Get node information (optional - to see current code)
+node_info = mcp_MCP-Proxy-2_call_server(
+    server_id="code-analysis-server",
+    command="cst_get_node_info",
+    params={
+        "tree_id": tree_id,
+        "node_id": node_id,
+        "include_code": True,  # Include code snippet
+        "include_children": True,  # Include children
+        "include_parent": True,  # Include parent
+        "max_children": 10  # Limit children count
+    }
+)
+
+# Step 4: Modify tree (can apply multiple operations atomically)
+modify_result = mcp_MCP-Proxy-2_call_server(
+    server_id="code-analysis-server",
+    command="cst_modify_tree",
+    params={
+        "tree_id": tree_id,
+        "operations": [
+            {
+                "action": "replace",  # or "insert", "delete"
+                "node_id": node_id,
+                "code": "def my_func(param: int) -> str:\n    \"\"\"Updated function.\"\"\"\n    return str(param)"
+            },
+            # Can add more operations here - all validated together
+            # {
+            #     "action": "insert",
+            #     "node_id": "parent_node_id",
+            #     "position": "after",  # or "before", "first", "last"
+            #     "code": "def new_function():\n    pass"
+            # }
+        ]
+    }
+)
+# All operations are validated together - if any fails, tree remains unchanged
+
+# Step 5: Save tree to file (atomic operation with backup)
+save_result = mcp_MCP-Proxy-2_call_server(
+    server_id="code-analysis-server",
+    command="cst_save_tree",
+    params={
+        "tree_id": tree_id,
+        "root_dir": "/path",
+        "file_path": "file.py",
+        "project_id": "project-uuid",  # Required
+        "dataset_id": "dataset-uuid",  # Optional - will be created if not provided
+        "validate": True,  # Validate before saving
+        "backup": True,  # Create backup before saving
+        "commit_message": "Updated my_func"  # Optional: git commit message
+    }
+)
+# This operation is fully atomic:
+# 1. Validates original file
+# 2. Creates backup
+# 3. Writes to temp file
+# 4. Validates temp file
+# 5. Atomically replaces original
+# 6. Updates database
+# 7. On any error: rollback and restore backup
+
+# Step 6: Validate and analyze (same as traditional approach)
+mcp_MCP-Proxy-2_call_server(
+    server_id="code-analysis-server",
+    command="format_code",
+    params={"file_path": "file.py"}
+)
+
+mcp_MCP-Proxy-2_call_server(
+    server_id="code-analysis-server",
+    command="comprehensive_analysis",
+    params={
+        "root_dir": "/path",
+        "file_path": "file.py",
+        "check_placeholders": True,
+        "check_stubs": True,
+        "check_empty_methods": True,
+        "check_imports": True,
+        "check_long_files": True,
+        "check_duplicates": True,
+        "check_flake8": True,
+        "check_mypy": True
+    },
+    use_queue=True
+)
+```
+
+**Key Advantages of Tree-based Approach**:
+- ✅ **Atomicity**: All modifications validated together before saving
+- ✅ **Efficiency**: Load file once, modify multiple times, save once
+- ✅ **Exploration**: Can explore tree structure before making changes
+- ✅ **Safety**: Full rollback on any error during save
+- ✅ **Database Integration**: Automatic database update after save
+
+**Operation Types for `cst_modify_tree`**:
+- `"replace"` - Replace node with new code
+- `"insert"` - Insert new code (requires parent node_id and position)
+- `"delete"` - Delete node (code can be empty string or omitted)
+
+**Search Types for `cst_find_node`**:
+- `"xpath"` - Use CSTQuery XPath-like selectors (powerful, flexible)
+- `"simple"` - Simple search by type, name, qualname, or line range
+
 **Selector Types for `compose_cst_module`**:
 - `{"kind": "block_id", "block_id": "..."}` - Use stable ID from `list_cst_blocks`
 - `{"kind": "function", "name": "func_name"}` - Find by function name
@@ -983,9 +1174,13 @@ mcp_MCP-Proxy-2_call_server(
 ### 10.1 Always Do
 
 - ✅ Use MCP commands as primary interface
-- ✅ **Use CST tools (`compose_cst_module`) for ALL existing code modifications**
-- ✅ **Use `list_cst_blocks` and `query_cst` to discover code structure before editing**
-- ✅ Preview changes with `apply=false` and `return_diff=true` before applying
+- ✅ **Use CST tools for ALL existing code modifications**
+  - **Traditional**: `compose_cst_module` for single operations
+  - **Tree-based**: `cst_load_file` → `cst_modify_tree` → `cst_save_tree` for multiple operations
+- ✅ **Use `list_cst_blocks` and `query_cst` to discover code structure before editing** (traditional)
+- ✅ **Use `cst_load_file` and `cst_find_node` to explore tree structure** (tree-based)
+- ✅ Preview changes with `apply=false` and `return_diff=true` before applying (traditional)
+- ✅ Use `cst_get_node_info` to inspect nodes before modifying (tree-based)
 - ✅ **Run `comprehensive_analysis` after each logically completed step**
 - ✅ Validate code before committing
 - ✅ Follow file organization standards
@@ -1018,15 +1213,29 @@ mcp_MCP-Proxy-2_call_server(
 
 ### 11.2 Code Editing Priority
 
-1. **Existing Python code** → **CST tools** (`compose_cst_module` via MCP) - **REQUIRED**
+1. **Existing Python code** → **CST tools** (via MCP) - **REQUIRED**
+   - **Single operation**: `compose_cst_module` (traditional)
+   - **Multiple operations**: `cst_load_file` → `cst_modify_tree` → `cst_save_tree` (tree-based)
 2. **New Python files** → Direct write (`write` tool)
 3. **Non-Python files** → Direct editing (`write`, `search_replace`)
 
-**CST Workflow**:
+**CST Workflow (Traditional - for single operations)**:
 1. `list_cst_blocks` → discover structure
 2. `query_cst` (optional) → find specific nodes
 3. `compose_cst_module` with `apply=false` → preview
 4. `compose_cst_module` with `apply=true` → apply
+
+**CST Workflow (Tree-based - for multiple operations)**:
+1. `cst_load_file` → load file into tree (get tree_id)
+2. `cst_find_node` → find nodes (simple or XPath search)
+3. `cst_get_node_info` (optional) → inspect node details
+4. `cst_modify_tree` → apply multiple operations atomically
+5. `cst_save_tree` → atomically save with backup and validation
+1. `cst_load_file` → load file into tree (get tree_id)
+2. `cst_find_node` → find nodes to modify (simple or XPath)
+3. `cst_get_node_info` (optional) → inspect node details
+4. `cst_modify_tree` → apply multiple operations atomically
+5. `cst_save_tree` → atomically save with backup and validation
 
 ### 11.3 Validation
 

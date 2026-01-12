@@ -886,10 +886,10 @@ class ComposeCSTModuleCommand(BaseMCPCommand):
                     ),
                 },
             },
-            "examples": [
+            "usage_examples": [
                 {
                     "description": "Preview changes without applying (apply=false, no commit_message needed)",
-                    "code": {
+                    "command": {
                         "root_dir": "/path/to/project",
                         "file_path": "code_analysis/main.py",
                         "ops": [
@@ -903,10 +903,13 @@ class ComposeCSTModuleCommand(BaseMCPCommand):
                         "return_diff": True,
                         "return_source": False,
                     },
+                    "explanation": (
+                        "Preview changes without modifying file. Safe to use, does not require commit_message even in git repository."
+                    ),
                 },
                 {
                     "description": "Apply changes in git repository (commit_message REQUIRED)",
-                    "code": {
+                    "command": {
                         "root_dir": "/path/to/project",
                         "file_path": "code_analysis/main.py",
                         "ops": [
@@ -919,10 +922,13 @@ class ComposeCSTModuleCommand(BaseMCPCommand):
                         "apply": True,
                         "commit_message": "Refactor: update my_function signature and return type",
                     },
+                    "explanation": (
+                        "Apply changes in git repository. commit_message is REQUIRED when root_dir is a git repository."
+                    ),
                 },
                 {
                     "description": "Apply changes WITHOUT git repository (commit_message optional)",
-                    "code": {
+                    "command": {
                         "root_dir": "/path/to/project",
                         "file_path": "code_analysis/main.py",
                         "ops": [
@@ -935,10 +941,13 @@ class ComposeCSTModuleCommand(BaseMCPCommand):
                         "apply": True,
                         # commit_message not required, git commit not performed
                     },
+                    "explanation": (
+                        "Apply changes without git repository. commit_message is optional and ignored."
+                    ),
                 },
                 {
                     "description": "Create new file from scratch (kind='module') - REQUIRES position='end_of_module'",
-                    "code": {
+                    "command": {
                         "root_dir": "/path/to/project",
                         "file_path": "new_module.py",
                         "ops": [
@@ -953,11 +962,14 @@ class ComposeCSTModuleCommand(BaseMCPCommand):
                         "apply": True,
                         "commit_message": "Add new module with NewClass",
                     },
-                    "note": "CRITICAL: When creating new file, position='end_of_module' is REQUIRED. file_docstring must be non-empty. new_code must contain at least one function or class.",
+                    "explanation": (
+                        "Create new file from scratch. CRITICAL: position='end_of_module' is REQUIRED. "
+                        "file_docstring must be non-empty. new_code must contain at least one function or class."
+                    ),
                 },
                 {
                     "description": "Create new file with main() entry point (complete example)",
-                    "code": {
+                    "command": {
                         "root_dir": "/path/to/project",
                         "file_path": "main.py",
                         "ops": [
@@ -972,11 +984,17 @@ class ComposeCSTModuleCommand(BaseMCPCommand):
                         "apply": True,
                         "commit_message": "Add main entry point with main() function",
                     },
-                    "note": "When creating new file: 1) file_docstring is REQUIRED and must match docstring in new_code, 2) position='end_of_module' is REQUIRED, 3) new_code must include file docstring at the beginning, 4) Use type: ignore comments for local imports if mypy validation fails",
+                    "explanation": (
+                        "Create new file with complete example. When creating new file: "
+                        "1) file_docstring is REQUIRED and must match docstring in new_code, "
+                        "2) position='end_of_module' is REQUIRED, "
+                        "3) new_code must include file docstring at the beginning, "
+                        "4) Use type: ignore comments for local imports if mypy validation fails"
+                    ),
                 },
                 {
                     "description": "Multiple operations (replace + insert + create)",
-                    "code": {
+                    "command": {
                         "root_dir": "/path/to/project",
                         "file_path": "code_analysis/main.py",
                         "ops": [
@@ -1007,10 +1025,14 @@ class ComposeCSTModuleCommand(BaseMCPCommand):
                         "apply": True,
                         "commit_message": "Refactor: update old_function, add helpers",
                     },
+                    "explanation": (
+                        "Multiple operations in one request. Operations are applied in order: "
+                        "replace first, then insert, then create. All operations are atomic."
+                    ),
                 },
                 {
                     "description": "Handle validation errors (syntax error in new_code)",
-                    "code": {
+                    "command": {
                         "root_dir": "/path/to/project",
                         "file_path": "code_analysis/main.py",
                         "ops": [
@@ -1023,11 +1045,13 @@ class ComposeCSTModuleCommand(BaseMCPCommand):
                         "apply": True,
                         "commit_message": "Fix function",
                     },
-                    "note": "This will return VALIDATION_ERROR with detailed compilation error. File is not modified.",
+                    "explanation": (
+                        "This will return VALIDATION_ERROR with detailed compilation error. File is not modified."
+                    ),
                 },
                 {
                     "description": "Delete code block (empty new_code)",
-                    "code": {
+                    "command": {
                         "root_dir": "/path/to/project",
                         "file_path": "code_analysis/main.py",
                         "ops": [
@@ -1043,48 +1067,62 @@ class ComposeCSTModuleCommand(BaseMCPCommand):
                         "apply": True,
                         "commit_message": "Remove deprecated_function",
                     },
+                    "explanation": (
+                        "Delete code block by using empty new_code string. The selected block is removed from the file."
+                    ),
                 },
             ],
-            "error_codes": {
+            "error_cases": {
                 "COMMIT_MESSAGE_REQUIRED": {
                     "description": (
                         "commit_message is required when working in a git repository. "
                         "This error occurs when root_dir is detected as a git repository (is_git=True) "
                         "but commit_message parameter is not provided."
                     ),
-                    "when_occurs": "is_git=True and commit_message is None or empty",
-                    "how_to_fix": "Provide commit_message parameter when working in git repository",
-                    "example": "commit_message is required when working in a git repository",
+                    "message": "commit_message is required when working in a git repository",
+                    "solution": "Provide commit_message parameter when working in git repository",
                 },
                 "VALIDATION_ERROR": {
                     "description": (
                         "File validation failed. This includes compilation, docstring, linter, or type checker errors. "
                         "Validation is performed on the ENTIRE file in a temporary location before any changes are applied."
                     ),
-                    "when_occurs": "Any validation step fails (compilation, docstrings, linter, type checker)",
+                    "message": "File validation failed. Check validation_results for details.",
+                    "solution": "Fix errors reported in validation_results and retry",
                     "types": {
                         "compile": "Compilation/syntax errors",
                         "docstrings": "Missing or invalid docstrings",
                         "linter": "Flake8 linting errors",
                         "type_checker": "Mypy type checking errors",
                     },
-                    "response_structure": "validation_results dictionary with details for each validation type",
-                    "how_to_fix": "Fix errors reported in validation_results and retry",
-                    "example": "Compilation failed: SyntaxError: invalid syntax at line 10",
+                    "examples": [
+                        {
+                            "case": "Compilation error",
+                            "message": "Compilation failed: SyntaxError: invalid syntax at line 10",
+                            "solution": "Fix syntax errors in new_code or operations",
+                        },
+                    ],
                 },
                 "COMPILE_ERROR": {
                     "description": "Compilation failed after CST patch. Python syntax error in resulting code.",
-                    "when_occurs": "Syntax errors, indentation errors, or other Python parsing errors",
-                    "causes": [
-                        "Syntax errors: missing parentheses, brackets, quotes",
-                        "Indentation errors: inconsistent indentation",
-                        "Invalid Python syntax in new_code",
-                    ],
-                    "how_to_fix": "Fix syntax errors in new_code or operations",
+                    "message": "Compilation failed: {error details}",
+                    "solution": "Fix syntax errors in new_code or operations",
                     "examples": [
-                        "SyntaxError: invalid syntax",
-                        "IndentationError: expected an indented block",
-                        "SyntaxError: unexpected EOF while parsing",
+                        {
+                            "case": "Syntax error",
+                            "message": "SyntaxError: invalid syntax",
+                            "solution": "Check for missing parentheses, brackets, or quotes",
+                        },
+                        {
+                            "case": "Indentation error",
+                            "message": "IndentationError: expected an indented block",
+                            "solution": "Fix indentation in new_code",
+                        },
+                        {
+                            "case": "Unexpected EOF",
+                            "message": "SyntaxError: unexpected EOF while parsing",
+                            "solution": "Check for missing closing brackets or incomplete statements",
+                        },
                     ],
                 },
                 "DOCSTRING_VALIDATION_ERROR": {
@@ -1092,96 +1130,99 @@ class ComposeCSTModuleCommand(BaseMCPCommand):
                         "Docstring validation failed. File, class, method, or function is missing required docstring "
                         "or docstring format is invalid."
                     ),
-                    "when_occurs": "Missing or invalid docstrings in file, classes, methods, or functions",
+                    "message": "Docstring validation failed: {error details}",
+                    "solution": "Add or fix docstrings according to project standards",
                     "requirements": {
                         "file": "File-level docstring with Author and email",
                         "classes": "Class docstring",
                         "methods": "Method docstring",
                         "functions": "Function docstring",
                     },
-                    "how_to_fix": "Add or fix docstrings according to project standards",
-                    "example": "Missing docstring for function 'my_function' at line 10",
+                    "examples": [
+                        {
+                            "case": "Missing function docstring",
+                            "message": "Missing docstring for function 'my_function' at line 10",
+                            "solution": "Add docstring to function",
+                        },
+                    ],
                 },
                 "LINTER_ERROR": {
                     "description": "Linter (flake8) errors found in validated file.",
-                    "when_occurs": "Flake8 detects code quality issues",
-                    "types": {
-                        "E": "Error (syntax, indentation, etc.)",
-                        "W": "Warning (code style)",
-                        "F": "Pyflakes errors (unused imports, undefined names, etc.)",
-                    },
+                    "message": "Linter errors found: {error details}",
+                    "solution": "Fix linter errors according to flake8 rules",
                     "examples": [
-                        "E501: line too long (80 > 79 characters)",
-                        "F401: 'os' imported but unused",
-                        "E302: expected 2 blank lines, found 1",
+                        {
+                            "case": "Line too long",
+                            "message": "E501: line too long (80 > 79 characters)",
+                            "solution": "Split long lines or adjust line length",
+                        },
+                        {
+                            "case": "Unused import",
+                            "message": "F401: 'os' imported but unused",
+                            "solution": "Remove unused import or use it in code",
+                        },
+                        {
+                            "case": "Missing blank lines",
+                            "message": "E302: expected 2 blank lines, found 1",
+                            "solution": "Add required blank lines",
+                        },
                     ],
-                    "how_to_fix": "Fix linter errors according to flake8 rules",
                 },
                 "TYPE_CHECK_ERROR": {
                     "description": "Type checker (mypy) errors found in validated file.",
-                    "when_occurs": "Mypy detects type inconsistencies or missing type annotations",
-                    "types": [
-                        "Incompatible types in assignment",
-                        "Missing type annotation",
-                        "Incompatible return type",
-                        "Unsupported operand types",
-                    ],
+                    "message": "Type checker errors found: {error details}",
+                    "solution": "Fix type errors according to mypy requirements",
                     "examples": [
-                        "Incompatible types in assignment: expected 'int', got 'str'",
-                        "Missing return type annotation",
-                        "Incompatible return type: expected 'int', got 'str'",
+                        {
+                            "case": "Incompatible types",
+                            "message": "Incompatible types in assignment: expected 'int', got 'str'",
+                            "solution": "Fix type annotations or convert types",
+                        },
+                        {
+                            "case": "Missing type annotation",
+                            "message": "Missing return type annotation",
+                            "solution": "Add return type annotation to function",
+                        },
+                        {
+                            "case": "Incompatible return type",
+                            "message": "Incompatible return type: expected 'int', got 'str'",
+                            "solution": "Fix return type or return value",
+                        },
                     ],
-                    "how_to_fix": "Fix type errors according to mypy requirements",
                 },
                 "TRANSACTION_ERROR": {
                     "description": "Database transaction error. Internal error in transaction management.",
-                    "when_occurs": "Transaction management issues (nested transactions, commit without begin, etc.)",
-                    "errors": [
-                        "Transaction already active: attempting to begin transaction while one is active",
-                        "No active transaction: attempting to commit/rollback without active transaction",
-                    ],
-                    "how_to_fix": "This is an internal error. Check transaction usage in code.",
+                    "message": "Database transaction error: {error details}",
+                    "solution": "This is an internal error. Check transaction usage in code.",
                 },
                 "BACKUP_ERROR": {
                     "description": "Error creating or restoring backup file.",
-                    "when_occurs": "BackupManager fails to create or restore backup",
-                    "causes": [
-                        "File not found",
-                        "Permission denied",
-                        "Disk space full",
-                        "Invalid backup UUID",
-                    ],
-                    "how_to_fix": "Check file permissions, disk space, and backup directory access",
+                    "message": "Backup error: {error details}",
+                    "solution": "Check file permissions, disk space, and backup directory access",
                 },
                 "GIT_COMMIT_ERROR": {
                     "description": (
                         "Error creating git commit. This is NOT critical - operation still succeeds, "
                         "data is saved, transaction is committed. Git commit is performed after successful transaction."
                     ),
-                    "when_occurs": "Git commit fails after successful file update and database transaction",
-                    "causes": [
-                        "Failed to stage file",
-                        "Failed to create commit",
-                        "Git repository corruption",
-                        "Permission denied",
-                    ],
-                    "important": "Operation is still considered successful. Data is saved, transaction committed.",
-                    "how_to_fix": "Check git repository status, permissions, and manually create commit if needed",
+                    "message": "Git commit error: {error details}",
+                    "solution": "Check git repository status, permissions, and manually create commit if needed",
+                    "note": "Operation is still considered successful. Data is saved, transaction committed.",
                 },
                 "FILE_NOT_FOUND": {
                     "description": "Target file does not exist and no module creation operation provided.",
-                    "when_occurs": "file_path does not exist and no operation has selector with kind='module'",
-                    "how_to_fix": "Use selector with kind='module' to create new file, or provide existing file path",
+                    "message": "Target file does not exist",
+                    "solution": "Use selector with kind='module' to create new file, or provide existing file path",
                 },
                 "INVALID_FILE": {
                     "description": "Target file is not a Python file (.py extension required).",
-                    "when_occurs": "file_path does not have .py extension",
-                    "how_to_fix": "Use .py file extension",
+                    "message": "Target file must be a .py file",
+                    "solution": "Use .py file extension",
                 },
                 "INVALID_OPERATION": {
                     "description": "Unknown or invalid operation type or selector.",
-                    "when_occurs": "Invalid operation_type or selector configuration",
-                    "how_to_fix": "Use valid operation types (replace, insert, create) and valid selector kinds",
+                    "message": "Invalid operation type or selector",
+                    "solution": "Use valid operation types (replace, insert, create) and valid selector kinds",
                 },
             },
             "git_integration": {
@@ -1270,11 +1311,70 @@ class ComposeCSTModuleCommand(BaseMCPCommand):
                     "Safe to use, does not require commit_message even in git repository."
                 ),
             },
+            "return_value": {
+                "success": {
+                    "description": "Command executed successfully",
+                    "data": {
+                        "success": "Always True on success",
+                        "file_path": "Path to modified file",
+                        "backup_uuid": "UUID of created backup (if apply=true and create_backup=true)",
+                        "git_commit": "Git commit hash if git commit was created (None otherwise)",
+                        "git_commit_error": "Error message if git commit failed (None if successful)",
+                        "diff": "Unified diff showing changes (if return_diff=true)",
+                        "source": "Full resulting source code (if return_source=true)",
+                        "validation_results": "Validation results if validation was performed",
+                    },
+                    "example": {
+                        "success": True,
+                        "file_path": "/path/to/project/code_analysis/main.py",
+                        "backup_uuid": "550e8400-e29b-41d4-a716-446655440000",
+                        "git_commit": "a1b2c3d4e5f6...",
+                        "git_commit_error": None,
+                        "diff": "@@ -10,7 +10,7 @@\n def my_function():\n-    pass\n+    return 42\n",
+                        "source": None,
+                        "validation_results": {
+                            "compile": {"success": True},
+                            "docstrings": {"success": True},
+                            "linter": {"success": True, "errors": []},
+                            "type_checker": {"success": True, "errors": []},
+                        },
+                    },
+                },
+                "error": {
+                    "description": "Command failed",
+                    "code": (
+                        "Error code (e.g., COMMIT_MESSAGE_REQUIRED, VALIDATION_ERROR, "
+                        "COMPILE_ERROR, FILE_NOT_FOUND, INVALID_FILE, INVALID_OPERATION, "
+                        "TRANSACTION_ERROR, BACKUP_ERROR, GIT_COMMIT_ERROR)"
+                    ),
+                    "message": "Human-readable error message",
+                    "details": "Additional error information (e.g., validation_results for VALIDATION_ERROR)",
+                },
+            },
+            "best_practices": [
+                "Always use apply=false first to preview changes (does not require commit_message even in git repo)",
+                "Use return_diff=true to see what will change before applying",
+                "Check validation_results before applying changes",
+                "Provide commit_message when working in git repository (required if is_git=True)",
+                "Use list_cst_blocks or query_cst to discover blocks before compose_cst_module",
+                "Use block_id or node_id selectors for stable targeting",
+                "Use cst_query selector for complex node searches",
+                "Create backups before major refactoring (create_backup=true)",
+                "Fix validation errors before applying changes",
+                "Use multiple operations in one request for atomic batch changes",
+                "For new files, use operation_type='create' with selector.kind='module' and position='end_of_module'",
+                "When creating new files, file_docstring is REQUIRED and must match docstring in new_code",
+                "Empty new_code string deletes the selected block",
+                "Operations are applied in order: replace first, then insert, then create",
+                "Preview mode (apply=false) is safe and does not modify files or database",
+            ],
             "see_also": [
                 "BackupManager: System for file backups with metadata",
                 "update_file_data_atomic: Atomic database update method",
                 "validate_file_in_temp: File validation in temporary location",
                 "is_git_repository: Git repository detection",
                 "create_git_commit: Git commit creation",
+                "list_cst_blocks: Discover logical blocks in a file",
+                "query_cst: Find nodes using CSTQuery selectors",
             ],
         }

@@ -7,6 +7,15 @@
 
 This document defines rules for AI models on how to use the code analysis and refactoring tools in this project. These rules ensure efficient, safe, and correct usage of the available tools.
 
+**CRITICAL PRINCIPLE**: Code is written through **CST (Concrete Syntax Tree) operations**, not as raw text. This ensures:
+- ✅ Syntax validation before applying changes
+- ✅ Preservation of formatting and structure
+- ✅ Atomic operations with rollback on errors
+- ✅ Database consistency
+- ✅ No JSON escaping issues with multi-line code
+
+**Key Technology**: Use `code_lines` (array of strings) instead of `code` (single string) for multi-line code to avoid JSON escaping issues.
+
 ## 0. AI Prompt Rules (MANDATORY)
 
 **⚠️ CRITICAL: These rules apply ONLY when server `code-analysis-server` is available via MCP Proxy. When server is unavailable, use fallback tools with user approval.**
@@ -19,10 +28,13 @@ This document defines rules for AI models on how to use the code analysis and re
 
 1. **Python code operations → SERVER TOOLS ONLY (MANDATORY)**
    - ✅ Editing existing Python code → `compose_cst_module` OR `cst_load_file` → `cst_modify_tree` → `cst_save_tree` (via MCP)
+   - ✅ **For multi-line code**: Use `code_lines` (array of strings) in `cst_modify_tree` - avoids JSON escaping issues
+   - ✅ **For test projects**: ONLY server tools, NEVER direct file editing
    - ✅ Splitting files → `split_file_to_package` (via MCP)
    - ✅ Code analysis → `comprehensive_analysis`, `get_code_entity_info` (via MCP)
    - ✅ Code quality → `format_code`, `lint_code`, `type_check_code` (via MCP)
    - ❌ **FORBIDDEN**: `search_replace` or `write` on existing `.py` files
+   - ❌ **FORBIDDEN**: Direct file editing for test project code
 
 2. **Error handling → USER DECISION REQUIRED**
    - ✅ Report ALL errors to user immediately
@@ -49,11 +61,14 @@ This document defines rules for AI models on how to use the code analysis and re
 4. `comprehensive_analysis` → validate quality
 
 **Tree-based (multiple operations):**
-1. `cst_load_file` → load file into tree
-2. `cst_find_node` → find nodes to modify
-3. `cst_modify_tree` → apply multiple operations atomically
-4. `cst_save_tree` → atomically save with backup
-5. `comprehensive_analysis` → validate quality
+1. `cst_load_file` → load file into tree (get tree_id)
+2. `cst_find_node` → find nodes to modify (simple or XPath search)
+3. `cst_get_node_info` (optional) → inspect node details
+4. `cst_modify_tree` → apply multiple operations atomically
+   - Use `code_lines` (array) for multi-line code (RECOMMENDED)
+   - Use `code` (string) only for single-line code
+5. `cst_save_tree` → atomically save with backup and validation
+6. `comprehensive_analysis` → validate quality
 
 **Remember**: Server tools = 9/10 reliability. Direct tools = 4/10 reliability. When server is available, using direct tools for Python code is a violation.
 
@@ -266,12 +281,21 @@ python -m code_analysis.cli.server_manager_cli --config config.json restart
 3. **Preview**: Use `compose_cst_module` with `apply=false` and `return_diff=true`
 4. **Apply**: Use `compose_cst_module` with `apply=true` and `create_backup=true`
 
-**2. In-Memory Tree-based CST (better for multiple operations)** - **NEW**:
+**2. In-Memory Tree-based CST (better for multiple operations)** - **RECOMMENDED**:
 1. **Load**: Use `cst_load_file` to load file into tree (returns tree_id)
 2. **Explore**: Use `cst_find_node` to find nodes (simple or XPath search)
-3. **Inspect**: Use `cst_get_node_info` to get node details
+3. **Inspect**: Use `cst_get_node_info` to get node details (code, children, parent)
 4. **Modify**: Use `cst_modify_tree` to apply multiple operations atomically
+   - **CRITICAL**: Use `code_lines` (array of strings) for multi-line code
+   - Each line is a separate array element - no JSON escaping issues
+   - Preserves exact formatting (indentation, empty lines)
 5. **Save**: Use `cst_save_tree` to atomically save all changes with backup
+
+**Technology Note**: CST operations work with **tree nodes**, not raw text. Code is parsed into CST nodes, modified as tree structure, then serialized back to text. This ensures:
+- Syntax validation before applying
+- Structure preservation
+- Atomic operations
+- No formatting loss
 
 **When to use Tree-based approach**:
 - ✅ Multiple related operations on the same file
@@ -917,6 +941,7 @@ result = mcp_MCP-Proxy-2_call_server(
         "file_path": "file.py",
         "ops": [{
             "selector": {"kind": "block_id", "block_id": "function:my_func:10-20"},
+            # For multi-line code, new_code is a single string (compose_cst_module handles it)
             "new_code": "def my_func(param: int) -> str:\n    \"\"\"Updated function.\"\"\"\n    return str(param)"
         }],
         "apply": True,
@@ -1039,14 +1064,26 @@ modify_result = mcp_MCP-Proxy-2_call_server(
             {
                 "action": "replace",  # or "insert", "delete"
                 "node_id": node_id,
-                "code": "def my_func(param: int) -> str:\n    \"\"\"Updated function.\"\"\"\n    return str(param)"
+                # For multi-line code, use code_lines (RECOMMENDED) to avoid JSON escaping issues
+                "code_lines": [
+                    "def my_func(param: int) -> str:",
+                    "    \"\"\"Updated function.\"\"\"",
+                    "    return str(param)"
+                ]
+                # OR use code for single-line (legacy, works but may have escaping issues):
+                # "code": "def my_func(param: int) -> str:\n    \"\"\"Updated function.\"\"\"\n    return str(param)"
             },
             # Can add more operations here - all validated together
             # {
             #     "action": "insert",
-            #     "node_id": "parent_node_id",
-            #     "position": "after",  # or "before", "first", "last"
-            #     "code": "def new_function():\n    pass"
+            #     "target_node_id": "node_id_to_insert_after",  # Insert after specific node
+            #     # OR: "parent_node_id": "parent_node_id",  # Insert at beginning/end of parent
+            #     "position": "after",  # or "before"
+            #     "code_lines": [
+            #         "def new_function():",
+            #         "    \"\"\"New function.\"\"\"",
+            #         "    pass"
+            #     ]
             # }
         ]
     }
@@ -1112,8 +1149,26 @@ mcp_MCP-Proxy-2_call_server(
 
 **Operation Types for `cst_modify_tree`**:
 - `"replace"` - Replace node with new code
-- `"insert"` - Insert new code (requires parent node_id and position)
-- `"delete"` - Delete node (code can be empty string or omitted)
+  - Requires: `node_id`, `code` OR `code_lines`
+  - `code_lines` (array of strings) is RECOMMENDED for multi-line code to avoid JSON escaping issues
+- `"insert"` - Insert new code
+  - Requires: (`parent_node_id` OR `target_node_id`), `position` ("before" or "after"), `code` OR `code_lines`
+  - `target_node_id`: Insert before/after specific node (automatically finds parent)
+  - `parent_node_id`: Insert at beginning/end of parent's body
+  - `code_lines` (array of strings) is RECOMMENDED for multi-line code
+- `"delete"` - Delete node
+  - Requires: `node_id` only (code not needed)
+
+**Code Format for Operations**:
+- **`code_lines` (RECOMMENDED for multi-line)**: Array of strings, each line is separate element
+  - ✅ No JSON escaping issues (`\n`, `\t`, `"`, emoji, etc.)
+  - ✅ Preserves exact formatting (indentation, empty lines)
+  - ✅ Easier to work with in JSON/MCP
+  - Example: `["line1", "    line2", "", "    line3"]`
+- **`code` (legacy, single-line only)**: Single string with `\n` for newlines
+  - ⚠️ May have escaping issues with special characters
+  - ⚠️ Less convenient for multi-line code
+  - Example: `"line1\n    line2\n\n    line3"`
 
 **Search Types for `cst_find_node`**:
 - `"xpath"` - Use CSTQuery XPath-like selectors (powerful, flexible)
@@ -1169,18 +1224,114 @@ mcp_MCP-Proxy-2_call_server(
 - ✅ Better code quality and consistency
 - ❌ Manual splitting breaks these guarantees
 
-## 10. Best Practices Summary
+## 10. Code Writing Technology Rules
 
-### 10.1 Always Do
+### 10.1 Core Principle: Code as Tree Nodes, Not Text
+
+**CRITICAL**: Code modifications work with **CST tree nodes**, not raw text strings.
+
+**Why Tree-based Approach**:
+- ✅ **Syntax validation**: Code is parsed before applying - invalid syntax is caught early
+- ✅ **Structure preservation**: Formatting, comments, and structure are preserved
+- ✅ **Atomic operations**: All changes validated together, rollback on any error
+- ✅ **No escaping issues**: `code_lines` (array) avoids JSON escaping problems
+- ✅ **Database consistency**: Changes tracked in database automatically
+
+### 10.2 Multi-line Code Format
+
+**RECOMMENDED**: Use `code_lines` (array of strings) for multi-line code:
+
+```json
+{
+  "action": "replace",
+  "node_id": "stmt:main:SimpleStatementLine:136:8-136:46",
+  "code_lines": [
+    "engine = ServerEngineFactory.get_engine(\"hypercorn\")",
+    "if not engine:",
+    "    print(\"❌ Error\", file=sys.stderr)",
+    "    sys.exit(1)",
+    "",
+    "# Prepare server configuration",
+    "server_config = {",
+    "    \"host\": config.model.server.host,",
+    "    \"port\": config.model.server.port,",
+    "    \"log_level\": \"info\",",
+    "    \"reload\": False,",
+    "}",
+    "",
+    "engine.run_server(app, server_config)"
+  ]
+}
+```
+
+**Advantages of `code_lines`**:
+- ✅ No JSON escaping issues (`\n`, `\t`, `"`, emoji, unicode)
+- ✅ Preserves exact formatting (indentation, empty lines)
+- ✅ Each line is separate array element - easy to work with
+- ✅ No need to escape special characters
+
+**Legacy `code` (single string)** - Use only for single-line:
+```json
+{
+  "action": "replace",
+  "node_id": "stmt:main:SimpleStatementLine:10:0-10:20",
+  "code": "x = 42"
+}
+```
+
+### 10.3 Test Project Code Modification Rules
+
+**CRITICAL**: For test projects (e.g., `test_data/particles/`), code modifications **MUST** be done **ONLY** through server tools:
+
+- ✅ **MANDATORY**: Use `cst_load_file` → `cst_modify_tree` → `cst_save_tree`
+- ✅ **MANDATORY**: Use `compose_cst_module` for single operations
+- ❌ **FORBIDDEN**: Direct file editing (`search_replace`, `write`) for test project code
+- ❌ **FORBIDDEN**: Manual file modifications
+
+**Rationale**: Test projects are used to test server functionality. Modifying them directly bypasses server validation and testing.
+
+### 10.4 Code Writing Workflow
+
+**For existing code (MANDATORY workflow)**:
+
+1. **Load/Discover**:
+   - Tree-based: `cst_load_file` → get `tree_id`
+   - Traditional: `list_cst_blocks` → get block IDs
+
+2. **Explore/Find**:
+   - Tree-based: `cst_find_node` → find nodes to modify
+   - Traditional: `query_cst` → find specific nodes
+
+3. **Inspect** (optional but recommended):
+   - Tree-based: `cst_get_node_info` → see current code, children, parent
+   - Traditional: Use block info from `list_cst_blocks`
+
+4. **Modify**:
+   - Tree-based: `cst_modify_tree` with `code_lines` for multi-line code
+   - Traditional: `compose_cst_module` with `new_code` string
+
+5. **Save**:
+   - Tree-based: `cst_save_tree` → atomic save with backup
+   - Traditional: `compose_cst_module` with `apply=true` → saves automatically
+
+6. **Validate**:
+   - `format_code`, `lint_code`, `type_check_code`
+   - `comprehensive_analysis` after logically completed steps
+
+## 11. Best Practices Summary
+
+### 11.1 Always Do
 
 - ✅ Use MCP commands as primary interface
 - ✅ **Use CST tools for ALL existing code modifications**
   - **Traditional**: `compose_cst_module` for single operations
   - **Tree-based**: `cst_load_file` → `cst_modify_tree` → `cst_save_tree` for multiple operations
+- ✅ **Use `code_lines` (array) for multi-line code** - avoids JSON escaping issues
 - ✅ **Use `list_cst_blocks` and `query_cst` to discover code structure before editing** (traditional)
 - ✅ **Use `cst_load_file` and `cst_find_node` to explore tree structure** (tree-based)
 - ✅ Preview changes with `apply=false` and `return_diff=true` before applying (traditional)
 - ✅ Use `cst_get_node_info` to inspect nodes before modifying (tree-based)
+- ✅ **For test projects: ONLY use server tools, NEVER direct file editing**
 - ✅ **Run `comprehensive_analysis` after each logically completed step**
 - ✅ Validate code before committing
 - ✅ Follow file organization standards
@@ -1190,7 +1341,7 @@ mcp_MCP-Proxy-2_call_server(
 - ✅ Update indexes after changes
 - ✅ Use direct write (`write` tool) ONLY for new files
 
-### 10.2 Never Do
+### 11.2 Never Do
 
 - ❌ **Use `search_replace` or direct editing for existing Python code** (use CST tools!)
 - ❌ **Edit existing code without first using `list_cst_blocks` or `query_cst`**
@@ -1204,14 +1355,14 @@ mcp_MCP-Proxy-2_call_server(
 - ❌ Continue with broken code
 - ❌ **Manually split large files** (always use MCP splitting tools)
 
-## 11. Quick Reference
+## 12. Quick Reference
 
-### 11.1 Command Priority
+### 12.1 Command Priority
 
 1. **MCP** → `mcp_MCP-Proxy-2_call_server`
 2. **CLI** → `run_terminal_cmd` (fallback only)
 
-### 11.2 Code Editing Priority
+### 12.2 Code Editing Priority
 
 1. **Existing Python code** → **CST tools** (via MCP) - **REQUIRED**
    - **Single operation**: `compose_cst_module` (traditional)
@@ -1230,19 +1381,16 @@ mcp_MCP-Proxy-2_call_server(
 2. `cst_find_node` → find nodes (simple or XPath search)
 3. `cst_get_node_info` (optional) → inspect node details
 4. `cst_modify_tree` → apply multiple operations atomically
-5. `cst_save_tree` → atomically save with backup and validation
-1. `cst_load_file` → load file into tree (get tree_id)
-2. `cst_find_node` → find nodes to modify (simple or XPath)
-3. `cst_get_node_info` (optional) → inspect node details
-4. `cst_modify_tree` → apply multiple operations atomically
+   - Use `code_lines` (array) for multi-line code (RECOMMENDED)
+   - Use `code` (string) only for single-line code
 5. `cst_save_tree` → atomically save with backup and validation
 
-### 11.3 Validation
+### 12.3 Validation
 
 - **Automatic** → `compose_cst_module` validates automatically
 - **Manual** → `format_code`, `lint_code`, `type_check_code`
 
-### 11.4 After Changes
+### 12.4 After Changes
 
 1. Format code
 2. Lint code

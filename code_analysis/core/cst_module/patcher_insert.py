@@ -48,6 +48,32 @@ class _InsertRewriter(cst.CSTTransformer):
                 return i
         return -1
 
+    def _span_contains_or_matches(
+        self,
+        node_span: tuple[int, int, int, int],
+        target_span: tuple[int, int, int, int],
+    ) -> bool:
+        """
+        Check if node_span contains or exactly matches target_span.
+
+        This handles cases where target_span is for a BaseSmallStatement inside
+        a SimpleStatementLine - we check if the SimpleStatementLine contains it.
+        """
+        # Exact match
+        if node_span == target_span:
+            return True
+
+        # Check if node_span contains target_span
+        node_sl, node_sc, node_el, node_ec = node_span
+        target_sl, target_sc, target_el, target_ec = target_span
+
+        # Target starts after or at node start, and ends before or at node end
+        if target_sl > node_sl or (target_sl == node_sl and target_sc >= node_sc):
+            if target_el < node_el or (target_el == node_el and target_ec <= node_ec):
+                return True
+
+        return False
+
     def _rewrite_body_with_insertions(
         self, original_body: list[cst.BaseStatement]
     ) -> list[cst.BaseStatement]:
@@ -63,16 +89,30 @@ class _InsertRewriter(cst.CSTTransformer):
 
             span = (pos.start.line, pos.start.column, pos.end.line, pos.end.column)
 
+            # Check for insertions before/after this node (exact match or contains)
+            matched_before = None
+            matched_after = None
+
+            for target_span, stmts in self._insert_before.items():
+                if self._span_contains_or_matches(span, target_span):
+                    matched_before = stmts
+                    break
+
+            for target_span, stmts in self._insert_after.items():
+                if self._span_contains_or_matches(span, target_span):
+                    matched_after = stmts
+                    break
+
             # Insert before this node
-            if span in self._insert_before:
-                new_body.extend(self._insert_before[span])
+            if matched_before:
+                new_body.extend(matched_before)
 
             # Add original node
             new_body.append(stmt)
 
             # Insert after this node
-            if span in self._insert_after:
-                new_body.extend(self._insert_after[span])
+            if matched_after:
+                new_body.extend(matched_after)
 
         # Add insertions at the end
         new_body.extend(self._insert_at_end)
@@ -106,7 +146,9 @@ def apply_insert_ops(source: str, ops: list[InsertOp]) -> tuple[str, dict[str, A
         (new_source, stats)
     """
     if not source.strip():
-        raise CSTModulePatchError("Cannot insert into empty source; use create operation instead")
+        raise CSTModulePatchError(
+            "Cannot insert into empty source; use create operation instead"
+        )
 
     module = cst.parse_module(source)
     wrapper = MetadataWrapper(module, unsafe_skip_copy=True)
@@ -215,4 +257,3 @@ def apply_insert_ops(source: str, ops: list[InsertOp]) -> tuple[str, dict[str, A
         ],
     }
     return new_source, stats
-

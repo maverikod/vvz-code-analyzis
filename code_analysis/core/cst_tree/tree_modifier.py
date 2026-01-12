@@ -74,7 +74,9 @@ def modify_tree(tree_id: str, operations: List[TreeOperation]) -> CSTTree:
         raise
 
 
-def _parse_code_snippet(code: str) -> list[cst.BaseStatement]:
+def _parse_code_snippet(
+    code: Optional[str] = None, code_lines: Optional[List[str]] = None
+) -> list[cst.BaseStatement]:
     """
     Parse code snippet into list of statements.
 
@@ -82,14 +84,28 @@ def _parse_code_snippet(code: str) -> list[cst.BaseStatement]:
     Handles indentation by normalizing it before parsing.
 
     Args:
-        code: Code snippet to parse (may have indentation).
+        code: Code snippet to parse as single string (may have indentation).
+        code_lines: Code snippet as list of lines (alternative to code).
+                    Prevents JSON escaping issues with multi-line code.
 
     Returns:
         List of CST statements.
 
     Raises:
-        ValueError: If code cannot be parsed.
+        ValueError: If code cannot be parsed or both code and code_lines are provided.
+
+    Note:
+        If code_lines is provided, it takes precedence over code.
+        This allows passing multi-line code without JSON escaping issues.
     """
+    # Prefer code_lines over code to avoid JSON escaping issues
+    if code_lines is not None:
+        if code is not None:
+            raise ValueError("Cannot provide both code and code_lines")
+        code = "\n".join(code_lines)
+    elif code is None:
+        return []
+
     if not code.strip():
         return []
 
@@ -192,16 +208,16 @@ def _validate_operation(tree: CSTTree, operation: TreeOperation) -> None:
                 f"Node not found for replacement: {operation.node_id}. "
                 f"Available nodes (first 5): {available}"
             )
-        if not operation.code:
-            raise ValueError("code required for replace operation")
+        if not operation.code and not operation.code_lines:
+            raise ValueError("code or code_lines required for replace operation")
         # Validate code syntax (supports multi-line)
         try:
-            _parse_code_snippet(operation.code)
+            _parse_code_snippet(code=operation.code, code_lines=operation.code_lines)
         except Exception as e:
             raise ValueError(f"Invalid code syntax for replace: {e}") from e
     elif operation.action == TreeOperationType.INSERT:
-        if not operation.code:
-            raise ValueError("code required for insert operation")
+        if not operation.code and not operation.code_lines:
+            raise ValueError("code or code_lines required for insert operation")
         # Either parent_node_id or target_node_id must be provided
         if not operation.parent_node_id and not operation.target_node_id:
             raise ValueError(
@@ -225,7 +241,7 @@ def _validate_operation(tree: CSTTree, operation: TreeOperation) -> None:
             )
         # Validate code syntax (supports multi-line)
         try:
-            _parse_code_snippet(operation.code)
+            _parse_code_snippet(code=operation.code, code_lines=operation.code_lines)
         except Exception as e:
             raise ValueError(f"Invalid code syntax for insert: {e}") from e
 
@@ -237,9 +253,15 @@ def _apply_operation(
     if operation.action == TreeOperationType.DELETE:
         return _delete_node(module, tree, operation.node_id)
     elif operation.action == TreeOperationType.REPLACE:
-        return _replace_node(module, tree, operation.node_id, operation.code)
+        code = operation.code
+        if operation.code_lines:
+            code = "\n".join(operation.code_lines)
+        return _replace_node(module, tree, operation.node_id, code)
     elif operation.action == TreeOperationType.INSERT:
         # If target_node_id is provided, find parent automatically and insert relative to target
+        code = operation.code
+        if operation.code_lines:
+            code = "\n".join(operation.code_lines)
         if operation.target_node_id:
             parent_id = _find_parent_for_node(tree, operation.target_node_id)
             if not parent_id:
@@ -251,18 +273,12 @@ def _apply_operation(
                 tree,
                 operation.target_node_id,
                 parent_id,
-                operation.code,
+                code,
                 operation.position,
             )
         else:
             # Use parent_node_id (existing logic)
-            return _insert_node(
-                module,
-                tree,
-                operation.parent_node_id,
-                operation.code,
-                operation.position,
-            )
+            return _insert_node(module, tree, operation.parent_node_id, code, operation.position)
     else:
         raise ValueError(f"Unknown operation type: {operation.action}")
 

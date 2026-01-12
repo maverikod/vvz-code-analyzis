@@ -82,7 +82,10 @@ class TreeOperation:
 
     action: TreeOperationType
     node_id: str
-    code: Optional[str] = None  # New code for replace/insert
+    code: Optional[str] = None  # New code for replace/insert (single string)
+    code_lines: Optional[List[str]] = (
+        None  # New code as list of lines (alternative to code)
+    )
     position: Optional[str] = None  # "before" or "after" for insert
     parent_node_id: Optional[str] = None  # Parent node for insert
     target_node_id: Optional[str] = (

@@ -57,7 +57,12 @@ class CSTModifyTreeCommand(BaseMCPCommand):
                             },
                             "code": {
                                 "type": "string",
-                                "description": "New code for replace/insert operations",
+                                "description": "New code for replace/insert operations (single string, may have escaping issues with multi-line)",
+                            },
+                            "code_lines": {
+                                "type": "array",
+                                "items": {"type": "string"},
+                                "description": "New code as list of lines (alternative to code, recommended for multi-line code to avoid JSON escaping issues)",
                             },
                             "position": {
                                 "type": "string",
@@ -111,6 +116,7 @@ class CSTModifyTreeCommand(BaseMCPCommand):
                         action=action,
                         node_id=op_dict.get("node_id", ""),
                         code=op_dict.get("code"),
+                        code_lines=op_dict.get("code_lines"),
                         position=op_dict.get("position"),
                         parent_node_id=op_dict.get("parent_node_id"),
                         target_node_id=op_dict.get("target_node_id"),
@@ -213,8 +219,13 @@ class CSTModifyTreeCommand(BaseMCPCommand):
                                 "type": "string",
                             },
                             "code": {
-                                "description": "New code for replace/insert operations (must be valid Python)",
+                                "description": "New code for replace/insert operations (single string, must be valid Python). For multi-line code, prefer code_lines to avoid JSON escaping issues.",
                                 "type": "string",
+                            },
+                            "code_lines": {
+                                "description": "New code as list of lines (alternative to code, recommended for multi-line code). Each line is a separate array element, avoiding JSON escaping issues.",
+                                "type": "array",
+                                "items": {"type": "string"},
                             },
                             "position": {
                                 "description": "Position for insert: 'before' or 'after' parent",

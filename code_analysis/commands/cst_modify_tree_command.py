@@ -48,7 +48,7 @@ class CSTModifyTreeCommand(BaseMCPCommand):
                         "properties": {
                             "action": {
                                 "type": "string",
-                                "enum": ["replace", "insert", "delete"],
+                                "enum": ["replace", "replace_range", "insert", "delete"],
                                 "description": "Operation type",
                             },
                             "node_id": {
@@ -77,6 +77,14 @@ class CSTModifyTreeCommand(BaseMCPCommand):
                                 "type": "string",
                                 "description": "Target node ID for insert operation (insert before/after this node, alternative to parent_node_id)",
                             },
+                            "start_node_id": {
+                                "type": "string",
+                                "description": "Start node ID for replace_range operation (first node in range to replace)",
+                            },
+                            "end_node_id": {
+                                "type": "string",
+                                "description": "End node ID for replace_range operation (last node in range to replace)",
+                            },
                         },
                         "required": ["action"],
                     },
@@ -100,6 +108,8 @@ class CSTModifyTreeCommand(BaseMCPCommand):
                 action_str = op_dict.get("action")
                 if action_str == "replace":
                     action = TreeOperationType.REPLACE
+                elif action_str == "replace_range":
+                    action = TreeOperationType.REPLACE_RANGE
                 elif action_str == "insert":
                     action = TreeOperationType.INSERT
                 elif action_str == "delete":
@@ -120,6 +130,8 @@ class CSTModifyTreeCommand(BaseMCPCommand):
                         position=op_dict.get("position"),
                         parent_node_id=op_dict.get("parent_node_id"),
                         target_node_id=op_dict.get("target_node_id"),
+                        start_node_id=op_dict.get("start_node_id"),
+                        end_node_id=op_dict.get("end_node_id"),
                     )
                 )
 
@@ -135,10 +147,22 @@ class CSTModifyTreeCommand(BaseMCPCommand):
             return SuccessResult(data=data)
 
         except ValueError as e:
+            # Extract detailed error information for better error messages
+            error_msg = str(e)
+            error_details = {"tree_id": tree_id, "error": error_msg}
+            
+            # Try to extract node context from error message
+            if "Node" in error_msg and "was not replaced" in error_msg:
+                # Parse error for additional context
+                if "Node type:" in error_msg:
+                    error_details["hint"] = "Check that the node is in a replaceable context (Module or IndentedBlock body)"
+                if "Try using replace_range" in error_msg:
+                    error_details["suggestion"] = "Consider using replace_range operation for replacing multiple statements"
+            
             return ErrorResult(
-                message=f"Invalid operation: {e}",
+                message=f"Invalid operation: {error_msg}",
                 code="INVALID_OPERATION",
-                details={"tree_id": tree_id},
+                details=error_details,
             )
         except Exception as e:
             logger.exception("cst_modify_tree failed: %s", e)

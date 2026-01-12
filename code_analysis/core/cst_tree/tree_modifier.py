@@ -215,6 +215,30 @@ def _validate_operation(tree: CSTTree, operation: TreeOperation) -> None:
             _parse_code_snippet(code=operation.code, code_lines=operation.code_lines)
         except Exception as e:
             raise ValueError(f"Invalid code syntax for replace: {e}") from e
+    elif operation.action == TreeOperationType.REPLACE_RANGE:
+        if not operation.start_node_id or not operation.end_node_id:
+            raise ValueError(
+                "start_node_id and end_node_id required for replace_range operation"
+            )
+        if operation.start_node_id not in tree.node_map:
+            available = list(tree.node_map.keys())[:5]
+            raise ValueError(
+                f"Start node not found for replace_range: {operation.start_node_id}. "
+                f"Available nodes (first 5): {available}"
+            )
+        if operation.end_node_id not in tree.node_map:
+            available = list(tree.node_map.keys())[:5]
+            raise ValueError(
+                f"End node not found for replace_range: {operation.end_node_id}. "
+                f"Available nodes (first 5): {available}"
+            )
+        if not operation.code and not operation.code_lines:
+            raise ValueError("code or code_lines required for replace_range operation")
+        # Validate code syntax (supports multi-line)
+        try:
+            _parse_code_snippet(code=operation.code, code_lines=operation.code_lines)
+        except Exception as e:
+            raise ValueError(f"Invalid code syntax for replace_range: {e}") from e
     elif operation.action == TreeOperationType.INSERT:
         if not operation.code and not operation.code_lines:
             raise ValueError("code or code_lines required for insert operation")
@@ -257,6 +281,17 @@ def _apply_operation(
         if operation.code_lines:
             code = "\n".join(operation.code_lines)
         return _replace_node(module, tree, operation.node_id, code)
+    elif operation.action == TreeOperationType.REPLACE_RANGE:
+        code = operation.code
+        if operation.code_lines:
+            code = "\n".join(operation.code_lines)
+        if not operation.start_node_id or not operation.end_node_id:
+            raise ValueError(
+                "start_node_id and end_node_id required for replace_range operation"
+            )
+        return _replace_range(
+            module, tree, operation.start_node_id, operation.end_node_id, code
+        )
     elif operation.action == TreeOperationType.INSERT:
         # If target_node_id is provided, find parent automatically and insert relative to target
         code = operation.code
@@ -321,13 +356,27 @@ def _replace_node(
     """Replace a node in module with one or more statements."""
     node = tree.node_map.get(node_id)
     if not node:
-        raise ValueError(f"Node not found: {node_id}")
+        # Get node metadata for better error message
+        metadata = tree.metadata_map.get(node_id)
+        node_info = f"Node type: {metadata.type if metadata else 'unknown'}, " if metadata else ""
+        available = list(tree.node_map.keys())[:5]
+        raise ValueError(
+            f"Node not found: {node_id}. {node_info}"
+            f"Available nodes (first 5): {available}"
+        )
 
     # Parse new code (supports multi-line)
     new_statements = _parse_code_snippet(new_code)
     if not new_statements:
         # Empty code means delete
         return _delete_node(module, tree, node_id)
+
+    # Get node metadata for better error context
+    metadata = tree.metadata_map.get(node_id)
+    node_type = metadata.type if metadata else "unknown"
+    parent_id = metadata.parent_id if metadata else None
+    parent_metadata = tree.metadata_map.get(parent_id) if parent_id else None
+    parent_type = parent_metadata.type if parent_metadata else "unknown"
 
     # Use LibCST transformer to replace the node
     class NodeReplacer(cst.CSTTransformer):
@@ -337,6 +386,7 @@ def _replace_node(
             self.target_node = target_node
             self.replacements = replacements
             self.replaced = False
+            self.visited_blocks: list[tuple[str, cst.IndentedBlock]] = []
 
         def on_leave(
             self, original_node: cst.CSTNode, updated_node: cst.CSTNode
@@ -373,9 +423,11 @@ def _replace_node(
             updated_node: cst.IndentedBlock,
         ) -> cst.IndentedBlock:
             # Handle block-level replacements (including multiple statements)
-            if any(stmt is self.target_node for stmt in original_node.body):
+            # Check both original and updated body to handle nested cases
+            body_to_check = original_node.body
+            if any(stmt is self.target_node for stmt in body_to_check):
                 new_body: list[cst.BaseStatement] = []
-                for stmt in original_node.body:
+                for stmt in body_to_check:
                     if stmt is self.target_node:
                         new_body.extend(self.replacements)
                         self.replaced = True
@@ -393,12 +445,146 @@ def _replace_node(
             # If replacing SimpleStatementLine with multiple statements,
             # we need to replace it at the parent level (IndentedBlock/Module)
             # This is handled in leave_IndentedBlock/leave_Module
+            # Mark that we visited this node to help with debugging
+            if original_node is self.target_node and len(self.replacements) > 1:
+                # This will be handled by parent's leave_IndentedBlock/leave_Module
+                pass
             return updated_node
 
     replacer = NodeReplacer(node, new_statements)
     result = module.visit(replacer)
     if not replacer.replaced:
-        raise ValueError(f"Node {node_id} was not replaced")
+        # Provide detailed error message with context
+        suggestion = ""
+        if node_type == "SimpleStatementLine" and len(new_statements) > 1:
+            suggestion = (
+                f" Hint: Replacing SimpleStatementLine with multiple statements requires "
+                f"the node to be in a Module or IndentedBlock body. "
+                f"Parent type: {parent_type}. "
+                f"Try using replace_range operation or replace the parent block instead."
+            )
+        raise ValueError(
+            f"Node {node_id} was not replaced. "
+            f"Node type: {node_type}, Parent type: {parent_type}.{suggestion}"
+        )
+    return result
+
+
+def _replace_range(
+    module: cst.Module,
+    tree: CSTTree,
+    start_node_id: str,
+    end_node_id: str,
+    new_code: str,
+) -> cst.Module:
+    """Replace a range of consecutive nodes with new code."""
+    start_node = tree.node_map.get(start_node_id)
+    end_node = tree.node_map.get(end_node_id)
+    if not start_node:
+        raise ValueError(f"Start node not found: {start_node_id}")
+    if not end_node:
+        raise ValueError(f"End node not found: {end_node_id}")
+
+    # Get metadata for better error messages
+    start_metadata = tree.metadata_map.get(start_node_id)
+    end_metadata = tree.metadata_map.get(end_node_id)
+    start_parent_id = start_metadata.parent_id if start_metadata else None
+    end_parent_id = end_metadata.parent_id if end_metadata else None
+
+    # Verify both nodes have the same parent
+    if start_parent_id != end_parent_id:
+        raise ValueError(
+            f"Start and end nodes must have the same parent. "
+            f"Start parent: {start_parent_id}, End parent: {end_parent_id}"
+        )
+
+    # Parse new code (supports multi-line)
+    new_statements = _parse_code_snippet(new_code)
+    if not new_statements:
+        # Empty code means delete the range
+        # This would require deleting all nodes in range, which is complex
+        # For now, raise an error
+        raise ValueError("Cannot replace range with empty code. Use delete operations instead.")
+
+    # Use LibCST transformer to replace the range
+    class RangeReplacer(cst.CSTTransformer):
+        def __init__(
+            self,
+            start_node: cst.CSTNode,
+            end_node: cst.CSTNode,
+            replacements: list[cst.BaseStatement],
+        ):
+            self.start_node = start_node
+            self.end_node = end_node
+            self.replacements = replacements
+            self.replaced = False
+            self.in_range = False
+
+        def leave_Module(
+            self, original_node: cst.Module, updated_node: cst.Module
+        ) -> cst.Module:
+            # Handle module-level range replacements
+            body = list(original_node.body)
+            start_idx = -1
+            end_idx = -1
+
+            # Find start and end indices
+            for i, stmt in enumerate(body):
+                if stmt is self.start_node:
+                    start_idx = i
+                if stmt is self.end_node:
+                    end_idx = i
+                    break  # End node found, stop searching
+
+            if start_idx >= 0 and end_idx >= 0 and start_idx <= end_idx:
+                # Replace range
+                new_body = body[:start_idx] + list(self.replacements) + body[end_idx + 1 :]
+                self.replaced = True
+                return updated_node.with_changes(body=new_body)
+            return updated_node
+
+        def leave_IndentedBlock(
+            self,
+            original_node: cst.IndentedBlock,
+            updated_node: cst.IndentedBlock,
+        ) -> cst.IndentedBlock:
+            # Handle block-level range replacements
+            body = list(original_node.body)
+            start_idx = -1
+            end_idx = -1
+
+            # Find start and end indices
+            for i, stmt in enumerate(body):
+                if stmt is self.start_node:
+                    start_idx = i
+                if stmt is self.end_node:
+                    end_idx = i
+                    break  # End node found, stop searching
+
+            if start_idx >= 0 and end_idx >= 0 and start_idx <= end_idx:
+                # Replace range
+                new_body = body[:start_idx] + list(self.replacements) + body[end_idx + 1 :]
+                self.replaced = True
+                return updated_node.with_changes(body=new_body)
+            return updated_node
+
+    replacer = RangeReplacer(start_node, end_node, new_statements)
+    result = module.visit(replacer)
+    if not replacer.replaced:
+        # Provide detailed error message
+        start_type = start_metadata.type if start_metadata else "unknown"
+        end_type = end_metadata.type if end_metadata else "unknown"
+        parent_type = (
+            tree.metadata_map.get(start_parent_id).type
+            if start_parent_id and tree.metadata_map.get(start_parent_id)
+            else "unknown"
+        )
+        raise ValueError(
+            f"Range from {start_node_id} to {end_node_id} was not replaced. "
+            f"Start node type: {start_type}, End node type: {end_type}, "
+            f"Parent type: {parent_type}. "
+            f"Both nodes must be consecutive statements in the same parent block."
+        )
     return result
 
 

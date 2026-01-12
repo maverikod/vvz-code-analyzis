@@ -19,6 +19,7 @@ class TreeOperationType(str, Enum):
     """Type of tree operation."""
 
     REPLACE = "replace"
+    REPLACE_RANGE = "replace_range"
     INSERT = "insert"
     DELETE = "delete"
 
@@ -91,6 +92,8 @@ class TreeOperation:
     target_node_id: Optional[str] = (
         None  # Target node for insert (alternative to parent_node_id)
     )
+    start_node_id: Optional[str] = None  # Start node for replace_range
+    end_node_id: Optional[str] = None  # End node for replace_range
 
 
 @dataclass

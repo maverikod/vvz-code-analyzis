@@ -27,9 +27,7 @@ from ..core.cst_module import (
     apply_replace_ops,
     apply_insert_ops,
     apply_create_ops,
-    compile_module,
     unified_diff,
-    validate_module_docstrings,
 )
 from ..core.cst_module.validation import validate_file_in_temp
 
@@ -416,6 +414,13 @@ class ComposeCSTModuleCommand(BaseMCPCommand):
                         code="VALIDATION_ERROR",
                         details=payload,
                     )
+
+                # Validation passed - temporary file is ready
+                # If apply=True, we will move it to target location and add to database in transaction
+                logger.info(
+                    f"Validation passed. Temporary file ready: {tmp_path}, "
+                    f"apply={apply}, target={target}"
+                )
             except Exception as e:
                 logger.error(f"Error during validation: {e}", exc_info=True)
                 # Clean up temporary file if it exists
@@ -430,8 +435,22 @@ class ComposeCSTModuleCommand(BaseMCPCommand):
             backup_uuid = None
             git_commit_success = False
             git_error = None
+            file_created_in_this_session = (
+                False  # Track if file was created in this session
+            )
 
             if apply:
+                # Verify temporary file exists before proceeding
+                if not tmp_path or not tmp_path.exists():
+                    return ErrorResult(
+                        message=(
+                            "Temporary file does not exist after validation. "
+                            "This should not happen if validation passed."
+                        ),
+                        code="TEMP_FILE_MISSING",
+                        details={"tmp_path": str(tmp_path) if tmp_path else None},
+                    )
+
                 # Begin transaction and atomic update process
                 database = self._open_database(str(root_path), auto_analyze=False)
                 backup_manager = None
@@ -465,7 +484,7 @@ class ComposeCSTModuleCommand(BaseMCPCommand):
                     # Begin transaction
                     database.begin_transaction()
 
-                    # Update database in transaction (BEFORE moving file)
+                    # Update database in transaction
                     project_id = self._get_project_id(
                         database, root_path, kwargs.get("project_id")
                     )
@@ -475,8 +494,54 @@ class ComposeCSTModuleCommand(BaseMCPCommand):
                         except ValueError:
                             rel_path = str(target)
 
+                        # Step 1: Move temporary file to target location
+                        # This ensures file exists on disk for add_file() validation
+                        abs_path = target.resolve()
+                        file_existed_before = target.exists()
+
+                        # Ensure target directory exists
+                        target.parent.mkdir(parents=True, exist_ok=True)
+
+                        # Move temporary file to target (creates or overwrites)
+                        shutil.move(str(tmp_path), str(target))
+                        tmp_path_moved = True
+                        if not file_existed_before:
+                            file_created_in_this_session = True
+
+                        # Step 2: Check if file exists in database, add if needed
+                        file_record = database.get_file_by_path(
+                            str(abs_path), project_id
+                        )
+                        if not file_record:
+                            file_record = database.get_file_by_path(
+                                rel_path, project_id
+                            )
+
+                        if not file_record:
+                            # File doesn't exist in database - add it
+                            import time
+
+                            dataset_id = database.get_or_create_dataset(
+                                project_id=project_id,
+                                root_path=str(root_path),
+                            )
+                            lines = len(new_source.splitlines())
+                            file_mtime = time.time()
+                            has_docstring = new_source.strip().startswith(
+                                '"""'
+                            ) or new_source.strip().startswith("'''")
+                            database.add_file(
+                                path=rel_path,
+                                lines=lines,
+                                last_modified=file_mtime,
+                                has_docstring=has_docstring,
+                                project_id=project_id,
+                                dataset_id=dataset_id,
+                            )
+
+                        # Step 3: Update database atomically (AST, CST, entities)
                         update_result = database.update_file_data_atomic(
-                            file_path=rel_path,
+                            file_path=str(abs_path),
                             project_id=project_id,
                             root_dir=root_path,
                             source_code=new_source,
@@ -486,21 +551,6 @@ class ComposeCSTModuleCommand(BaseMCPCommand):
                             raise Exception(
                                 f"Failed to update database: {update_result.get('error')}"
                             )
-
-                        # Atomically move temporary file to target location
-                        if target.exists():
-                            target_backup = target.with_suffix(target.suffix + ".bak")
-                            target.replace(target_backup)
-                            try:
-                                shutil.move(str(tmp_path), str(target))
-                                tmp_path_moved = True
-                                target_backup.unlink(missing_ok=True)
-                            except Exception:
-                                target_backup.replace(target)
-                                raise
-                        else:
-                            shutil.move(str(tmp_path), str(target))
-                            tmp_path_moved = True
 
                         # Commit transaction (BEFORE git commit)
                         database.commit_transaction()
@@ -527,12 +577,34 @@ class ComposeCSTModuleCommand(BaseMCPCommand):
                             f"entities={update_result.get('entities_updated')}"
                         )
 
-                except Exception as e:
+                except Exception:
                     # Rollback transaction on error
                     try:
                         database.rollback_transaction()
                     except Exception:
                         pass
+
+                    # If file was created on disk but error occurred, remove it
+                    # Only remove if it was created in this session
+                    # TEMPORARILY DISABLED for debugging - to see if file is created
+                    # if file_created_in_this_session and target.exists():
+                    #     try:
+                    #         # Check if file is empty or was just created
+                    #         file_size = target.stat().st_size
+                    #         logger.info(
+                    #             f"Removing newly created file due to error: {target}, size: {file_size} bytes"
+                    #         )
+                    #         target.unlink()
+                    #         logger.info(f"Removed newly created file: {target}")
+                    #     except Exception as remove_error:
+                    #         logger.error(
+                    #             f"Failed to remove newly created file: {remove_error}",
+                    #             exc_info=True,
+                    #         )
+                    if file_created_in_this_session and target.exists():
+                        logger.warning(
+                            f"File was created but error occurred. Keeping file for debugging: {target}"
+                        )
 
                     # Restore file from backup if backup was created
                     if backup_uuid and backup_manager and target.exists():
@@ -581,7 +653,7 @@ class ComposeCSTModuleCommand(BaseMCPCommand):
                 "compiled": True,
                 "stats": stats,
             }
-            
+
             # Add git commit info if applicable
             if is_git:
                 data["git_commit"] = {
@@ -712,6 +784,10 @@ class ComposeCSTModuleCommand(BaseMCPCommand):
                 "- commit_message is REQUIRED when working in git repository (is_git=True)\n"
                 "- Operations preserve code formatting and comments\n"
                 "- Can create new files from scratch (use selector with kind='module')\n"
+                "  * For new files: operation_type='create', selector.kind='module', position='end_of_module' REQUIRED\n"
+                "  * file_docstring is REQUIRED and must be non-empty for new files\n"
+                "  * new_code must include file docstring at the beginning (matching file_docstring)\n"
+                "  * new_code must contain at least one function or class (cannot be empty)\n"
                 "- Can delete code blocks (use empty new_code string)\n"
                 "- Backup UUID and git commit status are returned in response\n"
                 "- All operations are atomic: either all succeed or all fail\n"
@@ -744,7 +820,17 @@ class ComposeCSTModuleCommand(BaseMCPCommand):
                         "Operation types: replace (default), insert, create. "
                         "For replace: new_code replaces selected block (empty string deletes). "
                         "For insert: new_code is inserted before/after selected block. "
-                        "For create: new_code creates new node at specified position."
+                        "For create: new_code creates new node at specified position.\n\n"
+                        "CREATING NEW FILES (file does not exist):\n"
+                        "- Use operation_type='create' with selector.kind='module'\n"
+                        "- position='end_of_module' is REQUIRED for new files\n"
+                        "- file_docstring is REQUIRED and must be non-empty (minLength=1)\n"
+                        "- new_code is REQUIRED and must be non-empty (minLength=1)\n"
+                        "- new_code must include file docstring at the beginning (matching file_docstring)\n"
+                        "- new_code must contain at least one function or class\n"
+                        '- Example: {"operation_type": "create", "selector": {"kind": "module"}, '
+                        '"position": "end_of_module", "file_docstring": "File docstring", '
+                        '"new_code": \'"""File docstring"""\\n\\ndef main():\\n    pass\'}'
                     ),
                 },
                 "apply": {
@@ -800,58 +886,87 @@ class ComposeCSTModuleCommand(BaseMCPCommand):
                     "code": {
                         "root_dir": "/path/to/project",
                         "file_path": "code_analysis/main.py",
-                        "ops": [{
-                            "operation_type": "replace",
-                            "selector": {"kind": "function", "name": "my_function"},
-                            "new_code": 'def my_function(param: int) -> str:\n    """Updated function."""\n    return str(param)'
-                        }],
+                        "ops": [
+                            {
+                                "operation_type": "replace",
+                                "selector": {"kind": "function", "name": "my_function"},
+                                "new_code": 'def my_function(param: int) -> str:\n    """Updated function."""\n    return str(param)',
+                            }
+                        ],
                         "apply": False,
                         "return_diff": True,
-                        "return_source": False
-                    }
+                        "return_source": False,
+                    },
                 },
                 {
                     "description": "Apply changes in git repository (commit_message REQUIRED)",
                     "code": {
                         "root_dir": "/path/to/project",
                         "file_path": "code_analysis/main.py",
-                        "ops": [{
-                            "operation_type": "replace",
-                            "selector": {"kind": "function", "name": "my_function"},
-                            "new_code": 'def my_function(param: int) -> str:\n    """Updated function."""\n    return str(param)'
-                        }],
+                        "ops": [
+                            {
+                                "operation_type": "replace",
+                                "selector": {"kind": "function", "name": "my_function"},
+                                "new_code": 'def my_function(param: int) -> str:\n    """Updated function."""\n    return str(param)',
+                            }
+                        ],
                         "apply": True,
-                        "commit_message": "Refactor: update my_function signature and return type"
-                    }
+                        "commit_message": "Refactor: update my_function signature and return type",
+                    },
                 },
                 {
                     "description": "Apply changes WITHOUT git repository (commit_message optional)",
                     "code": {
                         "root_dir": "/path/to/project",
                         "file_path": "code_analysis/main.py",
-                        "ops": [{
-                            "operation_type": "replace",
-                            "selector": {"kind": "function", "name": "my_function"},
-                            "new_code": 'def my_function(param: int) -> str:\n    """Updated function."""\n    return str(param)'
-                        }],
-                        "apply": True
+                        "ops": [
+                            {
+                                "operation_type": "replace",
+                                "selector": {"kind": "function", "name": "my_function"},
+                                "new_code": 'def my_function(param: int) -> str:\n    """Updated function."""\n    return str(param)',
+                            }
+                        ],
+                        "apply": True,
                         # commit_message not required, git commit not performed
-                    }
+                    },
                 },
                 {
-                    "description": "Create new file from scratch (kind='module')",
+                    "description": "Create new file from scratch (kind='module') - REQUIRES position='end_of_module'",
                     "code": {
                         "root_dir": "/path/to/project",
                         "file_path": "new_module.py",
-                        "ops": [{
-                            "operation_type": "create",
-                            "selector": {"kind": "module"},
-                            "file_docstring": "New module for testing.\n\nAuthor: Vasiliy Zdanovskiy\nemail: vasilyvz@gmail.com",
-                            "new_code": 'class NewClass:\n    """Class description."""\n    \n    def __init__(self):\n        """Initialize."""\n        pass'
-                        }],
+                        "ops": [
+                            {
+                                "operation_type": "create",
+                                "selector": {"kind": "module"},
+                                "position": "end_of_module",
+                                "file_docstring": "New module for testing.\n\nAuthor: Vasiliy Zdanovskiy\nemail: vasilyvz@gmail.com",
+                                "new_code": 'class NewClass:\n    """Class description."""\n    \n    def __init__(self):\n        """Initialize."""\n        pass',
+                            }
+                        ],
                         "apply": True,
-                        "commit_message": "Add new module with NewClass"
-                    }
+                        "commit_message": "Add new module with NewClass",
+                    },
+                    "note": "CRITICAL: When creating new file, position='end_of_module' is REQUIRED. file_docstring must be non-empty. new_code must contain at least one function or class.",
+                },
+                {
+                    "description": "Create new file with main() entry point (complete example)",
+                    "code": {
+                        "root_dir": "/path/to/project",
+                        "file_path": "main.py",
+                        "ops": [
+                            {
+                                "operation_type": "create",
+                                "selector": {"kind": "module"},
+                                "position": "end_of_module",
+                                "file_docstring": "Main entry point for application.\n\nAuthor: Vasiliy Zdanovskiy\nemail: vasilyvz@gmail.com",
+                                "new_code": '"""\nMain entry point for application.\n\nAuthor: Vasiliy Zdanovskiy\nemail: vasilyvz@gmail.com\n"""\n\nfrom __future__ import annotations\n\nimport sys\nfrom local_module import connect  # type: ignore[import-not-found]\n\n\ndef main() -> int:\n    """\n    Main entry point for the application.\n    \n    Returns:\n        Exit code (0 for success, non-zero for error).\n    """\n    try:\n        api = connect()\n        print(f"Version: {api.info(\'version\')}")\n        return 0\n    except Exception as e:\n        print(f"Error: {e}", file=sys.stderr)\n        return 1\n\n\nif __name__ == "__main__":\n    sys.exit(main())\n',
+                            }
+                        ],
+                        "apply": True,
+                        "commit_message": "Add main entry point with main() function",
+                    },
+                    "note": "When creating new file: 1) file_docstring is REQUIRED and must match docstring in new_code, 2) position='end_of_module' is REQUIRED, 3) new_code must include file docstring at the beginning, 4) Use type: ignore comments for local imports if mypy validation fails",
                 },
                 {
                     "description": "Multiple operations (replace + insert + create)",
@@ -861,55 +976,68 @@ class ComposeCSTModuleCommand(BaseMCPCommand):
                         "ops": [
                             {
                                 "operation_type": "replace",
-                                "selector": {"kind": "function", "name": "old_function"},
-                                "new_code": 'def old_function() -> None:\n    """Updated old function."""\n    pass'
+                                "selector": {
+                                    "kind": "function",
+                                    "name": "old_function",
+                                },
+                                "new_code": 'def old_function() -> None:\n    """Updated old function."""\n    pass',
                             },
                             {
                                 "operation_type": "insert",
-                                "selector": {"kind": "function", "name": "old_function"},
+                                "selector": {
+                                    "kind": "function",
+                                    "name": "old_function",
+                                },
                                 "position": "after",
-                                "new_code": 'def new_helper() -> str:\n    """Helper function."""\n    return "help"'
+                                "new_code": 'def new_helper() -> str:\n    """Helper function."""\n    return "help"',
                             },
                             {
                                 "operation_type": "create",
                                 "selector": {"kind": "module"},
                                 "position": "end_of_module",
-                                "new_code": 'def module_level_function() -> int:\n    """Module level function."""\n    return 42'
-                            }
+                                "new_code": 'def module_level_function() -> int:\n    """Module level function."""\n    return 42',
+                            },
                         ],
                         "apply": True,
-                        "commit_message": "Refactor: update old_function, add helpers"
-                    }
+                        "commit_message": "Refactor: update old_function, add helpers",
+                    },
                 },
                 {
                     "description": "Handle validation errors (syntax error in new_code)",
                     "code": {
                         "root_dir": "/path/to/project",
                         "file_path": "code_analysis/main.py",
-                        "ops": [{
-                            "operation_type": "replace",
-                            "selector": {"kind": "function", "name": "my_function"},
-                            "new_code": "def my_function(:  # Invalid syntax - missing closing parenthesis"
-                        }],
+                        "ops": [
+                            {
+                                "operation_type": "replace",
+                                "selector": {"kind": "function", "name": "my_function"},
+                                "new_code": "def my_function(:  # Invalid syntax - missing closing parenthesis",
+                            }
+                        ],
                         "apply": True,
-                        "commit_message": "Fix function"
+                        "commit_message": "Fix function",
                     },
-                    "note": "This will return VALIDATION_ERROR with detailed compilation error. File is not modified."
+                    "note": "This will return VALIDATION_ERROR with detailed compilation error. File is not modified.",
                 },
                 {
                     "description": "Delete code block (empty new_code)",
                     "code": {
                         "root_dir": "/path/to/project",
                         "file_path": "code_analysis/main.py",
-                        "ops": [{
-                            "operation_type": "replace",
-                            "selector": {"kind": "function", "name": "deprecated_function"},
-                            "new_code": ""  # Empty string deletes the function
-                        }],
+                        "ops": [
+                            {
+                                "operation_type": "replace",
+                                "selector": {
+                                    "kind": "function",
+                                    "name": "deprecated_function",
+                                },
+                                "new_code": "",  # Empty string deletes the function
+                            }
+                        ],
                         "apply": True,
-                        "commit_message": "Remove deprecated_function"
-                    }
-                }
+                        "commit_message": "Remove deprecated_function",
+                    },
+                },
             ],
             "error_codes": {
                 "COMMIT_MESSAGE_REQUIRED": {
@@ -920,7 +1048,7 @@ class ComposeCSTModuleCommand(BaseMCPCommand):
                     ),
                     "when_occurs": "is_git=True and commit_message is None or empty",
                     "how_to_fix": "Provide commit_message parameter when working in git repository",
-                    "example": "commit_message is required when working in a git repository"
+                    "example": "commit_message is required when working in a git repository",
                 },
                 "VALIDATION_ERROR": {
                     "description": (
@@ -932,11 +1060,11 @@ class ComposeCSTModuleCommand(BaseMCPCommand):
                         "compile": "Compilation/syntax errors",
                         "docstrings": "Missing or invalid docstrings",
                         "linter": "Flake8 linting errors",
-                        "type_checker": "Mypy type checking errors"
+                        "type_checker": "Mypy type checking errors",
                     },
                     "response_structure": "validation_results dictionary with details for each validation type",
                     "how_to_fix": "Fix errors reported in validation_results and retry",
-                    "example": "Compilation failed: SyntaxError: invalid syntax at line 10"
+                    "example": "Compilation failed: SyntaxError: invalid syntax at line 10",
                 },
                 "COMPILE_ERROR": {
                     "description": "Compilation failed after CST patch. Python syntax error in resulting code.",
@@ -944,14 +1072,14 @@ class ComposeCSTModuleCommand(BaseMCPCommand):
                     "causes": [
                         "Syntax errors: missing parentheses, brackets, quotes",
                         "Indentation errors: inconsistent indentation",
-                        "Invalid Python syntax in new_code"
+                        "Invalid Python syntax in new_code",
                     ],
                     "how_to_fix": "Fix syntax errors in new_code or operations",
                     "examples": [
                         "SyntaxError: invalid syntax",
                         "IndentationError: expected an indented block",
-                        "SyntaxError: unexpected EOF while parsing"
-                    ]
+                        "SyntaxError: unexpected EOF while parsing",
+                    ],
                 },
                 "DOCSTRING_VALIDATION_ERROR": {
                     "description": (
@@ -963,10 +1091,10 @@ class ComposeCSTModuleCommand(BaseMCPCommand):
                         "file": "File-level docstring with Author and email",
                         "classes": "Class docstring",
                         "methods": "Method docstring",
-                        "functions": "Function docstring"
+                        "functions": "Function docstring",
                     },
                     "how_to_fix": "Add or fix docstrings according to project standards",
-                    "example": "Missing docstring for function 'my_function' at line 10"
+                    "example": "Missing docstring for function 'my_function' at line 10",
                 },
                 "LINTER_ERROR": {
                     "description": "Linter (flake8) errors found in validated file.",
@@ -974,14 +1102,14 @@ class ComposeCSTModuleCommand(BaseMCPCommand):
                     "types": {
                         "E": "Error (syntax, indentation, etc.)",
                         "W": "Warning (code style)",
-                        "F": "Pyflakes errors (unused imports, undefined names, etc.)"
+                        "F": "Pyflakes errors (unused imports, undefined names, etc.)",
                     },
                     "examples": [
                         "E501: line too long (80 > 79 characters)",
                         "F401: 'os' imported but unused",
-                        "E302: expected 2 blank lines, found 1"
+                        "E302: expected 2 blank lines, found 1",
                     ],
-                    "how_to_fix": "Fix linter errors according to flake8 rules"
+                    "how_to_fix": "Fix linter errors according to flake8 rules",
                 },
                 "TYPE_CHECK_ERROR": {
                     "description": "Type checker (mypy) errors found in validated file.",
@@ -990,23 +1118,23 @@ class ComposeCSTModuleCommand(BaseMCPCommand):
                         "Incompatible types in assignment",
                         "Missing type annotation",
                         "Incompatible return type",
-                        "Unsupported operand types"
+                        "Unsupported operand types",
                     ],
                     "examples": [
                         "Incompatible types in assignment: expected 'int', got 'str'",
                         "Missing return type annotation",
-                        "Incompatible return type: expected 'int', got 'str'"
+                        "Incompatible return type: expected 'int', got 'str'",
                     ],
-                    "how_to_fix": "Fix type errors according to mypy requirements"
+                    "how_to_fix": "Fix type errors according to mypy requirements",
                 },
                 "TRANSACTION_ERROR": {
                     "description": "Database transaction error. Internal error in transaction management.",
                     "when_occurs": "Transaction management issues (nested transactions, commit without begin, etc.)",
                     "errors": [
                         "Transaction already active: attempting to begin transaction while one is active",
-                        "No active transaction: attempting to commit/rollback without active transaction"
+                        "No active transaction: attempting to commit/rollback without active transaction",
                     ],
-                    "how_to_fix": "This is an internal error. Check transaction usage in code."
+                    "how_to_fix": "This is an internal error. Check transaction usage in code.",
                 },
                 "BACKUP_ERROR": {
                     "description": "Error creating or restoring backup file.",
@@ -1015,9 +1143,9 @@ class ComposeCSTModuleCommand(BaseMCPCommand):
                         "File not found",
                         "Permission denied",
                         "Disk space full",
-                        "Invalid backup UUID"
+                        "Invalid backup UUID",
                     ],
-                    "how_to_fix": "Check file permissions, disk space, and backup directory access"
+                    "how_to_fix": "Check file permissions, disk space, and backup directory access",
                 },
                 "GIT_COMMIT_ERROR": {
                     "description": (
@@ -1029,26 +1157,26 @@ class ComposeCSTModuleCommand(BaseMCPCommand):
                         "Failed to stage file",
                         "Failed to create commit",
                         "Git repository corruption",
-                        "Permission denied"
+                        "Permission denied",
                     ],
                     "important": "Operation is still considered successful. Data is saved, transaction committed.",
-                    "how_to_fix": "Check git repository status, permissions, and manually create commit if needed"
+                    "how_to_fix": "Check git repository status, permissions, and manually create commit if needed",
                 },
                 "FILE_NOT_FOUND": {
                     "description": "Target file does not exist and no module creation operation provided.",
                     "when_occurs": "file_path does not exist and no operation has selector with kind='module'",
-                    "how_to_fix": "Use selector with kind='module' to create new file, or provide existing file path"
+                    "how_to_fix": "Use selector with kind='module' to create new file, or provide existing file path",
                 },
                 "INVALID_FILE": {
                     "description": "Target file is not a Python file (.py extension required).",
                     "when_occurs": "file_path does not have .py extension",
-                    "how_to_fix": "Use .py file extension"
+                    "how_to_fix": "Use .py file extension",
                 },
                 "INVALID_OPERATION": {
                     "description": "Unknown or invalid operation type or selector.",
                     "when_occurs": "Invalid operation_type or selector configuration",
-                    "how_to_fix": "Use valid operation types (replace, insert, create) and valid selector kinds"
-                }
+                    "how_to_fix": "Use valid operation types (replace, insert, create) and valid selector kinds",
+                },
             },
             "git_integration": {
                 "automatic_detection": (
@@ -1078,8 +1206,8 @@ class ComposeCSTModuleCommand(BaseMCPCommand):
                 ),
                 "examples": {
                     "with_git": "root_dir is git repo → commit_message REQUIRED → git commit created after success",
-                    "without_git": "root_dir is not git repo → commit_message optional → no git commit"
-                }
+                    "without_git": "root_dir is not git repo → commit_message optional → no git commit",
+                },
             },
             "atomicity": {
                 "database_transactions": (
@@ -1107,7 +1235,7 @@ class ComposeCSTModuleCommand(BaseMCPCommand):
                     "3. Create temporary file, "
                     "4. Validate entire file in temp, "
                     "5. If apply=true: create backup, begin transaction, update database, move file, commit transaction, git commit"
-                )
+                ),
             },
             "safety_features": {
                 "validation": (
@@ -1134,13 +1262,13 @@ class ComposeCSTModuleCommand(BaseMCPCommand):
                 "preview": (
                     "Preview mode (apply=false) allows seeing changes without modifying file. "
                     "Safe to use, does not require commit_message even in git repository."
-                )
+                ),
             },
             "see_also": [
                 "BackupManager: System for file backups with metadata",
                 "update_file_data_atomic: Atomic database update method",
                 "validate_file_in_temp: File validation in temporary location",
                 "is_git_repository: Git repository detection",
-                "create_git_commit: Git commit creation"
-            ]
+                "create_git_commit: Git commit creation",
+            ],
         }

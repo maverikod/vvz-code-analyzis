@@ -83,18 +83,21 @@ def register_code_analysis_commands(reg: registry) -> None:
         from .commands.cst_save_tree_command import CSTSaveTreeCommand
         from .commands.cst_find_node_command import CSTFindNodeCommand
         from .commands.cst_get_node_info_command import CSTGetNodeInfoCommand
+        from .commands.cst_get_node_by_range_command import CSTGetNodeByRangeCommand
 
         reg.register(CSTLoadFileCommand, "custom")
         reg.register(CSTModifyTreeCommand, "custom")
         reg.register(CSTSaveTreeCommand, "custom")
         reg.register(CSTFindNodeCommand, "custom")
         reg.register(CSTGetNodeInfoCommand, "custom")
+        reg.register(CSTGetNodeByRangeCommand, "custom")
         import logging
 
         logger = logging.getLogger(__name__)
         logger.info(
             "✅ Registered CST tree commands: "
-            "cst_load_file, cst_modify_tree, cst_save_tree, cst_find_node, cst_get_node_info"
+            "cst_load_file, cst_modify_tree, cst_save_tree, cst_find_node, "
+            "cst_get_node_info, cst_get_node_by_range"
         )
     except ImportError as e:
         import logging
@@ -551,6 +554,7 @@ register_auto_import_module("code_analysis.commands.cst_modify_tree_command")
 register_auto_import_module("code_analysis.commands.cst_save_tree_command")
 register_auto_import_module("code_analysis.commands.cst_find_node_command")
 register_auto_import_module("code_analysis.commands.cst_get_node_info_command")
+register_auto_import_module("code_analysis.commands.cst_get_node_by_range_command")
 register_auto_import_module("code_analysis.commands.ast_mcp_commands")
 register_auto_import_module("code_analysis.commands.vector_commands")
 register_auto_import_module("code_analysis.commands.semantic_search_mcp")

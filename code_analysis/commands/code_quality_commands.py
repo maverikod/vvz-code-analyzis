@@ -73,12 +73,18 @@ class FormatCodeCommand(Command):
             "additionalProperties": False,
             "examples": [
                 {"file_path": "/abs/path/to/file.py"},
-                {"file_path": "/abs/path/to/file.py", "root_dir": "/abs/path/to/project"},
+                {
+                    "file_path": "/abs/path/to/file.py",
+                    "root_dir": "/abs/path/to/project",
+                },
             ],
         }
 
     async def execute(
-        self: "FormatCodeCommand", file_path: str, root_dir: Optional[str] = None, **kwargs: Any
+        self: "FormatCodeCommand",
+        file_path: str,
+        root_dir: Optional[str] = None,
+        **kwargs: Any,
     ) -> SuccessResult | ErrorResult:
         """Execute code formatting.
 
@@ -124,12 +130,15 @@ class FormatCodeCommand(Command):
 
                     root_path = PathType(root_dir)
                     if not root_path.exists() or not root_path.is_dir():
-                        logger.warning(f"Invalid root_dir: {root_dir}, skipping database update")
+                        logger.warning(
+                            f"Invalid root_dir: {root_dir}, skipping database update"
+                        )
                     else:
                         # Open database
                         storage_paths = resolve_storage_paths(root_path)
                         db_path = storage_paths["database"]
                         from ..core.database.base import create_driver_config_for_worker
+
                         driver_config = create_driver_config_for_worker(db_path)
                         database = CodeDatabase(driver_config=driver_config)
 
@@ -157,10 +166,14 @@ class FormatCodeCommand(Command):
                                     f"Error: {update_result.get('error')}"
                                 )
                         else:
-                            logger.debug(f"Project ID not found for {root_dir}, skipping database update")
+                            logger.debug(
+                                f"Project ID not found for {root_dir}, skipping database update"
+                            )
                 except Exception as e:
                     # Don't fail formatting if database update fails
-                    logger.warning(f"Error updating database after formatting: {e}", exc_info=True)
+                    logger.warning(
+                        f"Error updating database after formatting: {e}", exc_info=True
+                    )
 
             return SuccessResult(
                 data={
@@ -240,15 +253,18 @@ class FormatCodeCommand(Command):
             "parameters": {
                 "file_path": {
                     "description": (
-                        "Absolute or relative path to Python file to format. "
+                        "Path to Python file to format. "
+                        "**RECOMMENDED: Use absolute path for reliability.** "
+                        "Relative paths are resolved from current working directory, "
+                        "which may cause issues if working directory changes. "
                         "File must exist and be readable/writable."
                     ),
                     "type": "string",
                     "required": True,
                     "examples": [
-                        "/home/user/projects/my_project/src/main.py",
-                        "code_analysis/core/backup_manager.py",
-                        "./src/utils.py",
+                        "/home/user/projects/my_project/src/main.py",  # ✅ RECOMMENDED: Absolute path
+                        "code_analysis/core/backup_manager.py",  # ⚠️ Relative path (resolved from CWD)
+                        "./src/utils.py",  # ⚠️ Relative path (resolved from CWD)
                     ],
                 },
             },
@@ -509,15 +525,18 @@ class LintCodeCommand(Command):
             "parameters": {
                 "file_path": {
                     "description": (
-                        "Absolute or relative path to Python file to lint. "
+                        "Path to Python file to lint. "
+                        "**RECOMMENDED: Use absolute path for reliability.** "
+                        "Relative paths are resolved from current working directory, "
+                        "which may cause issues if working directory changes. "
                         "File must exist and be readable."
                     ),
                     "type": "string",
                     "required": True,
                     "examples": [
-                        "/home/user/projects/my_project/src/main.py",
-                        "code_analysis/core/backup_manager.py",
-                        "./src/utils.py",
+                        "/home/user/projects/my_project/src/main.py",  # ✅ RECOMMENDED: Absolute path
+                        "code_analysis/core/backup_manager.py",  # ⚠️ Relative path (resolved from CWD)
+                        "./src/utils.py",  # ⚠️ Relative path (resolved from CWD)
                     ],
                 },
                 "ignore": {
@@ -851,15 +870,18 @@ class TypeCheckCodeCommand(Command):
             "parameters": {
                 "file_path": {
                     "description": (
-                        "Absolute or relative path to Python file to type check. "
+                        "Path to Python file to type check. "
+                        "**RECOMMENDED: Use absolute path for reliability.** "
+                        "Relative paths are resolved from current working directory, "
+                        "which may cause issues if working directory changes. "
                         "File must exist and be readable."
                     ),
                     "type": "string",
                     "required": True,
                     "examples": [
-                        "/home/user/projects/my_project/src/main.py",
-                        "code_analysis/core/backup_manager.py",
-                        "./src/utils.py",
+                        "/home/user/projects/my_project/src/main.py",  # ✅ RECOMMENDED: Absolute path
+                        "code_analysis/core/backup_manager.py",  # ⚠️ Relative path (resolved from CWD)
+                        "./src/utils.py",  # ⚠️ Relative path (resolved from CWD)
                     ],
                 },
                 "config_file": {

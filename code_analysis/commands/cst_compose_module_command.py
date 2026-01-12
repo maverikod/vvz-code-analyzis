@@ -795,7 +795,10 @@ class ComposeCSTModuleCommand(BaseMCPCommand):
             "parameters": {
                 "root_dir": {
                     "description": (
-                        "Project root directory path. Can be absolute or relative. "
+                        "Project root directory path. "
+                        "**RECOMMENDED: Use absolute path for reliability.** "
+                        "Relative paths are resolved from current working directory, "
+                        "which may cause issues if working directory changes. "
                         "This directory is checked for git repository status. "
                         "If it is a git repository (detected via is_git_repository()), "
                         "commit_message parameter becomes REQUIRED. "
@@ -805,7 +808,10 @@ class ComposeCSTModuleCommand(BaseMCPCommand):
                 },
                 "file_path": {
                     "description": (
-                        "Target Python file path. Can be absolute or relative to root_dir. "
+                        "Target Python file path. "
+                        "**Can be absolute or relative to root_dir.** "
+                        "If relative, it is resolved relative to root_dir. "
+                        "If absolute, it must be within root_dir (or will be normalized). "
                         "If file does not exist, use selector with kind='module' to create new file. "
                         "File must have .py extension. "
                         "For new files, old_source is empty string and operations create file from scratch."

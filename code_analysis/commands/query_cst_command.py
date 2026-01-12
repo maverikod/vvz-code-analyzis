@@ -174,7 +174,7 @@ class QueryCSTCommand(Command):
                 "- Descendant combinator: whitespace (A B finds B inside A)\n"
                 "- Child combinator: > (A > B finds B as direct child of A)\n"
                 "- Each step: TYPE or * with optional predicates and pseudos\n"
-                "- Predicates: [attr OP value] (e.g., [name=\"MyClass\"])\n"
+                '- Predicates: [attr OP value] (e.g., [name="MyClass"])\n'
                 "- Pseudos: :first, :last, :nth(N)\n\n"
                 "Supported TYPE Aliases:\n"
                 "- module, class, function, method, stmt, smallstmt, import, node\n"
@@ -225,20 +225,26 @@ class QueryCSTCommand(Command):
             "parameters": {
                 "root_dir": {
                     "description": (
-                        "Project root directory path. Can be absolute or relative. "
+                        "Project root directory path. "
+                        "**RECOMMENDED: Use absolute path for reliability.** "
+                        "Relative paths are resolved from current working directory, "
+                        "which may cause issues if working directory changes. "
                         "Used to resolve relative file_path."
                     ),
                     "type": "string",
                     "required": True,
                     "examples": [
-                        "/home/user/projects/my_project",
-                        ".",
-                        "./code_analysis",
+                        "/home/user/projects/my_project",  # ✅ RECOMMENDED: Absolute path
+                        ".",  # ⚠️ Relative path (resolved from CWD)
+                        "./code_analysis",  # ⚠️ Relative path (resolved from CWD)
                     ],
                 },
                 "file_path": {
                     "description": (
-                        "Target Python file path. Can be absolute or relative to root_dir. "
+                        "Target Python file path. "
+                        "**Can be absolute or relative to root_dir.** "
+                        "If relative, it is resolved relative to root_dir. "
+                        "If absolute, it must be within root_dir (or will be normalized). "
                         "Must be a .py file."
                     ),
                     "type": "string",
@@ -253,10 +259,10 @@ class QueryCSTCommand(Command):
                     "description": (
                         "CSTQuery selector string. Uses jQuery/XPath-like syntax to find nodes. "
                         "Examples:\n"
-                        "- class[name=\"MyClass\"] - Find class by name\n"
-                        "- method[qualname=\"MyClass.my_method\"] - Find method by qualified name\n"
-                        "- smallstmt[type=\"Return\"] - Find all return statements\n"
-                        "- function[name=\"f\"] smallstmt[type=\"Return\"]:first - First return in function f\n"
+                        '- class[name="MyClass"] - Find class by name\n'
+                        '- method[qualname="MyClass.my_method"] - Find method by qualified name\n'
+                        '- smallstmt[type="Return"] - Find all return statements\n'
+                        '- function[name="f"] smallstmt[type="Return"]:first - First return in function f\n'
                         "See docs/CST_QUERY.md for full syntax documentation."
                     ),
                     "type": "string",

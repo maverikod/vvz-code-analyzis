@@ -23,11 +23,84 @@ from .utils import move_module_imports_to_top
 
 
 def _parse_snippet_as_module_body(snippet: str) -> list[cst.BaseStatement]:
-    """Parse a snippet into a list of module-level statements."""
+    """
+    Parse a snippet into a list of module-level statements.
+
+    Handles code with indentation by normalizing indentation before parsing.
+    This allows replacing code blocks inside functions/classes using range selector.
+
+    Args:
+        snippet: Code snippet to parse (may have indentation).
+
+    Returns:
+        List of CST statements.
+    """
     if not snippet.strip():
         return []
-    mod = cst.parse_module(snippet)
-    return list(mod.body)
+
+    # Normalize indentation: find minimum common indentation and remove it
+    lines = snippet.splitlines()
+    if not lines:
+        return []
+
+    # Find minimum indentation (excluding empty lines)
+    min_indent = None
+    for line in lines:
+        stripped = line.lstrip()
+        if stripped:  # Skip empty lines
+            indent = len(line) - len(stripped)
+            if min_indent is None or indent < min_indent:
+                min_indent = indent
+
+    # If all lines are empty or no indentation found, use original
+    if min_indent is None or min_indent == 0:
+        normalized = snippet
+    else:
+        # Remove minimum indentation from all lines
+        normalized_lines = []
+        for line in lines:
+            if line.strip():  # Non-empty line
+                if len(line) >= min_indent:
+                    normalized_lines.append(line[min_indent:])
+                else:
+                    normalized_lines.append(line)
+            else:  # Empty line
+                normalized_lines.append("")
+        normalized = "\n".join(normalized_lines)
+
+    # Try parsing as module first
+    try:
+        mod = cst.parse_module(normalized)
+        return list(mod.body)
+    except cst.ParserSyntaxError:
+        # If parsing as module fails, try wrapping in a function body
+        # This handles cases where code is a statement sequence (not valid module-level)
+        # Add proper indentation for function body (4 spaces)
+        indented_lines = []
+        for line in normalized.splitlines():
+            if line.strip():
+                indented_lines.append("    " + line)
+            else:
+                indented_lines.append("")
+        func_body = "\n".join(indented_lines)
+        func_wrapper = f"def _temp():\n{func_body}"
+
+        try:
+            mod = cst.parse_module(func_wrapper)
+            if mod.body and isinstance(mod.body[0], cst.FunctionDef):
+                func = mod.body[0]
+                if isinstance(func.body, cst.IndentedBlock):
+                    return list(func.body.body)
+        except Exception:
+            # If function wrapper also fails, re-raise with better context
+            pass
+
+        # Last resort: provide helpful error message
+        raise CSTModulePatchError(
+            "Failed to parse code snippet as statements. "
+            "Code must be valid Python statements. "
+            "Ensure the snippet can be parsed as module-level code or function body."
+        )
 
 
 class _StatementListRewriter(cst.CSTTransformer):

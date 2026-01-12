@@ -10,7 +10,7 @@ email: vasilyvz@gmail.com
 from __future__ import annotations
 
 import logging
-from typing import Any, Dict, Optional
+from typing import Any, Dict
 
 from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 

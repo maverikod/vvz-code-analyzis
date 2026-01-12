@@ -10,7 +10,7 @@ from __future__ import annotations
 import logging
 from typing import List, Optional
 
-from .models import CSTTree, TreeNodeMetadata
+from .models import TreeNodeMetadata
 from .tree_builder import get_tree
 
 logger = logging.getLogger(__name__)

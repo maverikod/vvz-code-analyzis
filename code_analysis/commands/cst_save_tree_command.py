@@ -17,6 +17,7 @@ from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 
 from .base_mcp_command import BaseMCPCommand
 from ..core.cst_tree.tree_saver import save_tree_to_file
+from ..core.cst_tree.tree_builder import reload_tree_from_file
 
 logger = logging.getLogger(__name__)
 
@@ -37,7 +38,10 @@ class CSTSaveTreeCommand(BaseMCPCommand):
         return {
             "type": "object",
             "properties": {
-                "tree_id": {"type": "string", "description": "Tree ID from cst_load_file"},
+                "tree_id": {
+                    "type": "string",
+                    "description": "Tree ID from cst_load_file",
+                },
                 "root_dir": {"type": "string", "description": "Project root directory"},
                 "file_path": {
                     "type": "string",
@@ -62,6 +66,11 @@ class CSTSaveTreeCommand(BaseMCPCommand):
                     "type": "string",
                     "description": "Optional git commit message",
                 },
+                "auto_reload": {
+                    "type": "boolean",
+                    "default": True,
+                    "description": "Automatically reload tree from file after save (keeps tree_id valid)",
+                },
             },
             "required": ["tree_id", "root_dir", "file_path", "project_id"],
             "additionalProperties": False,
@@ -77,6 +86,7 @@ class CSTSaveTreeCommand(BaseMCPCommand):
         validate: bool = True,
         backup: bool = True,
         commit_message: Optional[str] = None,
+        auto_reload: bool = True,
         **kwargs,
     ) -> SuccessResult:
         try:
@@ -118,11 +128,27 @@ class CSTSaveTreeCommand(BaseMCPCommand):
                     details=result,
                 )
 
+            # Automatically reload tree from file to sync with saved file
+            if auto_reload:
+                try:
+                    reload_tree_from_file(tree_id=tree_id)
+                    result["tree_reloaded"] = True
+                except Exception as reload_error:
+                    logger.warning(
+                        f"Failed to auto-reload tree after save: {reload_error}"
+                    )
+                    result["tree_reloaded"] = False
+                    result["reload_error"] = str(reload_error)
+            else:
+                result["tree_reloaded"] = False
+
             return SuccessResult(data=result)
 
         except Exception as e:
             logger.exception("cst_save_tree failed: %s", e)
-            return ErrorResult(message=f"cst_save_tree failed: {e}", code="CST_SAVE_ERROR")
+            return ErrorResult(
+                message=f"cst_save_tree failed: {e}", code="CST_SAVE_ERROR"
+            )
 
     @classmethod
     def metadata(cls: type["CSTSaveTreeCommand"]) -> Dict[str, Any]:

@@ -81,6 +81,7 @@ def register_code_analysis_commands(reg: registry) -> None:
         from .commands.cst_load_file_command import CSTLoadFileCommand
         from .commands.cst_modify_tree_command import CSTModifyTreeCommand
         from .commands.cst_save_tree_command import CSTSaveTreeCommand
+        from .commands.cst_reload_tree_command import CSTReloadTreeCommand
         from .commands.cst_find_node_command import CSTFindNodeCommand
         from .commands.cst_get_node_info_command import CSTGetNodeInfoCommand
         from .commands.cst_get_node_by_range_command import CSTGetNodeByRangeCommand
@@ -88,6 +89,7 @@ def register_code_analysis_commands(reg: registry) -> None:
         reg.register(CSTLoadFileCommand, "custom")
         reg.register(CSTModifyTreeCommand, "custom")
         reg.register(CSTSaveTreeCommand, "custom")
+        reg.register(CSTReloadTreeCommand, "custom")
         reg.register(CSTFindNodeCommand, "custom")
         reg.register(CSTGetNodeInfoCommand, "custom")
         reg.register(CSTGetNodeByRangeCommand, "custom")
@@ -552,6 +554,7 @@ register_auto_import_module("code_analysis.commands.query_cst_command")
 register_auto_import_module("code_analysis.commands.cst_load_file_command")
 register_auto_import_module("code_analysis.commands.cst_modify_tree_command")
 register_auto_import_module("code_analysis.commands.cst_save_tree_command")
+register_auto_import_module("code_analysis.commands.cst_reload_tree_command")
 register_auto_import_module("code_analysis.commands.cst_find_node_command")
 register_auto_import_module("code_analysis.commands.cst_get_node_info_command")
 register_auto_import_module("code_analysis.commands.cst_get_node_by_range_command")

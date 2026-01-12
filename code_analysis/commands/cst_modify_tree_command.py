@@ -41,6 +41,10 @@ class CSTModifyTreeCommand(BaseMCPCommand):
                     "type": "string",
                     "description": "Tree ID from cst_load_file",
                 },
+                "preview": {
+                    "type": "boolean",
+                    "description": "Preview mode: show changes without applying (default: false)",
+                },
                 "operations": {
                     "type": "array",
                     "items": {
@@ -48,7 +52,12 @@ class CSTModifyTreeCommand(BaseMCPCommand):
                         "properties": {
                             "action": {
                                 "type": "string",
-                                "enum": ["replace", "replace_range", "insert", "delete"],
+                                "enum": [
+                                    "replace",
+                                    "replace_range",
+                                    "insert",
+                                    "delete",
+                                ],
                                 "description": "Operation type",
                             },
                             "node_id": {
@@ -99,6 +108,7 @@ class CSTModifyTreeCommand(BaseMCPCommand):
         self,
         tree_id: str,
         operations: List[Dict[str, Any]],
+        preview: bool = False,
         **kwargs,
     ) -> SuccessResult:
         try:
@@ -135,12 +145,80 @@ class CSTModifyTreeCommand(BaseMCPCommand):
                     )
                 )
 
-            # Apply operations atomically
-            tree = modify_tree(tree_id, tree_operations)
+            # Get original tree for preview
+            from ..core.cst_tree.tree_builder import get_tree
 
+            original_tree = get_tree(tree_id)
+            if not original_tree:
+                return ErrorResult(
+                    message=f"Tree not found: {tree_id}",
+                    code="TREE_NOT_FOUND",
+                    details={"tree_id": tree_id},
+                )
+
+            original_code = original_tree.module.code
+
+            # Apply operations atomically
+            modified_tree = modify_tree(tree_id, tree_operations)
+            modified_code = modified_tree.module.code
+
+            # If preview mode, return changes without applying
+            if preview:
+                from difflib import unified_diff
+
+                diff_lines = list(
+                    unified_diff(
+                        original_code.splitlines(keepends=True),
+                        modified_code.splitlines(keepends=True),
+                        fromfile="original",
+                        tofile="modified",
+                        lineterm="",
+                    )
+                )
+                diff = "".join(diff_lines)
+
+                # Validate modified code
+                validation_result = {
+                    "syntax_valid": True,
+                    "compiles": True,
+                    "error": None,
+                }
+                try:
+                    compile(modified_code, "<string>", "exec")
+                except SyntaxError as e:
+                    validation_result: dict[str, Any] = {
+                        "syntax_valid": False,
+                        "compiles": False,
+                        "error": str(e),
+                        "line": e.lineno if e.lineno is not None else None,
+                        "offset": e.offset if e.offset is not None else None,
+                    }
+
+                data = {
+                    "success": True,
+                    "preview": True,
+                    "tree_id": tree_id,  # Return original tree_id in preview
+                    "operations_count": len(operations),
+                    "changes": [
+                        {
+                            "operation": op_dict.get("action"),
+                            "node_id": op_dict.get("node_id")
+                            or op_dict.get("start_node_id"),
+                            "description": f"{op_dict.get('action')} operation",
+                        }
+                        for op_dict in operations
+                    ],
+                    "diff": diff,
+                    "validation": validation_result,
+                }
+
+                return SuccessResult(data=data)
+
+            # Normal mode: apply changes
             data = {
                 "success": True,
-                "tree_id": tree.tree_id,
+                "preview": False,
+                "tree_id": modified_tree.tree_id,
                 "operations_applied": len(operations),
             }
 
@@ -150,15 +228,19 @@ class CSTModifyTreeCommand(BaseMCPCommand):
             # Extract detailed error information for better error messages
             error_msg = str(e)
             error_details = {"tree_id": tree_id, "error": error_msg}
-            
+
             # Try to extract node context from error message
             if "Node" in error_msg and "was not replaced" in error_msg:
                 # Parse error for additional context
                 if "Node type:" in error_msg:
-                    error_details["hint"] = "Check that the node is in a replaceable context (Module or IndentedBlock body)"
+                    error_details["hint"] = (
+                        "Check that the node is in a replaceable context (Module or IndentedBlock body)"
+                    )
                 if "Try using replace_range" in error_msg:
-                    error_details["suggestion"] = "Consider using replace_range operation for replacing multiple statements"
-            
+                    error_details["suggestion"] = (
+                        "Consider using replace_range operation for replacing multiple statements"
+                    )
+
             return ErrorResult(
                 message=f"Invalid operation: {error_msg}",
                 code="INVALID_OPERATION",

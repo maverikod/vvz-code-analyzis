@@ -280,11 +280,15 @@ def _apply_operation(
         code = operation.code
         if operation.code_lines:
             code = "\n".join(operation.code_lines)
+        if not code:
+            raise ValueError("code or code_lines required for replace operation")
         return _replace_node(module, tree, operation.node_id, code)
     elif operation.action == TreeOperationType.REPLACE_RANGE:
         code = operation.code
         if operation.code_lines:
             code = "\n".join(operation.code_lines)
+        if not code:
+            raise ValueError("code or code_lines required for replace_range operation")
         if not operation.start_node_id or not operation.end_node_id:
             raise ValueError(
                 "start_node_id and end_node_id required for replace_range operation"
@@ -297,23 +301,31 @@ def _apply_operation(
         code = operation.code
         if operation.code_lines:
             code = "\n".join(operation.code_lines)
+        if not code:
+            raise ValueError("code or code_lines required for insert operation")
         if operation.target_node_id:
             parent_id = _find_parent_for_node(tree, operation.target_node_id)
             if not parent_id:
                 raise ValueError(
                     f"Cannot find parent for target node: {operation.target_node_id}"
                 )
+            position = operation.position or "after"
             return _insert_node_relative(
                 module,
                 tree,
                 operation.target_node_id,
                 parent_id,
                 code,
-                operation.position,
+                position,
             )
         else:
             # Use parent_node_id (existing logic)
-            return _insert_node(module, tree, operation.parent_node_id, code, operation.position)
+            if not operation.parent_node_id:
+                raise ValueError(
+                    "parent_node_id or target_node_id required for insert operation"
+                )
+            position = operation.position or "end"
+            return _insert_node(module, tree, operation.parent_node_id, code, position)
     else:
         raise ValueError(f"Unknown operation type: {operation.action}")
 
@@ -338,7 +350,7 @@ def _delete_node(module: cst.Module, tree: CSTTree, node_id: str) -> cst.Module:
 
         def on_leave(
             self, original_node: cst.CSTNode, updated_node: cst.CSTNode
-        ) -> cst.CSTNode:
+        ) -> cst.CSTNode | cst.RemovalSentinel:
             if original_node is self.target_node:
                 return cst.RemoveFromParent()
             return updated_node
@@ -358,7 +370,11 @@ def _replace_node(
     if not node:
         # Get node metadata for better error message
         metadata = tree.metadata_map.get(node_id)
-        node_info = f"Node type: {metadata.type if metadata else 'unknown'}, " if metadata else ""
+        node_info = (
+            f"Node type: {metadata.type if metadata else 'unknown'}, "
+            if metadata
+            else ""
+        )
         available = list(tree.node_map.keys())[:5]
         raise ValueError(
             f"Node not found: {node_id}. {node_info}"
@@ -390,7 +406,7 @@ def _replace_node(
 
         def on_leave(
             self, original_node: cst.CSTNode, updated_node: cst.CSTNode
-        ) -> cst.CSTNode:
+        ) -> cst.CSTNode | cst.RemovalSentinel | cst.FlattenSentinel:
             # Single statement replacement handled here
             if original_node is self.target_node:
                 if len(self.replacements) == 1:
@@ -504,7 +520,9 @@ def _replace_range(
         # Empty code means delete the range
         # This would require deleting all nodes in range, which is complex
         # For now, raise an error
-        raise ValueError("Cannot replace range with empty code. Use delete operations instead.")
+        raise ValueError(
+            "Cannot replace range with empty code. Use delete operations instead."
+        )
 
     # Use LibCST transformer to replace the range
     class RangeReplacer(cst.CSTTransformer):
@@ -538,7 +556,9 @@ def _replace_range(
 
             if start_idx >= 0 and end_idx >= 0 and start_idx <= end_idx:
                 # Replace range
-                new_body = body[:start_idx] + list(self.replacements) + body[end_idx + 1 :]
+                new_body = (
+                    body[:start_idx] + list(self.replacements) + body[end_idx + 1 :]
+                )
                 self.replaced = True
                 return updated_node.with_changes(body=new_body)
             return updated_node
@@ -563,7 +583,9 @@ def _replace_range(
 
             if start_idx >= 0 and end_idx >= 0 and start_idx <= end_idx:
                 # Replace range
-                new_body = body[:start_idx] + list(self.replacements) + body[end_idx + 1 :]
+                new_body = (
+                    body[:start_idx] + list(self.replacements) + body[end_idx + 1 :]
+                )
                 self.replaced = True
                 return updated_node.with_changes(body=new_body)
             return updated_node
@@ -574,9 +596,12 @@ def _replace_range(
         # Provide detailed error message
         start_type = start_metadata.type if start_metadata else "unknown"
         end_type = end_metadata.type if end_metadata else "unknown"
+        parent_meta = (
+            tree.metadata_map.get(start_parent_id) if start_parent_id else None
+        )
         parent_type = (
-            tree.metadata_map.get(start_parent_id).type
-            if start_parent_id and tree.metadata_map.get(start_parent_id)
+            parent_meta.type
+            if parent_meta and hasattr(parent_meta, "type")
             else "unknown"
         )
         raise ValueError(
@@ -620,13 +645,16 @@ def _insert_node(
             if original_node is self.target_parent:
                 # Insert nodes into parent's body
                 if isinstance(updated_node, (cst.ClassDef, cst.FunctionDef)):
-                    body = list(updated_node.body.body)
-                    if self.position == "before":
-                        body = list(self.new_statements) + body
-                    else:  # after
-                        body = body + list(self.new_statements)
-                    self.inserted = True
-                    return updated_node.with_changes(body=cst.IndentedBlock(body=body))
+                    if isinstance(updated_node.body, cst.IndentedBlock):
+                        body: list[cst.BaseStatement] = list(updated_node.body.body)
+                        if self.position == "before":
+                            body = list(self.new_statements) + body
+                        else:  # after
+                            body = body + list(self.new_statements)
+                        self.inserted = True
+                        return updated_node.with_changes(
+                            body=cst.IndentedBlock(body=body)
+                        )
                 elif isinstance(updated_node, cst.Module):
                     # Insert at module level
                     body = list(updated_node.body)
@@ -643,7 +671,7 @@ def _insert_node(
         ) -> cst.Module:
             # Handle module-level insertions
             if original_node is self.target_parent:
-                body = list(updated_node.body)
+                body: list[cst.BaseStatement] = list(updated_node.body)
                 if self.position == "before":
                     body = list(self.new_statements) + body
                 else:  # after
@@ -683,11 +711,11 @@ def _insert_node_relative(
     target_node = tree.node_map.get(target_node_id)
     if not target_node:
         raise ValueError(f"Target node not found: {target_node_id}")
-    
+
     # Get actual parent of target node (more reliable than using provided parent_node_id)
     target_metadata = tree.metadata_map.get(target_node_id)
     actual_parent_id = target_metadata.parent_id if target_metadata else None
-    
+
     # Use provided parent_node_id if it matches actual parent, otherwise use actual parent
     if actual_parent_id and actual_parent_id != parent_node_id:
         # Log warning but use actual parent for insertion
@@ -696,7 +724,7 @@ def _insert_node_relative(
             f"Using actual parent for insertion."
         )
         parent_node_id = actual_parent_id
-    
+
     parent_node = tree.node_map.get(parent_node_id)
     if not parent_node:
         raise ValueError(
@@ -773,7 +801,7 @@ def _insert_node_relative(
             if target_index >= 0:
                 # Target node found in this block - insert relative to it
                 if self.position == "before":
-                    new_body = (
+                    new_body: list[cst.BaseStatement] = (
                         body[:target_index]
                         + list(self.new_statements)
                         + body[target_index:]
@@ -790,7 +818,7 @@ def _insert_node_relative(
 
         def on_leave(
             self, original_node: cst.CSTNode, updated_node: cst.CSTNode
-        ) -> cst.CSTNode:
+        ) -> cst.CSTNode | cst.RemovalSentinel | cst.FlattenSentinel:
             # Handle insertions into FunctionDef/ClassDef bodies
             # This is handled by leave_IndentedBlock, but we also check here
             # in case the parent is a FunctionDef/ClassDef and we need to update its body
@@ -828,10 +856,18 @@ def _insert_node_relative(
     # Get metadata for better error messages
     target_metadata = tree.metadata_map.get(target_node_id)
     parent_metadata = tree.metadata_map.get(parent_node_id)
-    target_type = target_metadata.type if target_metadata else "unknown"
-    parent_type = parent_metadata.type if parent_metadata else "unknown"
+    target_type = (
+        target_metadata.type
+        if target_metadata and hasattr(target_metadata, "type")
+        else "unknown"
+    )
+    parent_type = (
+        parent_metadata.type
+        if parent_metadata and hasattr(parent_metadata, "type")
+        else "unknown"
+    )
     target_parent_id = target_metadata.parent_id if target_metadata else None
-    
+
     inserter = RelativeNodeInserter(target_node, parent_node, new_statements, position)
     result = module.visit(inserter)
     if not inserter.inserted:

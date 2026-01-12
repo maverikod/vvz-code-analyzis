@@ -1,8 +1,7 @@
 """
 MCP command: compose_cst_module
 
-Applies module-level block replacements using LibCST and validates the result by
-compiling the resulting module source.
+Applies CST tree to file with atomic operations.
 
 Author: Vasiliy Zdanovskiy
 email: vasilyvz@gmail.com
@@ -11,6 +10,8 @@ email: vasilyvz@gmail.com
 from __future__ import annotations
 
 import logging
+import os
+import tempfile
 from pathlib import Path
 from typing import Any, Dict, Optional
 
@@ -18,42 +19,35 @@ from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 
 from .base_mcp_command import BaseMCPCommand
 from ..core.backup_manager import BackupManager
-from ..core.git_integration import is_git_repository, create_git_commit
-from ..core.cst_module import (
-    ReplaceOp,
-    InsertOp,
-    CreateOp,
-    Selector,
-    apply_replace_ops,
-    apply_insert_ops,
-    apply_create_ops,
-    unified_diff,
-)
-from ..core.cst_module.validation import validate_file_in_temp
+from ..core.git_integration import create_git_commit
+from ..core.cst_tree.tree_builder import get_tree
 
 logger = logging.getLogger(__name__)
 
 
 class ComposeCSTModuleCommand(BaseMCPCommand):
     """
-    Compose/patch a module using CST operations.
+    Compose/patch a module using CST tree.
 
-    This is intended for "logical blocks" workflows:
-    - choose blocks (functions/classes/statements) by selectors
-    - replace them with new code snippets
-    - normalize imports to the top
-    - validate via compile()
-    - create git commits automatically (if git repository detected)
-
-    Git Integration:
-    - If root_dir is a git repository, commit_message parameter is REQUIRED
-    - Automatically creates git commit with provided message after successful changes
-    - Backup is created before changes, comment is stored in backup index
+    Process:
+    1. Get CST tree from tree_id
+    2. Generate source code from tree
+    3. Write to temporary file
+    4. Validate temporary file (compile)
+    5. If validation fails, return errors
+    6. Check if file exists in database, backup data if exists
+    7. Begin database transaction
+    8. Delete all old data (clear_file_data)
+    9. Add new data (update_file_data_atomic)
+    10. Atomically replace file
+    11. Commit transaction
+    12. Git commit (if commit_message provided)
+    13. On any error: rollback transaction and restore data from backup
     """
 
     name = "compose_cst_module"
-    version = "1.0.0"
-    descr = "Replace module-level blocks using LibCST, compile the result, and optionally create git commit"
+    version = "2.0.0"
+    descr = "Apply CST tree to file with atomic operations"
     category = "refactor"
     author = "Vasiliy Zdanovskiy"
     email = "vasilyvz@gmail.com"
@@ -64,1317 +58,750 @@ class ComposeCSTModuleCommand(BaseMCPCommand):
         return {
             "type": "object",
             "properties": {
-                "root_dir": {
+                "project_id": {
                     "type": "string",
-                    "description": "Project root directory",
+                    "description": "Project ID (UUID4). Required.",
                 },
                 "file_path": {
                     "type": "string",
-                    "description": "Target python file path (absolute or relative to root_dir)",
+                    "description": "Target python file path (relative to project root)",
                 },
-                "ops": {
-                    "type": "array",
-                    "description": "List of operations (replace/insert/create)",
-                    "items": {
-                        "type": "object",
-                        "properties": {
-                            "operation_type": {
-                                "type": "string",
-                                "enum": ["replace", "insert", "create"],
-                                "default": "replace",
-                                "description": "Type of operation: replace (default), insert (add before/after), create (create new node)",
-                            },
-                            "selector": {
-                                "type": ["object", "null"],
-                                "description": "Selector for target node (null for insert/create at end)",
-                                "properties": {
-                                    "kind": {
-                                        "type": "string",
-                                        "enum": [
-                                            "module",
-                                            "function",
-                                            "class",
-                                            "method",
-                                            "range",
-                                            "block_id",
-                                            "node_id",
-                                            "cst_query",
-                                        ],
-                                    },
-                                    "name": {"type": "string"},
-                                    "start_line": {"type": "integer"},
-                                    "start_col": {"type": "integer"},
-                                    "end_line": {"type": "integer"},
-                                    "end_col": {"type": "integer"},
-                                    "block_id": {"type": "string"},
-                                    "node_id": {"type": "string"},
-                                    "query": {"type": "string"},
-                                    "match_index": {"type": "integer"},
-                                },
-                                "required": ["kind"],
-                                "additionalProperties": False,
-                            },
-                            "new_code": {
-                                "type": "string",
-                                "description": "Code snippet: for replace (replacement, empty=delete), for insert/create (new node code)",
-                            },
-                            "position": {
-                                "type": "string",
-                                "enum": [
-                                    "before",
-                                    "after",
-                                    "end",
-                                    "end_of_module",
-                                    "after_selector",
-                                    "before_selector",
-                                    "end_of_class",
-                                    "end_of_function",
-                                ],
-                                "default": "after",
-                                "description": "Position for insert/create: before/after/end (insert), end_of_module/after_selector/before_selector/end_of_class/end_of_function (create)",
-                            },
-                            "file_docstring": {
-                                "type": "string",
-                                "description": "Required when kind='module': file-level docstring",
-                            },
-                        },
-                        "required": ["new_code"],
-                        "allOf": [
-                            {
-                                "if": {
-                                    "properties": {
-                                        "selector": {
-                                            "properties": {"kind": {"const": "module"}}
-                                        }
-                                    }
-                                },
-                                "then": {
-                                    "required": ["file_docstring", "new_code"],
-                                    "properties": {
-                                        "file_docstring": {
-                                            "type": "string",
-                                            "minLength": 1,
-                                            "description": "File-level docstring (required and must not be empty for module creation)",
-                                        },
-                                        "new_code": {
-                                            "type": "string",
-                                            "minLength": 1,
-                                            "description": "First node code - function or class (required and must not be empty for module creation)",
-                                        },
-                                    },
-                                },
-                            }
-                        ],
-                        "additionalProperties": False,
-                    },
-                },
-                "apply": {
-                    "type": "boolean",
-                    "default": False,
-                    "description": "If true, write changes to file (after successful compile)",
-                },
-                "create_backup": {
-                    "type": "boolean",
-                    "default": True,
-                    "description": "If apply=true, create a backup in .code_mapper_backups",
-                },
-                "return_source": {
-                    "type": "boolean",
-                    "default": False,
-                    "description": "If true, return the resulting source text (can be large)",
-                },
-                "return_diff": {
-                    "type": "boolean",
-                    "default": True,
-                    "description": "If true, return unified diff",
+                "tree_id": {
+                    "type": "string",
+                    "description": "CST tree ID from cst_load_file command",
                 },
                 "commit_message": {
                     "type": "string",
-                    "description": (
-                        "Commit message for git commit. "
-                        "REQUIRED if root_dir is a git repository. "
-                        "If provided and root_dir is a git repository, automatically creates a git commit "
-                        "with this message after successfully applying changes. "
-                        "The message is also stored in backup index for version history tracking."
-                    ),
+                    "description": "Optional git commit message",
                 },
             },
-            "required": ["root_dir", "file_path", "ops"],
+            "required": ["project_id", "file_path", "tree_id"],
             "additionalProperties": False,
         }
 
-    async def execute(
-        self,
-        root_dir: str,
-        file_path: str,
-        ops: list[dict[str, Any]],
-        apply: bool = False,
-        create_backup: bool = True,
-        return_source: bool = False,
-        return_diff: bool = True,
-        commit_message: Optional[str] = None,
-        **kwargs,
-    ) -> SuccessResult:
-        try:
-            root_path = self._validate_root_dir(root_dir)
+    def _backup_file_data(self, database, file_id: int) -> Optional[Dict[str, Any]]:
+        """
+        Backup all file data from database.
 
-            # Check if git repository and validate commit_message
-            is_git = is_git_repository(root_path)
-            if is_git and not commit_message:
-                return ErrorResult(
-                    message="commit_message is required when working in a git repository",
-                    code="COMMIT_MESSAGE_REQUIRED",
-                    details={"root_dir": str(root_path)},
+        Args:
+            database: Database instance
+            file_id: File ID
+
+        Returns:
+            Dictionary with backed up data or None if file not found
+        """
+        # Get file record
+        file_record = database.get_file_by_id(file_id)
+        if not file_record:
+            return None
+
+        backup_data = {
+            "file_record": file_record,
+            "classes": database._fetchall(
+                "SELECT * FROM classes WHERE file_id = ?", (file_id,)
+            ),
+            "functions": database._fetchall(
+                "SELECT * FROM functions WHERE file_id = ?", (file_id,)
+            ),
+            "imports": database._fetchall(
+                "SELECT * FROM imports WHERE file_id = ?", (file_id,)
+            ),
+            "usages": database._fetchall(
+                "SELECT * FROM usages WHERE file_id = ?", (file_id,)
+            ),
+            "issues": database._fetchall(
+                "SELECT * FROM issues WHERE file_id = ?", (file_id,)
+            ),
+            "code_content": database._fetchall(
+                "SELECT * FROM code_content WHERE file_id = ?", (file_id,)
+            ),
+            "ast_trees": database._fetchall(
+                "SELECT * FROM ast_trees WHERE file_id = ?", (file_id,)
+            ),
+            "cst_trees": database._fetchall(
+                "SELECT * FROM cst_trees WHERE file_id = ?", (file_id,)
+            ),
+        }
+
+        # Get methods for all classes
+        class_ids = [row["id"] for row in backup_data["classes"]]
+        if class_ids:
+            placeholders = ",".join("?" * len(class_ids))
+            backup_data["methods"] = database._fetchall(
+                f"SELECT * FROM methods WHERE class_id IN ({placeholders})",
+                tuple(class_ids),
+            )
+        else:
+            backup_data["methods"] = []
+
+            return backup_data
+
+    def _delete_file_data(self, database, file_id: int) -> None:
+        """
+        Delete all file data within transaction.
+
+        Args:
+            database: Database instance
+            file_id: File ID
+        """
+        # Get class and content IDs
+        class_rows = database._fetchall(
+            "SELECT id FROM classes WHERE file_id = ?", (file_id,)
+        )
+        class_ids = [row["id"] for row in class_rows]
+        content_rows = database._fetchall(
+            "SELECT id FROM code_content WHERE file_id = ?", (file_id,)
+        )
+        content_ids = [row["id"] for row in content_rows]
+
+        # Delete FTS index
+        if content_ids:
+            placeholders = ",".join("?" * len(content_ids))
+            database._execute(
+                f"DELETE FROM code_content_fts WHERE rowid IN ({placeholders})",
+                tuple(content_ids),
+            )
+
+        # Delete methods
+        if class_ids:
+            placeholders = ",".join("?" * len(class_ids))
+            database._execute(
+                f"DELETE FROM methods WHERE class_id IN ({placeholders})",
+                tuple(class_ids),
+            )
+
+        # Delete main entities
+        database._execute("DELETE FROM classes WHERE file_id = ?", (file_id,))
+        database._execute("DELETE FROM functions WHERE file_id = ?", (file_id,))
+        database._execute("DELETE FROM imports WHERE file_id = ?", (file_id,))
+        database._execute("DELETE FROM issues WHERE file_id = ?", (file_id,))
+        database._execute("DELETE FROM usages WHERE file_id = ?", (file_id,))
+        database._execute("DELETE FROM code_content WHERE file_id = ?", (file_id,))
+        database._execute("DELETE FROM ast_trees WHERE file_id = ?", (file_id,))
+        database._execute("DELETE FROM cst_trees WHERE file_id = ?", (file_id,))
+        database._execute("DELETE FROM code_chunks WHERE file_id = ?", (file_id,))
+
+        # Delete vector index
+        database._execute(
+            "DELETE FROM vector_index WHERE entity_type = 'file' AND entity_id = ?",
+            (file_id,),
+        )
+        if class_ids:
+            placeholders = ",".join("?" * len(class_ids))
+            database._execute(
+                f"""
+                DELETE FROM vector_index
+                WHERE entity_type IN ('class', 'function', 'method')
+                AND entity_id IN ({placeholders})
+                """,
+                tuple(class_ids),
+            )
+
+    def _restore_entities(self, database, backup_data: Dict[str, Any]) -> None:
+        """
+        Restore entities (classes, methods, functions) from backup.
+
+        Args:
+            database: Database instance
+            backup_data: Backed up data
+        """
+        # Restore classes
+        for row in backup_data["classes"]:
+            database._execute(
+                """
+                INSERT INTO classes (id, file_id, name, qualname, start_line, end_line, docstring, bases)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    row["id"],
+                    row["file_id"],
+                    row["name"],
+                    row["qualname"],
+                    row["start_line"],
+                    row["end_line"],
+                    row.get("docstring"),
+                    row.get("bases"),
+                ),
+            )
+
+        # Restore methods
+        for row in backup_data["methods"]:
+            database._execute(
+                """
+                INSERT INTO methods (id, class_id, name, qualname, start_line, end_line, docstring, parameters)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    row["id"],
+                    row["class_id"],
+                    row["name"],
+                    row["qualname"],
+                    row["start_line"],
+                    row["end_line"],
+                    row.get("docstring"),
+                    row.get("parameters"),
+                ),
+            )
+
+        # Restore functions
+        for row in backup_data["functions"]:
+            database._execute(
+                """
+                INSERT INTO functions (id, file_id, name, qualname, start_line, end_line, docstring, parameters)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    row["id"],
+                    row["file_id"],
+                    row["name"],
+                    row["qualname"],
+                    row["start_line"],
+                    row["end_line"],
+                    row.get("docstring"),
+                    row.get("parameters"),
+                ),
+            )
+
+    def _restore_metadata(self, database, backup_data: Dict[str, Any]) -> None:
+        """
+        Restore metadata (imports, usages, issues, content) from backup.
+
+        Args:
+            database: Database instance
+            backup_data: Backed up data
+        """
+        # Restore imports
+        for row in backup_data["imports"]:
+            database._execute(
+                """
+                INSERT INTO imports (id, file_id, module, name, alias, import_type, line)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    row["id"],
+                    row["file_id"],
+                    row["module"],
+                    row["name"],
+                    row.get("alias"),
+                    row["import_type"],
+                    row["line"],
+                ),
+            )
+
+        # Restore usages
+        for row in backup_data["usages"]:
+            database._execute(
+                """
+                INSERT INTO usages (id, file_id, entity_type, entity_name, line, column)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    row["id"],
+                    row["file_id"],
+                    row["entity_type"],
+                    row["entity_name"],
+                    row["line"],
+                    row.get("column"),
+                ),
+            )
+
+        # Restore issues
+        for row in backup_data["issues"]:
+            database._execute(
+                """
+                INSERT INTO issues (id, file_id, issue_type, message, line, column)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    row["id"],
+                    row["file_id"],
+                    row["issue_type"],
+                    row["message"],
+                    row["line"],
+                    row.get("column"),
+                ),
+            )
+
+        # Restore code_content
+        for row in backup_data["code_content"]:
+            database._execute(
+                """
+                INSERT INTO code_content (id, file_id, content, start_line, end_line)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (
+                    row["id"],
+                    row["file_id"],
+                    row["content"],
+                    row["start_line"],
+                    row["end_line"],
+                ),
+            )
+
+    def _restore_trees(self, database, backup_data: Dict[str, Any]) -> None:
+        """
+        Restore AST and CST trees from backup.
+
+        Args:
+            database: Database instance
+            backup_data: Backed up data
+        """
+        # Restore AST trees
+        for row in backup_data["ast_trees"]:
+            database._execute(
+                """
+                INSERT INTO ast_trees (id, file_id, project_id, ast_json, ast_hash, file_mtime)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    row["id"],
+                    row["file_id"],
+                    row["project_id"],
+                    row["ast_json"],
+                    row["ast_hash"],
+                    row["file_mtime"],
+                ),
+            )
+
+        # Restore CST trees
+        for row in backup_data["cst_trees"]:
+            database._execute(
+                """
+                INSERT INTO cst_trees (id, file_id, project_id, cst_code, cst_hash, file_mtime)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    row["id"],
+                    row["file_id"],
+                    row["project_id"],
+                    row["cst_code"],
+                    row["cst_hash"],
+                    row["file_mtime"],
+                ),
+            )
+
+    def _restore_file_data(
+        self, database, file_id: int, backup_data: Dict[str, Any]
+    ) -> None:
+        """
+        Restore file data from backup.
+
+        Args:
+            database: Database instance
+            file_id: File ID
+            backup_data: Backed up data
+        """
+        # Restore file record
+        file_record = backup_data["file_record"]
+        database._execute(
+            """
+            UPDATE files SET
+                path = ?, lines = ?, last_modified = ?, has_docstring = ?,
+                project_id = ?, dataset_id = ?, updated_at = julianday('now')
+            WHERE id = ?
+            """,
+            (
+                file_record["path"],
+                file_record["lines"],
+                file_record["last_modified"],
+                file_record["has_docstring"],
+                file_record["project_id"],
+                file_record.get("dataset_id"),
+                file_id,
+            ),
+        )
+
+        # Restore entities
+        self._restore_entities(database, backup_data)
+
+        # Restore metadata
+        self._restore_metadata(database, backup_data)
+
+        # Restore trees
+        self._restore_trees(database, backup_data)
+
+    def _validate_and_write_temp(
+        self, source_code: str, target_path: Path
+    ) -> tuple[Path, ErrorResult | None]:
+        """
+        Write source code to temporary file and validate it.
+
+        Args:
+            source_code: Source code to write
+            target_path: Target file path
+
+        Returns:
+            Tuple of (temp_file_path, error_result or None)
+        """
+        temp_fd, temp_path_str = tempfile.mkstemp(
+            suffix=".py", prefix="cst_compose_", dir=target_path.parent
+        )
+        temp_file = Path(temp_path_str)
+
+        try:
+            with os.fdopen(temp_fd, "w", encoding="utf-8") as f:
+                f.write(source_code)
+        except Exception as e:
+            os.close(temp_fd)
+            return (
+                temp_file,
+                ErrorResult(
+                    message=f"Failed to write temporary file: {e}",
+                    code="TEMP_FILE_ERROR",
+                    details={"error": str(e)},
+                ),
+            )
+
+        # Validate temporary file
+        try:
+            compile(source_code, str(temp_file), "exec")
+        except SyntaxError as e:
+            temp_file.unlink()
+            return (
+                temp_file,
+                ErrorResult(
+                    message=f"Generated code has syntax errors: {e}",
+                    code="VALIDATION_ERROR",
+                    details={"error": str(e), "line": e.lineno, "offset": e.offset},
+                ),
+            )
+
+        return (temp_file, None)
+
+    def _update_file_record(
+        self,
+        database,
+        project_id: str,
+        root_path: Path,
+        target_path: Path,
+        source_code: str,
+        file_id: Optional[int],
+    ) -> int:
+        """
+        Add or update file record in database.
+
+        Args:
+            database: Database instance
+            project_id: Project ID
+            root_path: Project root path
+            target_path: Target file path
+            source_code: Source code
+            file_id: Existing file ID or None
+
+        Returns:
+            File ID
+        """
+        from ..core.project_resolution import normalize_root_dir
+
+        normalized_root = str(normalize_root_dir(root_path))
+        dataset_id = database.get_or_create_dataset(project_id, normalized_root)
+
+        lines = source_code.count("\n") + (1 if source_code else 0)
+        stripped = source_code.lstrip()
+        has_docstring = stripped.startswith('"""') or stripped.startswith("'''")
+
+        if not file_id:
+            import time
+
+            file_id = database.add_file(
+                path=str(target_path),
+                lines=lines,
+                last_modified=time.time(),
+                has_docstring=has_docstring,
+                project_id=project_id,
+                dataset_id=dataset_id,
+            )
+        else:
+            database._execute(
+                """
+                UPDATE files SET
+                    lines = ?, has_docstring = ?, updated_at = julianday('now')
+                WHERE id = ?
+                """,
+                (lines, has_docstring, file_id),
+            )
+
+        return file_id
+
+    def _handle_rollback(
+        self,
+        database,
+        file_id: Optional[int],
+        file_data_backup: Optional[Dict[str, Any]],
+        backup_uuid: Optional[str],
+        backup_manager: Optional[BackupManager],
+        root_path: Path,
+        target_path: Path,
+    ) -> None:
+        """
+        Handle rollback: restore file data and file from backup.
+
+        Args:
+            database: Database instance
+            file_id: File ID
+            file_data_backup: Backup of file data or None
+            backup_uuid: Backup UUID or None
+            backup_manager: BackupManager instance or None
+            root_path: Project root path
+            target_path: Target file path
+        """
+        # Restore file data from backup if backup exists
+        if file_data_backup and file_id:
+            try:
+                database.begin_transaction()
+                self._restore_file_data(database, file_id, file_data_backup)
+                database.commit_transaction()
+                logger.info(f"File data restored from backup for file_id={file_id}")
+            except Exception as restore_error:
+                logger.error(
+                    f"Failed to restore file data: {restore_error}",
+                    exc_info=True,
+                )
+                try:
+                    database.rollback_transaction()
+                except Exception:
+                    pass
+
+        # Restore file from backup if backup was created
+        if backup_uuid and backup_manager and target_path.exists():
+            try:
+                rel_path = str(target_path.relative_to(root_path))
+            except ValueError:
+                rel_path = str(target_path)
+            restore_success, restore_message = backup_manager.restore_file(
+                rel_path, backup_uuid
+            )
+            if restore_success:
+                logger.info(f"File restored from backup: {restore_message}")
+            else:
+                logger.error(f"Failed to restore file from backup: {restore_message}")
+
+    def _apply_changes(
+        self,
+        database,
+        project_id: str,
+        root_path: Path,
+        target_path: Path,
+        source_code: str,
+        file_id: Optional[int],
+        file_data_backup: Optional[Dict[str, Any]],
+        backup_uuid: Optional[str],
+        backup_manager: Optional[BackupManager],
+        temp_file: Path,
+        commit_message: Optional[str],
+    ) -> SuccessResult | ErrorResult:
+        """
+        Apply changes to file and database within transaction.
+
+        Args:
+            database: Database instance
+            project_id: Project ID
+            root_path: Project root path
+            target_path: Target file path
+            source_code: Source code to write
+            file_id: Existing file ID or None
+            file_data_backup: Backup of file data or None
+            backup_uuid: Backup UUID or None
+            backup_manager: BackupManager instance or None
+            temp_file: Temporary file path
+            commit_message: Optional git commit message
+
+        Returns:
+            SuccessResult or ErrorResult
+        """
+        try:
+            # Delete old data if file exists
+            if file_id:
+                self._delete_file_data(database, file_id)
+
+            # Update file record
+            file_id = self._update_file_record(
+                database, project_id, root_path, target_path, source_code, file_id
+            )
+
+            # Add new data (AST, CST, entities)
+            update_result = database.update_file_data_atomic(
+                file_path=str(target_path),
+                project_id=project_id,
+                root_dir=root_path,
+                source_code=source_code,
+                file_id=file_id,
+            )
+
+            if not update_result.get("success"):
+                raise RuntimeError(
+                    f"Failed to update file data: {update_result.get('error')}"
                 )
 
-            # Resolve file path (may not exist if creating new file)
-            target = Path(file_path)
-            if not target.is_absolute():
-                target = root_path / target
-            target = target.resolve()
+            # Atomically replace file
+            os.replace(str(temp_file), str(target_path))
 
-            if target.suffix != ".py":
+            # Commit transaction
+            database.commit_transaction()
+
+            # Git commit (if requested)
+            git_success = False
+            git_error = None
+            if commit_message:
+                git_success, git_error = create_git_commit(
+                    root_path, target_path, commit_message
+                )
+                if not git_success:
+                    logger.warning(f"Failed to create git commit: {git_error}")
+
+            return SuccessResult(
+                data={
+                    "success": True,
+                    "file_path": str(target_path),
+                    "file_id": file_id,
+                    "backup_uuid": backup_uuid,
+                    "update_result": update_result,
+                    "git_commit": {
+                        "success": git_success,
+                        "error": git_error,
+                    },
+                }
+            )
+
+        except Exception as error:
+            # Rollback transaction
+            try:
+                database.rollback_transaction()
+            except Exception as rollback_error:
+                logger.error(f"Error during rollback: {rollback_error}")
+
+            # Handle rollback
+            self._handle_rollback(
+                database,
+                file_id,
+                file_data_backup,
+                backup_uuid,
+                backup_manager,
+                root_path,
+                target_path,
+            )
+
+            raise error
+
+    async def execute(
+        self,
+        project_id: str,
+        file_path: str,
+        tree_id: str,
+        commit_message: Optional[str] = None,
+        **kwargs,
+    ) -> SuccessResult | ErrorResult:
+        """
+        Execute compose_cst_module command.
+
+        Args:
+            project_id: Project ID
+            file_path: File path relative to project root
+            tree_id: CST tree ID
+            commit_message: Optional git commit message
+
+        Returns:
+            SuccessResult or ErrorResult
+        """
+        try:
+            # Resolve project root from database
+            root_path = self._resolve_project_root(project_id=project_id, root_dir=None)
+
+            # Get CST tree
+            tree = get_tree(tree_id)
+            if not tree:
+                return ErrorResult(
+                    message=f"Tree not found: {tree_id}",
+                    code="TREE_NOT_FOUND",
+                    details={"tree_id": tree_id},
+                )
+
+            # Generate source code from tree
+            source_code = tree.module.code
+
+            # Resolve target file path
+            target_path = (root_path / file_path).resolve()
+
+            if target_path.suffix != ".py":
                 return ErrorResult(
                     message="Target file must be a .py file",
                     code="INVALID_FILE",
-                    details={"file_path": str(target)},
+                    details={"file_path": str(target_path)},
                 )
 
-            # Handle file creation from scratch
-            if not target.exists():
-                # Check if we have a "module" selector to create from scratch
-                has_module_selector = any(
-                    op.get("selector", {}).get("kind") == "module" for op in ops
-                )
-                if has_module_selector:
-                    # Create module from scratch
-                    old_source = ""
-                else:
-                    return ErrorResult(
-                        message=(
-                            "Target file does not exist. "
-                            "To create a new file, use selector with kind='module'"
-                        ),
-                        code="FILE_NOT_FOUND",
-                        details={"file_path": str(target)},
-                    )
-            else:
-                old_source = target.read_text(encoding="utf-8")
+            # Step 1-2: Write to temporary file and validate
+            temp_file, validation_error = self._validate_and_write_temp(
+                source_code, target_path
+            )
+            if validation_error:
+                return validation_error
 
-            # Separate operations by type
-            replace_ops: list[ReplaceOp] = []
-            insert_ops: list[InsertOp] = []
-            create_ops: list[CreateOp] = []
-
-            for op in ops:
-                op_type = op.get("operation_type", "replace")
-                sel_dict = op.get("selector")
-
-                selector = None
-                if sel_dict:
-                    selector = Selector(
-                        kind=str(sel_dict.get("kind")),
-                        name=sel_dict.get("name"),
-                        start_line=sel_dict.get("start_line"),
-                        start_col=sel_dict.get("start_col"),
-                        end_line=sel_dict.get("end_line"),
-                        end_col=sel_dict.get("end_col"),
-                        block_id=sel_dict.get("block_id"),
-                        node_id=sel_dict.get("node_id"),
-                        query=sel_dict.get("query"),
-                        match_index=sel_dict.get("match_index"),
-                    )
-
-                new_code = str(op.get("new_code", ""))
-                position = op.get("position", "after")
-                file_docstring = op.get("file_docstring")
-
-                if op_type == "replace":
-                    if selector is None:
-                        return ErrorResult(
-                            message="Selector is required for replace operation",
-                            code="INVALID_OPERATION",
-                            details={"operation_type": op_type},
-                        )
-                    replace_ops.append(
-                        ReplaceOp(
-                            selector=selector,
-                            new_code=new_code,
-                            file_docstring=file_docstring,
-                        )
-                    )
-                elif op_type == "insert":
-                    insert_ops.append(
-                        InsertOp(
-                            selector=selector,
-                            new_code=new_code,
-                            position=position,
-                            file_docstring=file_docstring,
-                        )
-                    )
-                elif op_type == "create":
-                    create_ops.append(
-                        CreateOp(
-                            selector=selector,
-                            new_code=new_code,
-                            position=position,
-                            file_docstring=file_docstring,
-                        )
-                    )
-                else:
-                    return ErrorResult(
-                        message=f"Unknown operation type: {op_type}",
-                        code="INVALID_OPERATION",
-                        details={"operation_type": op_type},
-                    )
-
-            # Apply operations in order: replace, then insert, then create
-            current_source = old_source
-            all_stats: dict[str, Any] = {
-                "replaced": 0,
-                "removed": 0,
-                "inserted": 0,
-                "created": 0,
-                "unmatched": [],
-            }
-
-            if replace_ops:
-                current_source, replace_stats = apply_replace_ops(
-                    current_source, replace_ops
-                )
-                all_stats["replaced"] = replace_stats.get("replaced", 0)
-                all_stats["removed"] = replace_stats.get("removed", 0)
-                all_stats["unmatched"].extend(replace_stats.get("unmatched", []))
-
-            if insert_ops:
-                current_source, insert_stats = apply_insert_ops(
-                    current_source, insert_ops
-                )
-                all_stats["inserted"] = insert_stats.get("inserted", 0)
-                all_stats["unmatched"].extend(insert_stats.get("unmatched", []))
-
-            if create_ops:
-                current_source, create_stats = apply_create_ops(
-                    current_source, create_ops
-                )
-                all_stats["created"] = create_stats.get("created", 0)
-                all_stats["unmatched"].extend(create_stats.get("unmatched", []))
-
-            new_source = current_source
-            stats = all_stats
-
-            # Create temporary file for validation
-            import tempfile
-            import shutil
-
-            tmp_path = None
-            tmp_path_moved = False
+            # Step 3: Get database connection
+            database = self._open_database(str(root_path), auto_analyze=False)
+            backup_manager = None
+            backup_uuid = None
+            file_data_backup = None
 
             try:
-                # Create temporary file
-                with tempfile.NamedTemporaryFile(
-                    mode="w", suffix=".py", delete=False, encoding="utf-8"
-                ) as tmp_file:
-                    tmp_file.write(new_source)
-                    tmp_path = Path(tmp_file.name)
+                # Step 4: Check if file exists in database and backup data
+                file_record = None
+                file_id = None
 
-                # Validate entire file in temporary file
-                validation_success, validation_error, validation_results = (
-                    validate_file_in_temp(
-                        source_code=new_source,
-                        temp_file_path=tmp_path,
-                        validate_linter=True,
-                        validate_type_checker=True,
+                if target_path.exists():
+                    # Get file record
+                    file_record = database.get_file_by_path(
+                        str(target_path), project_id
                     )
-                )
+                    if file_record:
+                        file_id = file_record["id"]
+                        # Backup file data
+                        file_data_backup = self._backup_file_data(database, file_id)
 
-                if not validation_success:
-                    # Return error with validation details
-                    payload: dict[str, Any] = {
-                        "success": False,
-                        "message": validation_error or "Validation failed",
-                        "validation_results": {
-                            k: {
-                                "success": v.success,
-                                "error_message": v.error_message,
-                                "errors": v.errors,
-                            }
-                            for k, v in validation_results.items()
-                        },
-                        "stats": stats,
-                    }
-                    if return_diff:
-                        payload["diff"] = unified_diff(
-                            old_source, new_source, str(target)
-                        )
-                    if return_source:
-                        payload["source"] = new_source
-                    return ErrorResult(
-                        message=validation_error or "Validation failed",
-                        code="VALIDATION_ERROR",
-                        details=payload,
+                # Step 5: Create file backup
+                if target_path.exists():
+                    backup_manager = BackupManager(root_path)
+                    backup_uuid = backup_manager.create_backup(
+                        target_path,
+                        command="compose_cst_module",
+                        comment=commit_message or "",
                     )
 
-                # Validation passed - temporary file is ready
-                # If apply=True, we will move it to target location and add to database in transaction
-                logger.info(
-                    f"Validation passed. Temporary file ready: {tmp_path}, "
-                    f"apply={apply}, target={target}"
-                )
-            except Exception as e:
-                logger.error(f"Error during validation: {e}", exc_info=True)
-                # Clean up temporary file if it exists
-                if tmp_path and tmp_path.exists():
-                    tmp_path.unlink(missing_ok=True)
-                return ErrorResult(
-                    message=f"Validation error: {e}",
-                    code="VALIDATION_ERROR",
-                    details={"stats": stats},
-                )
-
-            backup_uuid = None
-            git_commit_success = False
-            git_error = None
-            file_created_in_this_session = (
-                False  # Track if file was created in this session
-            )
-
-            if apply:
-                # Verify temporary file exists before proceeding
-                if not tmp_path or not tmp_path.exists():
-                    return ErrorResult(
-                        message=(
-                            "Temporary file does not exist after validation. "
-                            "This should not happen if validation passed."
-                        ),
-                        code="TEMP_FILE_MISSING",
-                        details={"tmp_path": str(tmp_path) if tmp_path else None},
-                    )
-
-                # Begin transaction and atomic update process
-                database = self._open_database(str(root_path), auto_analyze=False)
-                backup_manager = None
+                # Step 6: Begin database transaction
+                database.begin_transaction()
 
                 try:
-                    # Create backup using BackupManager before applying changes (if file exists)
-                    if target.exists():
-                        backup_manager = BackupManager(root_path)
-                        # Extract related files from ops (files mentioned in selectors)
-                        related_files = []
-                        for op in ops:
-                            selector = op.get("selector", {})
-                            name = selector.get("name", "")
-                            if name and "." in name:
-                                # Extract class/module name from selector
-                                parts = name.split(".")
-                                if len(parts) > 1:
-                                    related_files.append(parts[0])
-
-                        backup_uuid = backup_manager.create_backup(
-                            target,
-                            command="compose_cst_module",
-                            related_files=related_files if related_files else None,
-                            comment=commit_message or "",
-                        )
-                        if backup_uuid:
-                            logger.info(
-                                f"Backup created before CST compose: {backup_uuid}"
-                            )
-
-                    # Begin transaction
-                    database.begin_transaction()
-
-                    # Update database in transaction
-                    project_id = self._get_project_id(
-                        database, root_path, kwargs.get("project_id")
+                    # Step 7-12: Apply changes
+                    result = self._apply_changes(
+                        database=database,
+                        project_id=project_id,
+                        root_path=root_path,
+                        target_path=target_path,
+                        source_code=source_code,
+                        file_id=file_id,
+                        file_data_backup=file_data_backup,
+                        backup_uuid=backup_uuid,
+                        backup_manager=backup_manager,
+                        temp_file=temp_file,
+                        commit_message=commit_message,
                     )
-                    if project_id:
-                        try:
-                            rel_path = str(target.relative_to(root_path))
-                        except ValueError:
-                            rel_path = str(target)
+                    temp_file = None  # File was moved, don't delete it
+                    return result
 
-                        # Step 1: Move temporary file to target location
-                        # This ensures file exists on disk for add_file() validation
-                        abs_path = target.resolve()
-                        file_existed_before = target.exists()
+                except Exception as error:
+                    # Rollback handled in _apply_changes
+                    raise error
 
-                        # Ensure target directory exists
-                        target.parent.mkdir(parents=True, exist_ok=True)
+            finally:
+                database.close()
 
-                        # Move temporary file to target (creates or overwrites)
-                        shutil.move(str(tmp_path), str(target))
-                        tmp_path_moved = True
-                        if not file_existed_before:
-                            file_created_in_this_session = True
-
-                        # Step 2: Check if file exists in database, add if needed
-                        file_record = database.get_file_by_path(
-                            str(abs_path), project_id
-                        )
-                        if not file_record:
-                            file_record = database.get_file_by_path(
-                                rel_path, project_id
-                            )
-
-                        if not file_record:
-                            # File doesn't exist in database - add it
-                            import time
-
-                            dataset_id = database.get_or_create_dataset(
-                                project_id=project_id,
-                                root_path=str(root_path),
-                            )
-                            lines = len(new_source.splitlines())
-                            file_mtime = time.time()
-                            has_docstring = new_source.strip().startswith(
-                                '"""'
-                            ) or new_source.strip().startswith("'''")
-                            database.add_file(
-                                path=rel_path,
-                                lines=lines,
-                                last_modified=file_mtime,
-                                has_docstring=has_docstring,
-                                project_id=project_id,
-                                dataset_id=dataset_id,
-                            )
-
-                        # Step 3: Update database atomically (AST, CST, entities)
-                        update_result = database.update_file_data_atomic(
-                            file_path=str(abs_path),
-                            project_id=project_id,
-                            root_dir=root_path,
-                            source_code=new_source,
-                        )
-
-                        if not update_result.get("success"):
-                            raise Exception(
-                                f"Failed to update database: {update_result.get('error')}"
-                            )
-
-                        # Commit transaction (BEFORE git commit)
-                        database.commit_transaction()
-
-                        # Git commit after successful transaction (if git repository and commit_message provided)
-                        if is_git and commit_message:
-                            git_commit_success, git_error = create_git_commit(
-                                root_path, target, commit_message
-                            )
-                            if not git_commit_success:
-                                # Git commit is not critical - transaction already committed
-                                logger.warning(
-                                    f"Failed to create git commit: {git_error}"
-                                )
-                            else:
-                                logger.info(
-                                    f"Git commit created successfully: {commit_message}"
-                                )
-
-                        logger.info(
-                            f"Database updated after CST compose: "
-                            f"AST={update_result.get('ast_updated')}, "
-                            f"CST={update_result.get('cst_updated')}, "
-                            f"entities={update_result.get('entities_updated')}"
-                        )
-
-                except Exception:
-                    # Rollback transaction on error
+                # Clean up temporary file if it still exists
+                if temp_file and temp_file.exists():
                     try:
-                        database.rollback_transaction()
-                    except Exception:
-                        pass
-
-                    # If file was created on disk but error occurred, remove it
-                    # Only remove if it was created in this session
-                    # TEMPORARILY DISABLED for debugging - to see if file is created
-                    # if file_created_in_this_session and target.exists():
-                    #     try:
-                    #         # Check if file is empty or was just created
-                    #         file_size = target.stat().st_size
-                    #         logger.info(
-                    #             f"Removing newly created file due to error: {target}, size: {file_size} bytes"
-                    #         )
-                    #         target.unlink()
-                    #         logger.info(f"Removed newly created file: {target}")
-                    #     except Exception as remove_error:
-                    #         logger.error(
-                    #             f"Failed to remove newly created file: {remove_error}",
-                    #             exc_info=True,
-                    #         )
-                    if file_created_in_this_session and target.exists():
+                        temp_file.unlink()
+                    except Exception as cleanup_error:
                         logger.warning(
-                            f"File was created but error occurred. Keeping file for debugging: {target}"
+                            f"Failed to delete temporary file: {cleanup_error}"
                         )
 
-                    # Restore file from backup if backup was created
-                    if backup_uuid and backup_manager and target.exists():
-                        try:
-                            try:
-                                rel_path = str(target.relative_to(root_path))
-                            except ValueError:
-                                rel_path = str(target)
-
-                            restore_success, restore_message = (
-                                backup_manager.restore_file(rel_path, backup_uuid)
-                            )
-                            if restore_success:
-                                logger.info(
-                                    f"File restored from backup: {restore_message}"
-                                )
-                            else:
-                                logger.error(
-                                    f"Failed to restore file from backup: {restore_message}"
-                                )
-                        except Exception as restore_error:
-                            logger.error(
-                                f"Failed to restore backup: {restore_error}",
-                                exc_info=True,
-                            )
-
-                    raise
-
-                finally:
-                    database.close()
-
-                    # Clean up temporary file only if it wasn't moved
-                    if not tmp_path_moved and tmp_path and tmp_path.exists():
-                        tmp_path.unlink(missing_ok=True)
-
-            data: dict[str, Any] = {
-                "success": True,
-                "message": (
-                    "CST patch applied successfully"
-                    if apply
-                    else "CST patch preview generated"
-                ),
-                "file_path": str(target),
-                "applied": apply,
-                "backup_uuid": backup_uuid,
-                "compiled": True,
-                "stats": stats,
-            }
-
-            # Add git commit info if applicable
-            if is_git:
-                data["git_commit"] = {
-                    "success": git_commit_success,
-                    "error": git_error,
-                }
-            if return_diff:
-                data["diff"] = unified_diff(old_source, new_source, str(target))
-            if return_source:
-                data["source"] = new_source
-
-            return SuccessResult(data=data)
         except Exception as e:
             return self._handle_error(e, "CST_COMPOSE_ERROR", "compose_cst_module")
-
-    @classmethod
-    def metadata(cls: type["ComposeCSTModuleCommand"]) -> Dict[str, Any]:
-        """
-        Get detailed command metadata for AI models.
-
-        This method provides comprehensive information about the command,
-        including detailed descriptions, usage examples, and edge cases.
-        The metadata should be as detailed and clear as a man page.
-
-        Args:
-            cls: Command class.
-
-        Returns:
-            Dictionary with command metadata.
-        """
-        return {
-            "name": cls.name,
-            "version": cls.version,
-            "description": cls.descr,
-            "category": cls.category,
-            "author": cls.author,
-            "email": cls.email,
-            "detailed_description": (
-                "The compose_cst_module command applies module-level block replacements using LibCST "
-                "and validates the result by compiling the resulting module source. "
-                "This command provides atomic, transaction-safe file modifications with comprehensive validation.\n\n"
-                "DETAILED OPERATION FLOW:\n"
-                "1. Validates root_dir exists and is a directory\n"
-                "2. Resolves file_path (absolute or relative to root_dir)\n"
-                "3. Checks if root_dir is a git repository using is_git_repository()\n"
-                "4. If git repository detected (is_git=True), validates commit_message is provided\n"
-                "   - If commit_message is missing, returns COMMIT_MESSAGE_REQUIRED error immediately\n"
-                "   - Operation does not proceed if commit_message is required but missing\n"
-                "5. Loads existing source code (or empty string for new files with kind='module')\n"
-                "6. Applies CST operations (replace/insert/create) in order:\n"
-                "   - Replace operations are applied first\n"
-                "   - Insert operations are applied second\n"
-                "   - Create operations are applied last\n"
-                "7. Creates temporary file with new source code\n"
-                "8. Validates ENTIRE file in temporary file (not original):\n"
-                "   - Compilation check (syntax validation via compile_module)\n"
-                "   - Docstring validation (file, class, method, function level)\n"
-                "   - Linter check (flake8) - optional, enabled by default\n"
-                "   - Type checker (mypy) - optional, enabled by default\n"
-                "9. If validation fails, returns VALIDATION_ERROR with detailed results\n"
-                "10. If apply=true and validation succeeds:\n"
-                "    - Creates backup using BackupManager (stored in {root_dir}/old_code/ with UUID)\n"
-                "    - Backup includes comment (commit_message if provided) for history tracking\n"
-                "    - Begins database transaction\n"
-                "    - Updates database atomically (AST, CST, entities) using update_file_data_atomic\n"
-                "    - Atomically moves temporary file to target location\n"
-                "    - Commits database transaction\n"
-                "    - If git repository and commit_message provided, creates git commit\n"
-                "    - Git commit is performed AFTER successful transaction commit\n"
-                "    - If git commit fails, operation still succeeds (data is saved, transaction committed)\n"
-                "11. If any error occurs during apply:\n"
-                "    - Database transaction is rolled back\n"
-                "    - File is restored from backup (if backup was created)\n"
-                "    - Temporary file is cleaned up\n"
-                "\n"
-                "ATOMICITY AND TRANSACTIONS:\n"
-                "All database operations are performed within a transaction to ensure atomicity:\n"
-                "- Database transaction begins before any updates\n"
-                "- All file data (AST, CST, entities) is updated atomically\n"
-                "- If any error occurs, transaction is rolled back\n"
-                "- File is only moved after successful database update\n"
-                "- Transaction is committed before git commit (git commit is not part of transaction)\n"
-                "\n"
-                "VALIDATION PROCESS:\n"
-                "Validation is performed on the ENTIRE file in a temporary location:\n"
-                "- Compilation: Checks Python syntax via compile_module()\n"
-                "- Docstrings: Validates file, class, method, and function docstrings\n"
-                "- Linter: Runs flake8 on entire file (can be disabled with validate_linter=False)\n"
-                "- Type Checker: Runs mypy on entire file (can be disabled with validate_type_checker=False)\n"
-                "- Validation results include detailed error messages for each type\n"
-                "- If compilation fails, other validations are skipped\n"
-                "\n"
-                "BACKUP SYSTEM:\n"
-                "Uses BackupManager for file backups:\n"
-                "- Backup is stored in {root_dir}/old_code/ directory with UUID\n"
-                "- Backup includes metadata: command name, comment (commit_message), timestamp\n"
-                "- Backup is created BEFORE applying changes\n"
-                "- If operation fails, file is automatically restored from backup\n"
-                "- Backup UUID is returned in response for tracking\n"
-                "- Old system (write_with_backup) is NOT used in this command\n"
-                "\n"
-                "GIT INTEGRATION:\n"
-                "Automatic git repository detection and commit creation:\n"
-                "- Automatically detects if root_dir is a git repository\n"
-                "- If git repository detected (is_git=True), commit_message becomes REQUIRED\n"
-                "- commit_message validation happens at the START of execute(), before any operations\n"
-                "- If commit_message is missing in git repository, operation fails immediately\n"
-                "- Git commit is created AFTER successful database transaction commit\n"
-                "- Git commit stages the modified file and creates commit with provided message\n"
-                "- If git commit fails, operation still succeeds (data is saved, transaction committed)\n"
-                "- Git commit error is logged as warning and returned in response\n"
-                "- If root_dir is NOT a git repository (is_git=False):\n"
-                "  - commit_message is optional and ignored\n"
-                "  - Git commit is not performed\n"
-                "  - Operation succeeds normally (data is saved)\n"
-                "\n"
-                "SAFETY FEATURES:\n"
-                "- Comprehensive validation before file modification\n"
-                "- Automatic backup creation before changes\n"
-                "- Database transactions for atomicity\n"
-                "- Automatic rollback on any error\n"
-                "- File restoration from backup on error\n"
-                "- Temporary file cleanup in all cases\n"
-                "- Preview mode (apply=false) to see changes without modifying file\n"
-                "- Import normalization (moves imports to top)\n"
-                "\n"
-                "IMPORTANT NOTES:\n"
-                "- commit_message is REQUIRED when working in git repository (is_git=True)\n"
-                "- Operations preserve code formatting and comments\n"
-                "- Can create new files from scratch (use selector with kind='module')\n"
-                "  * For new files: operation_type='create', selector.kind='module', position='end_of_module' REQUIRED\n"
-                "  * file_docstring is REQUIRED and must be non-empty for new files\n"
-                "  * new_code must include file docstring at the beginning (matching file_docstring)\n"
-                "  * new_code must contain at least one function or class (cannot be empty)\n"
-                "- Can delete code blocks (use empty new_code string)\n"
-                "- Backup UUID and git commit status are returned in response\n"
-                "- All operations are atomic: either all succeed or all fail\n"
-            ),
-            "parameters": {
-                "root_dir": {
-                    "description": (
-                        "Project root directory path. "
-                        "**RECOMMENDED: Use absolute path for reliability.** "
-                        "Relative paths are resolved from current working directory, "
-                        "which may cause issues if working directory changes. "
-                        "This directory is checked for git repository status. "
-                        "If it is a git repository (detected via is_git_repository()), "
-                        "commit_message parameter becomes REQUIRED. "
-                        "Database file (code_analysis.db) is expected in this directory. "
-                        "Backup directory (old_code/) is created in this directory."
-                    ),
-                },
-                "file_path": {
-                    "description": (
-                        "Target Python file path. "
-                        "**Can be absolute or relative to root_dir.** "
-                        "If relative, it is resolved relative to root_dir. "
-                        "If absolute, it must be within root_dir (or will be normalized). "
-                        "If file does not exist, use selector with kind='module' to create new file. "
-                        "File must have .py extension. "
-                        "For new files, old_source is empty string and operations create file from scratch."
-                    ),
-                },
-                "ops": {
-                    "description": (
-                        "List of CST operations to apply. Operations are applied in order: "
-                        "replace operations first, then insert operations, then create operations. "
-                        "Each operation can target different code blocks using selectors. "
-                        "Selector types: module, function, class, method, range, block_id, node_id, cst_query. "
-                        "Operation types: replace (default), insert, create. "
-                        "For replace: new_code replaces selected block (empty string deletes). "
-                        "For insert: new_code is inserted before/after selected block. "
-                        "For create: new_code creates new node at specified position.\n\n"
-                        "CREATING NEW FILES (file does not exist):\n"
-                        "- Use operation_type='create' with selector.kind='module'\n"
-                        "- position='end_of_module' is REQUIRED for new files\n"
-                        "- file_docstring is REQUIRED and must be non-empty (minLength=1)\n"
-                        "- new_code is REQUIRED and must be non-empty (minLength=1)\n"
-                        "- new_code must include file docstring at the beginning (matching file_docstring)\n"
-                        "- new_code must contain at least one function or class\n"
-                        '- Example: {"operation_type": "create", "selector": {"kind": "module"}, '
-                        '"position": "end_of_module", "file_docstring": "File docstring", '
-                        '"new_code": \'"""File docstring"""\\n\\ndef main():\\n    pass\'}'
-                    ),
-                },
-                "apply": {
-                    "description": (
-                        "If true, writes changes to file after successful validation. "
-                        "Process includes: backup creation, database transaction, file update, git commit. "
-                        "If false, only returns preview (diff, source) without modifying file or database. "
-                        "Preview mode is safe and does not require commit_message even in git repository."
-                    ),
-                },
-                "create_backup": {
-                    "description": (
-                        "If true and apply=true, creates backup using BackupManager. "
-                        "Backup is stored in {root_dir}/old_code/ directory with UUID. "
-                        "Backup includes metadata: command name, comment (commit_message if provided), timestamp. "
-                        "Backup is created BEFORE applying changes. "
-                        "If operation fails, file is automatically restored from backup. "
-                        "Backup UUID is returned in response for tracking."
-                    ),
-                },
-                "commit_message": {
-                    "description": (
-                        "Commit message for git commit. "
-                        "REQUIRED if root_dir is a git repository (is_git=True). "
-                        "If root_dir is a git repository and commit_message is missing, "
-                        "operation fails immediately with COMMIT_MESSAGE_REQUIRED error. "
-                        "If provided and root_dir is a git repository, automatically creates a git commit "
-                        "with this message after successfully applying changes and committing database transaction. "
-                        "The message is also stored in backup index for version history tracking. "
-                        "If root_dir is NOT a git repository (is_git=False), this parameter is optional and ignored. "
-                        "Git commit is performed AFTER database transaction commit. "
-                        "If git commit fails, operation still succeeds (data is saved)."
-                    ),
-                },
-                "return_diff": {
-                    "description": (
-                        "If true, includes unified diff in response showing changes made to the file. "
-                        "Diff format is standard unified diff (like git diff). "
-                        "Useful for previewing changes before applying (apply=false)."
-                    ),
-                },
-                "return_source": {
-                    "description": (
-                        "If true, includes full resulting source code in response. "
-                        "Can be large for big files. "
-                        "Useful for previewing complete result or for further processing."
-                    ),
-                },
-            },
-            "usage_examples": [
-                {
-                    "description": "Preview changes without applying (apply=false, no commit_message needed)",
-                    "command": {
-                        "root_dir": "/path/to/project",
-                        "file_path": "code_analysis/main.py",
-                        "ops": [
-                            {
-                                "operation_type": "replace",
-                                "selector": {"kind": "function", "name": "my_function"},
-                                "new_code": 'def my_function(param: int) -> str:\n    """Updated function."""\n    return str(param)',
-                            }
-                        ],
-                        "apply": False,
-                        "return_diff": True,
-                        "return_source": False,
-                    },
-                    "explanation": (
-                        "Preview changes without modifying file. Safe to use, does not require commit_message even in git repository."
-                    ),
-                },
-                {
-                    "description": "Apply changes in git repository (commit_message REQUIRED)",
-                    "command": {
-                        "root_dir": "/path/to/project",
-                        "file_path": "code_analysis/main.py",
-                        "ops": [
-                            {
-                                "operation_type": "replace",
-                                "selector": {"kind": "function", "name": "my_function"},
-                                "new_code": 'def my_function(param: int) -> str:\n    """Updated function."""\n    return str(param)',
-                            }
-                        ],
-                        "apply": True,
-                        "commit_message": "Refactor: update my_function signature and return type",
-                    },
-                    "explanation": (
-                        "Apply changes in git repository. commit_message is REQUIRED when root_dir is a git repository."
-                    ),
-                },
-                {
-                    "description": "Apply changes WITHOUT git repository (commit_message optional)",
-                    "command": {
-                        "root_dir": "/path/to/project",
-                        "file_path": "code_analysis/main.py",
-                        "ops": [
-                            {
-                                "operation_type": "replace",
-                                "selector": {"kind": "function", "name": "my_function"},
-                                "new_code": 'def my_function(param: int) -> str:\n    """Updated function."""\n    return str(param)',
-                            }
-                        ],
-                        "apply": True,
-                        # commit_message not required, git commit not performed
-                    },
-                    "explanation": (
-                        "Apply changes without git repository. commit_message is optional and ignored."
-                    ),
-                },
-                {
-                    "description": "Create new file from scratch (kind='module') - REQUIRES position='end_of_module'",
-                    "command": {
-                        "root_dir": "/path/to/project",
-                        "file_path": "new_module.py",
-                        "ops": [
-                            {
-                                "operation_type": "create",
-                                "selector": {"kind": "module"},
-                                "position": "end_of_module",
-                                "file_docstring": "New module for testing.\n\nAuthor: Vasiliy Zdanovskiy\nemail: vasilyvz@gmail.com",
-                                "new_code": 'class NewClass:\n    """Class description."""\n    \n    def __init__(self):\n        """Initialize."""\n        pass',
-                            }
-                        ],
-                        "apply": True,
-                        "commit_message": "Add new module with NewClass",
-                    },
-                    "explanation": (
-                        "Create new file from scratch. CRITICAL: position='end_of_module' is REQUIRED. "
-                        "file_docstring must be non-empty. new_code must contain at least one function or class."
-                    ),
-                },
-                {
-                    "description": "Create new file with main() entry point (complete example)",
-                    "command": {
-                        "root_dir": "/path/to/project",
-                        "file_path": "main.py",
-                        "ops": [
-                            {
-                                "operation_type": "create",
-                                "selector": {"kind": "module"},
-                                "position": "end_of_module",
-                                "file_docstring": "Main entry point for application.\n\nAuthor: Vasiliy Zdanovskiy\nemail: vasilyvz@gmail.com",
-                                "new_code": '"""\nMain entry point for application.\n\nAuthor: Vasiliy Zdanovskiy\nemail: vasilyvz@gmail.com\n"""\n\nfrom __future__ import annotations\n\nimport sys\nfrom local_module import connect  # type: ignore[import-not-found]\n\n\ndef main() -> int:\n    """\n    Main entry point for the application.\n    \n    Returns:\n        Exit code (0 for success, non-zero for error).\n    """\n    try:\n        api = connect()\n        print(f"Version: {api.info(\'version\')}")\n        return 0\n    except Exception as e:\n        print(f"Error: {e}", file=sys.stderr)\n        return 1\n\n\nif __name__ == "__main__":\n    sys.exit(main())\n',
-                            }
-                        ],
-                        "apply": True,
-                        "commit_message": "Add main entry point with main() function",
-                    },
-                    "explanation": (
-                        "Create new file with complete example. When creating new file: "
-                        "1) file_docstring is REQUIRED and must match docstring in new_code, "
-                        "2) position='end_of_module' is REQUIRED, "
-                        "3) new_code must include file docstring at the beginning, "
-                        "4) Use type: ignore comments for local imports if mypy validation fails"
-                    ),
-                },
-                {
-                    "description": "Multiple operations (replace + insert + create)",
-                    "command": {
-                        "root_dir": "/path/to/project",
-                        "file_path": "code_analysis/main.py",
-                        "ops": [
-                            {
-                                "operation_type": "replace",
-                                "selector": {
-                                    "kind": "function",
-                                    "name": "old_function",
-                                },
-                                "new_code": 'def old_function() -> None:\n    """Updated old function."""\n    pass',
-                            },
-                            {
-                                "operation_type": "insert",
-                                "selector": {
-                                    "kind": "function",
-                                    "name": "old_function",
-                                },
-                                "position": "after",
-                                "new_code": 'def new_helper() -> str:\n    """Helper function."""\n    return "help"',
-                            },
-                            {
-                                "operation_type": "create",
-                                "selector": {"kind": "module"},
-                                "position": "end_of_module",
-                                "new_code": 'def module_level_function() -> int:\n    """Module level function."""\n    return 42',
-                            },
-                        ],
-                        "apply": True,
-                        "commit_message": "Refactor: update old_function, add helpers",
-                    },
-                    "explanation": (
-                        "Multiple operations in one request. Operations are applied in order: "
-                        "replace first, then insert, then create. All operations are atomic."
-                    ),
-                },
-                {
-                    "description": "Handle validation errors (syntax error in new_code)",
-                    "command": {
-                        "root_dir": "/path/to/project",
-                        "file_path": "code_analysis/main.py",
-                        "ops": [
-                            {
-                                "operation_type": "replace",
-                                "selector": {"kind": "function", "name": "my_function"},
-                                "new_code": "def my_function(:  # Invalid syntax - missing closing parenthesis",
-                            }
-                        ],
-                        "apply": True,
-                        "commit_message": "Fix function",
-                    },
-                    "explanation": (
-                        "This will return VALIDATION_ERROR with detailed compilation error. File is not modified."
-                    ),
-                },
-                {
-                    "description": "Delete code block (empty new_code)",
-                    "command": {
-                        "root_dir": "/path/to/project",
-                        "file_path": "code_analysis/main.py",
-                        "ops": [
-                            {
-                                "operation_type": "replace",
-                                "selector": {
-                                    "kind": "function",
-                                    "name": "deprecated_function",
-                                },
-                                "new_code": "",  # Empty string deletes the function
-                            }
-                        ],
-                        "apply": True,
-                        "commit_message": "Remove deprecated_function",
-                    },
-                    "explanation": (
-                        "Delete code block by using empty new_code string. The selected block is removed from the file."
-                    ),
-                },
-            ],
-            "error_cases": {
-                "COMMIT_MESSAGE_REQUIRED": {
-                    "description": (
-                        "commit_message is required when working in a git repository. "
-                        "This error occurs when root_dir is detected as a git repository (is_git=True) "
-                        "but commit_message parameter is not provided."
-                    ),
-                    "message": "commit_message is required when working in a git repository",
-                    "solution": "Provide commit_message parameter when working in git repository",
-                },
-                "VALIDATION_ERROR": {
-                    "description": (
-                        "File validation failed. This includes compilation, docstring, linter, or type checker errors. "
-                        "Validation is performed on the ENTIRE file in a temporary location before any changes are applied."
-                    ),
-                    "message": "File validation failed. Check validation_results for details.",
-                    "solution": "Fix errors reported in validation_results and retry",
-                    "types": {
-                        "compile": "Compilation/syntax errors",
-                        "docstrings": "Missing or invalid docstrings",
-                        "linter": "Flake8 linting errors",
-                        "type_checker": "Mypy type checking errors",
-                    },
-                    "examples": [
-                        {
-                            "case": "Compilation error",
-                            "message": "Compilation failed: SyntaxError: invalid syntax at line 10",
-                            "solution": "Fix syntax errors in new_code or operations",
-                        },
-                    ],
-                },
-                "COMPILE_ERROR": {
-                    "description": "Compilation failed after CST patch. Python syntax error in resulting code.",
-                    "message": "Compilation failed: {error details}",
-                    "solution": "Fix syntax errors in new_code or operations",
-                    "examples": [
-                        {
-                            "case": "Syntax error",
-                            "message": "SyntaxError: invalid syntax",
-                            "solution": "Check for missing parentheses, brackets, or quotes",
-                        },
-                        {
-                            "case": "Indentation error",
-                            "message": "IndentationError: expected an indented block",
-                            "solution": "Fix indentation in new_code",
-                        },
-                        {
-                            "case": "Unexpected EOF",
-                            "message": "SyntaxError: unexpected EOF while parsing",
-                            "solution": "Check for missing closing brackets or incomplete statements",
-                        },
-                    ],
-                },
-                "DOCSTRING_VALIDATION_ERROR": {
-                    "description": (
-                        "Docstring validation failed. File, class, method, or function is missing required docstring "
-                        "or docstring format is invalid."
-                    ),
-                    "message": "Docstring validation failed: {error details}",
-                    "solution": "Add or fix docstrings according to project standards",
-                    "requirements": {
-                        "file": "File-level docstring with Author and email",
-                        "classes": "Class docstring",
-                        "methods": "Method docstring",
-                        "functions": "Function docstring",
-                    },
-                    "examples": [
-                        {
-                            "case": "Missing function docstring",
-                            "message": "Missing docstring for function 'my_function' at line 10",
-                            "solution": "Add docstring to function",
-                        },
-                    ],
-                },
-                "LINTER_ERROR": {
-                    "description": "Linter (flake8) errors found in validated file.",
-                    "message": "Linter errors found: {error details}",
-                    "solution": "Fix linter errors according to flake8 rules",
-                    "examples": [
-                        {
-                            "case": "Line too long",
-                            "message": "E501: line too long (80 > 79 characters)",
-                            "solution": "Split long lines or adjust line length",
-                        },
-                        {
-                            "case": "Unused import",
-                            "message": "F401: 'os' imported but unused",
-                            "solution": "Remove unused import or use it in code",
-                        },
-                        {
-                            "case": "Missing blank lines",
-                            "message": "E302: expected 2 blank lines, found 1",
-                            "solution": "Add required blank lines",
-                        },
-                    ],
-                },
-                "TYPE_CHECK_ERROR": {
-                    "description": "Type checker (mypy) errors found in validated file.",
-                    "message": "Type checker errors found: {error details}",
-                    "solution": "Fix type errors according to mypy requirements",
-                    "examples": [
-                        {
-                            "case": "Incompatible types",
-                            "message": "Incompatible types in assignment: expected 'int', got 'str'",
-                            "solution": "Fix type annotations or convert types",
-                        },
-                        {
-                            "case": "Missing type annotation",
-                            "message": "Missing return type annotation",
-                            "solution": "Add return type annotation to function",
-                        },
-                        {
-                            "case": "Incompatible return type",
-                            "message": "Incompatible return type: expected 'int', got 'str'",
-                            "solution": "Fix return type or return value",
-                        },
-                    ],
-                },
-                "TRANSACTION_ERROR": {
-                    "description": "Database transaction error. Internal error in transaction management.",
-                    "message": "Database transaction error: {error details}",
-                    "solution": "This is an internal error. Check transaction usage in code.",
-                },
-                "BACKUP_ERROR": {
-                    "description": "Error creating or restoring backup file.",
-                    "message": "Backup error: {error details}",
-                    "solution": "Check file permissions, disk space, and backup directory access",
-                },
-                "GIT_COMMIT_ERROR": {
-                    "description": (
-                        "Error creating git commit. This is NOT critical - operation still succeeds, "
-                        "data is saved, transaction is committed. Git commit is performed after successful transaction."
-                    ),
-                    "message": "Git commit error: {error details}",
-                    "solution": "Check git repository status, permissions, and manually create commit if needed",
-                    "note": "Operation is still considered successful. Data is saved, transaction committed.",
-                },
-                "FILE_NOT_FOUND": {
-                    "description": "Target file does not exist and no module creation operation provided.",
-                    "message": "Target file does not exist",
-                    "solution": "Use selector with kind='module' to create new file, or provide existing file path",
-                },
-                "INVALID_FILE": {
-                    "description": "Target file is not a Python file (.py extension required).",
-                    "message": "Target file must be a .py file",
-                    "solution": "Use .py file extension",
-                },
-                "INVALID_OPERATION": {
-                    "description": "Unknown or invalid operation type or selector.",
-                    "message": "Invalid operation type or selector",
-                    "solution": "Use valid operation types (replace, insert, create) and valid selector kinds",
-                },
-            },
-            "git_integration": {
-                "automatic_detection": (
-                    "Git repository is automatically detected using is_git_repository(root_dir). "
-                    "Checks for .git directory or git config in root_dir."
-                ),
-                "commit_message_requirement": (
-                    "If git repository is detected (is_git=True), commit_message becomes REQUIRED. "
-                    "Validation happens at the START of execute() method, before any operations. "
-                    "If commit_message is missing, operation fails immediately with COMMIT_MESSAGE_REQUIRED error."
-                ),
-                "commit_process": (
-                    "Git commit is created AFTER successful database transaction commit. "
-                    "Process: 1) File is updated, 2) Database transaction is committed, 3) Git commit is created. "
-                    "Git commit stages the modified file and creates commit with provided message."
-                ),
-                "error_handling": (
-                    "If git commit fails, operation still succeeds. "
-                    "Data is saved, database transaction is committed, file is updated. "
-                    "Git commit error is logged as warning and returned in response. "
-                    "User can manually create commit if needed."
-                ),
-                "without_git": (
-                    "If root_dir is NOT a git repository (is_git=False): "
-                    "commit_message is optional and ignored, git commit is not performed, "
-                    "operation succeeds normally (data is saved)."
-                ),
-                "examples": {
-                    "with_git": "root_dir is git repo → commit_message REQUIRED → git commit created after success",
-                    "without_git": "root_dir is not git repo → commit_message optional → no git commit",
-                },
-            },
-            "atomicity": {
-                "database_transactions": (
-                    "All database operations are performed within a transaction. "
-                    "Transaction begins before updates, commits after successful file update. "
-                    "If any error occurs, transaction is rolled back."
-                ),
-                "validation_in_temp": (
-                    "Validation is performed on ENTIRE file in temporary file, not original. "
-                    "This ensures validation happens before any changes to original file."
-                ),
-                "atomic_file_move": (
-                    "File is moved atomically using temporary file and backup. "
-                    "Process: 1) Create temp file with new content, 2) Validate temp file, "
-                    "3) Update database in transaction, 4) Move temp file to target, 5) Commit transaction."
-                ),
-                "backup_system": (
-                    "BackupManager creates backup BEFORE applying changes. "
-                    "Backup is stored in {root_dir}/old_code/ with UUID. "
-                    "If operation fails, file is automatically restored from backup."
-                ),
-                "operation_order": (
-                    "1. Validate commit_message (if git repo), "
-                    "2. Apply CST operations, "
-                    "3. Create temporary file, "
-                    "4. Validate entire file in temp, "
-                    "5. If apply=true: create backup, begin transaction, update database, move file, commit transaction, git commit"
-                ),
-            },
-            "safety_features": {
-                "validation": (
-                    "Comprehensive validation before file modification: "
-                    "compilation, docstrings, linter, type checker. "
-                    "Validation happens in temporary file, not original."
-                ),
-                "backup": (
-                    "Automatic backup creation before changes using BackupManager. "
-                    "Backup includes metadata for history tracking."
-                ),
-                "transactions": (
-                    "Database transactions ensure atomicity. "
-                    "All database operations succeed or fail together."
-                ),
-                "rollback": (
-                    "Automatic rollback on any error: "
-                    "database transaction rollback, file restoration from backup."
-                ),
-                "cleanup": (
-                    "Temporary file cleanup in all cases (success or failure). "
-                    "No leftover temporary files."
-                ),
-                "preview": (
-                    "Preview mode (apply=false) allows seeing changes without modifying file. "
-                    "Safe to use, does not require commit_message even in git repository."
-                ),
-            },
-            "return_value": {
-                "success": {
-                    "description": "Command executed successfully",
-                    "data": {
-                        "success": "Always True on success",
-                        "file_path": "Path to modified file",
-                        "backup_uuid": "UUID of created backup (if apply=true and create_backup=true)",
-                        "git_commit": "Git commit hash if git commit was created (None otherwise)",
-                        "git_commit_error": "Error message if git commit failed (None if successful)",
-                        "diff": "Unified diff showing changes (if return_diff=true)",
-                        "source": "Full resulting source code (if return_source=true)",
-                        "validation_results": "Validation results if validation was performed",
-                    },
-                    "example": {
-                        "success": True,
-                        "file_path": "/path/to/project/code_analysis/main.py",
-                        "backup_uuid": "550e8400-e29b-41d4-a716-446655440000",
-                        "git_commit": "a1b2c3d4e5f6...",
-                        "git_commit_error": None,
-                        "diff": "@@ -10,7 +10,7 @@\n def my_function():\n-    pass\n+    return 42\n",
-                        "source": None,
-                        "validation_results": {
-                            "compile": {"success": True},
-                            "docstrings": {"success": True},
-                            "linter": {"success": True, "errors": []},
-                            "type_checker": {"success": True, "errors": []},
-                        },
-                    },
-                },
-                "error": {
-                    "description": "Command failed",
-                    "code": (
-                        "Error code (e.g., COMMIT_MESSAGE_REQUIRED, VALIDATION_ERROR, "
-                        "COMPILE_ERROR, FILE_NOT_FOUND, INVALID_FILE, INVALID_OPERATION, "
-                        "TRANSACTION_ERROR, BACKUP_ERROR, GIT_COMMIT_ERROR)"
-                    ),
-                    "message": "Human-readable error message",
-                    "details": "Additional error information (e.g., validation_results for VALIDATION_ERROR)",
-                },
-            },
-            "best_practices": [
-                "Always use apply=false first to preview changes (does not require commit_message even in git repo)",
-                "Use return_diff=true to see what will change before applying",
-                "Check validation_results before applying changes",
-                "Provide commit_message when working in git repository (required if is_git=True)",
-                "Use list_cst_blocks or query_cst to discover blocks before compose_cst_module",
-                "Use block_id or node_id selectors for stable targeting",
-                "Use cst_query selector for complex node searches",
-                "Create backups before major refactoring (create_backup=true)",
-                "Fix validation errors before applying changes",
-                "Use multiple operations in one request for atomic batch changes",
-                "For new files, use operation_type='create' with selector.kind='module' and position='end_of_module'",
-                "When creating new files, file_docstring is REQUIRED and must match docstring in new_code",
-                "Empty new_code string deletes the selected block",
-                "Operations are applied in order: replace first, then insert, then create",
-                "Preview mode (apply=false) is safe and does not modify files or database",
-            ],
-            "see_also": [
-                "BackupManager: System for file backups with metadata",
-                "update_file_data_atomic: Atomic database update method",
-                "validate_file_in_temp: File validation in temporary location",
-                "is_git_repository: Git repository detection",
-                "create_git_commit: Git commit creation",
-                "list_cst_blocks: Discover logical blocks in a file",
-                "query_cst: Find nodes using CSTQuery selectors",
-            ],
-        }

@@ -681,11 +681,28 @@ def _insert_node_relative(
 ) -> cst.Module:
     """Insert nodes relative to a target node (before/after it in parent's body)."""
     target_node = tree.node_map.get(target_node_id)
-    parent_node = tree.node_map.get(parent_node_id)
     if not target_node:
         raise ValueError(f"Target node not found: {target_node_id}")
+    
+    # Get actual parent of target node (more reliable than using provided parent_node_id)
+    target_metadata = tree.metadata_map.get(target_node_id)
+    actual_parent_id = target_metadata.parent_id if target_metadata else None
+    
+    # Use provided parent_node_id if it matches actual parent, otherwise use actual parent
+    if actual_parent_id and actual_parent_id != parent_node_id:
+        # Log warning but use actual parent for insertion
+        logger.warning(
+            f"Parent mismatch: provided {parent_node_id}, actual {actual_parent_id}. "
+            f"Using actual parent for insertion."
+        )
+        parent_node_id = actual_parent_id
+    
+    parent_node = tree.node_map.get(parent_node_id)
     if not parent_node:
-        raise ValueError(f"Parent node not found: {parent_node_id}")
+        raise ValueError(
+            f"Parent node not found: {parent_node_id}. "
+            f"Target node's actual parent: {actual_parent_id}"
+        )
 
     # Parse new code (supports multi-line)
     new_statements = _parse_code_snippet(new_code)
@@ -712,7 +729,7 @@ def _insert_node_relative(
         ) -> cst.Module:
             # Handle module-level insertions relative to target node
             if original_node is self.parent_node:
-                body = list(updated_node.body)
+                body = list(original_node.body)
                 # Find target node in body
                 target_index = -1
                 for i, stmt in enumerate(body):
@@ -722,19 +739,19 @@ def _insert_node_relative(
 
                 if target_index >= 0:
                     if self.position == "before":
-                        body = (
+                        new_body = (
                             body[:target_index]
                             + list(self.new_statements)
                             + body[target_index:]
                         )
                     else:  # after
-                        body = (
+                        new_body = (
                             body[: target_index + 1]
                             + list(self.new_statements)
                             + body[target_index + 1 :]
                         )
                     self.inserted = True
-                    return updated_node.with_changes(body=body)
+                    return updated_node.with_changes(body=new_body)
             return updated_node
 
         def leave_IndentedBlock(
@@ -743,9 +760,10 @@ def _insert_node_relative(
             updated_node: cst.IndentedBlock,
         ) -> cst.IndentedBlock:
             # Handle block-level insertions relative to target node
-            # Check if this block belongs to the parent
-            body = list(updated_node.body)
-            # Find target node in body
+            # Check if target node is in this block's body
+            # We check all IndentedBlocks, not just the parent, to handle nested cases
+            body = list(original_node.body)
+            # Find target node in body using identity check
             target_index = -1
             for i, stmt in enumerate(body):
                 if stmt is self.target_node:
@@ -753,60 +771,81 @@ def _insert_node_relative(
                     break
 
             if target_index >= 0:
+                # Target node found in this block - insert relative to it
                 if self.position == "before":
-                    body = (
+                    new_body = (
                         body[:target_index]
                         + list(self.new_statements)
                         + body[target_index:]
                     )
                 else:  # after
-                    body = (
+                    new_body = (
                         body[: target_index + 1]
                         + list(self.new_statements)
                         + body[target_index + 1 :]
                     )
                 self.inserted = True
-                return updated_node.with_changes(body=body)
+                return updated_node.with_changes(body=new_body)
             return updated_node
 
         def on_leave(
             self, original_node: cst.CSTNode, updated_node: cst.CSTNode
         ) -> cst.CSTNode:
             # Handle insertions into FunctionDef/ClassDef bodies
+            # This is handled by leave_IndentedBlock, but we also check here
+            # in case the parent is a FunctionDef/ClassDef and we need to update its body
             if original_node is self.parent_node:
                 if isinstance(updated_node, (cst.ClassDef, cst.FunctionDef)):
-                    body = list(updated_node.body.body)
-                    # Find target node in body
-                    target_index = -1
-                    for i, stmt in enumerate(body):
-                        if stmt is self.target_node:
-                            target_index = i
-                            break
+                    # Check if target node is in this function/class body
+                    if isinstance(updated_node.body, cst.IndentedBlock):
+                        body = list(updated_node.body.body)
+                        # Find target node in body
+                        target_index = -1
+                        for i, stmt in enumerate(body):
+                            if stmt is self.target_node:
+                                target_index = i
+                                break
 
-                    if target_index >= 0:
-                        if self.position == "before":
-                            body = (
-                                body[:target_index]
-                                + list(self.new_statements)
-                                + body[target_index:]
+                        if target_index >= 0:
+                            if self.position == "before":
+                                new_body = (
+                                    body[:target_index]
+                                    + list(self.new_statements)
+                                    + body[target_index:]
+                                )
+                            else:  # after
+                                new_body = (
+                                    body[: target_index + 1]
+                                    + list(self.new_statements)
+                                    + body[target_index + 1 :]
+                                )
+                            self.inserted = True
+                            return updated_node.with_changes(
+                                body=cst.IndentedBlock(body=new_body)
                             )
-                        else:  # after
-                            body = (
-                                body[: target_index + 1]
-                                + list(self.new_statements)
-                                + body[target_index + 1 :]
-                            )
-                        self.inserted = True
-                        return updated_node.with_changes(
-                            body=cst.IndentedBlock(body=body)
-                        )
             return updated_node
 
+    # Get metadata for better error messages
+    target_metadata = tree.metadata_map.get(target_node_id)
+    parent_metadata = tree.metadata_map.get(parent_node_id)
+    target_type = target_metadata.type if target_metadata else "unknown"
+    parent_type = parent_metadata.type if parent_metadata else "unknown"
+    target_parent_id = target_metadata.parent_id if target_metadata else None
+    
     inserter = RelativeNodeInserter(target_node, parent_node, new_statements, position)
     result = module.visit(inserter)
     if not inserter.inserted:
+        # Provide detailed error message with context
+        suggestion = ""
+        if target_type == "SimpleStatementLine" and target_parent_id != parent_node_id:
+            suggestion = (
+                f" Hint: Target node's actual parent ({target_parent_id}) differs from "
+                f"specified parent ({parent_node_id}). "
+                f"Try using target_node_id without parent_node_id, or use the correct parent."
+            )
         raise ValueError(
-            f"Nodes were not inserted relative to target node {target_node_id} in parent {parent_node_id}"
+            f"Nodes were not inserted relative to target node {target_node_id} in parent {parent_node_id}. "
+            f"Target node type: {target_type}, Parent node type: {parent_type}.{suggestion}"
         )
     return result
 

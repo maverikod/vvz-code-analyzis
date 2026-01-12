@@ -63,6 +63,7 @@ This document defines rules for AI models on how to use the code analysis and re
 **Tree-based (multiple operations):**
 1. `cst_load_file` → load file into tree (get tree_id)
 2. `cst_find_node` → find nodes to modify (simple or XPath search)
+   - OR `cst_get_node_by_range` → get node_id by line range (when you know line numbers)
 3. `cst_get_node_info` (optional) → inspect node details
 4. `cst_modify_tree` → apply multiple operations atomically
    - Use `code_lines` (array) for multi-line code (RECOMMENDED)
@@ -284,6 +285,7 @@ python -m code_analysis.cli.server_manager_cli --config config.json restart
 **2. In-Memory Tree-based CST (better for multiple operations)** - **RECOMMENDED**:
 1. **Load**: Use `cst_load_file` to load file into tree (returns tree_id)
 2. **Explore**: Use `cst_find_node` to find nodes (simple or XPath search)
+   - OR `cst_get_node_by_range` to get node_id by line range (when you know line numbers)
 3. **Inspect**: Use `cst_get_node_info` to get node details (code, children, parent)
 4. **Modify**: Use `cst_modify_tree` to apply multiple operations atomically
    - **CRITICAL**: Use `code_lines` (array of strings) for multi-line code
@@ -700,6 +702,7 @@ result = mcp_MCP-Proxy-2_call_server(
 **CST Tree Commands (In-Memory Tree-based)** - **NEW**:
 - `cst_load_file` - Load Python file into in-memory CST tree (returns tree_id)
 - `cst_find_node` - Find nodes in loaded tree (simple or XPath search)
+- `cst_get_node_by_range` - Get node_id for a specific line range (useful when you know line numbers)
 - `cst_get_node_info` - Get detailed information about a node (with code, children, parent)
 - `cst_modify_tree` - Atomically modify tree in memory (replace, insert, delete operations)
 - `cst_save_tree` - Atomically save modified tree to file (with backup, validation, DB update)
@@ -1025,6 +1028,7 @@ load_result = mcp_MCP-Proxy-2_call_server(
 tree_id = load_result["result"]["data"]["tree_id"]
 
 # Step 2: Find nodes to modify (optional - can use node_id from load_result)
+# Option A: Find by search (XPath or simple)
 find_result = mcp_MCP-Proxy-2_call_server(
     server_id="code-analysis-server",
     command="cst_find_node",
@@ -1039,6 +1043,20 @@ find_result = mcp_MCP-Proxy-2_call_server(
     }
 )
 node_id = find_result["result"]["data"]["matches"][0]["node_id"]
+
+# Option B: Get node by line range (when you know line numbers)
+# range_result = mcp_MCP-Proxy-2_call_server(
+#     server_id="code-analysis-server",
+#     command="cst_get_node_by_range",
+#     params={
+#         "tree_id": tree_id,
+#         "start_line": 136,  # 1-based, inclusive
+#         "end_line": 143,    # 1-based, inclusive
+#         "prefer_exact": False,  # True: prefer exact match, False: smallest containing node
+#         "all_intersecting": False  # True: return all intersecting nodes, False: single best node
+#     }
+# )
+# node_id = range_result["result"]["data"]["node"]["node_id"]
 
 # Step 3: Get node information (optional - to see current code)
 node_info = mcp_MCP-Proxy-2_call_server(
@@ -1299,7 +1317,7 @@ mcp_MCP-Proxy-2_call_server(
    - Traditional: `list_cst_blocks` → get block IDs
 
 2. **Explore/Find**:
-   - Tree-based: `cst_find_node` → find nodes to modify
+   - Tree-based: `cst_find_node` → find nodes to modify (or `cst_get_node_by_range` if you know line numbers)
    - Traditional: `query_cst` → find specific nodes
 
 3. **Inspect** (optional but recommended):
@@ -1328,7 +1346,7 @@ mcp_MCP-Proxy-2_call_server(
   - **Tree-based**: `cst_load_file` → `cst_modify_tree` → `cst_save_tree` for multiple operations
 - ✅ **Use `code_lines` (array) for multi-line code** - avoids JSON escaping issues
 - ✅ **Use `list_cst_blocks` and `query_cst` to discover code structure before editing** (traditional)
-- ✅ **Use `cst_load_file` and `cst_find_node` to explore tree structure** (tree-based)
+- ✅ **Use `cst_load_file` and `cst_find_node` (or `cst_get_node_by_range`) to explore tree structure** (tree-based)
 - ✅ Preview changes with `apply=false` and `return_diff=true` before applying (traditional)
 - ✅ Use `cst_get_node_info` to inspect nodes before modifying (tree-based)
 - ✅ **For test projects: ONLY use server tools, NEVER direct file editing**
@@ -1379,6 +1397,7 @@ mcp_MCP-Proxy-2_call_server(
 **CST Workflow (Tree-based - for multiple operations)**:
 1. `cst_load_file` → load file into tree (get tree_id)
 2. `cst_find_node` → find nodes (simple or XPath search)
+   - OR `cst_get_node_by_range` → get node_id by line range (when you know line numbers)
 3. `cst_get_node_info` (optional) → inspect node details
 4. `cst_modify_tree` → apply multiple operations atomically
    - Use `code_lines` (array) for multi-line code (RECOMMENDED)

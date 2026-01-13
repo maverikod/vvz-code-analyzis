@@ -188,6 +188,7 @@ class TestDatabaseClientIntegrationRealData:
         try:
             # Load real project info
             project_info = load_project_info(VAST_SRV_DIR)
+            project_id = project_info.project_id
 
             # Begin transaction
             transaction_id = client.begin_transaction()
@@ -228,7 +229,6 @@ class TestDatabaseClientIntegrationRealData:
         try:
             # Load real project info
             project_info = load_project_info(VAST_SRV_DIR)
-            project_id = project_info.project_id
 
             # Create new table
             schema = {

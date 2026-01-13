@@ -1,6 +1,8 @@
 """
 CLI interface for configuration generator and validator.
 
+Based on mcp-proxy-adapter CLI with code_analysis specific extensions.
+
 Author: Vasiliy Zdanovskiy
 email: vasilyvz@gmail.com
 """
@@ -12,22 +14,6 @@ from typing import Optional
 
 from ..core.config_generator import CodeAnalysisConfigGenerator
 from ..core.config_validator import CodeAnalysisConfigValidator
-
-
-def _parse_bool(value: str) -> bool:
-    """Parse boolean value from string."""
-    if value.lower() in ("true", "1", "yes", "on"):
-        return True
-    if value.lower() in ("false", "0", "no", "off"):
-        return False
-    raise ValueError(f"Invalid boolean value: {value}")
-
-
-def _parse_optional_int(value: str) -> Optional[int]:
-    """Parse optional integer value from string."""
-    if not value or value.lower() == "none":
-        return None
-    return int(value)
 
 
 def cmd_generate(args: argparse.Namespace) -> int:
@@ -43,61 +29,74 @@ def cmd_generate(args: argparse.Namespace) -> int:
     try:
         generator = CodeAnalysisConfigGenerator()
 
-        # Parse boolean arguments
-        queue_enabled = _parse_bool(args.queue_enabled) if args.queue_enabled else True
-        queue_in_memory = (
-            _parse_bool(args.queue_in_memory) if args.queue_in_memory else True
-        )
-
-        # Parse optional integer arguments
-        server_port = (
-            _parse_optional_int(args.server_port) if args.server_port else None
-        )
-        registration_port = (
-            _parse_optional_int(args.registration_port)
-            if args.registration_port
-            else None
-        )
-        queue_max_concurrent = (
-            int(args.queue_max_concurrent) if args.queue_max_concurrent else 5
-        )
-        queue_retention_seconds = (
-            int(args.queue_retention_seconds) if args.queue_retention_seconds else 21600
-        )
-
         # Generate configuration
         config_path = generator.generate(
-            protocol=args.protocol or "mtls",
-            out_path=args.out or "config.json",
+            protocol=args.protocol,
+            with_proxy=args.with_proxy if hasattr(args, "with_proxy") else False,
+            out_path=args.out,
             # Server parameters
             server_host=args.server_host,
-            server_port=server_port,
+            server_port=args.server_port,
             server_cert_file=args.server_cert_file,
             server_key_file=args.server_key_file,
             server_ca_cert_file=args.server_ca_cert_file,
+            server_crl_file=args.server_crl_file,
+            server_debug=args.server_debug if hasattr(args, "server_debug") else None,
+            server_log_level=(
+                args.server_log_level if hasattr(args, "server_log_level") else None
+            ),
             server_log_dir=args.server_log_dir,
             # Registration parameters
             registration_host=args.registration_host,
-            registration_port=registration_port,
+            registration_port=args.registration_port,
             registration_protocol=args.registration_protocol,
             registration_cert_file=args.registration_cert_file,
             registration_key_file=args.registration_key_file,
             registration_ca_cert_file=args.registration_ca_cert_file,
+            registration_crl_file=args.registration_crl_file,
             registration_server_id=args.registration_server_id,
             registration_server_name=args.registration_server_name,
             instance_uuid=args.instance_uuid,
             # Queue manager parameters
-            queue_enabled=queue_enabled,
-            queue_in_memory=queue_in_memory,
-            queue_max_concurrent=queue_max_concurrent,
-            queue_retention_seconds=queue_retention_seconds,
+            queue_enabled=(
+                args.queue_enabled if hasattr(args, "queue_enabled") else None
+            ),
+            queue_in_memory=(
+                args.queue_in_memory if hasattr(args, "queue_in_memory") else None
+            ),
+            queue_max_concurrent=(
+                args.queue_max_concurrent
+                if hasattr(args, "queue_max_concurrent")
+                else None
+            ),
+            queue_retention_seconds=(
+                args.queue_retention_seconds
+                if hasattr(args, "queue_retention_seconds")
+                else None
+            ),
+            # Code analysis specific parameters
+            code_analysis_db_path=(
+                args.code_analysis_db_path
+                if hasattr(args, "code_analysis_db_path")
+                else None
+            ),
+            code_analysis_driver_type=(
+                args.code_analysis_driver_type
+                if hasattr(args, "code_analysis_driver_type")
+                else None
+            ),
+            code_analysis_driver_path=(
+                args.code_analysis_driver_path
+                if hasattr(args, "code_analysis_driver_path")
+                else None
+            ),
         )
 
         print(f"✅ Configuration generated: {config_path}")
 
         # Validate generated configuration
         print("🔍 Validating generated configuration...")
-        validator = CodeAnalysisConfigValidator(config_path)
+        validator = CodeAnalysisConfigValidator(str(config_path))
         validator.load_config()
         results = validator.validate_config()
         summary = validator.get_validation_summary()
@@ -118,7 +117,9 @@ def cmd_generate(args: argparse.Namespace) -> int:
                 print(f"\n❌ Validation failed: {summary['errors']} error(s)")
                 return 1
             else:
-                print(f"\n⚠️  Validation completed with {summary['warnings']} warning(s)")
+                print(
+                    f"\n⚠️  Validation completed with {summary['warnings']} warning(s)"
+                )
                 return 0
 
     except Exception as e:
@@ -140,7 +141,7 @@ def cmd_validate(args: argparse.Namespace) -> int:
         Exit code (0 on success, 1 on error).
     """
     try:
-        config_path = Path(args.config_path)
+        config_path = Path(args.file)
         if not config_path.exists():
             print(f"❌ Configuration file not found: {config_path}", file=sys.stderr)
             return 1
@@ -201,41 +202,70 @@ def main(argv: Optional[list[str]] = None) -> int:
     subparsers.required = True
 
     # Generate command
-    gen_parser = subparsers.add_parser("generate", help="Generate configuration file")
-    gen_parser.add_argument(
-        "--out",
-        type=str,
-        default="config.json",
-        help="Output file path (default: config.json)",
+    gen_parser = subparsers.add_parser(
+        "generate", help="Generate configuration file", aliases=["gen"]
     )
     gen_parser.add_argument(
         "--protocol",
         type=str,
         choices=["http", "https", "mtls"],
-        default="mtls",
-        help="Server protocol (default: mtls)",
+        required=True,
+        help="Server/proxy protocol",
+    )
+    gen_parser.add_argument(
+        "--out",
+        type=str,
+        default="config.json",
+        help="Output config path (default: config.json)",
+    )
+    gen_parser.add_argument(
+        "--with-proxy",
+        action="store_true",
+        help="Enable proxy registration",
     )
 
     # Server parameters
-    gen_parser.add_argument("--server-host", type=str, help="Server host")
     gen_parser.add_argument(
-        "--server-port", type=str, help="Server port (integer or 'none')"
+        "--server-host", type=str, help="Server host (default: 0.0.0.0)"
     )
-    gen_parser.add_argument("--server-cert-file", type=str, help="Server certificate file")
-    gen_parser.add_argument("--server-key-file", type=str, help="Server key file")
     gen_parser.add_argument(
-        "--server-ca-cert-file", type=str, help="Server CA certificate file"
+        "--server-port", type=int, help="Server port (default: 8080)"
     )
-    gen_parser.add_argument("--server-log-dir", type=str, help="Server log directory")
+    gen_parser.add_argument(
+        "--server-cert-file", type=str, help="Server certificate file path"
+    )
+    gen_parser.add_argument("--server-key-file", type=str, help="Server key file path")
+    gen_parser.add_argument(
+        "--server-ca-cert-file",
+        type=str,
+        help="Server CA certificate file path (required for mTLS protocol)",
+    )
+    gen_parser.add_argument("--server-crl-file", type=str, help="Server CRL file path")
+    gen_parser.add_argument(
+        "--server-debug", action="store_true", help="Enable debug mode (default: False)"
+    )
+    gen_parser.add_argument(
+        "--server-log-level",
+        type=str,
+        choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
+        help="Log level (default: INFO)",
+    )
+    gen_parser.add_argument(
+        "--server-log-dir",
+        type=str,
+        help="Log directory path (default: ./logs)",
+    )
 
     # Registration parameters
     gen_parser.add_argument(
-        "--registration-host", type=str, help="Registration proxy host"
+        "--registration-host",
+        type=str,
+        help="Registration proxy host (default: localhost)",
     )
     gen_parser.add_argument(
         "--registration-port",
-        type=str,
-        help="Registration proxy port (integer or 'none')",
+        type=int,
+        help="Registration proxy port (default: 3005)",
     )
     gen_parser.add_argument(
         "--registration-protocol",
@@ -244,39 +274,66 @@ def main(argv: Optional[list[str]] = None) -> int:
         help="Registration protocol",
     )
     gen_parser.add_argument(
-        "--registration-cert-file", type=str, help="Registration certificate file"
+        "--registration-cert-file",
+        type=str,
+        help="Registration certificate file path",
     )
     gen_parser.add_argument(
-        "--registration-key-file", type=str, help="Registration key file"
+        "--registration-key-file",
+        type=str,
+        help="Registration key file path",
     )
     gen_parser.add_argument(
-        "--registration-ca-cert-file", type=str, help="Registration CA certificate file"
+        "--registration-ca-cert-file",
+        type=str,
+        help="Registration CA certificate file path",
     )
     gen_parser.add_argument(
-        "--registration-server-id", type=str, help="Server ID for registration"
+        "--registration-crl-file",
+        type=str,
+        help="Registration CRL file path",
     )
     gen_parser.add_argument(
-        "--registration-server-name", type=str, help="Server name"
+        "--registration-server-id",
+        type=str,
+        help="Server ID for registration",
     )
     gen_parser.add_argument(
-        "--instance-uuid", type=str, help="Server instance UUID (UUID4)"
+        "--registration-server-name",
+        type=str,
+        help="Server name for registration",
+    )
+    gen_parser.add_argument(
+        "--instance-uuid",
+        type=str,
+        help="Server instance UUID (UUID4 format, auto-generated if not provided)",
     )
 
     # Queue manager parameters
     gen_parser.add_argument(
         "--queue-enabled",
-        type=str,
-        help="Enable queue manager (true/false, default: true)",
+        action="store_true",
+        help="Enable queue manager (default: True)",
+    )
+    gen_parser.add_argument(
+        "--queue-disabled",
+        action="store_true",
+        help="Disable queue manager",
     )
     gen_parser.add_argument(
         "--queue-in-memory",
-        type=str,
-        help="Use in-memory queue (true/false, default: true)",
+        action="store_true",
+        help="Use in-memory queue (default: True)",
+    )
+    gen_parser.add_argument(
+        "--queue-persistent",
+        action="store_true",
+        help="Use persistent queue (not in-memory)",
     )
     gen_parser.add_argument(
         "--queue-max-concurrent",
         type=int,
-        help="Maximum concurrent jobs (default: 5)",
+        help="Maximum concurrent jobs (default: 10)",
     )
     gen_parser.add_argument(
         "--queue-retention-seconds",
@@ -284,19 +341,59 @@ def main(argv: Optional[list[str]] = None) -> int:
         help="Completed job retention in seconds (default: 21600)",
     )
 
+    # Code analysis specific parameters
+    gen_parser.add_argument(
+        "--code-analysis-db-path",
+        type=str,
+        help="Database path for code_analysis section (default: data/code_analysis.db)",
+    )
+    gen_parser.add_argument(
+        "--code-analysis-driver-type",
+        type=str,
+        choices=["sqlite", "sqlite_proxy", "postgres", "mysql"],
+        help="Database driver type (default: sqlite_proxy)",
+    )
+    gen_parser.add_argument(
+        "--code-analysis-driver-path",
+        type=str,
+        help="Database path for driver config (default: same as --code-analysis-db-path)",
+    )
+
     gen_parser.set_defaults(func=cmd_generate)
 
     # Validate command
-    val_parser = subparsers.add_parser("validate", help="Validate configuration file")
+    val_parser = subparsers.add_parser(
+        "validate", help="Validate configuration file", aliases=["val"]
+    )
     val_parser.add_argument(
-        "config_path", type=str, help="Path to configuration file"
+        "--file",
+        type=str,
+        required=True,
+        help="Path to configuration file",
     )
     val_parser.set_defaults(func=cmd_validate)
 
     args = parser.parse_args(argv)
+
+    # Handle queue flags
+    if hasattr(args, "queue_enabled") and hasattr(args, "queue_disabled"):
+        if args.queue_disabled:
+            args.queue_enabled = False
+        elif args.queue_enabled:
+            args.queue_enabled = True
+        else:
+            args.queue_enabled = True  # default
+
+    if hasattr(args, "queue_in_memory") and hasattr(args, "queue_persistent"):
+        if args.queue_persistent:
+            args.queue_in_memory = False
+        elif args.queue_in_memory:
+            args.queue_in_memory = True
+        else:
+            args.queue_in_memory = True  # default
+
     return args.func(args)
 
 
 if __name__ == "__main__":
     sys.exit(main())
-

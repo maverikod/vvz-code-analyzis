@@ -2,6 +2,7 @@
 Configuration validator for code-analysis-server.
 
 Validates configuration files for compatibility with mcp-proxy-adapter.
+Based on SimpleConfigValidator from mcp-proxy-adapter with code_analysis specific extensions.
 
 Author: Vasiliy Zdanovskiy
 email: vasilyvz@gmail.com
@@ -12,6 +13,11 @@ import re
 import urllib.parse
 from pathlib import Path
 from typing import Dict, List, Any, Optional, Tuple
+
+from mcp_proxy_adapter.core.config.simple_config import SimpleConfig
+from mcp_proxy_adapter.core.config.simple_config_validator import (
+    SimpleConfigValidator,
+)
 
 
 class ValidationResult:
@@ -43,7 +49,12 @@ class ValidationResult:
 
 
 class CodeAnalysisConfigValidator:
-    """Validate configuration for code-analysis-server."""
+    """
+    Validate configuration for code-analysis-server.
+
+    Extends SimpleConfigValidator from mcp-proxy-adapter with code_analysis
+    specific validation (database.driver, code_analysis sections, etc.).
+    """
 
     def __init__(self, config_path: Optional[str] = None):
         """
@@ -55,6 +66,8 @@ class CodeAnalysisConfigValidator:
         self.config_path = config_path
         self.config_data: Dict[str, Any] = {}
         self.validation_results: List[ValidationResult] = []
+        # Base validator will be initialized when needed
+        self._base_validator: Optional[SimpleConfigValidator] = None
 
     def load_config(self, config_path: Optional[str] = None) -> None:
         """
@@ -85,6 +98,9 @@ class CodeAnalysisConfigValidator:
         """
         Validate configuration data.
 
+        Uses SimpleConfigValidator from mcp-proxy-adapter for base validation,
+        then adds code_analysis specific validations.
+
         Args:
             config_data: Configuration data to validate (optional)
 
@@ -99,7 +115,42 @@ class CodeAnalysisConfigValidator:
 
         self.validation_results = []
 
-        # Run all validations
+        # First, validate using base validator from mcp-proxy-adapter
+        if self.config_path:
+            try:
+                # Initialize base validator if not already done
+                if self._base_validator is None:
+                    self._base_validator = SimpleConfigValidator(self.config_path)
+
+                simple_config = SimpleConfig(self.config_path)
+                model = simple_config.load()
+                base_errors = self._base_validator.validate(model)
+
+                # Convert base validator errors to our ValidationResult format
+                for error in base_errors:
+                    self.validation_results.append(
+                        ValidationResult(
+                            level="error",
+                            message=str(error),
+                            section=getattr(error, "section", None),
+                            key=getattr(error, "key", None),
+                            suggestion=getattr(error, "suggestion", None),
+                        )
+                    )
+            except Exception as e:
+                # If base validation fails, add warning but continue with our validations
+                # This allows us to validate code_analysis specific sections even if base validation fails
+                self.validation_results.append(
+                    ValidationResult(
+                        level="warning",
+                        message=f"Base validation warning: {str(e)}",
+                        section=None,
+                        key=None,
+                        suggestion="Base validation skipped, continuing with code_analysis specific validations",
+                    )
+                )
+
+        # Run code_analysis specific validations
         self._validate_required_sections()
         self._validate_server_section()
         self._validate_registration_section()
@@ -532,7 +583,10 @@ class CodeAnalysisConfigValidator:
         else:
             # Validate driver-specific config requirements
             # Check driver_type only if it's valid (string and not empty)
-            if isinstance(driver_type, str) and driver_type in ("sqlite", "sqlite_proxy"):
+            if isinstance(driver_type, str) and driver_type in (
+                "sqlite",
+                "sqlite_proxy",
+            ):
                 if "path" not in driver_config:
                     self.validation_results.append(
                         ValidationResult(

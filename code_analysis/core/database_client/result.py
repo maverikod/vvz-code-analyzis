@@ -32,7 +32,7 @@ class Result(Generic[T]):
         error_details: Optional additional error details
 
     Examples:
-        >>> result = Result.success(data={"node_id": "123"})
+        >>> result = Result.create_success(data={"node_id": "123"})
         >>> if result.is_success():
         ...     print(result.data)
         >>> result = Result.error(
@@ -48,7 +48,7 @@ class Result(Generic[T]):
     error_details: Optional[Dict[str, Any]] = None
 
     @classmethod
-    def success(cls, data: Optional[T] = None) -> Result[T]:
+    def create_success(cls, data: Optional[T] = None) -> Result[T]:
         """Create a successful result.
 
         Args:

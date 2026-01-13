@@ -1005,6 +1005,259 @@ class WorkerManager:
             message=f"Vectorization worker started (PID {process.pid})",
         )
 
+    def start_database_driver(
+        self,
+        *,
+        driver_config: Dict[str, Any],
+        socket_path: Optional[str] = None,
+        log_path: Optional[str] = None,
+        queue_max_size: int = 1000,
+    ) -> WorkerStartResult:
+        """
+        Start database driver process in a separate process and register it.
+
+        The driver process runs the database driver (SQLite, PostgreSQL, etc.)
+        and provides RPC interface for database operations.
+
+        CRITICAL: Uses multiprocessing.Process, not threading.Thread or async.
+        This ensures workers don't conflict with Hypercorn's event loop.
+
+        Args:
+            driver_config: Driver configuration dict with 'type' and 'config' keys.
+            socket_path: Path to Unix socket for RPC communication (optional).
+                        If not provided, will be generated based on driver config.
+            log_path: Path to driver log file (optional).
+            queue_max_size: Maximum size of request queue (default: 1000).
+
+        Returns:
+            WorkerStartResult.
+        """
+        from .database_driver_pkg.runner import run_database_driver
+
+        driver_type = driver_config.get("type")
+        if not driver_type:
+            return WorkerStartResult(
+                success=False,
+                worker_type="database_driver",
+                pid=None,
+                message="Driver config missing 'type' field",
+            )
+
+        # Generate socket path if not provided
+        if not socket_path:
+            # Use driver config path to generate socket path
+            driver_cfg = driver_config.get("config", {})
+            db_path = driver_cfg.get("path")
+            if db_path:
+                # Generate socket path similar to db_worker_manager
+                db_name = Path(db_path).stem
+                socket_dir = Path("/tmp/code_analysis_db_drivers")
+                socket_dir.mkdir(parents=True, exist_ok=True)
+                socket_path = str(socket_dir / f"{db_name}_driver.sock")
+            else:
+                # Fallback to driver type
+                socket_dir = Path("/tmp/code_analysis_db_drivers")
+                socket_dir.mkdir(parents=True, exist_ok=True)
+                socket_path = str(socket_dir / f"{driver_type}_driver.sock")
+
+        # PID file check (before starting driver)
+        pid_file_path = Path("logs") / "database_driver.pid"
+        existing_pid = self._check_and_cleanup_pid_file(
+            pid_file_path, "database_driver", "database_driver"
+        )
+        if existing_pid is not None:
+            # Process is alive, driver already running
+            return WorkerStartResult(
+                success=False,
+                worker_type="database_driver",
+                pid=existing_pid,
+                message="Database driver already running",
+            )
+
+        # Create process (NOT thread, NOT async task)
+        process = multiprocessing.Process(
+            target=run_database_driver,
+            args=(driver_type, driver_config.get("config", {})),
+            kwargs={
+                "socket_path": socket_path,
+                "log_path": log_path,
+                "queue_max_size": queue_max_size,
+            },
+            daemon=False,  # NOT daemon - driver process should persist
+        )
+        process.start()
+
+        # Write PID file after driver starts
+        try:
+            pid_file_path.parent.mkdir(parents=True, exist_ok=True)
+            with open(pid_file_path, "w") as f:
+                f.write(str(process.pid))
+        except Exception as e:
+            logger.warning(f"Failed to write PID file: {e}")
+
+        # Wait a bit for driver to initialize socket
+        import time
+
+        time.sleep(0.5)
+
+        # Verify socket file exists
+        socket_file = Path(socket_path)
+        if not socket_file.exists():
+            # Wait a bit more for socket creation
+            time.sleep(0.5)
+            if not socket_file.exists():
+                logger.warning(
+                    f"Database driver socket not created: {socket_path}, but process started (PID: {process.pid})"
+                )
+
+        worker_name = f"database_driver_{driver_type}"
+        self.register_worker(
+            "database_driver",
+            {
+                "pid": process.pid,
+                "process": process,
+                "name": worker_name,
+                "driver_type": driver_type,
+                "socket_path": socket_path,
+                "restart_func": self.start_database_driver,
+                "restart_kwargs": {
+                    "driver_config": driver_config,
+                    "socket_path": socket_path,
+                    "log_path": log_path,
+                    "queue_max_size": queue_max_size,
+                },
+            },
+        )
+        return WorkerStartResult(
+            success=True,
+            worker_type="database_driver",
+            pid=process.pid,
+            message=f"Database driver started (PID {process.pid}, socket: {socket_path})",
+        )
+
+    def stop_database_driver(self, timeout: float = 10.0) -> Dict[str, Any]:
+        """
+        Stop database driver process.
+
+        Args:
+            timeout: Timeout in seconds for graceful shutdown.
+
+        Returns:
+            Dictionary with stop results.
+        """
+        return self.stop_worker_type("database_driver", timeout=timeout)
+
+    def restart_database_driver(
+        self,
+        *,
+        driver_config: Dict[str, Any],
+        socket_path: Optional[str] = None,
+        log_path: Optional[str] = None,
+        queue_max_size: int = 1000,
+        timeout: float = 10.0,
+    ) -> WorkerStartResult:
+        """
+        Restart database driver process.
+
+        Stops the existing driver (if running) and starts a new one.
+
+        Args:
+            driver_config: Driver configuration dict with 'type' and 'config' keys.
+            socket_path: Path to Unix socket for RPC communication (optional).
+            log_path: Path to driver log file (optional).
+            queue_max_size: Maximum size of request queue (default: 1000).
+            timeout: Timeout in seconds for graceful shutdown of old driver.
+
+        Returns:
+            WorkerStartResult.
+        """
+        # Stop existing driver
+        stop_result = self.stop_database_driver(timeout=timeout)
+        if stop_result.get("failed", 0) > 0:
+            logger.warning(
+                f"Some errors occurred while stopping database driver: {stop_result.get('errors', [])}"
+            )
+
+        # Wait a bit before starting new driver
+        import time
+
+        time.sleep(0.5)
+
+        # Start new driver
+        return self.start_database_driver(
+            driver_config=driver_config,
+            socket_path=socket_path,
+            log_path=log_path,
+            queue_max_size=queue_max_size,
+        )
+
+    def get_database_driver_status(self) -> Dict[str, Any]:
+        """
+        Get status of database driver process.
+
+        Returns:
+            Dictionary with driver status information.
+        """
+        with self._lock:
+            if "database_driver" not in self._workers:
+                return {
+                    "running": False,
+                    "pid": None,
+                    "socket_path": None,
+                    "driver_type": None,
+                    "message": "Database driver not running",
+                }
+
+            workers = self._workers["database_driver"]
+            if not workers:
+                return {
+                    "running": False,
+                    "pid": None,
+                    "socket_path": None,
+                    "driver_type": None,
+                    "message": "Database driver not running",
+                }
+
+            # Get first worker (should be only one)
+            worker_info = workers[0]
+            pid = worker_info.get("pid")
+            process = worker_info.get("process")
+            socket_path = worker_info.get("socket_path")
+            driver_type = worker_info.get("driver_type")
+
+            # Check if process is alive
+            is_alive = False
+            if process:
+                try:
+                    is_alive = process.is_alive()
+                except (ValueError, AssertionError):
+                    is_alive = False
+            elif pid:
+                try:
+                    import psutil
+
+                    proc = psutil.Process(pid)
+                    is_alive = proc.is_running()
+                except Exception:
+                    is_alive = False
+
+            # Check if socket exists
+            socket_exists = False
+            if socket_path:
+                socket_exists = Path(socket_path).exists()
+
+            return {
+                "running": is_alive,
+                "pid": pid,
+                "socket_path": socket_path,
+                "driver_type": driver_type,
+                "socket_exists": socket_exists,
+                "message": (
+                    f"Database driver {'running' if is_alive else 'not running'} "
+                    f"(PID: {pid}, socket: {socket_path})"
+                ),
+            }
+
 
 # Global instance access
 def get_worker_manager() -> WorkerManager:

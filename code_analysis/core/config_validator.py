@@ -852,13 +852,20 @@ class CodeAnalysisConfigValidator:
             return True  # None is allowed for optional fields
 
         if not isinstance(value, expected_type):
+            # Format expected type name for error message
+            if isinstance(expected_type, tuple):
+                type_names = [t.__name__ for t in expected_type]
+                expected_type_str = " or ".join(type_names)
+            else:
+                expected_type_str = expected_type.__name__
+
             self.validation_results.append(
                 ValidationResult(
                     level="error",
-                    message=f"Field '{section}.{key}' must be {expected_type.__name__}, got {type(value).__name__}",
+                    message=f"Field '{section}.{key}' must be {expected_type_str}, got {type(value).__name__}",
                     section=section,
                     key=key,
-                    suggestion=f"Change '{section}.{key}' to {expected_type.__name__} type",
+                    suggestion=f"Change '{section}.{key}' to {expected_type_str} type",
                 )
             )
             return False

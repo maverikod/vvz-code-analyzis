@@ -552,7 +552,7 @@ def get_driver_config(config: Dict[str, Any]) -> Optional[Dict[str, Any]]:
 
     # Try to get driver config from code_analysis.database.driver
     database = code_analysis.get("database", {})
-    if database:
+    if database and isinstance(database, dict):
         driver = database.get("driver")
         if driver and isinstance(driver, dict):
             driver_type = driver.get("type")

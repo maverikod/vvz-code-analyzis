@@ -11,18 +11,12 @@ email: vasilyvz@gmail.com
 import json
 import socket
 import struct
-import subprocess
 import threading
 import time
-from pathlib import Path
-
-import pytest
 
 from code_analysis.core.database_driver_pkg.driver_factory import create_driver
 from code_analysis.core.database_driver_pkg.request_queue import RequestQueue
-from code_analysis.core.database_driver_pkg.rpc_protocol import RPCRequest
 from code_analysis.core.database_driver_pkg.rpc_server import RPCServer
-from code_analysis.core.database_driver_pkg.runner import run_database_driver
 
 
 class TestDriverIntegrationRealServer:

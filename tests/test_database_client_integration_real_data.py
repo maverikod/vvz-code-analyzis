@@ -227,9 +227,6 @@ class TestDatabaseClientIntegrationRealData:
         client.connect()
 
         try:
-            # Load real project info
-            project_info = load_project_info(VAST_SRV_DIR)
-
             # Create new table
             schema = {
                 "name": "workflow_table",

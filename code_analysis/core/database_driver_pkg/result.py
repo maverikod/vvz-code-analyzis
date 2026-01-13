@@ -34,7 +34,7 @@ class BaseResult(ABC):
         Returns:
             Dictionary representation of result
         """
-        pass
+        raise NotImplementedError
 
     @classmethod
     @abstractmethod
@@ -47,7 +47,7 @@ class BaseResult(ABC):
         Returns:
             Result instance
         """
-        pass
+        raise NotImplementedError
 
     @abstractmethod
     def is_success(self) -> bool:
@@ -56,7 +56,7 @@ class BaseResult(ABC):
         Returns:
             True if result is successful, False otherwise
         """
-        pass
+        raise NotImplementedError
 
     @abstractmethod
     def is_error(self) -> bool:
@@ -65,7 +65,7 @@ class BaseResult(ABC):
         Returns:
             True if result is error, False otherwise
         """
-        pass
+        raise NotImplementedError
 
 
 @dataclass

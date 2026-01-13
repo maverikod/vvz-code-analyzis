@@ -31,7 +31,7 @@ class BaseRequest(ABC):
         Raises:
             ValueError: If request parameters are invalid
         """
-        pass
+        raise NotImplementedError
 
     @abstractmethod
     def to_dict(self) -> Dict[str, Any]:
@@ -40,7 +40,7 @@ class BaseRequest(ABC):
         Returns:
             Dictionary representation of request
         """
-        pass
+        raise NotImplementedError
 
     @classmethod
     @abstractmethod
@@ -53,7 +53,7 @@ class BaseRequest(ABC):
         Returns:
             Request instance
         """
-        pass
+        raise NotImplementedError
 
 
 @dataclass

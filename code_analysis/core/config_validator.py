@@ -509,7 +509,7 @@ class CodeAnalysisConfigValidator:
 
         # Validate config field
         driver_config = driver.get("config")
-        if not driver_config:
+        if driver_config is None:
             self.validation_results.append(
                 ValidationResult(
                     level="error",
@@ -531,7 +531,8 @@ class CodeAnalysisConfigValidator:
             )
         else:
             # Validate driver-specific config requirements
-            if driver_type in ("sqlite", "sqlite_proxy"):
+            # Check driver_type only if it's valid (string and not empty)
+            if isinstance(driver_type, str) and driver_type in ("sqlite", "sqlite_proxy"):
                 if "path" not in driver_config:
                     self.validation_results.append(
                         ValidationResult(

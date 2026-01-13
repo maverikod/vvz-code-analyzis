@@ -110,7 +110,9 @@ class SVOServiceConfig(BaseModel):
         default=None, description="Path to CRL file (optional for mTLS)"
     )
     retry_attempts: int = Field(
-        default_factory=lambda: get_settings().get("retry_attempts", DEFAULT_RETRY_ATTEMPTS),
+        default_factory=lambda: get_settings().get(
+            "retry_attempts", DEFAULT_RETRY_ATTEMPTS
+        ),
         description="Number of retry attempts on failure",
     )
     retry_delay: float = Field(
@@ -121,7 +123,8 @@ class SVOServiceConfig(BaseModel):
         default=None, description="Optional timeout for service requests (seconds)"
     )
     check_hostname: bool = Field(
-        default=False, description="Enable hostname verification for SSL/TLS connections (default: False)"
+        default=False,
+        description="Enable hostname verification for SSL/TLS connections (default: False)",
     )
 
     @field_validator("protocol")
@@ -196,11 +199,15 @@ class ServerConfig(BaseModel):
         description="Vector dimension for embeddings (required if using FAISS)",
     )
     min_chunk_length: int = Field(
-        default_factory=lambda: get_settings().get("min_chunk_length", DEFAULT_MIN_CHUNK_LENGTH),
+        default_factory=lambda: get_settings().get(
+            "min_chunk_length", DEFAULT_MIN_CHUNK_LENGTH
+        ),
         description="Minimum text length for chunking. Shorter texts are grouped by level.",
     )
     vectorization_retry_attempts: int = Field(
-        default_factory=lambda: get_settings().get("retry_attempts", DEFAULT_RETRY_ATTEMPTS),
+        default_factory=lambda: get_settings().get(
+            "retry_attempts", DEFAULT_RETRY_ATTEMPTS
+        ),
         description="Number of retry attempts for vectorization on failure",
     )
     vectorization_retry_delay: float = Field(
@@ -212,25 +219,45 @@ class ServerConfig(BaseModel):
             "enabled": True,
             "poll_interval": get_settings().get("poll_interval", DEFAULT_POLL_INTERVAL),
             "batch_size": get_settings().get("batch_size", DEFAULT_BATCH_SIZE),
-            "retry_attempts": get_settings().get("retry_attempts", DEFAULT_RETRY_ATTEMPTS),
+            "retry_attempts": get_settings().get(
+                "retry_attempts", DEFAULT_RETRY_ATTEMPTS
+            ),
             "retry_delay": get_settings().get("retry_delay", DEFAULT_RETRY_DELAY),
             "watch_dirs": [],
-            "dynamic_watch_file": get_settings().get("dynamic_watch_file", DEFAULT_DYNAMIC_WATCH_FILE),
-            "log_path": get_settings().get("vectorization_worker_log", DEFAULT_VECTORIZATION_WORKER_LOG),
+            "dynamic_watch_file": get_settings().get(
+                "dynamic_watch_file", DEFAULT_DYNAMIC_WATCH_FILE
+            ),
+            "log_path": get_settings().get(
+                "vectorization_worker_log", DEFAULT_VECTORIZATION_WORKER_LOG
+            ),
             "log_rotation": {
                 "max_bytes": get_settings().get("log_max_bytes", DEFAULT_LOG_MAX_BYTES),
-                "backup_count": get_settings().get("log_backup_count", DEFAULT_LOG_BACKUP_COUNT),
+                "backup_count": get_settings().get(
+                    "log_backup_count", DEFAULT_LOG_BACKUP_COUNT
+                ),
             },
             "circuit_breaker": {
-                "failure_threshold": get_settings().get("failure_threshold", DEFAULT_FAILURE_THRESHOLD),
-                "recovery_timeout": get_settings().get("recovery_timeout", DEFAULT_RECOVERY_TIMEOUT),
-                "success_threshold": get_settings().get("success_threshold", DEFAULT_SUCCESS_THRESHOLD),
-                "initial_backoff": get_settings().get("initial_backoff", DEFAULT_INITIAL_BACKOFF),
+                "failure_threshold": get_settings().get(
+                    "failure_threshold", DEFAULT_FAILURE_THRESHOLD
+                ),
+                "recovery_timeout": get_settings().get(
+                    "recovery_timeout", DEFAULT_RECOVERY_TIMEOUT
+                ),
+                "success_threshold": get_settings().get(
+                    "success_threshold", DEFAULT_SUCCESS_THRESHOLD
+                ),
+                "initial_backoff": get_settings().get(
+                    "initial_backoff", DEFAULT_INITIAL_BACKOFF
+                ),
                 "max_backoff": get_settings().get("max_backoff", DEFAULT_MAX_BACKOFF),
-                "backoff_multiplier": get_settings().get("backoff_multiplier", DEFAULT_BACKOFF_MULTIPLIER),
+                "backoff_multiplier": get_settings().get(
+                    "backoff_multiplier", DEFAULT_BACKOFF_MULTIPLIER
+                ),
             },
             "batch_processor": {
-                "max_empty_iterations": get_settings().get("max_empty_iterations", DEFAULT_MAX_EMPTY_ITERATIONS),
+                "max_empty_iterations": get_settings().get(
+                    "max_empty_iterations", DEFAULT_MAX_EMPTY_ITERATIONS
+                ),
                 "empty_delay": get_settings().get("empty_delay", DEFAULT_EMPTY_DELAY),
             },
         },
@@ -242,14 +269,22 @@ class ServerConfig(BaseModel):
             "scan_interval": get_settings().get("scan_interval", DEFAULT_SCAN_INTERVAL),
             # lock_file_name removed: locks are now stored in locks_dir (service state directory)
             # See Step 4 of REFACTOR_MULTI_PROJECT_INDEXING_PLAN.md
-            "log_path": get_settings().get("file_watcher_log", DEFAULT_FILE_WATCHER_LOG),
+            "log_path": get_settings().get(
+                "file_watcher_log", DEFAULT_FILE_WATCHER_LOG
+            ),
             "log_rotation": {
                 "max_bytes": get_settings().get("log_max_bytes", DEFAULT_LOG_MAX_BYTES),
-                "backup_count": get_settings().get("log_backup_count", DEFAULT_LOG_BACKUP_COUNT),
+                "backup_count": get_settings().get(
+                    "log_backup_count", DEFAULT_LOG_BACKUP_COUNT
+                ),
             },
             "version_dir": get_settings().get("versions_dir_name", VERSIONS_DIR_NAME),
-            "max_scan_duration": get_settings().get("max_scan_duration", DEFAULT_MAX_SCAN_DURATION),
-            "ignore_patterns": get_settings().get("file_watcher_ignore_patterns", FILE_WATCHER_IGNORE_PATTERNS),
+            "max_scan_duration": get_settings().get(
+                "max_scan_duration", DEFAULT_MAX_SCAN_DURATION
+            ),
+            "ignore_patterns": get_settings().get(
+                "file_watcher_ignore_patterns", FILE_WATCHER_IGNORE_PATTERNS
+            ),
         },
         description="File watcher worker configuration",
     )
@@ -496,3 +531,45 @@ def save_config(config: Dict[str, Any], config_path: Path) -> None:
     config_path.parent.mkdir(parents=True, exist_ok=True)
     with open(config_path, "w", encoding="utf-8") as f:
         json.dump(config, f, indent=2, ensure_ascii=False)
+
+
+def get_driver_config(config: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """
+    Extract database driver configuration from full config.
+
+    Looks for driver config in code_analysis.database.driver section.
+    If not found, falls back to creating config from code_analysis.db_path.
+
+    Args:
+        config: Full configuration dictionary
+
+    Returns:
+        Driver configuration dict with 'type' and 'config' keys, or None if not found
+    """
+    code_analysis = config.get("code_analysis", {})
+    if not code_analysis:
+        return None
+
+    # Try to get driver config from code_analysis.database.driver
+    database = code_analysis.get("database", {})
+    if database:
+        driver = database.get("driver")
+        if driver and isinstance(driver, dict):
+            driver_type = driver.get("type")
+            driver_config = driver.get("config", {})
+            if driver_type and driver_config:
+                return {
+                    "type": driver_type,
+                    "config": driver_config,
+                }
+
+    # Fallback: create driver config from db_path (backward compatibility)
+    db_path = code_analysis.get("db_path")
+    if db_path:
+        from .database.base import create_driver_config_for_worker
+
+        return create_driver_config_for_worker(
+            Path(db_path), driver_type="sqlite_proxy"
+        )
+
+    return None

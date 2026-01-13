@@ -5,8 +5,6 @@ Author: Vasiliy Zdanovskiy
 email: vasilyvz@gmail.com
 """
 
-import pytest
-
 from code_analysis.core.database_client.result import Result
 from code_analysis.core.database_driver_pkg.rpc_protocol import ErrorCode
 
@@ -16,7 +14,7 @@ class TestResult:
 
     def test_create_success(self):
         """Test creating successful result."""
-        result = Result.success(data={"node_id": "123"})
+        result = Result.create_success(data={"node_id": "123"})
         assert result.success is True
         assert result.data == {"node_id": "123"}
         assert result.is_success()
@@ -24,7 +22,7 @@ class TestResult:
 
     def test_create_success_no_data(self):
         """Test creating successful result without data."""
-        result = Result.success()
+        result = Result.create_success()
         assert result.success is True
         assert result.data is None
         assert result.is_success()
@@ -53,7 +51,7 @@ class TestResult:
 
     def test_to_dict_success(self):
         """Test converting successful result to dictionary."""
-        result = Result.success(data={"node_id": "123"})
+        result = Result.create_success(data={"node_id": "123"})
         data = result.to_dict()
         assert data["success"] is True
         assert data["data"] == {"node_id": "123"}
@@ -96,7 +94,7 @@ class TestResult:
 
     def test_round_trip_serialization(self):
         """Test round-trip serialization."""
-        original = Result.success(data={"node_id": "123", "name": "test"})
+        original = Result.create_success(data={"node_id": "123", "name": "test"})
         data = original.to_dict()
         restored = Result.from_dict(data)
         assert restored.success == original.success

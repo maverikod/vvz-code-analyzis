@@ -603,16 +603,39 @@ def main() -> None:
                     from code_analysis.core.database.base import (
                         create_driver_config_for_worker,
                     )
+                    from code_analysis.core.config import get_driver_config
 
                     # Ensure parent directory exists
                     db_path_obj.parent.mkdir(parents=True, exist_ok=True)
 
+                    # Try to get driver config from config file
+                    driver_config = None
+                    try:
+                        driver_config = get_driver_config(full_config)
+                    except Exception as e:
+                        logger.debug(f"Could not get driver config from config: {e}")
+
+                    # Fallback to creating driver config from db_path
+                    if not driver_config:
+                        driver_config = create_driver_config_for_worker(
+                            db_path=db_path_obj,
+                            driver_type="sqlite_proxy",
+                            backup_dir=storage.backup_dir,
+                        )
+                    else:
+                        # Ensure path in driver config matches db_path
+                        if (
+                            "config" in driver_config
+                            and "path" in driver_config["config"]
+                        ):
+                            driver_config["config"]["path"] = str(db_path_obj)
+                        # Add backup_dir if provided
+                        if storage.backup_dir and "config" in driver_config:
+                            driver_config["config"]["backup_dir"] = str(
+                                storage.backup_dir
+                            )
+
                     # Create database connection (will automatically create schema)
-                    driver_config = create_driver_config_for_worker(
-                        db_path=db_path_obj,
-                        driver_type="sqlite_proxy",
-                        backup_dir=storage.backup_dir,
-                    )
                     init_database = CodeDatabase(driver_config=driver_config)
                     init_database.close()
                     logger.info(f"Created new database at {db_path}")
@@ -786,10 +809,12 @@ def main() -> None:
                     )
                     continue
                 # Use normalized absolute path
-                valid_watch_dirs.append({
-                    "id": watch_dir_id,
-                    "path": str(watch_dir_path),
-                })
+                valid_watch_dirs.append(
+                    {
+                        "id": watch_dir_id,
+                        "path": str(watch_dir_path),
+                    }
+                )
 
             if not valid_watch_dirs:
                 logger.warning(

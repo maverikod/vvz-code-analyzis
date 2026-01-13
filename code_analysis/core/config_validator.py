@@ -105,6 +105,7 @@ class CodeAnalysisConfigValidator:
         self._validate_registration_section()
         self._validate_queue_manager_section()
         self._validate_code_analysis_section()
+        self._validate_database_driver_section()
         self._validate_file_existence()
         self._validate_protocol_consistency()
         self._validate_uuid_format()
@@ -443,6 +444,170 @@ class CodeAnalysisConfigValidator:
                         )
                     )
 
+    def _validate_database_driver_section(self) -> None:
+        """Validate code_analysis.database.driver section."""
+        code_analysis = self.config_data.get("code_analysis", {})
+        if not code_analysis:
+            return
+
+        database = code_analysis.get("database", {})
+        if not database:
+            return
+
+        driver = database.get("driver")
+        if not driver:
+            return
+
+        # Validate driver is a dict
+        if not isinstance(driver, dict):
+            self.validation_results.append(
+                ValidationResult(
+                    level="error",
+                    message="code_analysis.database.driver must be a dictionary",
+                    section="code_analysis",
+                    key="database.driver",
+                    suggestion="Set database.driver to a dictionary with 'type' and 'config' keys",
+                )
+            )
+            return
+
+        # Validate required fields
+        driver_type = driver.get("type")
+        if not driver_type:
+            self.validation_results.append(
+                ValidationResult(
+                    level="error",
+                    message="code_analysis.database.driver.type is required",
+                    section="code_analysis",
+                    key="database.driver.type",
+                    suggestion="Add 'type' field to database.driver (e.g., 'sqlite_proxy', 'sqlite')",
+                )
+            )
+        elif not isinstance(driver_type, str):
+            self.validation_results.append(
+                ValidationResult(
+                    level="error",
+                    message=f"code_analysis.database.driver.type must be string, got {type(driver_type).__name__}",
+                    section="code_analysis",
+                    key="database.driver.type",
+                    suggestion="Set database.driver.type to a string value",
+                )
+            )
+        else:
+            # Validate driver type is supported
+            valid_driver_types = ["sqlite", "sqlite_proxy", "postgres", "mysql"]
+            if driver_type not in valid_driver_types:
+                self.validation_results.append(
+                    ValidationResult(
+                        level="error",
+                        message=f"code_analysis.database.driver.type '{driver_type}' is not supported. Valid types: {', '.join(valid_driver_types)}",
+                        section="code_analysis",
+                        key="database.driver.type",
+                        suggestion=f"Use one of: {', '.join(valid_driver_types)}",
+                    )
+                )
+
+        # Validate config field
+        driver_config = driver.get("config")
+        if not driver_config:
+            self.validation_results.append(
+                ValidationResult(
+                    level="error",
+                    message="code_analysis.database.driver.config is required",
+                    section="code_analysis",
+                    key="database.driver.config",
+                    suggestion="Add 'config' field to database.driver with driver-specific configuration",
+                )
+            )
+        elif not isinstance(driver_config, dict):
+            self.validation_results.append(
+                ValidationResult(
+                    level="error",
+                    message=f"code_analysis.database.driver.config must be dictionary, got {type(driver_config).__name__}",
+                    section="code_analysis",
+                    key="database.driver.config",
+                    suggestion="Set database.driver.config to a dictionary",
+                )
+            )
+        else:
+            # Validate driver-specific config requirements
+            if driver_type in ("sqlite", "sqlite_proxy"):
+                if "path" not in driver_config:
+                    self.validation_results.append(
+                        ValidationResult(
+                            level="error",
+                            message="code_analysis.database.driver.config.path is required for sqlite/sqlite_proxy driver",
+                            section="code_analysis",
+                            key="database.driver.config.path",
+                            suggestion="Add 'path' field to database.driver.config with database file path",
+                        )
+                    )
+                elif driver_config.get("path") and isinstance(
+                    driver_config.get("path"), str
+                ):
+                    # Validate path format (should be a valid path string)
+                    path_str = driver_config["path"]
+                    if not path_str.strip():
+                        self.validation_results.append(
+                            ValidationResult(
+                                level="error",
+                                message="code_analysis.database.driver.config.path cannot be empty",
+                                section="code_analysis",
+                                key="database.driver.config.path",
+                                suggestion="Set database.driver.config.path to a non-empty path string",
+                            )
+                        )
+
+            # Validate worker_config for sqlite_proxy
+            if driver_type == "sqlite_proxy":
+                worker_config = driver_config.get("worker_config")
+                if worker_config and isinstance(worker_config, dict):
+                    command_timeout = worker_config.get("command_timeout")
+                    if command_timeout is not None:
+                        if not isinstance(command_timeout, (int, float)):
+                            self.validation_results.append(
+                                ValidationResult(
+                                    level="error",
+                                    message="code_analysis.database.driver.config.worker_config.command_timeout must be number",
+                                    section="code_analysis",
+                                    key="database.driver.config.worker_config.command_timeout",
+                                    suggestion="Set command_timeout to a number",
+                                )
+                            )
+                        elif command_timeout <= 0:
+                            self.validation_results.append(
+                                ValidationResult(
+                                    level="error",
+                                    message="code_analysis.database.driver.config.worker_config.command_timeout must be > 0",
+                                    section="code_analysis",
+                                    key="database.driver.config.worker_config.command_timeout",
+                                    suggestion="Set command_timeout to a positive value",
+                                )
+                            )
+
+                    poll_interval = worker_config.get("poll_interval")
+                    if poll_interval is not None:
+                        if not isinstance(poll_interval, (int, float)):
+                            self.validation_results.append(
+                                ValidationResult(
+                                    level="error",
+                                    message="code_analysis.database.driver.config.worker_config.poll_interval must be number",
+                                    section="code_analysis",
+                                    key="database.driver.config.worker_config.poll_interval",
+                                    suggestion="Set poll_interval to a number",
+                                )
+                            )
+                        elif poll_interval <= 0:
+                            self.validation_results.append(
+                                ValidationResult(
+                                    level="error",
+                                    message="code_analysis.database.driver.config.worker_config.poll_interval must be > 0",
+                                    section="code_analysis",
+                                    key="database.driver.config.worker_config.poll_interval",
+                                    suggestion="Set poll_interval to a positive value",
+                                )
+                            )
+
     def _validate_file_existence(self) -> None:
         """Validate that referenced files exist."""
         if not self.config_path:
@@ -531,6 +696,46 @@ class CodeAnalysisConfigValidator:
                                     suggestion=f"Ensure file exists at {file_path}",
                                 )
                             )
+
+            # Check database driver config files
+            database = code_analysis.get("database", {})
+            if database:
+                driver = database.get("driver", {})
+                if driver and isinstance(driver, dict):
+                    driver_config = driver.get("config", {})
+                    if driver_config and isinstance(driver_config, dict):
+                        # Check database path (for sqlite/sqlite_proxy)
+                        db_path = driver_config.get("path")
+                        if db_path and isinstance(db_path, str):
+                            file_path = Path(db_path)
+                            if not file_path.is_absolute():
+                                file_path = config_dir / file_path
+                            # Note: database file may not exist yet (will be created on first use)
+                            # So we only check if parent directory exists
+                            if (
+                                file_path.parent.exists()
+                                and not file_path.parent.is_dir()
+                            ):
+                                self.validation_results.append(
+                                    ValidationResult(
+                                        level="error",
+                                        message=f"Database path parent is not a directory: {db_path}",
+                                        section="code_analysis",
+                                        key="database.driver.config.path",
+                                        suggestion=f"Ensure parent directory exists and is a directory: {file_path.parent}",
+                                    )
+                                )
+                            elif not file_path.parent.exists():
+                                # This is a warning, not an error, as parent dir will be created
+                                self.validation_results.append(
+                                    ValidationResult(
+                                        level="warning",
+                                        message=f"Database path parent directory does not exist: {file_path.parent}",
+                                        section="code_analysis",
+                                        key="database.driver.config.path",
+                                        suggestion=f"Parent directory will be created automatically: {file_path.parent}",
+                                    )
+                                )
 
     def _validate_protocol_consistency(self) -> None:
         """Validate protocol consistency across sections."""
@@ -640,98 +845,357 @@ class CodeAnalysisConfigValidator:
             self._validate_field_type("server", "host", server.get("host"), str)
             self._validate_field_type("server", "port", server.get("port"), int)
             self._validate_field_type("server", "protocol", server.get("protocol"), str)
-            self._validate_field_type("server", "servername", server.get("servername"), str)
-            self._validate_field_type("server", "advertised_host", server.get("advertised_host"), str)
+            self._validate_field_type(
+                "server", "servername", server.get("servername"), str
+            )
+            self._validate_field_type(
+                "server", "advertised_host", server.get("advertised_host"), str
+            )
             self._validate_field_type("server", "debug", server.get("debug"), bool)
-            self._validate_field_type("server", "log_level", server.get("log_level"), str)
+            self._validate_field_type(
+                "server", "log_level", server.get("log_level"), str
+            )
             self._validate_field_type("server", "log_dir", server.get("log_dir"), str)
 
             # Server SSL
             ssl = server.get("ssl")
             if ssl and isinstance(ssl, dict):
-                self._validate_field_type("server", "ssl.cert", ssl.get("cert"), (str, type(None)))
-                self._validate_field_type("server", "ssl.key", ssl.get("key"), (str, type(None)))
-                self._validate_field_type("server", "ssl.ca", ssl.get("ca"), (str, type(None)))
-                self._validate_field_type("server", "ssl.crl", ssl.get("crl"), (str, type(None)))
-                self._validate_field_type("server", "ssl.dnscheck", ssl.get("dnscheck"), bool)
-                self._validate_field_type("server", "ssl.check_hostname", ssl.get("check_hostname"), bool)
+                self._validate_field_type(
+                    "server", "ssl.cert", ssl.get("cert"), (str, type(None))
+                )
+                self._validate_field_type(
+                    "server", "ssl.key", ssl.get("key"), (str, type(None))
+                )
+                self._validate_field_type(
+                    "server", "ssl.ca", ssl.get("ca"), (str, type(None))
+                )
+                self._validate_field_type(
+                    "server", "ssl.crl", ssl.get("crl"), (str, type(None))
+                )
+                self._validate_field_type(
+                    "server", "ssl.dnscheck", ssl.get("dnscheck"), bool
+                )
+                self._validate_field_type(
+                    "server", "ssl.check_hostname", ssl.get("check_hostname"), bool
+                )
 
         # Registration section
         registration = self.config_data.get("registration", {})
         if registration:
-            self._validate_field_type("registration", "enabled", registration.get("enabled"), bool)
-            self._validate_field_type("registration", "protocol", registration.get("protocol"), str)
-            self._validate_field_type("registration", "register_url", registration.get("register_url"), str)
-            self._validate_field_type("registration", "unregister_url", registration.get("unregister_url"), str)
-            self._validate_field_type("registration", "heartbeat_interval", registration.get("heartbeat_interval"), int)
-            self._validate_field_type("registration", "server_id", registration.get("server_id"), str)
-            self._validate_field_type("registration", "server_name", registration.get("server_name"), str)
-            self._validate_field_type("registration", "instance_uuid", registration.get("instance_uuid"), str)
-            self._validate_field_type("registration", "auto_on_startup", registration.get("auto_on_startup"), bool)
-            self._validate_field_type("registration", "auto_on_shutdown", registration.get("auto_on_shutdown"), bool)
+            self._validate_field_type(
+                "registration", "enabled", registration.get("enabled"), bool
+            )
+            self._validate_field_type(
+                "registration", "protocol", registration.get("protocol"), str
+            )
+            self._validate_field_type(
+                "registration", "register_url", registration.get("register_url"), str
+            )
+            self._validate_field_type(
+                "registration",
+                "unregister_url",
+                registration.get("unregister_url"),
+                str,
+            )
+            self._validate_field_type(
+                "registration",
+                "heartbeat_interval",
+                registration.get("heartbeat_interval"),
+                int,
+            )
+            self._validate_field_type(
+                "registration", "server_id", registration.get("server_id"), str
+            )
+            self._validate_field_type(
+                "registration", "server_name", registration.get("server_name"), str
+            )
+            self._validate_field_type(
+                "registration", "instance_uuid", registration.get("instance_uuid"), str
+            )
+            self._validate_field_type(
+                "registration",
+                "auto_on_startup",
+                registration.get("auto_on_startup"),
+                bool,
+            )
+            self._validate_field_type(
+                "registration",
+                "auto_on_shutdown",
+                registration.get("auto_on_shutdown"),
+                bool,
+            )
 
             # Registration SSL
             reg_ssl = registration.get("ssl")
             if reg_ssl and isinstance(reg_ssl, dict):
-                self._validate_field_type("registration", "ssl.cert", reg_ssl.get("cert"), (str, type(None)))
-                self._validate_field_type("registration", "ssl.key", reg_ssl.get("key"), (str, type(None)))
-                self._validate_field_type("registration", "ssl.ca", reg_ssl.get("ca"), (str, type(None)))
-                self._validate_field_type("registration", "ssl.crl", reg_ssl.get("crl"), (str, type(None)))
-                self._validate_field_type("registration", "ssl.dnscheck", reg_ssl.get("dnscheck"), bool)
-                self._validate_field_type("registration", "ssl.check_hostname", reg_ssl.get("check_hostname"), bool)
+                self._validate_field_type(
+                    "registration", "ssl.cert", reg_ssl.get("cert"), (str, type(None))
+                )
+                self._validate_field_type(
+                    "registration", "ssl.key", reg_ssl.get("key"), (str, type(None))
+                )
+                self._validate_field_type(
+                    "registration", "ssl.ca", reg_ssl.get("ca"), (str, type(None))
+                )
+                self._validate_field_type(
+                    "registration", "ssl.crl", reg_ssl.get("crl"), (str, type(None))
+                )
+                self._validate_field_type(
+                    "registration", "ssl.dnscheck", reg_ssl.get("dnscheck"), bool
+                )
+                self._validate_field_type(
+                    "registration",
+                    "ssl.check_hostname",
+                    reg_ssl.get("check_hostname"),
+                    bool,
+                )
 
         # Queue manager section
         queue_manager = self.config_data.get("queue_manager", {})
         if queue_manager:
-            self._validate_field_type("queue_manager", "enabled", queue_manager.get("enabled"), bool)
-            self._validate_field_type("queue_manager", "in_memory", queue_manager.get("in_memory"), bool)
-            self._validate_field_type("queue_manager", "shutdown_timeout", queue_manager.get("shutdown_timeout"), (int, float))
-            self._validate_field_type("queue_manager", "max_concurrent_jobs", queue_manager.get("max_concurrent_jobs"), int)
-            self._validate_field_type("queue_manager", "max_queue_size", queue_manager.get("max_queue_size"), (int, type(None)))
-            self._validate_field_type("queue_manager", "completed_job_retention_seconds", queue_manager.get("completed_job_retention_seconds"), int)
+            self._validate_field_type(
+                "queue_manager", "enabled", queue_manager.get("enabled"), bool
+            )
+            self._validate_field_type(
+                "queue_manager", "in_memory", queue_manager.get("in_memory"), bool
+            )
+            self._validate_field_type(
+                "queue_manager",
+                "shutdown_timeout",
+                queue_manager.get("shutdown_timeout"),
+                (int, float),
+            )
+            self._validate_field_type(
+                "queue_manager",
+                "max_concurrent_jobs",
+                queue_manager.get("max_concurrent_jobs"),
+                int,
+            )
+            self._validate_field_type(
+                "queue_manager",
+                "max_queue_size",
+                queue_manager.get("max_queue_size"),
+                (int, type(None)),
+            )
+            self._validate_field_type(
+                "queue_manager",
+                "completed_job_retention_seconds",
+                queue_manager.get("completed_job_retention_seconds"),
+                int,
+            )
 
         # Code analysis section
         code_analysis = self.config_data.get("code_analysis", {})
         if code_analysis:
-            self._validate_field_type("code_analysis", "host", code_analysis.get("host"), str)
-            self._validate_field_type("code_analysis", "port", code_analysis.get("port"), int)
-            self._validate_field_type("code_analysis", "log", code_analysis.get("log"), str)
-            self._validate_field_type("code_analysis", "db_path", code_analysis.get("db_path"), str)
-            self._validate_field_type("code_analysis", "faiss_index_path", code_analysis.get("faiss_index_path"), str)
-            self._validate_field_type("code_analysis", "vector_dim", code_analysis.get("vector_dim"), int)
-            self._validate_field_type("code_analysis", "min_chunk_length", code_analysis.get("min_chunk_length"), int)
-            self._validate_field_type("code_analysis", "vectorization_retry_attempts", code_analysis.get("vectorization_retry_attempts"), int)
-            self._validate_field_type("code_analysis", "vectorization_retry_delay", code_analysis.get("vectorization_retry_delay"), (int, float))
+            self._validate_field_type(
+                "code_analysis", "host", code_analysis.get("host"), str
+            )
+            self._validate_field_type(
+                "code_analysis", "port", code_analysis.get("port"), int
+            )
+            self._validate_field_type(
+                "code_analysis", "log", code_analysis.get("log"), str
+            )
+            self._validate_field_type(
+                "code_analysis", "db_path", code_analysis.get("db_path"), str
+            )
+            self._validate_field_type(
+                "code_analysis",
+                "faiss_index_path",
+                code_analysis.get("faiss_index_path"),
+                str,
+            )
+            self._validate_field_type(
+                "code_analysis", "vector_dim", code_analysis.get("vector_dim"), int
+            )
+            self._validate_field_type(
+                "code_analysis",
+                "min_chunk_length",
+                code_analysis.get("min_chunk_length"),
+                int,
+            )
+            self._validate_field_type(
+                "code_analysis",
+                "vectorization_retry_attempts",
+                code_analysis.get("vectorization_retry_attempts"),
+                int,
+            )
+            self._validate_field_type(
+                "code_analysis",
+                "vectorization_retry_delay",
+                code_analysis.get("vectorization_retry_delay"),
+                (int, float),
+            )
 
             # Chunker section
             chunker = code_analysis.get("chunker", {})
             if chunker and isinstance(chunker, dict):
-                self._validate_field_type("code_analysis", "chunker.enabled", chunker.get("enabled"), bool)
-                self._validate_field_type("code_analysis", "chunker.url", chunker.get("url"), str)
-                self._validate_field_type("code_analysis", "chunker.port", chunker.get("port"), int)
-                self._validate_field_type("code_analysis", "chunker.protocol", chunker.get("protocol"), str)
-                self._validate_field_type("code_analysis", "chunker.cert_file", chunker.get("cert_file"), (str, type(None)))
-                self._validate_field_type("code_analysis", "chunker.key_file", chunker.get("key_file"), (str, type(None)))
-                self._validate_field_type("code_analysis", "chunker.ca_cert_file", chunker.get("ca_cert_file"), (str, type(None)))
-                self._validate_field_type("code_analysis", "chunker.crl_file", chunker.get("crl_file"), (str, type(None)))
-                self._validate_field_type("code_analysis", "chunker.retry_attempts", chunker.get("retry_attempts"), int)
-                self._validate_field_type("code_analysis", "chunker.retry_delay", chunker.get("retry_delay"), (int, float))
-                self._validate_field_type("code_analysis", "chunker.timeout", chunker.get("timeout"), (int, float, type(None)))
+                self._validate_field_type(
+                    "code_analysis", "chunker.enabled", chunker.get("enabled"), bool
+                )
+                self._validate_field_type(
+                    "code_analysis", "chunker.url", chunker.get("url"), str
+                )
+                self._validate_field_type(
+                    "code_analysis", "chunker.port", chunker.get("port"), int
+                )
+                self._validate_field_type(
+                    "code_analysis", "chunker.protocol", chunker.get("protocol"), str
+                )
+                self._validate_field_type(
+                    "code_analysis",
+                    "chunker.cert_file",
+                    chunker.get("cert_file"),
+                    (str, type(None)),
+                )
+                self._validate_field_type(
+                    "code_analysis",
+                    "chunker.key_file",
+                    chunker.get("key_file"),
+                    (str, type(None)),
+                )
+                self._validate_field_type(
+                    "code_analysis",
+                    "chunker.ca_cert_file",
+                    chunker.get("ca_cert_file"),
+                    (str, type(None)),
+                )
+                self._validate_field_type(
+                    "code_analysis",
+                    "chunker.crl_file",
+                    chunker.get("crl_file"),
+                    (str, type(None)),
+                )
+                self._validate_field_type(
+                    "code_analysis",
+                    "chunker.retry_attempts",
+                    chunker.get("retry_attempts"),
+                    int,
+                )
+                self._validate_field_type(
+                    "code_analysis",
+                    "chunker.retry_delay",
+                    chunker.get("retry_delay"),
+                    (int, float),
+                )
+                self._validate_field_type(
+                    "code_analysis",
+                    "chunker.timeout",
+                    chunker.get("timeout"),
+                    (int, float, type(None)),
+                )
 
             # Embedding section
             embedding = code_analysis.get("embedding", {})
             if embedding and isinstance(embedding, dict):
-                self._validate_field_type("code_analysis", "embedding.enabled", embedding.get("enabled"), bool)
-                self._validate_field_type("code_analysis", "embedding.host", embedding.get("host"), str)
-                self._validate_field_type("code_analysis", "embedding.port", embedding.get("port"), int)
-                self._validate_field_type("code_analysis", "embedding.protocol", embedding.get("protocol"), str)
-                self._validate_field_type("code_analysis", "embedding.cert_file", embedding.get("cert_file"), (str, type(None)))
-                self._validate_field_type("code_analysis", "embedding.key_file", embedding.get("key_file"), (str, type(None)))
-                self._validate_field_type("code_analysis", "embedding.ca_cert_file", embedding.get("ca_cert_file"), (str, type(None)))
-                self._validate_field_type("code_analysis", "embedding.crl_file", embedding.get("crl_file"), (str, type(None)))
-                self._validate_field_type("code_analysis", "embedding.retry_attempts", embedding.get("retry_attempts"), int)
-                self._validate_field_type("code_analysis", "embedding.retry_delay", embedding.get("retry_delay"), (int, float))
-                self._validate_field_type("code_analysis", "embedding.timeout", embedding.get("timeout"), (int, float, type(None)))
+                self._validate_field_type(
+                    "code_analysis", "embedding.enabled", embedding.get("enabled"), bool
+                )
+                self._validate_field_type(
+                    "code_analysis", "embedding.host", embedding.get("host"), str
+                )
+                self._validate_field_type(
+                    "code_analysis", "embedding.port", embedding.get("port"), int
+                )
+                self._validate_field_type(
+                    "code_analysis",
+                    "embedding.protocol",
+                    embedding.get("protocol"),
+                    str,
+                )
+                self._validate_field_type(
+                    "code_analysis",
+                    "embedding.cert_file",
+                    embedding.get("cert_file"),
+                    (str, type(None)),
+                )
+                self._validate_field_type(
+                    "code_analysis",
+                    "embedding.key_file",
+                    embedding.get("key_file"),
+                    (str, type(None)),
+                )
+                self._validate_field_type(
+                    "code_analysis",
+                    "embedding.ca_cert_file",
+                    embedding.get("ca_cert_file"),
+                    (str, type(None)),
+                )
+                self._validate_field_type(
+                    "code_analysis",
+                    "embedding.crl_file",
+                    embedding.get("crl_file"),
+                    (str, type(None)),
+                )
+                self._validate_field_type(
+                    "code_analysis",
+                    "embedding.retry_attempts",
+                    embedding.get("retry_attempts"),
+                    int,
+                )
+                self._validate_field_type(
+                    "code_analysis",
+                    "embedding.retry_delay",
+                    embedding.get("retry_delay"),
+                    (int, float),
+                )
+                self._validate_field_type(
+                    "code_analysis",
+                    "embedding.timeout",
+                    embedding.get("timeout"),
+                    (int, float, type(None)),
+                )
+
+            # Database driver section
+            database = code_analysis.get("database", {})
+            if database and isinstance(database, dict):
+                driver = database.get("driver", {})
+                if driver and isinstance(driver, dict):
+                    self._validate_field_type(
+                        "code_analysis", "database.driver.type", driver.get("type"), str
+                    )
+                    self._validate_field_type(
+                        "code_analysis",
+                        "database.driver.config",
+                        driver.get("config"),
+                        dict,
+                    )
+
+                    driver_config = driver.get("config", {})
+                    if driver_config and isinstance(driver_config, dict):
+                        self._validate_field_type(
+                            "code_analysis",
+                            "database.driver.config.path",
+                            driver_config.get("path"),
+                            (str, type(None)),
+                        )
+                        self._validate_field_type(
+                            "code_analysis",
+                            "database.driver.config.backup_dir",
+                            driver_config.get("backup_dir"),
+                            (str, type(None)),
+                        )
+                        self._validate_field_type(
+                            "code_analysis",
+                            "database.driver.config.worker_config",
+                            driver_config.get("worker_config"),
+                            (dict, type(None)),
+                        )
+
+                        worker_config = driver_config.get("worker_config", {})
+                        if worker_config and isinstance(worker_config, dict):
+                            self._validate_field_type(
+                                "code_analysis",
+                                "database.driver.config.worker_config.command_timeout",
+                                worker_config.get("command_timeout"),
+                                (int, float, type(None)),
+                            )
+                            self._validate_field_type(
+                                "code_analysis",
+                                "database.driver.config.worker_config.poll_interval",
+                                worker_config.get("poll_interval"),
+                                (int, float, type(None)),
+                            )
 
     def _validate_field_values(self) -> None:
         """Validate values of configuration fields."""

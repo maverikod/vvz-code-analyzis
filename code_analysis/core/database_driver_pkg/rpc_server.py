@@ -16,11 +16,12 @@ import socket
 import struct
 import threading
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Optional
 
 from .drivers.base import BaseDatabaseDriver
 from .exceptions import RPCServerError
 from .request_queue import RequestPriority, RequestQueue
+from .rpc_handlers import RPCHandlers
 from .rpc_protocol import ErrorCode, RPCError, RPCRequest, RPCResponse
 from .serialization import serialize_response
 
@@ -53,6 +54,7 @@ class RPCServer:
         self.server_socket: Optional[socket.socket] = None
         self.running = False
         self._lock = threading.Lock()
+        self.handlers = RPCHandlers(driver)
 
     def start(self) -> None:
         """Start RPC server."""
@@ -216,31 +218,23 @@ class RPCServer:
             params = request.params
 
             # Route to appropriate handler
-            if method == "create_table":
-                result = self._handle_create_table(params)
-            elif method == "drop_table":
-                result = self._handle_drop_table(params)
-            elif method == "insert":
-                result = self._handle_insert(params)
-            elif method == "update":
-                result = self._handle_update(params)
-            elif method == "delete":
-                result = self._handle_delete(params)
-            elif method == "select":
-                result = self._handle_select(params)
-            elif method == "execute":
-                result = self._handle_execute(params)
-            elif method == "begin_transaction":
-                result = self._handle_begin_transaction(params)
-            elif method == "commit_transaction":
-                result = self._handle_commit_transaction(params)
-            elif method == "rollback_transaction":
-                result = self._handle_rollback_transaction(params)
-            elif method == "get_table_info":
-                result = self._handle_get_table_info(params)
-            elif method == "sync_schema":
-                result = self._handle_sync_schema(params)
-            else:
+            handler_map = {
+                "create_table": self.handlers.handle_create_table,
+                "drop_table": self.handlers.handle_drop_table,
+                "insert": self.handlers.handle_insert,
+                "update": self.handlers.handle_update,
+                "delete": self.handlers.handle_delete,
+                "select": self.handlers.handle_select,
+                "execute": self.handlers.handle_execute,
+                "begin_transaction": self.handlers.handle_begin_transaction,
+                "commit_transaction": self.handlers.handle_commit_transaction,
+                "rollback_transaction": self.handlers.handle_rollback_transaction,
+                "get_table_info": self.handlers.handle_get_table_info,
+                "sync_schema": self.handlers.handle_sync_schema,
+            }
+
+            handler = handler_map.get(method)
+            if not handler:
                 return RPCResponse(
                     error=RPCError(
                         code=ErrorCode.INVALID_REQUEST,
@@ -248,6 +242,8 @@ class RPCServer:
                     ),
                     request_id=request.request_id,
                 )
+
+            result = handler(params)
 
             return RPCResponse(result=result, request_id=request.request_id)
         except Exception as e:
@@ -259,110 +255,6 @@ class RPCServer:
                 ),
                 request_id=request.request_id,
             )
-
-    def _handle_create_table(self, params: Dict[str, Any]) -> Dict[str, Any]:
-        """Handle create_table RPC method."""
-        schema = params.get("schema")
-        if not schema:
-            raise ValueError("schema parameter is required")
-        success = self.driver.create_table(schema)
-        return {"success": success}
-
-    def _handle_drop_table(self, params: Dict[str, Any]) -> Dict[str, Any]:
-        """Handle drop_table RPC method."""
-        table_name = params.get("table_name")
-        if not table_name:
-            raise ValueError("table_name parameter is required")
-        success = self.driver.drop_table(table_name)
-        return {"success": success}
-
-    def _handle_insert(self, params: Dict[str, Any]) -> Dict[str, Any]:
-        """Handle insert RPC method."""
-        table_name = params.get("table_name")
-        data = params.get("data")
-        if not table_name or not data:
-            raise ValueError("table_name and data parameters are required")
-        row_id = self.driver.insert(table_name, data)
-        return {"row_id": row_id}
-
-    def _handle_update(self, params: Dict[str, Any]) -> Dict[str, Any]:
-        """Handle update RPC method."""
-        table_name = params.get("table_name")
-        where = params.get("where")
-        data = params.get("data")
-        if not table_name or not where or not data:
-            raise ValueError("table_name, where, and data parameters are required")
-        affected_rows = self.driver.update(table_name, where, data)
-        return {"affected_rows": affected_rows}
-
-    def _handle_delete(self, params: Dict[str, Any]) -> Dict[str, Any]:
-        """Handle delete RPC method."""
-        table_name = params.get("table_name")
-        where = params.get("where")
-        if not table_name or not where:
-            raise ValueError("table_name and where parameters are required")
-        affected_rows = self.driver.delete(table_name, where)
-        return {"affected_rows": affected_rows}
-
-    def _handle_select(self, params: Dict[str, Any]) -> Dict[str, Any]:
-        """Handle select RPC method."""
-        table_name = params.get("table_name")
-        if not table_name:
-            raise ValueError("table_name parameter is required")
-        where = params.get("where")
-        columns = params.get("columns")
-        limit = params.get("limit")
-        offset = params.get("offset")
-        order_by = params.get("order_by")
-        rows = self.driver.select(table_name, where, columns, limit, offset, order_by)
-        return {"data": rows}
-
-    def _handle_execute(self, params: Dict[str, Any]) -> Dict[str, Any]:
-        """Handle execute RPC method."""
-        sql = params.get("sql")
-        if not sql:
-            raise ValueError("sql parameter is required")
-        params_tuple = params.get("params")
-        result = self.driver.execute(sql, params_tuple)
-        return result
-
-    def _handle_begin_transaction(self, params: Dict[str, Any]) -> Dict[str, Any]:
-        """Handle begin_transaction RPC method."""
-        transaction_id = self.driver.begin_transaction()
-        return {"transaction_id": transaction_id}
-
-    def _handle_commit_transaction(self, params: Dict[str, Any]) -> Dict[str, Any]:
-        """Handle commit_transaction RPC method."""
-        transaction_id = params.get("transaction_id")
-        if not transaction_id:
-            raise ValueError("transaction_id parameter is required")
-        success = self.driver.commit_transaction(transaction_id)
-        return {"success": success}
-
-    def _handle_rollback_transaction(self, params: Dict[str, Any]) -> Dict[str, Any]:
-        """Handle rollback_transaction RPC method."""
-        transaction_id = params.get("transaction_id")
-        if not transaction_id:
-            raise ValueError("transaction_id parameter is required")
-        success = self.driver.rollback_transaction(transaction_id)
-        return {"success": success}
-
-    def _handle_get_table_info(self, params: Dict[str, Any]) -> Dict[str, Any]:
-        """Handle get_table_info RPC method."""
-        table_name = params.get("table_name")
-        if not table_name:
-            raise ValueError("table_name parameter is required")
-        info = self.driver.get_table_info(table_name)
-        return {"info": info}
-
-    def _handle_sync_schema(self, params: Dict[str, Any]) -> Dict[str, Any]:
-        """Handle sync_schema RPC method."""
-        schema_definition = params.get("schema_definition")
-        if not schema_definition:
-            raise ValueError("schema_definition parameter is required")
-        backup_dir = params.get("backup_dir")
-        result = self.driver.sync_schema(schema_definition, backup_dir)
-        return result
 
     def _receive_data(self, sock: socket.socket) -> Optional[bytes]:
         """Receive data from socket.

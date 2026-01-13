@@ -14,12 +14,11 @@ import sqlite3
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from ..exceptions import (
-    DriverConnectionError,
-    DriverOperationError,
-    TransactionError,
-)
+from ..exceptions import DriverConnectionError, DriverOperationError
 from .base import BaseDatabaseDriver
+from .sqlite_operations import SQLiteOperations
+from .sqlite_schema import SQLiteSchemaManager
+from .sqlite_transactions import SQLiteTransactionManager
 
 
 class SQLiteDriver(BaseDatabaseDriver):
@@ -33,7 +32,9 @@ class SQLiteDriver(BaseDatabaseDriver):
         """Initialize SQLite driver."""
         self.conn: Optional[sqlite3.Connection] = None
         self.db_path: Optional[Path] = None
-        self._transactions: Dict[str, sqlite3.Connection] = {}
+        self._transaction_manager: Optional[SQLiteTransactionManager] = None
+        self._schema_manager: Optional[SQLiteSchemaManager] = None
+        self._operations: Optional[SQLiteOperations] = None
 
     def connect(self, config: Dict[str, Any]) -> None:
         """Establish SQLite connection.
@@ -61,6 +62,11 @@ class SQLiteDriver(BaseDatabaseDriver):
                 self.conn.execute("PRAGMA journal_mode = WAL")
             except Exception:
                 pass  # WAL might not be supported
+
+            # Initialize managers
+            self._transaction_manager = SQLiteTransactionManager(self.db_path)
+            self._schema_manager = SQLiteSchemaManager(self.conn)
+            self._operations = SQLiteOperations(self.conn)
         except Exception as e:
             raise DriverConnectionError(f"Failed to connect to database: {e}") from e
 
@@ -71,14 +77,9 @@ class SQLiteDriver(BaseDatabaseDriver):
             DriverConnectionError: If disconnection fails
         """
         try:
-            # Close all transaction connections
-            for transaction_id, conn in list(self._transactions.items()):
-                try:
-                    conn.rollback()
-                    conn.close()
-                except Exception:
-                    pass
-                del self._transactions[transaction_id]
+            # Close all transactions
+            if self._transaction_manager:
+                self._transaction_manager.close_all()
 
             if self.conn:
                 self.conn.close()
@@ -183,113 +184,24 @@ class SQLiteDriver(BaseDatabaseDriver):
             raise DriverOperationError(f"Failed to drop table: {e}") from e
 
     def insert(self, table_name: str, data: Dict[str, Any]) -> int:
-        """Insert row into table.
-
-        Args:
-            table_name: Name of the table
-            data: Dictionary with column names as keys and values as values
-
-        Returns:
-            ID of inserted row (lastrowid)
-
-        Raises:
-            DriverOperationError: If operation fails
-        """
-        if not self.conn:
-            raise DriverOperationError("Database connection not established")
-
-        try:
-            columns = list(data.keys())
-            values = list(data.values())
-            placeholders = ", ".join(["?" for _ in values])
-
-            sql = f"INSERT INTO {table_name} ({', '.join(columns)}) VALUES ({placeholders})"
-            cursor = self.conn.cursor()
-            cursor.execute(sql, values)
-            self.conn.commit()
-            return cursor.lastrowid or 0
-        except Exception as e:
-            self.conn.rollback()
-            raise DriverOperationError(f"Failed to insert row: {e}") from e
+        """Insert row into table."""
+        if not self._operations:
+            raise DriverOperationError("Operations manager not initialized")
+        return self._operations.insert(table_name, data)
 
     def update(
         self, table_name: str, where: Dict[str, Any], data: Dict[str, Any]
     ) -> int:
-        """Update rows in table.
-
-        Args:
-            table_name: Name of the table
-            where: Dictionary with conditions (column_name: value)
-            data: Dictionary with column names as keys and new values as values
-
-        Returns:
-            Number of affected rows
-
-        Raises:
-            DriverOperationError: If operation fails
-        """
-        if not self.conn:
-            raise DriverOperationError("Database connection not established")
-
-        try:
-            # Build SET clause
-            set_clauses = []
-            set_values = []
-            for col, val in data.items():
-                set_clauses.append(f"{col} = ?")
-                set_values.append(val)
-
-            # Build WHERE clause
-            where_clauses = []
-            where_values = []
-            for col, val in where.items():
-                where_clauses.append(f"{col} = ?")
-                where_values.append(val)
-
-            sql = (
-                f"UPDATE {table_name} SET {', '.join(set_clauses)} "
-                f"WHERE {' AND '.join(where_clauses)}"
-            )
-            cursor = self.conn.cursor()
-            cursor.execute(sql, set_values + where_values)
-            self.conn.commit()
-            return cursor.rowcount
-        except Exception as e:
-            self.conn.rollback()
-            raise DriverOperationError(f"Failed to update rows: {e}") from e
+        """Update rows in table."""
+        if not self._operations:
+            raise DriverOperationError("Operations manager not initialized")
+        return self._operations.update(table_name, where, data)
 
     def delete(self, table_name: str, where: Dict[str, Any]) -> int:
-        """Delete rows from table.
-
-        Args:
-            table_name: Name of the table
-            where: Dictionary with conditions (column_name: value)
-
-        Returns:
-            Number of affected rows
-
-        Raises:
-            DriverOperationError: If operation fails
-        """
-        if not self.conn:
-            raise DriverOperationError("Database connection not established")
-
-        try:
-            # Build WHERE clause
-            where_clauses = []
-            where_values = []
-            for col, val in where.items():
-                where_clauses.append(f"{col} = ?")
-                where_values.append(val)
-
-            sql = f"DELETE FROM {table_name} WHERE {' AND '.join(where_clauses)}"
-            cursor = self.conn.cursor()
-            cursor.execute(sql, where_values)
-            self.conn.commit()
-            return cursor.rowcount
-        except Exception as e:
-            self.conn.rollback()
-            raise DriverOperationError(f"Failed to delete rows: {e}") from e
+        """Delete rows from table."""
+        if not self._operations:
+            raise DriverOperationError("Operations manager not initialized")
+        return self._operations.delete(table_name, where)
 
     def select(
         self,
@@ -300,61 +212,12 @@ class SQLiteDriver(BaseDatabaseDriver):
         offset: Optional[int] = None,
         order_by: Optional[List[str]] = None,
     ) -> List[Dict[str, Any]]:
-        """Select rows from table.
-
-        Args:
-            table_name: Name of the table
-            where: Optional dictionary with conditions (column_name: value)
-            columns: Optional list of column names to select (None = all columns)
-            limit: Optional maximum number of rows to return
-            offset: Optional number of rows to skip
-            order_by: Optional list of column names for ordering
-
-        Returns:
-            List of dictionaries, each representing a row
-
-        Raises:
-            DriverOperationError: If operation fails
-        """
-        if not self.conn:
-            raise DriverOperationError("Database connection not established")
-
-        try:
-            # Build SELECT clause
-            if columns:
-                select_clause = ", ".join(columns)
-            else:
-                select_clause = "*"
-
-            sql = f"SELECT {select_clause} FROM {table_name}"
-
-            # Build WHERE clause
-            where_values = []
-            if where:
-                where_clauses = []
-                for col, val in where.items():
-                    where_clauses.append(f"{col} = ?")
-                    where_values.append(val)
-                sql += f" WHERE {' AND '.join(where_clauses)}"
-
-            # Build ORDER BY clause
-            if order_by:
-                sql += f" ORDER BY {', '.join(order_by)}"
-
-            # Build LIMIT and OFFSET
-            if limit is not None:
-                sql += f" LIMIT {limit}"
-                if offset is not None:
-                    sql += f" OFFSET {offset}"
-            elif offset is not None:
-                sql += f" OFFSET {offset}"
-
-            cursor = self.conn.cursor()
-            cursor.execute(sql, where_values)
-            rows = cursor.fetchall()
-            return [dict(row) for row in rows]
-        except Exception as e:
-            raise DriverOperationError(f"Failed to select rows: {e}") from e
+        """Select rows from table."""
+        if not self._operations:
+            raise DriverOperationError("Operations manager not initialized")
+        return self._operations.select(
+            table_name, where, columns, limit, offset, order_by
+        )
 
     def execute(self, sql: str, params: Optional[tuple] = None) -> Dict[str, Any]:
         """Execute raw SQL statement.
@@ -404,25 +267,9 @@ class SQLiteDriver(BaseDatabaseDriver):
         Raises:
             TransactionError: If transaction cannot be started
         """
-        if not self.conn:
-            raise TransactionError("Database connection not established")
-
-        try:
-            import uuid
-
-            transaction_id = str(uuid.uuid4())
-            # Create separate connection for transaction
-            if not self.db_path:
-                raise TransactionError("Database path not set")
-
-            trans_conn = sqlite3.connect(str(self.db_path), check_same_thread=False)
-            trans_conn.row_factory = sqlite3.Row
-            trans_conn.execute("PRAGMA foreign_keys = ON")
-            trans_conn.execute("BEGIN TRANSACTION")
-            self._transactions[transaction_id] = trans_conn
-            return transaction_id
-        except Exception as e:
-            raise TransactionError(f"Failed to begin transaction: {e}") from e
+        if not self._transaction_manager:
+            raise DriverOperationError("Transaction manager not initialized")
+        return self._transaction_manager.begin_transaction()
 
     def commit_transaction(self, transaction_id: str) -> bool:
         """Commit database transaction.
@@ -436,17 +283,9 @@ class SQLiteDriver(BaseDatabaseDriver):
         Raises:
             TransactionError: If transaction cannot be committed
         """
-        if transaction_id not in self._transactions:
-            raise TransactionError(f"Transaction {transaction_id} not found")
-
-        try:
-            conn = self._transactions[transaction_id]
-            conn.commit()
-            conn.close()
-            del self._transactions[transaction_id]
-            return True
-        except Exception as e:
-            raise TransactionError(f"Failed to commit transaction: {e}") from e
+        if not self._transaction_manager:
+            raise DriverOperationError("Transaction manager not initialized")
+        return self._transaction_manager.commit_transaction(transaction_id)
 
     def rollback_transaction(self, transaction_id: str) -> bool:
         """Rollback database transaction.
@@ -460,17 +299,9 @@ class SQLiteDriver(BaseDatabaseDriver):
         Raises:
             TransactionError: If transaction cannot be rolled back
         """
-        if transaction_id not in self._transactions:
-            raise TransactionError(f"Transaction {transaction_id} not found")
-
-        try:
-            conn = self._transactions[transaction_id]
-            conn.rollback()
-            conn.close()
-            del self._transactions[transaction_id]
-            return True
-        except Exception as e:
-            raise TransactionError(f"Failed to rollback transaction: {e}") from e
+        if not self._transaction_manager:
+            raise DriverOperationError("Transaction manager not initialized")
+        return self._transaction_manager.rollback_transaction(transaction_id)
 
     def get_table_info(self, table_name: str) -> List[Dict[str, Any]]:
         """Get information about table columns.
@@ -484,27 +315,9 @@ class SQLiteDriver(BaseDatabaseDriver):
         Raises:
             DriverOperationError: If operation fails
         """
-        if not self.conn:
-            raise DriverOperationError("Database connection not established")
-
-        try:
-            cursor = self.conn.cursor()
-            cursor.execute(f"PRAGMA table_info({table_name})")
-            rows = cursor.fetchall()
-            result = []
-            for row in rows:
-                result.append(
-                    {
-                        "name": row[1],
-                        "type": row[2],
-                        "nullable": not row[3],
-                        "default": row[4],
-                        "primary_key": bool(row[5]),
-                    }
-                )
-            return result
-        except Exception as e:
-            raise DriverOperationError(f"Failed to get table info: {e}") from e
+        if not self._schema_manager:
+            raise DriverOperationError("Schema manager not initialized")
+        return self._schema_manager.get_table_info(table_name)
 
     def sync_schema(
         self, schema_definition: Dict[str, Any], backup_dir: Optional[str] = None
@@ -521,45 +334,8 @@ class SQLiteDriver(BaseDatabaseDriver):
         Raises:
             DriverOperationError: If operation fails
         """
-        if not self.conn:
-            raise DriverOperationError("Database connection not established")
-
-        # This is a simplified implementation
-        # Full implementation would compare existing schema with new schema
-        # and apply changes incrementally
-        try:
-            result: Dict[str, Any] = {
-                "created_tables": [],
-                "modified_tables": [],
-                "errors": [],
-            }
-
-            tables = schema_definition.get("tables", [])
-            for table_schema in tables:
-                try:
-                    table_name = table_schema.get("name")
-                    if not table_name:
-                        continue
-
-                    # Check if table exists
-                    cursor = self.conn.cursor()
-                    cursor.execute(
-                        "SELECT name FROM sqlite_master WHERE type='table' AND name=?",
-                        (table_name,),
-                    )
-                    exists = cursor.fetchone() is not None
-
-                    if not exists:
-                        self.create_table(table_schema)
-                        result["created_tables"].append(table_name)
-                    else:
-                        # Table exists - could implement ALTER TABLE logic here
-                        result["modified_tables"].append(table_name)
-                except Exception as e:
-                    result["errors"].append(f"Error processing table {table_name}: {e}")
-
-            self.conn.commit()
-            return result
-        except Exception as e:
-            self.conn.rollback()
-            raise DriverOperationError(f"Failed to sync schema: {e}") from e
+        if not self._schema_manager:
+            raise DriverOperationError("Schema manager not initialized")
+        return self._schema_manager.sync_schema(
+            schema_definition, backup_dir, self.create_table
+        )

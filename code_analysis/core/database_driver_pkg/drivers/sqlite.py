@@ -10,11 +10,14 @@ email: vasilyvz@gmail.com
 
 from __future__ import annotations
 
+import logging
 import sqlite3
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from ..exceptions import DriverConnectionError, DriverOperationError
+
+logger = logging.getLogger(__name__)
 from .base import BaseDatabaseDriver
 from .sqlite_operations import SQLiteOperations
 from .sqlite_schema import SQLiteSchemaManager
@@ -60,8 +63,13 @@ class SQLiteDriver(BaseDatabaseDriver):
             # Enable WAL mode for better concurrency
             try:
                 self.conn.execute("PRAGMA journal_mode = WAL")
-            except Exception:
-                pass  # WAL might not be supported
+            except Exception as e:
+                # WAL might not be supported in some SQLite configurations
+                # Log warning but continue - database will work without WAL
+                logger.warning(
+                    f"Failed to enable WAL mode for database {self.db_path}: {e}. "
+                    "Continuing without WAL mode."
+                )
 
             # Initialize managers
             self._transaction_manager = SQLiteTransactionManager(self.db_path)

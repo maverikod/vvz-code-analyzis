@@ -1019,6 +1019,51 @@ email: vasilyvz@gmail.com
 """
 ```
 
+## Code Mapper Requirements
+
+**⚠️ CRITICAL: Must use code_mapper utility throughout driver development**
+
+### Before Writing Code
+- [ ] **ALWAYS run code_mapper** to check if functionality already exists in project
+- [ ] Search existing driver code using `code_mapper` indexes
+- [ ] Review existing driver implementations (`code_analysis/core/db_driver/`)
+- [ ] Check for existing patterns and similar code
+- [ ] Use command: `code_mapper -r code_analysis/` (excludes tests and test_data)
+
+### During Code Implementation
+- [ ] **Run code_mapper after each block of changes** to update indexes
+- [ ] Use command: `code_mapper -r code_analysis/` to update indexes
+- [ ] Keep indexes up-to-date for other developers and tools
+
+### After Writing Code (Production Code Only, Not Tests)
+- [ ] **⚠️ CRITICAL: Run code_mapper** to check for errors and issues
+- [ ] **Command**: `code_mapper -r code_analysis/` (excludes tests and test_data from analysis)
+- [ ] **Eliminate ALL errors** found by code_mapper utility - this is MANDATORY
+- [ ] Fix all code quality issues detected by code_mapper
+- [ ] Verify no duplicate code was introduced
+- [ ] Check file sizes (must be < 400 lines)
+- [ ] Split files if they exceed 400 lines
+- [ ] **DO NOT proceed until ALL code_mapper errors are fixed**
+
+**⚠️ IMPORTANT**: 
+- Always use `code_mapper -r code_analysis/` to exclude tests and test_data
+- After writing production code, you MUST run code_mapper and fix ALL errors
+- Test files are excluded from code_mapper analysis
+- All production code errors must be eliminated before proceeding
+
+**Commands**:
+```bash
+# Check existing functionality (excludes tests and test_data)
+code_mapper -r code_analysis/
+
+# Update indexes after changes (excludes tests and test_data)
+code_mapper -r code_analysis/
+
+# After writing production code - check for errors
+code_mapper -r code_analysis/
+# Fix ALL errors found before proceeding
+```
+
 ## Code Quality Requirements
 
 ### Code Style
@@ -1034,6 +1079,7 @@ email: vasilyvz@gmail.com
 - Run `flake8` for style checking
 - Run `mypy` for type checking
 - **All errors must be fixed**
+- **Run code_mapper** and fix ALL errors it finds
 
 ### Code Organization
 
@@ -1136,6 +1182,10 @@ code_mapper -r code_analysis/
 
 # Update indexes after changes (excludes tests and test_data)
 code_mapper -r code_analysis/
+
+# After writing production code - check for errors
+code_mapper -r code_analysis/
+# Fix ALL errors found before proceeding
 ```
 
 ## Implementation Checklist
@@ -1200,11 +1250,13 @@ When implementing a new driver, follow this checklist:
 - [ ] Provide usage examples
 
 ### Code Quality
+- [ ] **Run code_mapper** and fix ALL errors: `code_mapper -r code_analysis/`
 - [ ] Run `black` and fix formatting
 - [ ] Run `flake8` and fix errors
 - [ ] Run `mypy` and fix type errors
 - [ ] Verify file size < 400 lines
 - [ ] Review code structure
+- [ ] **DO NOT proceed until ALL code_mapper errors are fixed**
 
 ## Reference Implementation
 

@@ -10,6 +10,7 @@ email: vasilyvz@gmail.com
 
 from __future__ import annotations
 
+import logging
 import threading
 import time
 from collections import deque
@@ -18,6 +19,8 @@ from enum import IntEnum
 from typing import Any, Dict, Optional
 
 from .exceptions import RequestQueueError, RequestQueueFullError
+
+logger = logging.getLogger(__name__)
 
 
 class RequestPriority(IntEnum):
@@ -198,7 +201,12 @@ class RequestQueue:
             try:
                 queue.remove(request)
             except ValueError:
-                pass  # Already removed
+                # Request was already removed from queue (possible race condition)
+                # This is safe to ignore - request is being removed anyway
+                logger.debug(
+                    f"Request {request_id} was already removed from queue "
+                    "(possible race condition, safe to ignore)"
+                )
 
             del self._request_map[request_id]
             self._statistics.current_size -= 1

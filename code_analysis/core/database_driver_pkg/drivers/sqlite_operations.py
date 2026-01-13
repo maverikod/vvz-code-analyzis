@@ -43,7 +43,7 @@ class SQLiteOperations:
 
         try:
             columns = list(data.keys())
-            values = list(data.values())
+            values = tuple(data.values())  # SQLite requires tuple, not list
             placeholders = ", ".join(["?" for _ in values])
 
             sql = (

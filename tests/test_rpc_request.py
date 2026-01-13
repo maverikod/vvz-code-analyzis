@@ -149,6 +149,42 @@ class TestSelectRequest:
         with pytest.raises(ValueError, match="limit must be a non-negative integer"):
             request.validate()
 
+    def test_validate_invalid_columns(self):
+        """Test validation with invalid columns."""
+        request = SelectRequest(table_name="users", columns="invalid")
+        with pytest.raises(ValueError, match="columns must be a list or None"):
+            request.validate()
+
+    def test_validate_invalid_offset(self):
+        """Test validation with invalid offset."""
+        request = SelectRequest(table_name="users", offset=-1)
+        with pytest.raises(ValueError, match="offset must be a non-negative integer"):
+            request.validate()
+
+    def test_validate_invalid_order_by(self):
+        """Test validation with invalid order_by."""
+        request = SelectRequest(table_name="users", order_by="invalid")
+        with pytest.raises(ValueError, match="order_by must be a list or None"):
+            request.validate()
+
+    def test_to_dict_all_fields(self):
+        """Test converting to dictionary with all fields."""
+        request = SelectRequest(
+            table_name="users",
+            where={"age": 30},
+            columns=["name", "age"],
+            limit=10,
+            offset=5,
+            order_by=["name"],
+        )
+        data = request.to_dict()
+        assert data["table_name"] == "users"
+        assert data["where"] == {"age": 30}
+        assert data["columns"] == ["name", "age"]
+        assert data["limit"] == 10
+        assert data["offset"] == 5
+        assert data["order_by"] == ["name"]
+
     def test_to_dict(self):
         """Test converting to dictionary."""
         request = SelectRequest(

@@ -139,7 +139,7 @@ class RPCServer:
 
             # Parse RPC request
             try:
-                request_dict = json.loads(request_data)
+                request_dict = json.loads(request_data.decode("utf-8"))
                 rpc_request = RPCRequest.from_dict(request_dict)
             except Exception as e:
                 # Send error response

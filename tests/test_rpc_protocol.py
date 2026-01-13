@@ -239,3 +239,30 @@ class TestRPCResponse:
         assert response.error.code == ErrorCode.DATABASE_ERROR
         assert response.error.message == "Database connection failed"
         assert response.request_id == "123"
+
+    def test_response_to_dict_no_result_no_error(self):
+        """Test converting response with no result and no error."""
+        response = RPCResponse(request_id="123")
+        data = response.to_dict()
+        assert data["jsonrpc"] == "2.0"
+        assert data["result"] is None
+        assert "error" not in data
+        assert data["id"] == "123"
+
+    def test_response_from_dict_no_id(self):
+        """Test creating response from dictionary without ID."""
+        data = {
+            "jsonrpc": "2.0",
+            "result": {"row_id": 1},
+        }
+        response = RPCResponse.from_dict(data)
+        assert response.result == {"row_id": 1}
+        assert response.request_id is None
+
+    def test_error_from_dict_defaults(self):
+        """Test creating error from dictionary with defaults."""
+        data = {}  # Empty dict
+        error = RPCError.from_dict(data)
+        assert error.code == ErrorCode.INTERNAL_ERROR
+        assert error.message == "Unknown error"
+        assert error.data is None

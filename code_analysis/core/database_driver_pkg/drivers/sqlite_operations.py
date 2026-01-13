@@ -188,12 +188,14 @@ class SQLiteOperations:
                 sql += f" ORDER BY {', '.join(order_by)}"
 
             # Build LIMIT and OFFSET
+            # SQLite requires LIMIT when using OFFSET
             if limit is not None:
                 sql += f" LIMIT {limit}"
                 if offset is not None:
                     sql += f" OFFSET {offset}"
             elif offset is not None:
-                sql += f" OFFSET {offset}"
+                # Use a large limit when only offset is provided
+                sql += f" LIMIT -1 OFFSET {offset}"
 
             cursor = self.conn.cursor()
             cursor.execute(sql, where_values)

@@ -83,13 +83,41 @@ class _ToAst(Transformer):
         return "*"
 
     def BAREWORD(self, t: Token) -> str:  # noqa: N802
-        return str(t)
+        """Parse bareword value, handling quoted strings that were parsed as barewords.
+        
+        Sometimes quoted strings (especially single quotes inside double-quoted
+        Python strings) are parsed as BAREWORD instead of STRING.
+        We need to detect and handle these cases.
+        """
+        raw = str(t)
+        # Check if it looks like a quoted string (starts and ends with same quote)
+        if len(raw) >= 2 and raw[0] == raw[-1] and raw[0] in ("'", '"'):
+            # Remove quotes and decode escape sequences
+            unquoted = raw[1:-1]
+            try:
+                return bytes(unquoted, "utf-8").decode("unicode_escape")
+            except (UnicodeDecodeError, UnicodeError):
+                return unquoted
+        return raw
 
     def STRING(self, t: Token) -> str:  # noqa: N802
-        # Lark keeps quotes; eval-like unescape via python string literal rules.
+        """Parse string value, removing quotes and handling escape sequences.
+        
+        Lark provides the string token with quotes included.
+        We need to remove the outer quotes and decode escape sequences.
+        """
         raw = str(t)
-        if len(raw) >= 2 and raw[0] == raw[-1] and raw[0] in ("'", '"'):
-            return bytes(raw[1:-1], "utf-8").decode("unicode_escape")
+        # Remove outer quotes if present (both single and double quotes supported)
+        if len(raw) >= 2:
+            if raw[0] == raw[-1] and raw[0] in ("'", '"'):
+                # Remove quotes and decode escape sequences
+                unquoted = raw[1:-1]
+                try:
+                    # Decode escape sequences (e.g., \\n -> \n, \\' -> \')
+                    return bytes(unquoted, "utf-8").decode("unicode_escape")
+                except (UnicodeDecodeError, UnicodeError):
+                    # If decoding fails, return unquoted string as-is
+                    return unquoted
         return raw
 
     def OP(self, t: Token) -> str:  # noqa: N802

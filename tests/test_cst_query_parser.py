@@ -35,8 +35,8 @@ class TestParserBasic:
         assert len(query.first.predicates) == 1
         assert query.first.predicates[0].attr == "name"
         assert query.first.predicates[0].op.value == "="
-        # Value may include quotes from parser
-        assert query.first.predicates[0].value in ("test", "'test'", '"test"')
+        # Parser should remove quotes from values
+        assert query.first.predicates[0].value == "test"
 
     def test_parse_with_multiple_predicates(self):
         """Test parsing selector with multiple predicates."""

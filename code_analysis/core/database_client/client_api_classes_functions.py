@@ -115,7 +115,6 @@ class _ClientAPIClassesFunctionsMixin:
             RPCClientError: If RPC call fails
             RPCResponseError: If response contains error
         """
-        where = {}
         if project_id:
             # Need to join with files table, use execute for complex query
             sql = """

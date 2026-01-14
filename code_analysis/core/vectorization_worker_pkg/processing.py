@@ -13,6 +13,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+import uuid
 from typing import Any, Dict
 
 from .batch_processor import process_embedding_ready_chunks
@@ -153,8 +154,6 @@ async def process_chunks(self, poll_interval: int = 30) -> Dict[str, Any]:
 
             # Start worker statistics cycle
             # Use execute() for worker stats methods that are not yet in DatabaseClient
-            import uuid
-
             cycle_id = str(uuid.uuid4())
             cycle_start_time = time.time()
 

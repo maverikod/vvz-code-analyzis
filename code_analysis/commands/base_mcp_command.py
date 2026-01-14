@@ -6,6 +6,7 @@ email: vasilyvz@gmail.com
 """
 
 import logging
+import uuid
 from pathlib import Path
 from typing import Optional, Dict, Any
 
@@ -553,6 +554,64 @@ class BaseMCPCommand(Command):
                 details={"root_path": root_path},
             )
         return project_id
+
+    @staticmethod
+    def _get_or_create_dataset(
+        db: DatabaseClient, project_id: str, root_path: str, name: Optional[str] = None
+    ) -> str:
+        """Get or create dataset by project_id and root_path.
+
+        Datasets support multi-root indexing within a project.
+        Each dataset represents a separate indexed root directory.
+
+        Args:
+            db: DatabaseClient instance
+            project_id: Project ID (UUID4 string)
+            root_path: Root directory path (will be normalized to absolute)
+            name: Optional dataset name
+
+        Returns:
+            Dataset ID (UUID4 string)
+        """
+        # Normalize root_path to absolute resolved path
+        normalized_root = str(normalize_root_dir(root_path))
+
+        # Check if dataset exists
+        result = db.execute(
+            "SELECT id FROM datasets WHERE project_id = ? AND root_path = ?",
+            (project_id, normalized_root),
+        )
+        data = result.get("data", [])
+        if data:
+            return data[0]["id"]
+
+        # Create new dataset
+        dataset_id = str(uuid.uuid4())
+        dataset_name = name or Path(normalized_root).name
+        result = db.execute(
+            """
+            INSERT INTO datasets (id, project_id, root_path, name, updated_at)
+            VALUES (?, ?, ?, ?, julianday('now'))
+            """,
+            (dataset_id, project_id, normalized_root, dataset_name),
+        )
+        # Verify insertion succeeded
+        affected_rows = 0
+        if isinstance(result, dict):
+            if "data" in result and isinstance(result["data"], dict):
+                affected_rows = result["data"].get("affected_rows", 0)
+            else:
+                affected_rows = result.get("affected_rows", 0)
+        if affected_rows == 0:
+            raise DatabaseError(
+                "Failed to create dataset: no rows affected",
+                operation="create_dataset",
+                details={"project_id": project_id, "root_path": normalized_root},
+            )
+        logger.info(
+            f"Created dataset {dataset_id} for project {project_id} at {normalized_root}"
+        )
+        return dataset_id
 
     @staticmethod
     def _resolve_project_root(

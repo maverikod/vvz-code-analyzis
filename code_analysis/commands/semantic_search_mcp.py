@@ -146,8 +146,10 @@ class SemanticSearchMCPCommand(BaseMCPCommand):
                 dataset_id = database.get_dataset_id(actual_project_id, normalized_root)
                 if not dataset_id:
                     # Create dataset if it doesn't exist
-                    dataset_id = database.get_or_create_dataset(
-                        actual_project_id, normalized_root
+                    from .base_mcp_command import BaseMCPCommand
+
+                    dataset_id = BaseMCPCommand._get_or_create_dataset(
+                        database, actual_project_id, normalized_root
                     )
 
                 # Get dataset-scoped FAISS index path (Step 2)

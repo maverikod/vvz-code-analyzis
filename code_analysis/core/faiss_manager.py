@@ -828,10 +828,12 @@ class FaissIndexManager:
                 f"Could not load {missing_embeddings} vectors: embeddings not available"
             )
 
-        try:
-            database._commit()
-        except Exception:
-            pass
+        # Commit only for CodeDatabase (DatabaseClient.execute() auto-commits)
+        if not isinstance(database, DatabaseClient):
+            try:
+                database._commit()
+            except Exception:
+                pass
 
         # Save rebuilt index
         self.save_index()

@@ -95,42 +95,53 @@ class ComposeCSTModuleCommand(BaseMCPCommand):
         if not file_record:
             return None
 
+        # Use DatabaseClient API
+        classes_result = database.execute(
+            "SELECT * FROM classes WHERE file_id = ?", (file_id,)
+        )
+        functions_result = database.execute(
+            "SELECT * FROM functions WHERE file_id = ?", (file_id,)
+        )
+        imports_result = database.execute(
+            "SELECT * FROM imports WHERE file_id = ?", (file_id,)
+        )
+        usages_result = database.execute(
+            "SELECT * FROM usages WHERE file_id = ?", (file_id,)
+        )
+        issues_result = database.execute(
+            "SELECT * FROM issues WHERE file_id = ?", (file_id,)
+        )
+        code_content_result = database.execute(
+            "SELECT * FROM code_content WHERE file_id = ?", (file_id,)
+        )
+        ast_trees_result = database.execute(
+            "SELECT * FROM ast_trees WHERE file_id = ?", (file_id,)
+        )
+        cst_trees_result = database.execute(
+            "SELECT * FROM cst_trees WHERE file_id = ?", (file_id,)
+        )
+
         backup_data = {
             "file_record": file_record,
-            "classes": database._fetchall(
-                "SELECT * FROM classes WHERE file_id = ?", (file_id,)
-            ),
-            "functions": database._fetchall(
-                "SELECT * FROM functions WHERE file_id = ?", (file_id,)
-            ),
-            "imports": database._fetchall(
-                "SELECT * FROM imports WHERE file_id = ?", (file_id,)
-            ),
-            "usages": database._fetchall(
-                "SELECT * FROM usages WHERE file_id = ?", (file_id,)
-            ),
-            "issues": database._fetchall(
-                "SELECT * FROM issues WHERE file_id = ?", (file_id,)
-            ),
-            "code_content": database._fetchall(
-                "SELECT * FROM code_content WHERE file_id = ?", (file_id,)
-            ),
-            "ast_trees": database._fetchall(
-                "SELECT * FROM ast_trees WHERE file_id = ?", (file_id,)
-            ),
-            "cst_trees": database._fetchall(
-                "SELECT * FROM cst_trees WHERE file_id = ?", (file_id,)
-            ),
+            "classes": classes_result.get("data", []),
+            "functions": functions_result.get("data", []),
+            "imports": imports_result.get("data", []),
+            "usages": usages_result.get("data", []),
+            "issues": issues_result.get("data", []),
+            "code_content": code_content_result.get("data", []),
+            "ast_trees": ast_trees_result.get("data", []),
+            "cst_trees": cst_trees_result.get("data", []),
         }
 
         # Get methods for all classes
         class_ids = [row["id"] for row in backup_data["classes"]]
         if class_ids:
             placeholders = ",".join("?" * len(class_ids))
-            backup_data["methods"] = database._fetchall(
+            methods_result = database.execute(
                 f"SELECT * FROM methods WHERE class_id IN ({placeholders})",
                 tuple(class_ids),
             )
+            backup_data["methods"] = methods_result.get("data", [])
         else:
             backup_data["methods"] = []
 
@@ -145,19 +156,19 @@ class ComposeCSTModuleCommand(BaseMCPCommand):
             file_id: File ID
         """
         # Get class and content IDs
-        class_rows = database._fetchall(
+        class_result = database.execute(
             "SELECT id FROM classes WHERE file_id = ?", (file_id,)
         )
-        class_ids = [row["id"] for row in class_rows]
-        content_rows = database._fetchall(
+        class_ids = [row["id"] for row in class_result.get("data", [])]
+        content_result = database.execute(
             "SELECT id FROM code_content WHERE file_id = ?", (file_id,)
         )
-        content_ids = [row["id"] for row in content_rows]
+        content_ids = [row["id"] for row in content_result.get("data", [])]
 
         # Delete FTS index
         if content_ids:
             placeholders = ",".join("?" * len(content_ids))
-            database._execute(
+            database.execute(
                 f"DELETE FROM code_content_fts WHERE rowid IN ({placeholders})",
                 tuple(content_ids),
             )
@@ -165,30 +176,30 @@ class ComposeCSTModuleCommand(BaseMCPCommand):
         # Delete methods
         if class_ids:
             placeholders = ",".join("?" * len(class_ids))
-            database._execute(
+            database.execute(
                 f"DELETE FROM methods WHERE class_id IN ({placeholders})",
                 tuple(class_ids),
             )
 
         # Delete main entities
-        database._execute("DELETE FROM classes WHERE file_id = ?", (file_id,))
-        database._execute("DELETE FROM functions WHERE file_id = ?", (file_id,))
-        database._execute("DELETE FROM imports WHERE file_id = ?", (file_id,))
-        database._execute("DELETE FROM issues WHERE file_id = ?", (file_id,))
-        database._execute("DELETE FROM usages WHERE file_id = ?", (file_id,))
-        database._execute("DELETE FROM code_content WHERE file_id = ?", (file_id,))
-        database._execute("DELETE FROM ast_trees WHERE file_id = ?", (file_id,))
-        database._execute("DELETE FROM cst_trees WHERE file_id = ?", (file_id,))
-        database._execute("DELETE FROM code_chunks WHERE file_id = ?", (file_id,))
+        database.execute("DELETE FROM classes WHERE file_id = ?", (file_id,))
+        database.execute("DELETE FROM functions WHERE file_id = ?", (file_id,))
+        database.execute("DELETE FROM imports WHERE file_id = ?", (file_id,))
+        database.execute("DELETE FROM issues WHERE file_id = ?", (file_id,))
+        database.execute("DELETE FROM usages WHERE file_id = ?", (file_id,))
+        database.execute("DELETE FROM code_content WHERE file_id = ?", (file_id,))
+        database.execute("DELETE FROM ast_trees WHERE file_id = ?", (file_id,))
+        database.execute("DELETE FROM cst_trees WHERE file_id = ?", (file_id,))
+        database.execute("DELETE FROM code_chunks WHERE file_id = ?", (file_id,))
 
         # Delete vector index
-        database._execute(
+        database.execute(
             "DELETE FROM vector_index WHERE entity_type = 'file' AND entity_id = ?",
             (file_id,),
         )
         if class_ids:
             placeholders = ",".join("?" * len(class_ids))
-            database._execute(
+            database.execute(
                 f"""
                 DELETE FROM vector_index
                 WHERE entity_type IN ('class', 'function', 'method')
@@ -207,7 +218,7 @@ class ComposeCSTModuleCommand(BaseMCPCommand):
         """
         # Restore classes
         for row in backup_data["classes"]:
-            database._execute(
+            database.execute(
                 """
                 INSERT INTO classes (id, file_id, name, qualname, start_line, end_line, docstring, bases)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
@@ -226,7 +237,7 @@ class ComposeCSTModuleCommand(BaseMCPCommand):
 
         # Restore methods
         for row in backup_data["methods"]:
-            database._execute(
+            database.execute(
                 """
                 INSERT INTO methods (id, class_id, name, qualname, start_line, end_line, docstring, parameters)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
@@ -245,7 +256,7 @@ class ComposeCSTModuleCommand(BaseMCPCommand):
 
         # Restore functions
         for row in backup_data["functions"]:
-            database._execute(
+            database.execute(
                 """
                 INSERT INTO functions (id, file_id, name, qualname, start_line, end_line, docstring, parameters)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
@@ -272,7 +283,7 @@ class ComposeCSTModuleCommand(BaseMCPCommand):
         """
         # Restore imports
         for row in backup_data["imports"]:
-            database._execute(
+            database.execute(
                 """
                 INSERT INTO imports (id, file_id, module, name, alias, import_type, line)
                 VALUES (?, ?, ?, ?, ?, ?, ?)
@@ -290,7 +301,7 @@ class ComposeCSTModuleCommand(BaseMCPCommand):
 
         # Restore usages
         for row in backup_data["usages"]:
-            database._execute(
+            database.execute(
                 """
                 INSERT INTO usages (id, file_id, entity_type, entity_name, line, column)
                 VALUES (?, ?, ?, ?, ?, ?)
@@ -307,7 +318,7 @@ class ComposeCSTModuleCommand(BaseMCPCommand):
 
         # Restore issues
         for row in backup_data["issues"]:
-            database._execute(
+            database.execute(
                 """
                 INSERT INTO issues (id, file_id, issue_type, message, line, column)
                 VALUES (?, ?, ?, ?, ?, ?)
@@ -324,7 +335,7 @@ class ComposeCSTModuleCommand(BaseMCPCommand):
 
         # Restore code_content
         for row in backup_data["code_content"]:
-            database._execute(
+            database.execute(
                 """
                 INSERT INTO code_content (id, file_id, content, start_line, end_line)
                 VALUES (?, ?, ?, ?, ?)
@@ -348,7 +359,7 @@ class ComposeCSTModuleCommand(BaseMCPCommand):
         """
         # Restore AST trees
         for row in backup_data["ast_trees"]:
-            database._execute(
+            database.execute(
                 """
                 INSERT INTO ast_trees (id, file_id, project_id, ast_json, ast_hash, file_mtime)
                 VALUES (?, ?, ?, ?, ?, ?)
@@ -365,7 +376,7 @@ class ComposeCSTModuleCommand(BaseMCPCommand):
 
         # Restore CST trees
         for row in backup_data["cst_trees"]:
-            database._execute(
+            database.execute(
                 """
                 INSERT INTO cst_trees (id, file_id, project_id, cst_code, cst_hash, file_mtime)
                 VALUES (?, ?, ?, ?, ?, ?)
@@ -393,7 +404,7 @@ class ComposeCSTModuleCommand(BaseMCPCommand):
         """
         # Restore file record
         file_record = backup_data["file_record"]
-        database._execute(
+        database.execute(
             """
             UPDATE files SET
                 path = ?, lines = ?, last_modified = ?, has_docstring = ?,
@@ -491,10 +502,11 @@ class ComposeCSTModuleCommand(BaseMCPCommand):
         Returns:
             File ID
         """
-        from ..core.project_resolution import normalize_root_dir
+        from .base_mcp_command import BaseMCPCommand
 
-        normalized_root = str(normalize_root_dir(root_path))
-        dataset_id = database.get_or_create_dataset(project_id, normalized_root)
+        dataset_id = BaseMCPCommand._get_or_create_dataset(
+            database, project_id, root_path
+        )
 
         lines = source_code.count("\n") + (1 if source_code else 0)
         stripped = source_code.lstrip()
@@ -512,7 +524,7 @@ class ComposeCSTModuleCommand(BaseMCPCommand):
                 dataset_id=dataset_id,
             )
         else:
-            database._execute(
+            database.execute(
                 """
                 UPDATE files SET
                     lines = ?, has_docstring = ?, updated_at = julianday('now')

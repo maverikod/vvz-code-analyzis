@@ -206,8 +206,10 @@ class UpdateIndexesMCPCommand(BaseMCPCommand):
             normalized_root = str(normalize_root_dir(root_path))
             dataset_id = database.get_dataset_id(project_id, normalized_root)
             if not dataset_id:
-                dataset_id = database.get_or_create_dataset(
-                    project_id, normalized_root, name=root_path.name
+                from .base_mcp_command import BaseMCPCommand
+
+                dataset_id = BaseMCPCommand._get_or_create_dataset(
+                    database, project_id, normalized_root, name=root_path.name
                 )
 
             # Use absolute path for add_file to avoid path resolution issues

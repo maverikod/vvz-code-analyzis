@@ -145,8 +145,10 @@ class RebuildFaissCommand(BaseMCPCommand):
                         db_dataset_id = database.get_dataset_id(actual_project_id, normalized_root)
                         if not db_dataset_id:
                             # Create dataset if it doesn't exist
-                            db_dataset_id = database.get_or_create_dataset(
-                                actual_project_id, normalized_root
+                            from ...commands.base_mcp_command import BaseMCPCommand
+
+                            db_dataset_id = BaseMCPCommand._get_or_create_dataset(
+                                database, actual_project_id, normalized_root
                             )
 
                         if db_dataset_id != dataset_id:

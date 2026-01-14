@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import logging
+import uuid
 from pathlib import Path
 from typing import TYPE_CHECKING, List
 
@@ -114,8 +115,6 @@ async def _enqueue_watch_dirs(self, database: "DatabaseClient") -> int:
                     dataset_id = dataset_rows[0].get("id")
                 if not dataset_id:
                     # Create dataset if it doesn't exist
-                    import uuid
-
                     dataset_id = str(uuid.uuid4())
                     database.execute(
                         """

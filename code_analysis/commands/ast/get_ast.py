@@ -95,20 +95,22 @@ class GetASTMCPCommand(BaseMCPCommand):
                 # data/versions/{uuid}/code_analysis/main.py
                 # Try searching by path ending
                 # Search for files where path ends with the requested path
-                row = db._fetchone(
+                result = db.execute(
                     "SELECT * FROM files WHERE project_id = ? AND path LIKE ?",
                     (proj_id, f"%{file_path}")
                 )
-                if row:
-                    file_record = row
+                data = result.get("data", [])
+                if data:
+                    file_record = data[0]
             
             # Try 3: search by filename if path contains /
             if not file_record and "/" in file_path:
                 filename = file_path.split("/")[-1]
-                rows = db._fetchall(
+                result = db.execute(
                     "SELECT * FROM files WHERE project_id = ? AND path LIKE ?",
                     (proj_id, f"%{filename}")
                 )
+                rows = result.get("data", [])
                 # If multiple matches, prefer the one that matches the path structure
                 for row in rows:
                     path_str = row["path"]

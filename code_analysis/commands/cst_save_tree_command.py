@@ -106,7 +106,11 @@ class CSTSaveTreeCommand(BaseMCPCommand):
                 from ..core.project_resolution import normalize_root_dir
 
                 normalized_root = str(normalize_root_dir(root_dir))
-                dataset_id = database.get_or_create_dataset(project_id, normalized_root)
+                from .base_mcp_command import BaseMCPCommand
+
+                dataset_id = BaseMCPCommand._get_or_create_dataset(
+                    database, project_id, normalized_root
+                )
 
             # Save tree to file
             result = save_tree_to_file(

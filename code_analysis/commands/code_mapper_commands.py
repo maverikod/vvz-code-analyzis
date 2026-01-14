@@ -9,7 +9,7 @@ import logging
 from typing import Dict, List, Any, Optional
 
 from ..core.constants import DEFAULT_MAX_FILE_LINES
-from ..core.database import CodeDatabase
+from ..core.database_client.client import DatabaseClient
 
 logger = logging.getLogger(__name__)
 
@@ -23,7 +23,7 @@ class ListLongFilesCommand:
 
     def __init__(
         self,
-        database: CodeDatabase,
+        database: DatabaseClient,
         project_id: str,
         max_lines: int = DEFAULT_MAX_FILE_LINES,
     ):
@@ -31,7 +31,7 @@ class ListLongFilesCommand:
         Initialize command.
 
         Args:
-            database: CodeDatabase instance
+            database: DatabaseClient instance
             project_id: Project UUID
             max_lines: Maximum lines threshold (default: 400)
         """
@@ -51,7 +51,7 @@ class ListLongFilesCommand:
         """
         try:
             # Get files exceeding line limit
-            rows = self.database._fetchall(
+            result = self.database.execute(
                 """
                 SELECT id, path, lines, last_modified, has_docstring
                 FROM files
@@ -62,6 +62,7 @@ class ListLongFilesCommand:
                 """,
                 (self.project_id, self.max_lines),
             )
+            rows = result.get("data", [])
 
             files = []
             for row in rows:
@@ -93,12 +94,12 @@ class ListErrorsByCategoryCommand:
     This is equivalent to old code_mapper functionality for listing code issues.
     """
 
-    def __init__(self, database: CodeDatabase, project_id: Optional[str] = None):
+    def __init__(self, database: DatabaseClient, project_id: Optional[str] = None):
         """
         Initialize command.
 
         Args:
-            database: CodeDatabase instance
+            database: DatabaseClient instance
             project_id: Optional project UUID (if None, returns all projects)
         """
         self.database = database
@@ -117,7 +118,7 @@ class ListErrorsByCategoryCommand:
         try:
             # Get all issues grouped by type
             if self.project_id:
-                rows = self.database._fetchall(
+                result = self.database.execute(
                     """
                     SELECT i.issue_type, i.id, i.file_id, i.line, i.description, 
                            i.metadata, f.path as file_path
@@ -129,15 +130,16 @@ class ListErrorsByCategoryCommand:
                     (self.project_id, self.project_id),
                 )
             else:
-                rows = self.database._fetchall(
+                result = self.database.execute(
                     """
                     SELECT i.issue_type, i.id, i.file_id, i.line, i.description, 
                            i.metadata, f.path as file_path
                     FROM issues i
                     LEFT JOIN files f ON i.file_id = f.id
                     ORDER BY i.issue_type, f.path, i.line
-                    """,
+                    """
                 )
+            rows = result.get("data", [])
 
             # Group by category
             categories: Dict[str, List[Dict[str, Any]]] = {}

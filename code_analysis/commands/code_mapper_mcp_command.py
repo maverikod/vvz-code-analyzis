@@ -142,7 +142,7 @@ class UpdateIndexesMCPCommand(BaseMCPCommand):
 
         Args:
             self: Command instance.
-            database: CodeDatabase instance.
+            database: DatabaseClient instance.
             file_path: File to analyze.
             project_id: Project identifier.
             root_path: Root path to compute relative file paths.

@@ -17,7 +17,7 @@ class SearchCommand:
     """
     Command for searching code content, classes, and methods.
 
-    Wraps CodeDatabase search methods for easier use.
+    Wraps DatabaseClient search methods for easier use.
     """
 
     def __init__(self, database: Any, project_id: str):
@@ -25,7 +25,7 @@ class SearchCommand:
         Initialize search command.
 
         Args:
-            database: CodeDatabase instance
+            database: DatabaseClient instance
             project_id: Project ID to filter by
         """
         self.database = database

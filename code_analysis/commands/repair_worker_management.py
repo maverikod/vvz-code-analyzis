@@ -12,9 +12,9 @@ from pathlib import Path
 from typing import Any, Dict, Optional, TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from ..core.database import CodeDatabase
+    from ..core.database_client.client import DatabaseClient
 else:
-    CodeDatabase = Any
+    DatabaseClient = Any
 
 logger = logging.getLogger(__name__)
 

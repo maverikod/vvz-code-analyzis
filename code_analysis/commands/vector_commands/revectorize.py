@@ -548,7 +548,7 @@ class RevectorizeCommand(BaseMCPCommand):
         """Revectorize chunks for a specific dataset.
 
         Args:
-            database: CodeDatabase instance.
+            database: DatabaseClient instance.
             svo_client_manager: SVOClientManager instance.
             storage_paths: StoragePaths instance.
             project_id: Project UUID.

@@ -388,10 +388,32 @@ class RPCHandlers:
                 )
 
             # Import here to avoid circular dependencies
-            from ...database_client.objects.xpath_filter import XPathFilter
+            from code_analysis.core.database_client.objects.xpath_filter import XPathFilter
+            from code_analysis.core.cst_tree.tree_builder import load_file_to_tree
+            from code_analysis.core.cst_tree.tree_finder import find_nodes
+            import ast
+            import json
 
-            # Validate filter (will be used when AST filtering is implemented)
-            _ = XPathFilter.from_dict(filter_dict)
+            xpath_filter = XPathFilter.from_dict(filter_dict)
+
+            # Get file path from database
+            file_data = self.driver.select(
+                table_name="files",
+                where={"id": file_id},
+                limit=1,
+            )
+            if not file_data:
+                return ErrorResult(
+                    error_code=ErrorCode.NOT_FOUND,
+                    description=f"File not found for file_id={file_id}",
+                )
+
+            file_path = file_data[0].get("path")
+            if not file_path:
+                return ErrorResult(
+                    error_code=ErrorCode.NOT_FOUND,
+                    description=f"File path not found for file_id={file_id}",
+                )
 
             # Get AST tree from database
             ast_tree_rows = self.driver.select(
@@ -407,11 +429,81 @@ class RPCHandlers:
                 )
             ast_tree_data = ast_tree_rows[0]
 
-            # For now, return the AST tree data
-            # TODO: Implement proper AST node filtering using XPath filter
-            # This requires parsing AST JSON and filtering nodes
-            # For CST, we can use CSTQuery engine, but for AST we need different approach
-            return DataResult(data=[ast_tree_data])
+            # Load CST tree to find nodes using XPath filter
+            # AST filtering is done through CST, as XPath works with CST
+            try:
+                tree = load_file_to_tree(file_path)
+            except Exception as e:
+                logger.error(
+                    f"Error loading CST tree for AST query: {e}", exc_info=True
+                )
+                return ErrorResult(
+                    error_code=ErrorCode.DATABASE_ERROR,
+                    description=f"Failed to load CST tree: {e}",
+                )
+
+            # Find nodes using XPath filter (works with CST)
+            metadata_list = find_nodes(
+                tree.tree_id,
+                query=xpath_filter.selector,
+                search_type="xpath",
+                node_type=xpath_filter.node_type,
+                name=xpath_filter.name,
+                qualname=xpath_filter.qualname,
+                start_line=xpath_filter.start_line,
+                end_line=xpath_filter.end_line,
+            )
+
+            # Convert TreeNodeMetadata to ASTNode format
+            # For each CST node found, create an AST node representation
+            # AST filtering is done through CST, as XPath works with CST
+            from code_analysis.core.database_client.objects.ast_cst import ASTNode
+
+            ast_nodes = []
+            for metadata in metadata_list:
+                # Get node code from CST tree
+                node = tree.node_map.get(metadata.node_id)
+                code = node.code if node and hasattr(node, "code") else metadata.code
+
+                if code:
+                    # Parse code snippet to get AST node
+                    try:
+                        # Try to parse as expression first (for simple expressions)
+                        try:
+                            node_ast = ast.parse(code, mode="eval")
+                            node_ast = node_ast.body
+                        except SyntaxError:
+                            # If not an expression, parse as statement
+                            node_ast_module = ast.parse(code, mode="exec")
+                            if node_ast_module.body:
+                                node_ast = node_ast_module.body[0]
+                            else:
+                                node_ast = ast.Expr(ast.Constant(None))
+
+                        # Serialize AST node to JSON (ast.dump returns string)
+                        node_ast_json = json.dumps(ast.dump(node_ast))
+                    except (SyntaxError, ValueError) as e:
+                        # If code is not valid Python, create empty AST
+                        logger.warning(
+                            f"Failed to parse node code to AST: {e}, code: {code[:100]}"
+                        )
+                        node_ast_json = json.dumps(ast.dump(ast.Expr(ast.Constant(None))))
+                else:
+                    # No code available, create empty AST
+                    node_ast_json = json.dumps(ast.dump(ast.Expr(ast.Constant(None))))
+
+                # Create ASTNode for this specific node
+                # Note: ASTNode represents a tree node with its AST representation
+                ast_node = ASTNode(
+                    id=None,  # Node ID, not tree ID
+                    file_id=file_id,
+                    project_id=file_data[0].get("project_id", ""),
+                    ast_json=node_ast_json,
+                    ast_hash="",  # Not needed for query results
+                )
+                ast_nodes.append(ast_node.to_dict())
+
+            return DataResult(data=ast_nodes)
 
         except ValueError as e:
             logger.error(f"Validation error in handle_query_ast: {e}", exc_info=True)
@@ -451,9 +543,9 @@ class RPCHandlers:
                 )
 
             # Import here to avoid circular dependencies
-            from ...database_client.objects.xpath_filter import XPathFilter
-            from ...cst_tree.tree_builder import load_file_to_tree
-            from ...cst_tree.tree_finder import find_nodes
+            from code_analysis.core.database_client.objects.xpath_filter import XPathFilter
+            from code_analysis.core.cst_tree.tree_builder import load_file_to_tree
+            from code_analysis.core.cst_tree.tree_finder import find_nodes
 
             xpath_filter = XPathFilter.from_dict(filter_dict)
 
@@ -492,14 +584,17 @@ class RPCHandlers:
             )
 
             # Convert TreeNodeMetadata to CSTNode format
-            from ...database_client.objects.ast_cst import CSTNode
+            from code_analysis.core.database_client.objects.ast_cst import CSTNode
 
             cst_nodes = []
             for metadata in metadata_list:
                 # Get node code from tree
                 node = tree.node_map.get(metadata.node_id)
-                code = node.code if node else None
+                code = node.code if node and hasattr(node, "code") else metadata.code
 
+                # Create CSTNode with all metadata fields
+                # Note: CSTNode represents a tree node, not the full tree
+                # For query results, we include node metadata in cst_code
                 cst_node = CSTNode(
                     id=None,  # Node ID in tree, not database ID
                     file_id=file_id,
@@ -556,12 +651,12 @@ class RPCHandlers:
                 )
 
             # Import here to avoid circular dependencies
-            from ...database_client.objects.tree_action import TreeAction
+            from code_analysis.core.database_client.objects.tree_action import TreeAction
             from ...database_client.objects.xpath_filter import XPathFilter
-            from ...cst_tree.tree_builder import load_file_to_tree
-            from ...cst_tree.tree_finder import find_nodes
-            from ...cst_tree.tree_modifier import modify_tree
-            from ...cst_tree.models import TreeOperation, TreeOperationType
+            from code_analysis.core.cst_tree.tree_builder import load_file_to_tree
+            from code_analysis.core.cst_tree.tree_finder import find_nodes
+            from code_analysis.core.cst_tree.tree_modifier import modify_tree
+            from code_analysis.core.cst_tree.models import TreeOperation, TreeOperationType
             import ast
             import json
             import hashlib
@@ -790,10 +885,19 @@ class RPCHandlers:
                 )
 
             # Return modified AST node
-            from ...database_client.objects.ast_cst import ASTNode
+            from code_analysis.core.database_client.objects.ast_cst import ASTNode
+
+            # Get AST tree ID after save
+            saved_ast = self.driver.select(
+                table_name="ast_trees",
+                where={"file_id": file_id},
+                order_by=["updated_at"],
+                limit=1,
+            )
+            ast_id = saved_ast[0]["id"] if saved_ast else None
 
             ast_node = ASTNode(
-                id=existing_ast[0]["id"] if existing_ast else None,
+                id=ast_id,
                 file_id=file_id,
                 project_id=project_id,
                 ast_json=ast_json,
@@ -848,12 +952,12 @@ class RPCHandlers:
                 )
 
             # Import here to avoid circular dependencies
-            from ...database_client.objects.tree_action import TreeAction
+            from code_analysis.core.database_client.objects.tree_action import TreeAction
             from ...database_client.objects.xpath_filter import XPathFilter
-            from ...cst_tree.tree_builder import load_file_to_tree
-            from ...cst_tree.tree_finder import find_nodes
-            from ...cst_tree.tree_modifier import modify_tree
-            from ...cst_tree.models import TreeOperation, TreeOperationType
+            from code_analysis.core.cst_tree.tree_builder import load_file_to_tree
+            from code_analysis.core.cst_tree.tree_finder import find_nodes
+            from code_analysis.core.cst_tree.tree_modifier import modify_tree
+            from code_analysis.core.cst_tree.models import TreeOperation, TreeOperationType
 
             try:
                 action = TreeAction(action_str)
@@ -968,7 +1072,7 @@ class RPCHandlers:
             modified_tree = modify_tree(tree.tree_id, operations)
 
             # Convert modified tree to CSTNode format
-            from ...database_client.objects.ast_cst import CSTNode
+            from code_analysis.core.database_client.objects.ast_cst import CSTNode
 
             cst_node = CSTNode(
                 id=None,

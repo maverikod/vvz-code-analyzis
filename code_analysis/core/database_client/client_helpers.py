@@ -38,14 +38,14 @@ class _ClientHelpersMixin:
             return result_data.get("success", False)
         return False
 
-    def _extract_result_data(self, response: RPCResponse) -> Dict[str, Any]:
+    def _extract_result_data(self, response: RPCResponse) -> Any:
         """Extract result data from response.
 
         Args:
             response: RPC response
 
         Returns:
-            Result data dictionary
+            Result data (dict, list, or other type depending on result type)
 
         Raises:
             RPCResponseError: If response contains error
@@ -56,12 +56,12 @@ class _ClientHelpersMixin:
         result_data = response.result
         if result_data and isinstance(result_data, dict):
             # Handle both SuccessResult and DataResult formats
-            if "data" in result_data:
-                # DataResult format: {"success": True, "data": [...]}
-                return result_data
-            # SuccessResult format: {"success": True, "data": {...}}
+            # Both formats have "data" key, so always extract it
+            # SuccessResult format: {"success": True, "data": {"row_id": 1}}
+            # DataResult format: {"success": True, "data": [...]}
             return result_data.get("data", {})
-        return {}
+        # If result_data is not a dict (e.g., list for DataResult), return as-is
+        return result_data if result_data is not None else {}
 
     def _create_response_error(self, response: RPCResponse) -> RPCResponseError:
         """Create RPCResponseError from RPC response.

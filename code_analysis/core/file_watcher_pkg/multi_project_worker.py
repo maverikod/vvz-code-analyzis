@@ -116,10 +116,14 @@ class MultiProjectFileWatcherWorker:
             f"scan_interval={self.scan_interval}s"
         )
 
-        from ..database import CodeDatabase
-        from ..database.base import create_driver_config_for_worker
+        from ..database_client.client import DatabaseClient
+        from ..constants import DEFAULT_DB_DRIVER_SOCKET_DIR
 
-        driver_config = create_driver_config_for_worker(self.db_path)
+        # Get socket path for database driver
+        db_name = Path(self.db_path).stem
+        socket_dir = Path(DEFAULT_DB_DRIVER_SOCKET_DIR)
+        socket_dir.mkdir(parents=True, exist_ok=True)
+        socket_path = str(socket_dir / f"{db_name}_driver.sock")
 
         database: Any = None
         # Processors are created dynamically per discovered project
@@ -138,11 +142,12 @@ class MultiProjectFileWatcherWorker:
             while not self._stop_event.is_set():
                 if database is None:
                     try:
-                        database = CodeDatabase(driver_config=driver_config)
+                        database = DatabaseClient(socket_path=socket_path)
+                        database.connect()
                         # Test connection with a simple query
                         try:
                             # Try to get a project to test connection
-                            database._execute("SELECT 1", ())
+                            database.execute("SELECT 1", None)
                             # Connection successful
                             if not db_available:
                                 # Status changed: unavailable -> available
@@ -182,7 +187,7 @@ class MultiProjectFileWatcherWorker:
                                 db_status_logged = False
 
                             try:
-                                database.close()
+                                database.disconnect()
                             except Exception:
                                 pass
                             database = None
@@ -242,7 +247,7 @@ class MultiProjectFileWatcherWorker:
                             exc_info=True,
                         )
                     try:
-                        database.close()
+                        database.disconnect()
                     except Exception:
                         pass
                     database = None
@@ -281,7 +286,7 @@ class MultiProjectFileWatcherWorker:
         finally:
             try:
                 if database is not None:
-                    database.close()
+                    database.disconnect()
             except Exception:
                 pass
 
@@ -340,8 +345,29 @@ class MultiProjectFileWatcherWorker:
         logger.info(f"Total files on disk: {files_total_on_disk}")
 
         # Start worker statistics cycle with disk file count
-        cycle_id = database.start_file_watcher_cycle(
-            files_total_at_start=files_total_on_disk
+        import uuid
+
+        cycle_id = str(uuid.uuid4())
+        cycle_start_time = time.time()
+
+        # Mark any old active cycles as ended
+        database.execute(
+            """
+            UPDATE file_watcher_stats
+            SET cycle_end_time = ?, last_updated = julianday('now')
+            WHERE cycle_end_time IS NULL
+            """,
+            (cycle_start_time,),
+        )
+
+        # Insert new cycle record
+        database.execute(
+            """
+            INSERT INTO file_watcher_stats (
+                cycle_id, cycle_start_time, files_total_at_start, last_updated
+            ) VALUES (?, ?, ?, julianday('now'))
+            """,
+            (cycle_id, cycle_start_time, files_total_on_disk),
         )
 
         cycle_stats: Dict[str, Any] = {
@@ -377,20 +403,42 @@ class MultiProjectFileWatcherWorker:
             cycle_stats["errors"] += watch_dir_stats.get("errors", 0)
 
             # Update statistics after each watch_dir
-            database.update_file_watcher_stats(
-                cycle_id=cycle_id,
-                files_added=watch_dir_stats.get("new_files", 0),
-                files_processed=watch_dir_stats.get("new_files", 0)
-                + watch_dir_stats.get("changed_files", 0),
-                files_skipped=0,  # Skipped files are tracked separately if needed
-                files_failed=watch_dir_stats.get("errors", 0),
-                files_changed=watch_dir_stats.get("changed_files", 0),
-                files_deleted=watch_dir_stats.get("deleted_files", 0),
-                processing_time_seconds=watch_dir_duration,
+            database.execute(
+                """
+                UPDATE file_watcher_stats
+                SET
+                    files_added = files_added + ?,
+                    files_processed = files_processed + ?,
+                    files_skipped = files_skipped + ?,
+                    files_failed = files_failed + ?,
+                    files_changed = files_changed + ?,
+                    files_deleted = files_deleted + ?,
+                    total_processing_time_seconds = total_processing_time_seconds + ?,
+                    last_updated = julianday('now')
+                WHERE cycle_id = ?
+                """,
+                (
+                    watch_dir_stats.get("new_files", 0),
+                    watch_dir_stats.get("new_files", 0)
+                    + watch_dir_stats.get("changed_files", 0),
+                    0,  # Skipped files are tracked separately if needed
+                    watch_dir_stats.get("errors", 0),
+                    watch_dir_stats.get("changed_files", 0),
+                    watch_dir_stats.get("deleted_files", 0),
+                    watch_dir_duration,
+                    cycle_id,
+                ),
             )
 
         # End cycle
-        database.end_file_watcher_cycle(cycle_id)
+        database.execute(
+            """
+            UPDATE file_watcher_stats
+            SET cycle_end_time = ?, last_updated = julianday('now')
+            WHERE cycle_id = ?
+            """,
+            (time.time(), cycle_id),
+        )
 
         return cycle_stats
 
@@ -465,7 +513,18 @@ class MultiProjectFileWatcherWorker:
             # Also validate that project_id is not used in different directories
             for project_root_obj in discovered_projects:
                 try:
-                    project = database.get_project(project_root_obj.project_id)
+                    project_obj = database.get_project(project_root_obj.project_id)
+                    project = (
+                        {
+                            "id": project_obj.id,
+                            "root_path": project_obj.root_path,
+                            "name": project_obj.name,
+                            "comment": project_obj.comment,
+                            "watch_dir_id": getattr(project_obj, "watch_dir_id", None),
+                        }
+                        if project_obj
+                        else None
+                    )
                     if project:
                         # Project exists - validate root_path matches
                         if project["root_path"] != str(project_root_obj.root_path):
@@ -497,7 +556,7 @@ class MultiProjectFileWatcherWorker:
 
                         if needs_update:
                             update_values.append(project_root_obj.project_id)
-                            database._execute(
+                            database.execute(
                                 f"""
                                 UPDATE projects 
                                 SET {', '.join(update_fields)}, updated_at = julianday('now')
@@ -505,7 +564,6 @@ class MultiProjectFileWatcherWorker:
                                 """,
                                 tuple(update_values),
                             )
-                            database._commit()
                             logger.debug(
                                 f"Updated project {project_root_obj.project_id}: "
                                 f"comment={current_comment} -> {project_root_obj.description}, "
@@ -513,8 +571,17 @@ class MultiProjectFileWatcherWorker:
                             )
                     else:
                         # Check if project exists with different ID (by root_path)
-                        existing_project_id = database.get_project_id(
-                            str(project_root_obj.root_path)
+                        existing_result = database.execute(
+                            "SELECT id FROM projects WHERE root_path = ? LIMIT 1",
+                            (str(project_root_obj.root_path),),
+                        )
+                        existing_rows = (
+                            existing_result.get("data", [])
+                            if isinstance(existing_result, dict)
+                            else []
+                        )
+                        existing_project_id = (
+                            existing_rows[0].get("id") if existing_rows else None
                         )
                         if existing_project_id:
                             if existing_project_id != project_root_obj.project_id:
@@ -524,7 +591,7 @@ class MultiProjectFileWatcherWorker:
                                     f"({project_root_obj.project_id}), updating"
                                 )
                                 # Update project ID and description to match projectid file
-                                database._execute(
+                                database.execute(
                                     """
                                     UPDATE projects 
                                     SET id = ?, comment = ?, updated_at = julianday('now')
@@ -536,12 +603,19 @@ class MultiProjectFileWatcherWorker:
                                         existing_project_id,
                                     ),
                                 )
-                                database._commit()
                             # Project exists with correct ID
                         else:
                             # Check if project_id is used by another root_path
-                            existing_project = database.get_project(
+                            existing_project_obj = database.get_project(
                                 project_root_obj.project_id
+                            )
+                            existing_project = (
+                                {
+                                    "id": existing_project_obj.id,
+                                    "root_path": existing_project_obj.root_path,
+                                }
+                                if existing_project_obj
+                                else None
                             )
                             if existing_project:
                                 logger.error(
@@ -558,7 +632,7 @@ class MultiProjectFileWatcherWorker:
                             project_description = project_root_obj.description
                             # Get watch_dir_id from spec
                             watch_dir_id = spec.watch_dir_id
-                            database._execute(
+                            database.execute(
                                 """
                                 INSERT INTO projects (id, root_path, name, comment, watch_dir_id, updated_at)
                                 VALUES (?, ?, ?, ?, ?, julianday('now'))
@@ -571,7 +645,6 @@ class MultiProjectFileWatcherWorker:
                                     watch_dir_id,
                                 ),
                             )
-                            database._commit()
                             logger.info(
                                 f"Auto-created project {project_root_obj.project_id} "
                                 f"at {project_root_obj.root_path} "
@@ -705,12 +778,29 @@ class MultiProjectFileWatcherWorker:
                     # We'll need to pass it or get it from database
                     try:
                         # Get current cycle_id from database
-                        cycle_stats = database.get_file_watcher_stats()
-                        if cycle_stats:
-                            cycle_id = cycle_stats["cycle_id"]
-                            database.update_file_watcher_stats(
-                                cycle_id=cycle_id,
-                                current_project_id=current_project_id,
+                        cycle_result = database.execute(
+                            """
+                            SELECT cycle_id FROM file_watcher_stats
+                            WHERE cycle_end_time IS NULL
+                            ORDER BY cycle_start_time DESC
+                            LIMIT 1
+                            """,
+                            None,
+                        )
+                        cycle_rows = (
+                            cycle_result.get("data", [])
+                            if isinstance(cycle_result, dict)
+                            else []
+                        )
+                        if cycle_rows:
+                            cycle_id = cycle_rows[0].get("cycle_id")
+                            database.execute(
+                                """
+                                UPDATE file_watcher_stats
+                                SET current_project_id = ?, last_updated = julianday('now')
+                                WHERE cycle_id = ?
+                                """,
+                                (current_project_id, cycle_id),
                             )
                     except Exception as e:
                         logger.debug(f"Could not update current_project_id: {e}")
@@ -759,15 +849,24 @@ class MultiProjectFileWatcherWorker:
             config_watch_dir_ids.add(watch_dir_id)
 
             # Create/update watch_dir entry
-            database.create_watch_dir(
-                watch_dir_id=watch_dir_id,
-                name=watch_dir_path.name,
+            database.execute(
+                """
+                INSERT OR REPLACE INTO watch_dirs (id, name, updated_at)
+                VALUES (?, ?, julianday('now'))
+                """,
+                (watch_dir_id, watch_dir_path.name),
             )
 
             # Update watch_dir_paths
             if watch_dir_path.exists():
                 normalized_path = normalize_path_simple(str(watch_dir_path))
-                database.update_watch_dir_path(watch_dir_id, normalized_path)
+                database.execute(
+                    """
+                    INSERT OR REPLACE INTO watch_dir_paths (watch_dir_id, path, updated_at)
+                    VALUES (?, ?, julianday('now'))
+                    """,
+                    (watch_dir_id, normalized_path),
+                )
                 logger.debug(
                     f"Updated watch_dir_path: {watch_dir_id} -> {normalized_path}"
                 )
@@ -777,11 +876,14 @@ class MultiProjectFileWatcherWorker:
                     discovered_projects = discover_projects_in_directory(watch_dir_path)
                     for project_root_obj in discovered_projects:
                         # Check if project exists
-                        project = database.get_project(project_root_obj.project_id)
-                        if project:
+                        project_obj = database.get_project(project_root_obj.project_id)
+                        if project_obj:
                             # Update watch_dir_id if needed
-                            if project.get("watch_dir_id") != watch_dir_id:
-                                database._execute(
+                            if (
+                                getattr(project_obj, "watch_dir_id", None)
+                                != watch_dir_id
+                            ):
+                                database.execute(
                                     """
                                     UPDATE projects 
                                     SET watch_dir_id = ?, updated_at = julianday('now')
@@ -789,7 +891,6 @@ class MultiProjectFileWatcherWorker:
                                     """,
                                     (watch_dir_id, project_root_obj.project_id),
                                 )
-                                database._commit()
                                 logger.debug(
                                     f"Updated project {project_root_obj.project_id} "
                                     f"watch_dir_id to {watch_dir_id}"
@@ -797,7 +898,7 @@ class MultiProjectFileWatcherWorker:
                         else:
                             # Create new project
                             project_name = project_root_obj.root_path.name
-                            database._execute(
+                            database.execute(
                                 """
                                 INSERT INTO projects (id, root_path, name, comment, watch_dir_id, updated_at)
                                 VALUES (?, ?, ?, ?, ?, julianday('now'))
@@ -810,7 +911,6 @@ class MultiProjectFileWatcherWorker:
                                     watch_dir_id,
                                 ),
                             )
-                            database._commit()
                             logger.info(
                                 f"Created project {project_root_obj.project_id} "
                                 f"at {project_root_obj.root_path} "
@@ -823,19 +923,39 @@ class MultiProjectFileWatcherWorker:
                     )
             else:
                 # Path doesn't exist on disk - set NULL
-                database.update_watch_dir_path(watch_dir_id, None)
+                database.execute(
+                    """
+                    INSERT OR REPLACE INTO watch_dir_paths (watch_dir_id, path, updated_at)
+                    VALUES (?, NULL, julianday('now'))
+                    """,
+                    (watch_dir_id,),
+                )
                 logger.warning(
                     f"Watch dir path does not exist: {watch_dir_path}, "
                     f"setting NULL for watch_dir_id: {watch_dir_id}"
                 )
 
         # Step 3: Set NULL paths for watch_dirs in DB but not in config
-        all_db_watch_dirs = database.get_all_watch_dirs()
-        for db_watch_dir in all_db_watch_dirs:
+        all_watch_dirs_result = database.execute(
+            "SELECT id FROM watch_dirs",
+            None,
+        )
+        all_watch_dirs_rows = (
+            all_watch_dirs_result.get("data", [])
+            if isinstance(all_watch_dirs_result, dict)
+            else []
+        )
+        for db_watch_dir in all_watch_dirs_rows:
             db_watch_dir_id = db_watch_dir["id"]
             if db_watch_dir_id not in config_watch_dir_ids:
                 # Not in config - set path to NULL
-                database.update_watch_dir_path(db_watch_dir_id, None)
+                database.execute(
+                    """
+                    INSERT OR REPLACE INTO watch_dir_paths (watch_dir_id, path, updated_at)
+                    VALUES (?, NULL, julianday('now'))
+                    """,
+                    (db_watch_dir_id,),
+                )
                 logger.debug(
                     f"Watch dir {db_watch_dir_id} not in config, setting path to NULL"
                 )

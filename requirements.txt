@@ -3,3 +3,5 @@ click>=8.0
 mcp>=1.0.0
 pydantic>=2.1.0
 svo-client>=2.2.10
+lark>=1.1.0
+libcst>=1.1.0

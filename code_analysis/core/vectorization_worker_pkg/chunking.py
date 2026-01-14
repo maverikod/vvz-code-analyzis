@@ -14,13 +14,13 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict, List
 
 if TYPE_CHECKING:
-    from ..database import CodeDatabase
+    from ..database_client.client import DatabaseClient
 
 logger = logging.getLogger(__name__)
 
 
 async def _request_chunking_for_files(
-    self, database: "CodeDatabase", files: List[Dict[str, Any]]
+    self, database: "DatabaseClient", files: List[Dict[str, Any]]
 ) -> int:
     """
     Request chunking for files that need it.
@@ -114,7 +114,7 @@ async def _request_chunking_for_files(
 
 
 def _log_missing_docstring_files(
-    self, database: "CodeDatabase", sample: int = 10
+    self, database: "DatabaseClient", sample: int = 10
 ) -> None:
     """
     Log files that have no docstring chunks in the database.
@@ -122,7 +122,7 @@ def _log_missing_docstring_files(
     **Important**: Only logs files that are not marked as deleted.
     """
     try:
-        rows = database._fetchall(
+        rows_result = database.execute(
             """
             SELECT f.path
             FROM files f
@@ -136,6 +136,8 @@ def _log_missing_docstring_files(
             """,
             (self.project_id, sample),
         )
+        # Extract data from result - execute() returns dict with "data" key
+        rows = rows_result.get("data", []) if isinstance(rows_result, dict) else []
         if rows:
             paths = [row["path"] for row in rows]
             # Filter out paths that don't exist on disk (may have been split/refactored)

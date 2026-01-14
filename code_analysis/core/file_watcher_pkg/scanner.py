@@ -63,7 +63,10 @@ def should_ignore_path(path: Path, ignore_patterns: Optional[List[str]] = None) 
             # Check if next part is "versions" or if path contains "data/versions"
             try:
                 part_idx = path.parts.index(part)
-                if part_idx + 1 < len(path.parts) and path.parts[part_idx + 1] == "versions":
+                if (
+                    part_idx + 1 < len(path.parts)
+                    and path.parts[part_idx + 1] == "versions"
+                ):
                     return True
             except (ValueError, IndexError):
                 pass
@@ -75,7 +78,7 @@ def should_ignore_path(path: Path, ignore_patterns: Optional[List[str]] = None) 
             return True
         if rel_path_str and fnmatch.fnmatch(rel_path_str, pattern):
             return True
-        
+
         # Check if pattern matches any part of the path
         if "**" in pattern or "/" in pattern:
             # Glob pattern with ** or path separator
@@ -86,7 +89,7 @@ def should_ignore_path(path: Path, ignore_patterns: Optional[List[str]] = None) 
                 # Also check with leading slash
                 if fnmatch.fnmatch("/" + subpath, pattern):
                     return True
-        
+
         # Simple pattern matching for each part
         for part in path.parts:
             if fnmatch.fnmatch(part, pattern):
@@ -103,6 +106,8 @@ def should_ignore_path(path: Path, ignore_patterns: Optional[List[str]] = None) 
         return path.suffix not in CODE_FILE_EXTENSIONS
 
     return False
+
+
 def scan_directory(
     root_dir: Path,
     watch_dirs: List[Path],
@@ -110,15 +115,15 @@ def scan_directory(
 ) -> Dict[str, Dict]:
     """
     Scan directory recursively for code files and discover projects.
-    
+
     Implements project discovery: for each file, finds the nearest project root
     by walking up the directory tree and looking for projectid files.
-    
+
     Args:
         root_dir: Root directory to scan
         watch_dirs: List of watched directories for project discovery (REQUIRED)
         ignore_patterns: Glob patterns to ignore
-    
+
     Returns:
         Dictionary mapping absolute file paths to file info:
         {
@@ -130,18 +135,18 @@ def scan_directory(
                 "project_id": "uuid-here",
             }
         }
-        
+
         Files without a project (no projectid found) are skipped with a warning.
     """
     from ..path_normalization import normalize_file_path
     from ..exceptions import NestedProjectError, ProjectNotFoundError
     from typing import Any
-    
+
     files: Dict[str, Dict] = {}
-    
+
     # Resolve watch_dirs to absolute paths
     watch_dirs_resolved = [Path(wd).resolve() for wd in watch_dirs]
-    
+
     try:
         for item in root_dir.rglob("*"):
             if should_ignore_path(item, ignore_patterns):
@@ -152,9 +157,11 @@ def scan_directory(
                     stat = item.stat()
                     # Use unified path normalization method
                     try:
-                        normalized = normalize_file_path(item, watch_dirs=watch_dirs_resolved)
+                        normalized = normalize_file_path(
+                            item, watch_dirs=watch_dirs_resolved
+                        )
                         path_key = normalized.absolute_path
-                        
+
                         file_info: Dict[str, Any] = {
                             "path": Path(normalized.absolute_path),
                             "mtime": stat.st_mtime,

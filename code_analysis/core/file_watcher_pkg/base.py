@@ -99,10 +99,17 @@ class FileWatcherWorker:
         )
 
         try:
-            from ..database import CodeDatabase, create_driver_config_for_worker
+            from ..database_client.client import DatabaseClient
+            from ..constants import DEFAULT_DB_DRIVER_SOCKET_DIR
 
-            driver_config = create_driver_config_for_worker(self.db_path)
-            database = CodeDatabase(driver_config=driver_config)
+            # Get socket path for database driver
+            db_name = Path(self.db_path).stem
+            socket_dir = Path(DEFAULT_DB_DRIVER_SOCKET_DIR)
+            socket_dir.mkdir(parents=True, exist_ok=True)
+            socket_path = str(socket_dir / f"{db_name}_driver.sock")
+
+            database = DatabaseClient(socket_path=socket_path)
+            database.connect()
             processor = FileChangeProcessor(
                 database=database,
                 watch_dirs=self.watch_dirs,
@@ -133,7 +140,7 @@ class FileWatcherWorker:
                 # Wait for next scan interval
                 await asyncio.sleep(self.scan_interval)
 
-            database.close()
+            database.disconnect()
 
         except KeyboardInterrupt:
             logger.info("File watcher worker interrupted")
@@ -150,7 +157,7 @@ class FileWatcherWorker:
         Perform one scan cycle for all root watched directories.
 
         Args:
-            database: CodeDatabase instance
+            database: DatabaseClient instance
             processor: FileChangeProcessor instance
 
         Returns:
@@ -199,7 +206,7 @@ class FileWatcherWorker:
                 delta = processor.compute_delta(root_dir, scanned_files)
                 scan_end = datetime.now()
                 scan_duration = (scan_end - scan_start).total_seconds()
-                
+
                 # Log scan results (delta is always Dict[str, FileDelta])
                 total_new = sum(len(d.new_files) for d in delta.values())
                 total_changed = sum(len(d.changed_files) for d in delta.values())

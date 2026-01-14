@@ -57,10 +57,24 @@ async def process_embedding_ready_chunks(
         logger.info(
             f"[TIMING] Step 2: Starting to get non-vectorized chunks from DB ({scope_desc})"
         )
-        # get_non_vectorized_chunks is synchronous, returns List[Dict], not a coroutine
-        chunks = database.get_non_vectorized_chunks(
-            project_id=self.project_id,
-            limit=self.batch_size,
+        # get_non_vectorized_chunks - use execute() for complex query
+        chunks_result = database.execute(
+            """
+            SELECT cc.id, cc.chunk_text, cc.class_id, cc.function_id, cc.method_id,
+                   cc.line, cc.ast_node_type, cc.embedding_vector, cc.embedding_model
+            FROM code_chunks cc
+            INNER JOIN files f ON cc.file_id = f.id
+            WHERE cc.project_id = ?
+              AND (f.deleted = 0 OR f.deleted IS NULL)
+              AND cc.embedding_vector IS NOT NULL
+              AND cc.vector_id IS NULL
+            LIMIT ?
+            """,
+            (self.project_id, self.batch_size),
+        )
+        # Extract data from result - execute() returns dict with "data" key
+        chunks = (
+            chunks_result.get("data", []) if isinstance(chunks_result, dict) else []
         )
         step_duration = time.time() - step_start
         logger.info(
@@ -127,10 +141,15 @@ async def process_embedding_ready_chunks(
 
                 # Check if chunk has embedding_vector in database
                 db_check_start = time.time()
-                row = database._fetchone(
+                row_result = database.execute(
                     "SELECT embedding_vector, embedding_model FROM code_chunks WHERE id = ?",
                     (chunk_id,),
                 )
+                # Extract data from result - execute() returns dict with "data" key containing list
+                row_data = (
+                    row_result.get("data", []) if isinstance(row_result, dict) else []
+                )
+                row = row_data[0] if row_data else None
                 db_check_duration = time.time() - db_check_start
                 logger.debug(
                     f"[TIMING] [CHUNK {chunk_id}] DB check took {db_check_duration:.3f}s"
@@ -219,7 +238,7 @@ async def process_embedding_ready_chunks(
                                     if hasattr(embedding, "tolist")
                                     else embedding
                                 )
-                                database._execute(
+                                database.execute(
                                     "UPDATE code_chunks SET embedding_vector = ?, embedding_model = ? WHERE id = ?",
                                     (
                                         embedding_json,
@@ -227,7 +246,6 @@ async def process_embedding_ready_chunks(
                                         chunk_id,
                                     ),
                                 )
-                                database._commit()
                                 save_duration = time.time() - save_start
                                 logger.debug(
                                     f"[TIMING] [CHUNK {chunk_id}] Saved embedding to DB in {save_duration:.3f}s"
@@ -298,8 +316,9 @@ async def process_embedding_ready_chunks(
 
                 # Update database with vector_id (AST bindings are preserved)
                 db_update_start = time.time()
-                await database.update_chunk_vector_id(
-                    chunk_id, vector_id, embedding_model
+                database.execute(
+                    "UPDATE code_chunks SET vector_id = ?, embedding_model = ? WHERE id = ?",
+                    (vector_id, embedding_model, chunk_id),
                 )
                 db_update_duration = time.time() - db_update_start
                 logger.debug(

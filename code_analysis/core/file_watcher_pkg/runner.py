@@ -92,7 +92,7 @@ def run_file_watcher_worker(
     Worker policy:
         This worker must NOT start other processes (including DB worker).
         It connects to an already running DB worker via sqlite_proxy.
-        
+
     Projects are discovered automatically within each watch_dir by finding
     projectid files. Multiple projects can exist in one watch_dir.
 
@@ -119,7 +119,10 @@ def run_file_watcher_worker(
     # Setup worker logging first
     _setup_worker_logging(worker_log_path, log_max_bytes, log_backup_count)
 
-    from .multi_project_worker import MultiProjectFileWatcherWorker, build_watch_dir_specs
+    from .multi_project_worker import (
+        MultiProjectFileWatcherWorker,
+        build_watch_dir_specs,
+    )
 
     worker = MultiProjectFileWatcherWorker(
         db_path=Path(db_path),

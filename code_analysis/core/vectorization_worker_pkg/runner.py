@@ -127,26 +127,27 @@ def run_vectorization_worker(
     )
 
     # Database auto-creation (if database doesn't exist, create it)
-    from ..database import CodeDatabase
-    from ..database.base import create_driver_config_for_worker
+    from ..database_client.client import DatabaseClient
+    from ..constants import DEFAULT_DB_DRIVER_SOCKET_DIR
 
     db_path_obj = Path(db_path)
 
     # Ensure parent directory exists
     db_path_obj.parent.mkdir(parents=True, exist_ok=True)
 
-    # Create database connection (will automatically create schema if doesn't exist)
-    driver_config = create_driver_config_for_worker(
-        db_path=db_path_obj,
-        driver_type="sqlite_proxy",
-    )
+    # Get socket path for database driver
+    db_name = db_path_obj.stem
+    socket_dir = Path(DEFAULT_DB_DRIVER_SOCKET_DIR)
+    socket_dir.mkdir(parents=True, exist_ok=True)
+    socket_path = str(socket_dir / f"{db_name}_driver.sock")
 
     # Check if database exists, create if not
     if not db_path_obj.exists():
         logger.info(f"Database file not found, creating new database at {db_path}")
         try:
-            init_database = CodeDatabase(driver_config=driver_config)
-            init_database.close()
+            init_database = DatabaseClient(socket_path=socket_path)
+            init_database.connect()
+            init_database.disconnect()
             logger.info(f"Created new database at {db_path}")
         except Exception as e:
             logger.warning(f"Failed to create database: {e}, continuing anyway")
@@ -180,15 +181,21 @@ def run_vectorization_worker(
         logger.info(
             "Checking FAISS index synchronization with database for all projects..."
         )
-        # Override timeout for sync check
-        if driver_config.get("type") == "sqlite_proxy":
-            driver_config["config"]["worker_config"]["command_timeout"] = 30.0
-            driver_config["config"]["worker_config"]["poll_interval"] = 0.5
-
         try:
-            sync_database = CodeDatabase(driver_config=driver_config)
+            sync_database = DatabaseClient(socket_path=socket_path, timeout=30.0)
+            sync_database.connect()
             # Get all projects from database
-            all_projects = sync_database.get_all_projects()
+            all_projects = sync_database.list_projects()
+            # Convert Project objects to dict format for compatibility
+            all_projects = [
+                {
+                    "id": p.id,
+                    "root_path": p.root_path,
+                    "name": p.name,
+                    "comment": p.comment,
+                }
+                for p in all_projects
+            ]
 
             if not all_projects:
                 logger.info("No projects found in database, skipping FAISS sync check")
@@ -266,7 +273,7 @@ def run_vectorization_worker(
                         )
                         # Continue with next project
 
-            sync_database.close()
+            sync_database.disconnect()
         except Exception as db_e:
             logger.warning(
                 f"⚠️  Database is unavailable during startup sync check: {db_e}. "
@@ -314,6 +321,7 @@ def run_vectorization_worker(
             pass  # Use defaults
 
     # Create and run worker (universal mode - no project_id, no faiss_manager at init)
+    # Pass socket_path to worker for DatabaseClient initialization
     worker = VectorizationWorker(
         db_path=Path(db_path),
         faiss_dir=Path(faiss_dir),
@@ -325,6 +333,7 @@ def run_vectorization_worker(
         min_chunk_length=min_chunk_length,
         max_empty_iterations=max_empty_iterations,
         empty_delay=empty_delay,
+        socket_path=socket_path,  # Pass socket_path for DatabaseClient
     )
 
     try:

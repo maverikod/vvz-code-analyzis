@@ -36,6 +36,7 @@ class VectorizationWorker:
         min_chunk_length: int = 30,
         max_empty_iterations: int = 3,
         empty_delay: float = 5.0,
+        socket_path: Optional[str] = None,
     ):
         """
         Initialize universal vectorization worker.
@@ -55,6 +56,7 @@ class VectorizationWorker:
             min_chunk_length: Minimum text length for chunking (default: 30)
             max_empty_iterations: Max consecutive empty iterations before adding delay (default: 3)
             empty_delay: Delay in seconds when no chunks available (default: 5.0)
+            socket_path: Path to database driver socket (for DatabaseClient)
         """
         self.db_path = db_path
         self.faiss_dir = Path(faiss_dir)
@@ -66,6 +68,7 @@ class VectorizationWorker:
         self.min_chunk_length = min_chunk_length
         self.max_empty_iterations = max_empty_iterations
         self.empty_delay = empty_delay
+        self.socket_path = socket_path
         self._stop_event = multiprocessing.Event()
 
     def stop(self) -> None:

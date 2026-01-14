@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, List
 
 if TYPE_CHECKING:
-    from ..database import CodeDatabase
+    from ..database_client.client import DatabaseClient
 
 logger = logging.getLogger(__name__)
 
@@ -73,7 +73,7 @@ def _refresh_config(self) -> None:
         logger.error(f"Failed to refresh config: {e}", exc_info=True)
 
 
-async def _enqueue_watch_dirs(self, database: "CodeDatabase") -> int:
+async def _enqueue_watch_dirs(self, database: "DatabaseClient") -> int:
     """
     Scan watch_dirs and ensure files are registered for chunking.
 
@@ -96,11 +96,33 @@ async def _enqueue_watch_dirs(self, database: "CodeDatabase") -> int:
             normalized_root = str(normalize_root_dir(root_path))
             dataset_id = getattr(self, "dataset_id", None)
             if not dataset_id:
-                dataset_id = database.get_dataset_id(self.project_id, normalized_root)
+                # Use execute() for get_dataset_id
+                dataset_result = database.execute(
+                    """
+                    SELECT id FROM datasets
+                    WHERE project_id = ? AND root_path = ?
+                    LIMIT 1
+                    """,
+                    (self.project_id, normalized_root),
+                )
+                dataset_rows = (
+                    dataset_result.get("data", [])
+                    if isinstance(dataset_result, dict)
+                    else []
+                )
+                if dataset_rows:
+                    dataset_id = dataset_rows[0].get("id")
                 if not dataset_id:
                     # Create dataset if it doesn't exist
-                    dataset_id = database.get_or_create_dataset(
-                        self.project_id, normalized_root
+                    import uuid
+
+                    dataset_id = str(uuid.uuid4())
+                    database.execute(
+                        """
+                        INSERT INTO datasets (id, project_id, root_path, created_at)
+                        VALUES (?, ?, ?, julianday('now'))
+                        """,
+                        (dataset_id, self.project_id, normalized_root),
                     )
                     logger.info(
                         f"Created dataset {dataset_id} for watch_dir {normalized_root}"
@@ -109,24 +131,54 @@ async def _enqueue_watch_dirs(self, database: "CodeDatabase") -> int:
             for file_path in root_path.rglob("*.py"):
                 file_stat = file_path.stat()
                 file_mtime = file_stat.st_mtime
-                file_rec = database.get_file_by_path(str(file_path), self.project_id)
+                file_path_str = str(file_path)
+                # Use execute() for get_file_by_path
+                file_result = database.execute(
+                    """
+                    SELECT id, path, last_modified FROM files
+                    WHERE path = ? AND project_id = ?
+                    LIMIT 1
+                    """,
+                    (file_path_str, self.project_id),
+                )
+                file_rows = (
+                    file_result.get("data", []) if isinstance(file_result, dict) else []
+                )
+                file_rec = file_rows[0] if file_rows else None
                 if not file_rec:
                     # Register file and mark as needing chunking
-                    database.add_file(
-                        str(file_path),
-                        lines=len(file_path.read_text(encoding="utf-8").splitlines()),
-                        last_modified=file_mtime,
-                        has_docstring=False,
-                        project_id=self.project_id,
-                        dataset_id=dataset_id,
+                    # Use execute() for add_file
+                    file_lines = len(file_path.read_text(encoding="utf-8").splitlines())
+                    database.execute(
+                        """
+                        INSERT INTO files (path, lines, last_modified, has_docstring, project_id, dataset_id, created_at)
+                        VALUES (?, ?, ?, ?, ?, ?, julianday('now'))
+                        """,
+                        (
+                            file_path_str,
+                            file_lines,
+                            file_mtime,
+                            False,
+                            self.project_id,
+                            dataset_id,
+                        ),
                     )
-                    database.mark_file_needs_chunking(str(file_path), self.project_id)
+                    # Use execute() for mark_file_needs_chunking
+                    database.execute(
+                        """
+                        UPDATE files SET needs_chunking = 1 WHERE path = ? AND project_id = ?
+                        """,
+                        (file_path_str, self.project_id),
+                    )
                     enqueued += 1
                 else:
                     db_mtime = file_rec.get("last_modified")
                     if db_mtime is None or db_mtime != file_mtime:
-                        database.mark_file_needs_chunking(
-                            str(file_path), self.project_id
+                        database.execute(
+                            """
+                            UPDATE files SET needs_chunking = 1 WHERE path = ? AND project_id = ?
+                            """,
+                            (file_path_str, self.project_id),
                         )
                         enqueued += 1
         except Exception as e:

@@ -121,7 +121,11 @@ class _ClientOperationsMixin:
         )
         response = self.rpc_client.call("select", request.to_dict())
         result_data = self._extract_result_data(response)
-        return result_data.get("data", [])
+        # For DataResult, _extract_result_data returns the list directly
+        if isinstance(result_data, list):
+            return result_data
+        # Fallback: return empty list if not a list
+        return []
 
     def execute(self, sql: str, params: Optional[tuple] = None) -> Dict[str, Any]:
         """Execute raw SQL query.

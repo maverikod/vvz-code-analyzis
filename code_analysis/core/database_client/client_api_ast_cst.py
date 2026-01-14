@@ -9,6 +9,8 @@ from __future__ import annotations
 
 from typing import Any, Dict, List
 
+from ..database_driver_pkg.rpc_protocol import RPCResponse
+
 from .objects.ast_cst import ASTNode, CSTNode
 from .objects.tree_action import TreeAction
 from .objects.xpath_filter import XPathFilter
@@ -107,36 +109,50 @@ class _ClientAPIASTCSTMixin:
         return self._parse_result_response(response, CSTNode)
 
     def _parse_result_response(
-        self, response: Dict[str, Any], data_type: Any
+        self, response: RPCResponse, data_type: Any
     ) -> Result[Any]:
         """Parse RPC response into Result object.
 
         Args:
-            response: RPC response dictionary
+            response: RPC response object
             data_type: Expected data type (for deserialization)
 
         Returns:
             Result object
         """
-        if response.get("success"):
-            data = response.get("data")
-            # Deserialize data if needed
-            if data and data_type:
-                if data_type == List[ASTNode]:
-                    data = [ASTNode.from_dict(item) for item in data]
-                elif data_type == List[CSTNode]:
-                    data = [CSTNode.from_dict(item) for item in data]
-                elif data_type == ASTNode:
-                    data = ASTNode.from_dict(data)
-                elif data_type == CSTNode:
-                    data = CSTNode.from_dict(data)
-            return Result.create_success(data=data)
-        else:
+        if response.is_error():
             from ..database_driver_pkg.rpc_protocol import ErrorCode
 
-            error_code = ErrorCode(response.get("error_code", "UNKNOWN_ERROR"))
-            description = response.get("error_description", "Unknown error")
-            details = response.get("error_details")
+            error = response.error
+            if error:
+                error_code = error.code
+                description = error.message
+                details = error.data
+            else:
+                error_code = ErrorCode.UNKNOWN_ERROR
+                description = "Unknown error"
+                details = None
             return Result.error(
                 error_code=error_code, description=description, details=details
             )
+
+        # Extract data from result
+        result_data = response.result
+        if result_data and isinstance(result_data, dict):
+            # Handle both SuccessResult and DataResult formats
+            data = result_data.get("data")
+        else:
+            data = None
+
+        # Deserialize data if needed
+        if data and data_type:
+            if data_type == List[ASTNode]:
+                data = [ASTNode.from_dict(item) for item in data]
+            elif data_type == List[CSTNode]:
+                data = [CSTNode.from_dict(item) for item in data]
+            elif data_type == ASTNode:
+                data = ASTNode.from_dict(data)
+            elif data_type == CSTNode:
+                data = CSTNode.from_dict(data)
+
+        return Result.create_success(data=data)

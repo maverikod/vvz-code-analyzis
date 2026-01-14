@@ -169,7 +169,9 @@ class LockManager:
         try:
             if lock_path.exists():
                 lock_path.unlink()
-                logger.info(f"Released lock for {normalized_root} (lock_path: {lock_path})")
+                logger.info(
+                    f"Released lock for {normalized_root} (lock_path: {lock_path})"
+                )
         except OSError as e:
             logger.warning(f"Failed to remove lock file {lock_path}: {e}")
 

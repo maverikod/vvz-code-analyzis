@@ -42,16 +42,24 @@ async def process_chunks(self, poll_interval: int = 30) -> Dict[str, Any]:
     Returns:
         Dictionary with processing statistics (only when stopped)
     """
-    from ..database import CodeDatabase
+    from ..database_client.client import DatabaseClient
     from ..faiss_manager import FaissIndexManager
 
     if not self.svo_client_manager:
         logger.warning("SVO client manager not available, skipping vectorization")
         return {"processed": 0, "errors": 0}
 
-    from ..database import create_driver_config_for_worker
+    # Get socket path for database driver
+    if not self.socket_path:
+        from ..constants import DEFAULT_DB_DRIVER_SOCKET_DIR
+        from pathlib import Path
 
-    driver_config = create_driver_config_for_worker(self.db_path)
+        db_name = Path(self.db_path).stem
+        socket_dir = Path(DEFAULT_DB_DRIVER_SOCKET_DIR)
+        socket_dir.mkdir(parents=True, exist_ok=True)
+        socket_path = str(socket_dir / f"{db_name}_driver.sock")
+    else:
+        socket_path = self.socket_path
 
     # Track database availability status
     db_available = False
@@ -77,10 +85,11 @@ async def process_chunks(self, poll_interval: int = 30) -> Dict[str, Any]:
             # Check database availability
             if database is None or not db_available:
                 try:
-                    database = CodeDatabase(driver_config=driver_config)
+                    database = DatabaseClient(socket_path=socket_path)
+                    database.connect()
                     # Test connection with a simple query
                     try:
-                        database.get_all_projects()
+                        database.list_projects()
                         # Connection successful
                         if not db_available:
                             # Status changed: unavailable -> available
@@ -106,7 +115,7 @@ async def process_chunks(self, poll_interval: int = 30) -> Dict[str, Any]:
                             db_status_logged = False
 
                         try:
-                            database.close()
+                            database.disconnect()
                         except Exception:
                             pass
                         database = None
@@ -143,25 +152,200 @@ async def process_chunks(self, poll_interval: int = 30) -> Dict[str, Any]:
             logger.info(f"[CYCLE #{cycle_count}] Starting vectorization cycle")
 
             # Start worker statistics cycle
-            cycle_id = database.start_vectorization_cycle()
+            # Use execute() for worker stats methods that are not yet in DatabaseClient
+            import uuid
+
+            cycle_id = str(uuid.uuid4())
+            cycle_start_time = time.time()
+
+            # Mark any old active cycles as ended
+            database.execute(
+                """
+                UPDATE vectorization_stats
+                SET cycle_end_time = ?, last_updated = julianday('now')
+                WHERE cycle_end_time IS NULL
+                """,
+                (cycle_start_time,),
+            )
+
+            # Get total chunks count at start
+            chunks_result = database.execute(
+                "SELECT COUNT(*) as count FROM code_chunks WHERE vector_id IS NULL",
+                None,
+            )
+            # execute() returns dict with "data" key containing list of rows
+            chunks_data = (
+                chunks_result.get("data", []) if isinstance(chunks_result, dict) else []
+            )
+            chunks_total_at_start = chunks_data[0].get("count", 0) if chunks_data else 0
+
+            # Get total files count at start
+            files_result = database.execute(
+                "SELECT COUNT(*) as count FROM files WHERE (deleted = 0 OR deleted IS NULL)",
+                None,
+            )
+            files_data = (
+                files_result.get("data", []) if isinstance(files_result, dict) else []
+            )
+            files_total_at_start = files_data[0].get("count", 0) if files_data else 0
+
+            # Get vectorized files count
+            vectorized_result = database.execute(
+                """
+                SELECT COUNT(DISTINCT f.id) as count
+                FROM files f
+                INNER JOIN code_chunks cc ON f.id = cc.file_id
+                WHERE (f.deleted = 0 OR f.deleted IS NULL)
+                AND cc.vector_id IS NOT NULL
+                """,
+                None,
+            )
+            vectorized_data = (
+                vectorized_result.get("data", [])
+                if isinstance(vectorized_result, dict)
+                else []
+            )
+            files_vectorized = (
+                vectorized_data[0].get("count", 0) if vectorized_data else 0
+            )
+
+            # Insert new cycle record
+            database.execute(
+                """
+                INSERT INTO vectorization_stats (
+                    cycle_id, cycle_start_time, chunks_total_at_start,
+                    files_total_at_start, files_vectorized, last_updated
+                ) VALUES (?, ?, ?, ?, ?, julianday('now'))
+                """,
+                (
+                    cycle_id,
+                    cycle_start_time,
+                    chunks_total_at_start,
+                    files_total_at_start,
+                    files_vectorized,
+                ),
+            )
             cycle_start_time = time.time()
 
             cycle_activity = False
 
             # Get projects with files/chunks needing vectorization (sorted by count, smallest first)
             try:
-                projects = database.get_projects_with_vectorization_count()
+                # Use execute() for complex query
+                projects_result = database.execute(
+                    """
+                    SELECT 
+                        p.id AS project_id,
+                        p.root_path,
+                        (
+                            (SELECT COUNT(DISTINCT f.id)
+                             FROM files f
+                             WHERE f.project_id = p.id
+                               AND (f.deleted = 0 OR f.deleted IS NULL)
+                               AND (
+                                   f.has_docstring = 1 
+                                   OR EXISTS (
+                                       SELECT 1 FROM classes c 
+                                       WHERE c.file_id = f.id 
+                                         AND c.docstring IS NOT NULL 
+                                         AND c.docstring != ''
+                                   )
+                                   OR EXISTS (
+                                       SELECT 1 FROM functions fn 
+                                       WHERE fn.file_id = f.id 
+                                         AND fn.docstring IS NOT NULL 
+                                         AND fn.docstring != ''
+                                   )
+                                   OR EXISTS (
+                                       SELECT 1 FROM methods m 
+                                       JOIN classes c ON m.class_id = c.id 
+                                       WHERE c.file_id = f.id 
+                                         AND m.docstring IS NOT NULL 
+                                         AND m.docstring != ''
+                                   )
+                               )
+                               AND NOT EXISTS (
+                                   SELECT 1 FROM code_chunks cc 
+                                   WHERE cc.file_id = f.id
+                               ))
+                            +
+                            (SELECT COUNT(cc.id)
+                             FROM code_chunks cc
+                             INNER JOIN files f ON cc.file_id = f.id
+                             WHERE cc.project_id = p.id
+                               AND (f.deleted = 0 OR f.deleted IS NULL)
+                               AND cc.embedding_vector IS NOT NULL
+                               AND cc.vector_id IS NULL)
+                        ) AS pending_count
+                    FROM projects p
+                    WHERE (
+                        (SELECT COUNT(DISTINCT f.id)
+                         FROM files f
+                         WHERE f.project_id = p.id
+                           AND (f.deleted = 0 OR f.deleted IS NULL)
+                           AND (
+                               f.has_docstring = 1 
+                               OR EXISTS (
+                                   SELECT 1 FROM classes c 
+                                   WHERE c.file_id = f.id 
+                                     AND c.docstring IS NOT NULL 
+                                     AND c.docstring != ''
+                               )
+                               OR EXISTS (
+                                   SELECT 1 FROM functions fn 
+                                   WHERE fn.file_id = f.id 
+                                     AND fn.docstring IS NOT NULL 
+                                     AND fn.docstring != ''
+                               )
+                               OR EXISTS (
+                                   SELECT 1 FROM methods m 
+                                   JOIN classes c ON m.class_id = c.id 
+                                   WHERE c.file_id = f.id 
+                                     AND m.docstring IS NOT NULL 
+                                     AND m.docstring != ''
+                               )
+                           )
+                           AND NOT EXISTS (
+                               SELECT 1 FROM code_chunks cc 
+                               WHERE cc.file_id = f.id
+                           ))
+                        +
+                        (SELECT COUNT(cc.id)
+                         FROM code_chunks cc
+                         INNER JOIN files f ON cc.file_id = f.id
+                         WHERE cc.project_id = p.id
+                           AND (f.deleted = 0 OR f.deleted IS NULL)
+                           AND cc.embedding_vector IS NOT NULL
+                           AND cc.vector_id IS NULL)
+                    ) > 0
+                    ORDER BY pending_count ASC
+                    """,
+                    None,
+                )
+                # Extract data from result - execute() returns dict with "data" key
+                projects = (
+                    projects_result.get("data", [])
+                    if isinstance(projects_result, dict)
+                    else []
+                )
                 if not projects:
                     logger.info(
                         f"[CYCLE #{cycle_count}] No projects with pending items found"
                     )
                     # Update statistics even if no projects (0 processed)
-                    database.update_vectorization_stats(
-                        cycle_id=cycle_id,
-                        chunks_processed=0,
-                        chunks_skipped=0,
-                        chunks_failed=0,
-                        processing_time_seconds=0.0,
+                    # Use execute() for update_vectorization_stats
+                    database.execute(
+                        """
+                        UPDATE vectorization_stats
+                        SET
+                            chunks_processed = chunks_processed + ?,
+                            chunks_skipped = chunks_skipped + ?,
+                            chunks_failed = chunks_failed + ?,
+                            total_processing_time_seconds = total_processing_time_seconds + ?,
+                            last_updated = julianday('now')
+                        WHERE cycle_id = ?
+                        """,
+                        (0, 0, 0, 0.0, cycle_id),
                     )
                 else:
                     logger.info(
@@ -210,9 +394,48 @@ async def process_chunks(self, poll_interval: int = 30) -> Dict[str, Any]:
                                         )
                                     else:
                                         try:
-                                            files_to_chunk = database.get_files_needing_chunking(
-                                                project_id=project_id,
-                                                limit=5,  # Process 5 files per cycle
+                                            # Use execute() for get_files_needing_chunking
+                                            files_result = database.execute(
+                                                """
+                                                SELECT f.id, f.path, f.project_id
+                                                FROM files f
+                                                WHERE f.project_id = ?
+                                                  AND (f.deleted = 0 OR f.deleted IS NULL)
+                                                  AND (
+                                                      f.has_docstring = 1 
+                                                      OR EXISTS (
+                                                          SELECT 1 FROM classes c 
+                                                          WHERE c.file_id = f.id 
+                                                            AND c.docstring IS NOT NULL 
+                                                            AND c.docstring != ''
+                                                      )
+                                                      OR EXISTS (
+                                                          SELECT 1 FROM functions fn 
+                                                          WHERE fn.file_id = f.id 
+                                                            AND fn.docstring IS NOT NULL 
+                                                            AND fn.docstring != ''
+                                                      )
+                                                      OR EXISTS (
+                                                          SELECT 1 FROM methods m 
+                                                          JOIN classes c ON m.class_id = c.id 
+                                                          WHERE c.file_id = f.id 
+                                                            AND m.docstring IS NOT NULL 
+                                                            AND m.docstring != ''
+                                                      )
+                                                  )
+                                                  AND NOT EXISTS (
+                                                      SELECT 1 FROM code_chunks cc 
+                                                      WHERE cc.file_id = f.id
+                                                  )
+                                                LIMIT ?
+                                                """,
+                                                (project_id, 5),
+                                            )
+                                            # Extract data from result - execute() returns dict with "data" key
+                                            files_to_chunk = (
+                                                files_result.get("data", [])
+                                                if isinstance(files_result, dict)
+                                                else []
                                             )
 
                                             if files_to_chunk:
@@ -263,11 +486,22 @@ async def process_chunks(self, poll_interval: int = 30) -> Dict[str, Any]:
                                     cycle_activity = True
 
                                 # Update statistics
-                                database.update_vectorization_stats(
-                                    cycle_id=cycle_id,
-                                    chunks_processed=batch_processed,
-                                    chunks_failed=batch_errors,
-                                    processing_time_seconds=batch_duration,
+                                database.execute(
+                                    """
+                                    UPDATE vectorization_stats
+                                    SET
+                                        chunks_processed = chunks_processed + ?,
+                                        chunks_failed = chunks_failed + ?,
+                                        total_processing_time_seconds = total_processing_time_seconds + ?,
+                                        last_updated = julianday('now')
+                                    WHERE cycle_id = ?
+                                    """,
+                                    (
+                                        batch_processed,
+                                        batch_errors,
+                                        batch_duration,
+                                        cycle_id,
+                                    ),
                                 )
                             finally:
                                 # Restore original values
@@ -292,7 +526,17 @@ async def process_chunks(self, poll_interval: int = 30) -> Dict[str, Any]:
                     logger.info(
                         f"[CYCLE #{cycle_count}] Rebuilding FAISS indexes for all projects..."
                     )
-                    all_projects = database.get_all_projects()
+                    all_projects_list = database.list_projects()
+                    # Convert Project objects to dict format for compatibility
+                    all_projects = [
+                        {
+                            "id": p.id,
+                            "root_path": p.root_path,
+                            "name": p.name,
+                            "comment": p.comment,
+                        }
+                        for p in all_projects_list
+                    ]
                     for project in all_projects:
                         project_id = project["id"]
                         project_path = project.get("root_path", "unknown")
@@ -334,7 +578,7 @@ async def process_chunks(self, poll_interval: int = 30) -> Dict[str, Any]:
                         "Database error detected, will reconnect on next cycle"
                     )
                     try:
-                        database.close()
+                        database.disconnect()
                     except Exception:
                         pass
                     database = None
@@ -346,7 +590,14 @@ async def process_chunks(self, poll_interval: int = 30) -> Dict[str, Any]:
                 batch_processed = 0
 
             # End cycle
-            database.end_vectorization_cycle(cycle_id)
+            database.execute(
+                """
+                UPDATE vectorization_stats
+                SET cycle_end_time = ?, last_updated = julianday('now')
+                WHERE cycle_id = ?
+                """,
+                (time.time(), cycle_id),
+            )
 
             cycle_duration = time.time() - cycle_start_time
             if cycle_activity:
@@ -387,7 +638,7 @@ async def process_chunks(self, poll_interval: int = 30) -> Dict[str, Any]:
     finally:
         if database is not None:
             try:
-                database.close()
+                database.disconnect()
             except Exception:
                 pass
 

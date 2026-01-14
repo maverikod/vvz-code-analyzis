@@ -680,7 +680,7 @@ class ChangeProjectIdMCPCommand(BaseMCPCommand):
                                     )
                         else:
                             # Project doesn't exist in database, create it with new ID and description
-                            database._execute(
+                            database.execute(
                                 """
                                 INSERT INTO projects (id, root_path, name, comment, updated_at)
                                 VALUES (?, ?, ?, ?, julianday('now'))
@@ -692,7 +692,6 @@ class ChangeProjectIdMCPCommand(BaseMCPCommand):
                                     new_description,
                                 ),
                             )
-                            database._commit()
                             database_updated = True
                             database_project_id = new_project_id
                             logger.info(

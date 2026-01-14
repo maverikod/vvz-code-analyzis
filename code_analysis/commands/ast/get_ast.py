@@ -122,7 +122,7 @@ class GetASTMCPCommand(BaseMCPCommand):
                     file_record = rows[0]
 
             if not file_record:
-                db.close()
+                db.disconnect()
                 return ErrorResult(
                     message=f"File not found: {file_path}",
                     code="FILE_NOT_FOUND",
@@ -130,7 +130,7 @@ class GetASTMCPCommand(BaseMCPCommand):
 
             # Get AST from database (synchronous method, no await needed)
             ast_data = db.get_ast_tree(file_record["id"])
-            db.close()
+            db.disconnect()
 
             if ast_data:
                 result = {

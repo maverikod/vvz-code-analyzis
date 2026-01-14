@@ -134,7 +134,7 @@ class GetWorkerStatusMCPCommand(BaseMCPCommand):
                                     stats["processing_speed_chunks_per_second"] = None
                                 result["cycle_stats"] = stats
                     finally:
-                        db.close()
+                        db.disconnect()
                 except Exception as e:
                     logger.warning(f"Failed to get worker stats from database: {e}")
                     # Don't fail the command if stats are unavailable
@@ -511,13 +511,12 @@ class GetDatabaseStatusMCPCommand(BaseMCPCommand):
                 }
 
                 # Project statistics with file and chunk counts
-                project_count_row = db._fetchone(
-                    "SELECT COUNT(*) as count FROM projects"
-                )
-                project_count = project_count_row["count"] if project_count_row else 0
+                result = db.execute("SELECT COUNT(*) as count FROM projects")
+                data = result.get("data", [])
+                project_count = data[0]["count"] if data else 0
 
                 # Get projects with detailed statistics
-                projects_with_stats = db._fetchall(
+                projects_result = db.execute(
                     """
                     SELECT 
                         p.id,
@@ -541,6 +540,7 @@ class GetDatabaseStatusMCPCommand(BaseMCPCommand):
                     LIMIT 10
                     """
                 )
+                projects_with_stats = projects_result.get("data", [])
 
                 project_list = []
                 for p in projects_with_stats:
@@ -598,45 +598,42 @@ class GetDatabaseStatusMCPCommand(BaseMCPCommand):
                 }
 
                 # File statistics
-                total_files_row = db._fetchone("SELECT COUNT(*) as count FROM files")
-                total_files = total_files_row["count"] if total_files_row else 0
+                result = db.execute("SELECT COUNT(*) as count FROM files")
+                data = result.get("data", [])
+                total_files = data[0]["count"] if data else 0
 
-                deleted_files_row = db._fetchone(
+                result = db.execute(
                     "SELECT COUNT(*) as count FROM files WHERE deleted = 1"
                 )
-                deleted_files = deleted_files_row["count"] if deleted_files_row else 0
+                data = result.get("data", [])
+                deleted_files = data[0]["count"] if data else 0
 
-                files_with_docstring_row = db._fetchone(
+                result = db.execute(
                     "SELECT COUNT(*) as count FROM files WHERE has_docstring = 1"
                 )
-                files_with_docstring = (
-                    files_with_docstring_row["count"] if files_with_docstring_row else 0
-                )
+                data = result.get("data", [])
+                files_with_docstring = data[0]["count"] if data else 0
 
-                files_needing_chunking_row = db._fetchone(
+                result = db.execute(
                     """
                     SELECT COUNT(*) as count FROM files 
                     WHERE (deleted = 0 OR deleted IS NULL)
                     AND NOT EXISTS (SELECT 1 FROM code_chunks WHERE code_chunks.file_id = files.id)
                     """
                 )
-                files_needing_chunking = (
-                    files_needing_chunking_row["count"]
-                    if files_needing_chunking_row
-                    else 0
-                )
+                data = result.get("data", [])
+                files_needing_chunking = data[0]["count"] if data else 0
 
                 # Files that have been chunked (have chunks)
-                files_with_chunks_row = db._fetchone(
+                result = db.execute(
                     """
                     SELECT COUNT(DISTINCT f.id) as count FROM files f
                     WHERE (f.deleted = 0 OR f.deleted IS NULL)
                     AND EXISTS (SELECT 1 FROM code_chunks WHERE code_chunks.file_id = f.id)
                     """
                 )
-                files_with_chunks = (
-                    files_with_chunks_row["count"] if files_with_chunks_row else 0
-                )
+                data = result.get("data", [])
+                files_with_chunks = data[0]["count"] if data else 0
 
                 active_files = total_files - deleted_files
                 chunked_percent = (
@@ -656,26 +653,21 @@ class GetDatabaseStatusMCPCommand(BaseMCPCommand):
                 }
 
                 # Chunk statistics - use vector_id (not embedding_vector) for consistency
-                total_chunks_row = db._fetchone(
-                    "SELECT COUNT(*) as count FROM code_chunks"
-                )
-                total_chunks = total_chunks_row["count"] if total_chunks_row else 0
+                result = db.execute("SELECT COUNT(*) as count FROM code_chunks")
+                data = result.get("data", [])
+                total_chunks = data[0]["count"] if data else 0
 
-                vectorized_chunks_row = db._fetchone(
+                result = db.execute(
                     "SELECT COUNT(*) as count FROM code_chunks WHERE vector_id IS NOT NULL"
                 )
-                vectorized_chunks = (
-                    vectorized_chunks_row["count"] if vectorized_chunks_row else 0
-                )
+                data = result.get("data", [])
+                vectorized_chunks = data[0]["count"] if data else 0
 
-                not_vectorized_chunks_row = db._fetchone(
+                result = db.execute(
                     "SELECT COUNT(*) as count FROM code_chunks WHERE vector_id IS NULL"
                 )
-                not_vectorized_chunks = (
-                    not_vectorized_chunks_row["count"]
-                    if not_vectorized_chunks_row
-                    else 0
-                )
+                data = result.get("data", [])
+                not_vectorized_chunks = data[0]["count"] if data else 0
 
                 vectorization_percent = (
                     round((vectorized_chunks / total_chunks * 100), 2)
@@ -691,25 +683,23 @@ class GetDatabaseStatusMCPCommand(BaseMCPCommand):
                 }
 
                 # Recent activity (last 24 hours)
-                files_updated_24h_row = db._fetchone(
+                result = db.execute(
                     """
                     SELECT COUNT(*) as count FROM files 
                     WHERE updated_at > julianday('now', '-1 day')
                     """
                 )
-                files_updated_24h = (
-                    files_updated_24h_row["count"] if files_updated_24h_row else 0
-                )
+                data = result.get("data", [])
+                files_updated_24h = data[0]["count"] if data else 0
 
-                chunks_updated_24h_row = db._fetchone(
+                result = db.execute(
                     """
                     SELECT COUNT(*) as count FROM code_chunks 
                     WHERE created_at > julianday('now', '-1 day')
                     """
                 )
-                chunks_updated_24h = (
-                    chunks_updated_24h_row["count"] if chunks_updated_24h_row else 0
-                )
+                data = result.get("data", [])
+                chunks_updated_24h = data[0]["count"] if data else 0
 
                 result["recent_activity"] = {
                     "files_updated_24h": files_updated_24h,
@@ -787,7 +777,7 @@ class GetDatabaseStatusMCPCommand(BaseMCPCommand):
                 ]
 
                 # Get chunks needing vectorization (sample) - use vector_id
-                chunks_needing_vectorization = db._fetchall(
+                result = db.execute(
                     """
                     SELECT id, file_id, chunk_text, created_at
                     FROM code_chunks
@@ -796,6 +786,7 @@ class GetDatabaseStatusMCPCommand(BaseMCPCommand):
                     LIMIT 10
                     """
                 )
+                chunks_needing_vectorization = result.get("data", [])
                 result["chunks"]["needing_vectorization_sample"] = [
                     {
                         "id": c["id"],
@@ -812,7 +803,7 @@ class GetDatabaseStatusMCPCommand(BaseMCPCommand):
 
                 return SuccessResult(data=result)
             finally:
-                db.close()
+                db.disconnect()
         except Exception as e:
             return self._handle_error(e, "DATABASE_STATUS_ERROR", "get_database_status")
 

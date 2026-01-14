@@ -11,10 +11,9 @@ import json
 import uuid
 import threading
 from pathlib import Path
-from code_analysis.core.path_normalization import normalize_file_path
+from code_analysis.core.path_normalization import normalize_file_path, normalize_path_simple
 from code_analysis.core.project_resolution import (
     find_project_root_for_path,
-    normalize_path_simple,
     load_project_info,
 )
 from code_analysis.core.settings_manager import get_settings

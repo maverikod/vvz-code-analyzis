@@ -10,6 +10,10 @@ email: vasilyvz@gmail.com
 
 from __future__ import annotations
 
+from .client_api_ast_cst import _ClientAPIASTCSTMixin
+from .client_api_attributes import _ClientAPIAttributesMixin
+from .client_api_files import _ClientAPIFilesMixin
+from .client_api_projects import _ClientAPIProjectsMixin
 from .client_helpers import _ClientHelpersMixin
 from .client_operations import _ClientOperationsMixin
 from .client_schema import _ClientSchemaMixin
@@ -22,6 +26,10 @@ class DatabaseClient(
     _ClientOperationsMixin,
     _ClientSchemaMixin,
     _ClientTransactionsMixin,
+    _ClientAPIProjectsMixin,
+    _ClientAPIFilesMixin,
+    _ClientAPIAttributesMixin,
+    _ClientAPIASTCSTMixin,
 ):
     """Database client for RPC-based database operations.
 

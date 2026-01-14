@@ -104,6 +104,30 @@ Add database driver management to WorkerManager.
 - ✅ **Test coverage ~95%+ for driver methods** (20 unit tests, all passing)
 - ⚠️ **Integration tests with real server** (optional, can be done in STEP_07)
 
+## Architecture Notes
+
+### Asynchronous Request Processing
+- ✅ **RPC Server uses asynchronous processing**:
+  - Worker thread pool (ThreadPoolExecutor) for request processing
+  - Background thread dequeues requests from RequestQueue
+  - Requests processed asynchronously with priority support
+  - Clients wait for responses via Condition variables
+- ✅ **RequestQueue integration**:
+  - All requests added to RequestQueue with priorities
+  - Background processing loop handles queue
+  - Worker pool processes requests concurrently
+  - Responses synchronized back to clients
+
+### Queue System
+- ✅ **New RequestQueue** (`database_driver_pkg/request_queue.py`):
+  - Thread-safe with priorities and timeouts
+  - Used by new RPC server architecture
+  - Fully integrated with asynchronous processing
+- ⚠️ **Old queue system** (`db_worker_pkg/runner.py`):
+  - Simple jobs dictionary (old architecture)
+  - Will be removed in Step 14 (Cleanup)
+  - No duplication - serves different purpose
+
 ## Next Steps
 
 - [Step 7: Main Process Integration](./STEP_07_MAIN_PROCESS_INTEGRATION.md)

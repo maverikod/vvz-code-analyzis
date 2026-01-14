@@ -420,13 +420,16 @@ class TestWorkerManagerDatabaseDriver:
         assert result.success is True
 
         # Verify restart function is registered
-        with worker_manager._lock:
-            workers = worker_manager._workers.get("database_driver", [])
-            assert len(workers) > 0
-            worker_info = workers[0]
-            assert "restart_func" in worker_info
-            assert "restart_kwargs" in worker_info
-            assert worker_info["restart_func"] == worker_manager.start_database_driver
+        # Get workers through public API
+        workers = worker_manager._registry.get_workers("database_driver")
+        database_driver_workers = workers.get("database_driver", [])
+        assert len(database_driver_workers) > 0
+        worker_info = database_driver_workers[0]
+        assert "restart_func" in worker_info
+        assert "restart_kwargs" in worker_info
+        # Check that restart_func is callable and is the start_database_driver method
+        assert callable(worker_info["restart_func"])
+        assert worker_info["restart_func"].__name__ == "start_database_driver"
 
         # Cleanup
         worker_manager.stop_database_driver(timeout=2.0)
@@ -447,15 +450,16 @@ class TestWorkerManagerDatabaseDriver:
         assert result.success is True
 
         # Verify process is not daemon
-        with worker_manager._lock:
-            workers = worker_manager._workers.get("database_driver", [])
-            assert len(workers) > 0
-            worker_info = workers[0]
-            process = worker_info.get("process")
-            if process:
-                # Process should be alive and not daemon
-                # (daemon processes can't be checked this way, but we can verify it's alive)
-                assert process.is_alive() or True  # May be dead by now, but was started
+        # Get workers through public API
+        workers = worker_manager._registry.get_workers("database_driver")
+        database_driver_workers = workers.get("database_driver", [])
+        assert len(database_driver_workers) > 0
+        worker_info = database_driver_workers[0]
+        process = worker_info.get("process")
+        if process:
+            # Process should be alive and not daemon
+            # (daemon processes can't be checked this way, but we can verify it's alive)
+            assert process.is_alive() or True  # May be dead by now, but was started
 
         # Cleanup
         worker_manager.stop_database_driver(timeout=2.0)

@@ -85,6 +85,13 @@
 6. **[Step 6: WorkerManager Integration](./DATABASE_DRIVER_RPC_REFACTORING/STEP_06_WORKERMANAGER_INTEGRATION.md)**
    - Driver management in WorkerManager
    - Process lifecycle
+   - **Asynchronous request processing** (see Step 6.5)
+
+6.5. **[Step 6.5: Asynchronous Request Processing](./DATABASE_DRIVER_RPC_REFACTORING/STEP_06_ASYNC_PROCESSING.md)** ✅ **COMPLETED**
+   - Worker thread pool implementation
+   - Asynchronous request processing
+   - Priority-based queue processing
+   - Request-response synchronization
 
 7. **[Step 7: Main Process Integration](./DATABASE_DRIVER_RPC_REFACTORING/STEP_07_MAIN_PROCESS_INTEGRATION.md)**
    - Driver startup in main process
@@ -134,8 +141,34 @@
 
 15. **[Step 14: Cleanup](./DATABASE_DRIVER_RPC_REFACTORING/STEP_14_CLEANUP.md)**
     - Remove old code
+    - **Remove old queue system** (jobs dictionary in db_worker_pkg)
     - Documentation
     - Code review
+
+## Queue System Architecture
+
+### New RequestQueue (Active)
+- **Location**: `code_analysis/core/database_driver_pkg/request_queue.py`
+- **Features**: 
+  - Thread-safe with priorities (LOW, NORMAL, HIGH, URGENT)
+  - Request timeout handling
+  - Queue size limits
+  - Queue statistics
+- **Usage**: Used by new RPC server for asynchronous request processing
+- **Status**: ✅ Active and integrated
+
+### Old Queue System (To Be Removed)
+- **Location**: `code_analysis/core/db_worker_pkg/runner.py`
+- **Implementation**: Simple `jobs: Dict[str, Dict[str, Any]]` dictionary
+- **Architecture**: Client submits job, receives job_id, polls for results
+- **Status**: ⚠️ **OLD ARCHITECTURE - Will be removed in Step 14**
+- **Action**: Complete removal along with old DB worker code
+
+### Queue Duplication Resolution
+- ✅ **No duplication**: Old and new systems serve different purposes
+- ✅ **Old system**: Used by `db_worker_pkg` (old architecture, to be removed)
+- ✅ **New system**: Used by `database_driver_pkg` (new architecture, active)
+- ✅ **Clean separation**: Old code removal in Step 14 will eliminate old queue
 
 ## Quick Navigation
 
@@ -148,6 +181,7 @@
 - [Step 4: Configuration](./DATABASE_DRIVER_RPC_REFACTORING/STEP_04_CONFIGURATION.md)
 - [Step 5: RPC Infrastructure](./DATABASE_DRIVER_RPC_REFACTORING/STEP_05_RPC_INFRASTRUCTURE.md)
 - [Step 6: WorkerManager Integration](./DATABASE_DRIVER_RPC_REFACTORING/STEP_06_WORKERMANAGER_INTEGRATION.md)
+- [Step 6.5: Asynchronous Request Processing](./DATABASE_DRIVER_RPC_REFACTORING/STEP_06_ASYNC_PROCESSING.md) ✅ **COMPLETED**
 - [Step 7: Main Process Integration](./DATABASE_DRIVER_RPC_REFACTORING/STEP_07_MAIN_PROCESS_INTEGRATION.md)
 - [Step 8: Object Models](./DATABASE_DRIVER_RPC_REFACTORING/STEP_08_OBJECT_MODELS.md)
 - [Step 9: Client API](./DATABASE_DRIVER_RPC_REFACTORING/STEP_09_CLIENT_API.md)

@@ -40,7 +40,13 @@ class TestObjectModelsRealData:
     def test_db(self, tmp_path):
         """Create test database with real data."""
         db_path = tmp_path / "test_objects.db"
-        db = CodeDatabase(str(db_path))
+        driver_config = {
+            "type": "sqlite_proxy",
+            "config": {
+                "path": str(db_path),
+            },
+        }
+        db = CodeDatabase(driver_config)
         db.connect()
 
         # Load real projects if available

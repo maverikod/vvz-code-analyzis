@@ -16,12 +16,12 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from ..exceptions import DriverConnectionError, DriverOperationError
-
-logger = logging.getLogger(__name__)
 from .base import BaseDatabaseDriver
 from .sqlite_operations import SQLiteOperations
 from .sqlite_schema import SQLiteSchemaManager
 from .sqlite_transactions import SQLiteTransactionManager
+
+logger = logging.getLogger(__name__)
 
 
 class SQLiteDriver(BaseDatabaseDriver):

@@ -64,9 +64,17 @@ Remove old code and complete documentation.
 - [ ] **Remove `CodeDatabase` class completely**
 - [ ] **Remove `SQLiteDriverProxy` class completely**
 - [ ] **Remove `DBWorkerManager` class completely**
+- [ ] **Remove old DB worker queue system** (`db_worker_pkg/runner.py` jobs dictionary)
 - [ ] Remove all old database access code
 - [ ] Clean up unused imports
 - [ ] Remove all deprecated code
+
+**Old Queue System Removal**:
+- [ ] Remove `db_worker_pkg/runner.py` (entire file)
+- [ ] Remove `db_worker_manager.py` (entire file)
+- [ ] Remove old queue implementation (`jobs: Dict[str, Dict[str, Any]]`)
+- [ ] Verify no references to old queue system remain
+- [ ] **Note**: New `RequestQueue` in `database_driver_pkg/request_queue.py` is kept (new architecture)
 
 ### 14.2 Update Documentation
 - [ ] Update API documentation
@@ -85,7 +93,14 @@ Remove old code and complete documentation.
 - `code_analysis/core/database/base.py` - **DELETE** (CodeDatabase removed)
 - `code_analysis/core/db_driver/sqlite_proxy.py` - **DELETE**
 - `code_analysis/core/db_worker_manager.py` - **DELETE**
+- `code_analysis/core/db_worker_pkg/runner.py` - **DELETE** (old worker with jobs queue)
+- `code_analysis/core/db_worker_pkg/__init__.py` - **DELETE** (if exists)
 - All other old database access files
+
+**Queue System Cleanup**:
+- ✅ **Keep**: `code_analysis/core/database_driver_pkg/request_queue.py` (new architecture)
+- ❌ **Delete**: Old jobs dictionary queue in `db_worker_pkg/runner.py`
+- ❌ **Delete**: All old queue-related code in old architecture
 
 ## Files to Create/Update
 

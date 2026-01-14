@@ -23,6 +23,7 @@ from .mappers import (
     objects_from_table,
 )
 from .project import Project
+from .tree_action import TreeAction
 from .xpath_filter import XPathFilter
 
 __all__ = [
@@ -56,4 +57,5 @@ __all__ = [
     "get_table_name_for_object",
     # Other
     "XPathFilter",
+    "TreeAction",
 ]

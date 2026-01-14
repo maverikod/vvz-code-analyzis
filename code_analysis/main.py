@@ -20,6 +20,12 @@ from code_analysis.core.storage_paths import (
     load_raw_config,
     resolve_storage_paths,
 )
+from code_analysis.core.constants import (
+    DEFAULT_SHUTDOWN_GRACE_TIMEOUT,
+    DEFAULT_DATABASE_DRIVER_LOG_FILENAME,
+    DEFAULT_CONFIG_FILENAME,
+    DEFAULT_WORKER_MONITOR_INTERVAL,
+)
 from code_analysis.commands.base_mcp_command import BaseMCPCommand
 
 from code_analysis import hooks  # noqa: F401,E402
@@ -68,8 +74,8 @@ def main() -> None:
     parser.add_argument(
         "--config",
         type=str,
-        default="config.json",
-        help="Path to configuration file (default: config.json)",
+        default=DEFAULT_CONFIG_FILENAME,
+        help=f"Path to configuration file (default: {DEFAULT_CONFIG_FILENAME})",
     )
     parser.add_argument(
         "--daemon",
@@ -339,14 +345,14 @@ def main() -> None:
                 or app_config.get("server_manager")
                 or {}
             )
-            shutdown_timeout = 30.0
+            shutdown_timeout = DEFAULT_SHUTDOWN_GRACE_TIMEOUT
             if isinstance(shutdown_cfg, dict):
                 try:
                     val = shutdown_cfg.get("shutdown_grace_seconds")
                     if isinstance(val, (int, float)) and float(val) > 0:
                         shutdown_timeout = float(val)
                 except Exception:
-                    shutdown_timeout = 30.0
+                    shutdown_timeout = DEFAULT_SHUTDOWN_GRACE_TIMEOUT
 
             shutdown_result = worker_manager.stop_all_workers(timeout=shutdown_timeout)
             if shutdown_result.get("total_failed", 0) > 0:
@@ -412,7 +418,6 @@ def main() -> None:
             # Startup sequence: database driver → other workers
             # Start workers in background (non-blocking)
             import threading
-            import asyncio
 
             def _start_workers_bg() -> None:
                 """Start all workers in background thread with error handling.
@@ -424,7 +429,7 @@ def main() -> None:
                 """
                 try:
                     logger.info("🚀 [BACKGROUND] Starting database driver...")
-                    asyncio.run(startup_database_driver())
+                    startup_database_driver()
                     logger.info("✅ [BACKGROUND] Database driver started")
                 except Exception as e:
                     logger.error(
@@ -434,7 +439,7 @@ def main() -> None:
 
                 try:
                     logger.info("🚀 [BACKGROUND] Starting vectorization worker...")
-                    asyncio.run(startup_vectorization_worker())
+                    startup_vectorization_worker()
                     logger.info("✅ [BACKGROUND] Vectorization worker started")
                 except Exception as e:
                     logger.error(
@@ -444,7 +449,7 @@ def main() -> None:
 
                 try:
                     logger.info("🚀 [BACKGROUND] Starting file watcher worker...")
-                    asyncio.run(startup_file_watcher_worker())
+                    startup_file_watcher_worker()
                     logger.info("✅ [BACKGROUND] File watcher worker started")
                 except Exception as e:
                     logger.error(
@@ -494,14 +499,14 @@ def main() -> None:
                 or app_config.get("server_manager")
                 or {}
             )
-            shutdown_timeout = 30.0
+            shutdown_timeout = DEFAULT_SHUTDOWN_GRACE_TIMEOUT
             if isinstance(shutdown_cfg, dict):
                 try:
                     val = shutdown_cfg.get("shutdown_grace_seconds")
                     if isinstance(val, (int, float)) and float(val) > 0:
                         shutdown_timeout = float(val)
                 except Exception:
-                    shutdown_timeout = 30.0
+                    shutdown_timeout = DEFAULT_SHUTDOWN_GRACE_TIMEOUT
 
             shutdown_result = worker_manager.stop_all_workers(timeout=shutdown_timeout)
             if shutdown_result.get("total_failed", 0) > 0:
@@ -521,7 +526,7 @@ def main() -> None:
 
     monitoring_logger = logging.getLogger(__name__)
     try:
-        worker_manager.start_monitoring(interval=30.0)
+        worker_manager.start_monitoring(interval=DEFAULT_WORKER_MONITOR_INTERVAL)
         monitoring_logger.info("✅ Worker monitoring started")
     except Exception as e:
         monitoring_logger.error(
@@ -588,7 +593,7 @@ def main() -> None:
             )
 
             # Generate log path for driver
-            log_path = str(storage.config_dir / "logs" / "database_driver.log")
+            log_path = str(storage.config_dir / "logs" / DEFAULT_DATABASE_DRIVER_LOG_FILENAME)
             ensure_storage_dirs(storage)
 
             # Start database driver using WorkerManager
@@ -1038,14 +1043,14 @@ def main() -> None:
                 or app_config.get("server_manager")
                 or {}
             )
-            shutdown_timeout = 30.0
+            shutdown_timeout = DEFAULT_SHUTDOWN_GRACE_TIMEOUT
             if isinstance(shutdown_cfg, dict):
                 try:
                     val = shutdown_cfg.get("shutdown_grace_seconds")
                     if isinstance(val, (int, float)) and float(val) > 0:
                         shutdown_timeout = float(val)
                 except Exception:
-                    shutdown_timeout = 30.0
+                    shutdown_timeout = DEFAULT_SHUTDOWN_GRACE_TIMEOUT
 
             shutdown_result = worker_manager.stop_all_workers(timeout=shutdown_timeout)
             if shutdown_result.get("total_failed", 0) > 0:
@@ -1094,7 +1099,7 @@ def main() -> None:
         # Startup sequence: database driver → other workers
         # Database driver must start FIRST because other workers depend on it
         # Workers are separate processes (multiprocessing.Process), so no need for async/await
-        # This avoids asyncio.run() conflicts with Hypercorn's event loop
+        # Startup functions are synchronous and called directly (not via asyncio.run())
 
         # Step 1: Start database driver (MUST be first)
         try:

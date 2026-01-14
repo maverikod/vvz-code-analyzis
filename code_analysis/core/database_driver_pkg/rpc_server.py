@@ -15,14 +15,25 @@ import logging
 import socket
 import struct
 import threading
+import time
+import uuid
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-from typing import Optional
+from typing import Dict, Optional
+
+from ..constants import (
+    DEFAULT_RPC_WORKER_POOL_SIZE,
+    DEFAULT_REQUEST_TIMEOUT,
+    RPC_MAX_REQUEST_SIZE,
+    RPC_PROCESSING_LOOP_INTERVAL,
+    RPC_SERVER_SOCKET_TIMEOUT,
+)
 
 from .drivers.base import BaseDatabaseDriver
 from .exceptions import RPCServerError
 from .request import DeleteRequest, InsertRequest, SelectRequest, UpdateRequest
 from .request_queue import RequestPriority, RequestQueue
-from .result import BaseResult, ErrorResult
+from .result import BaseResult, DataResult, ErrorResult, SuccessResult
 from .rpc_handlers import RPCHandlers
 from .rpc_protocol import ErrorCode, RPCError, RPCRequest, RPCResponse
 from .serialization import serialize_response
@@ -42,6 +53,7 @@ class RPCServer:
         driver: BaseDatabaseDriver,
         request_queue: RequestQueue,
         socket_path: str,
+        worker_pool_size: int = DEFAULT_RPC_WORKER_POOL_SIZE,
     ):
         """Initialize RPC server.
 
@@ -49,6 +61,7 @@ class RPCServer:
             driver: Database driver instance
             request_queue: Request queue for managing requests
             socket_path: Path to Unix socket file
+            worker_pool_size: Size of worker thread pool for processing requests
         """
         self.driver = driver
         self.request_queue = request_queue
@@ -57,6 +70,13 @@ class RPCServer:
         self.running = False
         self._lock = threading.Lock()
         self.handlers = RPCHandlers(driver)
+        self.worker_pool_size = worker_pool_size
+        self.worker_pool: Optional[ThreadPoolExecutor] = None
+        # Map request_id -> (client_sock, condition, response)
+        self._pending_responses: Dict[
+            str, tuple[socket.socket, threading.Condition, Optional[RPCResponse]]
+        ] = {}
+        self._responses_lock = threading.Lock()
 
     def start(self) -> None:
         """Start RPC server."""
@@ -73,14 +93,22 @@ class RPCServer:
             self.server_socket = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
             self.server_socket.bind(self.socket_path)
             self.server_socket.listen(5)
-            self.server_socket.settimeout(1.0)  # Allow periodic checks
+            self.server_socket.settimeout(
+                RPC_SERVER_SOCKET_TIMEOUT
+            )  # Allow periodic checks
 
             self.running = True
             logger.info(f"RPC server started on socket: {self.socket_path}")
 
+            # Start worker pool for async request processing
+            self.worker_pool = ThreadPoolExecutor(
+                max_workers=self.worker_pool_size, thread_name_prefix="RPCWorker"
+            )
+            logger.info(f"RPC worker pool started (size: {self.worker_pool_size})")
+
             # Start request processing thread
             processing_thread = threading.Thread(
-                target=self._process_requests, daemon=True
+                target=self._process_requests_loop, daemon=True, name="RPCProcessor"
             )
             processing_thread.start()
 
@@ -110,6 +138,22 @@ class RPCServer:
 
             self.running = False
             logger.info("Stopping RPC server...")
+
+            # Shutdown worker pool
+            if self.worker_pool:
+                self.worker_pool.shutdown(wait=True)
+                logger.info("RPC worker pool stopped")
+
+            # Close all pending client connections
+            with self._responses_lock:
+                for request_id, (client_sock, _, _) in list(
+                    self._pending_responses.items()
+                ):
+                    try:
+                        client_sock.close()
+                    except Exception:
+                        pass
+                self._pending_responses.clear()
 
             if self.server_socket:
                 try:
@@ -157,18 +201,32 @@ class RPCServer:
 
             # Generate request ID if not provided
             if not rpc_request.request_id:
-                import uuid
-
                 rpc_request.request_id = str(uuid.uuid4())
 
-            # Add request to queue
+            # Register pending response
+            condition = threading.Condition(self._responses_lock)
+            with self._responses_lock:
+                self._pending_responses[rpc_request.request_id] = (
+                    client_sock,
+                    condition,
+                    None,
+                )
+
+            # Add request to queue for async processing
             try:
                 self.request_queue.enqueue(
                     rpc_request.request_id,
                     rpc_request,
                     priority=RequestPriority.NORMAL,
                 )
+                logger.debug(
+                    f"Request {rpc_request.request_id} enqueued for async processing"
+                )
             except Exception as e:
+                # Remove from pending and send error immediately
+                with self._responses_lock:
+                    if rpc_request.request_id in self._pending_responses:
+                        del self._pending_responses[rpc_request.request_id]
                 error_response = RPCResponse(
                     error=RPCError(
                         code=ErrorCode.INTERNAL_ERROR,
@@ -179,12 +237,39 @@ class RPCServer:
                 self._send_data(client_sock, serialize_response(error_response))
                 return
 
-            # Wait for response (processed by _process_requests)
-            # For now, process synchronously
-            response = self._process_request(rpc_request)
+            # Wait for response to be processed asynchronously
+            response = None
+            with condition:
+                if condition.wait(timeout=DEFAULT_REQUEST_TIMEOUT):
+                    # Got notification, response should be ready
+                    # Get response while holding condition lock (which is _responses_lock)
+                    pending_entry = self._pending_responses.get(rpc_request.request_id)
+                    if pending_entry:
+                        response = pending_entry[2]
+                else:
+                    # Timeout - check if response arrived anyway
+                    pending_entry = self._pending_responses.get(rpc_request.request_id)
+                    if pending_entry:
+                        response = pending_entry[2]
 
-            # Send response
-            self._send_data(client_sock, serialize_response(response))
+            # Remove from pending (condition lock already released)
+            with self._responses_lock:
+                if rpc_request.request_id in self._pending_responses:
+                    del self._pending_responses[rpc_request.request_id]
+
+            # Send response if available
+            if response:
+                self._send_data(client_sock, serialize_response(response))
+            else:
+                # Timeout or error
+                timeout_response = RPCResponse(
+                    error=RPCError(
+                        code=ErrorCode.INTERNAL_ERROR,
+                        message="Request processing timeout",
+                    ),
+                    request_id=rpc_request.request_id,
+                )
+                self._send_data(client_sock, serialize_response(timeout_response))
         except Exception as e:
             logger.error(f"Error handling client: {e}", exc_info=True)
         finally:
@@ -193,31 +278,80 @@ class RPCServer:
             except Exception:
                 pass
 
-    def _process_requests(self) -> None:
-        """Process requests from queue (background thread).
-
-        **Current Implementation**: This method runs in a background thread but
-        currently only performs periodic checks. Requests are processed synchronously
-        in _handle_client() method for simplicity and immediate response.
-
-        **Future Enhancement**: This thread is reserved for future asynchronous
-        request processing implementation where requests would be dequeued here
-        and processed asynchronously, allowing better handling of long-running
-        operations and improved concurrency.
-
-        Note: The thread is kept alive to maintain the architecture for future
-        enhancements without requiring major refactoring.
-        """
+    def _process_requests_loop(self) -> None:
+        """Background loop to process requests from queue asynchronously."""
+        logger.info("RPC request processing loop started")
         while self.running:
             try:
-                # Periodic check - requests are currently processed synchronously
-                # in _handle_client() for immediate response
-                # Future: This is where async request processing would be implemented
-                import time
+                # Get next request from queue
+                queued_request = self.request_queue.dequeue()
+                if queued_request is None:
+                    # No requests available, sleep briefly
+                    time.sleep(RPC_PROCESSING_LOOP_INTERVAL)
+                    continue
 
-                time.sleep(0.1)  # Small sleep to avoid busy waiting
+                # Process request in worker pool
+                if self.worker_pool:
+                    logger.debug(
+                        f"Submitting request {queued_request.request_id} to worker pool"
+                    )
+                    self.worker_pool.submit(
+                        self._process_request_async,
+                        queued_request.request_id,
+                        queued_request.request,
+                    )
             except Exception as e:
-                logger.error(f"Error in request processing thread: {e}", exc_info=True)
+                logger.error(f"Error in request processing loop: {e}", exc_info=True)
+                time.sleep(RPC_PROCESSING_LOOP_INTERVAL * 10)  # Wait before retrying
+
+        logger.info("RPC request processing loop stopped")
+
+    def _process_request_async(self, request_id: str, request: RPCRequest) -> None:
+        """Process request asynchronously and send response to client.
+
+        Args:
+            request_id: Request ID
+            request: RPC request to process
+        """
+        try:
+            logger.debug(f"Processing request {request_id} asynchronously")
+            # Process request
+            response = self._process_request(request)
+            logger.debug(f"Request {request_id} processed, sending response")
+
+            # Send response to waiting client
+            with self._responses_lock:
+                if request_id in self._pending_responses:
+                    client_sock, condition, _ = self._pending_responses[request_id]
+                    self._pending_responses[request_id] = (
+                        client_sock,
+                        condition,
+                        response,
+                    )
+                    # Notify waiting client
+                    # Note: condition uses self._responses_lock, so we're already holding it
+                    condition.notify()
+        except Exception as e:
+            logger.error(f"Error processing request {request_id}: {e}", exc_info=True)
+            # Send error response
+            error_response = RPCResponse(
+                error=RPCError(
+                    code=ErrorCode.INTERNAL_ERROR,
+                    message=f"Request processing error: {e}",
+                ),
+                request_id=request_id,
+            )
+            with self._responses_lock:
+                if request_id in self._pending_responses:
+                    client_sock, condition, _ = self._pending_responses[request_id]
+                    self._pending_responses[request_id] = (
+                        client_sock,
+                        condition,
+                        error_response,
+                    )
+                    # Notify waiting client
+                    # Note: condition uses self._responses_lock, so we're already holding it
+                    condition.notify()
 
     def _process_request(self, request: RPCRequest) -> RPCResponse:
         """Process RPC request and return response.
@@ -234,6 +368,9 @@ class RPCServer:
         try:
             method = request.method
             params = request.params
+
+            # Variable to hold result (can be SuccessResult, DataResult, or ErrorResult)
+            result: SuccessResult | DataResult | ErrorResult
 
             # Convert params to Request classes for methods that use them
             if method == "insert":
@@ -287,6 +424,10 @@ class RPCServer:
                     "rollback_transaction": self.handlers.handle_rollback_transaction,
                     "get_table_info": self.handlers.handle_get_table_info,
                     "sync_schema": self.handlers.handle_sync_schema,
+                    "query_ast": self.handlers.handle_query_ast,
+                    "query_cst": self.handlers.handle_query_cst,
+                    "modify_ast": self.handlers.handle_modify_ast,
+                    "modify_cst": self.handlers.handle_modify_cst,
                 }
 
                 handler = handler_map.get(method)
@@ -313,7 +454,9 @@ class RPCServer:
                 else:
                     # Convert SuccessResult or DataResult to result dict
                     result_dict = result.to_dict()
-                    return RPCResponse(result=result_dict, request_id=request.request_id)
+                    return RPCResponse(
+                        result=result_dict, request_id=request.request_id
+                    )
             else:
                 # Fallback for unexpected result type
                 logger.error(f"Unexpected result type: {type(result)}")
@@ -350,7 +493,7 @@ class RPCServer:
                 return None
 
             length = struct.unpack("!I", length_data)[0]
-            if length > 10 * 1024 * 1024:  # 10 MB limit
+            if length > RPC_MAX_REQUEST_SIZE:
                 return None
 
             # Read data

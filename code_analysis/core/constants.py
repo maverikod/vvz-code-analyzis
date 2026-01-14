@@ -14,7 +14,15 @@ from typing import Set
 # ============================================================================
 
 # File extensions to process
-CODE_FILE_EXTENSIONS: Set[str] = {".py", ".json", ".yaml", ".yml", ".toml", ".ini", ".cfg"}
+CODE_FILE_EXTENSIONS: Set[str] = {
+    ".py",
+    ".json",
+    ".yaml",
+    ".yml",
+    ".toml",
+    ".ini",
+    ".cfg",
+}
 
 # Configuration file extensions
 CONFIG_FILE_EXTENSIONS: Set[str] = {".json", ".yaml", ".yml", ".toml", ".ini", ".cfg"}
@@ -127,6 +135,12 @@ FILE_MODIFICATION_TOLERANCE: float = 0.1
 # Epsilon for updating last_modified timestamp
 LAST_MODIFIED_EPSILON: float = 0.001
 
+# Default request queue maximum size
+DEFAULT_QUEUE_MAX_SIZE: int = 1000
+
+# Maximum RPC request size in bytes (10 MB)
+RPC_MAX_REQUEST_SIZE: int = 10485760
+
 
 # ============================================================================
 # Timeouts and Intervals
@@ -161,6 +175,33 @@ DB_CONNECTION_RETRY_DELAY: float = 2.0
 
 # Maximum scan duration in seconds
 DEFAULT_MAX_SCAN_DURATION: int = 300
+
+# Default worker stop timeout in seconds
+DEFAULT_WORKER_STOP_TIMEOUT: float = 10.0
+
+# Default worker monitoring interval in seconds
+DEFAULT_WORKER_MONITOR_INTERVAL: float = 30.0
+
+# Driver startup delay in seconds (wait for socket creation)
+DRIVER_STARTUP_DELAY: float = 0.5
+
+# RPC server socket timeout in seconds
+RPC_SERVER_SOCKET_TIMEOUT: float = 1.0
+
+# RPC processing loop interval in seconds
+RPC_PROCESSING_LOOP_INTERVAL: float = 0.1
+
+# Driver main loop interval in seconds
+DRIVER_MAIN_LOOP_INTERVAL: float = 0.1
+
+# Default request timeout in seconds
+DEFAULT_REQUEST_TIMEOUT: float = 300.0
+
+# Default RPC server worker pool size
+DEFAULT_RPC_WORKER_POOL_SIZE: int = 10
+
+# Default shutdown grace timeout in seconds
+DEFAULT_SHUTDOWN_GRACE_TIMEOUT: float = 30.0
 
 
 # ============================================================================
@@ -266,6 +307,9 @@ DEFAULT_VECTORIZATION_WORKER_LOG: str = "logs/vectorization_worker.log"
 # Default file watcher log path (relative to project root)
 DEFAULT_FILE_WATCHER_LOG: str = "logs/file_watcher.log"
 
+# Default database driver log filename
+DEFAULT_DATABASE_DRIVER_LOG_FILENAME: str = "database_driver.log"
+
 
 # ============================================================================
 # Database Driver
@@ -273,6 +317,12 @@ DEFAULT_FILE_WATCHER_LOG: str = "logs/file_watcher.log"
 
 # Default database driver type
 DEFAULT_DB_DRIVER_TYPE: str = "sqlite_proxy"
+
+# Default database driver socket directory
+DEFAULT_DB_DRIVER_SOCKET_DIR: str = "/tmp/code_analysis_db_drivers"
+
+# Default config file name
+DEFAULT_CONFIG_FILENAME: str = "config.json"
 
 
 # ============================================================================
@@ -285,4 +335,3 @@ FILE_WATCHER_IGNORE_PATTERNS: list[str] = [
     "**/.git/**",
     "**/node_modules/**",
 ]
-

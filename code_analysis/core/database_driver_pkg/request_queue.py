@@ -18,6 +18,8 @@ from dataclasses import dataclass, field
 from enum import IntEnum
 from typing import Any, Dict, Optional
 
+from ..constants import DEFAULT_QUEUE_MAX_SIZE, DEFAULT_REQUEST_TIMEOUT
+
 from .exceptions import RequestQueueError, RequestQueueFullError
 
 logger = logging.getLogger(__name__)
@@ -79,8 +81,8 @@ class RequestQueue:
 
     def __init__(
         self,
-        max_size: int = 1000,
-        default_timeout: Optional[float] = 300.0,
+        max_size: int = DEFAULT_QUEUE_MAX_SIZE,
+        default_timeout: Optional[float] = DEFAULT_REQUEST_TIMEOUT,
     ):
         """Initialize request queue.
 

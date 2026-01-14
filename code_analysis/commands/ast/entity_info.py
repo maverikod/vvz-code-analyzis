@@ -80,7 +80,7 @@ class GetCodeEntityInfoMCPCommand(BaseMCPCommand):
             # Get entity info from database
             query = None
             params = []
-            
+
             if entity_type == "class":
                 query = "SELECT c.*, f.path as file_path FROM classes c JOIN files f ON c.file_id = f.id WHERE c.name = ? AND f.project_id = ?"
                 params = [entity_name, proj_id]
@@ -120,8 +120,9 @@ class GetCodeEntityInfoMCPCommand(BaseMCPCommand):
                     message=f"Unknown entity type: {entity_type}",
                     code="INVALID_ENTITY_TYPE",
                 )
-            
-            rows = db._fetchall(query, tuple(params))
+
+            result = db.execute(query, tuple(params))
+            rows = result.get("data", [])
             db.disconnect()
 
             if rows:

@@ -70,11 +70,12 @@ class ASTStatisticsMCPCommand(BaseMCPCommand):
                         message=f"File not found: {file_path}",
                         code="FILE_NOT_FOUND",
                     )
-                row = db._fetchone(
+                result = db.execute(
                     "SELECT COUNT(*) as count FROM ast_trees WHERE file_id = ?",
                     (file_record["id"],),
                 )
-                ast_count = row["count"] if row else 0
+                data = result.get("data", [])
+                ast_count = data[0]["count"] if data else 0
                 db.disconnect()
                 return SuccessResult(
                     data={
@@ -85,16 +86,18 @@ class ASTStatisticsMCPCommand(BaseMCPCommand):
                 )
             else:
                 # Project-wide stats
-                row = db._fetchone(
+                result = db.execute(
                     "SELECT COUNT(*) as count FROM ast_trees WHERE project_id = ?",
                     (proj_id,),
                 )
-                ast_count = row["count"] if row else 0
-                row = db._fetchone(
+                data = result.get("data", [])
+                ast_count = data[0]["count"] if data else 0
+                result = db.execute(
                     "SELECT COUNT(*) as count FROM files WHERE project_id = ? AND (deleted = 0 OR deleted IS NULL)",
                     (proj_id,),
                 )
-                file_count = row["count"] if row else 0
+                data = result.get("data", [])
+                file_count = data[0]["count"] if data else 0
                 db.disconnect()
                 return SuccessResult(
                     data={

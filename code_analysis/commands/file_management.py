@@ -85,7 +85,8 @@ class CleanupDeletedFilesCommand:
                 deleted_files = self.database.get_deleted_files(self.project_id)
             else:
                 # Get all projects and their deleted files
-                projects = self.database._fetchall("SELECT id FROM projects")
+                result = self.database.execute("SELECT id FROM projects")
+                projects = result.get("data", [])
                 deleted_files = []
                 for project_row in projects:
                     project_id = project_row["id"]
@@ -233,7 +234,7 @@ class UnmarkDeletedFileCommand:
 
         try:
             # Get file info
-            row = self.database._fetchone(
+            result = self.database.execute(
                 """
                 SELECT id, path, original_path, version_dir 
                 FROM files 
@@ -243,6 +244,8 @@ class UnmarkDeletedFileCommand:
                 """,
                 (self.project_id, self.file_path, self.file_path),
             )
+            data = result.get("data", [])
+            row = data[0] if data else None
 
             if not row:
                 result["error"] = f"File not found: {self.file_path}"
@@ -333,7 +336,7 @@ class CollapseVersionsCommand:
         try:
             if self.dry_run:
                 # Just analyze, don't delete
-                files_with_versions = self.database._fetchall(
+                result = self.database.execute(
                     """
                     SELECT path, COUNT(*) as version_count
                     FROM files
@@ -343,6 +346,7 @@ class CollapseVersionsCommand:
                     """,
                     (self.project_id,),
                 )
+                files_with_versions = result.get("data", [])
 
                 for path_row in files_with_versions:
                     file_path = path_row["path"]
@@ -507,7 +511,7 @@ class RepairDatabaseCommand:
                         # File exists but marked as deleted - restore it
                         try:
                             if not self.dry_run:
-                                self.database._execute(
+                                self.database.execute(
                                     """
                                     UPDATE files 
                                     SET deleted = 0, 
@@ -519,7 +523,6 @@ class RepairDatabaseCommand:
                                     """,
                                     (check_path, file_id),
                                 )
-                                self.database._commit()
                             result["files_in_project_restored"].append(
                                 {"id": file_id, "path": check_path}
                             )

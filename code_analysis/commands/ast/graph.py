@@ -123,7 +123,7 @@ class ExportGraphMCPCommand(BaseMCPCommand):
                 edges: list[dict[str, str]] = []
 
                 if graph_type == "hierarchy":
-                    rows = db._fetchall(
+                    result = db.execute(
                         """
                         SELECT c.name, c.bases
                         FROM classes c
@@ -131,6 +131,7 @@ class ExportGraphMCPCommand(BaseMCPCommand):
                         """,
                         (proj_id,),
                     )
+                    rows = result.get("data", [])
                     import json
 
                     for r in rows:
@@ -165,7 +166,7 @@ class ExportGraphMCPCommand(BaseMCPCommand):
                         where_extra = " AND f.path = ?"
                         params.append(file_path)
 
-                    rows = db._fetchall(
+                    result = db.execute(
                         """
                         SELECT f.path AS file_path, u.target_name, u.target_class
                         FROM usages u
@@ -175,6 +176,7 @@ class ExportGraphMCPCommand(BaseMCPCommand):
                         + where_extra,
                         tuple(params),
                     )
+                    rows = result.get("data", [])
                     for r in rows:
                         src = (
                             r.get("file_path") if hasattr(r, "get") else r["file_path"]
@@ -209,7 +211,7 @@ class ExportGraphMCPCommand(BaseMCPCommand):
                         where_extra = " AND f.path = ?"
                         params.append(file_path)
 
-                    rows = db._fetchall(
+                    result = db.execute(
                         """
                         SELECT f.path AS file_path, i.module, i.name
                         FROM imports i
@@ -219,6 +221,7 @@ class ExportGraphMCPCommand(BaseMCPCommand):
                         + where_extra,
                         tuple(params),
                     )
+                    rows = result.get("data", [])
                     for r in rows:
                         src = (
                             r.get("file_path") if hasattr(r, "get") else r["file_path"]
@@ -470,7 +473,7 @@ class ExportGraphMCPCommand(BaseMCPCommand):
                     "example_dot": {
                         "graph_type": "dependencies",
                         "format": "dot",
-                        "dot": "digraph G {\n  \"src/main.py\";\n  \"os\";\n  \"src/main.py\" -> \"os\";\n}",
+                        "dot": 'digraph G {\n  "src/main.py";\n  "os";\n  "src/main.py" -> "os";\n}',
                         "node_count": 2,
                         "edge_count": 1,
                     },

@@ -80,7 +80,7 @@ class ListCodeEntitiesMCPCommand(BaseMCPCommand):
 
             # List entities from database
             entities = []
-            
+
             if not entity_type or entity_type == "class":
                 query = "SELECT c.*, f.path as file_path FROM classes c JOIN files f ON c.file_id = f.id WHERE f.project_id = ?"
                 params = [proj_id]
@@ -94,10 +94,11 @@ class ListCodeEntitiesMCPCommand(BaseMCPCommand):
                     query += f" LIMIT {limit}"
                 if offset:
                     query += f" OFFSET {offset}"
-                rows = db._fetchall(query, tuple(params))
+                result = db.execute(query, tuple(params))
+                rows = result.get("data", [])
                 for row in rows:
                     entities.append({"type": "class", **row})
-            
+
             if not entity_type or entity_type == "function":
                 query = "SELECT func.*, f.path as file_path FROM functions func JOIN files f ON func.file_id = f.id WHERE f.project_id = ?"
                 params = [proj_id]
@@ -111,10 +112,11 @@ class ListCodeEntitiesMCPCommand(BaseMCPCommand):
                     query += f" LIMIT {limit}"
                 if offset:
                     query += f" OFFSET {offset}"
-                rows = db._fetchall(query, tuple(params))
+                result = db.execute(query, tuple(params))
+                rows = result.get("data", [])
                 for row in rows:
                     entities.append({"type": "function", **row})
-            
+
             if not entity_type or entity_type == "method":
                 query = "SELECT m.*, c.name as class_name, f.path as file_path FROM methods m JOIN classes c ON m.class_id = c.id JOIN files f ON c.file_id = f.id WHERE f.project_id = ?"
                 params = [proj_id]
@@ -128,12 +130,13 @@ class ListCodeEntitiesMCPCommand(BaseMCPCommand):
                     query += f" LIMIT {limit}"
                 if offset:
                     query += f" OFFSET {offset}"
-                rows = db._fetchall(query, tuple(params))
+                result = db.execute(query, tuple(params))
+                rows = result.get("data", [])
                 for row in rows:
                     entities.append({"type": "method", **row})
-            
+
             db.disconnect()
-            
+
             return SuccessResult(
                 data={
                     "success": True,
@@ -277,9 +280,7 @@ class ListCodeEntitiesMCPCommand(BaseMCPCommand):
                         "root_dir": "/home/user/projects/my_project",
                         "entity_type": "function",
                     },
-                    "explanation": (
-                        "Returns list of all functions in the project."
-                    ),
+                    "explanation": ("Returns list of all functions in the project."),
                 },
                 {
                     "description": "List entities with pagination",

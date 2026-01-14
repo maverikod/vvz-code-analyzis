@@ -90,7 +90,7 @@ class FindDependenciesMCPCommand(BaseMCPCommand):
             # - classes table: inheritance relationships (bases)
             results = []
             import json
-            
+
             # Search in imports table for class/function/module dependencies
             if entity_type in ("class", "function", "module", None):
                 import_query = """
@@ -100,24 +100,27 @@ class FindDependenciesMCPCommand(BaseMCPCommand):
                     WHERE f.project_id = ? AND (i.name = ? OR i.module LIKE ?)
                 """
                 import_params = [proj_id, entity_name, f"%{entity_name}%"]
-                
+
                 import_query += " ORDER BY f.path, i.line"
                 if limit:
                     import_query += f" LIMIT {limit}"
                 if offset:
                     import_query += f" OFFSET {offset}"
-                
-                import_rows = db._fetchall(import_query, tuple(import_params))
+
+                result = db.execute(import_query, tuple(import_params))
+                import_rows = result.get("data", [])
                 for row in import_rows:
-                    results.append({
-                        "type": "import",
-                        "file_path": row["file_path"],
-                        "line": row["line"],
-                        "module": row.get("module"),
-                        "name": row["name"],
-                        "import_type": row["import_type"],
-                    })
-            
+                    results.append(
+                        {
+                            "type": "import",
+                            "file_path": row["file_path"],
+                            "line": row["line"],
+                            "module": row.get("module"),
+                            "name": row["name"],
+                            "import_type": row["import_type"],
+                        }
+                    )
+
             # For classes: also search for inheritance (classes that inherit from this class)
             if entity_type in ("class", None):
                 inheritance_query = """
@@ -127,15 +130,18 @@ class FindDependenciesMCPCommand(BaseMCPCommand):
                     WHERE f.project_id = ? AND c.bases LIKE ?
                 """
                 inheritance_params = [proj_id, f"%{entity_name}%"]
-                
+
                 inheritance_query += " ORDER BY f.path, c.line"
                 if limit:
                     # Apply limit to total results, not just this query
-                    inheritance_query += f" LIMIT {limit * 2}"  # Get more to account for imports
+                    inheritance_query += (
+                        f" LIMIT {limit * 2}"  # Get more to account for imports
+                    )
                 if offset:
                     inheritance_query += f" OFFSET {offset}"
-                
-                inheritance_rows = db._fetchall(inheritance_query, tuple(inheritance_params))
+
+                result = db.execute(inheritance_query, tuple(inheritance_params))
+                inheritance_rows = result.get("data", [])
                 for row in inheritance_rows:
                     # Parse bases JSON to check if entity_name is in bases
                     bases = []
@@ -144,16 +150,18 @@ class FindDependenciesMCPCommand(BaseMCPCommand):
                             bases = json.loads(row["bases"])
                         except (json.JSONDecodeError, TypeError):
                             bases = []
-                    
+
                     if entity_name in bases:
-                        results.append({
-                            "type": "inheritance",
-                            "file_path": row["file_path"],
-                            "line": row["line"],
-                            "class_name": row["name"],
-                            "bases": bases,
-                        })
-            
+                        results.append(
+                            {
+                                "type": "inheritance",
+                                "file_path": row["file_path"],
+                                "line": row["line"],
+                                "class_name": row["name"],
+                                "bases": bases,
+                            }
+                        )
+
             # Also try usages table (may be empty, but check anyway)
             if entity_type in ("class", "function", "method", None):
                 usage_query = """
@@ -163,40 +171,43 @@ class FindDependenciesMCPCommand(BaseMCPCommand):
                     WHERE f.project_id = ? AND u.target_name = ?
                 """
                 usage_params = [proj_id, entity_name]
-                
+
                 if entity_type:
                     usage_query += " AND u.target_type = ?"
                     usage_params.append(entity_type)
-                
+
                 if target_class:
                     usage_query += " AND u.target_class = ?"
                     usage_params.append(target_class)
-                
+
                 usage_query += " ORDER BY f.path, u.line"
                 if limit:
                     usage_query += f" LIMIT {limit}"
                 if offset:
                     usage_query += f" OFFSET {offset}"
-                
-                usage_rows = db._fetchall(usage_query, tuple(usage_params))
+
+                result = db.execute(usage_query, tuple(usage_params))
+                usage_rows = result.get("data", [])
                 for row in usage_rows:
-                    results.append({
-                        "type": "usage",
-                        "file_path": row["file_path"],
-                        "line": row["line"],
-                        "target_name": row["target_name"],
-                        "target_type": row["target_type"],
-                        "target_class": row.get("target_class"),
-                    })
-            
+                    results.append(
+                        {
+                            "type": "usage",
+                            "file_path": row["file_path"],
+                            "line": row["line"],
+                            "target_name": row["target_name"],
+                            "target_type": row["target_type"],
+                            "target_class": row.get("target_class"),
+                        }
+                    )
+
             # Apply limit and offset to final results
             if limit:
-                results = results[offset:offset + limit]
+                results = results[offset : offset + limit]
             elif offset:
                 results = results[offset:]
-            
+
             db.disconnect()
-            
+
             return SuccessResult(
                 data={
                     "success": True,

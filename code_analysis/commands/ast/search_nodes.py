@@ -104,12 +104,13 @@ class SearchASTNodesMCPCommand(BaseMCPCommand):
 
                     file_record = db.get_file_by_path(file_path, proj_id)
                     if not file_record:
-                        row = db._fetchone(
+                        result = db.execute(
                             "SELECT id FROM files WHERE project_id = ? AND path LIKE ?",
                             (proj_id, f"%{file_path}"),
                         )
-                        if row:
-                            file_record = {"id": row["id"]}
+                        data = result.get("data", [])
+                        if data:
+                            file_record = {"id": data[0]["id"]}
 
                     if file_record:
                         query += " AND c.file_id = ?"
@@ -119,7 +120,8 @@ class SearchASTNodesMCPCommand(BaseMCPCommand):
                 if limit:
                     query += f" LIMIT {limit}"
 
-                rows = db._fetchall(query, tuple(params))
+                result = db.execute(query, tuple(params))
+                rows = result.get("data", [])
                 for row in rows:
                     results.append(
                         {
@@ -157,12 +159,13 @@ class SearchASTNodesMCPCommand(BaseMCPCommand):
 
                     file_record = db.get_file_by_path(file_path, proj_id)
                     if not file_record:
-                        row = db._fetchone(
+                        result = db.execute(
                             "SELECT id FROM files WHERE project_id = ? AND path LIKE ?",
                             (proj_id, f"%{file_path}"),
                         )
-                        if row:
-                            file_record = {"id": row["id"]}
+                        data = result.get("data", [])
+                        if data:
+                            file_record = {"id": data[0]["id"]}
 
                     if file_record:
                         query += " AND func.file_id = ?"
@@ -172,7 +175,8 @@ class SearchASTNodesMCPCommand(BaseMCPCommand):
                 if limit:
                     query += f" LIMIT {limit}"
 
-                rows = db._fetchall(query, tuple(params))
+                result = db.execute(query, tuple(params))
+                rows = result.get("data", [])
                 for row in rows:
                     results.append(
                         {
@@ -211,12 +215,13 @@ class SearchASTNodesMCPCommand(BaseMCPCommand):
 
                     file_record = db.get_file_by_path(file_path, proj_id)
                     if not file_record:
-                        row = db._fetchone(
+                        result = db.execute(
                             "SELECT id FROM files WHERE project_id = ? AND path LIKE ?",
                             (proj_id, f"%{file_path}"),
                         )
-                        if row:
-                            file_record = {"id": row["id"]}
+                        data = result.get("data", [])
+                        if data:
+                            file_record = {"id": data[0]["id"]}
 
                     if file_record:
                         query += " AND f.id = ?"
@@ -226,7 +231,8 @@ class SearchASTNodesMCPCommand(BaseMCPCommand):
                 if limit:
                     query += f" LIMIT {limit}"
 
-                rows = db._fetchall(query, tuple(params))
+                result = db.execute(query, tuple(params))
+                rows = result.get("data", [])
                 for row in rows:
                     results.append(
                         {
@@ -325,7 +331,13 @@ class SearchASTNodesMCPCommand(BaseMCPCommand):
                     ),
                     "type": "string",
                     "required": False,
-                    "examples": ["ClassDef", "FunctionDef", "class", "function", "method"],
+                    "examples": [
+                        "ClassDef",
+                        "FunctionDef",
+                        "class",
+                        "function",
+                        "method",
+                    ],
                 },
                 "file_path": {
                     "description": (
@@ -380,9 +392,7 @@ class SearchASTNodesMCPCommand(BaseMCPCommand):
                         "node_type": "method",
                         "limit": 200,
                     },
-                    "explanation": (
-                        "Returns up to 200 methods in the project."
-                    ),
+                    "explanation": ("Returns up to 200 methods in the project."),
                 },
                 {
                     "description": "Find all node types",

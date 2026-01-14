@@ -76,19 +76,20 @@ class ListProjectFilesMCPCommand(BaseMCPCommand):
 
             # Get files from database
             files = db.get_project_files(proj_id, include_deleted=False)
-            
+
             # Apply file_pattern filter if provided
             if file_pattern:
                 import fnmatch
+
                 files = [f for f in files if fnmatch.fnmatch(f["path"], file_pattern)]
-            
+
             # Apply pagination
             total = len(files)
             if offset > 0 or limit:
                 files = files[offset : offset + limit if limit else None]
-            
+
             db.disconnect()
-            
+
             return SuccessResult(
                 data={
                     "success": True,
@@ -174,7 +175,12 @@ class ListProjectFilesMCPCommand(BaseMCPCommand):
                     ),
                     "type": "string",
                     "required": False,
-                    "examples": ["*.py", "src/*", "tests/test_*.py", "code_analysis/**"],
+                    "examples": [
+                        "*.py",
+                        "src/*",
+                        "tests/test_*.py",
+                        "code_analysis/**",
+                    ],
                 },
                 "limit": {
                     "description": (
@@ -226,9 +232,7 @@ class ListProjectFilesMCPCommand(BaseMCPCommand):
                         "root_dir": "/home/user/projects/my_project",
                         "file_pattern": "src/*",
                     },
-                    "explanation": (
-                        "Returns only files in src/ directory."
-                    ),
+                    "explanation": ("Returns only files in src/ directory."),
                 },
                 {
                     "description": "List files with pagination",

@@ -69,11 +69,11 @@ class GetClassHierarchyMCPCommand(BaseMCPCommand):
             # Get class hierarchy from database
             # Classes table has 'bases' field (JSON array of base class names)
             import json
-            
+
             # Build hierarchy map
             hierarchy = {}
             all_classes = []
-            
+
             # Get all classes for the project
             query = """
                 SELECT c.*, f.path as file_path
@@ -82,13 +82,14 @@ class GetClassHierarchyMCPCommand(BaseMCPCommand):
                 WHERE f.project_id = ?
             """
             params = [proj_id]
-            
+
             if class_name:
                 query += " AND c.name = ?"
                 params.append(class_name)
-            
+
             if file_path:
                 from pathlib import Path
+
                 file_path_obj = Path(file_path)
                 root_path = Path(root_dir).resolve()
                 if file_path_obj.is_absolute():
@@ -99,29 +100,31 @@ class GetClassHierarchyMCPCommand(BaseMCPCommand):
                         pass
                 else:
                     file_path = str(file_path_obj)
-                
+
                 # Try to find file
                 file_record = db.get_file_by_path(file_path, proj_id)
                 if not file_record:
                     # Try versioned path
-                    row = db._fetchone(
+                    result = db.execute(
                         "SELECT id FROM files WHERE project_id = ? AND path LIKE ?",
-                        (proj_id, f"%{file_path}")
+                        (proj_id, f"%{file_path}"),
                     )
-                    if row:
-                        file_record = {"id": row["id"]}
-                
+                    data = result.get("data", [])
+                    if data:
+                        file_record = {"id": data[0]["id"]}
+
                 if file_record:
                     query += " AND c.file_id = ?"
                     params.append(file_record["id"])
-            
-            rows = db._fetchall(query, tuple(params))
-            
+
+            result = db.execute(query, tuple(params))
+            rows = result.get("data", [])
+
             for row in rows:
                 class_info = row
                 class_name_val = class_info["name"]
                 bases_str = class_info.get("bases")
-                
+
                 # Parse bases (JSON array or string)
                 bases = []
                 if bases_str:
@@ -135,7 +138,7 @@ class GetClassHierarchyMCPCommand(BaseMCPCommand):
                     except (json.JSONDecodeError, TypeError):
                         # Try to parse as AST string representation
                         bases = []
-                
+
                 hierarchy[class_name_val] = {
                     "name": class_name_val,
                     "file_path": class_info.get("file_path"),
@@ -144,29 +147,35 @@ class GetClassHierarchyMCPCommand(BaseMCPCommand):
                     "children": [],
                 }
                 all_classes.append(class_info)
-            
+
             # Build parent-child relationships
             for class_name_val, class_info in hierarchy.items():
                 for base in class_info["bases"]:
                     # Extract class name from base (could be "BaseClass" or "module.BaseClass")
-                    base_name = base.split(".")[-1] if isinstance(base, str) else str(base)
+                    base_name = (
+                        base.split(".")[-1] if isinstance(base, str) else str(base)
+                    )
                     if base_name in hierarchy:
                         hierarchy[base_name]["children"].append(class_name_val)
-            
+
             # Filter by class_name if specified
             if class_name:
                 result_hierarchy = hierarchy.get(class_name, {})
             else:
                 result_hierarchy = hierarchy
-            
+
             db.disconnect()
-            
+
             return SuccessResult(
                 data={
                     "success": True,
                     "class_name": class_name,
                     "hierarchy": result_hierarchy,
-                    "count": len(result_hierarchy) if isinstance(result_hierarchy, dict) else 1,
+                    "count": (
+                        len(result_hierarchy)
+                        if isinstance(result_hierarchy, dict)
+                        else 1
+                    ),
                 }
             )
         except Exception as e:

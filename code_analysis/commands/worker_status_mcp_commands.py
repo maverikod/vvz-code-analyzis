@@ -756,7 +756,7 @@ class GetDatabaseStatusMCPCommand(BaseMCPCommand):
                 }
 
                 # Get files needing chunking (sample)
-                files_needing_chunking_sample = db._fetchall(
+                result = db.execute(
                     """
                     SELECT f.id, f.path, f.has_docstring, f.last_modified
                     FROM files f
@@ -766,6 +766,7 @@ class GetDatabaseStatusMCPCommand(BaseMCPCommand):
                     LIMIT 10
                     """
                 )
+                files_needing_chunking_sample = result.get("data", [])
                 result["files"]["needing_chunking_sample"] = [
                     {
                         "id": f["id"],

@@ -271,7 +271,7 @@ class SemanticSearchMCPCommand(BaseMCPCommand):
 
                 # Filter results by dataset_id to ensure dataset-scoped search
                 placeholders = ",".join(["?"] * len(ids))
-                rows = database._fetchall(
+                result = database.execute(
                     f"""
                     SELECT
                         c.vector_id,
@@ -288,6 +288,7 @@ class SemanticSearchMCPCommand(BaseMCPCommand):
                     """,
                     [actual_project_id, dataset_id, *ids],
                 )
+                rows = result.get("data", [])
                 by_vector_id: dict[int, dict[str, Any]] = {
                     int(r["vector_id"]): dict(r) for r in rows
                 }

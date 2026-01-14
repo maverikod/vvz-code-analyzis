@@ -86,10 +86,10 @@ class GetImportsMCPCommand(BaseMCPCommand):
             # Get imports from database
             query = "SELECT * FROM imports WHERE file_id IN (SELECT id FROM files WHERE project_id = ?)"
             params = [proj_id]
-            
+
             if file_path:
                 from pathlib import Path
-                
+
                 # Normalize file path
                 file_path_obj = Path(file_path)
                 root_path = Path(root_dir).resolve()
@@ -101,26 +101,28 @@ class GetImportsMCPCommand(BaseMCPCommand):
                         pass
                 else:
                     file_path = str(file_path_obj)
-                
+
                 # Try multiple path formats
                 file_record = db.get_file_by_path(file_path, proj_id)
-                
+
                 # Try versioned path pattern
                 if not file_record:
-                    row = db._fetchone(
+                    result = db.execute(
                         "SELECT * FROM files WHERE project_id = ? AND path LIKE ?",
-                        (proj_id, f"%{file_path}")
+                        (proj_id, f"%{file_path}"),
                     )
-                    if row:
-                        file_record = row
-                
+                    data = result.get("data", [])
+                    if data:
+                        file_record = data[0]
+
                 # Try by filename
                 if not file_record and "/" in file_path:
                     filename = file_path.split("/")[-1]
-                    rows = db._fetchall(
+                    result = db.execute(
                         "SELECT * FROM files WHERE project_id = ? AND path LIKE ?",
-                        (proj_id, f"%{filename}")
+                        (proj_id, f"%{filename}"),
                     )
+                    rows = result.get("data", [])
                     for row in rows:
                         path_str = row["path"]
                         if file_path in path_str or path_str.endswith(file_path):
@@ -128,7 +130,7 @@ class GetImportsMCPCommand(BaseMCPCommand):
                             break
                     if not file_record and rows:
                         file_record = rows[0]
-                
+
                 if not file_record:
                     db.disconnect()
                     return ErrorResult(
@@ -137,27 +139,28 @@ class GetImportsMCPCommand(BaseMCPCommand):
                     )
                 query = "SELECT * FROM imports WHERE file_id = ?"
                 params = [file_record["id"]]
-            
+
             if import_type:
                 query += " AND import_type = ?"
                 params.append(import_type)
-            
+
             if module_name:
                 query += " AND module LIKE ?"
                 params.append(f"%{module_name}%")
-            
+
             query += " ORDER BY file_id, line"
-            
+
             if limit:
                 query += f" LIMIT {limit}"
             if offset:
                 query += f" OFFSET {offset}"
-            
-            rows = db._fetchall(query, tuple(params))
-            
+
+            result = db.execute(query, tuple(params))
+            rows = result.get("data", [])
+
             imports = rows
             db.disconnect()
-            
+
             return SuccessResult(
                 data={
                     "success": True,

@@ -638,7 +638,7 @@ class RevectorizeCommand(BaseMCPCommand):
                             embedding_json = json.dumps(embedding_array.tolist())
 
                             # Update database with new embedding
-                            database._execute(
+                            database.execute(
                                 """
                                 UPDATE code_chunks
                                 SET embedding_vector = ?, embedding_model = ?, vector_id = NULL
@@ -646,7 +646,6 @@ class RevectorizeCommand(BaseMCPCommand):
                                 """,
                                 (embedding_json, embedding_model, chunk_id),
                             )
-                            database._commit()
 
                             revectorized_count += 1
                 except Exception as e:

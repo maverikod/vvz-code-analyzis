@@ -63,22 +63,27 @@ Implement object-oriented API methods in DatabaseClient.
 - [x] `get_vectors(file_id: int) -> list[dict]` ✅
 
 ### 9.4 Code Structure Operations
-- [ ] Methods for classes, functions, methods, imports
-- [ ] Search and query methods
-- [ ] Relationship navigation methods
+- [x] Methods for classes, functions, methods, imports ✅
+- [x] Search and query methods ✅
+- [x] Relationship navigation methods ✅
 
 ### 9.5 Analysis Operations
-- [ ] Methods for issues, usages, duplicates
-- [ ] Query and search methods
-- [ ] Statistics methods
+- [x] Methods for issues, usages, duplicates ✅
+- [x] Query and search methods ✅
+- [x] Statistics methods ✅
 
 ## Files Created/Modified
 
 - `code_analysis/core/database_client/client_api_projects.py` - Project operations mixin ✅
 - `code_analysis/core/database_client/client_api_files.py` - File operations mixin ✅
 - `code_analysis/core/database_client/client_api_attributes.py` - Attribute operations mixin ✅
-- `code_analysis/core/database_client/client.py` - Integrated API mixins ✅
-- `tests/test_client_api.py` - Unit tests for API methods ✅
+- `code_analysis/core/database_client/client_api_classes_functions.py` - Class and Function operations mixin ✅
+- `code_analysis/core/database_client/client_api_methods_imports.py` - Method, Import operations and relationship navigation mixin ✅
+- `code_analysis/core/database_client/client_api_issues_usages.py` - Issue and Usage operations mixin ✅
+- `code_analysis/core/database_client/client_api_duplicates_stats.py` - CodeDuplicate operations and Statistics mixin ✅
+- `code_analysis/core/database_client/client.py` - Integrated all API mixins ✅
+- `tests/test_client_api.py` - Unit tests for Project, File, Attribute operations ✅
+- `tests/test_client_api_code_structure_analysis.py` - Unit tests for Code Structure and Analysis operations ✅
 
 ## Testing Requirements
 

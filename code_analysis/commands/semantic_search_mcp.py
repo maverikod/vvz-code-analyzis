@@ -143,7 +143,11 @@ class SemanticSearchMCPCommand(BaseMCPCommand):
 
                 # Get dataset_id for root_dir (normalized absolute path)
                 normalized_root = str(normalize_root_dir(root_dir))
-                dataset_id = database.get_dataset_id(actual_project_id, normalized_root)
+                from .base_mcp_command import BaseMCPCommand
+
+                dataset_id = BaseMCPCommand._get_dataset_id(
+                    database, actual_project_id, normalized_root
+                )
                 if not dataset_id:
                     # Create dataset if it doesn't exist
                     from .base_mcp_command import BaseMCPCommand
@@ -201,15 +205,25 @@ class SemanticSearchMCPCommand(BaseMCPCommand):
                             self.text = text
 
                     query_chunk = QueryChunk(query)
-                    chunks_with_emb = await svo_client_manager.get_embeddings([query_chunk])
+                    chunks_with_emb = await svo_client_manager.get_embeddings(
+                        [query_chunk]
+                    )
 
-                    if not chunks_with_emb or not hasattr(chunks_with_emb[0], "embedding"):
-                        error_msg = "Failed to get embedding for query from real service"
+                    if not chunks_with_emb or not hasattr(
+                        chunks_with_emb[0], "embedding"
+                    ):
+                        error_msg = (
+                            "Failed to get embedding for query from real service"
+                        )
                         logger.error(
                             "%s: chunks_with_emb=%s, has_embedding=%s",
                             error_msg,
                             chunks_with_emb is not None,
-                            hasattr(chunks_with_emb[0], "embedding") if chunks_with_emb else False,
+                            (
+                                hasattr(chunks_with_emb[0], "embedding")
+                                if chunks_with_emb
+                                else False
+                            ),
                         )
                         return ErrorResult(
                             message=error_msg,

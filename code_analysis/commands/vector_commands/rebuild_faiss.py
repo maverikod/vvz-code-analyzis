@@ -102,7 +102,9 @@ class RebuildFaissCommand(BaseMCPCommand):
 
             database = self._open_database(root_dir)
             try:
-                actual_project_id = self._get_project_id(database, root_path, project_id)
+                actual_project_id = self._get_project_id(
+                    database, root_path, project_id
+                )
                 if not actual_project_id:
                     return ErrorResult(
                         message=f"Project not found: {project_id}",
@@ -142,7 +144,11 @@ class RebuildFaissCommand(BaseMCPCommand):
                     if dataset_id:
                         # Rebuild index for specific dataset
                         normalized_root = str(normalize_root_dir(root_dir))
-                        db_dataset_id = database.get_dataset_id(actual_project_id, normalized_root)
+                        from ...commands.base_mcp_command import BaseMCPCommand
+
+                        db_dataset_id = BaseMCPCommand._get_dataset_id(
+                            database, actual_project_id, normalized_root
+                        )
                         if not db_dataset_id:
                             # Create dataset if it doesn't exist
                             from ...commands.base_mcp_command import BaseMCPCommand
@@ -520,4 +526,3 @@ class RebuildFaissCommand(BaseMCPCommand):
                 "Ensure vector_dim in config matches embedding dimension",
             ],
         }
-

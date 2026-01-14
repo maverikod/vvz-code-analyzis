@@ -204,7 +204,11 @@ class UpdateIndexesMCPCommand(BaseMCPCommand):
             from ..core.project_resolution import normalize_root_dir
 
             normalized_root = str(normalize_root_dir(root_path))
-            dataset_id = database.get_dataset_id(project_id, normalized_root)
+            from .base_mcp_command import BaseMCPCommand
+
+            dataset_id = BaseMCPCommand._get_dataset_id(
+                database, project_id, normalized_root
+            )
             if not dataset_id:
                 from .base_mcp_command import BaseMCPCommand
 

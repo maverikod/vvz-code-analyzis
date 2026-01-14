@@ -614,6 +614,28 @@ class BaseMCPCommand(Command):
         return dataset_id
 
     @staticmethod
+    def _get_dataset_id(
+        db: DatabaseClient, project_id: str, root_path: str
+    ) -> Optional[str]:
+        """Get dataset ID by project_id and root_path.
+
+        Args:
+            db: DatabaseClient instance
+            project_id: Project ID (UUID4 string)
+            root_path: Root directory path (will be normalized to absolute)
+
+        Returns:
+            Dataset ID (UUID4 string) or None if not found
+        """
+        normalized_root = str(normalize_root_dir(root_path))
+        result = db.execute(
+            "SELECT id FROM datasets WHERE project_id = ? AND root_path = ?",
+            (project_id, normalized_root),
+        )
+        data = result.get("data", [])
+        return data[0]["id"] if data else None
+
+    @staticmethod
     def _resolve_project_root(
         project_id: Optional[str] = None, root_dir: Optional[str] = None
     ) -> Path:

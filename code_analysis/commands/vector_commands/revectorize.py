@@ -109,7 +109,9 @@ class RevectorizeCommand(BaseMCPCommand):
 
             database = self._open_database(root_dir)
             try:
-                actual_project_id = self._get_project_id(database, root_path, project_id)
+                actual_project_id = self._get_project_id(
+                    database, root_path, project_id
+                )
                 if not actual_project_id:
                     return ErrorResult(
                         message=f"Project not found: {project_id}",
@@ -149,7 +151,11 @@ class RevectorizeCommand(BaseMCPCommand):
                     if dataset_id:
                         # Revectorize chunks for specific dataset
                         normalized_root = str(normalize_root_dir(root_dir))
-                        db_dataset_id = database.get_dataset_id(actual_project_id, normalized_root)
+                        from ...commands.base_mcp_command import BaseMCPCommand
+
+                        db_dataset_id = BaseMCPCommand._get_dataset_id(
+                            database, actual_project_id, normalized_root
+                        )
                         if not db_dataset_id:
                             # Create dataset if it doesn't exist
                             from ...commands.base_mcp_command import BaseMCPCommand
@@ -664,4 +670,3 @@ class RevectorizeCommand(BaseMCPCommand):
             }
         finally:
             faiss_manager.close()
-

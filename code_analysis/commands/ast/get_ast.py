@@ -60,7 +60,7 @@ class GetASTMCPCommand(BaseMCPCommand):
     ) -> SuccessResult:
         try:
             from pathlib import Path
-            
+
             root_path = self._validate_root_dir(root_dir)
             db = self._open_database(root_dir)
             proj_id = self._get_project_id(db, root_path, project_id)
@@ -85,10 +85,10 @@ class GetASTMCPCommand(BaseMCPCommand):
 
             # Get file_id first - try multiple path formats
             file_record = None
-            
+
             # Try 1: exact path match
             file_record = db.get_file_by_path(file_path, proj_id)
-            
+
             # Try 2: if not found, try with versioned path pattern
             if not file_record:
                 # Files in DB may be stored with versioned paths like:
@@ -97,18 +97,18 @@ class GetASTMCPCommand(BaseMCPCommand):
                 # Search for files where path ends with the requested path
                 result = db.execute(
                     "SELECT * FROM files WHERE project_id = ? AND path LIKE ?",
-                    (proj_id, f"%{file_path}")
+                    (proj_id, f"%{file_path}"),
                 )
                 data = result.get("data", [])
                 if data:
                     file_record = data[0]
-            
+
             # Try 3: search by filename if path contains /
             if not file_record and "/" in file_path:
                 filename = file_path.split("/")[-1]
                 result = db.execute(
                     "SELECT * FROM files WHERE project_id = ? AND path LIKE ?",
-                    (proj_id, f"%{filename}")
+                    (proj_id, f"%{filename}"),
                 )
                 rows = result.get("data", [])
                 # If multiple matches, prefer the one that matches the path structure
@@ -120,7 +120,7 @@ class GetASTMCPCommand(BaseMCPCommand):
                 # If still no match, use first result
                 if not file_record and rows:
                     file_record = rows[0]
-            
+
             if not file_record:
                 db.close()
                 return ErrorResult(
@@ -140,6 +140,7 @@ class GetASTMCPCommand(BaseMCPCommand):
                 }
                 if include_json and ast_data.get("ast_json"):
                     import json
+
                     result["ast"] = json.loads(ast_data["ast_json"])
                 return SuccessResult(data=result)
             return ErrorResult(

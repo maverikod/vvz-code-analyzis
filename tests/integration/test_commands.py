@@ -129,10 +129,10 @@ class TestCommandsIntegration:
                 assert result.data is not None
 
     @pytest.mark.asyncio
-    async def test_get_project_command_with_real_data(
+    async def test_list_projects_command_with_real_data(
         self, rpc_server_with_schema, tmp_path
     ):
-        """Test get project command with real data."""
+        """Test list projects command with real data."""
         self._check_test_data_available()
 
         _, socket_path, db_path = rpc_server_with_schema
@@ -175,16 +175,20 @@ class TestCommandsIntegration:
             ) as mock_socket:
                 mock_socket.return_value = socket_path
 
-                # Get project command
-                command = GetProjectMCPCommand()
-                result = await command.execute(
-                    root_dir=str(VAST_SRV_DIR),
-                    project_id=project_id,
-                )
+                # List projects command
+                command = ListProjectsMCPCommand()
+                result = await command.execute(root_dir=str(VAST_SRV_DIR))
 
                 assert result.success is True
                 assert result.data is not None
-                assert result.data.get("id") == project_id
+                # Should contain the project we created
+                projects = result.data.get("projects", [])
+                assert len(projects) > 0
+                # Find our project
+                found_project = next(
+                    (p for p in projects if p.get("id") == project_id), None
+                )
+                assert found_project is not None
 
     @pytest.mark.asyncio
     async def test_get_file_command_with_real_data(

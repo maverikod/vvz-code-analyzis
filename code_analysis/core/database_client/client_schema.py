@@ -81,7 +81,13 @@ class _ClientSchemaMixin:
         """
         response = self.rpc_client.call("get_table_info", {"table_name": table_name})
         result_data = self._extract_result_data(response)
-        return result_data.get("data", [])
+        # result_data is already the list from DataResult, not a dict
+        if isinstance(result_data, list):
+            return result_data
+        # Fallback: if it's a dict, try to get "data" key
+        if isinstance(result_data, dict):
+            return result_data.get("data", [])
+        return []
 
     def get_schema_version(self) -> str:
         """Get database schema version.

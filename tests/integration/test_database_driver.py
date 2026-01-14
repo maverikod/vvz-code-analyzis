@@ -234,7 +234,8 @@ class TestDatabaseDriverIntegration:
         """Test concurrent operations via RPC server."""
         _, socket_path, _ = rpc_server_with_real_data
 
-        client = DatabaseClient(socket_path)
+        # Use connection pool for concurrent operations
+        client = DatabaseClient(socket_path=socket_path, pool_size=20)
         client.connect()
 
         try:
@@ -252,6 +253,7 @@ class TestDatabaseDriverIntegration:
             import concurrent.futures
 
             def insert_value(value):
+                # Each thread uses the same client (with connection pool)
                 return client.insert("concurrent_test", {"value": value})
 
             with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
@@ -308,13 +310,17 @@ class TestDatabaseDriverIntegration:
 
         try:
             # Try to insert into non-existent table
-            from code_analysis.core.database_client.exceptions import RPCResponseError
+            from code_analysis.core.database_client.exceptions import (
+                RPCResponseError,
+                RPCClientError,
+            )
 
-            with pytest.raises(RPCResponseError):
+            # RPCClientError is raised for database errors
+            with pytest.raises((RPCResponseError, RPCClientError)):
                 client.insert("nonexistent_table", {"data": "test"})
 
             # Try to select from non-existent table
-            with pytest.raises(RPCResponseError):
+            with pytest.raises((RPCResponseError, RPCClientError)):
                 client.select("nonexistent_table")
         finally:
             client.disconnect()

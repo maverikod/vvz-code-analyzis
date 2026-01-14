@@ -410,7 +410,9 @@ class TestASTCSTOperationsRealData:
             assert delete_result.data is not None
 
             # Verify file was modified (if we had functions)
-            modified_cst = CSTNode.from_dict(delete_result.data)
+            # delete_result.data is already a CSTNode object, not a dict
+            modified_cst = delete_result.data
+            assert isinstance(modified_cst, CSTNode)
             assert (
                 modified_cst.cst_code != original_source or len(query_result.data) == 0
             )
@@ -481,7 +483,9 @@ class TestASTCSTOperationsRealData:
             ), f"Replace failed: {replace_result.error_description}"
             assert replace_result.data is not None
 
-            modified_cst = CSTNode.from_dict(replace_result.data)
+            # replace_result.data is already a CSTNode object, not a dict
+            modified_cst = replace_result.data
+            assert isinstance(modified_cst, CSTNode)
             assert replacement_code in modified_cst.cst_code
 
         finally:
@@ -558,7 +562,9 @@ class TestASTCSTOperationsRealData:
                     modify_result.is_success()
                 ), f"Modify failed: {modify_result.error_description}"
                 if modify_result.data:
-                    modified_ast = ASTNode.from_dict(modify_result.data)
+                    # modify_result.data is already an ASTNode object, not a dict
+                    modified_ast = modify_result.data
+                    assert isinstance(modified_ast, ASTNode)
                     assert modified_ast.ast_json != original_ast_json
 
         finally:

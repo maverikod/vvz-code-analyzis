@@ -200,14 +200,10 @@ class RPCClient:
             response_dict = json.loads(response_data.decode("utf-8"))
             response = RPCResponse.from_dict(response_dict)
 
-            # Return connection to pool if still valid
-            if not self._closed:
-                try:
-                    self._connection_pool.put_nowait(sock)
-                    sock = None  # Don't close in finally
-                except Exception:
-                    # Pool is full or closed, close connection
-                    pass
+            # Don't return connection to pool - server closes it after each request
+            # Server architecture: one request per connection, then close
+            # So we always create new connection for each request
+            sock = None  # Will be closed in finally
 
             # Check for errors in response
             if response.is_error() and response.error:

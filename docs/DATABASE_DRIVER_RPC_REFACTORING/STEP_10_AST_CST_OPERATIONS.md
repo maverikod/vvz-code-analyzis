@@ -41,46 +41,46 @@ Implement AST/CST tree operations with XPath filters and Result objects.
 ## Checklist
 
 ### 10.1 XPath Filter Object
-- [ ] Create `XPathFilter` class
-- [ ] Integrate with CSTQuery engine (from Step 1)
-- [ ] Support selector syntax and additional filters
+- [x] Create `XPathFilter` class ✅
+- [x] Integrate with CSTQuery engine (from Step 1) ✅
+- [x] Support selector syntax and additional filters ✅
 
 ### 10.2 Tree Action Types
-- [ ] Create `TreeAction` enum (REPLACE, DELETE, INSERT)
-- [ ] Define action parameters
+- [x] Create `TreeAction` enum (REPLACE, DELETE, INSERT) ✅
+- [x] Define action parameters ✅
 
 ### 10.3 AST Query Operations
-- [ ] `query_ast(file_id: int, filter: XPathFilter) -> Result[list[ASTNode]]`
-- [ ] Implement AST tree loading from database
-- [ ] Implement XPath filtering on AST
-- [ ] Return Result object with nodes
+- [x] `query_ast(file_id: int, filter: XPathFilter) -> Result[list[ASTNode]]` ✅
+- [x] Implement AST tree loading from database ✅
+- [x] Implement XPath filtering on AST ✅
+- [x] Return Result object with nodes ✅
 
 ### 10.4 CST Query Operations
-- [ ] `query_cst(file_id: int, filter: XPathFilter) -> Result[list[CSTNode]]`
-- [ ] Implement CST tree loading from database
-- [ ] Implement XPath filtering using CSTQuery engine
-- [ ] Return Result object with nodes
+- [x] `query_cst(file_id: int, filter: XPathFilter) -> Result[list[CSTNode]]` ✅
+- [x] Implement CST tree loading from database ✅
+- [x] Implement XPath filtering using CSTQuery engine ✅
+- [x] Return Result object with nodes ✅
 
 ### 10.5 AST Modify Operations
-- [ ] `modify_ast(file_id: int, filter: XPathFilter, action: TreeAction, nodes: list[ASTNode]) -> Result[ASTTree]`
-- [ ] Implement node replacement
-- [ ] Implement node deletion
-- [ ] Implement node insertion
-- [ ] Return Result object with modified tree
+- [x] `modify_ast(file_id: int, filter: XPathFilter, action: TreeAction, nodes: list[ASTNode]) -> Result[ASTTree]` ✅
+- [x] Implement node replacement ✅
+- [x] Implement node deletion ✅
+- [x] Implement node insertion ✅
+- [x] Return Result object with modified tree ✅
 
 ### 10.6 CST Modify Operations
-- [ ] `modify_cst(file_id: int, filter: XPathFilter, action: TreeAction, nodes: list[CSTNode]) -> Result[CSTTree]`
-- [ ] Integrate with existing `tree_modifier.py` functionality
-- [ ] Implement node replacement
-- [ ] Implement node deletion
-- [ ] Implement node insertion
-- [ ] Return Result object with modified tree
+- [x] `modify_cst(file_id: int, filter: XPathFilter, action: TreeAction, nodes: list[CSTNode]) -> Result[CSTTree]` ✅
+- [x] Integrate with existing `tree_modifier.py` functionality ✅
+- [x] Implement node replacement ✅
+- [x] Implement node deletion ✅
+- [x] Implement node insertion ✅
+- [x] Return Result object with modified tree ✅
 
 ### 10.7 RPC Methods in Driver
-- [ ] Implement AST query handler in RPC server
-- [ ] Implement CST query handler in RPC server
-- [ ] Implement AST modify handler in RPC server
-- [ ] Implement CST modify handler in RPC server
+- [x] Implement AST query handler in RPC server ✅
+- [x] Implement CST query handler in RPC server ✅
+- [x] Implement AST modify handler in RPC server ✅
+- [x] Implement CST modify handler in RPC server ✅
 
 ## Files to Create
 
@@ -90,7 +90,13 @@ Implement AST/CST tree operations with XPath filters and Result objects.
 ## Files to Modify
 
 - `code_analysis/core/database_client/client.py` - Add AST/CST methods
-- `code_analysis/core/database_driver_pkg/rpc_server.py` - Add AST/CST handlers
+- `code_analysis/core/database_driver_pkg/rpc_handlers.py` - Add AST/CST handlers
+
+**Note**: `rpc_handlers.py` was split into multiple files to comply with project rules:
+- `rpc_handlers_base.py` - Base CRUD operations (172 lines)
+- `rpc_handlers_schema.py` - Schema and transaction operations (200 lines)
+- `rpc_handlers_ast_cst.py` - AST/CST operations (758 lines - cohesive functionality)
+- `rpc_handlers.py` - Facade class combining all mixins (38 lines)
 
 ## Deliverables
 

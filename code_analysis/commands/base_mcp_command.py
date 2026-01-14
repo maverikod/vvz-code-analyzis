@@ -579,7 +579,13 @@ class BaseMCPCommand(Command):
             "SELECT id FROM datasets WHERE project_id = ? AND root_path = ?",
             (project_id, normalized_root),
         )
-        data = result.get("data", [])
+        # Handle both dict and list results from execute()
+        if isinstance(result, list):
+            data = result
+        elif isinstance(result, dict):
+            data = result.get("data", [])
+        else:
+            data = []
         if data:
             return data[0]["id"]
 
@@ -630,7 +636,13 @@ class BaseMCPCommand(Command):
             "SELECT id FROM datasets WHERE project_id = ? AND root_path = ?",
             (project_id, normalized_root),
         )
-        data = result.get("data", [])
+        # Handle both dict and list results from execute()
+        if isinstance(result, list):
+            data = result
+        elif isinstance(result, dict):
+            data = result.get("data", [])
+        else:
+            data = []
         return data[0]["id"] if data else None
 
     @staticmethod

@@ -209,18 +209,23 @@ class TestWorkersIntegration:
             assert len(files) > 0
 
             # Create mock vector (simulate embedding)
-            mock_vector = bytes([0] * 384)  # 384-dimensional vector
+            # Use base64 encoded string instead of bytes for JSON serialization
+            import base64
+
+            mock_vector_bytes = bytes([0] * 384)  # 384-dimensional vector
+            mock_vector_b64 = base64.b64encode(mock_vector_bytes).decode("utf-8")
 
             # Insert vector chunks (simulate vectorization)
             for file_id in file_ids[:3]:  # Vectorize first 3 files
                 chunk_text = "Test chunk text"
+                # Store vector as base64 string for JSON serialization
                 database.insert(
                     "vector_chunks",
                     {
                         "file_id": file_id,
                         "project_id": project_id,
                         "chunk_text": chunk_text,
-                        "vector": mock_vector,
+                        "vector": mock_vector_b64,
                     },
                 )
 
@@ -285,12 +290,16 @@ class TestWorkersIntegration:
 
         try:
             # Try operations on non-existent table
-            from code_analysis.core.database_client.exceptions import RPCResponseError
+            from code_analysis.core.database_client.exceptions import (
+                RPCResponseError,
+                RPCClientError,
+            )
 
-            with pytest.raises(RPCResponseError):
+            # RPCClientError is raised for database errors
+            with pytest.raises((RPCResponseError, RPCClientError)):
                 database.select("nonexistent_table")
 
-            with pytest.raises(RPCResponseError):
+            with pytest.raises((RPCResponseError, RPCClientError)):
                 database.insert("nonexistent_table", {"data": "test"})
 
         finally:
@@ -319,6 +328,7 @@ class TestWorkersIntegration:
             import concurrent.futures
 
             def make_request(value):
+                # Each request uses the same client with connection pool
                 return database.insert("pool_test", {"value": value})
 
             with concurrent.futures.ThreadPoolExecutor(max_workers=20) as executor:

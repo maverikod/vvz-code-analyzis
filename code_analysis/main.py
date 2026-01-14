@@ -310,19 +310,22 @@ def main() -> None:
         Returns:
             None
         """
+        import asyncio
         import logging
-        from pathlib import Path
-        from code_analysis.core.db_worker_manager import get_db_worker_manager
 
         logger = logging.getLogger(__name__)
         logger.info("🚀 Server startup: initializing workers...")
 
-        # DB worker is now started lazily by SQLiteDriverProxy.connect()
-        # No automatic startup needed - worker will be started when database connection is requested
+        # Startup sequence: database driver → other workers
+        # Database driver must start FIRST because other workers depend on it
+        # Functions are synchronous but run in executor to avoid blocking
+
+        # Start database driver first
+        await asyncio.to_thread(startup_database_driver)
 
         # Start vectorization and file watcher workers
-        await startup_vectorization_worker()
-        await startup_file_watcher_worker()
+        await asyncio.to_thread(startup_vectorization_worker)
+        await asyncio.to_thread(startup_file_watcher_worker)
 
         logger.info("✅ All workers started successfully")
 
@@ -332,8 +335,8 @@ def main() -> None:
         logger.info("🛑 Server shutdown: stopping all workers...")
         try:
             shutdown_cfg = (
-                app_config_lifespan.get("process_management")
-                or app_config_lifespan.get("server_manager")
+                app_config.get("process_management")
+                or app_config.get("server_manager")
                 or {}
             )
             shutdown_timeout = 30.0
@@ -406,19 +409,29 @@ def main() -> None:
         # We must NOT block here, otherwise the server won't bind the port and
         # proxy registration/health checks will fail.
         try:
-            # DB worker is now started lazily by SQLiteDriverProxy.connect()
-            # No automatic startup needed - worker will be started when database connection is requested
-
-            # Start vectorization and file watcher workers in background (non-blocking)
+            # Startup sequence: database driver → other workers
+            # Start workers in background (non-blocking)
             import threading
             import asyncio
 
-            def _start_non_db_workers_bg() -> None:
-                """Start non-DB workers in background thread with error handling.
+            def _start_workers_bg() -> None:
+                """Start all workers in background thread with error handling.
+
+                Startup sequence: database driver → vectorization → file_watcher
 
                 Returns:
                     None
                 """
+                try:
+                    logger.info("🚀 [BACKGROUND] Starting database driver...")
+                    asyncio.run(startup_database_driver())
+                    logger.info("✅ [BACKGROUND] Database driver started")
+                except Exception as e:
+                    logger.error(
+                        f"❌ [BACKGROUND] Failed to start database driver: {e}",
+                        exc_info=True,
+                    )
+
                 try:
                     logger.info("🚀 [BACKGROUND] Starting vectorization worker...")
                     asyncio.run(startup_vectorization_worker())
@@ -439,7 +452,7 @@ def main() -> None:
                         exc_info=True,
                     )
 
-            thread = threading.Thread(target=_start_non_db_workers_bg, daemon=True)
+            thread = threading.Thread(target=_start_workers_bg, daemon=True)
             thread.start()
 
             print(
@@ -518,6 +531,90 @@ def main() -> None:
     # Commands are automatically registered via hooks
     # Queue manager is automatically initialized if enabled in config
     # Registration happens automatically via AppFactory if auto_on_startup is enabled
+
+    # Start database driver on startup
+    def startup_database_driver() -> None:
+        """Start database driver process in background on server startup.
+
+        Database driver must be started BEFORE other workers that depend on it.
+        Driver configuration is loaded from code_analysis.database.driver section.
+
+        Returns:
+            None
+        """
+        import logging
+
+        from code_analysis.core.config import get_driver_config
+        from code_analysis.core.worker_manager import get_worker_manager
+
+        logger = logging.getLogger(__name__)
+        logger.info("🔍 startup_database_driver called")
+
+        try:
+            # Get config from global config instance
+            from mcp_proxy_adapter.config import get_config
+
+            cfg = get_config()
+            app_config = getattr(cfg, "config_data", {})
+            if not app_config:
+                # Fallback: try to load from config_path
+                if hasattr(cfg, "config_path") and cfg.config_path:
+                    import json
+
+                    with open(cfg.config_path, "r", encoding="utf-8") as f:
+                        app_config = json.load(f)
+
+            logger.info(
+                f"🔍 app_config loaded: {bool(app_config)}, keys: {list(app_config.keys()) if app_config else []}"
+            )
+
+            # Get driver config from code_analysis.database.driver
+            driver_config = get_driver_config(app_config)
+            if not driver_config:
+                logger.warning(
+                    "⚠️  No database driver config found in code_analysis.database.driver, "
+                    "skipping database driver startup"
+                )
+                return
+
+            driver_type = driver_config.get("type")
+            logger.info(f"🔍 Driver config found: type={driver_type}")
+
+            # Resolve storage paths for log file
+            config_path = BaseMCPCommand._resolve_config_path()
+            config_data = load_raw_config(config_path)
+            storage = resolve_storage_paths(
+                config_data=config_data, config_path=config_path
+            )
+
+            # Generate log path for driver
+            log_path = str(storage.config_dir / "logs" / "database_driver.log")
+            ensure_storage_dirs(storage)
+
+            # Start database driver using WorkerManager
+            logger.info("🚀 Starting database driver...")
+            print("🚀 Starting database driver...", flush=True)
+
+            worker_manager = get_worker_manager()
+            result = worker_manager.start_database_driver(
+                driver_config=driver_config,
+                log_path=log_path,
+            )
+
+            if result.success:
+                logger.info(f"✅ Database driver started: {result.message}")
+                print(f"✅ {result.message}", flush=True)
+            else:
+                logger.warning(f"⚠️  Failed to start database driver: {result.message}")
+                print(f"⚠️  {result.message}", flush=True)
+
+        except Exception as e:
+            print(
+                f"❌ Failed to start database driver: {e}",
+                flush=True,
+                file=sys.stderr,
+            )
+            logger.error(f"❌ Failed to start database driver: {e}", exc_info=True)
 
     # Start vectorization worker on startup
     def startup_vectorization_worker() -> None:
@@ -972,9 +1069,6 @@ def main() -> None:
         Returns:
             None
         """
-        import os
-        import signal as signal_module
-
         main_logger.info(f"Received signal {signum}, stopping all workers...")
         cleanup_workers()
 
@@ -997,23 +1091,33 @@ def main() -> None:
     print("🚀 Starting workers directly before server start...", flush=True)
 
     try:
-        # DB worker is now started lazily by SQLiteDriverProxy.connect()
-        # No automatic startup needed - worker will be started when database connection is requested
-
-        # Start vectorization and file watcher workers synchronously
+        # Startup sequence: database driver → other workers
+        # Database driver must start FIRST because other workers depend on it
         # Workers are separate processes (multiprocessing.Process), so no need for async/await
         # This avoids asyncio.run() conflicts with Hypercorn's event loop
+
+        # Step 1: Start database driver (MUST be first)
+        try:
+            worker_logger.info("🚀 Starting database driver...")
+            startup_database_driver()
+            worker_logger.info("✅ Database driver started successfully")
+        except Exception as e:
+            worker_logger.error(
+                f"❌ Failed to start database driver: {e}",
+                exc_info=True,
+            )
+            print(
+                f"❌ Failed to start database driver: {e}",
+                flush=True,
+                file=sys.stderr,
+            )
+            # Continue anyway - other workers may still work if driver is already running
+
+        # Step 2: Start other workers (vectorization, file_watcher)
         worker_logger.info(
-            "🔍 Starting non-DB workers (file_watcher, vectorization) synchronously"
+            "🔍 Starting other workers (vectorization, file_watcher) synchronously"
         )
 
-        # DB worker is started lazily by SQLiteDriverProxy.connect()
-        # No need to check or start it here
-        worker_logger.info(
-            "🔍 DB worker will be started lazily when database connection is requested"
-        )
-
-        # Start non-DB workers synchronously (they are separate processes)
         try:
             worker_logger.info("🚀 Starting vectorization worker...")
             startup_vectorization_worker()
@@ -1044,9 +1148,9 @@ def main() -> None:
                 file=sys.stderr,
             )
 
-        worker_logger.info("✅ Non-DB workers startup completed")
+        worker_logger.info("✅ All workers startup completed")
         print(
-            "✅ DB worker started, non-DB workers started",
+            "✅ Database driver and all workers started",
             flush=True,
         )
     except Exception as e:

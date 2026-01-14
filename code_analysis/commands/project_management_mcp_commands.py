@@ -595,7 +595,7 @@ class ChangeProjectIdMCPCommand(BaseMCPCommand):
                                 # Update project record (both ID and description if changed)
                                 if description is not None:
                                     # Update both ID and description
-                                    database._execute(
+                                    database.execute(
                                         """
                                         UPDATE projects 
                                         SET id = ?, comment = ?, updated_at = julianday('now')
@@ -609,7 +609,7 @@ class ChangeProjectIdMCPCommand(BaseMCPCommand):
                                     )
                                 else:
                                     # Update only ID
-                                    database._execute(
+                                    database.execute(
                                         """
                                         UPDATE projects 
                                         SET id = ?, updated_at = julianday('now')
@@ -617,7 +617,6 @@ class ChangeProjectIdMCPCommand(BaseMCPCommand):
                                         """,
                                         (new_project_id, current_project_id),
                                     )
-                                database._commit()
                                 database_updated = True
                                 database_project_id = new_project_id
                                 logger.info(
@@ -632,7 +631,7 @@ class ChangeProjectIdMCPCommand(BaseMCPCommand):
                             elif existing_project_id != new_project_id:
                                 # Update existing project with different ID
                                 if description is not None:
-                                    database._execute(
+                                    database.execute(
                                         """
                                         UPDATE projects 
                                         SET id = ?, comment = ?, updated_at = julianday('now')
@@ -645,7 +644,7 @@ class ChangeProjectIdMCPCommand(BaseMCPCommand):
                                         ),
                                     )
                                 else:
-                                    database._execute(
+                                    database.execute(
                                         """
                                         UPDATE projects 
                                         SET id = ?, updated_at = julianday('now')
@@ -653,7 +652,6 @@ class ChangeProjectIdMCPCommand(BaseMCPCommand):
                                         """,
                                         (new_project_id, existing_project_id),
                                     )
-                                database._commit()
                                 database_updated = True
                                 database_project_id = new_project_id
                                 logger.info(
@@ -668,7 +666,7 @@ class ChangeProjectIdMCPCommand(BaseMCPCommand):
                             else:
                                 # Same ID, only update description if provided
                                 if description is not None:
-                                    database._execute(
+                                    database.execute(
                                         """
                                         UPDATE projects 
                                         SET comment = ?, updated_at = julianday('now')
@@ -676,7 +674,6 @@ class ChangeProjectIdMCPCommand(BaseMCPCommand):
                                         """,
                                         (new_description, existing_project_id),
                                     )
-                                    database._commit()
                                     database_updated = True
                                     logger.info(
                                         f"Updated project description in database: {new_description}"

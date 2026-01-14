@@ -303,10 +303,12 @@ class ComprehensiveAnalysisMCPCommand(BaseMCPCommand):
                         else:
                             # File not found in specified project - check if it exists in another project
                             # This is a data inconsistency: file should be in correct project or marked as deleted
-                            file_in_wrong_project = db._fetchone(
+                            result = db.execute(
                                 "SELECT id, project_id, deleted FROM files WHERE path = ? LIMIT 1",
                                 (abs_path,),
                             )
+                            data = result.get("data", [])
+                            file_in_wrong_project = data[0] if data else None
                             if file_in_wrong_project:
                                 wrong_file_id = file_in_wrong_project["id"]
                                 wrong_project_id = file_in_wrong_project["project_id"]
@@ -327,7 +329,7 @@ class ComprehensiveAnalysisMCPCommand(BaseMCPCommand):
                                     )
 
                                     # Mark file as deleted in wrong project
-                                    db._execute(
+                                    db.execute(
                                         """
                                         UPDATE files 
                                         SET deleted = 1, updated_at = julianday('now')
@@ -335,7 +337,6 @@ class ComprehensiveAnalysisMCPCommand(BaseMCPCommand):
                                         """,
                                         (wrong_file_id,),
                                     )
-                                    db._commit()
                                     analysis_logger.info(
                                         f"Marked file_id={wrong_file_id} as deleted in project {wrong_project_id}"
                                     )
@@ -359,7 +360,10 @@ class ComprehensiveAnalysisMCPCommand(BaseMCPCommand):
                                                 )
                                                 if not dataset_id:
                                                     dataset_id = (
-                                                        db.get_or_create_dataset(
+                                                        from .base_mcp_command import BaseMCPCommand
+
+                                                        BaseMCPCommand._get_or_create_dataset(
+                                                            db,
                                                             proj_id, normalized_root
                                                         )
                                                     )
@@ -612,7 +616,7 @@ class ComprehensiveAnalysisMCPCommand(BaseMCPCommand):
                     )
                 else:
                     # Analyze all files in ALL projects
-                    files = db._fetchall(
+                    result = db.execute(
                         "SELECT id, path, lines, project_id FROM files WHERE deleted = 0",
                     )
                     analysis_logger.info(

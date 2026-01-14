@@ -458,10 +458,25 @@ class BaseMCPCommand(Command):
 
                 # Create project with specified ID using execute for SQL functions
                 project_name = root_path.name
-                db.execute(
+                result = db.execute(
                     "INSERT INTO projects (id, root_path, name, updated_at) VALUES (?, ?, ?, julianday('now'))",
                     (project_id, str(root_path), project_name),
                 )
+                # Verify insertion succeeded
+                # execute() returns dict with "data" key containing {"affected_rows": ..., "lastrowid": ...}
+                # or directly {"affected_rows": ..., "lastrowid": ...} depending on response format
+                affected_rows = 0
+                if isinstance(result, dict):
+                    if "data" in result and isinstance(result["data"], dict):
+                        affected_rows = result["data"].get("affected_rows", 0)
+                    else:
+                        affected_rows = result.get("affected_rows", 0)
+                if affected_rows == 0:
+                    raise DatabaseError(
+                        "Failed to create project: no rows affected",
+                        operation="create_project",
+                        details={"project_id": project_id, "root_path": str(root_path)},
+                    )
                 return project_id
 
             # Non-mutating commands may still infer/create.
@@ -518,10 +533,25 @@ class BaseMCPCommand(Command):
         project_id = str(uuid.uuid4())
         project_name = name or Path(root_path).name
 
-        db.execute(
+        result = db.execute(
             "INSERT INTO projects (id, root_path, name, updated_at) VALUES (?, ?, ?, julianday('now'))",
             (project_id, root_path, project_name),
         )
+        # Verify insertion succeeded
+        # execute() returns dict with "data" key containing {"affected_rows": ..., "lastrowid": ...}
+        # or directly {"affected_rows": ..., "lastrowid": ...} depending on response format
+        affected_rows = 0
+        if isinstance(result, dict):
+            if "data" in result and isinstance(result["data"], dict):
+                affected_rows = result["data"].get("affected_rows", 0)
+            else:
+                affected_rows = result.get("affected_rows", 0)
+        if affected_rows == 0:
+            raise DatabaseError(
+                "Failed to create project: no rows affected",
+                operation="create_project",
+                details={"root_path": root_path},
+            )
         return project_id
 
     @staticmethod
@@ -564,22 +594,26 @@ class BaseMCPCommand(Command):
             db = DatabaseClient(socket_path=socket_path)
             db.connect()
 
-            project = db.get_project(project_id)
-            if not project:
-                raise ValidationError(
-                    f"Project with ID {project_id} not found in database",
-                    field="project_id",
-                    details={"project_id": project_id},
-                )
+            try:
+                project = db.get_project(project_id)
+                if not project:
+                    raise ValidationError(
+                        f"Project with ID {project_id} not found in database",
+                        field="project_id",
+                        details={"project_id": project_id},
+                    )
 
-            root_path = Path(project.root_path)
-            if not root_path.exists():
-                raise ValidationError(
-                    f"Project root path does not exist: {root_path}",
-                    field="project_id",
-                    details={"project_id": project_id, "root_path": str(root_path)},
-                )
-            return root_path
+                root_path = Path(project.root_path)
+                if not root_path.exists():
+                    raise ValidationError(
+                        f"Project root path does not exist: {root_path}",
+                        field="project_id",
+                        details={"project_id": project_id, "root_path": str(root_path)},
+                    )
+                return root_path
+            finally:
+                # Disconnect from database client
+                db.disconnect()
         elif root_dir:
             return normalize_root_dir(root_dir)
         else:

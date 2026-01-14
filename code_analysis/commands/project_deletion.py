@@ -10,11 +10,125 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from ..core.database import CodeDatabase
+    from ..core.database_client.client import DatabaseClient
 else:
-    CodeDatabase = Any
+    DatabaseClient = Any
 
 logger = logging.getLogger(__name__)
+
+
+async def _clear_project_data_impl(database: DatabaseClient, project_id: str) -> None:
+    """Clear all data for a project using DatabaseClient.
+
+    This is a helper function that implements clear_project_data for DatabaseClient.
+    """
+    # Get all file IDs for this project
+    files = database.select("files", where={"project_id": project_id}, columns=["id"])
+    file_ids = [f["id"] for f in files]
+
+    # Delete duplicates first (before files)
+    try:
+        # Delete duplicate occurrences first (foreign key constraint)
+        database.execute(
+            """
+            DELETE FROM duplicate_occurrences
+            WHERE duplicate_id IN (
+                SELECT id FROM code_duplicates WHERE project_id = ?
+            )
+            """,
+            (project_id,),
+        )
+        # Delete duplicate groups
+        database.execute(
+            "DELETE FROM code_duplicates WHERE project_id = ?", (project_id,)
+        )
+    except Exception as e:
+        logger.warning(f"Failed to delete duplicates for project {project_id}: {e}")
+
+    if not file_ids:
+        # Delete datasets and vector_index even if no files
+        database.execute("DELETE FROM datasets WHERE project_id = ?", (project_id,))
+        database.execute("DELETE FROM vector_index WHERE project_id = ?", (project_id,))
+        database.execute("DELETE FROM projects WHERE id = ?", (project_id,))
+        logger.info(f"Cleared all data and removed project {project_id} (no files)")
+        return
+
+    # Delete data for all files
+    if file_ids:
+        placeholders = ",".join("?" * len(file_ids))
+        # Get class IDs
+        classes = database.execute(
+            f"SELECT id FROM classes WHERE file_id IN ({placeholders})",
+            tuple(file_ids),
+        )
+        class_ids = [c["id"] for c in classes.get("data", [])]
+
+        # Get content IDs for FTS
+        content_rows = database.execute(
+            f"SELECT id FROM code_content WHERE file_id IN ({placeholders})",
+            tuple(file_ids),
+        )
+        content_ids = [c["id"] for c in content_rows.get("data", [])]
+
+        # Delete FTS entries in batches
+        if content_ids:
+            batch_size = 1000
+            for i in range(0, len(content_ids), batch_size):
+                batch = content_ids[i : i + batch_size]
+                batch_placeholders = ",".join("?" * len(batch))
+                try:
+                    database.execute(
+                        f"DELETE FROM code_content_fts WHERE rowid IN ({batch_placeholders})",
+                        tuple(batch),
+                    )
+                except Exception as e:
+                    logger.warning(
+                        f"Failed to delete FTS batch {i//batch_size + 1} for project {project_id}: {e}"
+                    )
+                    break
+
+        # Delete methods
+        if class_ids:
+            method_placeholders = ",".join("?" * len(class_ids))
+            database.execute(
+                f"DELETE FROM methods WHERE class_id IN ({method_placeholders})",
+                tuple(class_ids),
+            )
+
+        # Delete other file-related data
+        database.execute(
+            f"DELETE FROM classes WHERE file_id IN ({placeholders})", tuple(file_ids)
+        )
+        database.execute(
+            f"DELETE FROM functions WHERE file_id IN ({placeholders})", tuple(file_ids)
+        )
+        database.execute(
+            f"DELETE FROM imports WHERE file_id IN ({placeholders})", tuple(file_ids)
+        )
+        database.execute(
+            f"DELETE FROM issues WHERE file_id IN ({placeholders})", tuple(file_ids)
+        )
+        database.execute(
+            f"DELETE FROM code_content WHERE file_id IN ({placeholders})",
+            tuple(file_ids),
+        )
+        database.execute(
+            f"DELETE FROM ast_trees WHERE file_id IN ({placeholders})", tuple(file_ids)
+        )
+        database.execute(
+            f"DELETE FROM cst_trees WHERE file_id IN ({placeholders})", tuple(file_ids)
+        )
+        database.execute(
+            f"DELETE FROM code_chunks WHERE file_id IN ({placeholders})",
+            tuple(file_ids),
+        )
+
+    # Delete project-level data
+    database.execute("DELETE FROM datasets WHERE project_id = ?", (project_id,))
+    database.execute("DELETE FROM vector_index WHERE project_id = ?", (project_id,))
+    database.execute("DELETE FROM files WHERE project_id = ?", (project_id,))
+    database.execute("DELETE FROM projects WHERE id = ?", (project_id,))
+    logger.info(f"Cleared all data and removed project {project_id}")
 
 
 class DeleteProjectCommand:
@@ -37,7 +151,7 @@ class DeleteProjectCommand:
 
     def __init__(
         self,
-        database: CodeDatabase,
+        database: DatabaseClient,
         project_id: str,
         dry_run: bool = False,
         delete_from_disk: bool = False,
@@ -47,7 +161,7 @@ class DeleteProjectCommand:
         Initialize delete project command.
 
         Args:
-            database: CodeDatabase instance
+            database: DatabaseClient instance
             project_id: Project ID to delete
             dry_run: If True, only show what would be deleted
             delete_from_disk: If True, also delete project directory and version files from disk
@@ -75,16 +189,15 @@ class DeleteProjectCommand:
                 "message": f"Project {self.project_id} not found",
             }
 
-        project_name = project.get("name", "Unknown")
-        root_path = project.get("root_path", "Unknown")
+        project_name = project.name or "Unknown"
+        root_path = project.root_path or "Unknown"
 
         # Get statistics before deletion
-        file_count = len(
-            self.database.get_project_files(self.project_id, include_deleted=True)
-        )
+        files = self.database.get_project_files(self.project_id, include_deleted=True)
+        file_count = len(files)
 
         # Count chunks
-        chunk_count_row = self.database._fetchone(
+        result = self.database.execute(
             """
             SELECT COUNT(*) as count 
             FROM code_chunks cc
@@ -93,10 +206,13 @@ class DeleteProjectCommand:
             """,
             (self.project_id,),
         )
-        chunk_count = chunk_count_row["count"] if chunk_count_row else 0
+        data = result.get("data", [])
+        chunk_count = data[0]["count"] if data and len(data) > 0 else 0
 
-        # Count datasets
-        datasets = self.database.get_project_datasets(self.project_id)
+        # Count datasets - use select to get datasets
+        datasets = self.database.select(
+            "datasets", where={"project_id": self.project_id}
+        )
         dataset_count = len(datasets)
 
         # Get version directory if needed
@@ -178,7 +294,9 @@ class DeleteProjectCommand:
                         disk_deletion_errors.append(error_msg)
 
             # Delete from database
-            await self.database.clear_project_data(self.project_id)
+            # clear_project_data is not in DatabaseClient API, so we implement it via execute()
+            # This is a complex operation that deletes all project data
+            await _clear_project_data_impl(self.database, self.project_id)
             logger.info(
                 f"Deleted project {self.project_id} ({project_name}) from database: "
                 f"{file_count} files, {chunk_count} chunks, {dataset_count} datasets"
@@ -235,7 +353,7 @@ class DeleteUnwatchedProjectsCommand:
 
     def __init__(
         self,
-        database: CodeDatabase,
+        database: DatabaseClient,
         watched_dirs: List[str],
         dry_run: bool = False,
         server_root_dir: Optional[str] = None,
@@ -244,7 +362,7 @@ class DeleteUnwatchedProjectsCommand:
         Initialize delete unwatched projects command.
 
         Args:
-            database: CodeDatabase instance
+            database: DatabaseClient instance
             watched_dirs: List of watched directory paths (absolute)
             dry_run: If True, only show what would be deleted
             server_root_dir: Server root directory (will be protected from deletion)
@@ -294,9 +412,8 @@ class DeleteUnwatchedProjectsCommand:
                 discovery_errors.append(f"Error in {watched_dir}: {e}")
 
         # Step 2: Get all projects from database
-        all_projects = self.database._fetchall(
-            "SELECT id, root_path, name FROM projects"
-        )
+        result = self.database.execute("SELECT id, root_path, name FROM projects")
+        all_projects = result.get("data", [])
 
         projects_to_delete = []
         projects_to_keep = []
@@ -392,7 +509,7 @@ class DeleteUnwatchedProjectsCommand:
                 deleted_projects.append(project_info)
             else:
                 try:
-                    await self.database.clear_project_data(project_id)
+                    await _clear_project_data_impl(self.database, project_id)
                     deleted_projects.append(project_info)
                     logger.info(
                         f"Deleted unwatched project {project_info['name']} "

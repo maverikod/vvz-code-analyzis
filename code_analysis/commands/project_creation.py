@@ -20,9 +20,9 @@ from ..core.project_resolution import (
 )
 
 if TYPE_CHECKING:
-    from ..core.database import CodeDatabase
+    from ..core.database_client.client import DatabaseClient
 else:
-    CodeDatabase = Any
+    DatabaseClient = Any
 
 logger = logging.getLogger(__name__)
 
@@ -43,7 +43,7 @@ class CreateProjectCommand:
 
     def __init__(
         self,
-        database: CodeDatabase,
+        database: DatabaseClient,
         watched_dir: str,
         project_dir: str,
         description: str = "",
@@ -52,7 +52,7 @@ class CreateProjectCommand:
         Initialize create project command.
 
         Args:
-            database: CodeDatabase instance
+            database: DatabaseClient instance
             watched_dir: Watched directory path (must exist, must not contain projectid)
             project_dir: Project directory path (must exist, must not be registered)
             description: Human-readable description of the project
@@ -134,13 +134,15 @@ class CreateProjectCommand:
             }
 
         # Step 4: Check if project is already registered in database
-        existing_project_id = self.database.get_project_id(str(project_path))
+        from .base_mcp_command import BaseMCPCommand
+
+        existing_project_id = BaseMCPCommand._get_project_id_by_root_path(
+            self.database, str(project_path)
+        )
         if existing_project_id:
             # Project is already registered - get existing info
             existing_project = self.database.get_project(existing_project_id)
-            existing_description = (
-                existing_project.get("comment", "") if existing_project else ""
-            )
+            existing_description = existing_project.comment if existing_project else ""
 
             # Try to load projectid file if it exists
             projectid_path = project_path / "projectid"
@@ -177,7 +179,7 @@ class CreateProjectCommand:
 
                 # Register in database
                 project_name = project_path.name
-                self.database._execute(
+                self.database.execute(
                     """
                     INSERT INTO projects (id, root_path, name, comment, updated_at)
                     VALUES (?, ?, ?, ?, julianday('now'))
@@ -189,7 +191,6 @@ class CreateProjectCommand:
                         old_description or self.description,
                     ),
                 )
-                self.database._commit()
 
                 logger.info(
                     f"Registered existing project {project_id} from projectid file: {project_path}"
@@ -239,14 +240,13 @@ class CreateProjectCommand:
         # Step 7: Register in database
         try:
             project_name = project_path.name
-            self.database._execute(
+            self.database.execute(
                 """
                 INSERT INTO projects (id, root_path, name, comment, updated_at)
                 VALUES (?, ?, ?, ?, julianday('now'))
                 """,
                 (project_id, str(project_path), project_name, final_description),
             )
-            self.database._commit()
 
             logger.info(
                 f"Registered new project {project_id} in database: {project_path}"

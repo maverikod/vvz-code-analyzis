@@ -10,9 +10,9 @@ from pathlib import Path
 from typing import Any, Dict, Optional, TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from ..core.database import CodeDatabase
+    from ..core.database_client.client import DatabaseClient
 else:
-    CodeDatabase = Any
+    DatabaseClient = Any
 
 logger = logging.getLogger(__name__)
 
@@ -40,7 +40,7 @@ class CleanupDeletedFilesCommand:
 
     def __init__(
         self,
-        database: CodeDatabase,
+        database: DatabaseClient,
         project_id: Optional[str] = None,
         dry_run: bool = False,
         older_than_days: Optional[int] = None,
@@ -50,7 +50,7 @@ class CleanupDeletedFilesCommand:
         Initialize cleanup command.
 
         Args:
-            database: CodeDatabase instance
+            database: DatabaseClient instance
             project_id: Optional project ID (all projects if None)
             dry_run: If True, only show what would be deleted
             older_than_days: Only delete files deleted more than N days ago
@@ -197,7 +197,7 @@ class UnmarkDeletedFileCommand:
 
     def __init__(
         self,
-        database: "CodeDatabase",
+        database: "DatabaseClient",
         file_path: str,
         project_id: str,
         dry_run: bool = False,
@@ -206,7 +206,7 @@ class UnmarkDeletedFileCommand:
         Initialize unmark command.
 
         Args:
-            database: CodeDatabase instance
+            database: DatabaseClient instance
             file_path: File path (current in version_dir or original_path)
             project_id: Project ID
             dry_run: If True, only show what would be restored
@@ -297,7 +297,7 @@ class CollapseVersionsCommand:
 
     def __init__(
         self,
-        database: "CodeDatabase",
+        database: "DatabaseClient",
         project_id: str,
         keep_latest: bool = True,
         dry_run: bool = False,
@@ -306,7 +306,7 @@ class CollapseVersionsCommand:
         Initialize collapse command.
 
         Args:
-            database: CodeDatabase instance
+            database: DatabaseClient instance
             project_id: Project ID
             keep_latest: If True, keep latest version (default: True)
             dry_run: If True, only show what would be collapsed
@@ -421,7 +421,7 @@ class RepairDatabaseCommand:
 
     def __init__(
         self,
-        database: "CodeDatabase",
+        database: "DatabaseClient",
         project_id: str,
         root_dir: Path,
         version_dir: str,
@@ -431,7 +431,7 @@ class RepairDatabaseCommand:
         Initialize repair database command.
 
         Args:
-            database: CodeDatabase instance
+            database: DatabaseClient instance
             project_id: Project ID
             root_dir: Project root directory
             version_dir: Version directory for deleted files
@@ -658,7 +658,7 @@ class RepairDatabaseCommand:
                         project = self.database.get_project(project_id)
                         if project and project.get("root_path"):
                             root_dir = Path(project["root_path"])
-                    
+
                     update_result = self.database.update_file_data(
                         file_path=file_path,
                         project_id=project_id,

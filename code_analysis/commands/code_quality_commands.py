@@ -123,10 +123,9 @@ class FormatCodeCommand(Command):
             database_updated = False
             if root_dir:
                 try:
-                    from ..core.database import CodeDatabase
                     from ..core.project_resolution import get_project_id
-                    from ..core.storage_paths import resolve_storage_paths
                     from pathlib import Path as PathType
+                    from .base_mcp_command import BaseMCPCommand
 
                     root_path = PathType(root_dir)
                     if not root_path.exists() or not root_path.is_dir():
@@ -134,41 +133,51 @@ class FormatCodeCommand(Command):
                             f"Invalid root_dir: {root_dir}, skipping database update"
                         )
                     else:
-                        # Open database
-                        storage_paths = resolve_storage_paths(root_path)
-                        db_path = storage_paths["database"]
-                        from ..core.database.base import create_driver_config_for_worker
+                        # Open database using BaseMCPCommand helper
+                        database = BaseMCPCommand._open_database(
+                            str(root_path), auto_analyze=False
+                        )
 
-                        driver_config = create_driver_config_for_worker(db_path)
-                        database = CodeDatabase(driver_config=driver_config)
+                        try:
+                            # Get project_id
+                            project_id = get_project_id(root_path)
+                            if project_id:
+                                # Update file last_modified after formatting
+                                # Note: Formatting doesn't change code structure, only formatting
+                                # We update last_modified to reflect new file_mtime
+                                import os
 
-                        # Get project_id
-                        project_id = get_project_id(root_path)
-                        if project_id:
-                            # Update database after formatting
-                            # Note: Formatting doesn't change code structure, only formatting
-                            # But we update to reflect new file_mtime
-                            update_result = database.update_file_data(
-                                file_path=str(path),
-                                project_id=project_id,
-                                root_dir=root_path,
-                            )
-                            if update_result.get("success"):
-                                database_updated = True
-                                logger.debug(
-                                    f"Database updated after formatting: {file_path} | "
-                                    f"AST={update_result.get('ast_updated')}, "
-                                    f"CST={update_result.get('cst_updated')}"
+                                file_stat = os.stat(path)
+                                last_modified = file_stat.st_mtime
+
+                                # Find file by path and project_id
+                                files = database.select(
+                                    "files",
+                                    where={"path": str(path), "project_id": project_id},
                                 )
+                                if files:
+                                    file_id = files[0]["id"]
+                                    # Update last_modified
+                                    database.update(
+                                        "files",
+                                        where={"id": file_id},
+                                        data={"last_modified": last_modified},
+                                    )
+                                    database_updated = True
+                                    logger.debug(
+                                        f"Database updated after formatting: {file_path} | "
+                                        f"last_modified={last_modified}"
+                                    )
+                                else:
+                                    logger.debug(
+                                        f"File not found in database: {file_path}, skipping update"
+                                    )
                             else:
-                                logger.warning(
-                                    f"Failed to update database after formatting: {file_path} | "
-                                    f"Error: {update_result.get('error')}"
+                                logger.debug(
+                                    f"Project ID not found for {root_dir}, skipping database update"
                                 )
-                        else:
-                            logger.debug(
-                                f"Project ID not found for {root_dir}, skipping database update"
-                            )
+                        finally:
+                            database.disconnect()
                 except Exception as e:
                     # Don't fail formatting if database update fails
                     logger.warning(

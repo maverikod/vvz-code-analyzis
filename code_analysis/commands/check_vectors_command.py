@@ -409,7 +409,7 @@ class CheckVectorsCommand(BaseMCPCommand):
                 ensure_storage_dirs(storage)
                 db_path = storage.db_path
 
-                # Use DatabaseClient instead of CodeDatabase
+                # Use DatabaseClient
                 from ..core.database_client.client import DatabaseClient
                 from .base_mcp_command import _get_socket_path_from_db_path
 

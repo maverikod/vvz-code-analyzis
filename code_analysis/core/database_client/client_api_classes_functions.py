@@ -131,9 +131,13 @@ class _ClientAPIClassesFunctionsMixin:
             result = self.execute(sql, tuple(params))
             rows = result.get("data", [])
         else:
+            # Use SQL for LIKE pattern matching when project_id is not specified
             if name:
-                where["name"] = name
-            rows = self.select("classes", where=where, order_by=["line"])
+                sql = "SELECT * FROM classes WHERE name LIKE ? ORDER BY line"
+                result = self.execute(sql, (f"%{name}%",))
+                rows = result.get("data", [])
+            else:
+                rows = self.select("classes", order_by=["line"])
 
         return db_rows_to_objects(rows, Class)
 
@@ -243,9 +247,12 @@ class _ClientAPIClassesFunctionsMixin:
             result = self.execute(sql, tuple(params))
             rows = result.get("data", [])
         else:
-            where = {}
+            # Use SQL for LIKE pattern matching when project_id is not specified
             if name:
-                where["name"] = name
-            rows = self.select("functions", where=where, order_by=["line"])
+                sql = "SELECT * FROM functions WHERE name LIKE ? ORDER BY line"
+                result = self.execute(sql, (f"%{name}%",))
+                rows = result.get("data", [])
+            else:
+                rows = self.select("functions", order_by=["line"])
 
         return db_rows_to_objects(rows, Function)

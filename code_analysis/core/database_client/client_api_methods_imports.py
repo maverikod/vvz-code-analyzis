@@ -244,12 +244,21 @@ class _ClientAPIMethodsImportsMixin:
             result = self.execute(sql, tuple(params))
             rows = result.get("data", [])
         else:
-            where = {}
-            if name:
-                where["name"] = name
-            if module:
-                where["module"] = module
-            rows = self.select("imports", where=where, order_by=["line"])
+            # Use SQL for LIKE pattern matching when project_id is not specified
+            if name or module:
+                sql = "SELECT * FROM imports WHERE 1=1"
+                params = []
+                if name:
+                    sql += " AND name LIKE ?"
+                    params.append(f"%{name}%")
+                if module:
+                    sql += " AND module LIKE ?"
+                    params.append(f"%{module}%")
+                sql += " ORDER BY line"
+                result = self.execute(sql, tuple(params))
+                rows = result.get("data", [])
+            else:
+                rows = self.select("imports", order_by=["line"])
 
         return db_rows_to_objects(rows, Import)
 

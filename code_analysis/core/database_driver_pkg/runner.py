@@ -14,8 +14,16 @@ import logging
 import os
 import signal
 import sys
+import time
 from pathlib import Path
 from typing import Any, Dict, Optional
+
+from ..constants import (
+    DEFAULT_LOG_BACKUP_COUNT,
+    DEFAULT_LOG_MAX_BYTES,
+    DEFAULT_QUEUE_MAX_SIZE,
+    DRIVER_MAIN_LOOP_INTERVAL,
+)
 
 from .driver_factory import create_driver
 from .drivers.base import BaseDatabaseDriver
@@ -31,8 +39,8 @@ logger = logging.getLogger(__name__)
 
 def _setup_driver_logging(
     log_path: Optional[str] = None,
-    max_bytes: int = 10485760,  # 10 MB default
-    backup_count: int = 5,
+    max_bytes: int = DEFAULT_LOG_MAX_BYTES,
+    backup_count: int = DEFAULT_LOG_BACKUP_COUNT,
 ) -> None:
     """Setup logging for driver process.
 
@@ -86,7 +94,7 @@ def run_database_driver(
     driver_config: Dict[str, Any],
     socket_path: str,
     log_path: Optional[str] = None,
-    queue_max_size: int = 1000,
+    queue_max_size: int = DEFAULT_QUEUE_MAX_SIZE,
 ) -> None:
     """Run database driver process.
 
@@ -101,6 +109,11 @@ def run_database_driver(
         log_path: Path to driver log file (optional)
         queue_max_size: Maximum size of request queue (default: 1000)
     """
+    # Set environment variable to allow direct sqlite driver in worker process
+    import os
+
+    os.environ["CODE_ANALYSIS_DB_WORKER"] = "1"
+
     # Setup logging
     _setup_driver_logging(log_path)
 
@@ -152,9 +165,7 @@ def run_database_driver(
         # Wait for shutdown signal
         logger.info("Driver process running, waiting for requests...")
         while not shutdown_event:
-            import time
-
-            time.sleep(0.1)  # Small sleep to avoid busy waiting
+            time.sleep(DRIVER_MAIN_LOOP_INTERVAL)  # Small sleep to avoid busy waiting
 
     except KeyboardInterrupt:
         logger.info("Driver process interrupted by keyboard")

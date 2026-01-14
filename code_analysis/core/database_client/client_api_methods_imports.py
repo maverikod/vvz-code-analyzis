@@ -9,7 +9,7 @@ email: vasilyvz@gmail.com
 
 from __future__ import annotations
 
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from .objects.class_function import Class
 from .objects.method_import import Import, Method
@@ -257,7 +257,9 @@ class _ClientAPIMethodsImportsMixin:
     # Relationship Navigation
     # ============================================================================
 
-    def get_class_with_methods(self, class_id: int) -> tuple[Optional[Class], List[Method]]:
+    def get_class_with_methods(
+        self, class_id: int
+    ) -> Tuple[Optional[Class], List[Method]]:
         """Get class with all its methods.
 
         Args:
@@ -277,7 +279,7 @@ class _ClientAPIMethodsImportsMixin:
         methods = self.get_class_methods(class_id)
         return class_obj, methods
 
-    def get_file_structure(self, file_id: int) -> Dict:
+    def get_file_structure(self, file_id: int) -> Dict[str, Any]:
         """Get complete file structure (classes, functions, methods, imports).
 
         Args:

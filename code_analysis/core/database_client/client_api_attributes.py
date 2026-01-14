@@ -14,7 +14,6 @@ import json
 from typing import Any, Dict, List, Optional
 
 from .objects.base import BaseObject
-from .objects.file import File
 
 
 class _ClientAPIAttributesMixin:
@@ -196,9 +195,7 @@ class _ClientAPIAttributesMixin:
 
         return rows[0].get("cst_code")
 
-    def save_vectors(
-        self, file_id: int, vectors: List[Dict[str, Any]]
-    ) -> bool:
+    def save_vectors(self, file_id: int, vectors: List[Dict[str, Any]]) -> bool:
         """Save vector indices for file.
 
         Args:

@@ -12,7 +12,8 @@ from typing import Optional, Dict, Any
 from mcp_proxy_adapter.commands.base import Command
 from mcp_proxy_adapter.commands.result import ErrorResult
 
-from ..core.database import CodeDatabase
+from ..core.database_client.client import DatabaseClient
+from ..core.constants import DEFAULT_DB_DRIVER_SOCKET_DIR
 from ..core.exceptions import (
     CodeAnalysisError,
     DatabaseError,
@@ -28,6 +29,21 @@ from ..core.storage_paths import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _get_socket_path_from_db_path(db_path: Path) -> str:
+    """Get socket path for database driver from database path.
+
+    Args:
+        db_path: Path to database file
+
+    Returns:
+        Socket path string
+    """
+    db_name = db_path.stem
+    socket_dir = Path(DEFAULT_DB_DRIVER_SOCKET_DIR)
+    socket_dir.mkdir(parents=True, exist_ok=True)
+    return str(socket_dir / f"{db_name}_driver.sock")
 
 
 class BaseMCPCommand(Command):
@@ -121,7 +137,7 @@ class BaseMCPCommand(Command):
         }
 
     @staticmethod
-    def _open_database(root_dir: str, auto_analyze: bool = True) -> CodeDatabase:
+    def _open_database(root_dir: str, auto_analyze: bool = True) -> DatabaseClient:
         """Open database connection for project.
 
         Automatically creates database and runs analysis if database doesn't exist
@@ -137,7 +153,7 @@ class BaseMCPCommand(Command):
             auto_analyze: If True, automatically run analysis if DB is missing or empty.
 
         Returns:
-            CodeDatabase instance.
+            DatabaseClient instance.
 
         Raises:
             DatabaseError: If database cannot be opened or created.
@@ -204,10 +220,13 @@ class BaseMCPCommand(Command):
 
             # Create database if it doesn't exist
             db_exists = db_path.exists()
-            from ..core.database.base import create_driver_config_for_worker
 
-            driver_config = create_driver_config_for_worker(db_path)
-            db = CodeDatabase(driver_config=driver_config)
+            # Get socket path for database driver
+            socket_path = _get_socket_path_from_db_path(db_path)
+
+            # Create DatabaseClient instance
+            db = DatabaseClient(socket_path=socket_path)
+            db.connect()
 
             # Check if database is empty (no projects or no files)
             if auto_analyze:
@@ -219,9 +238,9 @@ class BaseMCPCommand(Command):
                     needs_analysis = True
                 else:
                     try:
-                        # Use driver API instead of direct connection
-                        result = db._fetchone("SELECT COUNT(*) as count FROM projects")
-                        project_count = result["count"] if result else 0
+                        # Use DatabaseClient API - check projects count
+                        projects = db.select("projects", columns=["id"], limit=1)
+                        project_count = len(projects)
 
                         if project_count == 0:
                             logger.info(
@@ -229,8 +248,9 @@ class BaseMCPCommand(Command):
                             )
                             needs_analysis = True
                         else:
-                            result = db._fetchone("SELECT COUNT(*) as count FROM files")
-                            file_count = result["count"] if result else 0
+                            # Check files count
+                            files = db.select("files", columns=["id"], limit=1)
+                            file_count = len(files)
                             if file_count == 0:
                                 logger.info(
                                     "Database exists but has no files, will run analysis"
@@ -262,16 +282,16 @@ class BaseMCPCommand(Command):
                         logger.info(
                             f"Starting automatic project analysis for {root_path} in background thread (async context)"
                         )
-                        
+
                         def run_indexing():
                             """Run indexing in background thread."""
                             try:
                                 from ..core.constants import DEFAULT_MAX_FILE_LINES
-                                
+
                                 # Create new event loop for this thread
                                 loop = asyncio.new_event_loop()
                                 asyncio.set_event_loop(loop)
-                                
+
                                 try:
                                     cmd = UpdateIndexesMCPCommand()
                                     result = loop.run_until_complete(
@@ -280,7 +300,7 @@ class BaseMCPCommand(Command):
                                             max_lines=DEFAULT_MAX_FILE_LINES,
                                         )
                                     )
-                                    
+
                                     if not result.success:
                                         logger.warning(
                                             f"Automatic analysis completed with warnings: {result.message}"
@@ -301,10 +321,12 @@ class BaseMCPCommand(Command):
                                     f"Failed to run automatic indexing in background thread: {e}",
                                     exc_info=True,
                                 )
-                        
+
                         thread = threading.Thread(target=run_indexing, daemon=True)
                         thread.start()
-                        logger.info(f"Started background indexing thread for {root_path}")
+                        logger.info(
+                            f"Started background indexing thread for {root_path}"
+                        )
                     except RuntimeError:
                         # No running loop - can run synchronously
                         try:
@@ -393,13 +415,13 @@ class BaseMCPCommand(Command):
 
     @staticmethod
     def _get_project_id(
-        db: CodeDatabase, root_path: Path, project_id: Optional[str] = None
+        db: DatabaseClient, root_path: Path, project_id: Optional[str] = None
     ) -> Optional[str]:
         """
         Get or create project ID.
 
         Args:
-            db: Database instance
+            db: DatabaseClient instance
             root_path: Project root path
             project_id: Optional project ID; if provided, validates existence
 
@@ -420,7 +442,9 @@ class BaseMCPCommand(Command):
                     return project_id
 
                 # Project doesn't exist - check if root_path is already registered
-                existing = db.get_project_id(str(root_path))
+                existing = BaseMCPCommand._get_project_id_by_root_path(
+                    db, str(root_path)
+                )
                 if existing and existing != project_id:
                     raise ValidationError(
                         "Project root is already registered with a different project_id",
@@ -432,23 +456,73 @@ class BaseMCPCommand(Command):
                         },
                     )
 
-                # Create project with specified ID
+                # Create project with specified ID using execute for SQL functions
                 project_name = root_path.name
-                db._execute(
+                db.execute(
                     "INSERT INTO projects (id, root_path, name, updated_at) VALUES (?, ?, ?, julianday('now'))",
                     (project_id, str(root_path), project_name),
                 )
-                db._commit()
                 return project_id
 
             # Non-mutating commands may still infer/create.
-            return db.get_or_create_project(str(root_path), name=root_path.name)
+            return BaseMCPCommand._get_or_create_project(
+                db, str(root_path), root_path.name
+            )
         except Exception as e:
             raise DatabaseError(
                 f"Failed to get project ID: {str(e)}",
                 operation="get_project_id",
                 details={"root_path": str(root_path), "project_id": project_id},
             ) from e
+
+    @staticmethod
+    def _get_project_id_by_root_path(
+        db: DatabaseClient, root_path: str
+    ) -> Optional[str]:
+        """Get project ID by root path.
+
+        Args:
+            db: DatabaseClient instance
+            root_path: Project root path
+
+        Returns:
+            Project ID or None if not found
+        """
+        rows = db.select("projects", where={"root_path": root_path}, columns=["id"])
+        if rows:
+            return rows[0].get("id")
+        return None
+
+    @staticmethod
+    def _get_or_create_project(
+        db: DatabaseClient, root_path: str, name: Optional[str] = None
+    ) -> str:
+        """Get or create project by root path.
+
+        Args:
+            db: DatabaseClient instance
+            root_path: Project root path
+            name: Optional project name
+
+        Returns:
+            Project ID (UUID4 string)
+        """
+        # Check if project exists
+        existing_id = BaseMCPCommand._get_project_id_by_root_path(db, root_path)
+        if existing_id:
+            return existing_id
+
+        # Create new project using execute for SQL functions
+        import uuid
+
+        project_id = str(uuid.uuid4())
+        project_name = name or Path(root_path).name
+
+        db.execute(
+            "INSERT INTO projects (id, root_path, name, updated_at) VALUES (?, ?, ?, julianday('now'))",
+            (project_id, root_path, project_name),
+        )
+        return project_id
 
     @staticmethod
     def _resolve_project_root(
@@ -485,11 +559,10 @@ class BaseMCPCommand(Command):
             )
             db_path = storage.db_path
 
-            from ..core.database import CodeDatabase
-            from ..core.database.base import create_driver_config_for_worker
-
-            driver_config = create_driver_config_for_worker(db_path)
-            db = CodeDatabase(driver_config=driver_config)
+            # Get socket path and create DatabaseClient
+            socket_path = _get_socket_path_from_db_path(db_path)
+            db = DatabaseClient(socket_path=socket_path)
+            db.connect()
 
             project = db.get_project(project_id)
             if not project:
@@ -499,7 +572,7 @@ class BaseMCPCommand(Command):
                     details={"project_id": project_id},
                 )
 
-            root_path = Path(project["root_path"])
+            root_path = Path(project.root_path)
             if not root_path.exists():
                 raise ValidationError(
                     f"Project root path does not exist: {root_path}",

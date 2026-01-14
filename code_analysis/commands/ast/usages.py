@@ -230,7 +230,7 @@ class FindUsagesMCPCommand(BaseMCPCommand):
             elif offset:
                 usages = usages[offset:]
             
-            db.close()
+            db.disconnect()
             
             return SuccessResult(
                 data={

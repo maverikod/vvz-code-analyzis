@@ -65,7 +65,7 @@ class ASTStatisticsMCPCommand(BaseMCPCommand):
             if file_path:
                 file_record = db.get_file_by_path(file_path, proj_id)
                 if not file_record:
-                    db.close()
+                    db.disconnect()
                     return ErrorResult(
                         message=f"File not found: {file_path}",
                         code="FILE_NOT_FOUND",
@@ -75,7 +75,7 @@ class ASTStatisticsMCPCommand(BaseMCPCommand):
                     (file_record["id"],),
                 )
                 ast_count = row["count"] if row else 0
-                db.close()
+                db.disconnect()
                 return SuccessResult(
                     data={
                         "success": True,
@@ -95,7 +95,7 @@ class ASTStatisticsMCPCommand(BaseMCPCommand):
                     (proj_id,),
                 )
                 file_count = row["count"] if row else 0
-                db.close()
+                db.disconnect()
                 return SuccessResult(
                     data={
                         "success": True,

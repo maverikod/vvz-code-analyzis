@@ -804,7 +804,7 @@ class ComposeCSTModuleCommand(BaseMCPCommand):
                     raise error
 
             finally:
-                database.close()
+                database.disconnect()
 
                 # Clean up temporary file if it still exists
                 if temp_file and temp_file.exists():

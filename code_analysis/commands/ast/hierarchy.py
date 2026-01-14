@@ -159,7 +159,7 @@ class GetClassHierarchyMCPCommand(BaseMCPCommand):
             else:
                 result_hierarchy = hierarchy
             
-            db.close()
+            db.disconnect()
             
             return SuccessResult(
                 data={

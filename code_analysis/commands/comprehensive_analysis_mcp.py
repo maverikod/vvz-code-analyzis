@@ -219,7 +219,7 @@ class ComprehensiveAnalysisMCPCommand(BaseMCPCommand):
                 # Explicit project_id provided - validate it exists
                 proj_id = self._get_project_id(db, root_path, project_id)
                 if not proj_id:
-                    db.close()
+                    db.disconnect()
                     return ErrorResult(
                         message="Project not found", code="PROJECT_NOT_FOUND"
                     )
@@ -265,7 +265,7 @@ class ComprehensiveAnalysisMCPCommand(BaseMCPCommand):
                 # Analyze specific file
                 file_path_obj = self._validate_file_path(file_path, root_path)
                 if not file_path_obj.exists():
-                    db.close()
+                    db.disconnect()
                     return ErrorResult(message="File not found", code="FILE_NOT_FOUND")
 
                 # Get absolute path for database lookup
@@ -432,7 +432,7 @@ class ComprehensiveAnalysisMCPCommand(BaseMCPCommand):
                             file_id, file_mtime
                         )
                         if cached:
-                            db.close()
+                            db.disconnect()
                             if progress_tracker:
                                 progress_tracker.set_status("completed")
                                 progress_tracker.set_description(
@@ -930,7 +930,7 @@ class ComprehensiveAnalysisMCPCommand(BaseMCPCommand):
 
             results["summary"] = summary_data
 
-            db.close()
+            db.disconnect()
 
             if progress_tracker:
                 progress_tracker.set_status("completed")

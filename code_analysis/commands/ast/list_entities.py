@@ -132,7 +132,7 @@ class ListCodeEntitiesMCPCommand(BaseMCPCommand):
                 for row in rows:
                     entities.append({"type": "method", **row})
             
-            db.close()
+            db.disconnect()
             
             return SuccessResult(
                 data={

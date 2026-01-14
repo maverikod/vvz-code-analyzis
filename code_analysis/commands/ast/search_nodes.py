@@ -239,7 +239,7 @@ class SearchASTNodesMCPCommand(BaseMCPCommand):
                         }
                     )
 
-            db.close()
+            db.disconnect()
 
             return SuccessResult(
                 data={

@@ -87,7 +87,7 @@ class ListProjectFilesMCPCommand(BaseMCPCommand):
             if offset > 0 or limit:
                 files = files[offset : offset + limit if limit else None]
             
-            db.close()
+            db.disconnect()
             
             return SuccessResult(
                 data={

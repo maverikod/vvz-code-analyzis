@@ -195,7 +195,7 @@ class FindDependenciesMCPCommand(BaseMCPCommand):
             elif offset:
                 results = results[offset:]
             
-            db.close()
+            db.disconnect()
             
             return SuccessResult(
                 data={

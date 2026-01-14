@@ -247,7 +247,7 @@ class RebuildFaissCommand(BaseMCPCommand):
                 finally:
                     await svo_client_manager.close()
             finally:
-                database.close()
+                database.disconnect()
 
         except Exception as e:
             logger.error(f"Failed to rebuild FAISS index: {e}", exc_info=True)

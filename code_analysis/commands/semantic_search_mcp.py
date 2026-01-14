@@ -327,7 +327,7 @@ class SemanticSearchMCPCommand(BaseMCPCommand):
                 )
 
             finally:
-                database.close()
+                database.disconnect()
 
         except Exception as e:
             return self._handle_error(e, "SEARCH_ERROR", "semantic_search")

@@ -130,7 +130,7 @@ class GetImportsMCPCommand(BaseMCPCommand):
                         file_record = rows[0]
                 
                 if not file_record:
-                    db.close()
+                    db.disconnect()
                     return ErrorResult(
                         message=f"File not found: {file_path}",
                         code="FILE_NOT_FOUND",
@@ -156,7 +156,7 @@ class GetImportsMCPCommand(BaseMCPCommand):
             rows = db._fetchall(query, tuple(params))
             
             imports = rows
-            db.close()
+            db.disconnect()
             
             return SuccessResult(
                 data={

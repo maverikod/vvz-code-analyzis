@@ -215,7 +215,7 @@ class RevectorizeCommand(BaseMCPCommand):
                 finally:
                     await svo_client_manager.close()
             finally:
-                database.close()
+                database.disconnect()
 
         except Exception as e:
             logger.error(f"Failed to revectorize chunks: {e}", exc_info=True)

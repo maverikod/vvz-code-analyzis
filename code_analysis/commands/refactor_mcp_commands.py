@@ -391,7 +391,7 @@ class SplitClassMCPCommand(BaseMCPCommand):
 
                 splitter = ClassSplitter(file_path_obj)
                 success, error_msg, preview = splitter.preview_split(config)
-                db.close()
+                db.disconnect()
 
                 if success:
                     return SuccessResult(
@@ -464,7 +464,7 @@ class SplitClassMCPCommand(BaseMCPCommand):
                         )
                         # Don't fail the operation, just log the error
 
-                db.close()
+                db.disconnect()
 
                 if result.get("success"):
                     result_data = result.copy()
@@ -855,7 +855,7 @@ class ExtractSuperclassMCPCommand(BaseMCPCommand):
 
                 extractor = SuperclassExtractor(file_path_obj)
                 success, error_msg, preview = extractor.preview_extraction(config)
-                db.close()
+                db.disconnect()
 
                 if success:
                     return SuccessResult(
@@ -921,7 +921,7 @@ class ExtractSuperclassMCPCommand(BaseMCPCommand):
                         )
                         # Don't fail the operation, just log the error
                 
-                db.close()
+                db.disconnect()
 
                 if result.get("success"):
                     result_data = result.copy()
@@ -1354,7 +1354,7 @@ class SplitFileToPackageMCPCommand(BaseMCPCommand):
                     )
                     # Don't fail the operation, just log the error
 
-            db.close()
+            db.disconnect()
 
             if result.get("success"):
                 result_data = result.copy()

@@ -115,14 +115,14 @@ class GetCodeEntityInfoMCPCommand(BaseMCPCommand):
                     query += " AND m.line = ?"
                     params.append(line)
             else:
-                db.close()
+                db.disconnect()
                 return ErrorResult(
                     message=f"Unknown entity type: {entity_type}",
                     code="INVALID_ENTITY_TYPE",
                 )
             
             rows = db._fetchall(query, tuple(params))
-            db.close()
+            db.disconnect()
 
             if rows:
                 entities = rows

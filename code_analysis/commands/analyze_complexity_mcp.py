@@ -81,7 +81,7 @@ class AnalyzeComplexityMCPCommand(BaseMCPCommand):
             proj_id = self._get_project_id(db, root_path, project_id)
 
             if not proj_id:
-                db.close()
+                db.disconnect()
                 return ErrorResult(
                     message="Project not found", code="PROJECT_NOT_FOUND"
                 )
@@ -172,7 +172,7 @@ class AnalyzeComplexityMCPCommand(BaseMCPCommand):
                         # Skip files that can't be analyzed
                         continue
 
-            db.close()
+            db.disconnect()
 
             # Sort by complexity (descending)
             results.sort(key=lambda x: x["complexity"], reverse=True)

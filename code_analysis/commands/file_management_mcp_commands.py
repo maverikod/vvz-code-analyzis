@@ -114,7 +114,7 @@ class CleanupDeletedFilesMCPCommand(BaseMCPCommand):
                 result = await command.execute()
                 return SuccessResult(data=result)
             finally:
-                database.close()
+                database.disconnect()
 
         except Exception as e:
             return self._handle_error(e, "CLEANUP_ERROR", "cleanup_deleted_files")
@@ -403,7 +403,7 @@ class UnmarkDeletedFileMCPCommand(BaseMCPCommand):
                 result = await command.execute()
                 return SuccessResult(data=result)
             finally:
-                database.close()
+                database.disconnect()
 
         except Exception as e:
             return self._handle_error(e, "UNMARK_ERROR", "unmark_deleted_file")
@@ -669,7 +669,7 @@ class CollapseVersionsMCPCommand(BaseMCPCommand):
                 result = await command.execute()
                 return SuccessResult(data=result)
             finally:
-                database.close()
+                database.disconnect()
 
         except Exception as e:
             return self._handle_error(e, "COLLAPSE_ERROR", "collapse_versions")
@@ -960,7 +960,7 @@ class RepairDatabaseMCPCommand(BaseMCPCommand):
                 result = await command.execute()
                 return SuccessResult(data=result)
             finally:
-                database.close()
+                database.disconnect()
 
         except Exception as e:
             return self._handle_error(e, "REPAIR_DATABASE_ERROR", "repair_database")

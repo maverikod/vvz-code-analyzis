@@ -529,8 +529,6 @@ class BaseMCPCommand(Command):
             return existing_id
 
         # Create new project using execute for SQL functions
-        import uuid
-
         project_id = str(uuid.uuid4())
         project_name = name or Path(root_path).name
 

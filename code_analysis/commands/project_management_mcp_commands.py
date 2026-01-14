@@ -703,7 +703,7 @@ class ChangeProjectIdMCPCommand(BaseMCPCommand):
                                 f"description: {new_description}"
                             )
                     finally:
-                        database.close()
+                        database.disconnect()
                 except Exception as e:
                     logger.warning(
                         f"Failed to update database (file was updated): {str(e)}",
@@ -914,7 +914,7 @@ class DeleteProjectMCPCommand(BaseMCPCommand):
                     message=result.get("message", "Project deleted successfully"),
                 )
             finally:
-                database.close()
+                database.disconnect()
         except Exception as e:
             return self._handle_error(e, "DELETE_PROJECT_ERROR", "delete_project")
 
@@ -1318,7 +1318,7 @@ class DeleteUnwatchedProjectsMCPCommand(BaseMCPCommand):
                     message=result.get("message", "Unwatched projects processed"),
                 )
             finally:
-                database.close()
+                database.disconnect()
         except Exception as e:
             return self._handle_error(
                 e, "DELETE_UNWATCHED_PROJECTS_ERROR", "delete_unwatched_projects"
@@ -1791,7 +1791,7 @@ class ListProjectsMCPCommand(BaseMCPCommand):
                     message=f"Found {len(projects)} project(s)",
                 )
             finally:
-                database.close()
+                database.disconnect()
         except Exception as e:
             return self._handle_error(e, "LIST_PROJECTS_ERROR", "list_projects")
 
@@ -1943,7 +1943,7 @@ class CreateProjectMCPCommand(BaseMCPCommand):
                     message=result.get("message", "Project created successfully"),
                 )
             finally:
-                database.close()
+                database.disconnect()
         except Exception as e:
             return self._handle_error(e, "CREATE_PROJECT_ERROR", "create_project")
 

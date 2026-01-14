@@ -80,7 +80,7 @@ class ListLongFilesMCPCommand(BaseMCPCommand):
             proj_id = self._get_project_id(db, root_path, project_id)
 
             if not proj_id:
-                db.close()
+                db.disconnect()
                 return ErrorResult(
                     message="Project not found",
                     code="PROJECT_NOT_FOUND",
@@ -89,7 +89,7 @@ class ListLongFilesMCPCommand(BaseMCPCommand):
 
             command = ListLongFilesCommand(db, proj_id, max_lines)
             result = await command.execute()
-            db.close()
+            db.disconnect()
 
             return SuccessResult(data=result)
 
@@ -306,7 +306,7 @@ class ListErrorsByCategoryMCPCommand(BaseMCPCommand):
 
             command = ListErrorsByCategoryCommand(db, proj_id)
             result = await command.execute()
-            db.close()
+            db.disconnect()
 
             return SuccessResult(data=result)
 

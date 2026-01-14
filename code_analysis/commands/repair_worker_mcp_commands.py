@@ -123,7 +123,7 @@ class StartRepairWorkerMCPCommand(BaseMCPCommand):
                 result = manager.start()
                 return SuccessResult(data=result)
             finally:
-                database.close()
+                database.disconnect()
 
         except Exception as e:
             return self._handle_error(

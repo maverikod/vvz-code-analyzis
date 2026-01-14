@@ -139,7 +139,7 @@ class FulltextSearchMCPCommand(BaseMCPCommand):
                     }
                 )
             finally:
-                database.close()
+                database.disconnect()
 
         except Exception as e:
             return self._handle_error(e, "SEARCH_ERROR", "fulltext_search")
@@ -427,7 +427,7 @@ class ListClassMethodsMCPCommand(BaseMCPCommand):
                     }
                 )
             finally:
-                database.close()
+                database.disconnect()
 
         except Exception as e:
             return self._handle_error(e, "SEARCH_ERROR", "list_class_methods")
@@ -675,7 +675,7 @@ class FindClassesMCPCommand(BaseMCPCommand):
                     }
                 )
             finally:
-                database.close()
+                database.disconnect()
 
         except Exception as e:
             return self._handle_error(e, "SEARCH_ERROR", "find_classes")

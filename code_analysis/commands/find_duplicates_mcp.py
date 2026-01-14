@@ -109,7 +109,7 @@ class FindDuplicatesMCPCommand(BaseMCPCommand):
             proj_id = self._get_project_id(db, root_path, project_id)
 
             if not proj_id:
-                db.close()
+                db.disconnect()
                 return ErrorResult(
                     message="Project not found", code="PROJECT_NOT_FOUND"
                 )
@@ -224,7 +224,7 @@ class FindDuplicatesMCPCommand(BaseMCPCommand):
                 except Exception:
                     pass
 
-            db.close()
+            db.disconnect()
 
             # Filter by min_similarity
             filtered_groups = [

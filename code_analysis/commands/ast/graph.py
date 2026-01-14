@@ -269,7 +269,7 @@ class ExportGraphMCPCommand(BaseMCPCommand):
                 )
 
             finally:
-                db.close()
+                db.disconnect()
 
         except Exception as e:
             return self._handle_error(e, "EXPORT_GRAPH_ERROR", "export_graph")

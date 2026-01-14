@@ -844,7 +844,7 @@ class UpdateIndexesMCPCommand(BaseMCPCommand):
                     }
                 )
             finally:
-                database.close()
+                database.disconnect()
 
         except Exception as e:
             if progress_tracker:

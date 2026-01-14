@@ -172,10 +172,11 @@ class FindDuplicatesMCPCommand(BaseMCPCommand):
                     pass
             else:
                 # Analyze all files in project
-                files = db._fetchall(
+                result = db.execute(
                     "SELECT id, path FROM files WHERE project_id = ? AND deleted = 0",
                     (proj_id,),
                 )
+                files = result.get("data", [])
 
                 for file_record in files:
                     file_path_str = file_record["path"]

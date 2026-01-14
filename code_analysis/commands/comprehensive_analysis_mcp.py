@@ -616,8 +616,9 @@ class ComprehensiveAnalysisMCPCommand(BaseMCPCommand):
                 else:
                     # Analyze all files in ALL projects
                     result = db.execute(
-                        "SELECT id, path, lines, project_id FROM files WHERE deleted = 0",
+                        "SELECT id, path, lines, project_id FROM files WHERE deleted = 0"
                     )
+                    files = result.get("data", [])
                     analysis_logger.info(
                         f"Starting comprehensive analysis for all projects: {len(files)} files to analyze"
                     )

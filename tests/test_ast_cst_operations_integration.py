@@ -26,7 +26,6 @@ from code_analysis.core.database_client.objects import (
 from code_analysis.core.database_driver_pkg.driver_factory import create_driver
 from code_analysis.core.database_driver_pkg.request_queue import RequestQueue
 from code_analysis.core.database_driver_pkg.rpc_server import RPCServer
-from code_analysis.core.database import CodeDatabase
 from code_analysis.core.project_resolution import load_project_info
 
 # Get test data directory

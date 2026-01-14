@@ -24,7 +24,6 @@ from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 
 from .base_mcp_command import BaseMCPCommand
 from ..core.constants import DEFAULT_MAX_FILE_LINES
-from ..core.database import CodeDatabase
 from ..core.db_integrity import (
     backup_sqlite_files,
     clear_corruption_marker,
@@ -249,10 +248,16 @@ class RestoreDatabaseFromConfigMCPCommand(BaseMCPCommand):
             clear_corruption_marker(db_path)
 
             # Step 4: sequentially analyze configured directories into the same DB
-            from ..database import create_driver_config_for_worker
+            # Use DatabaseClient via BaseMCPCommand
+            # Use first directory as root_dir for database connection
+            if not scan_roots:
+                return ErrorResult(
+                    message="No scan directories found",
+                    code="NO_SCAN_DIRS",
+                )
 
-            driver_config = create_driver_config_for_worker(db_path)
-            db = CodeDatabase(driver_config=driver_config)
+            temp_root_dir = str(scan_roots[0])
+            db = BaseMCPCommand._open_database(temp_root_dir, auto_analyze=False)
             cmd = None
             try:
                 from .code_mapper_mcp_command import UpdateIndexesMCPCommand
@@ -282,8 +287,8 @@ class RestoreDatabaseFromConfigMCPCommand(BaseMCPCommand):
                         )
                         continue
 
-                    project_id = db.get_or_create_project(
-                        str(scan_root), name=scan_root.name
+                    project_id = BaseMCPCommand._get_or_create_project(
+                        db, str(scan_root), scan_root.name
                     )
                     py_files = list(_iter_python_files(scan_root))
                     dir_stats = {
@@ -332,8 +337,8 @@ class RestoreDatabaseFromConfigMCPCommand(BaseMCPCommand):
                 )
             finally:
                 try:
-                    if hasattr(db, "close"):
-                        db.close()
+                    if hasattr(db, "disconnect"):
+                        db.disconnect()
                 except Exception:
                     pass
 

@@ -120,15 +120,29 @@ class _ClientAPIMethodsImportsMixin:
             RPCClientError: If RPC call fails
             RPCResponseError: If response contains error
         """
-        where = {}
-        if class_id:
-            where["class_id"] = class_id
+        # Use SQL for LIKE pattern matching when name is specified
         if name:
-            where["name"] = name
-        if is_abstract is not None:
-            where["is_abstract"] = 1 if is_abstract else 0
+            sql = "SELECT * FROM methods WHERE 1=1"
+            params = []
+            if class_id:
+                sql += " AND class_id = ?"
+                params.append(class_id)
+            sql += " AND name LIKE ?"
+            params.append(f"%{name}%")
+            if is_abstract is not None:
+                sql += " AND is_abstract = ?"
+                params.append(1 if is_abstract else 0)
+            sql += " ORDER BY line"
+            result = self.execute(sql, tuple(params))
+            rows = result.get("data", [])
+        else:
+            where = {}
+            if class_id:
+                where["class_id"] = class_id
+            if is_abstract is not None:
+                where["is_abstract"] = 1 if is_abstract else 0
+            rows = self.select("methods", where=where, order_by=["line"])
 
-        rows = self.select("methods", where=where, order_by=["line"])
         return db_rows_to_objects(rows, Method)
 
     # ============================================================================

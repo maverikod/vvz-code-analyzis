@@ -231,13 +231,27 @@ class _ClientAPIIssuesUsagesMixin:
             RPCClientError: If RPC call fails
             RPCResponseError: If response contains error
         """
-        where = {}
+        # Use SQL for LIKE pattern matching when target_name is specified
         if target_name:
-            where["target_name"] = target_name
-        if target_type:
-            where["target_type"] = target_type
-        if usage_type:
-            where["usage_type"] = usage_type
+            sql = "SELECT * FROM usages WHERE 1=1"
+            params = []
+            sql += " AND target_name LIKE ?"
+            params.append(f"%{target_name}%")
+            if target_type:
+                sql += " AND target_type = ?"
+                params.append(target_type)
+            if usage_type:
+                sql += " AND usage_type = ?"
+                params.append(usage_type)
+            sql += " ORDER BY line"
+            result = self.execute(sql, tuple(params))
+            rows = result.get("data", [])
+        else:
+            where = {}
+            if target_type:
+                where["target_type"] = target_type
+            if usage_type:
+                where["usage_type"] = usage_type
+            rows = self.select("usages", where=where, order_by=["line"])
 
-        rows = self.select("usages", where=where, order_by=["line"])
         return db_rows_to_objects(rows, Usage)

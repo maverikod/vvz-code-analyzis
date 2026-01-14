@@ -359,13 +359,12 @@ class ComprehensiveAnalysisMCPCommand(BaseMCPCommand):
                                                     proj_id, normalized_root
                                                 )
                                                 if not dataset_id:
-                                                    dataset_id = (
-                                                        from .base_mcp_command import BaseMCPCommand
+                                                    from .base_mcp_command import (
+                                                        BaseMCPCommand,
+                                                    )
 
-                                                        BaseMCPCommand._get_or_create_dataset(
-                                                            db,
-                                                            proj_id, normalized_root
-                                                        )
+                                                    dataset_id = BaseMCPCommand._get_or_create_dataset(
+                                                        db, proj_id, normalized_root
                                                     )
 
                                                 # Read file metadata

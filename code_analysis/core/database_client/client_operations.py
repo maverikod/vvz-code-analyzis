@@ -121,10 +121,16 @@ class _ClientOperationsMixin:
         )
         response = self.rpc_client.call("select", request.to_dict())
         result_data = self._extract_result_data(response)
-        # For DataResult, _extract_result_data returns the list directly
+        # For DataResult, _extract_result_data returns {"success": True, "data": [...]}
+        # We need to extract the list from "data" key
         if isinstance(result_data, list):
             return result_data
-        # Fallback: return empty list if not a list
+        # If it's a dict (DataResult format), extract "data" key
+        if isinstance(result_data, dict):
+            data = result_data.get("data")
+            if isinstance(data, list):
+                return data
+        # Fallback: return empty list
         return []
 
     def execute(

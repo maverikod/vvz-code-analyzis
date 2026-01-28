@@ -25,7 +25,13 @@ class _ClientTransactionsMixin:
         """
         response = self.rpc_client.call("begin_transaction", {})
         result_data = self._extract_result_data(response)
-        return result_data.get("transaction_id", "")
+        # _extract_result_data returns {"success": True, "data": {"transaction_id": "..."}}
+        # Extract transaction_id from data key
+        if isinstance(result_data, dict):
+            data = result_data.get("data", {})
+            if isinstance(data, dict):
+                return data.get("transaction_id", "")
+        return ""
 
     def commit_transaction(self, transaction_id: str) -> bool:
         """Commit transaction.

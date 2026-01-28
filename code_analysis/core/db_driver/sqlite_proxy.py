@@ -576,6 +576,8 @@ class SQLiteDriverProxy(BaseDatabaseDriver):
                 self._lastrowid = int(val) if val is not None else None
         except Exception:
             self._lastrowid = None
+        # Return result dict (matches base driver interface)
+        return result if isinstance(result, dict) else {}
 
     def fetchone(
         self, sql: str, params: Optional[Tuple[Any, ...]] = None

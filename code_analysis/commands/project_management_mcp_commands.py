@@ -15,7 +15,7 @@ from typing import Any, Dict, List, Optional
 from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 
 from .base_mcp_command import BaseMCPCommand
-from ..core.exceptions import DatabaseError, ValidationError
+from ..core.exceptions import ValidationError
 from ..core.project_resolution import (
     ProjectIdError,
     load_project_id,

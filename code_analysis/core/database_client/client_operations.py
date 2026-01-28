@@ -147,9 +147,10 @@ class _ClientOperationsMixin:
             RPCClientError: If RPC call fails
             RPCResponseError: If response contains error
         """
-        response = self.rpc_client.call(
-            "execute", {"sql": sql, "params": params, "transaction_id": transaction_id}
-        )
+        rpc_params = {"sql": sql, "params": params}
+        if transaction_id is not None:
+            rpc_params["transaction_id"] = transaction_id
+        response = self.rpc_client.call("execute", rpc_params)
         result = self._extract_result_data(response)
         # _extract_result_data() returns the full result dict from RPC
         # For SuccessResult: {"success": True, "data": {"affected_rows": ..., "lastrowid": ..., "data": [...]}}

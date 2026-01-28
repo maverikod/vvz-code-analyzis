@@ -222,9 +222,13 @@ class CSTConvertAndSaveCommand(BaseMCPCommand):
                 from ..core.path_normalization import normalize_path_simple
 
                 normalized_path = normalize_path_simple(str(abs_path))
-                file_record = database.get_file_by_path(normalized_path, project_id)
-                if file_record:
-                    file_id = file_record["id"]
+                # Find file by path and project_id
+                file_rows = database.select(
+                    "files",
+                    where={"path": normalized_path, "project_id": project_id},
+                )
+                if file_rows:
+                    file_id = file_rows[0].get("id")
                 else:
                     # Add file to database
                     # Get or create dataset_id

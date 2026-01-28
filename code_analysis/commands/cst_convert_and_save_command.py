@@ -240,14 +240,21 @@ class CSTConvertAndSaveCommand(BaseMCPCommand):
                     lines = len(source_code.splitlines())
                     has_docstring = bool(ast.get_docstring(tree))
 
-                    file_id = database.add_file(
+                    # Create File object
+                    from ..core.database_client.objects.file import File
+
+                    file_obj = File(
+                        project_id=project_id,
+                        dataset_id=dataset_id,
                         path=normalized_path,
                         lines=lines,
                         last_modified=file_mtime,
                         has_docstring=has_docstring,
-                        project_id=project_id,
-                        dataset_id=dataset_id,
                     )
+
+                    # Create file in database
+                    created_file = database.create_file(file_obj)
+                    file_id = created_file.id
                     logger.info(f"Added file to database: file_id={file_id}")
 
                 # Save AST tree to database

@@ -109,10 +109,57 @@ class CSTCreateFileCommand(BaseMCPCommand):
             # Open database
             database = self._open_database(root_dir, auto_analyze=False)
             try:
-                # Resolve absolute path using project_id and watch_dir/project_name
-                target = self._resolve_file_path_from_project(
-                    database, project_id, file_path
+                # Get project to resolve path
+                project = database.get_project(project_id)
+                if not project:
+                    return ErrorResult(
+                        message=f"Project {project_id} not found",
+                        code="PROJECT_NOT_FOUND",
+                        details={"project_id": project_id},
+                    )
+
+                if not project.watch_dir_id:
+                    return ErrorResult(
+                        message=f"Project {project_id} is not linked to a watch directory",
+                        code="PROJECT_NOT_LINKED",
+                        details={"project_id": project_id},
+                    )
+
+                if not project.name:
+                    return ErrorResult(
+                        message=f"Project {project_id} does not have a name",
+                        code="PROJECT_NO_NAME",
+                        details={"project_id": project_id},
+                    )
+
+                # Get watch_dir_path from database
+                watch_dir_path_result = database.execute(
+                    "SELECT absolute_path FROM watch_dir_paths WHERE watch_dir_id = ?",
+                    (project.watch_dir_id,),
                 )
+                if isinstance(watch_dir_path_result, list):
+                    watch_dir_paths = watch_dir_path_result
+                else:
+                    watch_dir_paths = watch_dir_path_result.get("data", [])
+                
+                if not watch_dir_paths:
+                    return ErrorResult(
+                        message=f"Watch directory path not found for watch_dir_id {project.watch_dir_id}",
+                        code="WATCH_DIR_NOT_FOUND",
+                        details={"project_id": project_id, "watch_dir_id": project.watch_dir_id},
+                    )
+
+                watch_dir_path = watch_dir_paths[0].get("absolute_path")
+                if not watch_dir_path:
+                    return ErrorResult(
+                        message=f"Watch directory path is NULL for watch_dir_id {project.watch_dir_id}",
+                        code="WATCH_DIR_NULL",
+                        details={"project_id": project_id, "watch_dir_id": project.watch_dir_id},
+                    )
+
+                # Form absolute path: watch_dir_path / project_name / relative_file_path
+                target = Path(watch_dir_path) / project.name / file_path
+                target = target.resolve()
 
                 if target.suffix != ".py":
                     return ErrorResult(
@@ -127,15 +174,6 @@ class CSTCreateFileCommand(BaseMCPCommand):
                         message=f"File already exists: {target}",
                         code="FILE_EXISTS",
                         details={"file_path": str(target)},
-                    )
-
-                # Get project root from project
-                project = database.get_project(project_id)
-                if not project:
-                    return ErrorResult(
-                        message=f"Project {project_id} not found",
-                        code="PROJECT_NOT_FOUND",
-                        details={"project_id": project_id},
                     )
 
                 project_root = Path(project.root_path)

@@ -197,9 +197,13 @@ def _execute_operation(
             if not use_transaction_connection:
                 conn.commit()
             result = {
+                "affected_rows": cursor.rowcount,
                 "lastrowid": cursor.lastrowid,
-                "rowcount": cursor.rowcount,
             }
+            # If it's a SELECT statement, fetch data
+            if sql.strip().upper().startswith("SELECT"):
+                rows = cursor.fetchall()
+                result["data"] = [dict(zip(row.keys(), row)) for row in rows]
 
         elif operation == "fetchone":
             if not sql:

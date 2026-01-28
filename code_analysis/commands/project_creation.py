@@ -8,16 +8,13 @@ email: vasilyvz@gmail.com
 import json
 import logging
 import uuid
-from typing import Any, Dict, TYPE_CHECKING
+from typing import Any, Dict, Optional, TYPE_CHECKING
 
 from ..core.exceptions import (
     InvalidProjectIdFormatError,
     ProjectIdError,
 )
-from ..core.project_resolution import (
-    load_project_info,
-    normalize_root_dir,
-)
+from pathlib import Path
 
 if TYPE_CHECKING:
     from ..core.database_client.client import DatabaseClient
@@ -44,93 +41,223 @@ class CreateProjectCommand:
     def __init__(
         self,
         database: DatabaseClient,
-        watched_dir: str,
-        project_dir: str,
-        description: str = "",
+        watch_dir_id: str,
+        project_name: str,
+        description: str,
+        project_id: Optional[str] = None,
     ):
         """
         Initialize create project command.
 
         Args:
             database: DatabaseClient instance
-            watched_dir: Watched directory path (must exist, must not contain projectid)
-            project_dir: Project directory path (must exist, must not be registered)
-            description: Human-readable description of the project
+            watch_dir_id: Watch directory ID from watch_dirs table (must exist)
+            project_name: Name of project subdirectory to create in watch_dir
+            description: Human-readable description of the project (required)
+            project_id: Optional project ID (UUID4). If not provided, will be generated.
         """
         self.database = database
-        self.watched_dir = watched_dir
-        self.project_dir = project_dir
+        self.watch_dir_id = watch_dir_id
+        self.project_name = project_name
         self.description = description
+        self.project_id = project_id
+
+    def _get_watch_dir_path(self) -> Optional[Path]:
+        """
+        Get watch directory path from watch_dir_id.
+
+        Returns:
+            Path to watch directory or None if not found
+        """
+        try:
+            result = self.database.execute(
+                """
+                SELECT absolute_path FROM watch_dir_paths WHERE watch_dir_id = ?
+                """,
+                (self.watch_dir_id,),
+            )
+
+            # Handle different result formats
+            rows = []
+            if isinstance(result, dict):
+                if "data" in result and isinstance(result["data"], list):
+                    rows = result["data"]
+                elif isinstance(result, list):
+                    rows = result
+            elif isinstance(result, list):
+                rows = result
+
+            if not rows or len(rows) == 0:
+                logger.error(
+                    f"Watch directory {self.watch_dir_id} not found in database"
+                )
+                return None
+
+            path_str = (
+                rows[0].get("absolute_path") if isinstance(rows[0], dict) else rows[0]
+            )
+            if not path_str:
+                logger.error(f"Watch directory {self.watch_dir_id} has no path set")
+                return None
+
+            watch_path = Path(path_str)
+            if not watch_path.exists():
+                logger.error(f"Watch directory path does not exist: {watch_path}")
+                return None
+
+            return watch_path
+
+        except Exception as e:
+            logger.error(
+                f"Error getting watch_dir path for {self.watch_dir_id}: {e}",
+                exc_info=True,
+            )
+            return None
 
     async def execute(self) -> Dict[str, Any]:
         """
-        Execute project creation.
+        Execute project creation atomically.
 
         Returns:
             Dictionary with:
             - project_id: UUID4 identifier
-            - already_existed: Whether project already existed
-            - description: Project description (from file if existed, or provided)
-            - old_description: Old description if project was recreated
 
         Raises:
-            FileNotFoundError: If watched_dir or project_dir does not exist
-            ProjectIdError: If watched_dir contains projectid file
-            ValidationError: If project_dir is already registered in database
+            ValueError: If watch_dir_id not found or project_name invalid
         """
-        # Step 1: Validate watched directory exists
-        try:
-            watched_path = normalize_root_dir(self.watched_dir)
-        except FileNotFoundError:
-            return {
-                "success": False,
-                "error": "WATCHED_DIR_NOT_FOUND",
-                "message": f"Watched directory does not exist: {self.watched_dir}",
-            }
-        except NotADirectoryError:
-            return {
-                "success": False,
-                "error": "WATCHED_DIR_NOT_DIRECTORY",
-                "message": f"Watched path is not a directory: {self.watched_dir}",
-            }
+        transaction_id = None
+        project_path = None
+        projectid_path = None
 
-        # Step 2: Check if watched directory has projectid file
-        watched_projectid_path = watched_path / "projectid"
-        if watched_projectid_path.exists():
+        try:
+            # Step 1: Get watch directory path from database
+            watch_dir_path = self._get_watch_dir_path()
+            if not watch_dir_path:
+                return {
+                    "success": False,
+                    "error": "WATCH_DIR_NOT_FOUND",
+                    "message": f"Watch directory {self.watch_dir_id} not found in database or path not set",
+                }
+
+            # Step 2: Validate project name
+            if not self.project_name or not self.project_name.strip():
+                return {
+                    "success": False,
+                    "error": "INVALID_PROJECT_NAME",
+                    "message": "Project name cannot be empty",
+                }
+
+            # Step 3: Construct project path
+            project_path = watch_dir_path / self.project_name.strip()
+
+            # Step 4: Check if project directory already exists
+            if project_path.exists():
+                # Check if it's already registered
+                from .base_mcp_command import BaseMCPCommand
+
+                existing_project_id = BaseMCPCommand._get_project_id_by_root_path(
+                    self.database, str(project_path)
+                )
+                if existing_project_id:
+                    return {
+                        "success": False,
+                        "error": "PROJECT_ALREADY_EXISTS",
+                        "message": f"Project directory already exists and is registered: {existing_project_id}",
+                        "existing_project_id": existing_project_id,
+                    }
+                return {
+                    "success": False,
+                    "error": "PROJECT_DIR_EXISTS",
+                    "message": f"Project directory already exists: {project_path}",
+                }
+
+            # Step 5: Generate or use provided project_id
+            project_id = self.project_id or str(uuid.uuid4())
+
+            # Step 6: Begin transaction
+            transaction_id = self.database.begin_transaction()
+            logger.info(f"Started transaction {transaction_id} for project creation")
+
             try:
-                # Try to load it to get project info
-                watched_info = load_project_info(watched_path)
-                return {
-                    "success": False,
-                    "error": "PROJECTID_EXISTS_IN_WATCHED_DIR",
-                    "message": (
-                        f"Watched directory already contains projectid file with project_id: "
-                        f"{watched_info.project_id}"
-                    ),
-                    "existing_project_id": watched_info.project_id,
+                # Step 7: Create project directory
+                project_path.mkdir(parents=True, exist_ok=False)
+                logger.info(f"Created project directory: {project_path}")
+
+                # Step 8: Create projectid file
+                projectid_path = project_path / "projectid"
+                project_data = {
+                    "id": project_id,
+                    "description": self.description,
                 }
-            except (ProjectIdError, InvalidProjectIdFormatError) as e:
-                # File exists but is invalid - this is also an error
+                projectid_path.write_text(
+                    json.dumps(project_data, indent=4, ensure_ascii=False) + "\n",
+                    encoding="utf-8",
+                )
+                logger.info(f"Created projectid file: {projectid_path}")
+
+                # Step 9: Register project in database
+                project_name = project_path.name
+                self.database.execute(
+                    """
+                    INSERT INTO projects (id, root_path, name, comment, watch_dir_id, updated_at)
+                    VALUES (?, ?, ?, ?, ?, julianday('now'))
+                    """,
+                    (
+                        project_id,
+                        str(project_path),
+                        project_name,
+                        self.description,
+                        self.watch_dir_id,
+                    ),
+                    transaction_id=transaction_id,
+                )
+                logger.info(f"Registered project in database: {project_id}")
+
+                # Step 10: Commit transaction
+                self.database.commit_transaction(transaction_id)
+                logger.info(f"Committed transaction {transaction_id}")
+
                 return {
-                    "success": False,
-                    "error": "INVALID_PROJECTID_IN_WATCHED_DIR",
-                    "message": f"Watched directory contains invalid projectid file: {str(e)}",
+                    "success": True,
+                    "project_id": project_id,
+                    "message": f"Created and registered new project: {project_id}",
                 }
 
-        # Step 3: Validate project directory exists
-        try:
-            project_path = normalize_root_dir(self.project_dir)
-        except FileNotFoundError:
+            except Exception as e:
+                # Rollback transaction on error
+                if transaction_id:
+                    try:
+                        self.database.rollback_transaction(transaction_id)
+                        logger.info(f"Rolled back transaction {transaction_id}")
+                    except Exception as rollback_error:
+                        logger.error(f"Error during rollback: {rollback_error}")
+
+                # Clean up created files/directories
+                if projectid_path and projectid_path.exists():
+                    try:
+                        projectid_path.unlink()
+                        logger.info(f"Removed projectid file: {projectid_path}")
+                    except Exception:
+                        pass
+
+                if project_path and project_path.exists():
+                    try:
+                        project_path.rmdir()
+                        logger.info(f"Removed project directory: {project_path}")
+                    except Exception:
+                        pass
+
+                raise
+
+        except Exception as e:
+            logger.error(
+                f"Error creating project: {e}",
+                exc_info=True,
+            )
             return {
                 "success": False,
-                "error": "PROJECT_DIR_NOT_FOUND",
-                "message": f"Project directory does not exist: {self.project_dir}",
-            }
-        except NotADirectoryError:
-            return {
-                "success": False,
-                "error": "PROJECT_DIR_NOT_DIRECTORY",
-                "message": f"Project path is not a directory: {self.project_dir}",
+                "error": "CREATE_PROJECT_ERROR",
+                "message": f"Failed to create project: {str(e)}",
             }
 
         # Step 4: Check if project is already registered in database
@@ -155,6 +282,22 @@ class CreateProjectCommand:
                     # File exists but is invalid - ignore
                     pass
 
+            # Update watch_dir_id if needed
+            if watch_dir_id and existing_project:
+                existing_watch_dir_id = getattr(existing_project, "watch_dir_id", None)
+                if existing_watch_dir_id != watch_dir_id:
+                    self.database.execute(
+                        """
+                        UPDATE projects 
+                        SET watch_dir_id = ?, updated_at = julianday('now')
+                        WHERE id = ?
+                        """,
+                        (watch_dir_id, existing_project_id),
+                    )
+                    logger.info(
+                        f"Updated project {existing_project_id} watch_dir_id to {watch_dir_id}"
+                    )
+
             # Return existing project info
             return {
                 "success": True,
@@ -164,6 +307,7 @@ class CreateProjectCommand:
                 or existing_description
                 or self.description,
                 "old_description": existing_description,
+                "watch_dir_id": watch_dir_id,
                 "message": f"Project already registered: {existing_project_id}",
             }
 
@@ -181,14 +325,15 @@ class CreateProjectCommand:
                 project_name = project_path.name
                 self.database.execute(
                     """
-                    INSERT INTO projects (id, root_path, name, comment, updated_at)
-                    VALUES (?, ?, ?, ?, julianday('now'))
+                    INSERT INTO projects (id, root_path, name, comment, watch_dir_id, updated_at)
+                    VALUES (?, ?, ?, ?, ?, julianday('now'))
                     """,
                     (
                         project_id,
                         str(project_path),
                         project_name,
                         old_description or self.description,
+                        watch_dir_id,
                     ),
                 )
 
@@ -202,6 +347,7 @@ class CreateProjectCommand:
                     "already_existed": False,
                     "description": old_description or self.description,
                     "old_description": old_description,
+                    "watch_dir_id": watch_dir_id,
                     "message": f"Registered project from existing projectid file: {project_id}",
                 }
             except (ProjectIdError, InvalidProjectIdFormatError) as e:
@@ -242,10 +388,16 @@ class CreateProjectCommand:
             project_name = project_path.name
             self.database.execute(
                 """
-                INSERT INTO projects (id, root_path, name, comment, updated_at)
-                VALUES (?, ?, ?, ?, julianday('now'))
+                INSERT INTO projects (id, root_path, name, comment, watch_dir_id, updated_at)
+                VALUES (?, ?, ?, ?, ?, julianday('now'))
                 """,
-                (project_id, str(project_path), project_name, final_description),
+                (
+                    project_id,
+                    str(project_path),
+                    project_name,
+                    final_description,
+                    watch_dir_id,
+                ),
             )
 
             logger.info(
@@ -271,5 +423,6 @@ class CreateProjectCommand:
             "already_existed": False,
             "description": final_description,
             "old_description": old_description,
+            "watch_dir_id": watch_dir_id,
             "message": f"Created and registered new project: {project_id}",
         }

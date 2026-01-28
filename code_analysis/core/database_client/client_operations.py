@@ -127,7 +127,12 @@ class _ClientOperationsMixin:
         # Fallback: return empty list if not a list
         return []
 
-    def execute(self, sql: str, params: Optional[tuple] = None) -> Dict[str, Any]:
+    def execute(
+        self,
+        sql: str,
+        params: Optional[tuple] = None,
+        transaction_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
         """Execute raw SQL query.
 
         Args:
@@ -135,11 +140,29 @@ class _ClientOperationsMixin:
             params: Optional parameters for query
 
         Returns:
-            Query result as dictionary
+            Query result as dictionary. For SELECT queries, contains "data" key with list of rows.
+            For other queries, contains "affected_rows" and "lastrowid" keys.
 
         Raises:
             RPCClientError: If RPC call fails
             RPCResponseError: If response contains error
         """
-        response = self.rpc_client.call("execute", {"sql": sql, "params": params})
-        return self._extract_result_data(response)
+        response = self.rpc_client.call(
+            "execute", {"sql": sql, "params": params, "transaction_id": transaction_id}
+        )
+        result = self._extract_result_data(response)
+        # _extract_result_data() returns the full result dict from RPC
+        # For SuccessResult: {"success": True, "data": {"affected_rows": ..., "lastrowid": ..., "data": [...]}}
+        # The "data" key contains the actual driver result
+        if isinstance(result, dict):
+            # Extract the actual driver result from "data" key
+            driver_result = result.get("data", {})
+            # driver_result should be the full result from driver.execute()
+            # For SELECT: {"affected_rows": ..., "lastrowid": ..., "data": [...]}
+            # For other: {"affected_rows": ..., "lastrowid": ...}
+            if isinstance(driver_result, dict):
+                return driver_result
+            # Fallback: if not a dict, return empty dict
+            return {}
+        # Fallback: if result is not a dict, return empty dict
+        return {}

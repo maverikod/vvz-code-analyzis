@@ -258,16 +258,24 @@ class CSTConvertAndSaveCommand(BaseMCPCommand):
                     logger.info(f"Added file to database: file_id={file_id}")
 
                 # Save AST tree to database
-                ast_tree_id: Optional[int] = None
                 try:
-                    ast_tree_id = database.save_ast_tree(
-                        file_id,
-                        project_id,
-                        ast_json,
-                        ast_hash,
-                        file_mtime,
-                        overwrite=True,
+                    # Parse AST JSON to dict for save_ast
+                    ast_data = json.loads(ast_json)
+                    ast_saved = database.save_ast(file_id, ast_data)
+                    if not ast_saved:
+                        return ErrorResult(
+                            message="Failed to save AST",
+                            code="AST_SAVE_ERROR",
+                            details={},
+                        )
+                    # Get AST tree ID
+                    ast_rows = database.select(
+                        "ast_trees",
+                        where={"file_id": file_id},
+                        order_by=["updated_at DESC"],
+                        limit=1,
                     )
+                    ast_tree_id = ast_rows[0].get("id") if ast_rows else None
                     logger.debug(f"AST saved with id={ast_tree_id} for file_id={file_id}")
                 except Exception as e:
                     logger.error(f"Error saving AST: {e}", exc_info=True)
@@ -278,16 +286,22 @@ class CSTConvertAndSaveCommand(BaseMCPCommand):
                     )
 
                 # Save CST tree to database
-                cst_tree_id: Optional[int] = None
                 try:
-                    cst_tree_id = database.save_cst_tree(
-                        file_id,
-                        project_id,
-                        source_code,
-                        cst_hash,
-                        file_mtime,
-                        overwrite=True,
+                    cst_saved = database.save_cst(file_id, source_code)
+                    if not cst_saved:
+                        return ErrorResult(
+                            message="Failed to save CST",
+                            code="CST_SAVE_ERROR",
+                            details={},
+                        )
+                    # Get CST tree ID
+                    cst_rows = database.select(
+                        "cst_trees",
+                        where={"file_id": file_id},
+                        order_by=["updated_at DESC"],
+                        limit=1,
                     )
+                    cst_tree_id = cst_rows[0].get("id") if cst_rows else None
                     logger.debug(f"CST saved with id={cst_tree_id} for file_id={file_id}")
                 except Exception as e:
                     logger.error(f"Error saving CST: {e}", exc_info=True)

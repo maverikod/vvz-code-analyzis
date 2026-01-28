@@ -259,10 +259,21 @@ def _validate_operation(tree: CSTTree, operation: TreeOperation) -> None:
                 f"Target node not found: {operation.target_node_id}. "
                 f"Available nodes (first 5): {available}"
             )
-        if operation.position not in ("before", "after"):
-            raise ValueError(
-                "position must be 'before' or 'after' for insert operation"
-            )
+        # Validate position based on operation type
+        # For target_node_id: position must be 'before' or 'after' (insert relative to target)
+        # For parent_node_id: position can be 'before', 'after', or 'end' (insert in parent's body)
+        if operation.target_node_id:
+            # Inserting relative to target node
+            if operation.position not in ("before", "after"):
+                raise ValueError(
+                    "position must be 'before' or 'after' for insert relative to target node"
+                )
+        elif operation.parent_node_id:
+            # Inserting in parent's body
+            if operation.position not in ("before", "after", "end"):
+                raise ValueError(
+                    "position must be 'before', 'after', or 'end' for insert in parent node"
+                )
         # Validate code syntax (supports multi-line)
         try:
             _parse_code_snippet(code=operation.code, code_lines=operation.code_lines)
@@ -737,6 +748,45 @@ def _insert_node_relative(
     if not new_statements:
         raise ValueError("Cannot insert empty code")
 
+    # Get target node metadata for position-based search
+    target_metadata = tree.metadata_map.get(target_node_id)
+    target_start_line = target_metadata.start_line if target_metadata else None
+    target_name = None
+    if isinstance(target_node, (cst.FunctionDef, cst.ClassDef)):
+        target_name = (
+            target_node.name.value if hasattr(target_node.name, "value") else None
+        )
+
+    # Find target node index in original module body for fallback search
+    # This helps when identity check fails (LibCST creates new objects)
+    target_index_in_original = -1
+    if isinstance(parent_node, cst.Module):
+        for i, stmt in enumerate(parent_node.body):
+            # Check by identity first
+            if stmt is target_node:
+                target_index_in_original = i
+                logger.debug(f"Found target node by identity at index {i}")
+                break
+            # Also check by name for FunctionDef/ClassDef
+            if (
+                target_name
+                and isinstance(stmt, type(target_node))
+                and hasattr(stmt, "name")
+            ):
+                try:
+                    stmt_name = stmt.name.value if hasattr(stmt.name, "value") else None
+                    if stmt_name == target_name:
+                        target_index_in_original = i
+                        logger.debug(f"Found target node by name at index {i}")
+                        break
+                except Exception:
+                    pass
+
+        logger.debug(
+            f"Pre-computed target_index_in_original: {target_index_in_original} "
+            f"(target_name: {target_name}, parent body length: {len(parent_node.body)})"
+        )
+
     # Use LibCST transformer to insert relative to target node
     class RelativeNodeInserter(cst.CSTTransformer):
         def __init__(
@@ -745,41 +795,110 @@ def _insert_node_relative(
             parent_node: cst.CSTNode,
             new_statements: list[cst.BaseStatement],
             position: str,
+            target_start_line: Optional[int] = None,
+            target_name: Optional[str] = None,
+            target_index_in_original: int = -1,
         ):
             self.target_node = target_node
             self.parent_node = parent_node
             self.new_statements = new_statements
             self.position = position
+            self.target_start_line = target_start_line
+            self.target_name = target_name
+            self.target_index_in_original = target_index_in_original
             self.inserted = False
 
         def leave_Module(
             self, original_node: cst.Module, updated_node: cst.Module
         ) -> cst.Module:
             # Handle module-level insertions relative to target node
-            if original_node is self.parent_node:
-                body = list(original_node.body)
-                # Find target node in body
-                target_index = -1
+            # For Module, we process any Module node since we have the pre-computed index
+            logger.debug(
+                f"leave_Module called: target_name={self.target_name}, "
+                f"target_index_in_original={self.target_index_in_original}, "
+                f"body_length={len(original_node.body)}"
+            )
+            # Use original_node.body for reliable search (before any transformations)
+            body = list(original_node.body)
+            # Find target node in body - use pre-computed index first (most reliable)
+            target_index = -1
+
+            # First try: use pre-computed index if available (most reliable)
+            if (
+                self.target_index_in_original >= 0
+                and self.target_index_in_original < len(body)
+            ):
+                target_index = self.target_index_in_original
+                logger.debug(
+                    f"Using pre-computed index {target_index} for target node {self.target_name}"
+                )
+
+            # Second try: identity check in original_node.body (fallback)
+            # Note: This may not work if LibCST creates new objects during transformation
+            if target_index < 0:
                 for i, stmt in enumerate(body):
                     if stmt is self.target_node:
                         target_index = i
+                        logger.debug(
+                            f"Found target node by identity at index {i} in leave_Module"
+                        )
                         break
 
-                if target_index >= 0:
-                    if self.position == "before":
-                        new_body = (
-                            body[:target_index]
-                            + list(self.new_statements)
-                            + body[target_index:]
-                        )
-                    else:  # after
-                        new_body = (
-                            body[: target_index + 1]
-                            + list(self.new_statements)
-                            + body[target_index + 1 :]
-                        )
-                    self.inserted = True
-                    return updated_node.with_changes(body=new_body)
+            # Third try: check by type and name if identity doesn't match
+            if target_index < 0:
+                for i, stmt in enumerate(body):
+                    if isinstance(stmt, type(self.target_node)):
+                        # For named nodes (FunctionDef, ClassDef), check name if available
+                        if self.target_name and hasattr(stmt, "name"):
+                            try:
+                                # Get name value - handle both Name and other types
+                                if hasattr(stmt.name, "value"):
+                                    stmt_name = stmt.name.value
+                                elif isinstance(stmt.name, str):
+                                    stmt_name = stmt.name
+                                else:
+                                    stmt_name = None
+
+                                if stmt_name == self.target_name:
+                                    target_index = i
+                                    logger.debug(
+                                        f"Found target node by name at index {i}"
+                                    )
+                                    break
+                            except Exception:
+                                pass
+
+            if target_index >= 0:
+                logger.debug(
+                    f"Found target node at index {target_index} in module body (name: {self.target_name}, "
+                    f"position: {self.position}, new_statements: {len(self.new_statements)})"
+                )
+                # Found target node - insert relative to it
+                if self.position == "before":
+                    new_body = (
+                        body[:target_index]
+                        + list(self.new_statements)
+                        + body[target_index:]
+                    )
+                else:  # after
+                    new_body = (
+                        body[: target_index + 1]
+                        + list(self.new_statements)
+                        + body[target_index + 1 :]
+                    )
+                self.inserted = True
+                logger.debug(
+                    f"Inserted {len(self.new_statements)} statements, new body length: {len(new_body)}"
+                )
+                return updated_node.with_changes(body=new_body)
+            else:
+                logger.warning(
+                    f"Target node not found in module body. "
+                    f"Target name: {self.target_name}, "
+                    f"Target type: {type(self.target_node).__name__}, "
+                    f"Body length: {len(body)}, "
+                    f"Pre-computed index: {self.target_index_in_original}"
+                )
             return updated_node
 
         def leave_IndentedBlock(
@@ -868,7 +987,43 @@ def _insert_node_relative(
     )
     target_parent_id = target_metadata.parent_id if target_metadata else None
 
-    inserter = RelativeNodeInserter(target_node, parent_node, new_statements, position)
+    # If we have a valid index and parent is Module, we can insert directly without transformer
+    # This is more reliable than using transformer which may not find the node
+    if isinstance(parent_node, cst.Module) and target_index_in_original >= 0:
+        logger.debug(
+            f"Using direct insertion for Module: index={target_index_in_original}, "
+            f"position={position}, statements={len(new_statements)}"
+        )
+        body = list(parent_node.body)
+        if target_index_in_original < len(body):
+            if position == "before":
+                new_body = (
+                    body[:target_index_in_original]
+                    + new_statements
+                    + body[target_index_in_original:]
+                )
+            else:  # after
+                new_body = (
+                    body[: target_index_in_original + 1]
+                    + new_statements
+                    + body[target_index_in_original + 1 :]
+                )
+            return module.with_changes(body=new_body)
+        else:
+            logger.warning(
+                f"target_index_in_original ({target_index_in_original}) >= body length ({len(body)})"
+            )
+
+    # Fallback: use transformer
+    inserter = RelativeNodeInserter(
+        target_node,
+        parent_node,
+        new_statements,
+        position,
+        target_start_line=target_start_line,
+        target_name=target_name,
+        target_index_in_original=target_index_in_original,
+    )
     result = module.visit(inserter)
     if not inserter.inserted:
         # Provide detailed error message with context

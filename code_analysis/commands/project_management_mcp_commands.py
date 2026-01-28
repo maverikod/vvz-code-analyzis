@@ -790,19 +790,16 @@ class DeleteProjectMCPCommand(BaseMCPCommand):
                 "This operation cannot be undone."
             ),
             "properties": {
-                "root_dir": {
-                    "type": "string",
-                    "description": (
-                        "Project root directory (contains projectid file). "
-                        "Must be an absolute path or relative to current working directory."
-                    ),
-                },
                 "project_id": {
                     "type": "string",
                     "description": (
-                        "Optional project ID (UUID v4). "
-                        "If not provided, will be resolved from root_dir/projectid file."
+                        "Project ID (UUID v4). Required. "
+                        "The project identifier to delete. "
+                        "Can be obtained from list_projects command."
                     ),
+                    "examples": [
+                        "550e8400-e29b-41d4-a716-446655440000",
+                    ],
                 },
                 "dry_run": {
                     "type": "boolean",
@@ -821,14 +818,22 @@ class DeleteProjectMCPCommand(BaseMCPCommand):
                     "default": False,
                 },
             },
-            "required": ["root_dir"],
+            "required": ["project_id"],
             "additionalProperties": False,
+            "examples": [
+                {
+                    "project_id": "550e8400-e29b-41d4-a716-446655440000",
+                },
+                {
+                    "project_id": "550e8400-e29b-41d4-a716-446655440000",
+                    "dry_run": True,
+                },
+            ],
         }
 
     async def execute(
         self: "DeleteProjectMCPCommand",
-        root_dir: str,
-        project_id: Optional[str] = None,
+        project_id: str,
         dry_run: bool = False,
         delete_from_disk: bool = False,
         **kwargs: Any,
@@ -838,8 +843,7 @@ class DeleteProjectMCPCommand(BaseMCPCommand):
 
         Args:
             self: Command instance.
-            root_dir: Project root directory.
-            project_id: Optional project ID.
+            project_id: Project ID (UUID v4) to delete.
             dry_run: If True, only show what would be deleted.
             delete_from_disk: If True, also delete from disk and version directory.
             **kwargs: Extra args (unused).
@@ -848,33 +852,44 @@ class DeleteProjectMCPCommand(BaseMCPCommand):
             SuccessResult with deletion summary or ErrorResult on failure.
         """
         try:
-            # Validate and normalize root_dir
-            root_path = self._validate_root_dir(root_dir)
+            from ..core.exceptions import ValidationError, DatabaseError
+            from pathlib import Path
 
-            # Open database
-            database = self._open_database(str(root_path), auto_analyze=False)
+            # Resolve database path from config
+            from ..core.storage_paths import load_raw_config, resolve_storage_paths
+
+            config_path = self._resolve_config_path()
+            config_data = load_raw_config(config_path)
+            storage = resolve_storage_paths(
+                config_data=config_data, config_path=config_path
+            )
+            db_path = storage.db_path
+
+            # Get socket path and create DatabaseClient
+            from ..core.database_client.client import DatabaseClient
+            from .base_mcp_command import _get_socket_path_from_db_path
+
+            socket_path = _get_socket_path_from_db_path(db_path)
+            database = DatabaseClient(socket_path=socket_path)
+            database.connect()
+
             try:
-                # Resolve project_id if not provided
-                if not project_id:
-                    project_id = database.get_project_id(str(root_path))
-                    if not project_id:
-                        return self._handle_error(
-                            ValidationError(
-                                f"Project not found for root_dir: {root_dir}",
-                                field="root_dir",
-                                details={"root_dir": str(root_dir)},
-                            ),
-                            "PROJECT_NOT_FOUND",
-                            "delete_project",
-                        )
+                # Get project from database to verify it exists and get root_path
+                project = database.get_project(project_id)
+                if not project:
+                    return self._handle_error(
+                        ValidationError(
+                            f"Project not found: {project_id}",
+                            field="project_id",
+                            details={"project_id": project_id},
+                        ),
+                        "PROJECT_NOT_FOUND",
+                        "delete_project",
+                    )
 
                 # Get version_dir from config if delete_from_disk is True
                 version_dir = None
                 if delete_from_disk:
-                    config_path = self._resolve_config_path()
-                    from ..core.storage_paths import load_raw_config
-
-                    config_data = load_raw_config(config_path)
                     file_watcher_config = config_data.get("code_analysis", {}).get(
                         "file_watcher", {}
                     )
@@ -941,9 +956,9 @@ class DeleteProjectMCPCommand(BaseMCPCommand):
                 "Optionally, it can also delete the project directory and version files from disk. "
                 "This is a destructive operation that cannot be undone.\n\n"
                 "Operation flow:\n"
-                "1. Validates root_dir exists and is a directory\n"
+                "1. Resolves database path from server configuration (config.json)\n"
                 "2. Opens database connection\n"
-                "3. Resolves project_id (from parameter or from root_dir/projectid file)\n"
+                "3. Validates project_id exists in database and retrieves project information\n"
                 "4. Retrieves project information and statistics\n"
                 "5. If dry_run=True:\n"
                 "   - Returns statistics about what would be deleted\n"
@@ -993,26 +1008,35 @@ class DeleteProjectMCPCommand(BaseMCPCommand):
                 "- Use with extreme caution, especially with delete_from_disk=True"
             ),
             "parameters": {
-                "root_dir": {
+                "project_id": {
                     "description": (
-                        "Project root directory path. Can be absolute or relative. "
-                        "Must contain projectid file. Used to resolve project_id if not provided."
+                        "Project UUID (UUID4). Required. "
+                        "The project identifier to delete. "
+                        "Can be obtained from list_projects command. "
+                        "The project must exist in the database."
                     ),
                     "type": "string",
                     "required": True,
-                },
-                "project_id": {
-                    "description": (
-                        "Optional project UUID. If not provided, will be resolved from root_dir/projectid file. "
-                        "If provided, must match the project_id in the file."
-                    ),
-                    "type": "string",
-                    "required": False,
+                    "examples": [
+                        "550e8400-e29b-41d4-a716-446655440000",
+                        "928bcf10-db1c-47a3-8341-f60a6d997fe7",
+                    ],
                 },
                 "dry_run": {
                     "description": (
                         "If True, only shows what would be deleted without actually deleting. "
-                        "Default is False. ALWAYS use dry_run=True first to preview deletion."
+                        "Default is False. ALWAYS use dry_run=True first to preview deletion. "
+                        "This is a safety feature to prevent accidental deletions."
+                    ),
+                    "type": "boolean",
+                    "required": False,
+                    "default": False,
+                },
+                "delete_from_disk": {
+                    "description": (
+                        "If True, also deletes project root directory and all files from version directory. "
+                        "If False (default), only deletes from database. "
+                        "WARNING: This permanently removes files from disk and cannot be undone."
                     ),
                     "type": "boolean",
                     "required": False,
@@ -1023,54 +1047,61 @@ class DeleteProjectMCPCommand(BaseMCPCommand):
                 {
                     "description": "Preview deletion (dry run)",
                     "command": {
-                        "root_dir": "/home/user/projects/my_project",
+                        "project_id": "928bcf10-db1c-47a3-8341-f60a6d997fe7",
                         "dry_run": True,
                     },
                     "explanation": (
                         "Shows statistics about what would be deleted without actually deleting. "
-                        "Safe to run to preview deletion."
+                        "Safe to run to preview deletion. Always use this first before actual deletion."
                     ),
                 },
                 {
-                    "description": "Delete project",
+                    "description": "Delete project from database only",
                     "command": {
-                        "root_dir": "/home/user/projects/my_project",
-                    },
-                    "explanation": (
-                        "Permanently deletes project and all its data from database. "
-                        "WARNING: This is permanent and cannot be undone."
-                    ),
-                },
-                {
-                    "description": "Delete project with explicit project_id",
-                    "command": {
-                        "root_dir": "/home/user/projects/my_project",
                         "project_id": "928bcf10-db1c-47a3-8341-f60a6d997fe7",
                     },
                     "explanation": (
-                        "Deletes project with explicit project_id. "
-                        "Useful when you want to ensure correct project is deleted."
+                        "Permanently deletes project and all its data from database. "
+                        "Project files on disk are NOT deleted. "
+                        "WARNING: This is permanent and cannot be undone."
                     ),
                 },
                 {
                     "description": "Delete project from database and disk",
                     "command": {
-                        "root_dir": "/home/user/projects/my_project",
+                        "project_id": "928bcf10-db1c-47a3-8341-f60a6d997fe7",
                         "delete_from_disk": True,
                     },
                     "explanation": (
                         "Permanently deletes project from database AND removes project directory and "
-                        "version files from disk. WARNING: This is irreversible."
+                        "version files from disk. "
+                        "WARNING: This is irreversible and removes all project files permanently."
                     ),
                 },
             ],
             "error_cases": {
                 "PROJECT_NOT_FOUND": {
-                    "description": "Project not found in database",
-                    "example": "root_dir='/path' but project not registered in database",
+                    "description": "Project with specified project_id not found in database",
+                    "example": "project_id='550e8400-e29b-41d4-a716-446655440000' but project not in database",
                     "solution": (
-                        "Verify project exists. Run list_projects to see all projects. "
-                        "Ensure projectid file exists and contains valid UUID."
+                        "Verify project exists. Run list_projects to see all projects and their IDs. "
+                        "Ensure the project_id is correct and the project is registered in the database."
+                    ),
+                },
+                "CONFIG_NOT_FOUND": {
+                    "description": "Server configuration file (config.json) not found or cannot be loaded",
+                    "example": "config.json missing or invalid",
+                    "solution": (
+                        "Ensure config.json exists and is valid JSON. "
+                        "The configuration file is required to resolve database path."
+                    ),
+                },
+                "DATABASE_ERROR": {
+                    "description": "Failed to open or query the database",
+                    "example": "Database locked, corrupted, or permission denied",
+                    "solution": (
+                        "Check database integrity, ensure it's not locked by another process, "
+                        "verify file permissions, or run repair_sqlite_database if corrupted"
                     ),
                 },
                 "DELETE_PROJECT_ERROR": {
@@ -1124,17 +1155,19 @@ class DeleteProjectMCPCommand(BaseMCPCommand):
                 },
                 "error": {
                     "description": "Command failed",
-                    "code": "Error code (e.g., PROJECT_NOT_FOUND, DELETE_PROJECT_ERROR)",
+                    "code": "Error code (e.g., PROJECT_NOT_FOUND, CONFIG_NOT_FOUND, DATABASE_ERROR, DELETE_PROJECT_ERROR)",
                     "message": "Human-readable error message",
+                    "details": "Additional error details",
                 },
             },
             "best_practices": [
                 "ALWAYS use dry_run=True first to preview what will be deleted",
-                "Verify project_id is correct before deletion",
+                "Verify project_id is correct before deletion - use list_projects to get project IDs",
                 "Backup database before deleting important projects",
                 "This operation is permanent - double-check before proceeding",
-                "Project files on disk are NOT deleted, only database records",
-                "Use list_projects to verify project exists before deletion",
+                "By default, project files on disk are NOT deleted, only database records",
+                "Use list_projects to verify project exists and get correct project_id before deletion",
+                "Database path is automatically resolved from server configuration, no root_dir needed",
             ],
         }
 
@@ -1584,24 +1617,24 @@ class ListProjectsMCPCommand(BaseMCPCommand):
             "type": "object",
             "description": "List all projects in the database with their UUID and metadata",
             "properties": {
-                "root_dir": {
+                "watched_dir_id": {
                     "type": "string",
                     "description": (
-                        "Server root directory (contains data/code_analysis.db). "
-                        "Must be an absolute path or relative to current working directory."
+                        "Optional watched directory identifier (UUID4). "
+                        "If provided, only projects from this watched directory will be returned. "
+                        "If not provided, all projects from all watched directories are returned."
                     ),
                     "examples": [
-                        "/home/user/projects/code_analysis",
-                        "/var/lib/code_analysis",
-                        "./code_analysis",
+                        "550e8400-e29b-41d4-a716-446655440000",
                     ],
                 },
             },
-            "required": ["root_dir"],
+            "required": [],
             "additionalProperties": False,
             "examples": [
+                {},
                 {
-                    "root_dir": "/home/user/projects/code_analysis",
+                    "watched_dir_id": "550e8400-e29b-41d4-a716-446655440000",
                 },
             ],
         }
@@ -1631,74 +1664,78 @@ class ListProjectsMCPCommand(BaseMCPCommand):
             "detailed_description": (
                 "The list_projects command retrieves all projects from the database "
                 "and returns their complete metadata including UUID, root path, name, "
-                "comment, and last update timestamp.\n\n"
+                "comment, watch directory identifier, and last update timestamp.\n\n"
                 "Operation flow:\n"
-                "1. Validates root_dir exists and is a directory\n"
-                "2. Opens database connection at root_dir/data/code_analysis.db\n"
-                "3. Queries all projects from the projects table\n"
-                "4. Returns list of projects sorted by name and root_path\n\n"
+                "1. Resolves database path from server configuration (config.json)\n"
+                "2. Opens database connection\n"
+                "3. If watched_dir_id is provided, filters projects by watched_dir_id\n"
+                "4. Queries projects from the projects table\n"
+                "5. Returns list of projects with their metadata\n\n"
                 "Use cases:\n"
                 "- Discover all projects in the database\n"
                 "- Get project UUIDs for use in other commands\n"
+                "- Filter projects by watched directory\n"
                 "- Verify project registration\n"
                 "- Audit project metadata\n\n"
                 "Important notes:\n"
-                "- Returns all projects regardless of their status\n"
-                "- Projects are sorted alphabetically by name, then by root_path\n"
-                "- Empty database returns empty list (count: 0)\n"
-                "- Each project entry includes: id (UUID), root_path, name, comment, updated_at"
+                "- Returns all projects if watched_dir_id is not provided\n"
+                "- If watched_dir_id is provided, only projects from that watched directory are returned\n"
+                "- Empty database or no matching projects returns empty list (count: 0)\n"
+                "- Each project entry includes: id (UUID), root_path, name, comment, watch_dir_id, updated_at\n"
+                "- Database path is automatically resolved from server configuration, no root_dir parameter needed"
             ),
             "parameters": {
-                "root_dir": {
+                "watched_dir_id": {
                     "description": (
-                        "Server root directory path. Can be absolute or relative to current working directory. "
-                        "Must contain data/code_analysis.db file. The directory must exist and be accessible. "
-                        "This is the root directory of the code-analysis-server, not individual project directories."
+                        "Optional watched directory identifier (UUID4). "
+                        "If provided, only projects belonging to this watched directory will be returned. "
+                        "If not provided or omitted, all projects from all watched directories are returned. "
+                        "The watched_dir_id can be found in the watch_dirs table or obtained from project metadata."
                     ),
                     "type": "string",
-                    "required": True,
+                    "required": False,
                     "examples": [
-                        "/home/user/projects/code_analysis",
-                        "/var/lib/code_analysis",
-                        "./code_analysis",
-                        "/opt/code-analysis-server",
+                        "550e8400-e29b-41d4-a716-446655440000",
+                        "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
                     ],
                 },
             },
             "usage_examples": [
                 {
                     "description": "Basic usage: list all projects",
-                    "command": {
-                        "root_dir": "/home/user/projects/code_analysis",
-                    },
+                    "command": {},
                     "explanation": (
                         "Retrieves all projects from the database and returns their UUID, "
-                        "root path, name, comment, and last update time."
+                        "root path, name, comment, watch_dir_id, and last update time. "
+                        "Database path is automatically resolved from server configuration."
                     ),
                 },
                 {
-                    "description": "List projects from server root",
+                    "description": "List projects from specific watched directory",
                     "command": {
-                        "root_dir": "/var/lib/code_analysis",
+                        "watched_dir_id": "550e8400-e29b-41d4-a716-446655440000",
                     },
                     "explanation": (
-                        "Lists all projects stored in the server's database. "
-                        "Useful for discovering what projects are registered."
+                        "Lists only projects that belong to the specified watched directory. "
+                        "Useful for filtering projects by their watch directory location."
                     ),
                 },
             ],
             "error_cases": {
-                "ROOT_DIR_NOT_FOUND": {
-                    "description": "root_dir path doesn't exist or is not a directory",
-                    "example": "root_dir='/nonexistent/path'",
-                    "solution": "Provide a valid existing directory path",
+                "CONFIG_NOT_FOUND": {
+                    "description": "Server configuration file (config.json) not found or cannot be loaded",
+                    "example": "config.json missing or invalid",
+                    "solution": (
+                        "Ensure config.json exists and is valid JSON. "
+                        "The configuration file is required to resolve database path."
+                    ),
                 },
                 "DATABASE_NOT_FOUND": {
-                    "description": "Database file not found at root_dir/data/code_analysis.db",
-                    "example": "root_dir='/path' but data/code_analysis.db missing",
+                    "description": "Database file not found at the path resolved from configuration",
+                    "example": "Database path from config.json points to non-existent file",
                     "solution": (
-                        "Ensure the database file exists. You may need to run update_indexes "
-                        "or restore_database first to create the database."
+                        "Ensure the database file exists at the configured path. "
+                        "You may need to run update_indexes or restore_database first to create the database."
                     ),
                 },
                 "DATABASE_ERROR": {
@@ -1707,6 +1744,14 @@ class ListProjectsMCPCommand(BaseMCPCommand):
                     "solution": (
                         "Check database integrity, ensure it's not locked by another process, "
                         "verify file permissions, or run repair_sqlite_database if corrupted"
+                    ),
+                },
+                "INVALID_WATCHED_DIR_ID": {
+                    "description": "watched_dir_id provided but not found in database",
+                    "example": "watched_dir_id='invalid-uuid' or watched_dir_id not in watch_dirs table",
+                    "solution": (
+                        "Verify the watched_dir_id is a valid UUID4 and exists in the watch_dirs table. "
+                        "Use list_projects without filter first to see available projects and their watch_dir_id values."
                     ),
                 },
             },
@@ -1720,7 +1765,8 @@ class ListProjectsMCPCommand(BaseMCPCommand):
                             "- root_path: Project root directory path (string)\n"
                             "- name: Project name (string, may be None)\n"
                             "- comment: Optional comment/description (string, may be None)\n"
-                            "- updated_at: Last update timestamp (float, Julian day)"
+                            "- watch_dir_id: Watched directory identifier (string, UUID4, may be None)\n"
+                            "- updated_at: Last update timestamp (ISO format string or None)"
                         ),
                         "count": "Number of projects found (integer)",
                     },
@@ -1731,14 +1777,16 @@ class ListProjectsMCPCommand(BaseMCPCommand):
                                 "root_path": "/home/user/projects/vast_srv",
                                 "name": "vast_srv",
                                 "comment": None,
-                                "updated_at": 2460300.123456,
+                                "watch_dir_id": "550e8400-e29b-41d4-a716-446655440000",
+                                "updated_at": "2026-01-15T10:30:00.123456",
                             },
                             {
                                 "id": "36ebabd4-a480-4175-8129-2789f89beb40",
                                 "root_path": "/home/user/projects/code_analysis",
                                 "name": "code_analysis",
                                 "comment": "Main code analysis tool",
-                                "updated_at": 2460301.789012,
+                                "watch_dir_id": "550e8400-e29b-41d4-a716-446655440000",
+                                "updated_at": "2026-01-15T11:45:00.789012",
                             },
                         ],
                         "count": 2,
@@ -1746,7 +1794,7 @@ class ListProjectsMCPCommand(BaseMCPCommand):
                 },
                 "error": {
                     "description": "Command failed",
-                    "code": "Error code (e.g., VALIDATION_ERROR, DATABASE_ERROR, LIST_PROJECTS_ERROR)",
+                    "code": "Error code (e.g., CONFIG_NOT_FOUND, DATABASE_ERROR, LIST_PROJECTS_ERROR, INVALID_WATCHED_DIR_ID)",
                     "message": "Human-readable error message",
                     "details": "Additional error details",
                 },
@@ -1755,7 +1803,7 @@ class ListProjectsMCPCommand(BaseMCPCommand):
 
     async def execute(
         self: "ListProjectsMCPCommand",
-        root_dir: str,
+        watched_dir_id: Optional[str] = None,
         **kwargs: Any,
     ) -> SuccessResult | ErrorResult:
         """
@@ -1763,28 +1811,88 @@ class ListProjectsMCPCommand(BaseMCPCommand):
 
         Args:
             self: Command instance.
-            root_dir: Server root directory.
+            watched_dir_id: Optional watched directory identifier (UUID4) to filter projects.
             **kwargs: Extra args (unused).
 
         Returns:
             SuccessResult with list of projects or ErrorResult on failure.
         """
         try:
-            # Validate and normalize root_dir
-            root_path = self._validate_root_dir(root_dir)
+            # Resolve database path from config
+            from ..core.storage_paths import load_raw_config, resolve_storage_paths
 
-            # Open database
-            database = self._open_database(str(root_path), auto_analyze=False)
+            config_path = self._resolve_config_path()
+            config_data = load_raw_config(config_path)
+            storage = resolve_storage_paths(
+                config_data=config_data, config_path=config_path
+            )
+            db_path = storage.db_path
+
+            # Get socket path and create DatabaseClient
+            from ..core.database_client.client import DatabaseClient
+            from .base_mcp_command import _get_socket_path_from_db_path
+
+            socket_path = _get_socket_path_from_db_path(db_path)
+            database = DatabaseClient(socket_path=socket_path)
+            database.connect()
+
             try:
-                # Get all projects
-                projects = database.get_all_projects()
+                # Get all projects using DatabaseClient
+                project_objects = database.list_projects()
+
+                # Filter by watched_dir_id if provided
+                if watched_dir_id:
+                    # Validate watched_dir_id exists
+                    watch_dir = database.select(
+                        "watch_dirs", where={"id": watched_dir_id}, limit=1
+                    )
+                    if not watch_dir:
+                        from ..core.exceptions import ValidationError
+
+                        return self._handle_error(
+                            ValidationError(
+                                f"Watched directory not found: {watched_dir_id}",
+                                field="watched_dir_id",
+                                details={"watched_dir_id": watched_dir_id},
+                            ),
+                            "INVALID_WATCHED_DIR_ID",
+                            "list_projects",
+                        )
+
+                    # Filter projects by watched_dir_id
+                    project_objects = [
+                        p for p in project_objects if p.watch_dir_id == watched_dir_id
+                    ]
+
+                # Convert Project objects to dictionaries for compatibility
+                projects = []
+                for project in project_objects:
+                    project_dict = {
+                        "id": project.id,
+                        "root_path": project.root_path,
+                        "name": project.name,
+                        "comment": project.comment,
+                        "watch_dir_id": project.watch_dir_id,
+                        "updated_at": (
+                            project.updated_at.isoformat()
+                            if project.updated_at
+                            else None
+                        ),
+                    }
+                    projects.append(project_dict)
+
+                filter_msg = (
+                    f" (filtered by watched_dir_id: {watched_dir_id})"
+                    if watched_dir_id
+                    else ""
+                )
 
                 return SuccessResult(
                     data={
                         "projects": projects,
                         "count": len(projects),
                     },
-                    message=f"Found {len(projects)} project(s)",
+                    message=f"Found {len(projects)} project(s){filter_msg}",
                 )
             finally:
                 database.disconnect()
@@ -1842,8 +1950,8 @@ class CreateProjectMCPCommand(BaseMCPCommand):
         return {
             "type": "object",
             "description": (
-                "Create or register a new project. "
-                "Creates projectid file and registers project in database."
+                "Create a new project atomically. "
+                "Creates project subdirectory in watch_dir, creates projectid file, and registers project in database."
             ),
             "properties": {
                 "root_dir": {
@@ -1853,41 +1961,44 @@ class CreateProjectMCPCommand(BaseMCPCommand):
                         "Must be an absolute path or relative to current working directory."
                     ),
                 },
-                "watched_dir": {
+                "watch_dir_id": {
                     "type": "string",
                     "description": (
-                        "Watched directory path. Must exist and must NOT contain projectid file. "
-                        "Must be an absolute path or relative to current working directory."
+                        "Watch directory ID (UUID4) from watch_dirs table. "
+                        "Must exist in database. Required."
                     ),
                 },
-                "project_dir": {
+                "project_name": {
                     "type": "string",
                     "description": (
-                        "Project directory path. Must exist. "
-                        "If already registered in database, returns existing project info. "
-                        "Must be an absolute path or relative to current working directory."
+                        "Name of project subdirectory to create in watch_dir. "
+                        "Required. Must be a valid directory name."
                     ),
                 },
                 "description": {
                     "type": "string",
                     "description": (
-                        "Human-readable description of the project. "
-                        "If projectid file already exists, its description is used instead. "
-                        "Default: empty string or project directory name."
+                        "Human-readable description of the project. Required."
                     ),
-                    "default": "",
+                },
+                "project_id": {
+                    "type": "string",
+                    "description": (
+                        "Optional project ID (UUID4). If not provided, will be generated automatically."
+                    ),
                 },
             },
-            "required": ["root_dir", "watched_dir", "project_dir"],
+            "required": ["root_dir", "watch_dir_id", "project_name", "description"],
             "additionalProperties": False,
         }
 
     async def execute(
         self: "CreateProjectMCPCommand",
         root_dir: str,
-        watched_dir: str,
-        project_dir: str,
-        description: str = "",
+        watch_dir_id: str,
+        project_name: str,
+        description: str,
+        project_id: Optional[str] = None,
         **kwargs: Any,
     ) -> SuccessResult | ErrorResult:
         """
@@ -1896,13 +2007,14 @@ class CreateProjectMCPCommand(BaseMCPCommand):
         Args:
             self: Command instance.
             root_dir: Server root directory.
-            watched_dir: Watched directory path.
-            project_dir: Project directory path.
-            description: Optional project description.
+            watch_dir_id: Watch directory ID from watch_dirs table.
+            project_name: Name of project subdirectory to create.
+            description: Project description (required).
+            project_id: Optional project ID (UUID4).
             **kwargs: Extra args (unused).
 
         Returns:
-            SuccessResult with project info or ErrorResult on failure.
+            SuccessResult with project_id or ErrorResult on failure.
         """
         try:
             # Validate and normalize root_dir
@@ -1916,9 +2028,10 @@ class CreateProjectMCPCommand(BaseMCPCommand):
 
                 cmd = CreateProjectCommand(
                     database=database,
-                    watched_dir=watched_dir,
-                    project_dir=project_dir,
+                    watch_dir_id=watch_dir_id,
+                    project_name=project_name,
                     description=description,
+                    project_id=project_id,
                 )
                 result = await cmd.execute()
 
@@ -1927,15 +2040,16 @@ class CreateProjectMCPCommand(BaseMCPCommand):
                     return self._handle_error(
                         ValidationError(
                             result.get("message", "Failed to create project"),
-                            field="project_dir",
+                            field="project_name",
                             details=result,
                         ),
                         error_code,
                         "create_project",
                     )
 
+                # Return only project_id as requested
                 return SuccessResult(
-                    data=result,
+                    data={"project_id": result.get("project_id")},
                     message=result.get("message", "Project created successfully"),
                 )
             finally:
@@ -1972,18 +2086,22 @@ class CreateProjectMCPCommand(BaseMCPCommand):
                 "Operation flow:\n"
                 "1. Validates root_dir exists and is a directory\n"
                 "2. Opens database connection\n"
-                "3. Validates watched_dir exists and is a directory\n"
-                "4. Checks if watched_dir contains projectid file (raises error if found)\n"
-                "5. Validates project_dir exists and is a directory\n"
-                "6. Checks if project_dir is already registered in database:\n"
-                "   - If registered: Returns existing project info (already_existed=True)\n"
+                "3. Gets or creates watch_dir_id for watched_dir:\n"
+                "   - Searches for existing watch_dir by normalized path\n"
+                "   - If found: Uses existing watch_dir_id\n"
+                "   - If not found: Creates new watch_dir and watch_dir_path entries\n"
+                "4. Validates watched_dir exists and is a directory\n"
+                "5. Checks if watched_dir contains projectid file (raises error if found)\n"
+                "6. Validates project_dir exists and is a directory\n"
+                "7. Checks if project_dir is already registered in database:\n"
+                "   - If registered: Updates watch_dir_id if needed, returns existing project info (already_existed=True)\n"
                 "   - If not registered: Continues to creation\n"
-                "7. Checks if projectid file exists in project_dir:\n"
-                "   - If exists and valid: Registers in database using existing ID\n"
+                "8. Checks if projectid file exists in project_dir:\n"
+                "   - If exists and valid: Registers in database using existing ID with watch_dir_id\n"
                 "   - If exists but invalid: Recreates projectid file\n"
                 "   - If not exists: Creates new projectid file with UUID4\n"
-                "8. Registers project in database\n"
-                "9. Returns project information\n\n"
+                "9. Registers project in database with watch_dir_id\n"
+                "10. Returns project information including watch_dir_id\n\n"
                 "Project ID File Format:\n"
                 "The projectid file is created in JSON format:\n"
                 "{\n"
@@ -2001,6 +2119,7 @@ class CreateProjectMCPCommand(BaseMCPCommand):
                 "- already_existed: True if project was already registered, False if newly created\n"
                 "- description: Project description (from file if existed, or provided)\n"
                 "- old_description: Previous description if projectid file was recreated\n"
+                "- watch_dir_id: UUID4 identifier of the watch directory (project is linked to this watch_dir)\n"
                 "- message: Status message\n\n"
                 "Use cases:\n"
                 "- Register a new project for code analysis\n"
@@ -2021,7 +2140,9 @@ class CreateProjectMCPCommand(BaseMCPCommand):
                     "description": (
                         "Watched directory path. Must exist and be a directory. "
                         "Must NOT contain projectid file. This is the parent directory "
-                        "that will be monitored for projects. Can be absolute or relative."
+                        "that will be monitored for projects. Project will be linked to this watch_dir "
+                        "via watch_dir_id. If watch_dir doesn't exist in database, it will be created. "
+                        "Can be absolute or relative."
                     ),
                     "type": "string",
                     "required": True,
@@ -2131,6 +2252,11 @@ class CreateProjectMCPCommand(BaseMCPCommand):
                         "verify database connection is working."
                     ),
                 },
+                "WATCH_DIR_ERROR": {
+                    "description": "Failed to get or create watch_dir for watched_dir",
+                    "example": "Error during watch_dir lookup or creation",
+                    "solution": "Check database connection and permissions. Verify watched_dir path is valid.",
+                },
                 "CREATE_PROJECT_ERROR": {
                     "description": "General error during project creation",
                     "example": "Unexpected error in validation or creation process",
@@ -2146,6 +2272,7 @@ class CreateProjectMCPCommand(BaseMCPCommand):
                         "already_existed": "Whether project was already registered (True) or newly created (False)",
                         "description": "Project description (from file if existed, or provided)",
                         "old_description": "Previous description if projectid file was recreated, empty otherwise",
+                        "watch_dir_id": "UUID4 identifier of the watch directory (project is linked to this watch_dir)",
                         "message": "Status message",
                     },
                     "example_new": {
@@ -2154,6 +2281,7 @@ class CreateProjectMCPCommand(BaseMCPCommand):
                         "already_existed": False,
                         "description": "My new project",
                         "old_description": "",
+                        "watch_dir_id": "928bcf10-db1c-47a3-8341-f60a6d997fe7",
                         "message": "Created and registered new project: 550e8400-e29b-41d4-a716-446655440000",
                     },
                     "example_existing": {
@@ -2162,6 +2290,7 @@ class CreateProjectMCPCommand(BaseMCPCommand):
                         "already_existed": True,
                         "description": "Existing project description",
                         "old_description": "Previous description",
+                        "watch_dir_id": "928bcf10-db1c-47a3-8341-f60a6d997fe7",
                         "message": "Project already registered: 928bcf10-db1c-47a3-8341-f60a6d997fe7",
                     },
                 },
@@ -2173,9 +2302,12 @@ class CreateProjectMCPCommand(BaseMCPCommand):
             },
             "best_practices": [
                 "Ensure watched_dir exists and does not contain projectid file",
+                "Project will be automatically linked to watched_dir via watch_dir_id",
+                "If watch_dir doesn't exist in database, it will be created automatically",
                 "Use descriptive project descriptions for better organization",
                 "If project already has projectid file, it will be used (not recreated)",
-                "If project is already registered, command returns existing info without error",
+                "If project is already registered, command updates watch_dir_id if needed and returns existing info",
                 "Always check already_existed flag to know if project was created or already existed",
+                "watch_dir_id is returned in response and can be used for CST commands",
             ],
         }

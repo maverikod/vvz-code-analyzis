@@ -227,12 +227,13 @@ class SQLiteDriver(BaseDatabaseDriver):
             table_name, where, columns, limit, offset, order_by
         )
 
-    def execute(self, sql: str, params: Optional[tuple] = None) -> Dict[str, Any]:
+    def execute(self, sql: str, params: Optional[tuple] = None, transaction_id: Optional[str] = None) -> Dict[str, Any]:
         """Execute raw SQL statement.
 
         Args:
             sql: SQL statement
             params: Optional tuple of parameters for parameterized query
+            transaction_id: Optional transaction ID. If provided, uses transaction connection.
 
         Returns:
             Dictionary with operation result (affected_rows, lastrowid, data, etc.)
@@ -240,11 +241,20 @@ class SQLiteDriver(BaseDatabaseDriver):
         Raises:
             DriverOperationError: If operation fails
         """
-        if not self.conn:
-            raise DriverOperationError("Database connection not established")
+        # Use transaction connection if transaction_id is provided
+        if transaction_id:
+            if not self._transaction_manager:
+                raise DriverOperationError("Transaction manager not initialized")
+            if transaction_id not in self._transaction_manager._transactions:
+                raise DriverOperationError(f"Transaction {transaction_id} not found")
+            conn = self._transaction_manager._transactions[transaction_id]
+        else:
+            if not self.conn:
+                raise DriverOperationError("Database connection not established")
+            conn = self.conn
 
         try:
-            cursor = self.conn.cursor()
+            cursor = conn.cursor()
             if params:
                 cursor.execute(sql, params)
             else:
@@ -260,10 +270,14 @@ class SQLiteDriver(BaseDatabaseDriver):
                 rows = cursor.fetchall()
                 result["data"] = [dict(row) for row in rows]
 
-            self.conn.commit()
+            # Only commit if not in transaction
+            if not transaction_id:
+                conn.commit()
             return result
         except Exception as e:
-            self.conn.rollback()
+            # Only rollback if not in transaction (transaction rollback is handled separately)
+            if not transaction_id:
+                conn.rollback()
             raise DriverOperationError(f"Failed to execute SQL: {e}") from e
 
     def begin_transaction(self) -> str:

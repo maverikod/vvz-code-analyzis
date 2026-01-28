@@ -67,6 +67,48 @@ def load_file_to_tree(
     return tree
 
 
+def create_tree_from_code(
+    file_path: str,
+    source_code: str,
+    node_types: Optional[List[str]] = None,
+    max_depth: Optional[int] = None,
+    include_children: bool = True,
+) -> CSTTree:
+    """
+    Create CST tree from source code string (without reading from file).
+
+    This is useful for creating trees from code that doesn't exist on disk yet.
+
+    Args:
+        file_path: Path where file will be saved (used for tree metadata)
+        source_code: Python source code string
+        node_types: Optional filter by node types (e.g., ["FunctionDef", "ClassDef"])
+        max_depth: Optional maximum depth for node filtering
+        include_children: Whether to include children information in metadata
+
+    Returns:
+        CSTTree with tree_id and metadata
+    """
+    # Parse source code
+    module = cst.parse_module(source_code)
+
+    # Create tree
+    tree = CSTTree.create(str(Path(file_path).resolve()), module)
+
+    # Build node index and metadata
+    _build_tree_index(
+        tree,
+        node_types=node_types,
+        max_depth=max_depth,
+        include_children=include_children,
+    )
+
+    # Store in memory
+    _trees[tree.tree_id] = tree
+
+    return tree
+
+
 def _build_tree_index(
     tree: CSTTree,
     node_types: Optional[List[str]] = None,

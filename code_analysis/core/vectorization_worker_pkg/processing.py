@@ -322,11 +322,16 @@ async def process_chunks(self, poll_interval: int = 30) -> Dict[str, Any]:
                     None,
                 )
                 # Extract data from result - execute() returns dict with "data" key
+                # execute() now returns full driver result: {"affected_rows": ..., "lastrowid": ..., "data": [...]}
                 projects = (
                     projects_result.get("data", [])
                     if isinstance(projects_result, dict)
                     else []
                 )
+                if projects:
+                    logger.info(
+                        f"[CYCLE #{cycle_count}] Found {len(projects)} projects with pending items: {projects}"
+                    )
                 if not projects:
                     logger.info(
                         f"[CYCLE #{cycle_count}] No projects with pending items found"

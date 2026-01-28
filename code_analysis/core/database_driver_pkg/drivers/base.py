@@ -152,12 +152,13 @@ class BaseDatabaseDriver(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    def execute(self, sql: str, params: Optional[tuple] = None) -> Dict[str, Any]:
+    def execute(self, sql: str, params: Optional[tuple] = None, transaction_id: Optional[str] = None) -> Dict[str, Any]:
         """Execute raw SQL statement.
 
         Args:
             sql: SQL statement
             params: Optional tuple of parameters for parameterized query
+            transaction_id: Optional transaction ID. If provided, uses transaction connection.
 
         Returns:
             Dictionary with operation result (affected_rows, lastrowid, data, etc.)

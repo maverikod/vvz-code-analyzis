@@ -156,16 +156,18 @@ class MultiProjectFileWatcherWorker:
                                 db_status_logged = True
                                 backoff = 1.0  # Reset backoff
 
-                                # Initialize watch_dirs on first connection
-                                if not watch_dirs_initialized:
-                                    try:
-                                        self._initialize_watch_dirs(database)
-                                        watch_dirs_initialized = True
-                                    except Exception as init_e:
-                                        logger.error(
-                                            f"Failed to initialize watch_dirs: {init_e}",
-                                            exc_info=True,
-                                        )
+                            # Initialize watch_dirs on first connection (always, not just when db becomes available)
+                            if not watch_dirs_initialized:
+                                try:
+                                    logger.info("Initializing watch directories...")
+                                    self._initialize_watch_dirs(database)
+                                    watch_dirs_initialized = True
+                                    logger.info("Watch directories initialization completed")
+                                except Exception as init_e:
+                                    logger.error(
+                                        f"Failed to initialize watch_dirs: {init_e}",
+                                        exc_info=True,
+                                    )
                                         # Continue anyway - will retry on next cycle
                             else:
                                 db_status_logged = False  # Already logged as available
@@ -862,7 +864,7 @@ class MultiProjectFileWatcherWorker:
                 normalized_path = normalize_path_simple(str(watch_dir_path))
                 database.execute(
                     """
-                    INSERT OR REPLACE INTO watch_dir_paths (watch_dir_id, path, updated_at)
+                    INSERT OR REPLACE INTO watch_dir_paths (watch_dir_id, absolute_path, updated_at)
                     VALUES (?, ?, julianday('now'))
                     """,
                     (watch_dir_id, normalized_path),
@@ -925,7 +927,7 @@ class MultiProjectFileWatcherWorker:
                 # Path doesn't exist on disk - set NULL
                 database.execute(
                     """
-                    INSERT OR REPLACE INTO watch_dir_paths (watch_dir_id, path, updated_at)
+                    INSERT OR REPLACE INTO watch_dir_paths (watch_dir_id, absolute_path, updated_at)
                     VALUES (?, NULL, julianday('now'))
                     """,
                     (watch_dir_id,),
@@ -951,7 +953,7 @@ class MultiProjectFileWatcherWorker:
                 # Not in config - set path to NULL
                 database.execute(
                     """
-                    INSERT OR REPLACE INTO watch_dir_paths (watch_dir_id, path, updated_at)
+                    INSERT OR REPLACE INTO watch_dir_paths (watch_dir_id, absolute_path, updated_at)
                     VALUES (?, NULL, julianday('now'))
                     """,
                     (db_watch_dir_id,),

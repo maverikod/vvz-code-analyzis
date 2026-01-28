@@ -59,7 +59,9 @@ class _ClientHelpersMixin:
             # Both formats have "data" key, so always extract it
             # SuccessResult format: {"success": True, "data": {"row_id": 1}}
             # DataResult format: {"success": True, "data": [...]}
-            return result_data.get("data", {})
+            # For execute() method, we need to preserve the full structure
+            # Return the full dict - execute() will handle extraction
+            return result_data
         # If result_data is not a dict (e.g., list for DataResult), return as-is
         return result_data if result_data is not None else {}
 

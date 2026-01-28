@@ -8,7 +8,11 @@ email: vasilyvz@gmail.com
 """
 
 from .models import CSTTree, TreeNodeMetadata, TreeOperation, TreeOperationType
-from .tree_builder import load_file_to_tree, reload_tree_from_file
+from .tree_builder import (
+    load_file_to_tree,
+    reload_tree_from_file,
+    create_tree_from_code,
+)
 from .tree_modifier import modify_tree
 from .tree_saver import save_tree_to_file
 from .tree_finder import find_nodes
@@ -21,6 +25,7 @@ __all__ = [
     "TreeOperationType",
     "load_file_to_tree",
     "reload_tree_from_file",
+    "create_tree_from_code",
     "modify_tree",
     "save_tree_to_file",
     "find_nodes",

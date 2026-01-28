@@ -668,8 +668,17 @@ def main() -> None:
                 )
                 return
 
+            # Filter out 'database' field - it's not part of ServerConfig model
+            # database.driver config is used separately via get_driver_config() in startup_database_driver()
+            # ServerConfig has extra="forbid", so we must exclude unknown fields
+            server_config_dict = {
+                k: v
+                for k, v in code_analysis_config.items()
+                if k != "database"
+            }
+
             # Check if SVO chunker is configured
-            server_config = ServerConfig(**code_analysis_config)
+            server_config = ServerConfig(**server_config_dict)
             if not server_config.chunker:
                 logger.warning(
                     "⚠️  No chunker config found, skipping vectorization worker"
@@ -857,8 +866,17 @@ def main() -> None:
                 )
                 return
 
+            # Filter out 'database' field - it's not part of ServerConfig model
+            # database.driver config is used separately via get_driver_config() in startup_database_driver()
+            # ServerConfig has extra="forbid", so we must exclude unknown fields
+            server_config_dict = {
+                k: v
+                for k, v in code_analysis_config.items()
+                if k != "database"
+            }
+
             # Check if file watcher is enabled
-            server_config = ServerConfig(**code_analysis_config)
+            server_config = ServerConfig(**server_config_dict)
             file_watcher_config = server_config.file_watcher
             if not file_watcher_config or not isinstance(file_watcher_config, dict):
                 logger.info(

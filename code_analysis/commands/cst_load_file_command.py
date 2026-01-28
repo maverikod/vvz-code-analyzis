@@ -37,10 +37,17 @@ class CSTLoadFileCommand(BaseMCPCommand):
         return {
             "type": "object",
             "properties": {
-                "root_dir": {"type": "string", "description": "Project root directory"},
+                "project_id": {
+                    "type": "string",
+                    "description": "Project ID (UUID4). Required.",
+                },
                 "file_path": {
                     "type": "string",
-                    "description": "Target Python file path (absolute or relative to root_dir)",
+                    "description": "Target Python file path (relative to project root)",
+                },
+                "root_dir": {
+                    "type": "string",
+                    "description": "Server root directory (optional, for database access)",
                 },
                 "node_types": {
                     "type": "array",
@@ -57,37 +64,52 @@ class CSTLoadFileCommand(BaseMCPCommand):
                     "description": "Whether to include children information in metadata",
                 },
             },
-            "required": ["root_dir", "file_path"],
+            "required": ["project_id", "file_path"],
             "additionalProperties": False,
         }
 
     async def execute(
         self,
-        root_dir: str,
+        project_id: str,
         file_path: str,
+        root_dir: Optional[str] = None,
         node_types: Optional[List[str]] = None,
         max_depth: Optional[int] = None,
         include_children: bool = True,
         **kwargs,
     ) -> SuccessResult:
         try:
-            root = Path(root_dir).resolve()
-            target = Path(file_path)
-            if not target.is_absolute():
-                target = (root / target).resolve()
+            # Resolve server root_dir for database access
+            if not root_dir:
+                from ..core.storage_paths import (
+                    load_raw_config,
+                    resolve_storage_paths,
+                )
 
-            if target.suffix != ".py":
-                return ErrorResult(
-                    message="Target file must be a .py file",
-                    code="INVALID_FILE",
-                    details={"file_path": str(target)},
+                config_path = self._resolve_config_path()
+                config_data = load_raw_config(config_path)
+                storage = resolve_storage_paths(
+                    config_data=config_data, config_path=config_path
                 )
-            if not target.exists():
-                return ErrorResult(
-                    message="Target file does not exist",
-                    code="FILE_NOT_FOUND",
-                    details={"file_path": str(target)},
+                # Use server root from config or default
+                root_dir = str(storage.config_dir.parent) if hasattr(storage, 'config_dir') else "/"
+
+            # Open database
+            database = self._open_database(root_dir, auto_analyze=False)
+            try:
+                # Resolve absolute path using project_id and watch_dir/project_name
+                target = self._resolve_file_path_from_project(
+                    database, project_id, file_path
                 )
+
+                if target.suffix != ".py":
+                    return ErrorResult(
+                        message="Target file must be a .py file",
+                        code="INVALID_FILE",
+                        details={"file_path": str(target)},
+                    )
+            finally:
+                database.disconnect()
 
             # Load file into tree
             tree = load_file_to_tree(
@@ -147,15 +169,17 @@ class CSTLoadFileCommand(BaseMCPCommand):
                 "cst_save_tree, cst_find_node). The full CST tree is stored on the server, and only "
                 "node metadata is returned to the client.\n\n"
                 "Operation flow:\n"
-                "1. Validates root_dir exists and is a directory\n"
-                "2. Resolves file_path (absolute or relative to root_dir)\n"
-                "3. Validates file is a .py file\n"
-                "4. Validates file exists\n"
-                "5. Reads file source code\n"
-                "6. Parses source using LibCST\n"
-                "7. Builds node index and metadata\n"
-                "8. Stores tree in memory with tree_id\n"
-                "9. Returns tree_id and node metadata\n\n"
+                "1. Gets project from database using project_id\n"
+                "2. Validates project is linked to watch directory\n"
+                "3. Gets watch directory path from database\n"
+                "4. Forms absolute path: watch_dir_path / project_name / file_path\n"
+                "5. Validates file is a .py file\n"
+                "6. Validates file exists\n"
+                "7. Reads file source code\n"
+                "8. Parses source using LibCST\n"
+                "9. Builds node index and metadata\n"
+                "10. Stores tree in memory with tree_id\n"
+                "11. Returns tree_id and node metadata\n\n"
                 "Node Metadata:\n"
                 "Each node includes:\n"
                 "- node_id: Stable identifier for operations\n"
@@ -183,15 +207,20 @@ class CSTLoadFileCommand(BaseMCPCommand):
                 "- Filters reduce returned metadata, but full tree is still stored"
             ),
             "parameters": {
-                "root_dir": {
-                    "description": "Project root directory path. Use absolute path for reliability.",
+                "project_id": {
+                    "description": "Project ID (UUID4). Project must be linked to a watch directory.",
                     "type": "string",
                     "required": True,
                 },
                 "file_path": {
-                    "description": "Target Python file path. Can be absolute or relative to root_dir.",
+                    "description": "Target Python file path (relative to project root). Absolute path is formed as: watch_dir_path / project_name / file_path",
                     "type": "string",
                     "required": True,
+                },
+                "root_dir": {
+                    "description": "Server root directory (optional, for database access). If not provided, will be resolved from config.",
+                    "type": "string",
+                    "required": False,
                 },
                 "node_types": {
                     "description": "Optional filter by node types. Only nodes matching these types will be included in metadata.",
@@ -256,18 +285,19 @@ class CSTLoadFileCommand(BaseMCPCommand):
                 {
                     "description": "Load file without filters",
                     "command": {
-                        "root_dir": "/home/user/projects/my_project",
+                        "project_id": "928bcf10-db1c-47a3-8341-f60a6d997fe7",
                         "file_path": "src/main.py",
                     },
                     "explanation": (
                         "Loads entire file into CST tree. Returns all nodes with full metadata. "
+                        "Absolute path is formed as: watch_dir_path / project_name / src/main.py. "
                         "Use this when you need to work with all nodes in the file."
                     ),
                 },
                 {
                     "description": "Load only functions and classes",
                     "command": {
-                        "root_dir": "/home/user/projects/my_project",
+                        "project_id": "928bcf10-db1c-47a3-8341-f60a6d997fe7",
                         "file_path": "src/models.py",
                         "node_types": ["FunctionDef", "ClassDef"],
                     },
@@ -280,7 +310,7 @@ class CSTLoadFileCommand(BaseMCPCommand):
                 {
                     "description": "Load with depth limit",
                     "command": {
-                        "root_dir": "/home/user/projects/my_project",
+                        "project_id": "928bcf10-db1c-47a3-8341-f60a6d997fe7",
                         "file_path": "src/main.py",
                         "max_depth": 2,
                     },
@@ -292,7 +322,7 @@ class CSTLoadFileCommand(BaseMCPCommand):
                 {
                     "description": "Load without children information",
                     "command": {
-                        "root_dir": "/home/user/projects/my_project",
+                        "project_id": "928bcf10-db1c-47a3-8341-f60a6d997fe7",
                         "file_path": "src/utils.py",
                         "include_children": False,
                     },
@@ -304,7 +334,7 @@ class CSTLoadFileCommand(BaseMCPCommand):
                 {
                     "description": "Load specific statement types",
                     "command": {
-                        "root_dir": "/home/user/projects/my_project",
+                        "project_id": "928bcf10-db1c-47a3-8341-f60a6d997fe7",
                         "file_path": "src/main.py",
                         "node_types": ["If", "For", "Try", "With"],
                     },
@@ -348,7 +378,9 @@ class CSTLoadFileCommand(BaseMCPCommand):
                 },
             },
             "best_practices": [
-                "Use absolute paths for root_dir for reliability",
+                "Always provide project_id - it is required and used to form absolute path",
+                "Ensure project is linked to watch directory before using this command",
+                "Use relative file_path from project root (e.g., 'src/main.py' not '/absolute/path')",
                 "Use node_types filter to reduce metadata size when only specific types are needed",
                 "Use max_depth to limit analysis scope",
                 "Set include_children=False if children information is not needed",

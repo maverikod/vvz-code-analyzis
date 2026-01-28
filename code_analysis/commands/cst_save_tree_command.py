@@ -42,12 +42,18 @@ class CSTSaveTreeCommand(BaseMCPCommand):
                     "type": "string",
                     "description": "Tree ID from cst_load_file",
                 },
-                "root_dir": {"type": "string", "description": "Project root directory"},
+                "project_id": {
+                    "type": "string",
+                    "description": "Project ID (UUID4). Required.",
+                },
                 "file_path": {
                     "type": "string",
-                    "description": "Target file path (absolute or relative to root_dir)",
+                    "description": "Target file path (relative to project root)",
                 },
-                "project_id": {"type": "string", "description": "Project ID"},
+                "root_dir": {
+                    "type": "string",
+                    "description": "Server root directory (optional, for database access)",
+                },
                 "dataset_id": {
                     "type": "string",
                     "description": "Dataset ID (optional, will be created if not provided)",
@@ -72,16 +78,16 @@ class CSTSaveTreeCommand(BaseMCPCommand):
                     "description": "Automatically reload tree from file after save (keeps tree_id valid)",
                 },
             },
-            "required": ["tree_id", "root_dir", "file_path", "project_id"],
+            "required": ["tree_id", "project_id", "file_path"],
             "additionalProperties": False,
         }
 
     async def execute(
         self,
         tree_id: str,
-        root_dir: str,
-        file_path: str,
         project_id: str,
+        file_path: str,
+        root_dir: Optional[str] = None,
         dataset_id: Optional[str] = None,
         validate: bool = True,
         backup: bool = True,
@@ -90,63 +96,84 @@ class CSTSaveTreeCommand(BaseMCPCommand):
         **kwargs,
     ) -> SuccessResult:
         try:
-            root = Path(root_dir).resolve()
-            if not root.exists() or not root.is_dir():
-                return ErrorResult(
-                    message="root_dir does not exist or is not a directory",
-                    code="INVALID_ROOT_DIR",
-                    details={"root_dir": str(root)},
+            # Resolve server root_dir for database access
+            if not root_dir:
+                from ..core.storage_paths import (
+                    load_raw_config,
+                    resolve_storage_paths,
                 )
+
+                config_path = self._resolve_config_path()
+                config_data = load_raw_config(config_path)
+                storage = resolve_storage_paths(
+                    config_data=config_data, config_path=config_path
+                )
+                root_dir = str(storage.config_dir.parent) if hasattr(storage, 'config_dir') else "/"
 
             # Get database connection
             database = self._open_database(root_dir, auto_analyze=False)
-
-            # Get or create dataset_id if not provided
-            if not dataset_id:
-                from ..core.project_resolution import normalize_root_dir
-
-                normalized_root = str(normalize_root_dir(root_dir))
-                from .base_mcp_command import BaseMCPCommand
-
-                dataset_id = BaseMCPCommand._get_or_create_dataset(
-                    database, project_id, normalized_root
+            try:
+                # Resolve absolute file path using project_id and watch_dir/project_name
+                absolute_file_path = self._resolve_file_path_from_project(
+                    database, project_id, file_path
                 )
-
-            # Save tree to file
-            result = save_tree_to_file(
-                tree_id=tree_id,
-                file_path=file_path,
-                root_dir=root,
-                project_id=project_id,
-                dataset_id=dataset_id,
-                database=database,
-                validate=validate,
-                backup=backup,
-                commit_message=commit_message,
-            )
-
-            if not result.get("success"):
-                return ErrorResult(
-                    message=result.get("error", "Failed to save tree"),
-                    code="CST_SAVE_ERROR",
-                    details=result,
-                )
-
-            # Automatically reload tree from file to sync with saved file
-            if auto_reload:
-                try:
-                    reload_tree_from_file(tree_id=tree_id)
-                    result["tree_reloaded"] = True
-                except Exception as reload_error:
-                    logger.warning(
-                        f"Failed to auto-reload tree after save: {reload_error}"
+                
+                # Get project root from project
+                project = database.get_project(project_id)
+                if not project:
+                    return ErrorResult(
+                        message=f"Project {project_id} not found",
+                        code="PROJECT_NOT_FOUND",
+                        details={"project_id": project_id},
                     )
-                    result["tree_reloaded"] = False
-                    result["reload_error"] = str(reload_error)
-            else:
-                result["tree_reloaded"] = False
+                
+                project_root = Path(project.root_path)
 
-            return SuccessResult(data=result)
+                # Get or create dataset_id if not provided
+                if not dataset_id:
+                    from .base_mcp_command import BaseMCPCommand
+
+                    dataset_id = BaseMCPCommand._get_or_create_dataset(
+                        database, project_id, str(project_root)
+                    )
+
+                # Save tree to file
+                result = save_tree_to_file(
+                    tree_id=tree_id,
+                    file_path=str(absolute_file_path),
+                    root_dir=project_root,
+                    project_id=project_id,
+                    dataset_id=dataset_id,
+                    database=database,
+                    validate=validate,
+                    backup=backup,
+                    commit_message=commit_message,
+                )
+
+                if not result.get("success"):
+                    return ErrorResult(
+                        message=result.get("error", "Failed to save tree"),
+                        code="CST_SAVE_ERROR",
+                        details=result,
+                    )
+
+                # Automatically reload tree from file to sync with saved file
+                if auto_reload:
+                    try:
+                        reload_tree_from_file(tree_id=tree_id)
+                        result["tree_reloaded"] = True
+                    except Exception as reload_error:
+                        logger.warning(
+                            f"Failed to auto-reload tree after save: {reload_error}"
+                        )
+                        result["tree_reloaded"] = False
+                        result["reload_error"] = str(reload_error)
+                else:
+                    result["tree_reloaded"] = False
+
+                return SuccessResult(data=result)
+            finally:
+                database.disconnect()
 
         except Exception as e:
             logger.exception("cst_save_tree failed: %s", e)
@@ -174,18 +201,21 @@ class CSTSaveTreeCommand(BaseMCPCommand):
                 "If any error occurs during the save process, all changes are rolled back and the "
                 "file is restored from backup.\n\n"
                 "Operation flow:\n"
-                "1. Validates root_dir exists and is a directory\n"
-                "2. Validates original file (if exists) through compile()\n"
-                "3. Creates backup via BackupManager (if file exists and backup=True)\n"
-                "4. Generates source code from CST tree\n"
-                "5. Writes to temporary file\n"
-                "6. Validates temporary file (compile, syntax check)\n"
-                "7. Begins database transaction\n"
-                "8. Atomically replaces file via os.replace()\n"
-                "9. Updates database (add_file, update_file_data_atomic)\n"
-                "10. Commits database transaction\n"
-                "11. Creates git commit (if commit_message provided)\n"
-                "12. On any error: rolls back transaction and restores from backup\n\n"
+                "1. Gets project from database using project_id\n"
+                "2. Validates project is linked to watch directory\n"
+                "3. Gets watch directory path from database\n"
+                "4. Forms absolute path: watch_dir_path / project_name / file_path\n"
+                "5. Validates original file (if exists) through compile()\n"
+                "6. Creates backup via BackupManager (if file exists and backup=True)\n"
+                "7. Generates source code from CST tree\n"
+                "8. Writes to temporary file\n"
+                "9. Validates temporary file (compile, syntax check)\n"
+                "10. Begins database transaction\n"
+                "11. Atomically replaces file via os.replace()\n"
+                "12. Updates database (add_file, update_file_data_atomic)\n"
+                "13. Commits database transaction\n"
+                "14. Creates git commit (if commit_message provided)\n"
+                "15. On any error: rolls back transaction and restores from backup\n\n"
                 "Atomicity Guarantees:\n"
                 "- File is either completely updated or completely unchanged\n"
                 "- Database is either completely updated or rolled back\n"
@@ -214,25 +244,25 @@ class CSTSaveTreeCommand(BaseMCPCommand):
                     "type": "string",
                     "required": True,
                 },
-                "root_dir": {
-                    "description": "Project root directory path. Use absolute path for reliability.",
+                "project_id": {
+                    "description": "Project ID (UUID4). Project must be linked to a watch directory.",
                     "type": "string",
                     "required": True,
                 },
                 "file_path": {
-                    "description": "Target file path. Can be absolute or relative to root_dir.",
+                    "description": "Target file path (relative to project root). Absolute path is formed as: watch_dir_path / project_name / file_path",
                     "type": "string",
                     "required": True,
                 },
-                "project_id": {
-                    "description": "Project ID (UUID4 string)",
+                "root_dir": {
+                    "description": "Server root directory (optional, for database access). If not provided, will be resolved from config.",
                     "type": "string",
-                    "required": True,
+                    "required": False,
                 },
                 "dataset_id": {
-                    "description": "Dataset ID (UUID4 string)",
+                    "description": "Dataset ID (UUID4 string, optional, will be created if not provided)",
                     "type": "string",
-                    "required": True,
+                    "required": False,
                 },
                 "validate": {
                     "description": "Whether to validate file before saving. Default is True.",
@@ -296,13 +326,12 @@ class CSTSaveTreeCommand(BaseMCPCommand):
                     "description": "Save tree with default options",
                     "command": {
                         "tree_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
-                        "root_dir": "/home/user/projects/my_project",
+                        "project_id": "928bcf10-db1c-47a3-8341-f60a6d997fe7",
                         "file_path": "src/main.py",
-                        "project_id": "project-uuid-1234",
-                        "dataset_id": "dataset-uuid-5678",
                     },
                     "explanation": (
                         "Saves tree to file with validation and backup enabled by default. "
+                        "Absolute path is formed as: watch_dir_path / project_name / src/main.py. "
                         "File is validated, backup is created, and database is updated atomically. "
                         "If any step fails, all changes are rolled back."
                     ),
@@ -311,10 +340,8 @@ class CSTSaveTreeCommand(BaseMCPCommand):
                     "description": "Save without validation",
                     "command": {
                         "tree_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
-                        "root_dir": "/home/user/projects/my_project",
+                        "project_id": "928bcf10-db1c-47a3-8341-f60a6d997fe7",
                         "file_path": "src/main.py",
-                        "project_id": "project-uuid-1234",
-                        "dataset_id": "dataset-uuid-5678",
                         "validate": False,
                     },
                     "explanation": (
@@ -327,10 +354,8 @@ class CSTSaveTreeCommand(BaseMCPCommand):
                     "description": "Save without backup",
                     "command": {
                         "tree_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
-                        "root_dir": "/home/user/projects/my_project",
+                        "project_id": "928bcf10-db1c-47a3-8341-f60a6d997fe7",
                         "file_path": "src/main.py",
-                        "project_id": "project-uuid-1234",
-                        "dataset_id": "dataset-uuid-5678",
                         "backup": False,
                     },
                     "explanation": (
@@ -343,10 +368,8 @@ class CSTSaveTreeCommand(BaseMCPCommand):
                     "description": "Save with git commit",
                     "command": {
                         "tree_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
-                        "root_dir": "/home/user/projects/my_project",
+                        "project_id": "928bcf10-db1c-47a3-8341-f60a6d997fe7",
                         "file_path": "src/main.py",
-                        "project_id": "project-uuid-1234",
-                        "dataset_id": "dataset-uuid-5678",
                         "commit_message": "Refactor: update main function",
                     },
                     "explanation": (
@@ -359,10 +382,8 @@ class CSTSaveTreeCommand(BaseMCPCommand):
                     "description": "Save to new file",
                     "command": {
                         "tree_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
-                        "root_dir": "/home/user/projects/my_project",
+                        "project_id": "928bcf10-db1c-47a3-8341-f60a6d997fe7",
                         "file_path": "src/new_file.py",
-                        "project_id": "project-uuid-1234",
-                        "dataset_id": "dataset-uuid-5678",
                     },
                     "explanation": (
                         "Saves tree to a new file. No backup is created (file doesn't exist). "
@@ -374,10 +395,8 @@ class CSTSaveTreeCommand(BaseMCPCommand):
                     "description": "Save with all options",
                     "command": {
                         "tree_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
-                        "root_dir": "/home/user/projects/my_project",
+                        "project_id": "928bcf10-db1c-47a3-8341-f60a6d997fe7",
                         "file_path": "src/main.py",
-                        "project_id": "project-uuid-1234",
-                        "dataset_id": "dataset-uuid-5678",
                         "validate": True,
                         "backup": True,
                         "commit_message": "Refactor: major update",
@@ -390,10 +409,10 @@ class CSTSaveTreeCommand(BaseMCPCommand):
                 },
             ],
             "error_cases": {
-                "INVALID_ROOT_DIR": {
-                    "description": "Root directory is invalid",
-                    "message": "root_dir does not exist or is not a directory",
-                    "solution": "Verify root_dir path is correct and points to a directory",
+                "PROJECT_NOT_FOUND": {
+                    "description": "Project not found in database",
+                    "message": "Project {project_id} not found",
+                    "solution": "Verify project_id is correct and project exists in database",
                 },
                 "CST_SAVE_ERROR": {
                     "description": "Error during save operation",
@@ -438,8 +457,10 @@ class CSTSaveTreeCommand(BaseMCPCommand):
             },
             "best_practices": [
                 "Always use validate=True (default) unless you're certain code is valid",
+                "Always provide project_id - it is required and used to form absolute path",
+                "Ensure project is linked to watch directory before using this command",
+                "Use relative file_path from project root (e.g., 'src/main.py' not '/absolute/path')",
                 "Always use backup=True (default) for safety",
-                "Use absolute paths for root_dir for reliability",
                 "Save tree immediately after modifications to avoid memory issues",
                 "Check return value to ensure save was successful",
                 "Use commit_message for version control integration",

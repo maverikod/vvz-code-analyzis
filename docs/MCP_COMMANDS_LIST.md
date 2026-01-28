@@ -45,6 +45,14 @@
 - **Required params**: `project_id`, `file_path`, `docstring`
 - **Optional params**: `root_dir`
 
+### `cst_convert_and_save`
+- **Version**: 1.0.0
+- **Category**: cst
+- **Description**: Convert source code to CST, save CST and AST to database, optionally save to file
+- **Required params**: `project_id`, `file_path`, `source_code`
+- **Optional params**: `save_to_file` (default: True), `root_dir`
+- **Note**: Saves both AST (as JSON in ast_trees table) and CST (as source code in cst_trees table)
+
 ### `cst_load_file`
 - **Version**: 1.0.0
 - **Category**: cst
@@ -496,11 +504,11 @@
 
 ## Summary
 
-**Total Commands**: ~71+ MCP commands
+**Total Commands**: ~72+ MCP commands
 
 **Categories**:
 - **Project Management**: 5 commands
-- **CST (Concrete Syntax Tree)**: 10 commands
+- **CST (Concrete Syntax Tree)**: 11 commands
 - **AST (Abstract Syntax Tree)**: 11 commands
 - **Vectorization**: 4 commands
 - **Analysis**: 6 commands

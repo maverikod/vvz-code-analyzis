@@ -38,6 +38,13 @@
 
 ## CST (Concrete Syntax Tree) Commands
 
+### `cst_create_file`
+- **Version**: 1.0.0
+- **Category**: cst
+- **Description**: Create a new Python file with docstring and return tree_id. Creates file on disk and in database.
+- **Required params**: `project_id`, `file_path`, `docstring`
+- **Optional params**: `root_dir`
+
 ### `cst_load_file`
 - **Version**: 1.0.0
 - **Category**: cst
@@ -489,11 +496,11 @@
 
 ## Summary
 
-**Total Commands**: ~70+ MCP commands
+**Total Commands**: ~71+ MCP commands
 
 **Categories**:
 - **Project Management**: 5 commands
-- **CST (Concrete Syntax Tree)**: 9 commands
+- **CST (Concrete Syntax Tree)**: 10 commands
 - **AST (Abstract Syntax Tree)**: 11 commands
 - **Vectorization**: 4 commands
 - **Analysis**: 6 commands

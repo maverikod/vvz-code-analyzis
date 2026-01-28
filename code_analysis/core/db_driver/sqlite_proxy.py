@@ -484,6 +484,11 @@ class SQLiteDriverProxy(BaseDatabaseDriver):
                     logger.debug(
                         f"[SQLITE_PROXY] Operation '{operation}' completed successfully"
                     )
+                    # Extract result from worker response format
+                    # Worker returns: {"success": True, "result": {...}, "error": None}
+                    # We need to return the actual result dict
+                    if isinstance(result, dict) and "result" in result:
+                        return result["result"]
                     return result
                 else:
                     raise DatabaseOperationError(

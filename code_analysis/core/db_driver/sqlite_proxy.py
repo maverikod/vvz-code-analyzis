@@ -547,9 +547,25 @@ class SQLiteDriverProxy(BaseDatabaseDriver):
             "[SQLITE_PROXY] DB driver disconnected (worker remains running for other connections)"
         )
 
-    def execute(self, sql: str, params: Optional[Tuple[Any, ...]] = None) -> None:
-        """Execute SQL statement."""
-        transaction_id = getattr(self, "_transaction_id", None)
+    def execute(
+        self,
+        sql: str,
+        params: Optional[Tuple[Any, ...]] = None,
+        transaction_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Execute SQL statement.
+
+        Args:
+            sql: SQL statement
+            params: Optional parameters tuple
+            transaction_id: Optional transaction ID
+
+        Returns:
+            Dictionary with operation result
+        """
+        # Use provided transaction_id or fallback to instance attribute
+        if transaction_id is None:
+            transaction_id = getattr(self, "_transaction_id", None)
         result = self._execute_operation(
             "execute", sql=sql, params=params, transaction_id=transaction_id
         )

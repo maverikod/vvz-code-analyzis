@@ -91,6 +91,7 @@ class TestCommandsIntegration:
             locks_dir=tmp_path / "locks",
             queue_dir=tmp_path / "queue",
             backup_dir=tmp_path / "backups",
+            trash_dir=tmp_path / "trash",
         )
 
     def _check_test_data_available(self):

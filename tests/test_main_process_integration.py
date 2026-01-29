@@ -103,6 +103,7 @@ class TestMainProcessIntegration:
             locks_dir=tmp_path / "locks",
             queue_dir=None,
             backup_dir=tmp_path / "backups",
+            trash_dir=tmp_path / "trash",
         )
 
     def test_startup_database_driver_success(
@@ -117,31 +118,31 @@ class TestMainProcessIntegration:
         """Test successful database driver startup via WorkerManager (simulating startup_database_driver logic)."""
         # This test simulates the logic of startup_database_driver() without importing main.py
         # The actual function is defined inside main() and cannot be imported directly
-        
+
         from code_analysis.core.config import get_driver_config
-        
+
         # Get driver config (same logic as in startup_database_driver)
         driver_config_loaded = get_driver_config(app_config_with_driver)
         assert driver_config_loaded is not None
-        
+
         # Ensure logs directory exists
         logs_dir = tmp_path / "config" / "logs"
         logs_dir.mkdir(parents=True, exist_ok=True)
         log_path = str(logs_dir / "database_driver.log")
-        
+
         # Start database driver using WorkerManager (same as startup_database_driver does)
         result = worker_manager.start_database_driver(
             driver_config=driver_config_loaded,
             log_path=log_path,
         )
-        
+
         # Verify driver was started
         assert result.success is True
         status = worker_manager.get_database_driver_status()
         assert status["running"] is True
         assert status["pid"] is not None
         assert status["driver_type"] == "sqlite"
-        
+
         # Cleanup
         worker_manager.stop_database_driver(timeout=2.0)
 
@@ -155,10 +156,10 @@ class TestMainProcessIntegration:
         """Test startup logic when no driver config is found."""
         # This test simulates the logic when no driver config is found
         from code_analysis.core.config import get_driver_config
-        
+
         # Get driver config - should return None when no config
         driver_config = get_driver_config(app_config_without_driver)
-        
+
         # Verify no config found (startup_database_driver would return early)
         assert driver_config is None
 
@@ -172,18 +173,18 @@ class TestMainProcessIntegration:
         """Test error handling when driver startup fails."""
         # Test that WorkerManager handles errors gracefully
         from code_analysis.core.config import get_driver_config
-        
+
         # Get valid driver config
         driver_config_loaded = get_driver_config(app_config_with_driver)
         assert driver_config_loaded is not None
-        
+
         # Try to start with invalid config (missing path)
         invalid_config = {"type": "sqlite", "config": {}}
         result = worker_manager.start_database_driver(
             driver_config=invalid_config,
             log_path=str(tmp_path / "driver.log"),
         )
-        
+
         # Should handle error gracefully (may fail but shouldn't raise exception)
         # Result may be success=False, which is acceptable
         assert isinstance(result.success, bool)
@@ -197,21 +198,21 @@ class TestMainProcessIntegration:
     ):
         """Test error handling when worker manager fails to start driver."""
         from code_analysis.core.config import get_driver_config
-        
+
         # Get driver config
         driver_config_loaded = get_driver_config(app_config_with_driver)
         assert driver_config_loaded is not None
-        
+
         # Test with invalid socket path (should handle error gracefully)
         logs_dir = tmp_path / "logs"
         logs_dir.mkdir(parents=True, exist_ok=True)
-        
+
         # Start driver - should work or fail gracefully
         result = worker_manager.start_database_driver(
             driver_config=driver_config_loaded,
             log_path=str(logs_dir / "driver.log"),
         )
-        
+
         # Result should be a valid WorkerStartResult
         assert isinstance(result, WorkerStartResult)
         assert isinstance(result.success, bool)
@@ -227,26 +228,26 @@ class TestMainProcessIntegration:
         # This test verifies that driver startup works correctly
         # Full integration test with real server would verify actual startup sequence
         from code_analysis.core.config import get_driver_config
-        
+
         # Get driver config
         driver_config_loaded = get_driver_config(app_config_with_driver)
         assert driver_config_loaded is not None
-        
+
         # Ensure logs directory exists
         logs_dir = tmp_path / "logs"
         logs_dir.mkdir(parents=True, exist_ok=True)
-        
+
         # Start database driver (first in sequence)
         result = worker_manager.start_database_driver(
             driver_config=driver_config_loaded,
             log_path=str(logs_dir / "database_driver.log"),
         )
-        
+
         # Verify driver started successfully
         assert result.success is True
         status = worker_manager.get_database_driver_status()
         assert status["running"] is True
-        
+
         # Cleanup
         worker_manager.stop_database_driver(timeout=2.0)
 
@@ -277,18 +278,18 @@ class TestMainProcessIntegration:
         """Test driver config loading from file (simulating config_path fallback)."""
         # This test verifies that config can be loaded from file
         from code_analysis.core.config import get_driver_config
-        
+
         # Write config to file
         config_path = tmp_path / "config.json"
         config_path.write_text(json.dumps(app_config_with_driver))
-        
+
         # Load config from file
         with open(config_path, "r", encoding="utf-8") as f:
             config_from_file = json.load(f)
-        
+
         # Get driver config from loaded config
         driver_config_loaded = get_driver_config(config_from_file)
-        
+
         # Verify config was loaded correctly
         assert driver_config_loaded is not None
         assert driver_config_loaded["type"] == "sqlite"

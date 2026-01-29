@@ -210,11 +210,3 @@ def get_faiss_index_path(faiss_dir: Path, project_id: str, dataset_id: str) -> P
     # Ensure parent directory exists
     index_file.parent.mkdir(parents=True, exist_ok=True)
     return index_file
-
-
-# Test change понеділок, 5 січня 2026 12:57:11 +0200
-# Second test change понеділок, 5 січня 2026 12:59:26 +0200
-# Third change 1767610869
-# Final test change 1767611059
-# Auto-detection test 1767611193
-# Change detection test 1767611302

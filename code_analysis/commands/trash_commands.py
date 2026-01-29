@@ -58,7 +58,12 @@ class ListTrashedProjectsCommand:
             Dict with success, items: [{ folder_name, original_name, deleted_at, path }].
         """
         if not self.trash_dir.exists():
-            return {"success": True, "items": [], "trash_dir": str(self.trash_dir)}
+            return {
+                "success": True,
+                "items": [],
+                "trash_dir": str(self.trash_dir),
+                "count": 0,
+            }
 
         items: List[Dict[str, Any]] = []
         try:

@@ -513,10 +513,13 @@ def register_code_analysis_commands(reg: registry) -> None:
     try:
         from .commands.project_management_mcp_commands import (
             ChangeProjectIdMCPCommand,
+            ClearTrashMCPCommand,
             CreateProjectMCPCommand,
             DeleteProjectMCPCommand,
             DeleteUnwatchedProjectsMCPCommand,
             ListProjectsMCPCommand,
+            ListTrashedProjectsMCPCommand,
+            PermanentlyDeleteFromTrashMCPCommand,
         )
 
         reg.register(ChangeProjectIdMCPCommand, "custom")
@@ -524,12 +527,16 @@ def register_code_analysis_commands(reg: registry) -> None:
         reg.register(DeleteProjectMCPCommand, "custom")
         reg.register(DeleteUnwatchedProjectsMCPCommand, "custom")
         reg.register(ListProjectsMCPCommand, "custom")
+        reg.register(ListTrashedProjectsMCPCommand, "custom")
+        reg.register(PermanentlyDeleteFromTrashMCPCommand, "custom")
+        reg.register(ClearTrashMCPCommand, "custom")
         import logging
 
         logger = logging.getLogger(__name__)
         logger.info(
             "✅ Registered project management commands: "
-            "change_project_id, create_project, delete_project, delete_unwatched_projects, list_projects"
+            "change_project_id, create_project, delete_project, delete_unwatched_projects, "
+            "list_projects, list_trashed_projects, permanently_delete_from_trash, clear_trash"
         )
     except ImportError as e:
         import logging

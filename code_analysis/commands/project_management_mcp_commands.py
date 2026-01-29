@@ -812,7 +812,7 @@ class DeleteProjectMCPCommand(BaseMCPCommand):
                 "delete_from_disk": {
                     "type": "boolean",
                     "description": (
-                        "If True, also delete project root directory and all files from version directory. "
+                        "If True, move project root directory to trash (recycle bin) and delete version directory. "
                         "If False, only delete from database. Default: False."
                     ),
                     "default": False,
@@ -887,17 +887,18 @@ class DeleteProjectMCPCommand(BaseMCPCommand):
                         "delete_project",
                     )
 
-                # Get version_dir from config if delete_from_disk is True
+                # Get version_dir and trash_dir from config if delete_from_disk is True
                 version_dir = None
+                trash_dir = None
                 if delete_from_disk:
                     file_watcher_config = config_data.get("code_analysis", {}).get(
                         "file_watcher", {}
                     )
                     version_dir = file_watcher_config.get("version_dir")
                     if not version_dir:
-                        # Default: data/versions relative to config_dir
-                        config_dir = Path(config_path).parent
-                        version_dir = str(config_dir / "data" / "versions")
+                        config_dir_path = Path(config_path).parent
+                        version_dir = str(config_dir_path / "data" / "versions")
+                    trash_dir = str(storage.trash_dir)
 
                 # Import and execute command
                 from .project_deletion import DeleteProjectCommand
@@ -908,6 +909,7 @@ class DeleteProjectMCPCommand(BaseMCPCommand):
                     dry_run=dry_run,
                     delete_from_disk=delete_from_disk,
                     version_dir=version_dir,
+                    trash_dir=trash_dir,
                 )
                 result = await cmd.execute()
 
@@ -965,11 +967,12 @@ class DeleteProjectMCPCommand(BaseMCPCommand):
                 "   - Shows what would be deleted from disk (if delete_from_disk=True)\n"
                 "   - Does not perform actual deletion\n"
                 "6. If dry_run=False:\n"
-                "   a. If delete_from_disk=True:\n"
-                "      * Deletes project root directory from disk (recursively)\n"
-                "      * Deletes all files from version directory for this project ({version_dir}/{project_id}/)\n"
-                "      * Continues even if disk deletion fails (errors are logged)\n"
-                "   b. Deletes all project data from database:\n"
+                "   a. Deletes all project data from database first (while project dir still exists)\n"
+                "   b. If delete_from_disk=True:\n"
+                "      * Moves project root directory to trash (recycle bin); does NOT permanently delete\n"
+                "      * Permanently deletes version directory for this project ({version_dir}/{project_id}/)\n"
+                "      * Continues even if move/delete fails (errors are logged)\n"
+                "   c. Database deletion:\n"
                 "      * All files and their associated data (classes, functions, methods, imports, usages)\n"
                 "      * All chunks and removes from FAISS vector index\n"
                 "      * All duplicates\n"
@@ -988,10 +991,10 @@ class DeleteProjectMCPCommand(BaseMCPCommand):
                 "- Datasets: All dataset records\n"
                 "- AST/CST: All AST and CST trees\n"
                 "- Project record: The project itself\n\n"
-                "Deleted Data (Disk, if delete_from_disk=True):\n"
-                "- Project root directory: Entire project directory tree is removed\n"
-                "- Version directory: All files in {version_dir}/{project_id}/ are removed\n"
-                "  Version directory is typically 'data/versions' relative to config directory\n\n"
+                "Disk (if delete_from_disk=True):\n"
+                "- Project root directory: Moved to trash (recycle bin), not permanently deleted. Use list_trashed_projects / permanently_delete_from_trash / clear_trash to manage.\n"
+                "- Version directory: Permanently removed ({version_dir}/{project_id}/)\n"
+                "  Trash directory is typically 'data/trash' (config: code_analysis.storage.trash_dir)\n\n"
                 "Use cases:\n"
                 "- Remove projects that are no longer needed (database only)\n"
                 "- Completely remove projects including files from disk\n"
@@ -1034,9 +1037,9 @@ class DeleteProjectMCPCommand(BaseMCPCommand):
                 },
                 "delete_from_disk": {
                     "description": (
-                        "If True, also deletes project root directory and all files from version directory. "
+                        "If True, moves project root directory to trash (recycle bin) and deletes version directory. "
                         "If False (default), only deletes from database. "
-                        "WARNING: This permanently removes files from disk and cannot be undone."
+                        "Trashed projects can be listed with list_trashed_projects and permanently removed with permanently_delete_from_trash or clear_trash."
                     ),
                     "type": "boolean",
                     "required": False,
@@ -1067,15 +1070,15 @@ class DeleteProjectMCPCommand(BaseMCPCommand):
                     ),
                 },
                 {
-                    "description": "Delete project from database and disk",
+                    "description": "Delete project from database and move to trash",
                     "command": {
                         "project_id": "928bcf10-db1c-47a3-8341-f60a6d997fe7",
                         "delete_from_disk": True,
                     },
                     "explanation": (
-                        "Permanently deletes project from database AND removes project directory and "
-                        "version files from disk. "
-                        "WARNING: This is irreversible and removes all project files permanently."
+                        "Deletes project from database and moves project directory to trash (recycle bin). "
+                        "Version directory is permanently deleted. Use list_trashed_projects to see trashed items; "
+                        "permanently_delete_from_trash or clear_trash to remove from disk permanently."
                     ),
                 },
             ],
@@ -1170,6 +1173,234 @@ class DeleteProjectMCPCommand(BaseMCPCommand):
                 "Database path is automatically resolved from server configuration, no root_dir needed",
             ],
         }
+
+
+class ListTrashedProjectsMCPCommand(BaseMCPCommand):
+    """
+    List projects that have been moved to trash (recycle bin).
+
+    Returns folders in trash_dir with parsed original_name and deleted_at.
+    """
+
+    name = "list_trashed_projects"
+    version = "1.0.0"
+    descr = "List projects in trash (recycle bin) with folder name, original name, and deletion time"
+    category = "project_management"
+    author = "Vasiliy Zdanovskiy"
+    email = "vasilyvz@gmail.com"
+    use_queue = False
+
+    @classmethod
+    def get_schema(cls: type["ListTrashedProjectsMCPCommand"]) -> Dict[str, Any]:
+        return {
+            "type": "object",
+            "description": "List projects in trash (recycle bin)",
+            "properties": {
+                "trash_dir": {
+                    "type": "string",
+                    "description": (
+                        "Optional path to trash directory. "
+                        "If omitted, uses trash_dir from server config (StoragePaths)."
+                    ),
+                },
+            },
+            "required": [],
+            "additionalProperties": False,
+        }
+
+    async def execute(
+        self: "ListTrashedProjectsMCPCommand",
+        **kwargs: Any,
+    ) -> SuccessResult | ErrorResult:
+        try:
+            from ..core.storage_paths import load_raw_config, resolve_storage_paths
+
+            config_path = self._resolve_config_path()
+            config_data = load_raw_config(config_path)
+            storage = resolve_storage_paths(
+                config_data=config_data, config_path=config_path
+            )
+            trash_dir = kwargs.get("trash_dir")
+            if not trash_dir:
+                trash_dir = str(storage.trash_dir)
+            from .trash_commands import ListTrashedProjectsCommand
+
+            cmd = ListTrashedProjectsCommand(trash_dir=trash_dir)
+            result = cmd.execute()
+            if not result.get("success"):
+                return self._handle_error(
+                    Exception(result.get("message", "List trash failed")),
+                    result.get("error", "LIST_TRASH_ERROR"),
+                    "list_trashed_projects",
+                )
+            return SuccessResult(
+                data=result,
+                message=f"Found {result.get('count', 0)} item(s) in trash",
+            )
+        except Exception as e:
+            return self._handle_error(
+                e, "LIST_TRASHED_PROJECTS_ERROR", "list_trashed_projects"
+            )
+
+
+class PermanentlyDeleteFromTrashMCPCommand(BaseMCPCommand):
+    """
+    Permanently delete one project folder from trash.
+
+    Removes the folder from trash_dir; cannot be undone.
+    """
+
+    name = "permanently_delete_from_trash"
+    version = "1.0.0"
+    descr = "Permanently delete one project folder from trash (recycle bin)"
+    category = "project_management"
+    author = "Vasiliy Zdanovskiy"
+    email = "vasilyvz@gmail.com"
+    use_queue = False
+
+    @classmethod
+    def get_schema(cls: type["PermanentlyDeleteFromTrashMCPCommand"]) -> Dict[str, Any]:
+        return {
+            "type": "object",
+            "description": "Permanently delete one folder from trash",
+            "properties": {
+                "trash_folder_name": {
+                    "type": "string",
+                    "description": (
+                        "Name of the trashed folder to delete (e.g. MyProject_2025-01-29T14-30-00Z). "
+                        "Must be a direct child of trash_dir; no path separators or '..' allowed."
+                    ),
+                },
+                "trash_dir": {
+                    "type": "string",
+                    "description": (
+                        "Optional path to trash directory. "
+                        "If omitted, uses trash_dir from server config."
+                    ),
+                },
+            },
+            "required": ["trash_folder_name"],
+            "additionalProperties": False,
+        }
+
+    async def execute(
+        self: "PermanentlyDeleteFromTrashMCPCommand",
+        trash_folder_name: str,
+        trash_dir: Optional[str] = None,
+        **kwargs: Any,
+    ) -> SuccessResult | ErrorResult:
+        try:
+            from ..core.storage_paths import load_raw_config, resolve_storage_paths
+
+            config_path = self._resolve_config_path()
+            config_data = load_raw_config(config_path)
+            storage = resolve_storage_paths(
+                config_data=config_data, config_path=config_path
+            )
+            if not trash_dir:
+                trash_dir = str(storage.trash_dir)
+            from .trash_commands import PermanentlyDeleteFromTrashCommand
+
+            cmd = PermanentlyDeleteFromTrashCommand(
+                trash_dir=trash_dir,
+                trash_folder_name=trash_folder_name,
+            )
+            result = cmd.execute()
+            if not result.get("success"):
+                return self._handle_error(
+                    Exception(result.get("message", "Permanent delete failed")),
+                    result.get("error", "PERMANENT_DELETE_ERROR"),
+                    "permanently_delete_from_trash",
+                )
+            return SuccessResult(
+                data=result,
+                message=result.get("message", "Permanently deleted from trash"),
+            )
+        except Exception as e:
+            return self._handle_error(
+                e,
+                "PERMANENTLY_DELETE_FROM_TRASH_ERROR",
+                "permanently_delete_from_trash",
+            )
+
+
+class ClearTrashMCPCommand(BaseMCPCommand):
+    """
+    Permanently delete all contents of the trash directory.
+
+    Optionally dry_run to only report what would be removed.
+    """
+
+    name = "clear_trash"
+    version = "1.0.0"
+    descr = "Permanently delete all projects from trash (recycle bin); optional dry_run"
+    category = "project_management"
+    author = "Vasiliy Zdanovskiy"
+    email = "vasilyvz@gmail.com"
+    use_queue = False
+
+    @classmethod
+    def get_schema(cls: type["ClearTrashMCPCommand"]) -> Dict[str, Any]:
+        return {
+            "type": "object",
+            "description": "Clear all contents of trash (recycle bin)",
+            "properties": {
+                "dry_run": {
+                    "type": "boolean",
+                    "description": (
+                        "If True, only list what would be removed without deleting. "
+                        "Default: False."
+                    ),
+                    "default": False,
+                },
+                "trash_dir": {
+                    "type": "string",
+                    "description": (
+                        "Optional path to trash directory. "
+                        "If omitted, uses trash_dir from server config."
+                    ),
+                },
+            },
+            "required": [],
+            "additionalProperties": False,
+        }
+
+    async def execute(
+        self: "ClearTrashMCPCommand",
+        dry_run: bool = False,
+        trash_dir: Optional[str] = None,
+        **kwargs: Any,
+    ) -> SuccessResult | ErrorResult:
+        try:
+            from ..core.storage_paths import load_raw_config, resolve_storage_paths
+
+            config_path = self._resolve_config_path()
+            config_data = load_raw_config(config_path)
+            storage = resolve_storage_paths(
+                config_data=config_data, config_path=config_path
+            )
+            if not trash_dir:
+                trash_dir = str(storage.trash_dir)
+            from .trash_commands import ClearTrashCommand
+
+            cmd = ClearTrashCommand(trash_dir=trash_dir, dry_run=dry_run)
+            result = cmd.execute()
+            if not result.get("success"):
+                return self._handle_error(
+                    Exception(result.get("message", "Clear trash failed")),
+                    result.get("error", "CLEAR_TRASH_ERROR"),
+                    "clear_trash",
+                )
+            return SuccessResult(
+                data=result,
+                message=(
+                    f"Would remove {result.get('removed_count', 0)} item(s)"
+                    if dry_run
+                    else f"Removed {result.get('removed_count', 0)} item(s) from trash"
+                ),
+            )
+        except Exception as e:
+            return self._handle_error(e, "CLEAR_TRASH_ERROR", "clear_trash")
 
 
 class DeleteUnwatchedProjectsMCPCommand(BaseMCPCommand):

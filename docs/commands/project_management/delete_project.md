@@ -12,7 +12,7 @@ email: vasilyvz@gmail.com
 
 ## Purpose (Предназначение)
 
-The delete_project command completely removes a project and all its data from the database. Optionally, it can also delete the project directory and version files from disk. This is a destructive operation that cannot be undone.
+The delete_project command completely removes a project and all its data from the database. Optionally, when delete_from_disk=True, it moves the project root directory to trash (recycle bin) instead of permanently deleting it; the version directory for this project is permanently deleted. Database removal cannot be undone.
 
 Operation flow:
 1. Resolves database path from server configuration (config.json)
@@ -21,14 +21,15 @@ Operation flow:
 4. Retrieves project information and statistics
 5. If dry_run=True:
    - Returns statistics about what would be deleted
-   - Shows what would be deleted from disk (if delete_from_disk=True)
+   - Shows what would be moved to trash (if delete_from_disk=True)
    - Does not perform actual deletion
 6. If dry_run=False:
-   a. If delete_from_disk=True:
-      * Deletes project root directory from disk (recursively)
-      * Deletes all files from version directory for this project ({version_dir}/{project_id}/)
-      * Continues even if disk deletion fails (errors are logged)
-   b. Deletes all project data from database:
+   a. Deletes all project data from database first (while project dir still exists)
+   b. If delete_from_disk=True:
+      * Moves project root directory to trash (recycle bin); does NOT permanently delete
+      * Permanently deletes version directory for this project ({version_dir}/{project_id}/)
+      * Continues even if move/delete fails (errors are logged)
+   c. Database deletion:
       * All files and their associated data (classes, functions, methods, imports, usages)
       * All chunks and removes from FAISS vector index
       * All duplicates
@@ -49,10 +50,9 @@ Deleted Data (Database):
 - AST/CST: All AST and CST trees
 - Project record: The project itself
 
-Deleted Data (Disk, if delete_from_disk=True):
-- Project root directory: Entire project directory tree is removed
-- Version directory: All files in {version_dir}/{project_id}/ are removed
-  Version directory is typically 'data/versions' relative to config directory
+Disk (if delete_from_disk=True):
+- Project root directory: Moved to trash (recycle bin). Use list_trashed_projects to list; permanently_delete_from_trash or clear_trash to permanently remove.
+- Version directory: Permanently removed ({version_dir}/{project_id}/). Trash directory is typically 'data/trash' (config: code_analysis.storage.trash_dir).
 
 Use cases:
 - Remove projects that are no longer needed (database only)
@@ -78,7 +78,7 @@ Important notes:
 |-----------|------|----------|-------------|
 | `project_id` | string | **Yes** | Project ID (UUID v4). Required. The project identifier to delete. Can be obtained from list_projects command. |
 | `dry_run` | boolean | No | If True, only show what would be deleted without actually deleting. Default: False. Default: `false`. |
-| `delete_from_disk` | boolean | No | If True, also delete project root directory and all files from version directory. If False, only delete from database. Default: False. Default: `false`. |
+| `delete_from_disk` | boolean | No | If True, move project root to trash (recycle bin) and delete version directory. If False, only delete from database. Default: False. Default: `false`. |
 
 **Schema:** `additionalProperties: false` — only the parameters above are accepted.
 
@@ -134,7 +134,7 @@ Shows statistics about what would be deleted without actually deleting. Safe to 
 
 Permanently deletes project and all its data from database. Project files on disk are NOT deleted. WARNING: This is permanent and cannot be undone.
 
-**Delete project from database and disk**
+**Delete project from database and move to trash**
 ```json
 {
   "project_id": "928bcf10-db1c-47a3-8341-f60a6d997fe7",
@@ -142,7 +142,7 @@ Permanently deletes project and all its data from database. Project files on dis
 }
 ```
 
-Permanently deletes project from database AND removes project directory and version files from disk. WARNING: This is irreversible and removes all project files permanently.
+Deletes project from database and moves project directory to trash (recycle bin). Version directory is permanently deleted. Use list_trashed_projects to see trashed items; permanently_delete_from_trash or clear_trash to remove from disk permanently.
 
 ### Incorrect usage
 

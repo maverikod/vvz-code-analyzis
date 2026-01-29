@@ -5,6 +5,15 @@ A comprehensive Python code analysis and refactoring tool that generates code ma
 Author: Vasiliy Zdanovskiy  
 Email: vasilyvz@gmail.com
 
+## Documentation structure
+
+- **FILE_STRUCTURE_AND_OBJECT_SCHEMA.md** — Project file layout and main object/schema concepts; use `code_analysis/method_index.yaml` and `code_analysis/code_map.yaml` for quick class/method lookup.
+- **COMPONENT_INTERACTION.md** — How MCP entry, command registration, database driver, and workers interact.
+- **COMMANDS_INDEX.md** — Command name → class → source file → docs block.
+- **commands/** — Per-block command docs:
+  - **ast**, **backup**, **code_mapper**, **code_quality**, **cst**, **database_integrity**, **database_restore**, **file_management**, **log_viewer**, **project_management**, **refactor**, **repair_worker**, **search**, **vector**, **worker_management**, **worker_status**, **analysis**, **misc**
+  - In each block: `README.md` (overview and command→file table), `COMMANDS.md` (detailed per-command description).
+
 ## Features
 
 ### Code Analysis

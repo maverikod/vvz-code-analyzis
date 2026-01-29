@@ -18,6 +18,7 @@ from .client_api_files import _ClientAPIFilesMixin
 from .client_api_issues_usages import _ClientAPIIssuesUsagesMixin
 from .client_api_methods_imports import _ClientAPIMethodsImportsMixin
 from .client_api_projects import _ClientAPIProjectsMixin
+from .client_api_search import _ClientAPISearchMixin
 from .client_helpers import _ClientHelpersMixin
 from .client_operations import _ClientOperationsMixin
 from .client_schema import _ClientSchemaMixin
@@ -31,6 +32,7 @@ class DatabaseClient(
     _ClientSchemaMixin,
     _ClientTransactionsMixin,
     _ClientAPIProjectsMixin,
+    _ClientAPISearchMixin,
     _ClientAPIFilesMixin,
     _ClientAPIAttributesMixin,
     _ClientAPIASTCSTMixin,

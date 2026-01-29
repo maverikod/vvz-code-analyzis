@@ -59,9 +59,7 @@ class SearchCommand:
         Returns:
             List of matching classes
         """
-        return self.database.search_classes(
-            name_pattern=pattern, project_id=self.project_id
-        )
+        return self.database.search_classes(project_id=self.project_id, name=pattern)
 
     def search_methods(self, class_name: Optional[str] = None) -> List[Dict[str, Any]]:
         """

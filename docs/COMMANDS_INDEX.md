@@ -3,10 +3,15 @@
 Author: Vasiliy Zdanovskiy  
 email: vasilyvz@gmail.com
 
+## Related documentation
+
+- **Detailed guide:** [COMMANDS_GUIDE.md](COMMANDS_GUIDE.md) — main entry point: purpose, arguments, return format, and examples for all commands, with links to per-command docs.
+- **Per-command files:** Each command has a **dedicated file** `docs/commands/<block>/<command_name>.md` (see tables below).
+
 ## How to use this guide
 
 - **Quick lookup:** MCP command name → class → source file → docs block (tables below).
-- **Per-command detailed guide:** Each command has a **dedicated file** `docs/commands/<block>/<command_name>.md` with:
+- **Per-command detailed guide:** Each command doc file contains:
   - **Purpose (предназначение)** — what the command does
   - **Arguments (аргументы)** — parameters, types, required/optional
   - **Returned data (возвращаемые данные)** — success/error format and examples

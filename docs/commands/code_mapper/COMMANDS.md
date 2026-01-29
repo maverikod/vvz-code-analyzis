@@ -1,30 +1,14 @@
-# Code Mapper Commands — Detailed Descriptions
+# Code Mapper Commands — Index
 
 Author: Vasiliy Zdanovskiy  
 email: vasilyvz@gmail.com
 
-**update_indexes:** `commands/code_mapper_mcp_command.py`. **list_long_files**, **list_errors_by_category:** `commands/code_mapper_mcp_commands.py`. Schema from `get_schema()`; metadata from `metadata()`.
+Each command is described in a separate file: purpose, arguments, return format, and examples.
 
----
+| Command | Description | Doc |
+|---------|-------------|-----|
+| update_indexes | Update code indexes (analyze project files) | [update_indexes.md](update_indexes.md) |
+| list_long_files | List files exceeding line limit | [list_long_files.md](list_long_files.md) |
+| list_errors_by_category | List errors grouped by category | [list_errors_by_category.md](list_errors_by_category.md) |
 
-## update_indexes — UpdateIndexesMCPCommand
-
-**Description:** Update code indexes by analyzing project files and adding them to the database. Builds/updates file list, AST, entities, and optionally chunks/vectors.
-
-**Behavior:** Accepts root_dir (and optional project_id); scans project files, parses AST, extracts entities and docstrings; updates DB and can run in background queue (use_queue). Used by file watcher after changes.
-
----
-
-## list_long_files — ListLongFilesMCPCommand
-
-**Description:** MCP command to list files exceeding line limit. Equivalent to old code_mapper functionality for finding oversized files.
-
-**Behavior:** Returns list of files whose line count exceeds configured max (e.g. 400 lines).
-
----
-
-## list_errors_by_category — ListErrorsByCategoryMCPCommand
-
-**Description:** MCP command to list errors grouped by category. Equivalent to old code_mapper functionality for listing code issues.
-
-**Behavior:** Returns issues (e.g. missing docstrings, long files, lint) grouped by category.
+See [README.md](README.md) for block overview.

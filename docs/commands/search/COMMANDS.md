@@ -1,30 +1,12 @@
-# Search Commands — Detailed Descriptions
+# Search Commands — Index
 
 Author: Vasiliy Zdanovskiy  
 email: vasilyvz@gmail.com
 
-All in `commands/search_mcp_commands.py`. Internal: `SearchCommand` in `commands/search.py`. Schema from `get_schema()`; metadata from `metadata()`.
+| Command | Description | Doc |
+|---------|-------------|-----|
+| fulltext_search | Full-text search over project | [fulltext_search.md](fulltext_search.md) |
+| list_class_methods | List methods of a class | [list_class_methods.md](list_class_methods.md) |
+| find_classes | Find classes by name/pattern | [find_classes.md](find_classes.md) |
 
----
-
-## fulltext_search — FulltextSearchMCPCommand
-
-**Description:** Full-text search over project (e.g. file contents, docstrings, or DB full-text index).
-
-**Behavior:** Accepts query string and optional scope (project/file); returns matching files and snippets.
-
----
-
-## list_class_methods — ListClassMethodsMCPCommand
-
-**Description:** List methods of a class (optionally with signatures and docstrings).
-
-**Behavior:** Accepts project/file and class name; returns list of methods from entities DB or AST.
-
----
-
-## find_classes — FindClassesMCPCommand
-
-**Description:** Find classes by name or pattern in project or file.
-
-**Behavior:** Returns list of classes matching the given name or pattern with location and metadata.
+See [README.md](README.md) for block overview.

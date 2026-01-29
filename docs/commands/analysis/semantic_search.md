@@ -1,0 +1,176 @@
+# semantic_search
+
+**Command name:** `semantic_search`  
+**Class:** `SemanticSearchMCPCommand`  
+**Source:** `code_analysis/commands/semantic_search_mcp.py`  
+**Category:** analysis
+
+Author: Vasiliy Zdanovskiy  
+email: vasilyvz@gmail.com
+
+---
+
+## Purpose (Предназначение)
+
+The semantic_search command performs semantic search using embeddings and FAISS vector index. It converts the query text to an embedding vector using an embedding service, then searches for similar code chunks in the FAISS index.
+
+Operation flow:
+1. Validates root_dir exists and is a directory
+2. Opens database connection
+3. Resolves project_id (from parameter or inferred from root_dir)
+4. Loads config.json to get vector_dim and embedding service config
+5. Gets or creates dataset_id for the project
+6. Resolves FAISS index path (dataset-scoped)
+7. Loads FAISS index using FaissIndexManager
+8. Gets query embedding from embedding service (SVOClientManager)
+9. Normalizes embedding vector
+10. Searches FAISS index for k nearest neighbors
+11. Filters results by dataset_id and min_score (if provided)
+12. Returns similar code chunks with similarity scores
+
+Semantic Search:
+- Uses embedding vectors to find semantically similar code
+- Query is converted to embedding using embedding service
+- Searches in FAISS index for similar vectors
+- Returns chunks ranked by similarity (distance)
+- Similarity score: 1.0 / (1.0 + distance)
+
+FAISS Index:
+- Dataset-scoped index (one per project dataset)
+- Must be built with update_indexes first
+- Uses cosine similarity (normalized vectors)
+- Supports k-nearest neighbor search
+
+Use cases:
+- Find code with similar functionality
+- Search by meaning rather than exact text
+- Discover related code patterns
+- Find code implementing similar concepts
+
+Important notes:
+- Requires embedding service to be available
+- Requires FAISS index (run update_indexes first)
+- Requires config.json with embedding service configuration
+- Results are dataset-scoped (only chunks from same dataset)
+- Similarity scores range from 0.0 to 1.0 (higher is better)
+- min_score filters results by similarity threshold
+
+---
+
+## Arguments (Аргументы)
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `root_dir` | string | **Yes** | Root directory of the project (contains data/code_analysis.db) |
+| `query` | string | **Yes** | Search query text |
+| `k` | integer | No | Number of results to return (1-100) |
+| `min_score` | number | No | Minimum similarity score (0.0-1.0) |
+| `project_id` | string | No | Optional project UUID; if omitted, inferred by root_dir |
+
+**Schema:** `additionalProperties: false` — only the parameters above are accepted.
+
+---
+
+## Returned data (Возвращаемые данные)
+
+All MCP commands return either a **success** result (with `data`) or an **error** result (with `code` and `message`).
+
+### Success
+
+- **Shape:** `SuccessResult` with `data` object.
+- `query`: Search query that was used
+- `k`: Number of results requested
+- `min_score`: Minimum score threshold (if provided)
+- `index_path`: Path to FAISS index file
+- `project_id`: Project UUID
+- `dataset_id`: Dataset UUID
+- `results`: List of similar code chunks. Each contains:
+- score: Similarity score (0.0-1.0, higher is better)
+- distance: Distance in vector space (lower is better)
+- vector_id: Vector ID in FAISS index
+- chunk_uuid: Chunk UUID
+- chunk_type: Type of chunk
+- file_path: Path to file containing the chunk
+- line: Line number in file
+- text: Text content of chunk
+- `count`: Number of results returned (after min_score filtering)
+
+### Error
+
+- **Shape:** `ErrorResult` with `code` and `message`.
+- **Possible codes:** PROJECT_NOT_FOUND, CONFIG_NOT_FOUND, FAISS_INDEX_NOT_FOUND, EMBEDDING_SERVICE_ERROR, SEARCH_ERROR (and others).
+
+---
+
+## Examples
+
+### Correct usage
+
+**Basic semantic search**
+```json
+{
+  "root_dir": "/home/user/projects/my_project",
+  "query": "database connection",
+  "k": 10
+}
+```
+
+Searches for code chunks semantically similar to 'database connection', returning top 10 results.
+
+**Search with minimum score threshold**
+```json
+{
+  "root_dir": "/home/user/projects/my_project",
+  "query": "error handling",
+  "k": 20,
+  "min_score": 0.7
+}
+```
+
+Searches for similar code with minimum similarity score of 0.7, returning up to 20 results.
+
+**Find highly similar code**
+```json
+{
+  "root_dir": "/home/user/projects/my_project",
+  "query": "file processing",
+  "k": 5,
+  "min_score": 0.9
+}
+```
+
+Finds highly similar code (score >= 0.9) related to 'file processing', returning top 5 results.
+
+### Incorrect usage
+
+- **PROJECT_NOT_FOUND**: root_dir='/path' but project not registered. Ensure project is registered. Run update_indexes first.
+
+- **CONFIG_NOT_FOUND**: root_dir='/path' but config.json missing. Ensure config.json exists in root_dir with embedding service configuration.
+
+- **FAISS_INDEX_NOT_FOUND**: Index file doesn't exist for project/dataset. Run update_indexes first to build the FAISS index. Index is dataset-scoped and must be created before searching.
+
+- **EMBEDDING_SERVICE_ERROR**: Service unavailable, invalid response, or zero norm vector. Check embedding service configuration in config.json. Ensure service is available and responding correctly.
+
+- **SEARCH_ERROR**: Database error, FAISS error, or vector dimension mismatch. Check database integrity, verify FAISS index is valid, ensure vector_dim matches index configuration.
+
+## Error codes summary
+
+| Code | Description | Action |
+|------|-------------|--------|
+| `PROJECT_NOT_FOUND` | Project not found in database | Ensure project is registered. Run update_indexes f |
+| `CONFIG_NOT_FOUND` | Configuration file not found | Ensure config.json exists in root_dir with embeddi |
+| `FAISS_INDEX_NOT_FOUND` | FAISS index not found | Run update_indexes first to build the FAISS index. |
+| `EMBEDDING_SERVICE_ERROR` | Failed to get embedding from service | Check embedding service configuration in config.js |
+| `SEARCH_ERROR` | General error during search | Check database integrity, verify FAISS index is va |
+
+## Best practices
+
+- Run update_indexes first to build the FAISS index
+- Ensure embedding service is configured and available
+- Use min_score to filter low-quality results
+- Adjust k based on expected result count
+- Results are dataset-scoped (only chunks from same dataset)
+- Similarity scores help identify most relevant matches
+- Query text should describe the concept you're searching for
+
+---

@@ -1,10 +1,10 @@
-# Database Restore Command
+# Database Restore Commands — Index
 
 Author: Vasiliy Zdanovskiy  
 email: vasilyvz@gmail.com
 
-**File:** `commands/database_restore_mcp_commands.py`.
+| Command | Description | Doc |
+|---------|-------------|-----|
+| restore_database | Restore (rebuild) DB from config | [restore_database.md](restore_database.md) |
 
-## restore_database
-
-Restore (rebuild) SQLite database by sequentially indexing directories from config. Reads list of project roots from config, creates/clears DB, runs full indexing for each root. Used for disaster recovery or initial bulk setup.
+See [README.md](README.md) for block overview.

@@ -19,6 +19,7 @@ def add_class(
     line: int,
     docstring: Optional[str],
     bases: List[str],
+    end_line: Optional[int] = None,
 ) -> int:
     """
     Add class to database.
@@ -29,6 +30,7 @@ def add_class(
         line: Line number
         docstring: Class docstring
         bases: List of base class names
+        end_line: Optional end line (for entity cross-ref resolution)
 
     Returns:
         Class ID
@@ -36,10 +38,10 @@ def add_class(
     bases_json = json.dumps(bases)
     self._execute(
         """
-        INSERT OR REPLACE INTO classes (file_id, name, line, docstring, bases)
-        VALUES (?, ?, ?, ?, ?)
+        INSERT OR REPLACE INTO classes (file_id, name, line, end_line, docstring, bases)
+        VALUES (?, ?, ?, ?, ?, ?)
         """,
-        (file_id, name, line, docstring, bases_json),
+        (file_id, name, line, end_line, docstring, bases_json),
     )
     self._commit()
     result = self._lastrowid()
@@ -55,6 +57,7 @@ def add_method(
     args: List[str],
     docstring: Optional[str],
     complexity: Optional[int] = None,
+    end_line: Optional[int] = None,
 ) -> int:
     """
     Add method to database.
@@ -66,6 +69,7 @@ def add_method(
         args: List of argument names
         docstring: Method docstring
         complexity: Cyclomatic complexity (optional)
+        end_line: Optional end line (for entity cross-ref resolution)
 
     Returns:
         Method ID
@@ -73,10 +77,10 @@ def add_method(
     args_json = json.dumps(args)
     self._execute(
         """
-        INSERT OR REPLACE INTO methods (class_id, name, line, args, docstring)
-        VALUES (?, ?, ?, ?, ?)
+        INSERT OR REPLACE INTO methods (class_id, name, line, end_line, args, docstring)
+        VALUES (?, ?, ?, ?, ?, ?)
         """,
-        (class_id, name, line, args_json, docstring),
+        (class_id, name, line, end_line, args_json, docstring),
     )
     self._commit()
     result = self._lastrowid()
@@ -92,6 +96,7 @@ def add_function(
     args: List[str],
     docstring: Optional[str],
     complexity: Optional[int] = None,
+    end_line: Optional[int] = None,
 ) -> int:
     """
     Add function to database.
@@ -103,6 +108,7 @@ def add_function(
         args: List of argument names
         docstring: Function docstring
         complexity: Cyclomatic complexity (optional)
+        end_line: Optional end line (for entity cross-ref resolution)
 
     Returns:
         Function ID
@@ -110,10 +116,10 @@ def add_function(
     args_json = json.dumps(args)
     self._execute(
         """
-        INSERT OR REPLACE INTO functions (file_id, name, line, args, docstring)
-        VALUES (?, ?, ?, ?, ?)
+        INSERT OR REPLACE INTO functions (file_id, name, line, end_line, args, docstring)
+        VALUES (?, ?, ?, ?, ?, ?)
         """,
-        (file_id, name, line, args_json, docstring),
+        (file_id, name, line, end_line, args_json, docstring),
     )
     self._commit()
     result = self._lastrowid()

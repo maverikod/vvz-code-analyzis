@@ -309,7 +309,6 @@ class FaissIndexManager:
         self: "FaissIndexManager",
         database: Union[CodeDatabase, DatabaseClient],
         project_id: str,
-        dataset_id: Optional[str] = None,
     ) -> Tuple[bool, Dict[str, Any]]:
         """
         Check synchronization between database and FAISS index.
@@ -321,7 +320,6 @@ class FaissIndexManager:
             self: Instance.
             database: CodeDatabase instance.
             project_id: Project ID to check.
-            dataset_id: Optional dataset ID to filter by.
 
         Returns:
             Tuple of (is_synced: bool, details: dict) where details contains:
@@ -338,67 +336,32 @@ class FaissIndexManager:
                 "index_vector_count": 0,
             }
 
-        # Get all vector_id values from database for this project/dataset
-        # Support both CodeDatabase and DatabaseClient
+        # Get all vector_id values from database for this project
         if isinstance(database, DatabaseClient):
-            if dataset_id:
-                result = database.execute(
-                    """
-                    SELECT DISTINCT cc.vector_id
-                    FROM code_chunks cc
-                    INNER JOIN files f ON cc.file_id = f.id
-                    WHERE cc.project_id = ?
-                      AND f.dataset_id = ?
-                      AND (f.deleted = 0 OR f.deleted IS NULL)
-                      AND cc.vector_id IS NOT NULL
-                      AND cc.embedding_vector IS NOT NULL
-                    ORDER BY cc.vector_id
-                    """,
-                    (project_id, dataset_id),
-                )
-                rows = result.get("data", []) if isinstance(result, dict) else []
-            else:
-                result = database.execute(
-                    """
-                    SELECT DISTINCT vector_id
-                    FROM code_chunks
-                    WHERE project_id = ?
-                      AND vector_id IS NOT NULL
-                      AND embedding_vector IS NOT NULL
-                    ORDER BY vector_id
-                    """,
-                    (project_id,),
-                )
-                rows = result.get("data", []) if isinstance(result, dict) else []
+            result = database.execute(
+                """
+                SELECT DISTINCT vector_id
+                FROM code_chunks
+                WHERE project_id = ?
+                  AND vector_id IS NOT NULL
+                  AND embedding_vector IS NOT NULL
+                ORDER BY vector_id
+                """,
+                (project_id,),
+            )
+            rows = result.get("data", []) if isinstance(result, dict) else []
         else:
-            # CodeDatabase
-            if dataset_id:
-                rows = database._fetchall(
-                    """
-                    SELECT DISTINCT cc.vector_id
-                    FROM code_chunks cc
-                    INNER JOIN files f ON cc.file_id = f.id
-                    WHERE cc.project_id = ?
-                      AND f.dataset_id = ?
-                      AND (f.deleted = 0 OR f.deleted IS NULL)
-                      AND cc.vector_id IS NOT NULL
-                      AND cc.embedding_vector IS NOT NULL
-                    ORDER BY cc.vector_id
-                    """,
-                    (project_id, dataset_id),
-                )
-            else:
-                rows = database._fetchall(
-                    """
-                    SELECT DISTINCT vector_id
-                    FROM code_chunks
-                    WHERE project_id = ?
-                      AND vector_id IS NOT NULL
-                      AND embedding_vector IS NOT NULL
-                    ORDER BY vector_id
-                    """,
-                    (project_id,),
-                )
+            rows = database._fetchall(
+                """
+                SELECT DISTINCT vector_id
+                FROM code_chunks
+                WHERE project_id = ?
+                  AND vector_id IS NOT NULL
+                  AND embedding_vector IS NOT NULL
+                ORDER BY vector_id
+                """,
+                (project_id,),
+            )
 
         db_vector_ids = {
             row["vector_id"] for row in rows if row["vector_id"] is not None
@@ -457,73 +420,32 @@ class FaissIndexManager:
         database: Union[CodeDatabase, DatabaseClient],
         svo_client_manager: Optional[Any] = None,
         project_id: Optional[str] = None,
-        dataset_id: Optional[str] = None,
     ) -> int:
         """
         Rebuild FAISS index from database.
 
-        Implements dataset-scoped FAISS (Step 2 of refactor plan).
-        If project_id and dataset_id are provided, rebuilds index for that dataset only.
-        If only project_id is provided, rebuilds index for all datasets in the project.
-        If neither is provided, rebuilds index for all projects (legacy mode).
+        If project_id is provided, rebuilds index for that project only.
+        If project_id is None, rebuilds index for all projects (legacy mode).
 
         This operation recreates the FAISS index file from `code_chunks.embedding_vector`.
-
-        Important:
-            `code_chunks.vector_id` must be a 1:1 mapping to FAISS vector IDs.
-            To avoid duplicated IDs and huge per-row UPDATEs (which destabilize the
-            sqlite_proxy worker), we reassign `vector_id` to a dense range `0..N-1`
-            using a single SQL statement before building the FAISS file.
 
         Args:
             self: Instance.
             database: CodeDatabase instance
             svo_client_manager: Optional SVOClientManager to get embeddings if missing
             project_id: Optional project ID to filter by
-            dataset_id: Optional dataset ID to filter by (requires project_id)
 
         Returns:
             Number of vectors loaded
         """
-        if dataset_id and not project_id:
-            raise ValueError("dataset_id requires project_id")
-
-        scope_desc = (
-            f"project={project_id}, dataset={dataset_id}"
-            if project_id and dataset_id
-            else f"project={project_id}" if project_id else "all projects"
-        )
+        scope_desc = f"project={project_id}" if project_id else "all projects"
         logger.info(f"Rebuilding FAISS index from database ({scope_desc})...")
 
         # Ensure `vector_id` is dense and unique (single SQL statement).
-        # This avoids thousands of per-row UPDATEs through sqlite_proxy.
-        # Filter by project_id and dataset_id if provided (dataset-scoped FAISS).
         try:
-            # Support both CodeDatabase and DatabaseClient
             if isinstance(database, DatabaseClient):
-                if project_id and dataset_id:
-                    # Dataset-scoped: normalize vector_id only for this dataset
-                    database.execute(
-                        """
-                        WITH ranked AS (
-                            SELECT
-                                cc.id,
-                                (ROW_NUMBER() OVER (ORDER BY cc.id) - 1) AS new_vector_id
-                            FROM code_chunks cc
-                            INNER JOIN files f ON cc.file_id = f.id
-                            WHERE cc.project_id = ?
-                              AND f.dataset_id = ?
-                              AND cc.embedding_model IS NOT NULL
-                              AND cc.embedding_vector IS NOT NULL
-                        )
-                        UPDATE code_chunks
-                        SET vector_id = (SELECT new_vector_id FROM ranked WHERE ranked.id = code_chunks.id)
-                        WHERE id IN (SELECT id FROM ranked)
-                        """,
-                        (project_id, dataset_id),
-                    )
-                elif project_id:
-                    # Project-scoped: normalize vector_id for all datasets in project
+                if project_id:
+                    # Project-scoped: normalize vector_id for project
                     database.execute(
                         """
                         WITH ranked AS (
@@ -561,29 +483,7 @@ class FaissIndexManager:
                     )
             else:
                 # CodeDatabase
-                if project_id and dataset_id:
-                    # Dataset-scoped: normalize vector_id only for this dataset
-                    database._execute(
-                        """
-                        WITH ranked AS (
-                            SELECT
-                                cc.id,
-                                (ROW_NUMBER() OVER (ORDER BY cc.id) - 1) AS new_vector_id
-                            FROM code_chunks cc
-                            INNER JOIN files f ON cc.file_id = f.id
-                            WHERE cc.project_id = ?
-                              AND f.dataset_id = ?
-                              AND cc.embedding_model IS NOT NULL
-                              AND cc.embedding_vector IS NOT NULL
-                        )
-                        UPDATE code_chunks
-                        SET vector_id = (SELECT new_vector_id FROM ranked WHERE ranked.id = code_chunks.id)
-                        WHERE id IN (SELECT id FROM ranked)
-                        """,
-                        (project_id, dataset_id),
-                    )
-                elif project_id:
-                    # Project-scoped: normalize vector_id for all datasets in project
+                if project_id:
                     database._execute(
                         """
                         WITH ranked AS (
@@ -634,44 +534,9 @@ class FaissIndexManager:
                 "Cleared %d vectors from FAISS index (rebuild)", old_vector_count
             )
 
-        # Get chunks with embeddings (filtered by project_id and dataset_id if provided)
-        # Support both CodeDatabase and DatabaseClient
+        # Get chunks with embeddings (filtered by project_id if provided)
         if isinstance(database, DatabaseClient):
-            # Use execute() for DatabaseClient
-            if project_id and dataset_id:
-                # Dataset-scoped: get chunks only for this dataset
-                result = database.execute(
-                    """
-                    SELECT 
-                        cc.id,
-                        cc.file_id,
-                        cc.project_id,
-                        cc.chunk_uuid,
-                        cc.chunk_type,
-                        cc.chunk_text,
-                        cc.chunk_ordinal,
-                        cc.vector_id,
-                        cc.embedding_model,
-                        cc.embedding_vector,
-                        cc.class_id,
-                        cc.function_id,
-                        cc.method_id,
-                        cc.line,
-                        cc.ast_node_type,
-                        cc.source_type
-                    FROM code_chunks cc
-                    INNER JOIN files f ON cc.file_id = f.id
-                    WHERE cc.project_id = ?
-                      AND f.dataset_id = ?
-                      AND cc.embedding_model IS NOT NULL
-                      AND cc.embedding_vector IS NOT NULL
-                    ORDER BY cc.id
-                    """,
-                    (project_id, dataset_id),
-                )
-                chunks = result.get("data", []) if isinstance(result, dict) else []
-            elif project_id:
-                # Project-scoped: get chunks for all datasets in project
+            if project_id:
                 result = database.execute(
                     """
                     SELECT 
@@ -730,9 +595,8 @@ class FaissIndexManager:
                 )
                 chunks = result.get("data", []) if isinstance(result, dict) else []
         else:
-            # CodeDatabase
             chunks = database.get_all_chunks_for_faiss_rebuild(
-                project_id=project_id, dataset_id=dataset_id
+                project_id=project_id
             )
         if not chunks:
             logger.info("No chunks with embeddings found in database")

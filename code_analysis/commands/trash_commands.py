@@ -190,10 +190,13 @@ class ClearTrashCommand:
 
     def execute(self) -> Dict[str, Any]:
         """
-        Remove all direct child directories of trash_dir.
+        Remove all direct children of trash_dir (directories and files).
+
+        Directories are removed recursively. Files (e.g. service files like
+        .projectid, lock files) are also removed so the trash is fully cleared.
 
         Returns:
-            Dict with success, removed_count, removed (list of folder names).
+            Dict with success, removed_count, removed (list of names).
         """
         if not self.trash_dir.exists():
             return {
@@ -208,15 +211,17 @@ class ClearTrashCommand:
         errors: List[str] = []
         try:
             for child in list(self.trash_dir.iterdir()):
-                if not child.is_dir():
-                    continue
                 name = child.name
                 removed.append(name)
-                if not self.dry_run:
-                    try:
+                if self.dry_run:
+                    continue
+                try:
+                    if child.is_dir():
                         shutil.rmtree(child)
-                    except OSError as e:
-                        errors.append(f"{name}: {e}")
+                    else:
+                        child.unlink()
+                except OSError as e:
+                    errors.append(f"{name}: {e}")
         except OSError as e:
             return {
                 "success": False,

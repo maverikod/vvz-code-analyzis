@@ -178,11 +178,6 @@ class CSTCreateFileCommand(BaseMCPCommand):
 
                 project_root = Path(project.root_path)
 
-                # Get or create dataset_id
-                dataset_id = BaseMCPCommand._get_or_create_dataset(
-                    database, project_id, str(project_root)
-                )
-
                 # Format docstring as triple-quoted string
                 docstring_value = docstring.strip()
                 if not (
@@ -205,7 +200,6 @@ class CSTCreateFileCommand(BaseMCPCommand):
                     file_path=str(target),
                     root_dir=project_root,
                     project_id=project_id,
-                    dataset_id=dataset_id,
                     database=database,
                     validate=True,
                     backup=False,  # No backup needed for new file

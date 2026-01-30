@@ -47,13 +47,6 @@ def test_file_with_content(test_db, test_project, tmp_path):
     )
     test_db._commit()
     
-    # Create dataset
-    dataset_id = test_db.get_or_create_dataset(
-        project_id=test_project,
-        root_path=str(tmp_path),
-        name=tmp_path.name,
-    )
-    
     # Create test file with classes and functions
     test_file = tmp_path / "test_file.py"
     file_content = '''"""
@@ -86,7 +79,6 @@ def standalone_function(param: str) -> str:
         last_modified=file_mtime,
         has_docstring=True,
         project_id=test_project,
-        dataset_id=dataset_id,
     )
     
     # Use update_file_data to analyze file and create AST/CST
@@ -398,13 +390,6 @@ def new_function() -> str:
         )
         test_db._commit()
         
-        # Create dataset
-        dataset_id = test_db.get_or_create_dataset(
-            project_id=test_project,
-            root_path=str(tmp_path),
-            name=tmp_path.name,
-        )
-        
         # Step 1: Create and add file
         test_file = tmp_path / "full_cycle_test.py"
         initial_content = '''"""
@@ -429,7 +414,6 @@ def initial_function():
             last_modified=file_mtime,
             has_docstring=True,
             project_id=test_project,
-            dataset_id=dataset_id,
         )
         
         # Step 2: Update file data (analyze and create AST/CST)

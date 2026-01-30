@@ -79,13 +79,6 @@ def real_test_file_with_classes(test_data_root):
 @pytest.fixture
 def real_test_file_in_db(test_db, test_project, temp_dir, real_test_file_with_classes, test_data_root):
     """Add real test file to database."""
-    # Create dataset
-    dataset_id = test_db.get_or_create_dataset(
-        project_id=test_project,
-        root_path=str(test_data_root),
-        name=test_data_root.name,
-    )
-    
     # Read file content
     file_content = real_test_file_with_classes.read_text(encoding="utf-8")
     
@@ -100,7 +93,6 @@ def real_test_file_in_db(test_db, test_project, temp_dir, real_test_file_with_cl
         last_modified=file_mtime,
         has_docstring=file_content.strip().startswith('"""') or file_content.strip().startswith("'''"),
         project_id=test_project,
-        dataset_id=dataset_id,
     )
     
     return file_id, real_test_file_with_classes, test_project, test_data_root
@@ -121,12 +113,6 @@ class TestFileSplitterIntegrationReal:
         shutil.copy2(file_path, test_file)
         
         # Add test file to database
-        dataset_id = test_db.get_or_create_dataset(
-            project_id=project_id,
-            root_path=str(root_dir),
-            name=root_dir.name,
-        )
-        
         file_content = test_file.read_text(encoding="utf-8")
         import os
         file_mtime = os.path.getmtime(test_file)
@@ -138,7 +124,6 @@ class TestFileSplitterIntegrationReal:
             last_modified=file_mtime,
             has_docstring=file_content.strip().startswith('"""') or file_content.strip().startswith("'''"),
             project_id=project_id,
-            dataset_id=dataset_id,
         )
         
         # Create splitter with database access
@@ -245,12 +230,6 @@ class TestClassSplitterIntegrationReal:
         shutil.copy2(file_path, test_file)
         
         # Add test file to database
-        dataset_id = test_db.get_or_create_dataset(
-            project_id=project_id,
-            root_path=str(root_dir),
-            name=root_dir.name,
-        )
-        
         file_content = test_file.read_text(encoding="utf-8")
         import os
         file_mtime = os.path.getmtime(test_file)
@@ -262,7 +241,6 @@ class TestClassSplitterIntegrationReal:
             last_modified=file_mtime,
             has_docstring=file_content.strip().startswith('"""') or file_content.strip().startswith("'''"),
             project_id=project_id,
-            dataset_id=dataset_id,
         )
         
         # Find classes in the file

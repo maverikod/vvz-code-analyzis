@@ -289,7 +289,6 @@ def save_tree_to_file(
     file_path: str,
     root_dir: Path,
     project_id: str,
-    dataset_id: str,
     database,
     validate: bool = True,
     backup: bool = True,
@@ -316,7 +315,6 @@ def save_tree_to_file(
         file_path: Target file path (absolute or relative to root_dir)
         root_dir: Project root directory
         project_id: Project ID
-        dataset_id: Dataset ID
         database: Database instance
         validate: Whether to validate file before saving
         backup: Whether to create backup
@@ -430,7 +428,6 @@ def save_tree_to_file(
                 file_obj = File(
                     id=file_record["id"],
                     project_id=project_id,
-                    dataset_id=dataset_id,
                     path=normalized_path,
                     lines=lines,
                     last_modified=last_modified,
@@ -442,7 +439,6 @@ def save_tree_to_file(
                 # Create new file
                 file_obj = File(
                     project_id=project_id,
-                    dataset_id=dataset_id,
                     path=normalized_path,
                     lines=lines,
                     last_modified=last_modified,

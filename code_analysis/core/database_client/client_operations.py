@@ -39,7 +39,8 @@ class _ClientOperationsMixin:
         request = InsertRequest(table_name=table_name, data=data)
         response = self.rpc_client.call("insert", request.to_dict())
         result_data = self._extract_result_data(response)
-        return result_data.get("row_id", 0)
+        data_inner = result_data.get("data", result_data) if isinstance(result_data, dict) else {}
+        return data_inner.get("row_id", 0) if isinstance(data_inner, dict) else 0
 
     def update(
         self,
@@ -64,7 +65,8 @@ class _ClientOperationsMixin:
         request = UpdateRequest(table_name=table_name, where=where, data=data)
         response = self.rpc_client.call("update", request.to_dict())
         result_data = self._extract_result_data(response)
-        return result_data.get("affected_rows", 0)
+        data_inner = result_data.get("data", result_data) if isinstance(result_data, dict) else {}
+        return data_inner.get("affected_rows", 0) if isinstance(data_inner, dict) else 0
 
     def delete(self, table_name: str, where: Dict[str, Any]) -> int:
         """Delete rows from table.
@@ -83,7 +85,8 @@ class _ClientOperationsMixin:
         request = DeleteRequest(table_name=table_name, where=where)
         response = self.rpc_client.call("delete", request.to_dict())
         result_data = self._extract_result_data(response)
-        return result_data.get("affected_rows", 0)
+        data_inner = result_data.get("data", result_data) if isinstance(result_data, dict) else {}
+        return data_inner.get("affected_rows", 0) if isinstance(data_inner, dict) else 0
 
     def select(
         self,
@@ -173,3 +176,83 @@ class _ClientOperationsMixin:
             return {}
         # Fallback: if result is not a dict, return empty dict
         return {}
+
+    def add_code_chunk(
+        self,
+        file_id: int,
+        project_id: str,
+        chunk_uuid: str,
+        chunk_type: str,
+        chunk_text: str,
+        chunk_ordinal: Optional[int] = None,
+        vector_id: Optional[int] = None,
+        embedding_model: Optional[str] = None,
+        bm25_score: Optional[float] = None,
+        embedding_vector: Optional[str] = None,
+        token_count: Optional[int] = None,
+        class_id: Optional[int] = None,
+        function_id: Optional[int] = None,
+        method_id: Optional[int] = None,
+        line: Optional[int] = None,
+        ast_node_type: Optional[str] = None,
+        source_type: Optional[str] = None,
+        binding_level: int = 0,
+    ) -> int:
+        """Add or replace code chunk row. Uses INSERT OR REPLACE by chunk_uuid.
+
+        Persists chunk text, embedding vector (and model), and token count.
+
+        Args:
+            file_id: File ID
+            project_id: Project UUID
+            chunk_uuid: Unique chunk identifier (UUID5)
+            chunk_type: Type of chunk (e.g. DocBlock)
+            chunk_text: Text content of the chunk
+            chunk_ordinal: Ordinal position
+            vector_id: FAISS index ID (optional)
+            embedding_model: Model name (optional)
+            bm25_score: BM25 score (optional)
+            embedding_vector: JSON string of embedding vector (optional)
+            token_count: Number of tokens in chunk (optional)
+            class_id, function_id, method_id: AST bindings (optional)
+            line: Line number (optional)
+            ast_node_type: AST node type (optional)
+            source_type: Source type (optional)
+            binding_level: Nesting level (default 0)
+
+        Returns:
+            Chunk ID (lastrowid)
+        """
+        sql = """
+            INSERT OR REPLACE INTO code_chunks
+            (
+                file_id, project_id, chunk_uuid, chunk_type, chunk_text,
+                chunk_ordinal, vector_id, embedding_model, bm25_score,
+                embedding_vector, token_count, class_id, function_id, method_id,
+                line, ast_node_type, source_type, binding_level,
+                updated_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, julianday('now'))
+        """
+        params = (
+            file_id,
+            project_id,
+            chunk_uuid,
+            chunk_type,
+            chunk_text,
+            chunk_ordinal,
+            vector_id,
+            embedding_model,
+            bm25_score,
+            embedding_vector,
+            token_count,
+            class_id,
+            function_id,
+            method_id,
+            line,
+            ast_node_type,
+            source_type,
+            binding_level,
+        )
+        result = self.execute(sql, params)
+        return result.get("lastrowid") or 0

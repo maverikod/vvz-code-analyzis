@@ -19,14 +19,13 @@ Operation flow:
 2. Opens database connection
 3. Resolves project_id (from parameter or inferred from root_dir)
 4. Loads config.json to get vector_dim and embedding service config
-5. Gets or creates dataset_id for the project
-6. Resolves FAISS index path (dataset-scoped)
-7. Loads FAISS index using FaissIndexManager
-8. Gets query embedding from embedding service (SVOClientManager)
-9. Normalizes embedding vector
-10. Searches FAISS index for k nearest neighbors
-11. Filters results by dataset_id and min_score (if provided)
-12. Returns similar code chunks with similarity scores
+5. Resolves FAISS index path (one index per project)
+6. Loads FAISS index using FaissIndexManager
+7. Gets query embedding from embedding service (SVOClientManager)
+8. Normalizes embedding vector
+9. Searches FAISS index for k nearest neighbors
+10. Filters results by min_score (if provided)
+11. Returns similar code chunks with similarity scores
 
 Semantic Search:
 - Uses embedding vectors to find semantically similar code
@@ -36,7 +35,7 @@ Semantic Search:
 - Similarity score: 1.0 / (1.0 + distance)
 
 FAISS Index:
-- Dataset-scoped index (one per project dataset)
+- One index per project
 - Must be built with update_indexes first
 - Uses cosine similarity (normalized vectors)
 - Supports k-nearest neighbor search
@@ -51,7 +50,7 @@ Important notes:
 - Requires embedding service to be available
 - Requires FAISS index (run update_indexes first)
 - Requires config.json with embedding service configuration
-- Results are dataset-scoped (only chunks from same dataset)
+- Results are project-scoped (only chunks from same project)
 - Similarity scores range from 0.0 to 1.0 (higher is better)
 - min_score filters results by similarity threshold
 
@@ -83,7 +82,6 @@ All MCP commands return either a **success** result (with `data`) or an **error*
 - `min_score`: Minimum score threshold (if provided)
 - `index_path`: Path to FAISS index file
 - `project_id`: Project UUID
-- `dataset_id`: Dataset UUID
 - `results`: List of similar code chunks. Each contains:
 - score: Similarity score (0.0-1.0, higher is better)
 - distance: Distance in vector space (lower is better)
@@ -147,7 +145,7 @@ Finds highly similar code (score >= 0.9) related to 'file processing', returning
 
 - **CONFIG_NOT_FOUND**: root_dir='/path' but config.json missing. Ensure config.json exists in root_dir with embedding service configuration.
 
-- **FAISS_INDEX_NOT_FOUND**: Index file doesn't exist for project/dataset. Run update_indexes first to build the FAISS index. Index is dataset-scoped and must be created before searching.
+- **FAISS_INDEX_NOT_FOUND**: Index file doesn't exist for project. Run update_indexes first to build the FAISS index. Index is project-scoped and must be created before searching.
 
 - **EMBEDDING_SERVICE_ERROR**: Service unavailable, invalid response, or zero norm vector. Check embedding service configuration in config.json. Ensure service is available and responding correctly.
 
@@ -169,7 +167,7 @@ Finds highly similar code (score >= 0.9) related to 'file processing', returning
 - Ensure embedding service is configured and available
 - Use min_score to filter low-quality results
 - Adjust k based on expected result count
-- Results are dataset-scoped (only chunks from same dataset)
+- Results are project-scoped (only chunks from same project)
 - Similarity scores help identify most relevant matches
 - Query text should describe the concept you're searching for
 

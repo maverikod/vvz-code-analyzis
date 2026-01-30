@@ -1117,7 +1117,6 @@ save_result = mcp_MCP-Proxy-2_call_server(
         "root_dir": "/path",
         "file_path": "file.py",
         "project_id": "project-uuid",  # Required
-        "dataset_id": "dataset-uuid",  # Optional - will be created if not provided
         "validate": True,  # Validate before saving
         "backup": True,  # Create backup before saving
         "commit_message": "Updated my_func"  # Optional: git commit message

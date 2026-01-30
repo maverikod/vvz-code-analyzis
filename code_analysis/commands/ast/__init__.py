@@ -16,6 +16,10 @@ from .entity_info import GetCodeEntityInfoMCPCommand
 from .list_entities import ListCodeEntitiesMCPCommand
 from .imports import GetImportsMCPCommand
 from .dependencies import FindDependenciesMCPCommand
+from .entity_dependencies import (
+    GetEntityDependenciesMCPCommand,
+    GetEntityDependentsMCPCommand,
+)
 from .hierarchy import GetClassHierarchyMCPCommand
 from .usages import FindUsagesMCPCommand
 from .graph import ExportGraphMCPCommand
@@ -29,6 +33,8 @@ __all__ = [
     "ListCodeEntitiesMCPCommand",
     "GetImportsMCPCommand",
     "FindDependenciesMCPCommand",
+    "GetEntityDependenciesMCPCommand",
+    "GetEntityDependentsMCPCommand",
     "GetClassHierarchyMCPCommand",
     "FindUsagesMCPCommand",
     "ExportGraphMCPCommand",

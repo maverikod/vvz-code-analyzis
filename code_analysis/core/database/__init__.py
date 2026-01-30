@@ -21,9 +21,9 @@ try:
 except ImportError:
     projects = None
 
-from . import datasets
 from . import chunks
 from . import comprehensive_analysis
+from . import entity_cross_ref
 from . import watch_dirs
 from . import worker_stats
 
@@ -39,12 +39,12 @@ def _add_functions_as_methods(target_class: type, source_module: object) -> None
 
 _MODULES = [
     projects,
-    datasets,
     files,
     cst,
     ast,
     watch_dirs,
     entities,
+    entity_cross_ref,
     chunks,
     comprehensive_analysis,
     worker_stats,

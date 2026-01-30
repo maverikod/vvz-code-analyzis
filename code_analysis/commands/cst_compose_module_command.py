@@ -454,7 +454,7 @@ class ComposeCSTModuleCommand(BaseMCPCommand):
             """
             UPDATE files SET
                 path = ?, lines = ?, last_modified = ?, has_docstring = ?,
-                project_id = ?, dataset_id = ?, updated_at = julianday('now')
+                project_id = ?, updated_at = julianday('now')
             WHERE id = ?
             """,
             (
@@ -463,7 +463,6 @@ class ComposeCSTModuleCommand(BaseMCPCommand):
                 file_record["last_modified"],
                 file_record["has_docstring"],
                 file_record["project_id"],
-                file_record.get("dataset_id"),
                 file_id,
             ),
         )
@@ -582,12 +581,6 @@ class ComposeCSTModuleCommand(BaseMCPCommand):
         Returns:
             File ID
         """
-        from .base_mcp_command import BaseMCPCommand
-
-        dataset_id = BaseMCPCommand._get_or_create_dataset(
-            database, project_id, root_path
-        )
-
         lines = source_code.count("\n") + (1 if source_code else 0)
         stripped = source_code.lstrip()
         has_docstring = stripped.startswith('"""') or stripped.startswith("'''")
@@ -599,11 +592,10 @@ class ComposeCSTModuleCommand(BaseMCPCommand):
 
             # Normalize path to absolute
             normalized_path = normalize_path_simple(str(target_path))
-            
+
             # Create File object
             file_obj = File(
                 project_id=project_id,
-                dataset_id=dataset_id,
                 path=normalized_path,
                 lines=lines,
                 last_modified=time.time(),

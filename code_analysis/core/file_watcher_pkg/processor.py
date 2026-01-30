@@ -56,25 +56,18 @@ class FileChangeProcessor:
         database: Any,
         watch_dirs: List[Path],
         version_dir: Optional[str] = None,
-        dataset_id: Optional[str] = None,
     ) -> None:
         """
         Initialize file change processor.
-
-        Implements dataset-scoped file processing (Step 2 of refactor plan).
-        If dataset_id is provided, processes files only for that dataset.
-        If dataset_id is None, resolves dataset_id from root_dir when processing.
 
         Args:
             database: CodeDatabase instance
             watch_dirs: List of watched directories for project discovery (REQUIRED)
             version_dir: Version directory for deleted files (optional)
-            dataset_id: Optional dataset ID (if None, will be resolved from root_dir)
         """
         self.database = database
         self.watch_dirs = watch_dirs
         self.version_dir = version_dir
-        self.dataset_id = dataset_id
         self.watch_dirs_resolved = [Path(wd).resolve() for wd in watch_dirs]
 
     def compute_delta(
@@ -93,8 +86,6 @@ class FileChangeProcessor:
         Returns:
             Dictionary mapping project_id to FileDelta
         """
-        from ..project_resolution import normalize_root_dir
-
         # Group files by project_id
         files_by_project: Dict[str, Dict[str, Dict]] = defaultdict(dict)
         project_roots: Dict[str, Path] = {}
@@ -123,55 +114,18 @@ class FileChangeProcessor:
             changed_files: List[tuple[str, float, int]] = []
 
             try:
-                # Resolve dataset_id from project_root
-                normalized_root = str(normalize_root_dir(project_root))
-                dataset_id = self.dataset_id
-                if not dataset_id:
-                    # Use execute() for get_dataset_id
-                    dataset_result = self.database.execute(
-                        """
-                        SELECT id FROM datasets
-                        WHERE project_id = ? AND root_path = ?
-                        LIMIT 1
-                        """,
-                        (project_id, normalized_root),
-                    )
-                    dataset_rows = (
-                        dataset_result.get("data", [])
-                        if isinstance(dataset_result, dict)
-                        else []
-                    )
-                    dataset_id = dataset_rows[0].get("id") if dataset_rows else None
-                    if not dataset_id:
-                        # Create dataset if it doesn't exist
-                        import uuid
-
-                        dataset_id = str(uuid.uuid4())
-                        self.database.execute(
-                            """
-                            INSERT INTO datasets (id, project_id, root_path, created_at)
-                            VALUES (?, ?, ?, julianday('now'))
-                            """,
-                            (dataset_id, project_id, normalized_root),
-                        )
-                        logger.info(
-                            f"Created dataset {dataset_id} for project {project_id} root {normalized_root}"
-                        )
-
-                # Get files from database for this project and dataset (read-only)
+                # Get files from database for this project (read-only)
                 db_files_list = self.database.get_project_files(
                     project_id, include_deleted=False
                 )
-                # Convert File objects to dict format and filter by dataset_id
+                # Convert File objects to dict format
                 db_files = [
                     {
                         "id": f.id,
                         "path": f.path,
                         "last_modified": f.last_modified,
-                        "dataset_id": f.dataset_id,
                     }
                     for f in db_files_list
-                    if f.dataset_id == dataset_id
                 ]
 
                 # Create mapping of path -> file record
@@ -192,7 +146,9 @@ class FileChangeProcessor:
                         else:
                             # Existing file - check if changed
                             db_mtime = db_file.get("last_modified")
-                            if db_mtime is None or abs(mtime - db_mtime) > 0.1:
+                            if db_mtime is not None and hasattr(db_mtime, "timestamp"):
+                                db_mtime = db_mtime.timestamp()
+                            if db_mtime is None or abs(mtime - float(db_mtime)) > 0.1:
                                 # File changed (tolerance 0.1 seconds for filesystem precision)
                                 changed_files.append((file_path_str, mtime, size))
 
@@ -222,16 +178,20 @@ class FileChangeProcessor:
         # Also check projects from database that are in this watch_dir but their directories don't exist
         # This handles the case where a project directory was deleted but files remain in database
         try:
-            # Get all projects from database
-            all_projects_result = self.database.execute(
-                "SELECT id, root_path FROM projects",
-                None,
-            )
-            all_projects = (
-                all_projects_result.get("data", [])
-                if isinstance(all_projects_result, dict)
-                else []
-            )
+            # Get all projects from database (DatabaseClient has select(), not _fetchall)
+            if hasattr(self.database, "select"):
+                all_projects = (
+                    self.database.select("projects", columns=["id", "root_path"]) or []
+                )
+            else:
+                all_projects = (
+                    self.database.execute("SELECT id, root_path FROM projects").get(
+                        "data"
+                    )
+                    or []
+                )
+            if not isinstance(all_projects, list):
+                all_projects = []
 
             for project_row in all_projects:
                 db_project_id = project_row["id"]
@@ -302,8 +262,6 @@ class FileChangeProcessor:
         Returns:
             Aggregated statistics across all projects
         """
-        from ..project_resolution import normalize_root_dir
-
         total_stats = {
             "new_files": 0,
             "changed_files": 0,
@@ -342,85 +300,9 @@ class FileChangeProcessor:
 
                 project_root = Path(project["root_path"])
 
-                # Normalize root_dir - handle case where directory doesn't exist
-                try:
-                    normalized_root = str(normalize_root_dir(project_root))
-                except (FileNotFoundError, NotADirectoryError):
-                    # Project directory doesn't exist - use path as-is for dataset resolution
-                    # This happens when project was deleted but files remain in database
-                    normalized_root = str(project_root.resolve())
-
-                # Resolve dataset_id
-                dataset_id = self.dataset_id
-                if not dataset_id:
-                    # Try to get existing dataset_id first (works even if directory doesn't exist)
-                    try:
-                        dataset_result = self.database.execute(
-                            """
-                            SELECT id FROM datasets
-                            WHERE project_id = ? AND root_path = ?
-                            LIMIT 1
-                            """,
-                            (project_id, normalized_root),
-                        )
-                        dataset_rows = (
-                            dataset_result.get("data", [])
-                            if isinstance(dataset_result, dict)
-                            else []
-                        )
-                        dataset_id = dataset_rows[0].get("id") if dataset_rows else None
-                    except (FileNotFoundError, NotADirectoryError):
-                        # Directory doesn't exist - get dataset_id from any existing files
-                        db_files_list = self.database.get_project_files(
-                            project_id, include_deleted=False
-                        )
-                        if db_files_list:
-                            # Get dataset_id from first file
-                            dataset_id = db_files_list[0].dataset_id
-
-                    if not dataset_id:
-                        # Try to create dataset, but handle case where directory doesn't exist
-                        try:
-                            import uuid
-
-                            dataset_id = str(uuid.uuid4())
-                            self.database.execute(
-                                """
-                                INSERT INTO datasets (id, project_id, root_path, created_at)
-                                VALUES (?, ?, ?, julianday('now'))
-                                """,
-                                (dataset_id, project_id, normalized_root),
-                            )
-                        except (FileNotFoundError, NotADirectoryError):
-                            # Directory doesn't exist - get dataset_id from any existing files
-                            # or use None (will be handled in _queue_project_delta)
-                            db_files_list = self.database.get_project_files(
-                                project_id, include_deleted=False
-                            )
-                            if db_files_list:
-                                # Get dataset_id from first file
-                                dataset_id = db_files_list[0].dataset_id
-                            if not dataset_id:
-                                logger.warning(
-                                    f"Cannot resolve dataset_id for project {project_id} "
-                                    f"with non-existent root {normalized_root}, "
-                                    "files may not be processed correctly"
-                                )
-
-                if not dataset_id:
-                    logger.error(
-                        f"[QUEUE] Cannot determine dataset_id for project {project_id} root {root_dir}"
-                    )
-                    total_stats["errors"] += (
-                        len(delta.new_files)
-                        + len(delta.changed_files)
-                        + len(delta.deleted_files)
-                    )
-                    continue
-
-                # Process files for this project (reuse existing logic)
+                # Process files for this project
                 project_stats = self._queue_project_delta(
-                    project_id, delta, dataset_id, project_root
+                    project_id, delta, project_root
                 )
 
                 total_stats["new_files"] += project_stats["new_files"]
@@ -442,7 +324,7 @@ class FileChangeProcessor:
         return total_stats
 
     def _queue_project_delta(
-        self, project_id: str, delta: FileDelta, dataset_id: str, project_root: Path
+        self, project_id: str, delta: FileDelta, project_root: Path
     ) -> Dict[str, Any]:
         """
         Queue file changes for a single project.
@@ -450,7 +332,6 @@ class FileChangeProcessor:
         Args:
             project_id: Project ID
             delta: FileDelta for this project
-            dataset_id: Dataset ID (already resolved)
             project_root: Project root directory
 
         Returns:
@@ -473,7 +354,7 @@ class FileChangeProcessor:
                     f"size: {size} bytes"
                 )
                 if self._queue_file_for_processing(
-                    file_path_str, mtime, project_id, dataset_id, project_root
+                    file_path_str, mtime, project_id, project_root
                 ):
                     stats["new_files"] += 1
                     logger.info(
@@ -500,7 +381,7 @@ class FileChangeProcessor:
                     f"size: {size} bytes"
                 )
                 if self._queue_file_for_processing(
-                    file_path_str, mtime, project_id, dataset_id, project_root
+                    file_path_str, mtime, project_id, project_root
                 ):
                     stats["changed_files"] += 1
                     logger.info(
@@ -524,8 +405,7 @@ class FileChangeProcessor:
                     f"[project={project_id}] [DELETED FILE] {file_path_str} | action: soft_delete"
                 )
                 if self.version_dir:
-                    # Use execute() for mark_file_deleted
-                    result = self.database.execute(
+                    self.database._execute(
                         """
                         UPDATE files 
                         SET deleted = 1, deleted_at = julianday('now')
@@ -533,12 +413,13 @@ class FileChangeProcessor:
                         """,
                         (file_path_str, project_id),
                     )
-                    affected_rows = (
-                        result.get("affected_rows", 0)
-                        if isinstance(result, dict)
-                        else 0
+                    self.database._commit()
+                    # Check if row was updated
+                    row = self.database._fetchone(
+                        "SELECT id FROM files WHERE path = ? AND project_id = ? AND deleted = 1",
+                        (file_path_str, project_id),
                     )
-                    if affected_rows > 0:
+                    if row:
                         stats["deleted_files"] += 1
                         logger.info(
                             f"[project={project_id}] [DELETED FILE] ✓ Marked as deleted: {file_path_str}"
@@ -566,7 +447,6 @@ class FileChangeProcessor:
         file_path: str,
         mtime: float,
         project_id: str,
-        dataset_id: str,
         project_root: Optional[Path] = None,
     ) -> bool:
         """
@@ -580,7 +460,6 @@ class FileChangeProcessor:
             file_path: File path (will be normalized to absolute)
             mtime: File modification time
             project_id: Project ID
-            dataset_id: Dataset ID (already resolved)
             project_root: Project root directory (optional, will be resolved if not provided)
 
         Returns:
@@ -629,19 +508,12 @@ class FileChangeProcessor:
                         f"Could not determine root_dir for {abs_file_path}, "
                         "falling back to mark_file_needs_chunking"
                     )
-                    # Fallback to old behavior
-                    result = self.database.execute(
-                        """
-                        UPDATE files SET needs_chunking = 1 WHERE path = ? AND project_id = ?
-                        """,
+                    # Check if file already exists before UPDATE
+                    existing = self.database._fetchone(
+                        "SELECT id FROM files WHERE path = ? AND project_id = ?",
                         (abs_file_path, project_id),
                     )
-                    affected_rows = (
-                        result.get("affected_rows", 0)
-                        if isinstance(result, dict)
-                        else 0
-                    )
-                    if affected_rows == 0:
+                    if not existing:
                         # New file: insert/update file record first
                         path_obj = Path(abs_file_path)
                         lines = 0
@@ -662,10 +534,10 @@ class FileChangeProcessor:
                             )
 
                         try:
-                            self.database.execute(
+                            self.database._execute(
                                 """
-                                INSERT INTO files (path, lines, last_modified, has_docstring, project_id, dataset_id, created_at)
-                                VALUES (?, ?, ?, ?, ?, ?, julianday('now'))
+                                INSERT INTO files (path, lines, last_modified, has_docstring, project_id, created_at)
+                                VALUES (?, ?, ?, ?, ?, julianday('now'))
                                 """,
                                 (
                                     abs_file_path,
@@ -673,9 +545,9 @@ class FileChangeProcessor:
                                     mtime,
                                     has_docstring,
                                     project_id,
-                                    dataset_id,
                                 ),
                             )
+                            self.database._commit()
                         except Exception as e:
                             logger.error(
                                 f"[QUEUE] Failed to add new file record: {abs_file_path} ({e})"
@@ -683,18 +555,23 @@ class FileChangeProcessor:
                             return False
 
                         # Retry marking for chunking
-                        result = self.database.execute(
+                        self.database._execute(
                             """
                             UPDATE files SET needs_chunking = 1 WHERE path = ? AND project_id = ?
                             """,
                             (abs_file_path, project_id),
                         )
-                        affected_rows = (
-                            result.get("affected_rows", 0)
-                            if isinstance(result, dict)
-                            else 0
+                        self.database._commit()
+                    else:
+                        # File already existed: just mark for chunking
+                        self.database._execute(
+                            """
+                            UPDATE files SET needs_chunking = 1 WHERE path = ? AND project_id = ?
+                            """,
+                            (abs_file_path, project_id),
                         )
-                    return affected_rows > 0
+                        self.database._commit()
+                    return True
 
             # Path is already normalized by normalize_file_path above
             # No need to re-normalize
@@ -730,10 +607,10 @@ class FileChangeProcessor:
                 # Add/update file and get file_id (add_file handles both INSERT and UPDATE)
                 # This ensures relative_path and watch_dir_id are always set correctly
                 # Use execute() for add_file
-                result = self.database.execute(
+                self.database._execute(
                     """
-                    INSERT OR REPLACE INTO files (path, lines, last_modified, has_docstring, project_id, dataset_id, created_at, updated_at)
-                    VALUES (?, ?, ?, ?, ?, ?, julianday('now'), julianday('now'))
+                    INSERT OR REPLACE INTO files (path, lines, last_modified, has_docstring, project_id, created_at, updated_at)
+                    VALUES (?, ?, ?, ?, ?, julianday('now'), julianday('now'))
                     """,
                     (
                         abs_file_path,
@@ -741,32 +618,23 @@ class FileChangeProcessor:
                         mtime,
                         has_docstring,
                         project_id,
-                        dataset_id,
                     ),
                 )
-                # Get file_id from result or by querying
-                file_result = self.database.execute(
+                self.database._commit()
+                # Get file_id by querying
+                file_row = self.database._fetchone(
                     "SELECT id FROM files WHERE path = ? AND project_id = ? LIMIT 1",
                     (abs_file_path, project_id),
                 )
-                file_rows = (
-                    file_result.get("data", []) if isinstance(file_result, dict) else []
-                )
-                if file_rows:
-                    file_id = file_rows[0].get("id")
-                else:
-                    # Try to get file_id from execute result
-                    file_id = (
-                        result.get("lastrowid", 0) if isinstance(result, dict) else 0
-                    )
+                file_id = file_row.get("id", 0) if file_row else 0
                 logger.debug(
                     f"[QUEUE] File added/updated in database: {abs_file_path} | "
-                    f"file_id={file_id} | project_id={project_id} | dataset_id={dataset_id}"
+                    f"file_id={file_id} | project_id={project_id}"
                 )
 
                 # Verify file was added/updated successfully by checking file_id
-                file_record_obj = self.database.get_file(file_id) if file_id else None
-                if not file_record_obj:
+                file_record = self.database.get_file_by_id(file_id) if file_id else None
+                if not file_record:
                     logger.error(
                         f"[QUEUE] File was added/updated (file_id={file_id}) but not found in database: {abs_file_path}. "
                         "This may indicate a transaction issue."
@@ -775,8 +643,8 @@ class FileChangeProcessor:
                 else:
                     logger.debug(
                         f"[QUEUE] File verified in database: file_id={file_id}, "
-                        f"path={file_record_obj.path}, relative_path={getattr(file_record_obj, 'relative_path', None)}, "
-                        f"watch_dir_id={getattr(file_record_obj, 'watch_dir_id', None)}, project_id={file_record_obj.project_id}"
+                        f"path={file_record.get('path')}, relative_path={file_record.get('relative_path')}, "
+                        f"watch_dir_id={file_record.get('watch_dir_id')}, project_id={file_record.get('project_id')}"
                     )
             except Exception as e:
                 logger.error(
@@ -796,12 +664,13 @@ class FileChangeProcessor:
             # Mark for chunking (vectorization worker will process)
             # Note: Immediate vectorization is not done here because this is sync context
             # Worker will handle vectorization in background
-            self.database.execute(
+            self.database._execute(
                 """
                 UPDATE files SET needs_chunking = 1 WHERE path = ? AND project_id = ?
                 """,
                 (abs_file_path, project_id),
             )
+            self.database._commit()
             logger.debug(
                 f"[QUEUE] File marked for worker vectorization: {abs_file_path}"
             )

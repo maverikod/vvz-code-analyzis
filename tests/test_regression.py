@@ -347,14 +347,12 @@ class TestRegressionExistingWorkflows:
             test_file = tmp_path / "test.py"
             test_file.write_text("# Test\n")
 
-            dataset_id = str(db.get_or_create_dataset(project_id, str(tmp_path)))
             file_id = db.add_file(
                 path=str(test_file),
                 lines=1,
                 last_modified=test_file.stat().st_mtime,
                 has_docstring=False,
                 project_id=project_id,
-                dataset_id=dataset_id,
             )
 
             # Query file

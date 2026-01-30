@@ -15,7 +15,6 @@ from code_analysis.core.database_client.objects import (
     ASTNode,
     Class,
     CodeChunk,
-    Dataset,
     File,
     Function,
     Import,
@@ -168,25 +167,6 @@ class TestObjectModelsRealData:
             # Verify essential fields
             assert row["project_id"] == file_obj.project_id
             assert row["path"] == file_obj.path
-
-    def test_dataset_from_real_database(self, test_db):
-        """Test Dataset object with real datasets from database."""
-        self._check_test_data_available()
-
-        projects_data = test_db.get_projects()
-        if not projects_data:
-            pytest.skip("No projects found in test database")
-
-        project_id = projects_data[0]["id"]
-        datasets_data = test_db.get_datasets(project_id=project_id)
-
-        if datasets_data:
-            # Convert to Dataset objects
-            datasets = [Dataset.from_db_row(ds_data) for ds_data in datasets_data]
-
-            for dataset in datasets:
-                assert isinstance(dataset, Dataset)
-                assert dataset.project_id == project_id
 
     def test_class_from_real_database(self, test_db):
         """Test Class object with real classes from database."""

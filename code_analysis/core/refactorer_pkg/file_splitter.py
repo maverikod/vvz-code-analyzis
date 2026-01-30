@@ -83,13 +83,6 @@ class FileToPackageSplitter(BaseRefactorer):
                         lines = len(module_content.splitlines())
                         has_docstring = module_content.strip().startswith('"""') or module_content.strip().startswith("'''")
                         
-                        # Get or create dataset
-                        dataset_id = self.database.get_or_create_dataset(
-                            project_id=self.project_id,
-                            root_path=str(self.root_dir),
-                            name=self.root_dir.name,
-                        )
-                        
                         # Add file to database (or update if exists)
                         module_file_id = self.database.add_file(
                             path=str(module_path),
@@ -97,7 +90,6 @@ class FileToPackageSplitter(BaseRefactorer):
                             last_modified=file_mtime,
                             has_docstring=has_docstring,
                             project_id=self.project_id,
-                            dataset_id=dataset_id,
                         )
                         
                         # Now update file data (this will parse AST/CST and extract entities)

@@ -23,6 +23,7 @@ async def add_code_chunk(
     embedding_model: Optional[str] = None,
     bm25_score: Optional[float] = None,
     embedding_vector: Optional[str] = None,
+    token_count: Optional[int] = None,
     class_id: Optional[int] = None,
     function_id: Optional[int] = None,
     method_id: Optional[int] = None,
@@ -34,8 +35,8 @@ async def add_code_chunk(
     """
     Add or update code chunk. Returns chunk_id.
 
+    Persists chunk text, embedding vector (and model), and token count.
     Uses INSERT OR REPLACE to handle updates based on chunk_uuid (UNIQUE constraint).
-    This allows the same chunk to be updated if it already exists (e.g., during re-chunking).
 
     Args:
         file_id: File ID
@@ -48,6 +49,7 @@ async def add_code_chunk(
         embedding_model: Model name used for embedding (NULL until vectorized)
         bm25_score: BM25 relevance score (optional)
         embedding_vector: JSON string containing embedding vector (optional)
+        token_count: Number of tokens in chunk (optional)
         class_id: AST binding - class ID (if chunk is from class docstring)
         function_id: AST binding - function ID (if chunk is from function docstring)
         method_id: AST binding - method ID (if chunk is from method docstring)
@@ -65,11 +67,11 @@ async def add_code_chunk(
             (
                 file_id, project_id, chunk_uuid, chunk_type, chunk_text,
                 chunk_ordinal, vector_id, embedding_model, bm25_score,
-                embedding_vector, class_id, function_id, method_id,
+                embedding_vector, token_count, class_id, function_id, method_id,
                 line, ast_node_type, source_type, binding_level,
                 updated_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, julianday('now'))
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, julianday('now'))
         """,
         (
             file_id,
@@ -82,6 +84,7 @@ async def add_code_chunk(
             embedding_model,
             bm25_score,
             embedding_vector,
+            token_count,
             class_id,
             function_id,
             method_id,
@@ -95,4 +98,3 @@ async def add_code_chunk(
     result = self._lastrowid()
     assert result is not None
     return result
-

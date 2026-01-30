@@ -81,13 +81,6 @@ def real_test_file_with_class(test_data_root):
 @pytest.fixture
 def real_test_file_in_db(test_db, test_project, temp_dir, real_test_file, test_data_root):
     """Add real test file to database."""
-    # Create dataset
-    dataset_id = test_db.get_or_create_dataset(
-        project_id=test_project,
-        root_path=str(test_data_root),
-        name=test_data_root.name,
-    )
-    
     # Read file content
     file_content = real_test_file.read_text(encoding="utf-8")
     
@@ -102,7 +95,6 @@ def real_test_file_in_db(test_db, test_project, temp_dir, real_test_file, test_d
         last_modified=file_mtime,
         has_docstring=True,
         project_id=test_project,
-        dataset_id=dataset_id,
     )
     
     # Add AST and CST trees directly via SQL
@@ -339,13 +331,6 @@ class TestUpdateFileDataReal:
         self, test_db, test_project, temp_dir, real_test_file_with_class, test_data_root
     ):
         """Test update_file_data with real file containing classes."""
-        # Create dataset
-        dataset_id = test_db.get_or_create_dataset(
-            project_id=test_project,
-            root_path=str(test_data_root),
-            name=test_data_root.name,
-        )
-        
         # Read file content
         file_content = real_test_file_with_class.read_text(encoding="utf-8")
         
@@ -360,7 +345,6 @@ class TestUpdateFileDataReal:
             last_modified=file_mtime,
             has_docstring=True,
             project_id=test_project,
-            dataset_id=dataset_id,
         )
         
         # Use _analyze_file to properly extract all entities

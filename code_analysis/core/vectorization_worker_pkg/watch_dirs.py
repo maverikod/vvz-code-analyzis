@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import json
 import logging
-import uuid
 from pathlib import Path
 from typing import TYPE_CHECKING, List
 
@@ -78,54 +77,15 @@ async def _enqueue_watch_dirs(self, database: "DatabaseClient") -> int:
     """
     Scan watch_dirs and ensure files are registered for chunking.
 
-    Implements dataset-scoped file processing (Step 2 of refactor plan).
-    Resolves dataset_id from each watch_dir root.
-
     Returns:
         Number of files enqueued (new or marked needing chunking).
     """
-    from ..project_resolution import normalize_root_dir
-
     enqueued = 0
     for root in self.watch_dirs:
         try:
             root_path = Path(root)
             if not root_path.exists():
                 continue
-
-            # Resolve dataset_id for this watch_dir
-            normalized_root = str(normalize_root_dir(root_path))
-            dataset_id = getattr(self, "dataset_id", None)
-            if not dataset_id:
-                # Use execute() for get_dataset_id
-                dataset_result = database.execute(
-                    """
-                    SELECT id FROM datasets
-                    WHERE project_id = ? AND root_path = ?
-                    LIMIT 1
-                    """,
-                    (self.project_id, normalized_root),
-                )
-                dataset_rows = (
-                    dataset_result.get("data", [])
-                    if isinstance(dataset_result, dict)
-                    else []
-                )
-                if dataset_rows:
-                    dataset_id = dataset_rows[0].get("id")
-                if not dataset_id:
-                    # Create dataset if it doesn't exist
-                    dataset_id = str(uuid.uuid4())
-                    database.execute(
-                        """
-                        INSERT INTO datasets (id, project_id, root_path, created_at)
-                        VALUES (?, ?, ?, julianday('now'))
-                        """,
-                        (dataset_id, self.project_id, normalized_root),
-                    )
-                    logger.info(
-                        f"Created dataset {dataset_id} for watch_dir {normalized_root}"
-                    )
 
             for file_path in root_path.rglob("*.py"):
                 file_stat = file_path.stat()
@@ -146,21 +106,13 @@ async def _enqueue_watch_dirs(self, database: "DatabaseClient") -> int:
                 file_rec = file_rows[0] if file_rows else None
                 if not file_rec:
                     # Register file and mark as needing chunking
-                    # Use execute() for add_file
                     file_lines = len(file_path.read_text(encoding="utf-8").splitlines())
                     database.execute(
                         """
-                        INSERT INTO files (path, lines, last_modified, has_docstring, project_id, dataset_id, created_at)
-                        VALUES (?, ?, ?, ?, ?, ?, julianday('now'))
+                        INSERT INTO files (project_id, path, lines, last_modified, has_docstring, updated_at)
+                        VALUES (?, ?, ?, ?, ?, julianday('now'))
                         """,
-                        (
-                            file_path_str,
-                            file_lines,
-                            file_mtime,
-                            False,
-                            self.project_id,
-                            dataset_id,
-                        ),
+                        (self.project_id, file_path_str, file_lines, file_mtime, False),
                     )
                     # Use execute() for mark_file_needs_chunking
                     database.execute(

@@ -45,25 +45,26 @@ def test_db(temp_dir):
 
 @pytest.fixture
 def test_project(test_db, temp_dir, project_id):
-    """Create test project in database."""
+    """Create test project in database and projectid file on disk."""
     project_name = temp_dir.name
     test_db._execute(
         "INSERT INTO projects (id, root_path, name, updated_at) VALUES (?, ?, ?, julianday('now'))",
         (project_id, str(temp_dir), project_name),
     )
     test_db._commit()
+    # Create projectid file so _queue_file_for_processing can resolve project info
+    import json
+    projectid_file = temp_dir / "projectid"
+    projectid_file.write_text(
+        json.dumps({"id": project_id, "description": "Test project"}),
+        encoding="utf-8",
+    )
     return project_id
 
 
 @pytest.fixture
 def test_file_with_content(test_db, temp_dir, test_project):
     """Create test file with content."""
-    dataset_id = test_db.get_or_create_dataset(
-        project_id=test_project,
-        root_path=str(temp_dir),
-        name=temp_dir.name,
-    )
-    
     file_path = temp_dir / "test_module.py"
     file_content = '''"""
 Test module.
@@ -106,10 +107,9 @@ def function_b():
         last_modified=file_mtime,
         has_docstring=True,
         project_id=test_project,
-        dataset_id=dataset_id,
     )
     
-    return file_id, file_path, test_project, dataset_id
+    return file_id, file_path, test_project
 
 
 class TestFileSplitterIntegration:
@@ -119,7 +119,7 @@ class TestFileSplitterIntegration:
         self, test_db, test_file_with_content, temp_dir
     ):
         """Test that file splitter updates database for new files."""
-        file_id, file_path, project_id, dataset_id = test_file_with_content
+        file_id, file_path, project_id = test_file_with_content
         
         # Create splitter with database access
         splitter = FileToPackageSplitter(
@@ -181,7 +181,7 @@ class TestClassSplitterIntegration:
         self, test_db, test_file_with_content, temp_dir
     ):
         """Test that class splitter updates database after file write."""
-        file_id, file_path, project_id, dataset_id = test_file_with_content
+        file_id, file_path, project_id = test_file_with_content
         
         # Create splitter with database access
         splitter = ClassSplitter(
@@ -255,7 +255,7 @@ class TestExtractorIntegration:
         self, test_db, test_file_with_content, temp_dir
     ):
         """Test that extractor updates database after file write."""
-        file_id, file_path, project_id, dataset_id = test_file_with_content
+        file_id, file_path, project_id = test_file_with_content
         
         # Create extractor with database access
         extractor = SuperclassExtractor(
@@ -335,7 +335,7 @@ def test_function():
         self, test_db, test_file_with_content, temp_dir
     ):
         """Test that AST saving preserves comments."""
-        file_id, file_path, project_id, dataset_id = test_file_with_content
+        file_id, file_path, project_id = test_file_with_content
         
         # Add comments to file
         content_with_comments = file_path.read_text(encoding="utf-8")
@@ -373,7 +373,7 @@ class TestFileWatcherIntegration:
         self, test_db, test_file_with_content, temp_dir
     ):
         """Test that file watcher updates database on file change."""
-        file_id, file_path, project_id, dataset_id = test_file_with_content
+        file_id, file_path, project_id = test_file_with_content
         
         from code_analysis.core.file_watcher_pkg.processor import FileChangeProcessor
         
@@ -407,7 +407,6 @@ class UpdatedClass:
             file_path=str(file_path),
             mtime=mtime,
             project_id=project_id,
-            dataset_id=dataset_id,
             project_root=temp_dir,
         )
         
@@ -431,7 +430,7 @@ class UpdatedClass:
         self, test_db, test_file_with_content, temp_dir
     ):
         """Test file watcher with multiple file changes."""
-        file_id, file_path, project_id, dataset_id = test_file_with_content
+        file_id, file_path, project_id = test_file_with_content
         
         from code_analysis.core.file_watcher_pkg.processor import FileChangeProcessor
         
@@ -464,7 +463,6 @@ class SecondClass:
             last_modified=file2_mtime,
             has_docstring=True,
             project_id=project_id,
-            dataset_id=dataset_id,
         )
         
         # Modify both files
@@ -482,7 +480,6 @@ class SecondClass:
             file_path=str(file_path),
             mtime=mtime1,
             project_id=project_id,
-            dataset_id=dataset_id,
             project_root=temp_dir,
         )
         
@@ -490,7 +487,6 @@ class SecondClass:
             file_path=str(file2_path),
             mtime=mtime2,
             project_id=project_id,
-            dataset_id=dataset_id,
             project_root=temp_dir,
         )
         

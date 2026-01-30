@@ -126,6 +126,8 @@ def register_code_analysis_commands(reg: registry) -> None:
             GetASTMCPCommand,
             GetClassHierarchyMCPCommand,
             GetCodeEntityInfoMCPCommand,
+            GetEntityDependenciesMCPCommand,
+            GetEntityDependentsMCPCommand,
             GetImportsMCPCommand,
             ListCodeEntitiesMCPCommand,
             ListProjectFilesMCPCommand,
@@ -140,6 +142,8 @@ def register_code_analysis_commands(reg: registry) -> None:
         reg.register(ListCodeEntitiesMCPCommand, "custom")
         reg.register(GetImportsMCPCommand, "custom")
         reg.register(FindDependenciesMCPCommand, "custom")
+        reg.register(GetEntityDependenciesMCPCommand, "custom")
+        reg.register(GetEntityDependentsMCPCommand, "custom")
         reg.register(GetClassHierarchyMCPCommand, "custom")
         reg.register(FindUsagesMCPCommand, "custom")
         reg.register(ExportGraphMCPCommand, "custom")

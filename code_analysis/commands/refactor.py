@@ -13,9 +13,6 @@ from ..core.refactorer_pkg.splitter import ClassSplitter
 from ..core.refactorer_pkg.extractor import SuperclassExtractor
 from ..core.refactorer_pkg.file_splitter import FileToPackageSplitter
 
-# TODO: Add ClassMerger when available
-# from ..core.refactorer_pkg.merger import ClassMerger
-
 logger = logging.getLogger(__name__)
 
 
@@ -23,7 +20,10 @@ class RefactorCommand:
     """Commands for code refactoring."""
 
     def __init__(
-        self, project_id: str, database: Optional[Any] = None, root_dir: Optional[Path] = None
+        self,
+        project_id: str,
+        database: Optional[Any] = None,
+        root_dir: Optional[Path] = None,
     ):
         """
         Initialize refactor command.

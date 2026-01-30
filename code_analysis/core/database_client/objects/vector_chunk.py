@@ -128,6 +128,7 @@ class CodeChunk(BaseObject):
         embedding_model: Embedding model used
         bm25_score: BM25 relevance score
         embedding_vector: Embedding vector as JSON
+        token_count: Number of tokens in chunk (optional)
         class_id: Associated class (if applicable)
         function_id: Associated function (if applicable)
         method_id: Associated method (if applicable)
@@ -150,6 +151,7 @@ class CodeChunk(BaseObject):
     embedding_model: Optional[str] = None
     bm25_score: Optional[float] = None
     embedding_vector: Optional[str] = None
+    token_count: Optional[int] = None
     class_id: Optional[int] = None
     function_id: Optional[int] = None
     method_id: Optional[int] = None
@@ -214,6 +216,7 @@ class CodeChunk(BaseObject):
             embedding_model=data.get("embedding_model"),
             bm25_score=data.get("bm25_score"),
             embedding_vector=data.get("embedding_vector"),
+            token_count=data.get("token_count"),
             class_id=data.get("class_id"),
             function_id=data.get("function_id"),
             method_id=data.get("method_id"),
@@ -266,6 +269,8 @@ class CodeChunk(BaseObject):
             result["bm25_score"] = self.bm25_score
         if self.embedding_vector is not None:
             result["embedding_vector"] = self.embedding_vector
+        if self.token_count is not None:
+            result["token_count"] = self.token_count
         if self.class_id is not None:
             result["class_id"] = self.class_id
         if self.function_id is not None:

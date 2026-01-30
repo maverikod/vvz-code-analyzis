@@ -102,7 +102,6 @@ class TestVectorizationIntegrationRealData:
                 last_modified=file_path.stat().st_mtime,
                 has_docstring=False,
                 project_id=project_info.project_id,
-                dataset_id=str(temp_db.get_or_create_dataset(project_info.project_id, str(project_info.root_path))),
             )
             file_ids.append(file_id)
 
@@ -177,7 +176,6 @@ class TestVectorizationIntegrationRealData:
                 last_modified=file_path.stat().st_mtime,
                 has_docstring=False,
                 project_id=project_info.project_id,
-                dataset_id=str(temp_db.get_or_create_dataset(project_info.project_id, str(project_info.root_path))),
             )
             assert file_id > 0
 
@@ -256,7 +254,6 @@ class TestVectorizationIntegrationRealData:
                 last_modified=large_file.stat().st_mtime,
                 has_docstring=False,
                 project_id=project_id,
-                dataset_id=str(temp_db.get_or_create_dataset(project_id)),
             )
             assert file_id > 0
 
@@ -296,7 +293,6 @@ class TestVectorizationIntegrationRealData:
                 last_modified=error_file.stat().st_mtime,
                 has_docstring=False,
                 project_id=project_id,
-                dataset_id=str(temp_db.get_or_create_dataset(project_id)),
             )
 
             # Create worker
@@ -398,7 +394,6 @@ class TestVectorizationIntegrationRealData:
                 last_modified=test_file.stat().st_mtime,
                 has_docstring=True,
                 project_id=project_id,
-                dataset_id=str(temp_db.get_or_create_dataset(project_id)),
             )
 
             # Verify file is in database

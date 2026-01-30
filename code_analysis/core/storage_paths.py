@@ -181,32 +181,17 @@ def ensure_storage_dirs(paths: StoragePaths) -> None:
         paths.queue_dir.mkdir(parents=True, exist_ok=True)
 
 
-def get_faiss_index_path(faiss_dir: Path, project_id: str, dataset_id: str) -> Path:
+def get_faiss_index_path(faiss_dir: Path, project_id: str) -> Path:
     """
-    Get FAISS index file path for a specific dataset.
+    Get FAISS index file path for a project.
 
-    Implements dataset-scoped FAISS indexing (Step 2 of refactor plan).
-    Each dataset gets its own FAISS index file to avoid cross-root collisions
-    and maintain high search relevance.
-
-    Path format: `{faiss_dir}/{project_id}/{dataset_id}.bin`
+    One index per project: path format is `{faiss_dir}/{project_id}.bin`.
 
     Args:
         faiss_dir: Base directory for FAISS index files (from StoragePaths).
         project_id: Project identifier (UUID4 string).
-        dataset_id: Dataset identifier (UUID4 string).
 
     Returns:
-        Absolute Path to the FAISS index file for this dataset.
-
-    Example:
-        >>> faiss_dir = Path("/var/lib/code_analysis/faiss")
-        >>> project_id = "123e4567-e89b-12d3-a456-426614174000"
-        >>> dataset_id = "987fcdeb-51a2-43f7-8b9c-123456789abc"
-        >>> get_faiss_index_path(faiss_dir, project_id, dataset_id)
-        Path('/var/lib/code_analysis/faiss/123e4567-e89b-12d3-a456-426614174000/987fcdeb-51a2-43f7-8b9c-123456789abc.bin')
+        Absolute Path to the FAISS index file for this project.
     """
-    index_file = faiss_dir / project_id / f"{dataset_id}.bin"
-    # Ensure parent directory exists
-    index_file.parent.mkdir(parents=True, exist_ok=True)
-    return index_file
+    return faiss_dir / f"{project_id}.bin"

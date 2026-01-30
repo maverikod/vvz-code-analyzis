@@ -63,13 +63,12 @@ def add_file(
     last_modified: float,
     has_docstring: bool,
     project_id: str,
-    dataset_id: str,
 ) -> int:
     """
     Add or update file record. Returns file_id.
 
     Files are stored with relative_path from project root.
-    Files are uniquely identified by (project_id, dataset_id, path).
+    Files are uniquely identified by (project_id, path).
 
     **Important**: If file exists in a different project, it will be marked as deleted
     in the old project and all related data will be cleared before adding to the new project.
@@ -80,7 +79,6 @@ def add_file(
         last_modified: Last modification timestamp
         has_docstring: Whether file has docstring
         project_id: Project ID (UUID4 string)
-        dataset_id: Dataset ID (UUID4 string)
 
     Returns:
         File ID
@@ -172,10 +170,10 @@ def add_file(
     existing_in_correct_project = self._fetchone(
         """
         SELECT id FROM files 
-        WHERE project_id = ? AND dataset_id = ? 
+        WHERE project_id = ?
         AND (relative_path = ? OR path = ?)
         """,
-        (project_id, dataset_id, str(relative_path), abs_path),
+        (project_id, str(relative_path), abs_path),
     )
     
     if existing_in_correct_project:
@@ -199,10 +197,10 @@ def add_file(
         self._execute(
             """
                 INSERT INTO files
-                (project_id, dataset_id, watch_dir_id, path, relative_path, lines, last_modified, has_docstring, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, julianday('now'))
+                (project_id, watch_dir_id, path, relative_path, lines, last_modified, has_docstring, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, julianday('now'))
             """,
-            (project_id, dataset_id, watch_dir_id, abs_path, str(relative_path), lines, last_modified, has_docstring),
+            (project_id, watch_dir_id, abs_path, str(relative_path), lines, last_modified, has_docstring),
         )
         # Only commit if not in a transaction (transaction will commit all changes)
         if not self._in_transaction():
@@ -280,6 +278,7 @@ def clear_file_data(self, file_id: int) -> None:
     3. Then delete from database
     This ensures FAISS stays in sync when files are updated.
     """
+    self.delete_entity_cross_ref_for_file(file_id)
     class_rows = self._fetchall("SELECT id FROM classes WHERE file_id = ?", (file_id,))
     class_ids = [row["id"] for row in class_rows]
     content_rows = self._fetchall(
@@ -1632,8 +1631,9 @@ def update_file_data_atomic(
                             bases.append(ast.unparse(base))
                         except AttributeError:
                             bases.append(str(base))
+                end_line_class = getattr(node, "end_lineno", node.lineno)
                 class_id = self.add_class(
-                    file_id, node.name, node.lineno, docstring, bases
+                    file_id, node.name, node.lineno, docstring, bases, end_line=end_line_class
                 )
                 classes_added += 1
                 class_nodes[node] = class_id
@@ -1671,6 +1671,7 @@ def update_file_data_atomic(
                                 exc_info=True,
                             )
                             method_complexity = None
+                        end_line_method = getattr(item, "end_lineno", item.lineno)
                         method_id = self.add_method(
                             class_id,
                             item.name,
@@ -1678,6 +1679,7 @@ def update_file_data_atomic(
                             method_args,
                             method_docstring,
                             complexity=method_complexity,
+                            end_line=end_line_method,
                         )
                         methods_added += 1
 
@@ -1728,6 +1730,7 @@ def update_file_data_atomic(
                             exc_info=True,
                         )
                         function_complexity = None
+                    end_line_func = getattr(node, "end_lineno", node.lineno)
                     function_id = self.add_function(
                         file_id,
                         node.name,
@@ -1735,6 +1738,7 @@ def update_file_data_atomic(
                         args,
                         docstring,
                         complexity=function_complexity,
+                        end_line=end_line_func,
                     )
                     functions_added += 1
 
@@ -1773,7 +1777,7 @@ def update_file_data_atomic(
 
         # Track usages (function calls, method calls, class instantiations)
         try:
-            from ..core.usage_tracker import UsageTracker
+            from ..usage_tracker import UsageTracker
 
             def add_usage_callback(usage_record: Dict[str, Any]) -> None:
                 """Callback to add usage record to database."""
@@ -1807,6 +1811,23 @@ def update_file_data_atomic(
                 exc_info=True,
             )
             # Continue even if usage tracking fails
+
+        # Build entity cross-ref from usages (caller/callee by entity id)
+        try:
+            from ..entity_cross_ref_builder import build_entity_cross_ref_for_file
+
+            cross_ref_added = build_entity_cross_ref_for_file(
+                self, file_id, project_id, source_code
+            )
+            logger.debug(
+                f"Built {cross_ref_added} entity cross-refs for {abs_path}",
+            )
+        except Exception as e:
+            logger.warning(
+                f"Failed to build entity cross-ref for {abs_path}: {e}",
+                exc_info=True,
+            )
+            # Do not fail the whole file update
 
         entities_count = classes_added + functions_added + methods_added
 

@@ -22,6 +22,26 @@ def _row_to_dict(row: Any) -> Dict[str, Any]:
     return dict(row)
 
 
+def _path_by_file_ids(
+    db: Any, file_ids: List[Optional[int]]
+) -> Dict[Optional[int], str]:
+    """Build mapping file_id -> path by querying files table."""
+    ids = [fid for fid in file_ids if fid is not None]
+    if not ids:
+        return {}
+    placeholders = ",".join("?" * len(ids))
+    result = db.execute(
+        f"SELECT id, path FROM files WHERE id IN ({placeholders})",
+        tuple(ids),
+    )
+    rows = result.get("data") or []
+    path_by_id: Dict[Optional[int], str] = {}
+    for r in rows:
+        d = _row_to_dict(r)
+        path_by_id[d["id"]] = d.get("path", "")
+    return path_by_id
+
+
 def _get_entity_dependencies_via_execute(
     db: Any, entity_type: str, entity_id: int
 ) -> List[Dict[str, Any]]:
@@ -49,17 +69,7 @@ def _get_entity_dependencies_via_execute(
     file_ids = list(
         {_row_to_dict(r).get("file_id") for r in rows if _row_to_dict(r).get("file_id")}
     )
-    path_by_id: Dict[Optional[int], str] = {}
-    if file_ids:
-        placeholders = ",".join("?" * len(file_ids))
-        path_result = db.execute(
-            f"SELECT id, path FROM files WHERE id IN ({placeholders})",
-            tuple(file_ids),
-        )
-        path_rows = path_result.get("data") or []
-        for r in path_rows:
-            d = _row_to_dict(r)
-            path_by_id[d["id"]] = d.get("path", "")
+    path_by_id = _path_by_file_ids(db, file_ids)
 
     out: List[Dict[str, Any]] = []
     for r in rows:
@@ -172,17 +182,7 @@ def _get_entity_dependents_via_execute(
     file_ids = list(
         {_row_to_dict(r).get("file_id") for r in rows if _row_to_dict(r).get("file_id")}
     )
-    path_by_id: Dict[Optional[int], str] = {}
-    if file_ids:
-        placeholders = ",".join("?" * len(file_ids))
-        path_result = db.execute(
-            f"SELECT id, path FROM files WHERE id IN ({placeholders})",
-            tuple(file_ids),
-        )
-        path_rows = path_result.get("data") or []
-        for r in path_rows:
-            d = _row_to_dict(r)
-            path_by_id[d["id"]] = d.get("path", "")
+    path_by_id = _path_by_file_ids(db, file_ids)
 
     out = []
     for r in rows:

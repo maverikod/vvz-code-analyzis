@@ -34,7 +34,7 @@ class TestClientAPI:
         driver = create_driver("sqlite", {"path": str(db_path)})
 
         # Create projects table
-        driver._execute(
+        driver.execute(
             """
             CREATE TABLE IF NOT EXISTS projects (
                 id TEXT PRIMARY KEY,
@@ -48,28 +48,12 @@ class TestClientAPI:
             """
         )
 
-        # Create datasets table
-        driver._execute(
-            """
-            CREATE TABLE IF NOT EXISTS datasets (
-                id TEXT PRIMARY KEY,
-                project_id TEXT NOT NULL,
-                root_path TEXT NOT NULL,
-                name TEXT,
-                created_at REAL DEFAULT (julianday('now')),
-                updated_at REAL DEFAULT (julianday('now')),
-                FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
-            )
-            """
-        )
-
-        # Create files table
-        driver._execute(
+        # Create files table (one project, path unique per project)
+        driver.execute(
             """
             CREATE TABLE IF NOT EXISTS files (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 project_id TEXT NOT NULL,
-                dataset_id TEXT NOT NULL,
                 watch_dir_id TEXT,
                 path TEXT NOT NULL,
                 relative_path TEXT,
@@ -82,14 +66,13 @@ class TestClientAPI:
                 created_at REAL DEFAULT (julianday('now')),
                 updated_at REAL DEFAULT (julianday('now')),
                 FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE,
-                FOREIGN KEY (dataset_id) REFERENCES datasets(id) ON DELETE CASCADE,
-                UNIQUE(project_id, dataset_id, path)
+                UNIQUE(project_id, path)
             )
             """
         )
 
         # Create ast_trees table
-        driver._execute(
+        driver.execute(
             """
             CREATE TABLE IF NOT EXISTS ast_trees (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -108,7 +91,7 @@ class TestClientAPI:
         )
 
         # Create cst_trees table
-        driver._execute(
+        driver.execute(
             """
             CREATE TABLE IF NOT EXISTS cst_trees (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -127,7 +110,7 @@ class TestClientAPI:
         )
 
         # Create vector_index table
-        driver._execute(
+        driver.execute(
             """
             CREATE TABLE IF NOT EXISTS vector_index (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -144,7 +127,7 @@ class TestClientAPI:
             """
         )
 
-        driver._commit()
+        # execute() commits after each statement
 
         # Start RPC server
         request_queue = RequestQueue()
@@ -321,7 +304,7 @@ class TestClientAPI:
         client.connect()
 
         try:
-            # Create project and dataset first
+            # Create project first
             project = Project(
                 id="test-project-file",
                 root_path="/tmp/test_project_file",
@@ -331,7 +314,6 @@ class TestClientAPI:
             # Create file
             file = File(
                 project_id=project.id,
-                dataset_id="test-dataset-1",
                 path="/tmp/test_project_file/test.py",
                 relative_path="test.py",
                 lines=100,
@@ -340,7 +322,6 @@ class TestClientAPI:
             created = client.create_file(file)
             assert created.id is not None
             assert created.project_id == file.project_id
-            assert created.dataset_id == file.dataset_id
             assert created.path == file.path
             assert created.lines == file.lines
             assert created.created_at is not None
@@ -364,7 +345,6 @@ class TestClientAPI:
 
             file = File(
                 project_id=project.id,
-                dataset_id="test-dataset-2",
                 path="/tmp/test_project_file_2/test2.py",
             )
             created = client.create_file(file)
@@ -398,7 +378,6 @@ class TestClientAPI:
 
             file = File(
                 project_id=project.id,
-                dataset_id="test-dataset-3",
                 path="/tmp/test_project_file_3/test3.py",
                 lines=50,
             )
@@ -413,7 +392,6 @@ class TestClientAPI:
             # Try to update file without id
             file_no_id = File(
                 project_id=project.id,
-                dataset_id="test-dataset-3",
                 path="/tmp/test_project_file_3/test4.py",
             )
             with pytest.raises(ValueError, match="id is required"):
@@ -438,7 +416,6 @@ class TestClientAPI:
 
             file = File(
                 project_id=project.id,
-                dataset_id="test-dataset-4",
                 path="/tmp/test_project_file_4/test4.py",
             )
             created = client.create_file(file)
@@ -476,7 +453,6 @@ class TestClientAPI:
             for i in range(3):
                 file = File(
                     project_id=project.id,
-                    dataset_id="test-dataset-files",
                     path=f"/tmp/test_project_files/file{i}.py",
                 )
                 client.create_file(file)
@@ -512,7 +488,6 @@ class TestClientAPI:
 
             file = File(
                 project_id=project.id,
-                dataset_id="test-dataset-ast",
                 path="/tmp/test_project_ast/test_ast.py",
                 last_modified=datetime.now(),
             )
@@ -551,7 +526,6 @@ class TestClientAPI:
 
             file = File(
                 project_id=project.id,
-                dataset_id="test-dataset-cst",
                 path="/tmp/test_project_cst/test_cst.py",
                 last_modified=datetime.now(),
             )
@@ -589,7 +563,6 @@ class TestClientAPI:
 
             file = File(
                 project_id=project.id,
-                dataset_id="test-dataset-vectors",
                 path="/tmp/test_project_vectors/test_vectors.py",
             )
             created = client.create_file(file)

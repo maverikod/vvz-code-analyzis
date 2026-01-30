@@ -24,7 +24,6 @@ SCHEMA_VERSION = "1.3.0"  # Current schema version (added files_total_at_start a
 # Migration functions are called in order when upgrading from old version to new version
 # Example usage:
 #   MIGRATION_METHODS["1.0.0"] = lambda driver: driver._migrate_to_uuid_projects()
-#   MIGRATION_METHODS["1.1.0"] = lambda driver: driver._migrate_add_datasets_table()
 MIGRATION_METHODS: Dict[str, Callable[[Any], None]] = {
     # Register migration methods here
     # Format: "version": lambda driver: driver._migration_method_name()
@@ -411,30 +410,12 @@ class CodeDatabase:
             )
         except Exception:
             pass  # Index might already exist
-        # Create datasets table (Step 1.1 of refactor plan)
-        # datasets table supports multi-root indexing within a project
-        self._execute(
-            """
-                CREATE TABLE IF NOT EXISTS datasets (
-                    id TEXT PRIMARY KEY,
-                    project_id TEXT NOT NULL,
-                    root_path TEXT NOT NULL,
-                    name TEXT,
-                    created_at REAL DEFAULT (julianday('now')),
-                    updated_at REAL DEFAULT (julianday('now')),
-                    FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE,
-                    UNIQUE(project_id, root_path)
-                )
-            """
-        )
-        # Update files table to include dataset_id, watch_dir_id, and relative_path
-        # Files now store relative_path from project root, not absolute path
+        # Files table: one project, path unique per project
         self._execute(
             """
                 CREATE TABLE IF NOT EXISTS files (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     project_id TEXT NOT NULL,
-                    dataset_id TEXT NOT NULL,
                     watch_dir_id TEXT,
                     path TEXT NOT NULL,
                     relative_path TEXT,
@@ -448,9 +429,8 @@ class CodeDatabase:
                     created_at REAL DEFAULT (julianday('now')),
                     updated_at REAL DEFAULT (julianday('now')),
                     FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE,
-                    FOREIGN KEY (dataset_id) REFERENCES datasets(id) ON DELETE CASCADE,
                     FOREIGN KEY (watch_dir_id) REFERENCES watch_dirs(id) ON DELETE SET NULL,
-                    UNIQUE(project_id, dataset_id, path)
+                    UNIQUE(project_id, path)
                 )
             """
         )
@@ -471,6 +451,7 @@ class CodeDatabase:
                     file_id INTEGER NOT NULL,
                     name TEXT NOT NULL,
                     line INTEGER NOT NULL,
+                    end_line INTEGER,
                     docstring TEXT,
                     bases TEXT,
                     created_at REAL DEFAULT (julianday('now')),
@@ -486,6 +467,7 @@ class CodeDatabase:
                     class_id INTEGER NOT NULL,
                     name TEXT NOT NULL,
                     line INTEGER NOT NULL,
+                    end_line INTEGER,
                     args TEXT,
                     docstring TEXT,
                     is_abstract BOOLEAN DEFAULT 0,
@@ -504,6 +486,7 @@ class CodeDatabase:
                     file_id INTEGER NOT NULL,
                     name TEXT NOT NULL,
                     line INTEGER NOT NULL,
+                    end_line INTEGER,
                     args TEXT,
                     docstring TEXT,
                     created_at REAL DEFAULT (julianday('now')),
@@ -561,6 +544,40 @@ class CodeDatabase:
                     context TEXT,
                     created_at REAL DEFAULT (julianday('now')),
                     FOREIGN KEY (file_id) REFERENCES files(id) ON DELETE CASCADE
+                )
+            """
+        )
+        self._execute(
+            """
+                CREATE TABLE IF NOT EXISTS entity_cross_ref (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    caller_class_id INTEGER NULL,
+                    caller_method_id INTEGER NULL,
+                    caller_function_id INTEGER NULL,
+                    callee_class_id INTEGER NULL,
+                    callee_method_id INTEGER NULL,
+                    callee_function_id INTEGER NULL,
+                    ref_type TEXT NOT NULL,
+                    file_id INTEGER NULL,
+                    line INTEGER NULL,
+                    created_at REAL DEFAULT (julianday('now')),
+                    FOREIGN KEY (caller_class_id) REFERENCES classes(id) ON DELETE CASCADE,
+                    FOREIGN KEY (caller_method_id) REFERENCES methods(id) ON DELETE CASCADE,
+                    FOREIGN KEY (caller_function_id) REFERENCES functions(id) ON DELETE CASCADE,
+                    FOREIGN KEY (callee_class_id) REFERENCES classes(id) ON DELETE CASCADE,
+                    FOREIGN KEY (callee_method_id) REFERENCES methods(id) ON DELETE CASCADE,
+                    FOREIGN KEY (callee_function_id) REFERENCES functions(id) ON DELETE CASCADE,
+                    FOREIGN KEY (file_id) REFERENCES files(id) ON DELETE SET NULL,
+                    CHECK (
+                        (caller_class_id IS NOT NULL AND caller_method_id IS NULL AND caller_function_id IS NULL)
+                        OR (caller_class_id IS NULL AND caller_method_id IS NOT NULL AND caller_function_id IS NULL)
+                        OR (caller_class_id IS NULL AND caller_method_id IS NULL AND caller_function_id IS NOT NULL)
+                    ),
+                    CHECK (
+                        (callee_class_id IS NOT NULL AND callee_method_id IS NULL AND callee_function_id IS NULL)
+                        OR (callee_class_id IS NULL AND callee_method_id IS NOT NULL AND callee_function_id IS NULL)
+                        OR (callee_class_id IS NULL AND callee_method_id IS NULL AND callee_function_id IS NOT NULL)
+                    )
                 )
             """
         )
@@ -668,6 +685,7 @@ class CodeDatabase:
                     embedding_model TEXT,
                     bm25_score REAL,
                     embedding_vector TEXT,
+                    token_count INTEGER,
                     class_id INTEGER,
                     function_id INTEGER,
                     method_id INTEGER,
@@ -708,6 +726,11 @@ class CodeDatabase:
                 "ALTER TABLE code_chunks ADD COLUMN updated_at REAL DEFAULT (julianday('now'))"
             )
             logger.info("Added updated_at column to code_chunks table")
+        except Exception:
+            pass
+        try:
+            self._execute("ALTER TABLE code_chunks ADD COLUMN token_count INTEGER")
+            logger.info("Added token_count column to code_chunks table")
         except Exception:
             pass
         # Create code_duplicates table
@@ -805,10 +828,7 @@ class CodeDatabase:
         # Create indexes
         indexes = [
             "CREATE INDEX IF NOT EXISTS idx_projects_root_path ON projects(root_path)",
-            "CREATE INDEX IF NOT EXISTS idx_datasets_project ON datasets(project_id)",
-            "CREATE INDEX IF NOT EXISTS idx_datasets_root_path ON datasets(root_path)",
             "CREATE INDEX IF NOT EXISTS idx_files_project ON files(project_id)",
-            "CREATE INDEX IF NOT EXISTS idx_files_dataset ON files(dataset_id)",
             "CREATE INDEX IF NOT EXISTS idx_files_path ON files(path)",
             "CREATE INDEX IF NOT EXISTS idx_classes_name ON classes(name)",
             "CREATE INDEX IF NOT EXISTS idx_classes_file ON classes(file_id)",
@@ -823,6 +843,13 @@ class CodeDatabase:
             "CREATE INDEX IF NOT EXISTS idx_usages_file ON usages(file_id)",
             "CREATE INDEX IF NOT EXISTS idx_usages_target ON usages(target_type, target_name)",
             "CREATE INDEX IF NOT EXISTS idx_usages_class_name ON usages(target_class, target_name)",
+            "CREATE INDEX IF NOT EXISTS idx_entity_cross_ref_caller_class ON entity_cross_ref(caller_class_id) WHERE caller_class_id IS NOT NULL",
+            "CREATE INDEX IF NOT EXISTS idx_entity_cross_ref_caller_method ON entity_cross_ref(caller_method_id) WHERE caller_method_id IS NOT NULL",
+            "CREATE INDEX IF NOT EXISTS idx_entity_cross_ref_caller_function ON entity_cross_ref(caller_function_id) WHERE caller_function_id IS NOT NULL",
+            "CREATE INDEX IF NOT EXISTS idx_entity_cross_ref_callee_class ON entity_cross_ref(callee_class_id) WHERE callee_class_id IS NOT NULL",
+            "CREATE INDEX IF NOT EXISTS idx_entity_cross_ref_callee_method ON entity_cross_ref(callee_method_id) WHERE callee_method_id IS NOT NULL",
+            "CREATE INDEX IF NOT EXISTS idx_entity_cross_ref_callee_function ON entity_cross_ref(callee_function_id) WHERE callee_function_id IS NOT NULL",
+            "CREATE INDEX IF NOT EXISTS idx_entity_cross_ref_file ON entity_cross_ref(file_id)",
             "CREATE INDEX IF NOT EXISTS idx_code_content_file ON code_content(file_id)",
             "CREATE INDEX IF NOT EXISTS idx_code_content_entity ON code_content(entity_type, entity_id)",
             "CREATE INDEX IF NOT EXISTS idx_ast_trees_file ON ast_trees(file_id)",
@@ -905,7 +932,6 @@ class CodeDatabase:
                 CREATE TABLE IF NOT EXISTS files_new (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     project_id TEXT NOT NULL,
-                    dataset_id TEXT NOT NULL,
                     path TEXT NOT NULL,
                     lines INTEGER,
                     last_modified REAL,
@@ -913,21 +939,15 @@ class CodeDatabase:
                     created_at REAL DEFAULT (julianday('now')),
                     updated_at REAL DEFAULT (julianday('now')),
                     FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE,
-                    UNIQUE(project_id, dataset_id, path)
+                    UNIQUE(project_id, path)
                 )
             """
             )
             self._execute(
                 """
-                INSERT INTO files_new (
-                    id, project_id, dataset_id, path, lines, last_modified,
-                    has_docstring, created_at, updated_at
-                )
-                SELECT id, project_id, ?, path, lines, last_modified,
-                       has_docstring, created_at, updated_at
-                FROM files
-            """,
-                (str(uuid.uuid4()),),  # Create default dataset_id for migration
+                INSERT INTO files_new (id, project_id, path, lines, last_modified, has_docstring, created_at, updated_at)
+                SELECT id, project_id, path, lines, last_modified, has_docstring, created_at, updated_at FROM files
+                """
             )
             self._execute("DROP TABLE files")
             self._execute("ALTER TABLE files_new RENAME TO files")
@@ -948,85 +968,6 @@ class CodeDatabase:
         This method is called on every database initialization to ensure
         the schema is up to date with the latest version.
         """
-        # Check if datasets table exists, if not create it
-        try:
-            self._get_table_info("datasets")
-            datasets_exists = True
-        except Exception:
-            datasets_exists = False
-
-        if not datasets_exists:
-            logger.info("Creating datasets table...")
-            self._execute(
-                """
-                CREATE TABLE IF NOT EXISTS datasets (
-                    id TEXT PRIMARY KEY,
-                    project_id TEXT NOT NULL,
-                    root_path TEXT NOT NULL,
-                    name TEXT,
-                    created_at REAL DEFAULT (julianday('now')),
-                    updated_at REAL DEFAULT (julianday('now')),
-                    FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE,
-                    UNIQUE(project_id, root_path)
-                )
-            """
-            )
-            self._commit()
-
-        # Check if files table has dataset_id column
-        files_table_info = self._get_table_info("files")
-        files_columns = {col["name"]: col["type"] for col in files_table_info}
-
-        if "dataset_id" not in files_columns:
-            logger.info("Migrating files table: adding dataset_id column")
-            # This is a complex migration - we need to:
-            # 1. Create default datasets for existing projects
-            # 2. Add dataset_id column to files
-            # 3. Update all files to have a dataset_id
-            try:
-                # Get all projects
-                projects = self._fetchall("SELECT id, root_path FROM projects")
-                for project in projects:
-                    project_id = project["id"]
-                    root_path = project["root_path"]
-                    # Create default dataset for this project
-                    dataset_id = str(uuid.uuid4())
-                    self._execute(
-                        """
-                        INSERT OR IGNORE INTO datasets (id, project_id, root_path, name)
-                        VALUES (?, ?, ?, ?)
-                    """,
-                        (
-                            dataset_id,
-                            project_id,
-                            root_path,
-                            f"Default dataset for {root_path}",
-                        ),
-                    )
-
-                # Add dataset_id column
-                self._execute("ALTER TABLE files ADD COLUMN dataset_id TEXT")
-                # Update all files to have dataset_id (use first dataset for each project)
-                for project in projects:
-                    project_id = project["id"]
-                    dataset = self._fetchone(
-                        "SELECT id FROM datasets WHERE project_id = ? LIMIT 1",
-                        (project_id,),
-                    )
-                    if dataset:
-                        dataset_id = dataset["id"]
-                        self._execute(
-                            "UPDATE files SET dataset_id = ? WHERE project_id = ? AND dataset_id IS NULL",
-                            (dataset_id, project_id),
-                        )
-
-                # Make dataset_id NOT NULL (requires recreating table in SQLite)
-                # For now, we'll just ensure it's set for all rows
-                self._commit()
-                logger.info("Migration completed: files table now has dataset_id")
-            except Exception as e:
-                logger.warning(f"Migration issue (may already exist): {e}")
-
         # Use driver interface to get table info
         issues_table_info = self._get_table_info("issues")
         issues_columns = {col["name"]: col["type"] for col in issues_table_info}
@@ -1072,6 +1013,7 @@ class CodeDatabase:
             "source_type": "TEXT",
             "bm25_score": "REAL",
             "embedding_vector": "TEXT",
+            "token_count": "INTEGER",
             "binding_level": "INTEGER DEFAULT 0",
         }
         for col_name, col_type in new_columns.items():
@@ -1090,6 +1032,8 @@ class CodeDatabase:
                     )
 
         # Migration: Add deleted, original_path, version_dir columns to files table if they don't exist
+        files_table_info = self._get_table_info("files")
+        files_columns = {col["name"]: col["type"] for col in files_table_info}
         if "deleted" not in files_columns:
             try:
                 logger.info("Migrating files table: adding deleted column")
@@ -1172,6 +1116,18 @@ class CodeDatabase:
             except Exception as e:
                 logger.warning(f"Could not add needs_chunking column to files: {e}")
 
+        if "dataset_id" in files_columns:
+            try:
+                logger.info(
+                    "Migrating files table: dropping dataset_id column (datasets removed)"
+                )
+                self._execute("ALTER TABLE files DROP COLUMN dataset_id")
+                self._commit()
+            except Exception as e:
+                logger.warning(
+                    f"Could not drop dataset_id from files (SQLite 3.35+ required): {e}"
+                )
+
         # Create index after adding deleted column
         if "deleted" in files_columns or "deleted" not in files_columns:
             try:
@@ -1208,6 +1164,86 @@ class CodeDatabase:
             except Exception as e:
                 logger.warning(f"Could not add complexity column to methods: {e}")
 
+        # Migration: Add end_line to classes, methods, functions (entity cross-ref)
+        classes_table_info = self._get_table_info("classes")
+        classes_columns = {col["name"]: col["type"] for col in classes_table_info}
+        if "end_line" not in classes_columns:
+            try:
+                logger.info("Migrating classes table: adding end_line column")
+                self._execute("ALTER TABLE classes ADD COLUMN end_line INTEGER")
+                self._commit()
+            except Exception as e:
+                logger.warning(f"Could not add end_line column to classes: {e}")
+        if "end_line" not in methods_columns:
+            try:
+                logger.info("Migrating methods table: adding end_line column")
+                self._execute("ALTER TABLE methods ADD COLUMN end_line INTEGER")
+                self._commit()
+            except Exception as e:
+                logger.warning(f"Could not add end_line column to methods: {e}")
+        if "end_line" not in functions_columns:
+            try:
+                logger.info("Migrating functions table: adding end_line column")
+                self._execute("ALTER TABLE functions ADD COLUMN end_line INTEGER")
+                self._commit()
+            except Exception as e:
+                logger.warning(f"Could not add end_line column to functions: {e}")
+
+        # Migration: Create entity_cross_ref table if not exists (existing DBs)
+        entity_cross_ref_check = self._fetchone(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='entity_cross_ref'"
+        )
+        if not entity_cross_ref_check:
+            try:
+                logger.info("Migrating: creating entity_cross_ref table")
+                self._execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS entity_cross_ref (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        caller_class_id INTEGER NULL,
+                        caller_method_id INTEGER NULL,
+                        caller_function_id INTEGER NULL,
+                        callee_class_id INTEGER NULL,
+                        callee_method_id INTEGER NULL,
+                        callee_function_id INTEGER NULL,
+                        ref_type TEXT NOT NULL,
+                        file_id INTEGER NULL,
+                        line INTEGER NULL,
+                        created_at REAL DEFAULT (julianday('now')),
+                        FOREIGN KEY (caller_class_id) REFERENCES classes(id) ON DELETE CASCADE,
+                        FOREIGN KEY (caller_method_id) REFERENCES methods(id) ON DELETE CASCADE,
+                        FOREIGN KEY (caller_function_id) REFERENCES functions(id) ON DELETE CASCADE,
+                        FOREIGN KEY (callee_class_id) REFERENCES classes(id) ON DELETE CASCADE,
+                        FOREIGN KEY (callee_method_id) REFERENCES methods(id) ON DELETE CASCADE,
+                        FOREIGN KEY (callee_function_id) REFERENCES functions(id) ON DELETE CASCADE,
+                        FOREIGN KEY (file_id) REFERENCES files(id) ON DELETE SET NULL,
+                        CHECK (
+                            (caller_class_id IS NOT NULL AND caller_method_id IS NULL AND caller_function_id IS NULL)
+                            OR (caller_class_id IS NULL AND caller_method_id IS NOT NULL AND caller_function_id IS NULL)
+                            OR (caller_class_id IS NULL AND caller_method_id IS NULL AND caller_function_id IS NOT NULL)
+                        ),
+                        CHECK (
+                            (callee_class_id IS NOT NULL AND callee_method_id IS NULL AND callee_function_id IS NULL)
+                            OR (callee_class_id IS NULL AND callee_method_id IS NOT NULL AND callee_function_id IS NULL)
+                            OR (callee_class_id IS NULL AND callee_method_id IS NULL AND callee_function_id IS NOT NULL)
+                        )
+                    )
+                    """
+                )
+                for idx_sql in [
+                    "CREATE INDEX IF NOT EXISTS idx_entity_cross_ref_caller_class ON entity_cross_ref(caller_class_id) WHERE caller_class_id IS NOT NULL",
+                    "CREATE INDEX IF NOT EXISTS idx_entity_cross_ref_caller_method ON entity_cross_ref(caller_method_id) WHERE caller_method_id IS NOT NULL",
+                    "CREATE INDEX IF NOT EXISTS idx_entity_cross_ref_caller_function ON entity_cross_ref(caller_function_id) WHERE caller_function_id IS NOT NULL",
+                    "CREATE INDEX IF NOT EXISTS idx_entity_cross_ref_callee_class ON entity_cross_ref(callee_class_id) WHERE callee_class_id IS NOT NULL",
+                    "CREATE INDEX IF NOT EXISTS idx_entity_cross_ref_callee_method ON entity_cross_ref(callee_method_id) WHERE callee_method_id IS NOT NULL",
+                    "CREATE INDEX IF NOT EXISTS idx_entity_cross_ref_callee_function ON entity_cross_ref(callee_function_id) WHERE callee_function_id IS NOT NULL",
+                    "CREATE INDEX IF NOT EXISTS idx_entity_cross_ref_file ON entity_cross_ref(file_id)",
+                ]:
+                    self._execute(idx_sql)
+                self._commit()
+            except Exception as e:
+                logger.warning(f"Could not create entity_cross_ref table: {e}")
+
     def close(self) -> None:
         """Close database connection."""
         if self.driver:
@@ -1222,59 +1258,22 @@ class CodeDatabase:
         self.close()
 
     def get_all_chunks_for_faiss_rebuild(
-        self, project_id: Optional[str] = None, dataset_id: Optional[str] = None
+        self, project_id: Optional[str] = None
     ) -> List[Dict[str, Any]]:
         """
         Get all code chunks with embeddings for FAISS index rebuild.
 
-        Implements dataset-scoped FAISS (Step 2 of refactor plan).
-        If project_id and dataset_id are provided, filters chunks for that dataset only.
-        If only project_id is provided, returns chunks for all datasets in the project.
-        If neither is provided, returns chunks for all projects (legacy mode).
+        If project_id is provided, returns chunks for that project only.
+        If project_id is None, returns chunks for all projects (legacy mode).
 
         Args:
             project_id: Optional project ID to filter by.
-            dataset_id: Optional dataset ID to filter by (requires project_id).
 
         Returns:
             List of chunk records with embeddings.
         """
-        if dataset_id and not project_id:
-            raise ValueError("dataset_id requires project_id")
-
-        if project_id and dataset_id:
-            # Dataset-scoped: get chunks only for this dataset
-            return self._fetchall(
-                """
-                SELECT 
-                    cc.id,
-                    cc.file_id,
-                    cc.project_id,
-                    cc.chunk_uuid,
-                    cc.chunk_type,
-                    cc.chunk_text,
-                    cc.chunk_ordinal,
-                    cc.vector_id,
-                    cc.embedding_model,
-                    cc.embedding_vector,
-                    cc.class_id,
-                    cc.function_id,
-                    cc.method_id,
-                    cc.line,
-                    cc.ast_node_type,
-                    cc.source_type
-                FROM code_chunks cc
-                INNER JOIN files f ON cc.file_id = f.id
-                WHERE cc.project_id = ?
-                  AND f.dataset_id = ?
-                  AND cc.embedding_model IS NOT NULL
-                  AND cc.embedding_vector IS NOT NULL
-                ORDER BY cc.id
-                """,
-                (project_id, dataset_id),
-            )
-        elif project_id:
-            # Project-scoped: get chunks for all datasets in project
+        if project_id:
+            # Project-scoped: get chunks for project
             return self._fetchall(
                 """
                 SELECT 
@@ -1333,91 +1332,48 @@ class CodeDatabase:
     def get_non_vectorized_chunks(
         self,
         project_id: str,
-        dataset_id: Optional[str] = None,
         limit: int = 10,
     ) -> List[Dict[str, Any]]:
         """
         Get chunks that have embeddings but need vector_id assignment.
 
-        Implements dataset-scoped vectorization (Step 2 of refactor plan).
-        If dataset_id is provided, returns chunks only for that dataset.
-        If dataset_id is None, returns chunks for all datasets in project.
-
         Args:
-            project_id: Project ID (REQUIRED for write operations).
-            dataset_id: Optional dataset ID to filter by.
+            project_id: Project ID.
             limit: Maximum number of chunks to return.
 
         Returns:
             List of chunk records that need vector_id assignment.
         """
-        if dataset_id:
-            # Dataset-scoped: get chunks only for this dataset
-            return self._fetchall(
-                """
-                SELECT 
-                    cc.id,
-                    cc.file_id,
-                    cc.project_id,
-                    cc.chunk_uuid,
-                    cc.chunk_type,
-                    cc.chunk_text,
-                    cc.chunk_ordinal,
-                    cc.vector_id,
-                    cc.embedding_model,
-                    cc.embedding_vector,
-                    cc.class_id,
-                    cc.function_id,
-                    cc.method_id,
-                    cc.line,
-                    cc.ast_node_type,
-                    cc.source_type,
-                    f.dataset_id
-                FROM code_chunks cc
-                INNER JOIN files f ON cc.file_id = f.id
-                WHERE cc.project_id = ?
-                  AND f.dataset_id = ?
-                  AND (f.deleted = 0 OR f.deleted IS NULL)
-                  AND cc.embedding_vector IS NOT NULL
-                  AND cc.vector_id IS NULL
-                ORDER BY cc.id
-                LIMIT ?
-                """,
-                (project_id, dataset_id, limit),
-            )
-        else:
-            # Project-scoped: get chunks for all datasets in project
-            return self._fetchall(
-                """
-                SELECT 
-                    cc.id,
-                    cc.file_id,
-                    cc.project_id,
-                    cc.chunk_uuid,
-                    cc.chunk_type,
-                    cc.chunk_text,
-                    cc.chunk_ordinal,
-                    cc.vector_id,
-                    cc.embedding_model,
-                    cc.embedding_vector,
-                    cc.class_id,
-                    cc.function_id,
-                    cc.method_id,
-                    cc.line,
-                    cc.ast_node_type,
-                    cc.source_type,
-                    f.dataset_id
-                FROM code_chunks cc
-                INNER JOIN files f ON cc.file_id = f.id
-                WHERE cc.project_id = ?
-                  AND (f.deleted = 0 OR f.deleted IS NULL)
-                  AND cc.embedding_vector IS NOT NULL
-                  AND cc.vector_id IS NULL
-                ORDER BY cc.id
-                LIMIT ?
-                """,
-                (project_id, limit),
-            )
+        return self._fetchall(
+            """
+            SELECT 
+                cc.id,
+                cc.file_id,
+                cc.project_id,
+                cc.chunk_uuid,
+                cc.chunk_type,
+                cc.chunk_text,
+                cc.chunk_ordinal,
+                cc.vector_id,
+                cc.embedding_model,
+                cc.embedding_vector,
+                cc.class_id,
+                cc.function_id,
+                cc.method_id,
+                cc.line,
+                cc.ast_node_type,
+                cc.source_type
+            FROM code_chunks cc
+            INNER JOIN files f ON cc.file_id = f.id
+            WHERE cc.project_id = ?
+              AND (f.deleted = 0 OR f.deleted IS NULL)
+              AND cc.embedding_vector IS NOT NULL
+              AND cc.vector_id IS NULL
+            ORDER BY cc.id
+            LIMIT ?
+            """,
+            (project_id, limit),
+        )
 
     async def update_chunk_vector_id(
         self,
@@ -1460,21 +1416,18 @@ class CodeDatabase:
         self._commit()
 
     def _get_schema_definition(self) -> Dict[str, Any]:
-        """
-        Get structured schema definition for synchronization.
+        """Return structured schema definition (delegates to get_schema_definition)."""
+        return get_schema_definition()
 
-        This method returns a structured dictionary representation of the schema,
-        not SQL statements. This is used by SchemaComparator to compare and migrate schemas.
 
-        Returns:
-            Dictionary with schema definition containing:
-            - version: Schema version string
-            - tables: Dict of table definitions with columns, foreign keys, constraints
-            - indexes: List of index definitions
-            - virtual_tables: List of virtual table definitions (FTS5)
-            - migration_methods: Registry of migration methods
-        """
-        return {
+def get_schema_definition() -> Dict[str, Any]:
+    """
+    Return structured schema definition for synchronization.
+
+    Used by SchemaComparator and by RPC client when initializing an empty database.
+    Returns a dict with version, tables, indexes, virtual_tables, migration_methods.
+    """
+    return {
             "version": SCHEMA_VERSION,
             "tables": {
                 "db_settings": {
@@ -1592,41 +1545,6 @@ class CodeDatabase:
                     "unique_constraints": [{"columns": ["root_path"]}],
                     "check_constraints": [],
                 },
-                "datasets": {
-                    "columns": [
-                        {
-                            "name": "id",
-                            "type": "TEXT",
-                            "not_null": True,
-                            "primary_key": True,
-                        },
-                        {"name": "project_id", "type": "TEXT", "not_null": True},
-                        {"name": "root_path", "type": "TEXT", "not_null": True},
-                        {"name": "name", "type": "TEXT", "not_null": False},
-                        {
-                            "name": "created_at",
-                            "type": "REAL",
-                            "not_null": False,
-                            "default": "julianday('now')",
-                        },
-                        {
-                            "name": "updated_at",
-                            "type": "REAL",
-                            "not_null": False,
-                            "default": "julianday('now')",
-                        },
-                    ],
-                    "foreign_keys": [
-                        {
-                            "columns": ["project_id"],
-                            "references_table": "projects",
-                            "references_columns": ["id"],
-                            "on_delete": "CASCADE",
-                        }
-                    ],
-                    "unique_constraints": [{"columns": ["project_id", "root_path"]}],
-                    "check_constraints": [],
-                },
                 "files": {
                     "columns": [
                         {
@@ -1637,7 +1555,6 @@ class CodeDatabase:
                             "autoincrement": True,
                         },
                         {"name": "project_id", "type": "TEXT", "not_null": True},
-                        {"name": "dataset_id", "type": "TEXT", "not_null": True},
                         {"name": "watch_dir_id", "type": "TEXT", "not_null": False},
                         {"name": "path", "type": "TEXT", "not_null": True},
                         {"name": "relative_path", "type": "TEXT", "not_null": False},
@@ -1679,21 +1596,13 @@ class CodeDatabase:
                             "on_delete": "CASCADE",
                         },
                         {
-                            "columns": ["dataset_id"],
-                            "references_table": "datasets",
-                            "references_columns": ["id"],
-                            "on_delete": "CASCADE",
-                        },
-                        {
                             "columns": ["watch_dir_id"],
                             "references_table": "watch_dirs",
                             "references_columns": ["id"],
                             "on_delete": "SET NULL",
                         },
                     ],
-                    "unique_constraints": [
-                        {"columns": ["project_id", "dataset_id", "path"]}
-                    ],
+                    "unique_constraints": [{"columns": ["project_id", "path"]}],
                     "check_constraints": [],
                 },
                 "classes": {
@@ -1708,6 +1617,7 @@ class CodeDatabase:
                         {"name": "file_id", "type": "INTEGER", "not_null": True},
                         {"name": "name", "type": "TEXT", "not_null": True},
                         {"name": "line", "type": "INTEGER", "not_null": True},
+                        {"name": "end_line", "type": "INTEGER", "not_null": False},
                         {"name": "docstring", "type": "TEXT", "not_null": False},
                         {"name": "bases", "type": "TEXT", "not_null": False},
                         {
@@ -1740,6 +1650,7 @@ class CodeDatabase:
                         {"name": "class_id", "type": "INTEGER", "not_null": True},
                         {"name": "name", "type": "TEXT", "not_null": True},
                         {"name": "line", "type": "INTEGER", "not_null": True},
+                        {"name": "end_line", "type": "INTEGER", "not_null": False},
                         {"name": "args", "type": "TEXT", "not_null": False},
                         {"name": "docstring", "type": "TEXT", "not_null": False},
                         {
@@ -1791,6 +1702,7 @@ class CodeDatabase:
                         {"name": "file_id", "type": "INTEGER", "not_null": True},
                         {"name": "name", "type": "TEXT", "not_null": True},
                         {"name": "line", "type": "INTEGER", "not_null": True},
+                        {"name": "end_line", "type": "INTEGER", "not_null": False},
                         {"name": "args", "type": "TEXT", "not_null": False},
                         {"name": "docstring", "type": "TEXT", "not_null": False},
                         {"name": "complexity", "type": "INTEGER", "not_null": False},
@@ -1810,6 +1722,43 @@ class CodeDatabase:
                         }
                     ],
                     "unique_constraints": [{"columns": ["file_id", "name", "line"]}],
+                    "check_constraints": [],
+                },
+                "entity_cross_ref": {
+                    "columns": [
+                        {
+                            "name": "id",
+                            "type": "INTEGER",
+                            "not_null": True,
+                            "primary_key": True,
+                            "autoincrement": True,
+                        },
+                        {"name": "caller_class_id", "type": "INTEGER", "not_null": False},
+                        {"name": "caller_method_id", "type": "INTEGER", "not_null": False},
+                        {"name": "caller_function_id", "type": "INTEGER", "not_null": False},
+                        {"name": "callee_class_id", "type": "INTEGER", "not_null": False},
+                        {"name": "callee_method_id", "type": "INTEGER", "not_null": False},
+                        {"name": "callee_function_id", "type": "INTEGER", "not_null": False},
+                        {"name": "ref_type", "type": "TEXT", "not_null": True},
+                        {"name": "file_id", "type": "INTEGER", "not_null": False},
+                        {"name": "line", "type": "INTEGER", "not_null": False},
+                        {
+                            "name": "created_at",
+                            "type": "REAL",
+                            "not_null": False,
+                            "default": "julianday('now')",
+                        },
+                    ],
+                    "foreign_keys": [
+                        {"columns": ["caller_class_id"], "references_table": "classes", "references_columns": ["id"], "on_delete": "CASCADE"},
+                        {"columns": ["caller_method_id"], "references_table": "methods", "references_columns": ["id"], "on_delete": "CASCADE"},
+                        {"columns": ["caller_function_id"], "references_table": "functions", "references_columns": ["id"], "on_delete": "CASCADE"},
+                        {"columns": ["callee_class_id"], "references_table": "classes", "references_columns": ["id"], "on_delete": "CASCADE"},
+                        {"columns": ["callee_method_id"], "references_table": "methods", "references_columns": ["id"], "on_delete": "CASCADE"},
+                        {"columns": ["callee_function_id"], "references_table": "functions", "references_columns": ["id"], "on_delete": "CASCADE"},
+                        {"columns": ["file_id"], "references_table": "files", "references_columns": ["id"], "on_delete": "SET NULL"},
+                    ],
+                    "unique_constraints": [],
                     "check_constraints": [],
                 },
                 "imports": {
@@ -2113,6 +2062,7 @@ class CodeDatabase:
                         {"name": "embedding_model", "type": "TEXT", "not_null": False},
                         {"name": "bm25_score", "type": "REAL", "not_null": False},
                         {"name": "embedding_vector", "type": "TEXT", "not_null": False},
+                        {"name": "token_count", "type": "INTEGER", "not_null": False},
                         {"name": "class_id", "type": "INTEGER", "not_null": False},
                         {"name": "function_id", "type": "INTEGER", "not_null": False},
                         {"name": "method_id", "type": "INTEGER", "not_null": False},
@@ -2453,30 +2403,9 @@ class CodeDatabase:
                     "where_clause": None,
                 },
                 {
-                    "name": "idx_datasets_project",
-                    "table": "datasets",
-                    "columns": ["project_id"],
-                    "unique": False,
-                    "where_clause": None,
-                },
-                {
-                    "name": "idx_datasets_root_path",
-                    "table": "datasets",
-                    "columns": ["root_path"],
-                    "unique": False,
-                    "where_clause": None,
-                },
-                {
                     "name": "idx_files_project",
                     "table": "files",
                     "columns": ["project_id"],
-                    "unique": False,
-                    "where_clause": None,
-                },
-                {
-                    "name": "idx_files_dataset",
-                    "table": "files",
-                    "columns": ["dataset_id"],
                     "unique": False,
                     "where_clause": None,
                 },
@@ -2589,6 +2518,55 @@ class CodeDatabase:
                     "name": "idx_usages_class_name",
                     "table": "usages",
                     "columns": ["target_class", "target_name"],
+                    "unique": False,
+                    "where_clause": None,
+                },
+                {
+                    "name": "idx_entity_cross_ref_caller_class",
+                    "table": "entity_cross_ref",
+                    "columns": ["caller_class_id"],
+                    "unique": False,
+                    "where_clause": "caller_class_id IS NOT NULL",
+                },
+                {
+                    "name": "idx_entity_cross_ref_caller_method",
+                    "table": "entity_cross_ref",
+                    "columns": ["caller_method_id"],
+                    "unique": False,
+                    "where_clause": "caller_method_id IS NOT NULL",
+                },
+                {
+                    "name": "idx_entity_cross_ref_caller_function",
+                    "table": "entity_cross_ref",
+                    "columns": ["caller_function_id"],
+                    "unique": False,
+                    "where_clause": "caller_function_id IS NOT NULL",
+                },
+                {
+                    "name": "idx_entity_cross_ref_callee_class",
+                    "table": "entity_cross_ref",
+                    "columns": ["callee_class_id"],
+                    "unique": False,
+                    "where_clause": "callee_class_id IS NOT NULL",
+                },
+                {
+                    "name": "idx_entity_cross_ref_callee_method",
+                    "table": "entity_cross_ref",
+                    "columns": ["callee_method_id"],
+                    "unique": False,
+                    "where_clause": "callee_method_id IS NOT NULL",
+                },
+                {
+                    "name": "idx_entity_cross_ref_callee_function",
+                    "table": "entity_cross_ref",
+                    "columns": ["callee_function_id"],
+                    "unique": False,
+                    "where_clause": "callee_function_id IS NOT NULL",
+                },
+                {
+                    "name": "idx_entity_cross_ref_file",
+                    "table": "entity_cross_ref",
+                    "columns": ["file_id"],
                     "unique": False,
                     "where_clause": None,
                 },

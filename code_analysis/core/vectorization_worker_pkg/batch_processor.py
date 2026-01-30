@@ -51,7 +51,7 @@ async def process_embedding_ready_chunks(
     while not self._stop_event.is_set():
         # Get chunks with embeddings in DB but without vector_id
         # These are chunks where embedding was saved but FAISS add failed or wasn't done
-        # Project-scoped: all chunks in project (datasets EXCLUDED)
+        # Project-scoped: all chunks in project
         step_start = time.time()
         scope_desc = f"project={self.project_id}"
         logger.info(

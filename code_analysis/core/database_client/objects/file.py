@@ -21,7 +21,6 @@ class File(BaseObject):
     Attributes:
         id: File identifier (INTEGER, PRIMARY KEY)
         project_id: Project identifier
-        dataset_id: Dataset identifier
         watch_dir_id: Watch directory identifier (optional)
         path: Absolute file path
         relative_path: Relative path from project root (preferred)
@@ -37,7 +36,6 @@ class File(BaseObject):
 
     id: Optional[int] = None
     project_id: str = ""
-    dataset_id: str = ""
     watch_dir_id: Optional[str] = None
     path: str = ""
     relative_path: Optional[str] = None
@@ -65,15 +63,12 @@ class File(BaseObject):
         """
         if "project_id" not in data:
             raise ValueError("File project_id is required")
-        if "dataset_id" not in data:
-            raise ValueError("File dataset_id is required")
         if "path" not in data:
             raise ValueError("File path is required")
 
         return cls(
             id=data.get("id"),
             project_id=data["project_id"],
-            dataset_id=data["dataset_id"],
             watch_dir_id=data.get("watch_dir_id"),
             path=data["path"],
             relative_path=data.get("relative_path"),
@@ -116,7 +111,6 @@ class File(BaseObject):
         """
         result = {
             "project_id": self.project_id,
-            "dataset_id": self.dataset_id,
             "path": self.path,
             "deleted": 1 if self.deleted else 0,
         }

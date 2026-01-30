@@ -33,7 +33,6 @@ Operation flow:
       * All files and their associated data (classes, functions, methods, imports, usages)
       * All chunks and removes from FAISS vector index
       * All duplicates
-      * All datasets
       * All AST trees
       * All CST trees
       * The project record itself
@@ -46,7 +45,6 @@ Deleted Data (Database):
 - Usages: All usage records
 - Chunks: All code chunks and vector indexes
 - Duplicates: All duplicate records
-- Datasets: All dataset records
 - AST/CST: All AST and CST trees
 - Project record: The project itself
 
@@ -98,7 +96,6 @@ All MCP commands return either a **success** result (with `data`) or an **error*
 - `root_path`: Project root path
 - `files_count`: Number of files that were deleted
 - `chunks_count`: Number of chunks that were deleted
-- `datasets_count`: Number of datasets that were deleted
 - `delete_from_disk`: Whether disk deletion was requested
 - `version_dir`: Version directory path (if delete_from_disk=True)
 - `disk_deletion_errors`: List of disk deletion errors (if any)

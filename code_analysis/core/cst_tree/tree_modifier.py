@@ -475,7 +475,7 @@ def _replace_node(
             # Mark that we visited this node to help with debugging
             if original_node is self.target_node and len(self.replacements) > 1:
                 # This will be handled by parent's leave_IndentedBlock/leave_Module
-                pass
+                return updated_node
             return updated_node
 
     replacer = NodeReplacer(node, new_statements)

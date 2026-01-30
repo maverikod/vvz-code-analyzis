@@ -56,13 +56,6 @@ def test_project(temp_db, tmp_path):
 @pytest.fixture
 def test_file(temp_db, tmp_path, test_project):
     """Create test file in database and filesystem."""
-    # Create dataset
-    dataset_id = temp_db.get_or_create_dataset(
-        project_id=test_project,
-        root_path=str(tmp_path),
-        name=tmp_path.name,
-    )
-
     file_path = tmp_path / "test_file.py"
     file_content = '''"""
 Test file.
@@ -95,7 +88,6 @@ def test_function():
         last_modified=file_mtime,
         has_docstring=True,
         project_id=test_project,
-        dataset_id=dataset_id,
     )
 
     # Create projectid file for project_id validation (JSON format)

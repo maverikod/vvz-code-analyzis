@@ -16,7 +16,6 @@ from code_analysis.core.database_client.objects import (
     CodeChunk,
     CodeDuplicate,
     CSTNode,
-    Dataset,
     File,
     Function,
     Import,
@@ -161,42 +160,13 @@ class TestProject:
         assert "created_at" not in row or row["created_at"] is None
 
 
-class TestDataset:
-    """Test Dataset object model."""
-
-    def test_create_dataset_minimal(self):
-        """Test creating dataset with minimal required fields."""
-        dataset = Dataset(id="ds-1", project_id="proj-1", root_path="/test/path")
-        assert dataset.id == "ds-1"
-        assert dataset.project_id == "proj-1"
-        assert dataset.root_path == "/test/path"
-
-    def test_from_dict_missing_fields(self):
-        """Test creating dataset with missing required fields."""
-        with pytest.raises(ValueError, match="Dataset id is required"):
-            Dataset.from_dict({"project_id": "proj-1", "root_path": "/test"})
-        with pytest.raises(ValueError, match="Dataset project_id is required"):
-            Dataset.from_dict({"id": "ds-1", "root_path": "/test"})
-        with pytest.raises(ValueError, match="Dataset root_path is required"):
-            Dataset.from_dict({"id": "ds-1", "project_id": "proj-1"})
-
-    def test_to_db_row(self):
-        """Test converting dataset to database row."""
-        dataset = Dataset(id="ds-1", project_id="proj-1", root_path="/test/path")
-        row = dataset.to_db_row()
-        assert row["id"] == "ds-1"
-        assert row["project_id"] == "proj-1"
-        assert row["root_path"] == "/test/path"
-
-
 class TestFile:
     """Test File object model."""
 
     def test_create_file_minimal(self):
         """Test creating file with minimal required fields."""
-        file_obj = File(project_id="proj-1", dataset_id="ds-1", path="/test/file.py")
+        file_obj = File(project_id="proj-1", path="/test/file.py")
         assert file_obj.project_id == "proj-1"
-        assert file_obj.dataset_id == "ds-1"
         assert file_obj.path == "/test/file.py"
         assert file_obj.deleted is False
 
@@ -205,7 +175,6 @@ class TestFile:
         row = {
             "id": 1,
             "project_id": "proj-1",
-            "dataset_id": "ds-1",
             "path": "/test/file.py",
             "has_docstring": 1,
             "deleted": 0,
@@ -218,7 +187,6 @@ class TestFile:
         """Test converting file boolean fields to database format."""
         file_obj = File(
             project_id="proj-1",
-            dataset_id="ds-1",
             path="/test/file.py",
             has_docstring=True,
             deleted=True,
@@ -574,7 +542,7 @@ class TestMappers:
         project = Project(id="test", root_path="/test")
         table_name = get_table_name_for_object(project)
         assert table_name == "projects"
-        file_obj = File(project_id="test", dataset_id="ds", path="/test")
+        file_obj = File(project_id="test", path="/test")
         table_name = get_table_name_for_object(file_obj)
         assert table_name == "files"
 

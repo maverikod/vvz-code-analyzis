@@ -190,18 +190,12 @@ class TestFileWatcherProcessorRealData:
         project_info = load_project_info(VAST_SRV_DIR)
         project_id = project_info.project_id
 
-        # Create project and dataset in database
+        # Create project in database
         db._execute(
             "INSERT INTO projects (id, root_path, name, updated_at) VALUES (?, ?, ?, julianday('now'))",
             (project_id, str(VAST_SRV_DIR), VAST_SRV_DIR.name),
         )
         db._commit()
-
-        dataset_id = db.get_or_create_dataset(
-            project_id=project_id,
-            root_path=str(VAST_SRV_DIR),
-            name=VAST_SRV_DIR.name,
-        )
 
         # Scan directory
         watch_dirs = [TEST_DATA_DIR]
@@ -214,7 +208,6 @@ class TestFileWatcherProcessorRealData:
         processor = FileChangeProcessor(
             database=db,
             watch_dirs=watch_dirs,
-            dataset_id=dataset_id,
         )
 
         # Compute delta - should find new files
@@ -245,18 +238,12 @@ class TestFileWatcherProcessorRealData:
         project_info = load_project_info(VAST_SRV_DIR)
         project_id = project_info.project_id
 
-        # Create project and dataset in database
+        # Create project in database
         db._execute(
             "INSERT INTO projects (id, root_path, name, updated_at) VALUES (?, ?, ?, julianday('now'))",
             (project_id, str(VAST_SRV_DIR), VAST_SRV_DIR.name),
         )
         db._commit()
-
-        dataset_id = db.get_or_create_dataset(
-            project_id=project_id,
-            root_path=str(VAST_SRV_DIR),
-            name=VAST_SRV_DIR.name,
-        )
 
         # Get a Python file from vast_srv
         python_files = list(VAST_SRV_DIR.rglob("*.py"))
@@ -274,7 +261,6 @@ class TestFileWatcherProcessorRealData:
             last_modified=old_mtime,
             has_docstring=True,
             project_id=project_id,
-            dataset_id=dataset_id,
         )
 
         # Scan directory
@@ -288,7 +274,6 @@ class TestFileWatcherProcessorRealData:
         processor = FileChangeProcessor(
             database=db,
             watch_dirs=watch_dirs,
-            dataset_id=dataset_id,
         )
 
         # Compute delta - should find changed file
@@ -321,18 +306,12 @@ class TestFileWatcherProcessorRealData:
         project_info = load_project_info(VAST_SRV_DIR)
         project_id = project_info.project_id
 
-        # Create project and dataset in database
+        # Create project in database
         db._execute(
             "INSERT INTO projects (id, root_path, name, updated_at) VALUES (?, ?, ?, julianday('now'))",
             (project_id, str(VAST_SRV_DIR), VAST_SRV_DIR.name),
         )
         db._commit()
-
-        dataset_id = db.get_or_create_dataset(
-            project_id=project_id,
-            root_path=str(VAST_SRV_DIR),
-            name=VAST_SRV_DIR.name,
-        )
 
         # Create a temporary file and add it to database
         with tempfile.NamedTemporaryFile(
@@ -349,7 +328,6 @@ class TestFileWatcherProcessorRealData:
                 last_modified=tmp_path.stat().st_mtime,
                 has_docstring=False,
                 project_id=project_id,
-                dataset_id=dataset_id,
             )
 
             # Delete the file
@@ -366,7 +344,6 @@ class TestFileWatcherProcessorRealData:
             processor = FileChangeProcessor(
                 database=db,
                 watch_dirs=watch_dirs,
-                dataset_id=dataset_id,
             )
 
             # Compute delta - should find deleted file
@@ -403,18 +380,12 @@ class TestFileWatcherProcessorRealData:
         project_info = load_project_info(VAST_SRV_DIR)
         project_id = project_info.project_id
 
-        # Create project and dataset in database
+        # Create project in database
         db._execute(
             "INSERT INTO projects (id, root_path, name, updated_at) VALUES (?, ?, ?, julianday('now'))",
             (project_id, str(VAST_SRV_DIR), VAST_SRV_DIR.name),
         )
         db._commit()
-
-        dataset_id = db.get_or_create_dataset(
-            project_id=project_id,
-            root_path=str(VAST_SRV_DIR),
-            name=VAST_SRV_DIR.name,
-        )
 
         # Get first 5 Python files
         python_files = list(VAST_SRV_DIR.rglob("*.py"))[:5]
@@ -438,7 +409,6 @@ class TestFileWatcherProcessorRealData:
         processor = FileChangeProcessor(
             database=db,
             watch_dirs=watch_dirs,
-            dataset_id=dataset_id,
         )
 
         # Compute delta

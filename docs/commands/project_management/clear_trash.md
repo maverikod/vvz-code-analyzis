@@ -12,7 +12,7 @@ email: vasilyvz@gmail.com
 
 ## Purpose
 
-Permanently delete all contents of the trash directory. All direct child directories of trash_dir are removed. Optionally use dry_run to only report what would be removed without deleting.
+Permanently delete all contents of the trash directory. All direct children of trash_dir are removed: directories (recursively) and files (including service files such as .projectid, lock files). Optionally use dry_run to only report what would be removed without deleting.
 
 ---
 
@@ -31,8 +31,8 @@ Permanently delete all contents of the trash directory. All direct child directo
 
 - **Shape:** `SuccessResult` with `data` object.
 - `success`: True (or False if some removals failed; see `errors`)
-- `removed_count`: Number of folders removed (or that would be removed if dry_run)
-- `removed`: List of folder names removed
+- `removed_count`: Number of items removed (directories and files; or that would be removed if dry_run)
+- `removed`: List of names removed (directories and files)
 - `dry_run`: Whether this was a dry run
 - `trash_dir`: Path to trash directory
 - `errors`: List of error strings (if any removal failed)

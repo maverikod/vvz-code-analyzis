@@ -35,7 +35,6 @@ class DeleteProjectCommand:
     - All files and their associated data (classes, functions, methods, etc.)
     - All chunks and vector indexes
     - All duplicates
-    - All datasets
     - The project record itself
 
     Optionally can also "delete from disk": when delete_from_disk=True, the project
@@ -117,12 +116,6 @@ class DeleteProjectCommand:
             data = []
         chunk_count = data[0]["count"] if data and len(data) > 0 else 0
 
-        # Count datasets - use select to get datasets
-        datasets = self.database.select(
-            "datasets", where={"project_id": self.project_id}
-        )
-        dataset_count = len(datasets)
-
         # Get version directory if needed
         version_dir_path = None
         if self.delete_from_disk:
@@ -172,7 +165,6 @@ class DeleteProjectCommand:
                 "root_path": root_path,
                 "files_count": file_count,
                 "chunks_count": chunk_count,
-                "datasets_count": dataset_count,
                 "delete_from_disk": self.delete_from_disk,
                 "message": f"Would delete project {project_name} ({self.project_id})",
             }
@@ -204,7 +196,7 @@ class DeleteProjectCommand:
             logger.info(
                 f"[DELETE_PROJECT] Completed database deletion in {time.time() - db_start:.3f}s. "
                 f"Deleted project {self.project_id} ({project_name}) from database: "
-                f"{file_count} files, {chunk_count} chunks, {dataset_count} datasets"
+                f"{file_count} files, {chunk_count} chunks"
             )
 
             # 2. If delete_from_disk: move project root to trash, then delete version dir
@@ -253,7 +245,6 @@ class DeleteProjectCommand:
                 "root_path": root_path,
                 "files_count": file_count,
                 "chunks_count": chunk_count,
-                "datasets_count": dataset_count,
                 "delete_from_disk": self.delete_from_disk,
                 "message": f"Deleted project {project_name} ({self.project_id})",
             }

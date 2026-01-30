@@ -54,10 +54,6 @@ class CSTSaveTreeCommand(BaseMCPCommand):
                     "type": "string",
                     "description": "Server root directory (optional, for database access)",
                 },
-                "dataset_id": {
-                    "type": "string",
-                    "description": "Dataset ID (optional, will be created if not provided)",
-                },
                 "validate": {
                     "type": "boolean",
                     "default": True,
@@ -88,7 +84,6 @@ class CSTSaveTreeCommand(BaseMCPCommand):
         project_id: str,
         file_path: str,
         root_dir: Optional[str] = None,
-        dataset_id: Optional[str] = None,
         validate: bool = True,
         backup: bool = True,
         commit_message: Optional[str] = None,
@@ -129,21 +124,12 @@ class CSTSaveTreeCommand(BaseMCPCommand):
                 
                 project_root = Path(project.root_path)
 
-                # Get or create dataset_id if not provided
-                if not dataset_id:
-                    from .base_mcp_command import BaseMCPCommand
-
-                    dataset_id = BaseMCPCommand._get_or_create_dataset(
-                        database, project_id, str(project_root)
-                    )
-
                 # Save tree to file
                 result = save_tree_to_file(
                     tree_id=tree_id,
                     file_path=str(absolute_file_path),
                     root_dir=project_root,
                     project_id=project_id,
-                    dataset_id=dataset_id,
                     database=database,
                     validate=validate,
                     backup=backup,
@@ -256,11 +242,6 @@ class CSTSaveTreeCommand(BaseMCPCommand):
                 },
                 "root_dir": {
                     "description": "Server root directory (optional, for database access). If not provided, will be resolved from config.",
-                    "type": "string",
-                    "required": False,
-                },
-                "dataset_id": {
-                    "description": "Dataset ID (UUID4 string, optional, will be created if not provided)",
                     "type": "string",
                     "required": False,
                 },

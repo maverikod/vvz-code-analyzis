@@ -47,6 +47,8 @@ Schema source of truth: `code_analysis/commands/**/*.py` → `get_schema()` and 
 | list_code_entities | [list_code_entities.md](commands/ast/list_code_entities.md) | List entities (classes, functions, etc.) |
 | get_imports | [get_imports.md](commands/ast/get_imports.md) | Imports for file/project |
 | find_dependencies | [find_dependencies.md](commands/ast/find_dependencies.md) | Dependency graph for file |
+| get_entity_dependencies | [get_entity_dependencies.md](commands/ast/get_entity_dependencies.md) | Dependencies of entity by id (what it calls) |
+| get_entity_dependents | [get_entity_dependents.md](commands/ast/get_entity_dependents.md) | Dependents of entity by id (what calls it) |
 | get_class_hierarchy | [get_class_hierarchy.md](commands/ast/get_class_hierarchy.md) | Class inheritance hierarchy |
 | find_usages | [find_usages.md](commands/ast/find_usages.md) | Find usages of symbol |
 | export_graph | [export_graph.md](commands/ast/export_graph.md) | Export dependency/usage graph |

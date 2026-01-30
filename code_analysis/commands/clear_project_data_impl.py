@@ -77,17 +77,7 @@ async def _clear_project_data_impl(database: DatabaseClient, project_id: str) ->
             logger.warning(f"Failed to delete duplicates for project {project_id}: {e}")
 
         if not file_ids:
-            # Delete datasets and vector_index even if no files
-            step_start = time.time()
-            database.execute(
-                "DELETE FROM datasets WHERE project_id = ?",
-                (project_id,),
-                transaction_id=transaction_id,
-            )
-            logger.info(
-                f"[CLEAR_PROJECT_DATA] Deleted datasets in {time.time() - step_start:.3f}s"
-            )
-
+            # Delete vector_index even if no files
             step_start = time.time()
             database.execute(
                 "DELETE FROM vector_index WHERE project_id = ?",
@@ -292,16 +282,6 @@ async def _clear_project_data_impl(database: DatabaseClient, project_id: str) ->
             )
 
         # Delete project-level data
-        step_start = time.time()
-        database.execute(
-            "DELETE FROM datasets WHERE project_id = ?",
-            (project_id,),
-            transaction_id=transaction_id,
-        )
-        logger.info(
-            f"[CLEAR_PROJECT_DATA] Deleted datasets in {time.time() - step_start:.3f}s"
-        )
-
         step_start = time.time()
         database.execute(
             "DELETE FROM vector_index WHERE project_id = ?",

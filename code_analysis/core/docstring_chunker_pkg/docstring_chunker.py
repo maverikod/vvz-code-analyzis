@@ -16,15 +16,25 @@ email: vasilyvz@gmail.com
 from __future__ import annotations
 
 import ast
+import asyncio
 import hashlib
 import json
 import logging
 import time
 import uuid
 from dataclasses import dataclass
-from typing import Any, Iterable, Optional
+from typing import Any, Iterable, List, Optional, Tuple
 
 logger = logging.getLogger(__name__)
+
+
+def _chunk_text_from_svo(chunk: Any) -> str:
+    """Get text/body from svo_client chunk (SemanticChunk)."""
+    if hasattr(chunk, "body") and getattr(chunk, "body") is not None:
+        return str(getattr(chunk, "body"))
+    if hasattr(chunk, "text") and getattr(chunk, "text") is not None:
+        return str(getattr(chunk, "text"))
+    return ""
 
 
 @dataclass(frozen=True)
@@ -141,94 +151,97 @@ class DocstringChunker:
         if not items:
             return 0
 
-        # Precompute embeddings using chunker service (SVO - chunks and vectorizes)
-        embeddings: list[Optional[list[float]]] = [None] * len(items)
+        # For each docstring: call chunker (SVO) - it returns all chunks with embeddings.
+        # Collect (item, chunk_index, chunk_text, embedding, embedding_model, token_count)
+        # for every chunk; if chunker returns [], persist one row with original text.
+        def _token_count_from_text(text: str) -> int:
+            """Heuristic token count (words). Use chunker token_count if available."""
+            return len(text.split()) if text else 0
+
+        rows_to_persist: List[
+            Tuple[
+                _DocItem,
+                int,
+                str,
+                Optional[List[float]],
+                Optional[str],
+                Optional[int],
+            ]
+        ] = []
         if self.svo_client_manager:
             logger.info(
-                f"[FILE {file_id}] Requesting embeddings for {len(items)} docstrings from chunker service..."
+                f"[FILE {file_id}] Requesting chunks+embeddings for {len(items)} docstrings from chunker service..."
             )
             embedding_start_time = time.time()
             try:
-                # Use chunker service for each docstring - it returns chunks with embeddings
                 for i, item in enumerate(items):
-                    docstring_start_time = time.time()
-                    logger.debug(
-                        f"[FILE {file_id}] [DOCSTRING {i+1}/{len(items)}] Requesting embedding for docstring at line {item.line} "
-                        f"(text length: {len(item.text)}, type: {item.ast_node_type})"
-                    )
                     try:
-                        # Call chunker service - it chunks and vectorizes
                         chunks = await self.svo_client_manager.get_chunks(
                             text=item.text, type="DocBlock"
                         )
-                        docstring_duration = time.time() - docstring_start_time
-                        logger.debug(
-                            f"[FILE {file_id}] [DOCSTRING {i+1}/{len(items)}] Received {len(chunks) if chunks else 0} chunks "
-                            f"in {docstring_duration:.3f}s"
-                        )
-                        # Extract embedding from first chunk (chunker returns chunks with embeddings)
                         if chunks and len(chunks) > 0:
-                            first_chunk = chunks[0]
-                            # SemanticChunk from svo_client has embedding attribute
-                            emb = getattr(first_chunk, "embedding", None)
-                            # Also extract embedding_model if available
-                            chunk_embedding_model = getattr(
-                                first_chunk, "embedding_model", None
-                            )
+                            chunk_embedding_model = None
+                            for j, ch in enumerate(chunks):
+                                chunk_text = _chunk_text_from_svo(ch)
+                                emb = getattr(ch, "embedding", None)
+                                if emb is None and hasattr(ch, "vector"):
+                                    emb = ch.vector
+                                if chunk_embedding_model is None:
+                                    chunk_embedding_model = getattr(
+                                        ch, "embedding_model", None
+                                    )
+                                tc = getattr(ch, "token_count", None)
+                                if tc is None and chunk_text:
+                                    tc = _token_count_from_text(chunk_text)
+                                rows_to_persist.append(
+                                    (
+                                        item,
+                                        j,
+                                        chunk_text,
+                                        emb,
+                                        chunk_embedding_model,
+                                        tc,
+                                    )
+                                )
                             if chunk_embedding_model and not self.embedding_model:
-                                # Use embedding_model from chunk if not set in chunker
                                 self.embedding_model = chunk_embedding_model
-                                logger.debug(
-                                    f"[FILE {file_id}] [DOCSTRING {i+1}/{len(items)}] Using embedding_model from chunk: {chunk_embedding_model}"
-                                )
-
-                            if isinstance(emb, list) and emb:
-                                embeddings[i] = emb
-                                logger.debug(
-                                    f"[FILE {file_id}] [DOCSTRING {i+1}/{len(items)}] Embedding extracted: {len(emb)} dimensions"
-                                )
-                            elif hasattr(first_chunk, "vector") and first_chunk.vector:
-                                # Alternative: check for vector attribute
-                                embeddings[i] = first_chunk.vector
-                                logger.debug(
-                                    f"[FILE {file_id}] [DOCSTRING {i+1}/{len(items)}] Embedding extracted from vector attribute: "
-                                    f"{len(first_chunk.vector)} dimensions"
-                                )
-                            else:
-                                logger.debug(
-                                    f"[FILE {file_id}] [DOCSTRING {i+1}/{len(items)}] No embedding found in chunk"
-                                )
                         else:
-                            # Empty chunks list - text is too short for chunker (below min_chunk_length)
-                            # Will be saved to DB without embedding
-                            logger.debug(
-                                f"[FILE {file_id}] [DOCSTRING {i+1}/{len(items)}] Text too short for chunker "
-                                f"(length: {len(item.text)}), will save to DB without embedding"
+                            # Chunker returned [] (text too short) - one row without embedding
+                            tc = _token_count_from_text(item.text)
+                            rows_to_persist.append(
+                                (item, 0, item.text, None, None, tc if tc else None)
                             )
-                            embeddings[i] = None
                     except Exception as e:
-                        docstring_duration = time.time() - docstring_start_time
                         logger.warning(
-                            f"[FILE {file_id}] [DOCSTRING {i+1}/{len(items)}] Failed to get chunks with embeddings "
-                            f"after {docstring_duration:.3f}s: {e} (continuing without embedding)"
+                            f"[FILE {file_id}] [DOCSTRING {i+1}/{len(items)}] Failed to get chunks: {e} "
+                            "(persisting one row without embedding)"
                         )
-                        # Continue without embedding - chunk will be saved without embedding
-                        embeddings[i] = None
+                        tc = _token_count_from_text(item.text)
+                        rows_to_persist.append(
+                            (item, 0, item.text, None, None, tc if tc else None)
+                        )
             except Exception as e:
-                embedding_duration = time.time() - embedding_start_time
-                # If chunking fails, log warning but continue - chunks will be saved without embeddings
                 logger.warning(
-                    f"[FILE {file_id}] Failed to precompute embeddings for docstrings after {embedding_duration:.3f}s: {e} "
-                    "(continuing without embeddings)"
+                    f"[FILE {file_id}] Chunker failed: {e}; persisting docstrings without embeddings"
                 )
-                # Continue processing - chunks will be saved without embeddings
+                for item in items:
+                    tc = _token_count_from_text(item.text)
+                    rows_to_persist.append(
+                        (item, 0, item.text, None, None, tc if tc else None)
+                    )
             else:
-                embedding_duration = time.time() - embedding_start_time
                 logger.info(
-                    f"[FILE {file_id}] Completed embedding requests for {len(items)} docstrings in {embedding_duration:.3f}s"
+                    f"[FILE {file_id}] Chunker returned {len(rows_to_persist)} chunks in "
+                    f"{time.time() - embedding_start_time:.3f}s"
+                )
+        else:
+            for item in items:
+                tc = _token_count_from_text(item.text)
+                rows_to_persist.append(
+                    (item, 0, item.text, None, None, tc if tc else None)
                 )
 
-        # Persist items (only if file and project still exist and file is not deleted)
+        # Persist each chunk row (only if file and project still exist)
         if not self._file_still_exists_and_not_deleted(file_id, project_id):
             logger.warning(
                 f"[FILE {file_id}] File or project no longer exists or file is marked deleted, "
@@ -237,13 +250,19 @@ class DocstringChunker:
             return 0
 
         logger.info(
-            f"[FILE {file_id}] Persisting {len(items)} docstring chunks to database..."
+            f"[FILE {file_id}] Persisting {len(rows_to_persist)} chunks to database..."
         )
         persist_start_time = time.time()
         written = 0
         ordinal = 0
-        for it, emb in zip(items, embeddings):
-            # Before each chunk: stop if file/project was deleted in the meantime
+        for (
+            it,
+            chunk_index,
+            chunk_text,
+            emb,
+            _chunk_embedding_model,
+            token_count,
+        ) in rows_to_persist:
             if not self._file_still_exists_and_not_deleted(file_id, project_id):
                 logger.warning(
                     f"[FILE {file_id}] File or project deleted during persist, "
@@ -251,13 +270,10 @@ class DocstringChunker:
                 )
                 break
             ordinal += 1
-            # All items are persisted, including short ones (they will have emb=None)
-
-            # Stable UUID to avoid duplicating chunks across repeated worker cycles.
-            # This allows `add_or_update_code_chunk` to update instead of always inserting.
-            text_sig = hashlib.sha1(it.text.encode("utf-8")).hexdigest()
+            text_sig = hashlib.sha1(chunk_text.encode("utf-8")).hexdigest()
             uuid_name = (
-                f"{file_id}:{it.ast_node_type}:{it.line}:{it.source_type}:{text_sig}"
+                f"{file_id}:{it.ast_node_type}:{it.line}:{it.source_type}:"
+                f"{chunk_index}:{text_sig}"
             )
             chunk_uuid = str(uuid.uuid5(uuid.NAMESPACE_URL, uuid_name))
             embedding_json: Optional[str] = None
@@ -267,29 +283,56 @@ class DocstringChunker:
                 embedding_model = self.embedding_model
 
             try:
-                await self.database.add_code_chunk(
-                    file_id=file_id,
-                    project_id=project_id,
-                    chunk_uuid=chunk_uuid,
-                    chunk_type=it.chunk_type,
-                    chunk_text=it.text,
-                    chunk_ordinal=ordinal,
-                    vector_id=None,
-                    embedding_model=embedding_model,
-                    bm25_score=None,
-                    embedding_vector=embedding_json,
-                    class_id=None,
-                    function_id=None,
-                    method_id=None,
-                    line=int(it.line),
-                    ast_node_type=it.ast_node_type,
-                    source_type=it.source_type,
-                    binding_level=int(it.binding_level),
-                )
+                # DatabaseClient.add_code_chunk is sync (runs in executor); direct DB may be async
+                if asyncio.iscoroutinefunction(
+                    getattr(self.database, "add_code_chunk", None)
+                ):
+                    await self.database.add_code_chunk(
+                        file_id=file_id,
+                        project_id=project_id,
+                        chunk_uuid=chunk_uuid,
+                        chunk_type=it.chunk_type,
+                        chunk_text=chunk_text,
+                        chunk_ordinal=ordinal,
+                        vector_id=None,
+                        embedding_model=embedding_model,
+                        bm25_score=None,
+                        embedding_vector=embedding_json,
+                        token_count=token_count,
+                        class_id=None,
+                        function_id=None,
+                        method_id=None,
+                        line=int(it.line),
+                        ast_node_type=it.ast_node_type,
+                        source_type=it.source_type,
+                        binding_level=int(it.binding_level),
+                    )
+                else:
+                    await asyncio.to_thread(
+                        self.database.add_code_chunk,
+                        file_id=file_id,
+                        project_id=project_id,
+                        chunk_uuid=chunk_uuid,
+                        chunk_type=it.chunk_type,
+                        chunk_text=chunk_text,
+                        chunk_ordinal=ordinal,
+                        vector_id=None,
+                        embedding_model=embedding_model,
+                        bm25_score=None,
+                        embedding_vector=embedding_json,
+                        token_count=token_count,
+                        class_id=None,
+                        function_id=None,
+                        method_id=None,
+                        line=int(it.line),
+                        ast_node_type=it.ast_node_type,
+                        source_type=it.source_type,
+                        binding_level=int(it.binding_level),
+                    )
                 written += 1
             except Exception as e:
                 logger.warning(
-                    f"[FILE {file_id}] Failed to persist docstring chunk for {file_path} (line={it.line}): {e}",
+                    f"[FILE {file_id}] Failed to persist chunk for {file_path} (line={it.line}, idx={chunk_index}): {e}",
                     exc_info=True,
                 )
 

@@ -34,11 +34,11 @@ class TestClientAPICodeStructureAnalysis:
         driver = create_driver("sqlite", {"path": str(db_path)})
 
         # Create all necessary tables (reuse from test_client_api.py fixture logic)
-        # Projects, datasets, files, ast_trees, cst_trees, vector_index
+        # Projects, files, ast_trees, cst_trees, vector_index
         # Plus: classes, functions, methods, imports, issues, usages, code_duplicates
 
         # Create projects table
-        driver._execute(
+        driver.execute(
             """
             CREATE TABLE IF NOT EXISTS projects (
                 id TEXT PRIMARY KEY,
@@ -52,13 +52,12 @@ class TestClientAPICodeStructureAnalysis:
             """
         )
 
-        # Create files table
-        driver._execute(
+        # Create files table (one project, path unique per project)
+        driver.execute(
             """
             CREATE TABLE IF NOT EXISTS files (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 project_id TEXT NOT NULL,
-                dataset_id TEXT NOT NULL,
                 path TEXT NOT NULL,
                 relative_path TEXT,
                 lines INTEGER,
@@ -67,13 +66,13 @@ class TestClientAPICodeStructureAnalysis:
                 deleted INTEGER DEFAULT 0,
                 created_at REAL DEFAULT (julianday('now')),
                 updated_at REAL DEFAULT (julianday('now')),
-                UNIQUE(project_id, dataset_id, path)
+                UNIQUE(project_id, path)
             )
             """
         )
 
         # Create classes table
-        driver._execute(
+        driver.execute(
             """
             CREATE TABLE IF NOT EXISTS classes (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -90,7 +89,7 @@ class TestClientAPICodeStructureAnalysis:
         )
 
         # Create functions table
-        driver._execute(
+        driver.execute(
             """
             CREATE TABLE IF NOT EXISTS functions (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -107,7 +106,7 @@ class TestClientAPICodeStructureAnalysis:
         )
 
         # Create methods table
-        driver._execute(
+        driver.execute(
             """
             CREATE TABLE IF NOT EXISTS methods (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -127,7 +126,7 @@ class TestClientAPICodeStructureAnalysis:
         )
 
         # Create imports table
-        driver._execute(
+        driver.execute(
             """
             CREATE TABLE IF NOT EXISTS imports (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -143,7 +142,7 @@ class TestClientAPICodeStructureAnalysis:
         )
 
         # Create issues table
-        driver._execute(
+        driver.execute(
             """
             CREATE TABLE IF NOT EXISTS issues (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -164,7 +163,7 @@ class TestClientAPICodeStructureAnalysis:
         )
 
         # Create usages table
-        driver._execute(
+        driver.execute(
             """
             CREATE TABLE IF NOT EXISTS usages (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -182,7 +181,7 @@ class TestClientAPICodeStructureAnalysis:
         )
 
         # Create code_duplicates table
-        driver._execute(
+        driver.execute(
             """
             CREATE TABLE IF NOT EXISTS code_duplicates (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -196,7 +195,7 @@ class TestClientAPICodeStructureAnalysis:
             """
         )
 
-        driver._commit()
+        # execute() commits after each statement
 
         request_queue = RequestQueue()
         server = RPCServer(driver, request_queue, socket_path)
@@ -228,7 +227,6 @@ class TestClientAPICodeStructureAnalysis:
 
             file = File(
                 project_id=project.id,
-                dataset_id="test-dataset",
                 path="/tmp/test_cs/test.py",
             )
             created_file = client.create_file(file)
@@ -264,7 +262,6 @@ class TestClientAPICodeStructureAnalysis:
 
             file = File(
                 project_id=project.id,
-                dataset_id="test-dataset",
                 path="/tmp/test_fn/test.py",
             )
             created_file = client.create_file(file)
@@ -298,7 +295,6 @@ class TestClientAPICodeStructureAnalysis:
 
             file = File(
                 project_id=project.id,
-                dataset_id="test-dataset",
                 path="/tmp/test_meth/test.py",
             )
             created_file = client.create_file(file)
@@ -336,7 +332,6 @@ class TestClientAPICodeStructureAnalysis:
 
             file = File(
                 project_id=project.id,
-                dataset_id="test-dataset",
                 path="/tmp/test_struct/test.py",
             )
             created_file = client.create_file(file)
@@ -376,7 +371,6 @@ class TestClientAPICodeStructureAnalysis:
 
             file = File(
                 project_id=project.id,
-                dataset_id="test-dataset",
                 path="/tmp/test_issue/test.py",
             )
             created_file = client.create_file(file)
@@ -412,7 +406,6 @@ class TestClientAPICodeStructureAnalysis:
 
             file = File(
                 project_id=project.id,
-                dataset_id="test-dataset",
                 path="/tmp/test_usage/test.py",
             )
             created_file = client.create_file(file)
@@ -448,7 +441,6 @@ class TestClientAPICodeStructureAnalysis:
 
             file = File(
                 project_id=project.id,
-                dataset_id="test-dataset",
                 path="/tmp/test_stats/test.py",
             )
             created_file = client.create_file(file)

@@ -229,6 +229,138 @@ class BaseMCPCommand(Command):
             db = DatabaseClient(socket_path=socket_path)
             db.connect()
 
+            # Ensure schema exists (empty DB after delete-and-recreate has no tables)
+            try:
+                db.select("projects", columns=["id"], limit=1)
+            except Exception as e:
+                err_msg = str(e).lower()
+                cause_msg = str(getattr(e, "__cause__", "") or "").lower()
+                if (
+                    "no such table" in err_msg
+                    or "no such table" in repr(e).lower()
+                    or "no such table" in cause_msg
+                ):
+                    logger.info(
+                        "Database has no tables, initializing schema via sync_schema"
+                    )
+                    try:
+                        from ..core.database.base import get_schema_definition
+
+                        schema_def = get_schema_definition()
+                        # Driver expects tables as list; columns use "nullable" (we have "not_null"); constraints from foreign_keys
+                        tables = schema_def.get("tables")
+                        if isinstance(tables, dict):
+                            tables_list = []
+                            for k, v in tables.items():
+                                t = {"name": k, **v}
+                                cols = t.get("columns") or []
+                                t["columns"] = [
+                                    {
+                                        **c,
+                                        "nullable": not c.get("not_null", False),
+                                        "type": (
+                                            "INTEGER"
+                                            if c.get("type") == "BOOLEAN"
+                                            else c.get("type", "TEXT")
+                                        ),
+                                    }
+                                    for c in cols
+                                ]
+                                fks = t.pop("foreign_keys", [])
+                                t["constraints"] = [
+                                    {
+                                        "type": "foreign_key",
+                                        "columns": c.get("columns", []),
+                                        "references_table": c.get(
+                                            "references_table", ""
+                                        ),
+                                        "references_columns": c.get(
+                                            "references_columns", []
+                                        ),
+                                    }
+                                    for c in fks
+                                ]
+                                tables_list.append(t)
+                            schema_def = {**schema_def, "tables": tables_list}
+                        backup_dir = getattr(storage, "backup_dir", None)
+                        db.sync_schema(
+                            schema_def,
+                            backup_dir=str(backup_dir) if backup_dir else None,
+                        )
+                        logger.info("Schema initialized successfully")
+                        # Verify schema: retry select so we do not return with broken DB
+                        db.select("projects", columns=["id"], limit=1)
+                    except Exception as schema_err:
+                        logger.warning(
+                            "Failed to initialize schema: %s", schema_err, exc_info=True
+                        )
+                        raise DatabaseError(
+                            f"Schema init failed (empty DB): {schema_err}",
+                            operation="sync_schema",
+                            details={"error": str(schema_err)},
+                        ) from schema_err
+                else:
+                    raise
+
+            # Ensure virtual tables (e.g. code_content_fts) exist (older DBs may lack them)
+            try:
+                db.select("code_content_fts", columns=["rowid"], limit=1)
+            except Exception as e:
+                err_msg = str(e).lower()
+                cause_msg = str(getattr(e, "__cause__", "") or "").lower()
+                if "no such table" in err_msg or "no such table" in cause_msg:
+                    logger.info(
+                        "code_content_fts missing, running sync_schema for virtual tables"
+                    )
+                    try:
+                        from ..core.database.base import get_schema_definition
+
+                        schema_def = get_schema_definition()
+                        tables = schema_def.get("tables")
+                        if isinstance(tables, dict):
+                            tables_list = []
+                            for k, v in tables.items():
+                                t = {"name": k, **v}
+                                cols = t.get("columns") or []
+                                t["columns"] = [
+                                    {
+                                        **c,
+                                        "nullable": not c.get("not_null", False),
+                                        "type": (
+                                            "INTEGER"
+                                            if c.get("type") == "BOOLEAN"
+                                            else c.get("type", "TEXT")
+                                        ),
+                                    }
+                                    for c in cols
+                                ]
+                                fks = t.pop("foreign_keys", [])
+                                t["constraints"] = [
+                                    {
+                                        "type": "foreign_key",
+                                        "columns": c.get("columns", []),
+                                        "references_table": c.get(
+                                            "references_table", ""
+                                        ),
+                                        "references_columns": c.get(
+                                            "references_columns", []
+                                        ),
+                                    }
+                                    for c in fks
+                                ]
+                                tables_list.append(t)
+                            schema_def = {**schema_def, "tables": tables_list}
+                        backup_dir = getattr(storage, "backup_dir", None)
+                        db.sync_schema(
+                            schema_def,
+                            backup_dir=str(backup_dir) if backup_dir else None,
+                        )
+                        logger.info("Virtual tables synced successfully")
+                    except Exception as sync_err:
+                        logger.warning(
+                            "Failed to sync virtual tables: %s", sync_err, exc_info=True
+                        )
+
             # Check if database is empty (no projects or no files)
             if auto_analyze:
                 needs_analysis = False
@@ -554,98 +686,6 @@ class BaseMCPCommand(Command):
         return project_id
 
     @staticmethod
-    def _get_or_create_dataset(
-        db: DatabaseClient, project_id: str, root_path: str, name: Optional[str] = None
-    ) -> str:
-        """Get or create dataset by project_id and root_path.
-
-        Datasets support multi-root indexing within a project.
-        Each dataset represents a separate indexed root directory.
-
-        Args:
-            db: DatabaseClient instance
-            project_id: Project ID (UUID4 string)
-            root_path: Root directory path (will be normalized to absolute)
-            name: Optional dataset name
-
-        Returns:
-            Dataset ID (UUID4 string)
-        """
-        # Normalize root_path to absolute resolved path
-        normalized_root = str(normalize_root_dir(root_path))
-
-        # Check if dataset exists
-        result = db.execute(
-            "SELECT id FROM datasets WHERE project_id = ? AND root_path = ?",
-            (project_id, normalized_root),
-        )
-        # Handle both dict and list results from execute()
-        if isinstance(result, list):
-            data = result
-        elif isinstance(result, dict):
-            data = result.get("data", [])
-        else:
-            data = []
-        if data:
-            return data[0]["id"]
-
-        # Create new dataset
-        dataset_id = str(uuid.uuid4())
-        dataset_name = name or Path(normalized_root).name
-        result = db.execute(
-            """
-            INSERT INTO datasets (id, project_id, root_path, name, updated_at)
-            VALUES (?, ?, ?, ?, julianday('now'))
-            """,
-            (dataset_id, project_id, normalized_root, dataset_name),
-        )
-        # Verify insertion succeeded
-        affected_rows = 0
-        if isinstance(result, dict):
-            if "data" in result and isinstance(result["data"], dict):
-                affected_rows = result["data"].get("affected_rows", 0)
-            else:
-                affected_rows = result.get("affected_rows", 0)
-        if affected_rows == 0:
-            raise DatabaseError(
-                "Failed to create dataset: no rows affected",
-                operation="create_dataset",
-                details={"project_id": project_id, "root_path": normalized_root},
-            )
-        logger.info(
-            f"Created dataset {dataset_id} for project {project_id} at {normalized_root}"
-        )
-        return dataset_id
-
-    @staticmethod
-    def _get_dataset_id(
-        db: DatabaseClient, project_id: str, root_path: str
-    ) -> Optional[str]:
-        """Get dataset ID by project_id and root_path.
-
-        Args:
-            db: DatabaseClient instance
-            project_id: Project ID (UUID4 string)
-            root_path: Root directory path (will be normalized to absolute)
-
-        Returns:
-            Dataset ID (UUID4 string) or None if not found
-        """
-        normalized_root = str(normalize_root_dir(root_path))
-        result = db.execute(
-            "SELECT id FROM datasets WHERE project_id = ? AND root_path = ?",
-            (project_id, normalized_root),
-        )
-        # Handle both dict and list results from execute()
-        if isinstance(result, list):
-            data = result
-        elif isinstance(result, dict):
-            data = result.get("data", [])
-        else:
-            data = []
-        return data[0]["id"] if data else None
-
-    @staticmethod
     def _resolve_project_root(
         project_id: Optional[str] = None, root_dir: Optional[str] = None
     ) -> Path:
@@ -838,7 +878,7 @@ class BaseMCPCommand(Command):
             watch_dir_paths = watch_dir_path_result
         else:
             watch_dir_paths = watch_dir_path_result.get("data", [])
-        
+
         if not watch_dir_paths:
             raise ValidationError(
                 f"Watch directory path not found for watch_dir_id {project.watch_dir_id}",

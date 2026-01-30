@@ -55,13 +55,6 @@ def test_project(test_db, temp_dir, project_id):
 @pytest.fixture
 def test_file(test_db, temp_dir, test_project):
     """Create test file in database and filesystem."""
-    # Create dataset first
-    dataset_id = test_db.get_or_create_dataset(
-        project_id=test_project,
-        root_path=str(temp_dir),
-        name=temp_dir.name,
-    )
-    
     file_path = temp_dir / "test_file.py"
     file_content = '''"""
 Test file.
@@ -93,7 +86,6 @@ def test_function():
         last_modified=file_mtime,
         has_docstring=True,
         project_id=test_project,
-        dataset_id=dataset_id,
     )
     
     # Add AST and CST trees directly via SQL

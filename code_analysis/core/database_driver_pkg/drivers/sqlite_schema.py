@@ -115,6 +115,49 @@ class SQLiteSchemaManager:
                 except Exception as e:
                     result["errors"].append(f"Error processing table {table_name}: {e}")
 
+            if result["errors"]:
+                self.conn.rollback()
+                raise DriverOperationError(
+                    "Schema sync had errors: " + "; ".join(result["errors"])
+                ) from None
+
+            # Create virtual tables (e.g. FTS5 code_content_fts) if missing
+            virtual_tables = schema_definition.get("virtual_tables", [])
+            for vt_def in virtual_tables:
+                vt_name = vt_def.get("name")
+                if not vt_name:
+                    continue
+                try:
+                    cursor = self.conn.cursor()
+                    cursor.execute(
+                        "SELECT name FROM sqlite_master WHERE type='table' AND name=?",
+                        (vt_name,),
+                    )
+                    exists = cursor.fetchone() is not None
+                    if not exists:
+                        vt_type = vt_def.get("type", "fts5")
+                        columns = vt_def.get("columns", [])
+                        options = vt_def.get("options", {})
+                        cols_str = ", ".join(columns)
+                        opts_parts = [f"{k}='{v}'" for k, v in options.items()]
+                        opts_str = ", " + ", ".join(opts_parts) if opts_parts else ""
+                        create_sql = (
+                            f"CREATE VIRTUAL TABLE IF NOT EXISTS {vt_name} "
+                            f"USING {vt_type}({cols_str}{opts_str})"
+                        )
+                        cursor.execute(create_sql)
+                        result["created_tables"].append(vt_name)
+                except Exception as e:
+                    result["errors"].append(
+                        f"Error creating virtual table {vt_name}: {e}"
+                    )
+
+            if result["errors"]:
+                self.conn.rollback()
+                raise DriverOperationError(
+                    "Schema sync had errors: " + "; ".join(result["errors"])
+                ) from None
+
             self.conn.commit()
             return result
         except Exception as e:

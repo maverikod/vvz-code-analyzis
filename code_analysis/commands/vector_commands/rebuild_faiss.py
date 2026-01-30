@@ -1,15 +1,14 @@
 """
 MCP command for rebuilding FAISS index.
 
-Implements dataset-scoped FAISS (Step 2 of refactor plan).
+One index per project: {faiss_dir}/{project_id}.bin.
 
 Author: Vasiliy Zdanovskiy
 email: vasilyvz@gmail.com
 """
 
 import logging
-from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict
 
 from mcp_proxy_adapter.commands.result import SuccessResult, ErrorResult
 
@@ -25,8 +24,7 @@ class RebuildFaissCommand(BaseMCPCommand):
     """
     Rebuild FAISS index from database.
 
-    Implements dataset-scoped FAISS (Step 2 of refactor plan).
-    Rebuilds FAISS index for a specific dataset or all datasets in a project.
+    One index per project. Rebuilds the single FAISS index for the project.
 
     Attributes:
         name: MCP command name.
@@ -40,7 +38,7 @@ class RebuildFaissCommand(BaseMCPCommand):
 
     name = "rebuild_faiss"
     version = "1.0.0"
-    descr = "Rebuild FAISS index from database (dataset-scoped)"
+    descr = "Rebuild FAISS index from database (one index per project)"
     category = "vectorization"
     author = "Vasiliy Zdanovskiy"
     email = "vasilyvz@gmail.com"
@@ -67,10 +65,6 @@ class RebuildFaissCommand(BaseMCPCommand):
                     "type": "string",
                     "description": "Project UUID (must match root_dir/projectid)",
                 },
-                "dataset_id": {
-                    "type": "string",
-                    "description": "Optional dataset UUID; if omitted, rebuilds all datasets in project",
-                },
             },
             "required": ["root_dir", "project_id"],
             "additionalProperties": False,
@@ -80,16 +74,14 @@ class RebuildFaissCommand(BaseMCPCommand):
         self: "RebuildFaissCommand",
         root_dir: str,
         project_id: str,
-        dataset_id: Optional[str] = None,
         **kwargs: Any,
     ) -> SuccessResult | ErrorResult:
-        """Execute FAISS index rebuild.
+        """Execute FAISS index rebuild (one index per project).
 
         Args:
             self: Command instance.
             root_dir: Root directory of the project.
             project_id: Project UUID (must match root_dir/projectid).
-            dataset_id: Optional dataset UUID; if omitted, rebuilds all datasets.
 
         Returns:
             SuccessResult with rebuild statistics or ErrorResult on failure.
@@ -132,6 +124,11 @@ class RebuildFaissCommand(BaseMCPCommand):
                 code_analysis_config = config_dict.get("code_analysis", config_dict)
                 vector_dim = int(code_analysis_config.get("vector_dim", 384))
 
+                # One index per project: {faiss_dir}/{project_id}.bin
+                index_path = get_faiss_index_path(
+                    storage_paths.faiss_dir, actual_project_id
+                )
+
                 # Initialize SVO client manager
                 from ...core.svo_client_manager import SVOClientManager
 
@@ -139,109 +136,24 @@ class RebuildFaissCommand(BaseMCPCommand):
                 await svo_client_manager.initialize()
 
                 try:
-                    results = []
+                    faiss_manager = FaissIndexManager(
+                        index_path=str(index_path),
+                        vector_dim=vector_dim,
+                    )
 
-                    if dataset_id:
-                        # Rebuild index for specific dataset
-                        normalized_root = str(normalize_root_dir(root_dir))
-                        from ...commands.base_mcp_command import BaseMCPCommand
+                    vectors_count = await faiss_manager.rebuild_from_database(
+                        database,
+                        svo_client_manager,
+                        project_id=actual_project_id,
+                    )
 
-                        db_dataset_id = BaseMCPCommand._get_dataset_id(
-                            database, actual_project_id, normalized_root
-                        )
-                        if not db_dataset_id:
-                            # Create dataset if it doesn't exist
-                            from ...commands.base_mcp_command import BaseMCPCommand
-
-                            db_dataset_id = BaseMCPCommand._get_or_create_dataset(
-                                database, actual_project_id, normalized_root
-                            )
-
-                        if db_dataset_id != dataset_id:
-                            return ErrorResult(
-                                message=f"Dataset ID mismatch: provided {dataset_id}, found {db_dataset_id}",
-                                code="DATASET_ID_MISMATCH",
-                            )
-
-                        # Get dataset-scoped FAISS index path
-                        index_path = get_faiss_index_path(
-                            storage_paths.faiss_dir, actual_project_id, dataset_id
-                        )
-
-                        # Initialize FAISS manager
-                        faiss_manager = FaissIndexManager(
-                            index_path=str(index_path),
-                            vector_dim=vector_dim,
-                        )
-
-                        # Rebuild index
-                        vectors_count = await faiss_manager.rebuild_from_database(
-                            database,
-                            svo_client_manager,
-                            project_id=actual_project_id,
-                            dataset_id=dataset_id,
-                        )
-
-                        results.append(
-                            {
-                                "dataset_id": dataset_id,
-                                "index_path": str(index_path),
-                                "vectors_count": vectors_count,
-                            }
-                        )
-
-                        faiss_manager.close()
-                    else:
-                        # Rebuild indexes for all datasets in project
-                        datasets = database.get_project_datasets(actual_project_id)
-                        if not datasets:
-                            return ErrorResult(
-                                message=f"No datasets found for project {actual_project_id}",
-                                code="NO_DATASETS",
-                            )
-
-                        for dataset in datasets:
-                            ds_id = dataset["id"]
-                            ds_root = dataset["root_path"]
-
-                            # Get dataset-scoped FAISS index path
-                            index_path = get_faiss_index_path(
-                                storage_paths.faiss_dir, actual_project_id, ds_id
-                            )
-
-                            # Initialize FAISS manager
-                            faiss_manager = FaissIndexManager(
-                                index_path=str(index_path),
-                                vector_dim=vector_dim,
-                            )
-
-                            # Rebuild index
-                            vectors_count = await faiss_manager.rebuild_from_database(
-                                database,
-                                svo_client_manager,
-                                project_id=actual_project_id,
-                                dataset_id=ds_id,
-                            )
-
-                            results.append(
-                                {
-                                    "dataset_id": ds_id,
-                                    "root_path": ds_root,
-                                    "index_path": str(index_path),
-                                    "vectors_count": vectors_count,
-                                }
-                            )
-
-                            faiss_manager.close()
-
-                    total_vectors = sum(r["vectors_count"] for r in results)
+                    faiss_manager.close()
 
                     return SuccessResult(
                         data={
                             "project_id": actual_project_id,
-                            "datasets_rebuilt": len(results),
-                            "total_vectors": total_vectors,
-                            "results": results,
+                            "index_path": str(index_path),
+                            "vectors_count": vectors_count,
                         }
                     )
                 finally:
@@ -277,8 +189,7 @@ class RebuildFaissCommand(BaseMCPCommand):
             "email": cls.email,
             "detailed_description": (
                 "The rebuild_faiss command rebuilds FAISS (Facebook AI Similarity Search) "
-                "index from database embeddings. It implements dataset-scoped FAISS, allowing "
-                "rebuilding indexes for specific datasets or all datasets in a project.\n\n"
+                "index from database embeddings. One index per project: {faiss_dir}/{project_id}.bin.\n\n"
                 "Operation flow:\n"
                 "1. Validates root_dir exists and is a directory\n"
                 "2. Validates project_id matches root_dir/projectid file\n"
@@ -286,44 +197,14 @@ class RebuildFaissCommand(BaseMCPCommand):
                 "4. Verifies project exists in database\n"
                 "5. Loads config.json to get storage paths and vector dimension\n"
                 "6. Initializes SVOClientManager for embeddings\n"
-                "7. If dataset_id provided: rebuilds index for that dataset\n"
-                "8. If dataset_id omitted: rebuilds indexes for all datasets in project\n"
-                "9. For each dataset:\n"
-                "   - Gets dataset-scoped FAISS index path\n"
-                "   - Initializes FaissIndexManager\n"
-                "   - Normalizes vector_id to dense range (0..N-1)\n"
-                "   - Rebuilds FAISS index from database embeddings\n"
-                "   - Closes FAISS manager\n"
-                "10. Returns rebuild statistics\n\n"
-                "FAISS Index Rebuilding:\n"
+                "7. Gets project-scoped FAISS index path\n"
+                "8. Rebuilds FAISS index from database embeddings (all chunks in project)\n"
+                "9. Returns rebuild statistics\n\n"
+                "FAISS Index:\n"
+                "- One index per project: {faiss_dir}/{project_id}.bin\n"
                 "- Reads embeddings from code_chunks.embedding_vector in database\n"
-                "- Normalizes vector_id to dense range to avoid ID conflicts\n"
-                "- Creates new FAISS index file from embeddings\n"
-                "- Index is dataset-scoped (one index per dataset)\n"
-                "- Index path: {faiss_dir}/{project_id}/{dataset_id}/index.faiss\n\n"
-                "Vector ID Normalization:\n"
-                "- Reassigns vector_id to dense range 0..N-1\n"
-                "- Uses single SQL statement to avoid per-row UPDATEs\n"
-                "- Prevents ID conflicts and stabilizes sqlite_proxy worker\n"
-                "- Only processes chunks with valid embeddings\n\n"
-                "Dataset-Scoped FAISS:\n"
-                "- Each dataset has its own FAISS index file\n"
-                "- Allows independent index management per dataset\n"
-                "- Supports multiple datasets per project\n"
-                "- Indexes are stored in separate directories\n\n"
-                "Use cases:\n"
-                "- Rebuild index after database changes\n"
-                "- Recover from corrupted index file\n"
-                "- Rebuild index after embedding updates\n"
-                "- Initialize index for new dataset\n"
-                "- Sync index with database state\n"
-                "- Rebuild all indexes after project changes\n\n"
-                "Important notes:\n"
+                "- Normalizes vector_id to dense range 0..N-1\n"
                 "- Requires valid embeddings in database (use revectorize if missing)\n"
-                "- Rebuilds index from existing embeddings (doesn't generate new ones)\n"
-                "- Index file is recreated (old index is replaced)\n"
-                "- Vector dimension must match config.json setting\n"
-                "- Requires SVOClientManager for missing embeddings (if any)\n"
                 "- project_id must match root_dir/projectid file"
             ),
             "parameters": {
@@ -343,7 +224,7 @@ class RebuildFaissCommand(BaseMCPCommand):
                 "project_id": {
                     "description": (
                         "Project UUID. Must match the UUID in root_dir/projectid file. "
-                        "Used to identify project and resolve dataset indexes."
+                        "Used to identify project and resolve FAISS index path."
                     ),
                     "type": "string",
                     "required": True,
@@ -351,42 +232,15 @@ class RebuildFaissCommand(BaseMCPCommand):
                         "123e4567-e89b-12d3-a456-426614174000",
                     ],
                 },
-                "dataset_id": {
-                    "description": (
-                        "Optional dataset UUID. If provided, rebuilds index only for that dataset. "
-                        "If omitted, rebuilds indexes for all datasets in the project. "
-                        "Dataset must exist in database."
-                    ),
-                    "type": "string",
-                    "required": False,
-                    "examples": [
-                        "223e4567-e89b-12d3-a456-426614174001",
-                    ],
-                },
             },
             "usage_examples": [
                 {
-                    "description": "Rebuild index for specific dataset",
-                    "command": {
-                        "root_dir": "/home/user/projects/my_project",
-                        "project_id": "123e4567-e89b-12d3-a456-426614174000",
-                        "dataset_id": "223e4567-e89b-12d3-a456-426614174001",
-                    },
-                    "explanation": (
-                        "Rebuilds FAISS index for specific dataset. "
-                        "Useful when only one dataset needs index update."
-                    ),
-                },
-                {
-                    "description": "Rebuild indexes for all datasets",
+                    "description": "Rebuild FAISS index for project",
                     "command": {
                         "root_dir": "/home/user/projects/my_project",
                         "project_id": "123e4567-e89b-12d3-a456-426614174000",
                     },
-                    "explanation": (
-                        "Rebuilds FAISS indexes for all datasets in the project. "
-                        "Useful after project-wide changes."
-                    ),
+                    "explanation": "Rebuilds the single FAISS index for the project.",
                 },
             ],
             "error_cases": {
@@ -404,22 +258,6 @@ class RebuildFaissCommand(BaseMCPCommand):
                     "solution": (
                         "Ensure config.json exists in root_dir. "
                         "Config file is required for storage paths and vector dimension."
-                    ),
-                },
-                "DATASET_ID_MISMATCH": {
-                    "description": "Dataset ID mismatch",
-                    "message": "Dataset ID mismatch: provided {dataset_id}, found {db_dataset_id}",
-                    "solution": (
-                        "Verify dataset_id is correct. Dataset ID in database must match provided ID. "
-                        "Use list_projects or database queries to find correct dataset_id."
-                    ),
-                },
-                "NO_DATASETS": {
-                    "description": "No datasets found for project",
-                    "message": "No datasets found for project {project_id}",
-                    "solution": (
-                        "Ensure project has datasets. Run update_indexes to create datasets. "
-                        "Datasets are created automatically when indexing files."
                     ),
                 },
                 "REBUILD_FAISS_ERROR": {
@@ -456,73 +294,27 @@ class RebuildFaissCommand(BaseMCPCommand):
                 "success": {
                     "description": "FAISS index rebuilt successfully",
                     "data": {
-                        "project_id": "Project UUID that was processed",
-                        "datasets_rebuilt": "Number of datasets processed",
-                        "total_vectors": "Total number of vectors in all indexes",
-                        "results": (
-                            "List of rebuild results. Each contains:\n"
-                            "- dataset_id: Dataset UUID\n"
-                            "- index_path: Path to FAISS index file\n"
-                            "- vectors_count: Number of vectors in index\n"
-                            "- root_path: Dataset root path (if all datasets)"
-                        ),
+                        "project_id": "Project UUID",
+                        "index_path": "Path to FAISS index file ({faiss_dir}/{project_id}.bin)",
+                        "vectors_count": "Number of vectors in index",
                     },
-                    "example_single_dataset": {
+                    "example": {
                         "project_id": "123e4567-e89b-12d3-a456-426614174000",
-                        "datasets_rebuilt": 1,
-                        "total_vectors": 5000,
-                        "results": [
-                            {
-                                "dataset_id": "223e4567-e89b-12d3-a456-426614174001",
-                                "index_path": "/data/faiss/123e4567.../223e4567.../index.faiss",
-                                "vectors_count": 5000,
-                            }
-                        ],
-                    },
-                    "example_multiple_datasets": {
-                        "project_id": "123e4567-e89b-12d3-a456-426614174000",
-                        "datasets_rebuilt": 3,
-                        "total_vectors": 15000,
-                        "results": [
-                            {
-                                "dataset_id": "223e4567-e89b-12d3-a456-426614174001",
-                                "root_path": "/path/to/dataset1",
-                                "index_path": "/data/faiss/123e4567.../223e4567.../index.faiss",
-                                "vectors_count": 5000,
-                            },
-                            {
-                                "dataset_id": "323e4567-e89b-12d3-a456-426614174002",
-                                "root_path": "/path/to/dataset2",
-                                "index_path": "/data/faiss/123e4567.../323e4567.../index.faiss",
-                                "vectors_count": 7000,
-                            },
-                            {
-                                "dataset_id": "423e4567-e89b-12d3-a456-426614174003",
-                                "root_path": "/path/to/dataset3",
-                                "index_path": "/data/faiss/123e4567.../423e4567.../index.faiss",
-                                "vectors_count": 3000,
-                            },
-                        ],
+                        "index_path": "/data/faiss/123e4567-e89b-12d3-a456-426614174000.bin",
+                        "vectors_count": 5000,
                     },
                 },
                 "error": {
                     "description": "Command failed",
-                    "code": (
-                        "Error code (e.g., PROJECT_NOT_FOUND, CONFIG_NOT_FOUND, "
-                        "DATASET_ID_MISMATCH, NO_DATASETS, REBUILD_FAISS_ERROR)"
-                    ),
+                    "code": "Error code (e.g., PROJECT_NOT_FOUND, CONFIG_NOT_FOUND, REBUILD_FAISS_ERROR)",
                     "message": "Human-readable error message",
                 },
             },
             "best_practices": [
                 "Run revectorize first if embeddings are missing",
                 "Rebuild index after bulk embedding updates",
-                "Use dataset_id to rebuild specific dataset index",
-                "Rebuild all datasets after project-wide changes",
                 "Verify vectors_count matches expected number of chunks",
                 "Check index_path to verify index file location",
-                "Monitor total_vectors to track index size",
-                "Rebuild index after database repairs or restores",
                 "Ensure vector_dim in config matches embedding dimension",
             ],
         }

@@ -78,8 +78,33 @@ class SQLiteDriver(BaseDatabaseDriver):
 
             # Ensure migrations for columns used by workers (e.g. needs_chunking)
             self._ensure_files_table_migrations()
+            self._ensure_code_chunks_migrations()
         except Exception as e:
             raise DriverConnectionError(f"Failed to connect to database: {e}") from e
+
+    def _ensure_code_chunks_migrations(self) -> None:
+        """Add code_chunks.token_count if missing (worker add_code_chunk needs it)."""
+        if not self._schema_manager:
+            return
+        try:
+            info = self._schema_manager.get_table_info("code_chunks")
+            columns = {row["name"] for row in info}
+            if "token_count" not in columns:
+                logger.info(
+                    "Migrating code_chunks table: adding token_count column (driver)"
+                )
+                self.conn.execute(
+                    "ALTER TABLE code_chunks ADD COLUMN token_count INTEGER"
+                )
+                self.conn.commit()
+        except Exception as e:
+            logger.warning(
+                "Could not add token_count to code_chunks in driver: %s", e
+            )
+            try:
+                self.conn.rollback()
+            except Exception:
+                pass
 
     def _ensure_files_table_migrations(self) -> None:
         """Run migrations on files table (e.g. needs_chunking) if column is missing.
@@ -100,6 +125,22 @@ class SQLiteDriver(BaseDatabaseDriver):
                     "ALTER TABLE files ADD COLUMN needs_chunking INTEGER DEFAULT 0"
                 )
                 self.conn.commit()
+            if "dataset_id" in columns:
+                logger.info(
+                    "Migrating files table: dropping dataset_id column (driver)"
+                )
+                try:
+                    self.conn.execute("ALTER TABLE files DROP COLUMN dataset_id")
+                    self.conn.commit()
+                except Exception as drop_e:
+                    logger.warning(
+                        "Could not drop dataset_id (SQLite 3.35+ required): %s",
+                        drop_e,
+                    )
+                    try:
+                        self.conn.rollback()
+                    except Exception:
+                        pass
         except Exception as e:
             logger.warning(
                 "Could not add needs_chunking column to files in driver: %s", e
@@ -166,10 +207,10 @@ class SQLiteDriver(BaseDatabaseDriver):
                 if not nullable:
                     col_def += " NOT NULL"
                 if default is not None:
-                    if isinstance(default, str):
+                    if isinstance(default, str) and "(" not in default:
                         col_def += f" DEFAULT '{default}'"
                     else:
-                        col_def += f" DEFAULT {default}"
+                        col_def += f" DEFAULT ({default})" if isinstance(default, str) else f" DEFAULT {default}"
                 if primary_key:
                     col_def += " PRIMARY KEY"
 
@@ -306,14 +347,30 @@ class SQLiteDriver(BaseDatabaseDriver):
                 rows = cursor.fetchall()
                 result["data"] = [dict(row) for row in rows]
 
-            # Only commit if not in transaction
+            # Only commit if not in transaction (writes are persisted)
             if not transaction_id:
-                conn.commit()
+                try:
+                    conn.commit()
+                except Exception as commit_err:
+                    msg = str(commit_err).lower()
+                    # SQLite can raise when no transaction is active (e.g. autocommit or implicit commit)
+                    if "no transaction" in msg or "cannot commit" in msg:
+                        logger.debug(
+                            "Commit skipped (no active transaction): %s",
+                            commit_err,
+                        )
+                    else:
+                        raise DriverOperationError(
+                            f"Failed to commit: {commit_err}"
+                        ) from commit_err
             return result
         except Exception as e:
             # Only rollback if not in transaction (transaction rollback is handled separately)
             if not transaction_id:
-                conn.rollback()
+                try:
+                    conn.rollback()
+                except Exception:
+                    pass  # Ignore rollback errors (e.g. no transaction)
             raise DriverOperationError(f"Failed to execute SQL: {e}") from e
 
     def begin_transaction(self) -> str:

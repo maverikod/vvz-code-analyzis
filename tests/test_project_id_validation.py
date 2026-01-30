@@ -54,18 +54,12 @@ class TestProjectIdValidationRealData:
         project_info = load_project_info(VAST_SRV_DIR)
         project_id = project_info.project_id
 
-        # Create project and dataset in database first
+        # Create project in database first
         db._execute(
             "INSERT INTO projects (id, root_path, name, updated_at) VALUES (?, ?, ?, julianday('now'))",
             (project_id, str(VAST_SRV_DIR), VAST_SRV_DIR.name),
         )
         db._commit()
-
-        dataset_id = db.get_or_create_dataset(
-            project_id=project_id,
-            root_path=str(VAST_SRV_DIR),
-            name=VAST_SRV_DIR.name,
-        )
 
         # Find a Python file in vast_srv
         python_files = list(VAST_SRV_DIR.rglob("*.py"))
@@ -82,7 +76,6 @@ class TestProjectIdValidationRealData:
             last_modified=test_file.stat().st_mtime,
             has_docstring=True,
             project_id=project_id,
-            dataset_id=dataset_id,
         )
 
         assert file_id > 0
@@ -107,18 +100,12 @@ class TestProjectIdValidationRealData:
         correct_project_id = project_info.project_id
         wrong_project_id = "00000000-0000-0000-0000-000000000000"
 
-        # Create project and dataset in database first
+        # Create project in database first
         db._execute(
             "INSERT INTO projects (id, root_path, name, updated_at) VALUES (?, ?, ?, julianday('now'))",
             (wrong_project_id, str(VAST_SRV_DIR), VAST_SRV_DIR.name),
         )
         db._commit()
-
-        dataset_id = db.get_or_create_dataset(
-            project_id=wrong_project_id,
-            root_path=str(VAST_SRV_DIR),
-            name=VAST_SRV_DIR.name,
-        )
 
         # Find a Python file in vast_srv
         python_files = list(VAST_SRV_DIR.rglob("*.py"))
@@ -136,7 +123,6 @@ class TestProjectIdValidationRealData:
                 last_modified=test_file.stat().st_mtime,
                 has_docstring=True,
                 project_id=wrong_project_id,
-                dataset_id=dataset_id,
             )
 
         assert exc_info.value.file_project_id == correct_project_id
@@ -169,18 +155,12 @@ class TestProjectIdValidationRealData:
         test_file = python_files[0]
         file_path = str(test_file.resolve())
 
-        # Create project and dataset in database first
+        # Create project in database first
         db._execute(
             "INSERT INTO projects (id, root_path, name, updated_at) VALUES (?, ?, ?, julianday('now'))",
             (project_id, str(VAST_SRV_DIR), VAST_SRV_DIR.name),
         )
         db._commit()
-
-        dataset_id = db.get_or_create_dataset(
-            project_id=project_id,
-            root_path=str(VAST_SRV_DIR),
-            name=VAST_SRV_DIR.name,
-        )
 
         # First add the file
         file_id = db.add_file(
@@ -189,7 +169,6 @@ class TestProjectIdValidationRealData:
             last_modified=test_file.stat().st_mtime,
             has_docstring=True,
             project_id=project_id,
-            dataset_id=dataset_id,
         )
 
         # Update file with correct project_id - should succeed
@@ -248,18 +227,12 @@ class TestProjectIdValidationRealData:
         test_file = python_files[0]
         file_path = str(test_file.resolve())
 
-        # Create project and dataset in database first (with correct project_id)
+        # Create project in database first (with correct project_id)
         db._execute(
             "INSERT INTO projects (id, root_path, name, updated_at) VALUES (?, ?, ?, julianday('now'))",
             (correct_project_id, str(VAST_SRV_DIR), VAST_SRV_DIR.name),
         )
         db._commit()
-
-        dataset_id = db.get_or_create_dataset(
-            project_id=correct_project_id,
-            root_path=str(VAST_SRV_DIR),
-            name=VAST_SRV_DIR.name,
-        )
 
         # First add the file with correct project_id
         file_id = db.add_file(
@@ -268,7 +241,6 @@ class TestProjectIdValidationRealData:
             last_modified=test_file.stat().st_mtime,
             has_docstring=True,
             project_id=correct_project_id,
-            dataset_id=dataset_id,
         )
 
         # Update file with wrong project_id - should raise ProjectIdMismatchError
@@ -301,18 +273,12 @@ class TestProjectIdValidationRealData:
         project_info = load_project_info(VAST_SRV_DIR)
         project_id = project_info.project_id
 
-        # Create project and dataset in database first
+        # Create project in database first
         db._execute(
             "INSERT INTO projects (id, root_path, name, updated_at) VALUES (?, ?, ?, julianday('now'))",
             (project_id, str(VAST_SRV_DIR), VAST_SRV_DIR.name),
         )
         db._commit()
-
-        dataset_id = db.get_or_create_dataset(
-            project_id=project_id,
-            root_path=str(VAST_SRV_DIR),
-            name=VAST_SRV_DIR.name,
-        )
 
         # Get first 5 Python files
         python_files = list(VAST_SRV_DIR.rglob("*.py"))[:5]
@@ -328,7 +294,6 @@ class TestProjectIdValidationRealData:
                 last_modified=test_file.stat().st_mtime,
                 has_docstring=True,
                 project_id=project_id,
-                dataset_id=dataset_id,
             )
             assert file_id > 0
 
@@ -351,18 +316,12 @@ class TestProjectIdValidationRealData:
         project_info = load_project_info(BHLFF_DIR)
         project_id = project_info.project_id
 
-        # Create project and dataset in database first
+        # Create project in database first
         db._execute(
             "INSERT INTO projects (id, root_path, name, updated_at) VALUES (?, ?, ?, julianday('now'))",
             (project_id, str(BHLFF_DIR), BHLFF_DIR.name),
         )
         db._commit()
-
-        dataset_id = db.get_or_create_dataset(
-            project_id=project_id,
-            root_path=str(BHLFF_DIR),
-            name=BHLFF_DIR.name,
-        )
 
         # Get first 3 Python files
         python_files = list(BHLFF_DIR.rglob("*.py"))[:3]
@@ -378,7 +337,6 @@ class TestProjectIdValidationRealData:
                 last_modified=test_file.stat().st_mtime,
                 has_docstring=True,
                 project_id=project_id,
-                dataset_id=dataset_id,
             )
             assert file_id > 0
 
@@ -402,13 +360,6 @@ class TestProjectIdValidationRealData:
             )
             db._commit()
 
-            # Create dataset
-            dataset_id = db.get_or_create_dataset(
-                project_id=project_id,
-                root_path=str(root_path),
-                name=root_path.name,
-            )
-
             # Add file - should not raise error (validation is best-effort)
             # The validation in add_file tries to find projectid, but if not found,
             # it falls back to simple normalization
@@ -418,7 +369,6 @@ class TestProjectIdValidationRealData:
                 last_modified=test_file.stat().st_mtime,
                 has_docstring=False,
                 project_id=project_id,
-                dataset_id=dataset_id,
             )
 
             assert file_id > 0
@@ -446,13 +396,6 @@ class TestProjectIdValidationRealData:
             )
             db._commit()
 
-            # Create dataset
-            dataset_id = db.get_or_create_dataset(
-                project_id=project_id,
-                root_path=str(root_path),
-                name=root_path.name,
-            )
-
             # Add file - should not raise error (validation catches InvalidProjectIdFormatError)
             # and falls back to simple normalization
             file_id = db.add_file(
@@ -461,7 +404,6 @@ class TestProjectIdValidationRealData:
                 last_modified=test_file.stat().st_mtime,
                 has_docstring=False,
                 project_id=project_id,
-                dataset_id=dataset_id,
             )
 
             assert file_id > 0

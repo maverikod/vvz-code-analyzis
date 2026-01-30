@@ -66,7 +66,6 @@ Important notes:
 | `project_id` | string | **Yes** | Project ID (UUID4). Required. |
 | `file_path` | string | **Yes** | Target file path (relative to project root) |
 | `root_dir` | string | No | Server root directory (optional, for database access) |
-| `dataset_id` | string | No | Dataset ID (optional, will be created if not provided) |
 | `validate` | boolean | No | Whether to validate file before saving Default: `true`. |
 | `backup` | boolean | No | Whether to create backup Default: `true`. |
 | `commit_message` | string | No | Optional git commit message |

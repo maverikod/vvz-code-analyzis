@@ -45,12 +45,10 @@ class _ClientAPIFilesMixin:
         self.insert(table_name, data)
 
         # Fetch created file to get all fields including ID and timestamps
-        # Use project_id, dataset_id, and path to find the file
         rows = self.select(
             table_name,
             where={
                 "project_id": file.project_id,
-                "dataset_id": file.dataset_id,
                 "path": file.path,
             },
         )

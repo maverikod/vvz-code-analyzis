@@ -70,7 +70,7 @@ Commands are grouped by **block**; each block is documented under `docs/commands
 
 | Area | Path | Main concepts |
 |------|------|----------------|
-| **Database** | `database/` | `CodeDatabase`; modules: base, projects, datasets, files, ast, cst, entities, chunks, comprehensive_analysis, watch_dirs, worker_stats |
+| **Database** | `database/` | `CodeDatabase`; modules: base, projects, files, ast, cst, entities, chunks, comprehensive_analysis, watch_dirs, worker_stats |
 | **Database client** | `database_client/` | RPC client to DB driver; `objects/`: Project, File, Dataset, AST/CST nodes, Method, Import, Issue, Usage, TreeAction, XPathFilter, vector chunks |
 | **Database driver** | `database_driver_pkg/` | RPC server (runner), handlers (schema, AST/CST query/modify, base CRUD), SQLite driver, request/result protocol |
 | **DB integrity** | `db_integrity.py` | Physical integrity check and repair for SQLite |
@@ -91,7 +91,7 @@ Commands are grouped by **block**; each block is documented under `docs/commands
 ## 4. Object Schema (High Level)
 
 - **Project**: root path, project_id (UUID), watch_dir; stored via `database/projects.py` and client `objects/project.py`.
-- **File / Dataset**: files belong to a project/dataset; path, content, metadata; DB modules `files`, `datasets`.
+- **File**: files belong to a project; path, content, metadata; DB module `files`.
 - **AST**: nodes and trees stored/retrieved via `database/ast.py`; client objects in `database_client/objects/ast_cst.py`.
 - **CST**: trees and nodes; `database/cst.py`, `core/cst_tree/`, `core/cst_module/`; client tree actions in `objects/tree_action.py`.
 - **Entities**: classes, functions, methods; `database/entities.py`, client `objects/class_function.py`, `objects/method_import.py`.

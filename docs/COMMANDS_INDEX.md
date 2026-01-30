@@ -33,6 +33,8 @@ email: vasilyvz@gmail.com
 | list_code_entities  | ListCodeEntitiesMCPCommand| commands/ast/list_entities.py       |
 | get_imports         | GetImportsMCPCommand      | commands/ast/imports.py             |
 | find_dependencies   | FindDependenciesMCPCommand| commands/ast/dependencies.py        |
+| get_entity_dependencies | GetEntityDependenciesMCPCommand | commands/ast/entity_dependencies.py |
+| get_entity_dependents   | GetEntityDependentsMCPCommand   | commands/ast/entity_dependencies.py |
 | get_class_hierarchy | GetClassHierarchyMCPCommand| commands/ast/hierarchy.py          |
 | find_usages         | FindUsagesMCPCommand      | commands/ast/usages.py              |
 | export_graph        | ExportGraphMCPCommand     | commands/ast/graph.py               |

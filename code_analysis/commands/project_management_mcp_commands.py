@@ -744,7 +744,6 @@ class DeleteProjectMCPCommand(BaseMCPCommand):
     - All files and their associated data
     - All chunks and vector indexes
     - All duplicates
-    - All datasets
     - The project record itself
 
     Use with caution - this operation cannot be undone.
@@ -977,7 +976,6 @@ class DeleteProjectMCPCommand(BaseMCPCommand):
                 "      * All files and their associated data (classes, functions, methods, imports, usages)\n"
                 "      * All chunks and removes from FAISS vector index\n"
                 "      * All duplicates\n"
-                "      * All datasets\n"
                 "      * All AST trees\n"
                 "      * All CST trees\n"
                 "      * The project record itself\n"
@@ -989,7 +987,6 @@ class DeleteProjectMCPCommand(BaseMCPCommand):
                 "- Usages: All usage records\n"
                 "- Chunks: All code chunks and vector indexes\n"
                 "- Duplicates: All duplicate records\n"
-                "- Datasets: All dataset records\n"
                 "- AST/CST: All AST and CST trees\n"
                 "- Project record: The project itself\n\n"
                 "Disk (if delete_from_disk=True):\n"
@@ -1128,7 +1125,6 @@ class DeleteProjectMCPCommand(BaseMCPCommand):
                         "root_path": "Project root path",
                         "files_count": "Number of files that were deleted",
                         "chunks_count": "Number of chunks that were deleted",
-                        "datasets_count": "Number of datasets that were deleted",
                         "delete_from_disk": "Whether disk deletion was requested",
                         "version_dir": "Version directory path (if delete_from_disk=True)",
                         "disk_deletion_errors": "List of disk deletion errors (if any)",
@@ -1142,7 +1138,6 @@ class DeleteProjectMCPCommand(BaseMCPCommand):
                         "root_path": "/home/user/projects/my_project",
                         "files_count": 42,
                         "chunks_count": 100,
-                        "datasets_count": 2,
                         "message": "Would delete project my_project (928bcf10-db1c-47a3-8341-f60a6d997fe7)",
                     },
                     "example_deleted": {
@@ -1153,7 +1148,6 @@ class DeleteProjectMCPCommand(BaseMCPCommand):
                         "root_path": "/home/user/projects/my_project",
                         "files_count": 42,
                         "chunks_count": 100,
-                        "datasets_count": 2,
                         "message": "Deleted project my_project (928bcf10-db1c-47a3-8341-f60a6d997fe7)",
                     },
                 },
@@ -2044,23 +2038,10 @@ class ListProjectsMCPCommand(BaseMCPCommand):
             SuccessResult with list of projects or ErrorResult on failure.
         """
         try:
-            # Resolve database path from config
-            from ..core.storage_paths import load_raw_config, resolve_storage_paths
-
+            # Use _open_database so schema is initialized when DB is empty
             config_path = self._resolve_config_path()
-            config_data = load_raw_config(config_path)
-            storage = resolve_storage_paths(
-                config_data=config_data, config_path=config_path
-            )
-            db_path = storage.db_path
-
-            # Get socket path and create DatabaseClient
-            from ..core.database_client.client import DatabaseClient
-            from .base_mcp_command import _get_socket_path_from_db_path
-
-            socket_path = _get_socket_path_from_db_path(db_path)
-            database = DatabaseClient(socket_path=socket_path)
-            database.connect()
+            root_dir = str(Path(config_path).resolve().parent)
+            database = self._open_database(root_dir, auto_analyze=False)
 
             try:
                 # Get all projects using DatabaseClient

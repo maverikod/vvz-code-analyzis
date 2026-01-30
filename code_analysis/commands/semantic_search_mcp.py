@@ -14,7 +14,6 @@ from mcp_proxy_adapter.commands.result import SuccessResult, ErrorResult
 from .base_mcp_command import BaseMCPCommand
 from ..core.faiss_manager import FaissIndexManager
 from ..core.storage_paths import resolve_storage_paths, get_faiss_index_path
-from ..core.project_resolution import normalize_root_dir
 
 logger = logging.getLogger(__name__)
 
@@ -120,14 +119,20 @@ class SemanticSearchMCPCommand(BaseMCPCommand):
                         code="PROJECT_NOT_FOUND",
                     )
 
+                import json
+
                 config_path = root_path / "config.json"
                 if not config_path.exists():
-                    return ErrorResult(
-                        message=f"Configuration file not found: {config_path}",
-                        code="CONFIG_NOT_FOUND",
-                    )
-
-                import json
+                    # Fallback to server config (project root often has no config.json)
+                    config_path = Path(self._resolve_config_path())
+                    if not config_path.exists():
+                        return ErrorResult(
+                            message=(
+                                f"Configuration file not found in project ({root_path / 'config.json'}) "
+                                f"and server config not found: {config_path}"
+                            ),
+                            code="CONFIG_NOT_FOUND",
+                        )
 
                 with open(config_path, "r", encoding="utf-8") as f:
                     config_dict = json.load(f)
@@ -136,29 +141,14 @@ class SemanticSearchMCPCommand(BaseMCPCommand):
                 code_analysis_config = config_dict.get("code_analysis", config_dict)
                 vector_dim = int(code_analysis_config.get("vector_dim", 384))
 
-                # Resolve storage paths (Step 2: dataset-scoped FAISS)
+                # Resolve storage paths (one index per project)
                 storage_paths = resolve_storage_paths(
                     config_data=config_dict, config_path=config_path
                 )
 
-                # Get dataset_id for root_dir (normalized absolute path)
-                normalized_root = str(normalize_root_dir(root_dir))
-                from .base_mcp_command import BaseMCPCommand
-
-                dataset_id = BaseMCPCommand._get_dataset_id(
-                    database, actual_project_id, normalized_root
-                )
-                if not dataset_id:
-                    # Create dataset if it doesn't exist
-                    from .base_mcp_command import BaseMCPCommand
-
-                    dataset_id = BaseMCPCommand._get_or_create_dataset(
-                        database, actual_project_id, normalized_root
-                    )
-
-                # Get dataset-scoped FAISS index path (Step 2)
+                # One index per project: {faiss_dir}/{project_id}.bin
                 index_path = get_faiss_index_path(
-                    storage_paths.faiss_dir, actual_project_id, dataset_id
+                    storage_paths.faiss_dir, actual_project_id
                 )
 
                 if not index_path.exists():
@@ -168,7 +158,6 @@ class SemanticSearchMCPCommand(BaseMCPCommand):
                         details={
                             "index_path": str(index_path),
                             "project_id": actual_project_id,
-                            "dataset_id": dataset_id,
                         },
                     )
 
@@ -269,7 +258,7 @@ class SemanticSearchMCPCommand(BaseMCPCommand):
                         }
                     )
 
-                # Filter results by dataset_id to ensure dataset-scoped search
+                # Resolve chunk metadata by project_id (one index per project)
                 placeholders = ",".join(["?"] * len(ids))
                 result = database.execute(
                     f"""
@@ -282,11 +271,10 @@ class SemanticSearchMCPCommand(BaseMCPCommand):
                         f.path AS file_path
                     FROM code_chunks c
                     JOIN files f ON f.id = c.file_id
-                    WHERE c.project_id = ? 
-                      AND f.dataset_id = ?
+                    WHERE c.project_id = ?
                       AND c.vector_id IN ({placeholders})
                     """,
-                    [actual_project_id, dataset_id, *ids],
+                    [actual_project_id, *ids],
                 )
                 rows = result.get("data", [])
                 by_vector_id: dict[int, dict[str, Any]] = {
@@ -321,7 +309,6 @@ class SemanticSearchMCPCommand(BaseMCPCommand):
                         "min_score": min_score,
                         "index_path": str(index_path),
                         "project_id": actual_project_id,
-                        "dataset_id": dataset_id,
                         "results": results,
                         "count": len(results),
                     }
@@ -364,14 +351,13 @@ class SemanticSearchMCPCommand(BaseMCPCommand):
                 "2. Opens database connection\n"
                 "3. Resolves project_id (from parameter or inferred from root_dir)\n"
                 "4. Loads config.json to get vector_dim and embedding service config\n"
-                "5. Gets or creates dataset_id for the project\n"
-                "6. Resolves FAISS index path (dataset-scoped)\n"
-                "7. Loads FAISS index using FaissIndexManager\n"
-                "8. Gets query embedding from embedding service (SVOClientManager)\n"
-                "9. Normalizes embedding vector\n"
-                "10. Searches FAISS index for k nearest neighbors\n"
-                "11. Filters results by dataset_id and min_score (if provided)\n"
-                "12. Returns similar code chunks with similarity scores\n\n"
+                "5. Resolves FAISS index path (one index per project: {faiss_dir}/{project_id}.bin)\n"
+                "6. Loads FAISS index using FaissIndexManager\n"
+                "7. Gets query embedding from embedding service (SVOClientManager)\n"
+                "8. Normalizes embedding vector\n"
+                "9. Searches FAISS index for k nearest neighbors\n"
+                "10. Filters results by min_score (if provided)\n"
+                "11. Returns similar code chunks with similarity scores\n\n"
                 "Semantic Search:\n"
                 "- Uses embedding vectors to find semantically similar code\n"
                 "- Query is converted to embedding using embedding service\n"
@@ -379,20 +365,13 @@ class SemanticSearchMCPCommand(BaseMCPCommand):
                 "- Returns chunks ranked by similarity (distance)\n"
                 "- Similarity score: 1.0 / (1.0 + distance)\n\n"
                 "FAISS Index:\n"
-                "- Dataset-scoped index (one per project dataset)\n"
+                "- One index per project: {faiss_dir}/{project_id}.bin\n"
                 "- Must be built with update_indexes first\n"
                 "- Uses cosine similarity (normalized vectors)\n"
                 "- Supports k-nearest neighbor search\n\n"
-                "Use cases:\n"
-                "- Find code with similar functionality\n"
-                "- Search by meaning rather than exact text\n"
-                "- Discover related code patterns\n"
-                "- Find code implementing similar concepts\n\n"
                 "Important notes:\n"
                 "- Requires embedding service to be available\n"
                 "- Requires FAISS index (run update_indexes first)\n"
-                "- Requires config.json with embedding service configuration\n"
-                "- Results are dataset-scoped (only chunks from same dataset)\n"
                 "- Similarity scores range from 0.0 to 1.0 (higher is better)\n"
                 "- min_score filters results by similarity threshold"
             ),
@@ -503,10 +482,10 @@ class SemanticSearchMCPCommand(BaseMCPCommand):
                 },
                 "FAISS_INDEX_NOT_FOUND": {
                     "description": "FAISS index not found",
-                    "example": "Index file doesn't exist for project/dataset",
+                    "example": "Index file doesn't exist for project",
                     "solution": (
                         "Run update_indexes first to build the FAISS index. "
-                        "Index is dataset-scoped and must be created before searching."
+                        "One index per project: {faiss_dir}/{project_id}.bin"
                     ),
                 },
                 "EMBEDDING_SERVICE_ERROR": {
@@ -533,9 +512,8 @@ class SemanticSearchMCPCommand(BaseMCPCommand):
                         "query": "Search query that was used",
                         "k": "Number of results requested",
                         "min_score": "Minimum score threshold (if provided)",
-                        "index_path": "Path to FAISS index file",
+                        "index_path": "Path to FAISS index file ({faiss_dir}/{project_id}.bin)",
                         "project_id": "Project UUID",
-                        "dataset_id": "Dataset UUID",
                         "results": (
                             "List of similar code chunks. Each contains:\n"
                             "- score: Similarity score (0.0-1.0, higher is better)\n"
@@ -553,9 +531,8 @@ class SemanticSearchMCPCommand(BaseMCPCommand):
                         "query": "database connection",
                         "k": 10,
                         "min_score": None,
-                        "index_path": "data/faiss/project_id/dataset_id.index",
+                        "index_path": "data/faiss/928bcf10-db1c-47a3-8341-f60a6d997fe7.bin",
                         "project_id": "928bcf10-db1c-47a3-8341-f60a6d997fe7",
-                        "dataset_id": "abc123...",
                         "results": [
                             {
                                 "score": 0.85,
@@ -586,7 +563,6 @@ class SemanticSearchMCPCommand(BaseMCPCommand):
                 "Ensure embedding service is configured and available",
                 "Use min_score to filter low-quality results",
                 "Adjust k based on expected result count",
-                "Results are dataset-scoped (only chunks from same dataset)",
                 "Similarity scores help identify most relevant matches",
                 "Query text should describe the concept you're searching for",
             ],

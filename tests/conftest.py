@@ -34,7 +34,7 @@ def rpc_server_with_schema(tmp_path):
     driver = create_driver("sqlite", {"path": str(db_path)})
 
     # Create projects table
-    driver._execute(
+    driver.execute(
         """
         CREATE TABLE IF NOT EXISTS projects (
             id TEXT PRIMARY KEY,
@@ -48,28 +48,12 @@ def rpc_server_with_schema(tmp_path):
         """
     )
 
-    # Create datasets table
-    driver._execute(
-        """
-        CREATE TABLE IF NOT EXISTS datasets (
-            id TEXT PRIMARY KEY,
-            project_id TEXT NOT NULL,
-            root_path TEXT NOT NULL,
-            name TEXT,
-            created_at REAL DEFAULT (julianday('now')),
-            updated_at REAL DEFAULT (julianday('now')),
-            FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
-        )
-        """
-    )
-
-    # Create files table
-    driver._execute(
+    # Create files table (one project, path unique per project)
+    driver.execute(
         """
         CREATE TABLE IF NOT EXISTS files (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             project_id TEXT NOT NULL,
-            dataset_id TEXT NOT NULL,
             watch_dir_id TEXT,
             path TEXT NOT NULL,
             relative_path TEXT,
@@ -82,14 +66,13 @@ def rpc_server_with_schema(tmp_path):
             created_at REAL DEFAULT (julianday('now')),
             updated_at REAL DEFAULT (julianday('now')),
             FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE,
-            FOREIGN KEY (dataset_id) REFERENCES datasets(id) ON DELETE CASCADE,
-            UNIQUE(project_id, dataset_id, path)
+            UNIQUE(project_id, path)
         )
         """
     )
 
     # Create ast_trees table
-    driver._execute(
+    driver.execute(
         """
         CREATE TABLE IF NOT EXISTS ast_trees (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -108,7 +91,7 @@ def rpc_server_with_schema(tmp_path):
     )
 
     # Create cst_trees table
-    driver._execute(
+    driver.execute(
         """
         CREATE TABLE IF NOT EXISTS cst_trees (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -127,7 +110,7 @@ def rpc_server_with_schema(tmp_path):
     )
 
     # Create vector_index table
-    driver._execute(
+    driver.execute(
         """
         CREATE TABLE IF NOT EXISTS vector_index (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -144,7 +127,7 @@ def rpc_server_with_schema(tmp_path):
         """
     )
 
-    driver._commit()
+    # execute() commits after each statement
 
     # Start RPC server
     request_queue = RequestQueue()
@@ -204,16 +187,6 @@ def test_file(database_client, test_project, tmp_path):
     """Create test file in database and filesystem."""
     project_id, root_path = test_project
 
-    # Create dataset
-    dataset_id = str(uuid.uuid4())
-    database_client.execute(
-        """
-        INSERT INTO datasets (id, project_id, root_path, name, updated_at)
-        VALUES (?, ?, ?, ?, julianday('now'))
-        """,
-        (dataset_id, project_id, str(root_path), root_path.name),
-    )
-
     # Create test file
     file_path = tmp_path / "test_file.py"
     file_content = '''"""
@@ -244,7 +217,6 @@ def test_function():
     # Create file in database
     file_obj = File(
         project_id=project_id,
-        dataset_id=dataset_id,
         path=str(file_path),
         relative_path="test_file.py",
         lines=lines,

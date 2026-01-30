@@ -210,7 +210,6 @@ class TestPerformanceProjectIdValidation:
                 test_files.append(test_file)
 
             # Add files to database
-            dataset_id = str(db.get_or_create_dataset(project_id, str(project_root)))
             start_time = time.time()
             for test_file in test_files:
                 db.add_file(
@@ -219,7 +218,6 @@ class TestPerformanceProjectIdValidation:
                     last_modified=test_file.stat().st_mtime,
                     has_docstring=False,
                     project_id=project_id,
-                    dataset_id=dataset_id,
                 )
             elapsed = time.time() - start_time
 
@@ -316,7 +314,6 @@ class TestPerformanceDatabaseIntegration:
             )
 
             # Create and add 100 files
-            dataset_id = str(db.get_or_create_dataset(project_id, str(project_root)))
             test_files = []
             for i in range(100):
                 test_file = project_root / f"test_{i}.py"
@@ -332,7 +329,6 @@ class TestPerformanceDatabaseIntegration:
                     last_modified=test_file.stat().st_mtime,
                     has_docstring=False,
                     project_id=project_id,
-                    dataset_id=dataset_id,
                 )
             elapsed = time.time() - start_time
 
@@ -386,7 +382,6 @@ class TestPerformanceVectorization:
             )
 
             # Create 50 test files
-            dataset_id = str(db.get_or_create_dataset(project_id, str(project_root)))
             for i in range(50):
                 test_file = project_root / f"test_{i}.py"
                 test_file.write_text(f'"""Test docstring {i}."""\ndef func_{i}():\n    pass\n')
@@ -397,7 +392,6 @@ class TestPerformanceVectorization:
                     last_modified=test_file.stat().st_mtime,
                     has_docstring=True,
                     project_id=project_id,
-                    dataset_id=dataset_id,
                 )
 
             # Measure time for getting files needing chunking

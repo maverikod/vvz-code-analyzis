@@ -193,11 +193,12 @@ def run_vectorization_worker(
             server_config_obj = ServerConfig(**svo_config)
             logger.info("Creating SVOClientManager...")
             svo_client_manager = SVOClientManager(server_config_obj)
-            logger.info("Initializing SVOClientManager...")
-            asyncio.run(svo_client_manager.initialize())
-            logger.info("SVOClientManager initialized successfully")
+            logger.info(
+                "SVOClientManager will be initialized in same event loop as process_chunks "
+                "to avoid 'Event loop is closed' when calling chunker service."
+            )
         except Exception as e:
-            logger.error(f"Failed to initialize SVO client manager: {e}", exc_info=True)
+            logger.error(f"Failed to create SVO client manager: {e}", exc_info=True)
             return {"processed": 0, "errors": 1}
     else:
         logger.warning(
@@ -247,7 +248,7 @@ def run_vectorization_worker(
                             vector_dim=vector_dim,
                         )
 
-                        # Check sync (datasets EXCLUDED)
+                        # Check sync (project-scoped index)
                         is_synced, sync_details = faiss_manager.check_index_sync(
                             database=sync_database,
                             project_id=project_id,
@@ -275,7 +276,7 @@ def run_vectorization_worker(
                             logger.info(
                                 f"🔄 Rebuilding FAISS index from database for project {project_id}..."
                             )
-                            # Rebuild index from database (datasets EXCLUDED)
+                            # Rebuild index from database (project-scoped)
                             vectors_count = asyncio.run(
                                 faiss_manager.rebuild_from_database(
                                     database=sync_database,
@@ -364,8 +365,20 @@ def run_vectorization_worker(
         socket_path=socket_path,  # Pass socket_path for DatabaseClient
     )
 
+    async def _run_worker_with_svo() -> Dict[str, Any]:
+        """Run worker in a single event loop so SVO chunker client is not bound to a closed loop."""
+        if svo_client_manager:
+            await svo_client_manager.initialize()
+            logger.info("SVOClientManager initialized successfully")
+        try:
+            return await worker.process_chunks(poll_interval=poll_interval)
+        finally:
+            if svo_client_manager:
+                await svo_client_manager.close()
+                logger.info("SVOClientManager closed")
+
     try:
-        result = asyncio.run(worker.process_chunks(poll_interval=poll_interval))
+        result = asyncio.run(_run_worker_with_svo())
         return result
     except KeyboardInterrupt:
         logger.info("Vectorization worker interrupted by signal")
@@ -375,8 +388,6 @@ def run_vectorization_worker(
         logger.error(f"Error in vectorization worker: {e}", exc_info=True)
         return {"processed": 0, "errors": 1}
     finally:
-        if svo_client_manager:
-            asyncio.run(svo_client_manager.close())
         # Remove PID file only if it contains this process's PID (do not remove another process's file)
         if pid_file_path:
             _remove_pid_file_if_ours(pid_file_path)

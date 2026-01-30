@@ -11,7 +11,6 @@ from .base import BaseObject
 from .class_function import Class, Function
 from .method_import import Import, Method
 from .vector_chunk import CodeChunk, VectorIndex
-from .dataset import Dataset
 from .file import File
 from .mappers import (
     db_row_to_object,
@@ -31,7 +30,6 @@ __all__ = [
     "BaseObject",
     # Core Objects
     "Project",
-    "Dataset",
     "File",
     # Attribute Objects
     "ASTNode",

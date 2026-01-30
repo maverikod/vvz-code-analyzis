@@ -1,15 +1,14 @@
 """
 MCP command for revectorizing chunks.
 
-Implements dataset-scoped FAISS (Step 2 of refactor plan).
+One index per project: {faiss_dir}/{project_id}.bin.
 
 Author: Vasiliy Zdanovskiy
 email: vasilyvz@gmail.com
 """
 
 import logging
-from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict
 
 from mcp_proxy_adapter.commands.result import SuccessResult, ErrorResult
 
@@ -25,8 +24,7 @@ class RevectorizeCommand(BaseMCPCommand):
     """
     Revectorize chunks (regenerate embeddings and update FAISS index).
 
-    Implements dataset-scoped FAISS (Step 2 of refactor plan).
-    Revectorizes chunks for a specific dataset or all datasets in a project.
+    One index per project. Revectorizes all chunks in the project.
 
     Attributes:
         name: MCP command name.
@@ -67,10 +65,6 @@ class RevectorizeCommand(BaseMCPCommand):
                     "type": "string",
                     "description": "Project UUID (must match root_dir/projectid)",
                 },
-                "dataset_id": {
-                    "type": "string",
-                    "description": "Optional dataset UUID; if omitted, revectorizes all datasets in project",
-                },
                 "force": {
                     "type": "boolean",
                     "description": "Force revectorization even if embeddings exist (default: false)",
@@ -85,17 +79,15 @@ class RevectorizeCommand(BaseMCPCommand):
         self: "RevectorizeCommand",
         root_dir: str,
         project_id: str,
-        dataset_id: Optional[str] = None,
         force: bool = False,
         **kwargs: Any,
     ) -> SuccessResult | ErrorResult:
-        """Execute chunk revectorization.
+        """Execute chunk revectorization (one index per project).
 
         Args:
             self: Command instance.
             root_dir: Root directory of the project.
             project_id: Project UUID (must match root_dir/projectid).
-            dataset_id: Optional dataset UUID; if omitted, revectorizes all datasets.
             force: Force revectorization even if embeddings exist.
 
         Returns:
@@ -146,70 +138,22 @@ class RevectorizeCommand(BaseMCPCommand):
                 await svo_client_manager.initialize()
 
                 try:
-                    results = []
-
-                    if dataset_id:
-                        # Revectorize chunks for specific dataset
-                        normalized_root = str(normalize_root_dir(root_dir))
-                        from ...commands.base_mcp_command import BaseMCPCommand
-
-                        db_dataset_id = BaseMCPCommand._get_dataset_id(
-                            database, actual_project_id, normalized_root
-                        )
-                        if not db_dataset_id:
-                            # Create dataset if it doesn't exist
-                            from ...commands.base_mcp_command import BaseMCPCommand
-
-                            db_dataset_id = BaseMCPCommand._get_or_create_dataset(
-                                database, actual_project_id, normalized_root
-                            )
-
-                        if db_dataset_id != dataset_id:
-                            return ErrorResult(
-                                message=f"Dataset ID mismatch: provided {dataset_id}, found {db_dataset_id}",
-                                code="DATASET_ID_MISMATCH",
-                            )
-
-                        result = await self._revectorize_dataset(
-                            database,
-                            svo_client_manager,
-                            storage_paths,
-                            actual_project_id,
-                            dataset_id,
-                            vector_dim,
-                            force,
-                        )
-                        results.append(result)
-                    else:
-                        # Revectorize chunks for all datasets in project
-                        datasets = database.get_project_datasets(actual_project_id)
-                        if not datasets:
-                            return ErrorResult(
-                                message=f"No datasets found for project {actual_project_id}",
-                                code="NO_DATASETS",
-                            )
-
-                        for dataset in datasets:
-                            ds_id = dataset["id"]
-                            result = await self._revectorize_dataset(
-                                database,
-                                svo_client_manager,
-                                storage_paths,
-                                actual_project_id,
-                                ds_id,
-                                vector_dim,
-                                force,
-                            )
-                            results.append(result)
-
-                    total_chunks = sum(r["chunks_revectorized"] for r in results)
+                    # One index per project: revectorize all chunks in project
+                    result = await self._revectorize_project(
+                        database,
+                        svo_client_manager,
+                        storage_paths,
+                        actual_project_id,
+                        vector_dim,
+                        force,
+                    )
 
                     return SuccessResult(
                         data={
                             "project_id": actual_project_id,
-                            "datasets_processed": len(results),
-                            "total_chunks_revectorized": total_chunks,
-                            "results": results,
+                            "chunks_revectorized": result["chunks_revectorized"],
+                            "vectors_in_index": result.get("vectors_in_index", 0),
+                            "index_path": result.get("index_path"),
                         }
                     )
                 finally:
@@ -245,8 +189,7 @@ class RevectorizeCommand(BaseMCPCommand):
             "email": cls.email,
             "detailed_description": (
                 "The revectorize command regenerates embeddings for code chunks and updates "
-                "the FAISS index. It implements dataset-scoped FAISS, allowing revectorization "
-                "for specific datasets or all datasets in a project.\n\n"
+                "the FAISS index. One index per project.\n\n"
                 "Operation flow:\n"
                 "1. Validates root_dir exists and is a directory\n"
                 "2. Validates project_id matches root_dir/projectid file\n"
@@ -254,16 +197,9 @@ class RevectorizeCommand(BaseMCPCommand):
                 "4. Verifies project exists in database\n"
                 "5. Loads config.json to get storage paths and vector dimension\n"
                 "6. Initializes SVOClientManager for embedding generation\n"
-                "7. If dataset_id provided: revectorizes chunks for that dataset\n"
-                "8. If dataset_id omitted: revectorizes chunks for all datasets in project\n"
-                "9. For each dataset:\n"
-                "   - Gets chunks that need revectorization\n"
-                "   - For each chunk:\n"
-                "     * Gets chunk text\n"
-                "     * Calls SVO service to generate embedding\n"
-                "     * Updates database with new embedding\n"
-                "     * Sets vector_id to NULL (will be reassigned on rebuild)\n"
-                "   - Rebuilds FAISS index from updated embeddings\n"
+                "7. Gets chunks that need revectorization for the project\n"
+                "8. For each chunk: gets text, calls SVO for embedding, updates DB, sets vector_id to NULL\n"
+                "9. Rebuilds FAISS index from updated embeddings\n"
                 "10. Returns revectorization statistics\n\n"
                 "Revectorization Process:\n"
                 "- Finds chunks without embeddings or with force=True (all chunks)\n"
@@ -286,8 +222,7 @@ class RevectorizeCommand(BaseMCPCommand):
                 "FAISS Index Update:\n"
                 "- After revectorization, FAISS index is rebuilt\n"
                 "- Rebuild normalizes vector_id to dense range\n"
-                "- Index includes all chunks with valid embeddings\n"
-                "- Index is dataset-scoped (one per dataset)\n\n"
+                "- Index includes all chunks with valid embeddings (one index per project)\n\n"
                 "Use cases:\n"
                 "- Generate embeddings for chunks without vectors\n"
                 "- Regenerate embeddings after model changes\n"
@@ -321,24 +256,12 @@ class RevectorizeCommand(BaseMCPCommand):
                 "project_id": {
                     "description": (
                         "Project UUID. Must match the UUID in root_dir/projectid file. "
-                        "Used to identify project and resolve dataset chunks."
+                        "Used to identify project and resolve FAISS index path."
                     ),
                     "type": "string",
                     "required": True,
                     "examples": [
                         "123e4567-e89b-12d3-a456-426614174000",
-                    ],
-                },
-                "dataset_id": {
-                    "description": (
-                        "Optional dataset UUID. If provided, revectorizes chunks only for that dataset. "
-                        "If omitted, revectorizes chunks for all datasets in the project. "
-                        "Dataset must exist in database."
-                    ),
-                    "type": "string",
-                    "required": False,
-                    "examples": [
-                        "223e4567-e89b-12d3-a456-426614174001",
                     ],
                 },
                 "force": {
@@ -355,15 +278,14 @@ class RevectorizeCommand(BaseMCPCommand):
             },
             "usage_examples": [
                 {
-                    "description": "Revectorize missing embeddings for specific dataset",
+                    "description": "Revectorize missing embeddings for project",
                     "command": {
                         "root_dir": "/home/user/projects/my_project",
                         "project_id": "123e4567-e89b-12d3-a456-426614174000",
-                        "dataset_id": "223e4567-e89b-12d3-a456-426614174001",
                         "force": False,
                     },
                     "explanation": (
-                        "Revectorizes only chunks without embeddings for specific dataset. "
+                        "Revectorizes only chunks without embeddings. "
                         "FAISS index is automatically rebuilt after completion."
                     ),
                 },
@@ -374,21 +296,7 @@ class RevectorizeCommand(BaseMCPCommand):
                         "project_id": "123e4567-e89b-12d3-a456-426614174000",
                         "force": True,
                     },
-                    "explanation": (
-                        "Regenerates all embeddings for all datasets in project. "
-                        "Useful after embedding model changes."
-                    ),
-                },
-                {
-                    "description": "Revectorize all datasets",
-                    "command": {
-                        "root_dir": "/home/user/projects/my_project",
-                        "project_id": "123e4567-e89b-12d3-a456-426614174000",
-                    },
-                    "explanation": (
-                        "Revectorizes missing embeddings for all datasets in project. "
-                        "Processes chunks without embeddings only."
-                    ),
+                    "explanation": "Regenerates all embeddings. Useful after embedding model changes.",
                 },
             ],
             "error_cases": {
@@ -406,22 +314,6 @@ class RevectorizeCommand(BaseMCPCommand):
                     "solution": (
                         "Ensure config.json exists in root_dir. "
                         "Config file is required for SVO service configuration."
-                    ),
-                },
-                "DATASET_ID_MISMATCH": {
-                    "description": "Dataset ID mismatch",
-                    "message": "Dataset ID mismatch: provided {dataset_id}, found {db_dataset_id}",
-                    "solution": (
-                        "Verify dataset_id is correct. Dataset ID in database must match provided ID. "
-                        "Use list_projects or database queries to find correct dataset_id."
-                    ),
-                },
-                "NO_DATASETS": {
-                    "description": "No datasets found for project",
-                    "message": "No datasets found for project {project_id}",
-                    "solution": (
-                        "Ensure project has datasets. Run update_indexes to create datasets. "
-                        "Datasets are created automatically when indexing files."
                     ),
                 },
                 "REVECTORIZE_ERROR": {
@@ -458,74 +350,21 @@ class RevectorizeCommand(BaseMCPCommand):
                 "success": {
                     "description": "Revectorization completed successfully",
                     "data": {
-                        "project_id": "Project UUID that was processed",
-                        "datasets_processed": "Number of datasets processed",
-                        "total_chunks_revectorized": "Total number of chunks revectorized",
-                        "results": (
-                            "List of revectorization results. Each contains:\n"
-                            "- dataset_id: Dataset UUID\n"
-                            "- chunks_revectorized: Number of chunks revectorized\n"
-                            "- vectors_in_index: Number of vectors in rebuilt FAISS index\n"
-                            "- index_path: Path to FAISS index file"
-                        ),
+                        "project_id": "Project UUID",
+                        "chunks_revectorized": "Number of chunks revectorized",
+                        "vectors_in_index": "Number of vectors in rebuilt FAISS index",
+                        "index_path": "Path to FAISS index file ({faiss_dir}/{project_id}.bin)",
                     },
-                    "example_single_dataset": {
+                    "example": {
                         "project_id": "123e4567-e89b-12d3-a456-426614174000",
-                        "datasets_processed": 1,
-                        "total_chunks_revectorized": 500,
-                        "results": [
-                            {
-                                "dataset_id": "223e4567-e89b-12d3-a456-426614174001",
-                                "chunks_revectorized": 500,
-                                "vectors_in_index": 5000,
-                                "index_path": "/data/faiss/123e4567.../223e4567.../index.faiss",
-                            }
-                        ],
-                    },
-                    "example_multiple_datasets": {
-                        "project_id": "123e4567-e89b-12d3-a456-426614174000",
-                        "datasets_processed": 3,
-                        "total_chunks_revectorized": 1200,
-                        "results": [
-                            {
-                                "dataset_id": "223e4567-e89b-12d3-a456-426614174001",
-                                "chunks_revectorized": 500,
-                                "vectors_in_index": 5000,
-                                "index_path": "/data/faiss/123e4567.../223e4567.../index.faiss",
-                            },
-                            {
-                                "dataset_id": "323e4567-e89b-12d3-a456-426614174002",
-                                "chunks_revectorized": 400,
-                                "vectors_in_index": 7000,
-                                "index_path": "/data/faiss/123e4567.../323e4567.../index.faiss",
-                            },
-                            {
-                                "dataset_id": "423e4567-e89b-12d3-a456-426614174003",
-                                "chunks_revectorized": 300,
-                                "vectors_in_index": 3000,
-                                "index_path": "/data/faiss/123e4567.../423e4567.../index.faiss",
-                            },
-                        ],
-                    },
-                    "example_no_chunks": {
-                        "project_id": "123e4567-e89b-12d3-a456-426614174000",
-                        "datasets_processed": 1,
-                        "total_chunks_revectorized": 0,
-                        "results": [
-                            {
-                                "dataset_id": "223e4567-e89b-12d3-a456-426614174001",
-                                "chunks_revectorized": 0,
-                                "index_path": "/data/faiss/123e4567.../223e4567.../index.faiss",
-                            }
-                        ],
+                        "chunks_revectorized": 500,
+                        "vectors_in_index": 5000,
+                        "index_path": "/data/faiss/123e4567-e89b-12d3-a456-426614174000.bin",
                     },
                 },
                 "error": {
                     "description": "Command failed",
-                    "code": (
-                        "Error code (e.g., PROJECT_NOT_FOUND, CONFIG_NOT_FOUND, "
-                        "DATASET_ID_MISMATCH, NO_DATASETS, REVECTORIZE_ERROR)"
-                    ),
+                    "code": "Error code (e.g., PROJECT_NOT_FOUND, CONFIG_NOT_FOUND, REVECTORIZE_ERROR)",
                     "message": "Human-readable error message",
                 },
             },
@@ -535,42 +374,35 @@ class RevectorizeCommand(BaseMCPCommand):
                 "Run revectorize before rebuild_faiss if embeddings are missing",
                 "Monitor chunks_revectorized to track progress",
                 "Check vectors_in_index to verify FAISS index was rebuilt",
-                "Use dataset_id to revectorize specific dataset",
-                "Revectorize all datasets after model updates",
                 "Ensure SVO service is configured and accessible",
-                "Monitor logs for failed chunk revectorization",
                 "Run rebuild_faiss after revectorize to ensure index is updated",
             ],
         }
 
-    async def _revectorize_dataset(
+    async def _revectorize_project(
         self,
         database: Any,
         svo_client_manager: Any,
         storage_paths: Any,
         project_id: str,
-        dataset_id: str,
         vector_dim: int,
         force: bool,
     ) -> Dict[str, Any]:
-        """Revectorize chunks for a specific dataset.
+        """Revectorize chunks for a project (one index per project).
 
         Args:
             database: DatabaseClient instance.
             svo_client_manager: SVOClientManager instance.
             storage_paths: StoragePaths instance.
             project_id: Project UUID.
-            dataset_id: Dataset UUID.
             vector_dim: Vector dimension.
             force: Force revectorization even if embeddings exist.
 
         Returns:
             Dictionary with revectorization statistics.
         """
-        # Get dataset-scoped FAISS index path
-        index_path = get_faiss_index_path(
-            storage_paths.faiss_dir, project_id, dataset_id
-        )
+        # One index per project: {faiss_dir}/{project_id}.bin
+        index_path = get_faiss_index_path(storage_paths.faiss_dir, project_id)
 
         # Initialize FAISS manager
         faiss_manager = FaissIndexManager(
@@ -579,18 +411,17 @@ class RevectorizeCommand(BaseMCPCommand):
         )
 
         try:
-            # Get chunks for this dataset that need revectorization
+            # Get chunks for this project that need revectorization
             # If force=True, get all chunks; otherwise get only chunks without embeddings
             if force:
-                # Get all chunks for this dataset
+                # Get all chunks for this project
                 chunks = database.get_all_chunks_for_faiss_rebuild(
-                    project_id=project_id, dataset_id=dataset_id
+                    project_id=project_id
                 )
             else:
                 # Get only chunks without embeddings
-                # This is a simplified version - in production, you might want a more sophisticated query
                 chunks = database.get_all_chunks_for_faiss_rebuild(
-                    project_id=project_id, dataset_id=dataset_id
+                    project_id=project_id
                 )
                 # Filter chunks without embeddings
                 chunks = [
@@ -601,7 +432,7 @@ class RevectorizeCommand(BaseMCPCommand):
 
             if not chunks:
                 return {
-                    "dataset_id": dataset_id,
+                    "project_id": project_id,
                     "chunks_revectorized": 0,
                     "index_path": str(index_path),
                 }
@@ -653,16 +484,15 @@ class RevectorizeCommand(BaseMCPCommand):
                         f"Failed to revectorize chunk {chunk_id}: {e}", exc_info=True
                     )
 
-            # Rebuild FAISS index for this dataset
+            # Rebuild FAISS index for this project
             vectors_count = await faiss_manager.rebuild_from_database(
                 database,
                 svo_client_manager,
                 project_id=project_id,
-                dataset_id=dataset_id,
             )
 
             return {
-                "dataset_id": dataset_id,
+                "project_id": project_id,
                 "chunks_revectorized": revectorized_count,
                 "vectors_in_index": vectors_count,
                 "index_path": str(index_path),

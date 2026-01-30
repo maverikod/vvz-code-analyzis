@@ -13,7 +13,6 @@ from .base import BaseObject
 from .class_function import Class, Function
 from .method_import import Import, Method
 from .vector_chunk import CodeChunk, VectorIndex
-from .dataset import Dataset
 from .file import File
 from .project import Project
 
@@ -22,7 +21,6 @@ T = TypeVar("T", bound=BaseObject)
 # Mapping of table names to object classes
 TABLE_TO_CLASS: Dict[str, Type[BaseObject]] = {
     "projects": Project,
-    "datasets": Dataset,
     "files": File,
     "ast_trees": ASTNode,
     "cst_trees": CSTNode,

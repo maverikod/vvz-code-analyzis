@@ -253,11 +253,6 @@ class CSTConvertAndSaveCommand(BaseMCPCommand):
                     file_id = file_rows[0].get("id")
                 else:
                     # Add file to database
-                    # Get or create dataset_id
-                    dataset_id = BaseMCPCommand._get_or_create_dataset(
-                        database, project_id, str(project_root)
-                    )
-
                     # Calculate file metadata
                     lines = len(source_code.splitlines())
                     has_docstring = bool(ast.get_docstring(tree))
@@ -267,7 +262,6 @@ class CSTConvertAndSaveCommand(BaseMCPCommand):
 
                     file_obj = File(
                         project_id=project_id,
-                        dataset_id=dataset_id,
                         path=normalized_path,
                         lines=lines,
                         last_modified=file_mtime,

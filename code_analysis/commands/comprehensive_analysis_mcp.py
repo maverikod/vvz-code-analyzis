@@ -348,25 +348,6 @@ class ComprehensiveAnalysisMCPCommand(BaseMCPCommand):
                                             try:
                                                 file_path_obj.relative_to(root_path)
                                                 # File is within project root - add it to correct project
-                                                from code_analysis.core.project_resolution import (
-                                                    normalize_root_dir,
-                                                )
-
-                                                normalized_root = str(
-                                                    normalize_root_dir(root_path)
-                                                )
-                                                dataset_id = db.get_dataset_id(
-                                                    proj_id, normalized_root
-                                                )
-                                                if not dataset_id:
-                                                    from .base_mcp_command import (
-                                                        BaseMCPCommand,
-                                                    )
-
-                                                    dataset_id = BaseMCPCommand._get_or_create_dataset(
-                                                        db, proj_id, normalized_root
-                                                    )
-
                                                 # Read file metadata
                                                 text = file_path_obj.read_text(
                                                     encoding="utf-8", errors="ignore"
@@ -386,7 +367,6 @@ class ComprehensiveAnalysisMCPCommand(BaseMCPCommand):
                                                     last_modified=file_mtime,
                                                     has_docstring=has_docstring,
                                                     project_id=proj_id,
-                                                    dataset_id=dataset_id,
                                                 )
                                                 file_id = new_file_id
                                                 file_project_id = proj_id

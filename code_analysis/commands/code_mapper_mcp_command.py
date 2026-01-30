@@ -200,22 +200,6 @@ class UpdateIndexesMCPCommand(BaseMCPCommand):
 
             lines = len(file_content.splitlines())
 
-            # Get or create dataset_id for this root_path
-            from ..core.project_resolution import normalize_root_dir
-
-            normalized_root = str(normalize_root_dir(root_path))
-            from .base_mcp_command import BaseMCPCommand
-
-            dataset_id = BaseMCPCommand._get_dataset_id(
-                database, project_id, normalized_root
-            )
-            if not dataset_id:
-                from .base_mcp_command import BaseMCPCommand
-
-                dataset_id = BaseMCPCommand._get_or_create_dataset(
-                    database, project_id, normalized_root, name=root_path.name
-                )
-
             # Use absolute path for add_file to avoid path resolution issues
             # add_file normalizes paths internally, but we need to pass absolute path
             # to ensure it matches existing records
@@ -243,7 +227,6 @@ class UpdateIndexesMCPCommand(BaseMCPCommand):
                         file_mtime,
                         has_docstring,
                         project_id,
-                        dataset_id,
                     )
                     # add_file returns the file_id (may be same or different)
                     file_id = updated_file_id
@@ -264,7 +247,6 @@ class UpdateIndexesMCPCommand(BaseMCPCommand):
                     file_mtime,
                     has_docstring,
                     project_id,
-                    dataset_id,
                 )
                 # Verify file_id is valid
                 if not file_id:

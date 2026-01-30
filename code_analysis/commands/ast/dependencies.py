@@ -10,6 +10,7 @@ from typing import Any, Dict, Optional
 from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 
 from ..base_mcp_command import BaseMCPCommand
+from .entity_dependencies import _get_entity_dependents_via_execute
 
 
 class FindDependenciesMCPCommand(BaseMCPCommand):
@@ -58,6 +59,10 @@ class FindDependenciesMCPCommand(BaseMCPCommand):
                     "type": "string",
                     "description": "Optional project UUID; if omitted, inferred by root_dir",
                 },
+                "entity_id": {
+                    "type": "integer",
+                    "description": "Optional entity DB id; when set with entity_type (class/method/function), queries entity_cross_ref (get_entity_dependents) instead of usages by name",
+                },
             },
             "required": ["root_dir", "entity_name"],
             "additionalProperties": False,
@@ -72,6 +77,7 @@ class FindDependenciesMCPCommand(BaseMCPCommand):
         limit: Optional[int] = None,
         offset: int = 0,
         project_id: Optional[str] = None,
+        entity_id: Optional[int] = None,
         **kwargs,
     ) -> SuccessResult:
         try:
@@ -81,6 +87,38 @@ class FindDependenciesMCPCommand(BaseMCPCommand):
             if not proj_id:
                 return ErrorResult(
                     message="Project not found", code="PROJECT_NOT_FOUND"
+                )
+
+            # When entity_id and entity_type (class/method/function) provided, use entity_cross_ref (get_entity_dependents)
+            if entity_id is not None and entity_type in ("class", "method", "function"):
+                dependents = _get_entity_dependents_via_execute(
+                    db, entity_type, entity_id
+                )
+                results = [
+                    {
+                        "type": "entity_ref",
+                        "file_path": r.get("file_path", ""),
+                        "line": r.get("line"),
+                        "ref_type": r.get("ref_type", ""),
+                        "caller_entity_type": r.get("caller_entity_type", ""),
+                        "caller_entity_id": r.get("caller_entity_id"),
+                    }
+                    for r in dependents
+                ]
+                if limit:
+                    results = results[offset : offset + limit]
+                elif offset:
+                    results = results[offset:]
+                db.disconnect()
+                return SuccessResult(
+                    data={
+                        "success": True,
+                        "entity_name": entity_name,
+                        "entity_type": entity_type,
+                        "entity_id": entity_id,
+                        "dependencies": results,
+                        "count": len(results),
+                    }
                 )
 
             # Find dependencies from database
@@ -333,6 +371,15 @@ class FindDependenciesMCPCommand(BaseMCPCommand):
                     "type": "string",
                     "required": False,
                 },
+                "entity_id": {
+                    "description": (
+                        "Optional entity DB id. When set together with entity_type "
+                        "(class/method/function), queries entity_cross_ref (get_entity_dependents) "
+                        "instead of usages by name. Use for precise 'who depends on this entity' by id."
+                    ),
+                    "type": "integer",
+                    "required": False,
+                },
             },
             "usage_examples": [
                 {
@@ -382,6 +429,19 @@ class FindDependenciesMCPCommand(BaseMCPCommand):
                     },
                     "explanation": (
                         "Finds first 50 files that import 'os' module. Use offset for next page."
+                    ),
+                },
+                {
+                    "description": "Find dependents by entity id (entity_cross_ref)",
+                    "command": {
+                        "root_dir": "/home/user/projects/my_project",
+                        "entity_name": "DataProcessor",
+                        "entity_type": "class",
+                        "entity_id": 42,
+                    },
+                    "explanation": (
+                        "When entity_id is set with entity_type, queries entity_cross_ref "
+                        "for callers that depend on this entity (get_entity_dependents)."
                     ),
                 },
             ],

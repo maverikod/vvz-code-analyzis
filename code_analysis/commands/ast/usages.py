@@ -10,6 +10,7 @@ from typing import Any, Dict, Optional
 from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 
 from ..base_mcp_command import BaseMCPCommand
+from .entity_dependencies import _get_entity_dependents_via_execute
 
 
 class FindUsagesMCPCommand(BaseMCPCommand):
@@ -62,6 +63,10 @@ class FindUsagesMCPCommand(BaseMCPCommand):
                     "type": "string",
                     "description": "Optional project UUID; if omitted, inferred by root_dir",
                 },
+                "entity_id": {
+                    "type": "integer",
+                    "description": "Optional entity DB id; when set with target_type (class/method/function), queries entity_cross_ref (get_entity_dependents) instead of usages by name",
+                },
             },
             "required": ["root_dir", "target_name"],
             "additionalProperties": False,
@@ -77,6 +82,7 @@ class FindUsagesMCPCommand(BaseMCPCommand):
         limit: Optional[int] = None,
         offset: int = 0,
         project_id: Optional[str] = None,
+        entity_id: Optional[int] = None,
         **kwargs,
     ) -> SuccessResult:
         try:
@@ -86,6 +92,42 @@ class FindUsagesMCPCommand(BaseMCPCommand):
             if not proj_id:
                 return ErrorResult(
                     message="Project not found", code="PROJECT_NOT_FOUND"
+                )
+
+            # When entity_id and target_type (class/method/function) provided, use entity_cross_ref (get_entity_dependents)
+            if entity_id is not None and target_type in (
+                "class",
+                "method",
+                "function",
+            ):
+                dependents = _get_entity_dependents_via_execute(
+                    db, target_type, entity_id
+                )
+                usages = [
+                    {
+                        "file_path": r.get("file_path", ""),
+                        "line": r.get("line"),
+                        "target_name": target_name,
+                        "target_type": target_type,
+                        "usage_type": r.get("ref_type", "usage"),
+                        "caller_entity_type": r.get("caller_entity_type", ""),
+                        "caller_entity_id": r.get("caller_entity_id"),
+                    }
+                    for r in dependents
+                ]
+                if limit:
+                    usages = usages[offset : offset + limit]
+                elif offset:
+                    usages = usages[offset:]
+                db.disconnect()
+                return SuccessResult(
+                    data={
+                        "success": True,
+                        "target_name": target_name,
+                        "entity_id": entity_id,
+                        "usages": usages,
+                        "count": len(usages),
+                    }
                 )
 
             # Find usages from database
@@ -375,6 +417,15 @@ class FindUsagesMCPCommand(BaseMCPCommand):
                     "type": "string",
                     "required": False,
                 },
+                "entity_id": {
+                    "description": (
+                        "Optional entity DB id. When set together with target_type "
+                        "(class/method/function), queries entity_cross_ref (get_entity_dependents) "
+                        "instead of usages by name. Use for precise 'who depends on this entity' by id."
+                    ),
+                    "type": "integer",
+                    "required": False,
+                },
             },
             "usage_examples": [
                 {
@@ -422,6 +473,19 @@ class FindUsagesMCPCommand(BaseMCPCommand):
                     },
                     "explanation": (
                         "Finds first 100 usages of 'calculate' (any type). Use offset for next page."
+                    ),
+                },
+                {
+                    "description": "Find dependents by entity id (entity_cross_ref)",
+                    "command": {
+                        "root_dir": "/home/user/projects/my_project",
+                        "target_name": "process_data",
+                        "target_type": "function",
+                        "entity_id": 15,
+                    },
+                    "explanation": (
+                        "When entity_id is set with target_type, queries entity_cross_ref "
+                        "for callers that depend on this entity (get_entity_dependents)."
                     ),
                 },
             ],

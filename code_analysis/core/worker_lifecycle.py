@@ -310,6 +310,7 @@ class WorkerLifecycleManager:
         scan_interval: int = 60,
         version_dir: Optional[str] = None,
         worker_log_path: Optional[str] = None,
+        worker_logs_dir: Optional[str] = None,
         ignore_patterns: Optional[List[str]] = None,
     ) -> WorkerStartResult:
         """
@@ -329,6 +330,7 @@ class WorkerLifecycleManager:
             scan_interval: Scan interval seconds.
             version_dir: Version directory for deleted files.
             worker_log_path: Log path for worker process.
+            worker_logs_dir: Absolute directory for worker log and PID file (optional).
             ignore_patterns: Optional ignore patterns.
 
         Returns:
@@ -336,8 +338,12 @@ class WorkerLifecycleManager:
         """
         from .file_watcher_pkg.runner import run_file_watcher_worker
 
-        # PID file check (before starting worker)
-        pid_file_path = Path(LOGS_DIR_NAME) / "file_watcher_worker.pid"
+        # PID file: use absolute path when worker_logs_dir provided
+        if worker_logs_dir:
+            pid_file_path = Path(worker_logs_dir).resolve() / "file_watcher_worker.pid"
+        else:
+            pid_file_path = Path(LOGS_DIR_NAME).resolve() / "file_watcher_worker.pid"
+
         existing_pid = self.check_pid_file(
             pid_file_path, "file_watcher", "file_watcher"
         )
@@ -358,6 +364,7 @@ class WorkerLifecycleManager:
                 "scan_interval": int(scan_interval),
                 "version_dir": version_dir,
                 "worker_log_path": worker_log_path,
+                "pid_file_path": str(pid_file_path),
                 "ignore_patterns": ignore_patterns or [],
             },
             daemon=True,  # Daemon process for background workers
@@ -401,6 +408,7 @@ class WorkerLifecycleManager:
         batch_size: int = 10,
         poll_interval: int = 30,
         worker_log_path: Optional[str] = None,
+        worker_logs_dir: Optional[str] = None,
     ) -> WorkerStartResult:
         """
         Start universal vectorization worker in a separate process and register it.
@@ -416,17 +424,23 @@ class WorkerLifecycleManager:
             faiss_dir: Base directory for FAISS index files (project-scoped indexes: {faiss_dir}/{project_id}.bin).
             vector_dim: Embedding vector dimension.
             svo_config: Optional SVO config dict.
-            batch_size: Batch size.
-            poll_interval: Poll interval seconds.
-            worker_log_path: Log path for worker process.
+        batch_size: Batch size.
+        poll_interval: Poll interval seconds.
+        worker_log_path: Log path for worker process.
+        worker_logs_dir: Absolute directory for worker log and PID file (optional).
+                         If provided, PID file is {worker_logs_dir}/vectorization_worker.pid.
 
         Returns:
             WorkerStartResult.
         """
         from .vectorization_worker_pkg.runner import run_vectorization_worker
 
-        # PID file check (before starting worker)
-        pid_file_path = Path(LOGS_DIR_NAME) / "vectorization_worker.pid"
+        # PID file: use absolute path when worker_logs_dir provided so cwd does not affect it
+        if worker_logs_dir:
+            pid_file_path = Path(worker_logs_dir).resolve() / "vectorization_worker.pid"
+        else:
+            pid_file_path = Path(LOGS_DIR_NAME).resolve() / "vectorization_worker.pid"
+
         existing_pid = self.check_pid_file(
             pid_file_path, "vectorization", "vectorization"
         )
@@ -447,6 +461,7 @@ class WorkerLifecycleManager:
                 "batch_size": int(batch_size),
                 "poll_interval": int(poll_interval),
                 "worker_log_path": worker_log_path,
+                "pid_file_path": str(pid_file_path),
             },
             daemon=True,  # Daemon process for background workers
         )

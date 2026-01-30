@@ -86,6 +86,7 @@ def run_vectorization_worker(
     retry_attempts: int = 3,
     retry_delay: float = 10.0,
     worker_log_path: Optional[str] = None,
+    pid_file_path: Optional[str] = None,
     log_max_bytes: int = 10485760,  # 10 MB default
     log_backup_count: int = 5,
 ) -> Dict[str, Any]:
@@ -349,3 +350,10 @@ def run_vectorization_worker(
     finally:
         if svo_client_manager:
             asyncio.run(svo_client_manager.close())
+        # Remove PID file on exit so next start is not blocked by stale PID
+        if pid_file_path and Path(pid_file_path).exists():
+            try:
+                Path(pid_file_path).unlink()
+                logger.debug(f"Removed PID file on exit: {pid_file_path}")
+            except Exception as e:
+                logger.warning(f"Could not remove PID file {pid_file_path}: {e}")

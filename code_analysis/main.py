@@ -708,8 +708,26 @@ def main() -> None:
                 f"🔍 app_config loaded: {bool(app_config)}, keys: {list(app_config.keys()) if app_config else []}"
             )
 
-            # Check if code_analysis config section exists
-            code_analysis_config = app_config.get("code_analysis", {})
+            # Check if code_analysis config section exists (fallback: load from config file)
+            code_analysis_config = (
+                app_config.get("code_analysis", {}) if app_config else {}
+            )
+            fallback_config_path = getattr(cfg, "config_path", None)
+            if (
+                not code_analysis_config
+                and fallback_config_path
+                and Path(fallback_config_path).exists()
+            ):
+                try:
+                    import json
+
+                    with open(fallback_config_path, "r", encoding="utf-8") as f:
+                        app_config = json.load(f)
+                    code_analysis_config = app_config.get("code_analysis", {})
+                except Exception as e:
+                    logger.debug(
+                        f"Could not load config from {fallback_config_path}: {e}"
+                    )
             logger.info(f"🔍 code_analysis_config found: {bool(code_analysis_config)}")
             if not code_analysis_config:
                 logger.warning(
@@ -838,6 +856,8 @@ def main() -> None:
                 )
 
             # Start single universal worker using WorkerManager
+            # Use absolute logs dir for PID file so worker start is not blocked by cwd/stale PID
+            worker_logs_dir = str(Path(worker_log_path).resolve().parent)
             logger.info("🚀 Starting universal vectorization worker...")
             print("🚀 Starting universal vectorization worker...", flush=True)
 
@@ -850,6 +870,7 @@ def main() -> None:
                 batch_size=batch_size,
                 poll_interval=poll_interval,
                 worker_log_path=worker_log_path,
+                worker_logs_dir=worker_logs_dir,
             )
 
             if result.success:
@@ -1007,6 +1028,9 @@ def main() -> None:
             logger.info(
                 "ℹ️  Projects will be discovered automatically within each watch directory"
             )
+            if not worker_log_path:
+                worker_log_path = str(storage.config_dir / "logs" / "file_watcher.log")
+            worker_logs_dir = str(Path(worker_log_path).resolve().parent)
             if worker_log_path:
                 logger.info(f"📝 Worker log file: {worker_log_path}")
 
@@ -1019,6 +1043,7 @@ def main() -> None:
                 scan_interval=scan_interval,
                 version_dir=version_dir,
                 worker_log_path=worker_log_path,
+                worker_logs_dir=worker_logs_dir,
                 ignore_patterns=ignore_patterns,
             )
 

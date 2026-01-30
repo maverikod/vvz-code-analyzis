@@ -84,6 +84,7 @@ def run_file_watcher_worker(
     version_dir: Optional[str] = None,
     ignore_patterns: Optional[List[str]] = None,
     worker_log_path: Optional[str] = None,
+    pid_file_path: Optional[str] = None,
     log_max_bytes: int = 10485760,  # 10 MB default
     log_backup_count: int = 5,
 ) -> Dict[str, Any]:
@@ -141,3 +142,11 @@ def run_file_watcher_worker(
     except Exception as e:
         logger.error(f"File watcher worker error: {e}", exc_info=True)
         return {"cycles": 0, "errors": 1}
+    finally:
+        # Remove PID file on exit so next start is not blocked by stale PID
+        if pid_file_path and Path(pid_file_path).exists():
+            try:
+                Path(pid_file_path).unlink()
+                logger.debug(f"Removed PID file on exit: {pid_file_path}")
+            except Exception as e:
+                logger.warning(f"Could not remove PID file {pid_file_path}: {e}")

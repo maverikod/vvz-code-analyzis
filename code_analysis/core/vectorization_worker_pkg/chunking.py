@@ -63,6 +63,28 @@ async def _request_chunking_for_files(
                 )
                 continue
 
+            # Check that file and project still exist in DB and file is not marked deleted
+            try:
+                check_result = database.execute(
+                    "SELECT 1 FROM files WHERE id = ? AND project_id = ? AND (deleted = 0 OR deleted IS NULL)",
+                    (file_id, project_id),
+                )
+                check_data = (
+                    check_result.get("data", [])
+                    if isinstance(check_result, dict)
+                    else []
+                )
+                if not check_data:
+                    logger.debug(
+                        f"[FILE {file_id}] Skipping: file or project no longer exists or file is marked deleted: {file_path}"
+                    )
+                    continue
+            except Exception as e:
+                logger.warning(
+                    f"[FILE {file_id}] Failed to verify file/project in DB: {e}, skipping"
+                )
+                continue
+
             logger.debug(f"[FILE {file_id}] Reading file from disk...")
             try:
                 file_content = file_path_obj.read_text(encoding="utf-8")
@@ -104,9 +126,7 @@ async def _request_chunking_for_files(
                     (file_id,),
                 )
             except Exception as e:
-                logger.debug(
-                    f"[FILE {file_id}] Could not clear needs_chunking: {e}"
-                )
+                logger.debug(f"[FILE {file_id}] Could not clear needs_chunking: {e}")
 
             chunked_count += 1
             file_duration = time.time() - file_start_time

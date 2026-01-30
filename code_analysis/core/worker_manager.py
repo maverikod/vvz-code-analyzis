@@ -242,6 +242,7 @@ class WorkerManager:
         scan_interval: int = 60,
         version_dir: Optional[str] = None,
         worker_log_path: Optional[str] = None,
+        worker_logs_dir: Optional[str] = None,
         ignore_patterns: Optional[List[str]] = None,
     ) -> WorkerStartResult:
         """
@@ -254,6 +255,7 @@ class WorkerManager:
             scan_interval: Scan interval seconds.
             version_dir: Version directory for deleted files.
             worker_log_path: Log path for worker process.
+            worker_logs_dir: Absolute directory for worker log and PID file (optional).
             ignore_patterns: Optional ignore patterns.
 
         Returns:
@@ -266,6 +268,7 @@ class WorkerManager:
             scan_interval=scan_interval,
             version_dir=version_dir,
             worker_log_path=worker_log_path,
+            worker_logs_dir=worker_logs_dir,
             ignore_patterns=ignore_patterns,
         )
 
@@ -279,6 +282,7 @@ class WorkerManager:
         batch_size: int = 10,
         poll_interval: int = 30,
         worker_log_path: Optional[str] = None,
+        worker_logs_dir: Optional[str] = None,
     ) -> WorkerStartResult:
         """
         Start universal vectorization worker in a separate process and register it.
@@ -291,6 +295,7 @@ class WorkerManager:
             batch_size: Batch size.
             poll_interval: Poll interval seconds.
             worker_log_path: Log path for worker process.
+            worker_logs_dir: Absolute directory for worker log and PID file (optional).
 
         Returns:
             WorkerStartResult.
@@ -303,6 +308,7 @@ class WorkerManager:
             batch_size=batch_size,
             poll_interval=poll_interval,
             worker_log_path=worker_log_path,
+            worker_logs_dir=worker_logs_dir,
         )
 
     # Database driver methods

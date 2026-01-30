@@ -11,6 +11,7 @@ email: vasilyvz@gmail.com
 from __future__ import annotations
 
 import logging
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
@@ -187,6 +188,7 @@ class StartWorkerMCPCommand(BaseMCPCommand):
                 log_path = worker_log_path or str(
                     (root_path / "logs" / "file_watcher.log").resolve()
                 )
+                worker_logs_dir = str(Path(log_path).resolve().parent)
                 worker_manager = get_worker_manager()
                 res = worker_manager.start_file_watcher_worker(
                     db_path=str(db_path),
@@ -196,6 +198,7 @@ class StartWorkerMCPCommand(BaseMCPCommand):
                         (storage.config_dir / "data" / "versions").resolve()
                     ),
                     worker_log_path=log_path,
+                    worker_logs_dir=worker_logs_dir,
                     ignore_patterns=list(
                         DEFAULT_IGNORE_PATTERNS | {DATA_DIR_NAME, LOGS_DIR_NAME}
                     ),
@@ -207,6 +210,7 @@ class StartWorkerMCPCommand(BaseMCPCommand):
                 log_path = worker_log_path or str(
                     (root_path / "logs" / "vectorization_worker.log").resolve()
                 )
+                worker_logs_dir = str(Path(log_path).resolve().parent)
 
                 # Get faiss_dir from storage (base directory for project-scoped indexes)
                 faiss_dir = storage.faiss_dir
@@ -236,6 +240,7 @@ class StartWorkerMCPCommand(BaseMCPCommand):
                     batch_size=batch_size,
                     poll_interval=poll_interval,
                     worker_log_path=log_path,
+                    worker_logs_dir=worker_logs_dir,
                 )
                 return SuccessResult(data=res.__dict__)
 
@@ -557,7 +562,9 @@ class StopWorkerMCPCommand(BaseMCPCommand):
         """
         try:
             worker_manager = get_worker_manager()
-            result = worker_manager.stop_worker_type(worker_type, timeout=float(timeout))
+            result = worker_manager.stop_worker_type(
+                worker_type, timeout=float(timeout)
+            )
             return SuccessResult(data=result)
         except Exception as e:
             return self._handle_error(e, "WORKER_STOP_ERROR", "stop_worker")

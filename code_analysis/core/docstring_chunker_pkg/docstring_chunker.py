@@ -82,6 +82,29 @@ class DocstringChunker:
         self.min_chunk_length = int(min_chunk_length)
         self.embedding_model = embedding_model
 
+    def _file_still_exists_and_not_deleted(self, file_id: int, project_id: str) -> bool:
+        """
+        Check if file and project still exist and file is not marked deleted.
+
+        Used before and during chunk persistence to avoid writing chunks when
+        the file or project has been removed (or file marked deleted) in the meantime.
+
+        Returns:
+            True if file exists, belongs to project, and is not deleted; False otherwise.
+        """
+        if hasattr(self.database, "_fetchone"):
+            row = self.database._fetchone(
+                "SELECT 1 FROM files WHERE id = ? AND project_id = ? AND (deleted = 0 OR deleted IS NULL)",
+                (file_id, project_id),
+            )
+            return row is not None
+        r = self.database.execute(
+            "SELECT 1 FROM files WHERE id = ? AND project_id = ? AND (deleted = 0 OR deleted IS NULL)",
+            (file_id, project_id),
+        )
+        data = r.get("data", []) if isinstance(r, dict) else []
+        return len(data) > 0
+
     async def process_file(
         self,
         *,
@@ -112,14 +135,18 @@ class DocstringChunker:
             return 0
 
         items = list(self._extract_docstrings(tree, file_content))
-        logger.info(f"[FILE {file_id}] Extracted {len(items)} docstrings from {file_path}")
+        logger.info(
+            f"[FILE {file_id}] Extracted {len(items)} docstrings from {file_path}"
+        )
         if not items:
             return 0
 
         # Precompute embeddings using chunker service (SVO - chunks and vectorizes)
         embeddings: list[Optional[list[float]]] = [None] * len(items)
         if self.svo_client_manager:
-            logger.info(f"[FILE {file_id}] Requesting embeddings for {len(items)} docstrings from chunker service...")
+            logger.info(
+                f"[FILE {file_id}] Requesting embeddings for {len(items)} docstrings from chunker service..."
+            )
             embedding_start_time = time.time()
             try:
                 # Use chunker service for each docstring - it returns chunks with embeddings
@@ -145,14 +172,16 @@ class DocstringChunker:
                             # SemanticChunk from svo_client has embedding attribute
                             emb = getattr(first_chunk, "embedding", None)
                             # Also extract embedding_model if available
-                            chunk_embedding_model = getattr(first_chunk, "embedding_model", None)
+                            chunk_embedding_model = getattr(
+                                first_chunk, "embedding_model", None
+                            )
                             if chunk_embedding_model and not self.embedding_model:
                                 # Use embedding_model from chunk if not set in chunker
                                 self.embedding_model = chunk_embedding_model
                                 logger.debug(
                                     f"[FILE {file_id}] [DOCSTRING {i+1}/{len(items)}] Using embedding_model from chunk: {chunk_embedding_model}"
                                 )
-                            
+
                             if isinstance(emb, list) and emb:
                                 embeddings[i] = emb
                                 logger.debug(
@@ -199,12 +228,28 @@ class DocstringChunker:
                     f"[FILE {file_id}] Completed embedding requests for {len(items)} docstrings in {embedding_duration:.3f}s"
                 )
 
-        # Persist items
-        logger.info(f"[FILE {file_id}] Persisting {len(items)} docstring chunks to database...")
+        # Persist items (only if file and project still exist and file is not deleted)
+        if not self._file_still_exists_and_not_deleted(file_id, project_id):
+            logger.warning(
+                f"[FILE {file_id}] File or project no longer exists or file is marked deleted, "
+                f"skipping chunk persistence for {file_path}"
+            )
+            return 0
+
+        logger.info(
+            f"[FILE {file_id}] Persisting {len(items)} docstring chunks to database..."
+        )
         persist_start_time = time.time()
         written = 0
         ordinal = 0
         for it, emb in zip(items, embeddings):
+            # Before each chunk: stop if file/project was deleted in the meantime
+            if not self._file_still_exists_and_not_deleted(file_id, project_id):
+                logger.warning(
+                    f"[FILE {file_id}] File or project deleted during persist, "
+                    f"stopping after {written} chunks for {file_path}"
+                )
+                break
             ordinal += 1
             # All items are persisted, including short ones (they will have emb=None)
 

@@ -218,7 +218,7 @@ This yields a single table of entity-to-entity references with optional VIEWs, a
 - **RPC**: Commands use `DatabaseClient.execute()` for entity_cross_ref queries; no dedicated RPC handlers required.
 - **Tests**: Unit tests in `test_entity_cross_ref.py`, `test_entity_cross_ref_builder.py`; integration in `test_entity_cross_ref_integration.py`. Coverage for entity_cross_ref and entity_cross_ref_builder ~93% (90%+).
 
-**Optional (done):** find_dependencies and find_usages accept optional entity_id; when entity_type (or target_type) and entity_id are provided, they query entity_cross_ref via _get_entity_dependents_via_execute (thin wrapper). Metadata for both commands documents entity_id.
+**By-name API:** get_entity_dependencies and get_entity_dependents accept entity_name + entity_type (and optional target_class for methods); the command resolves the name to entity_id within the project so the caller does not need to know the id. find_dependencies and find_usages remain name-only (usages/imports tables); they do not take entity_id.
 
 ---
 

@@ -3,19 +3,25 @@
 Author: Vasiliy Zdanovskiy  
 email: vasilyvz@gmail.com
 
+## PID file contract
+
+- **Content:** The PID file contains a single line: the **process ID (integer)**. We write the worker process number when the worker starts.
+- **Check:** We never treat "file exists" as "worker running". We **read the PID from the file** and **verify the process is running** (e.g. `os.kill(pid, 0)`). If the file is missing or the process is dead, we remove a stale file when applicable and allow start.
+- **On exit:** The worker removes the PID file only if the file contains **this process's PID** (`os.getpid()`); it does not remove another process's PID file.
+
 ## Causes and fixes
 
 ### 1. PID file blocks start
 
 **Symptom:** `get_worker_status` shows 0 processes; server log says "Vectorization worker already running" or start is skipped.
 
-**Cause:** PID file (e.g. `logs/vectorization_worker.pid`) exists and contains a PID that is still running (e.g. from a previous server run). The current process does not register that PID, so status shows 0.
+**Cause:** The PID file (e.g. `logs/vectorization_worker.pid`) exists and contains a **process number**; we read that PID and check the process is running. If that process is still alive (e.g. from a previous run), we block start. The current server process does not register that PID, so status shows 0.
 
 **Fixes:**
 
-- Workers now remove their PID file on exit (`finally` in runner). Restart the server so that when workers exit they clear the PID file; then on next start they can start again.
-- PID file path is now absolute when `worker_logs_dir` is passed (from `worker_log_path`’s parent). This avoids different working directories creating different PID file locations.
-- Manually remove stale PID files: `rm -f logs/vectorization_worker.pid logs/file_watcher_worker.pid` (or the absolute path under your config logs dir), then restart.
+- Workers remove the PID file on exit only when the file contains **their own PID** (so we never remove another process's file). Restart the server so workers exit and clear their PID file; then the next start can proceed.
+- PID file path is absolute when `worker_logs_dir` is passed. If a process died without cleaning up: our check reads the PID and verifies the process exists; if the process is dead, we remove the stale file and allow start.
+- Manually remove stale PID files only if needed: `rm -f logs/vectorization_worker.pid logs/file_watcher_worker.pid`, then restart.
 
 ### 2. Missing or empty `code_analysis` config
 

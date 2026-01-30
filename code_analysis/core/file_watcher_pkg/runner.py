@@ -16,6 +16,33 @@ from typing import Any, Dict, List, Optional
 logger = logging.getLogger(__name__)
 
 
+def _remove_pid_file_if_ours(pid_file_path: str) -> None:
+    """
+    Remove PID file only if it contains this process's PID.
+
+    PID file must contain a single line: the process ID (integer).
+    We never remove the file based on existence alone; we read the PID
+    and remove only when it matches the current process (os.getpid()).
+    """
+    import os
+
+    path = Path(pid_file_path)
+    if not path.exists():
+        return
+    try:
+        pid_str = path.read_text().strip()
+        pid = int(pid_str)
+        if pid == os.getpid():
+            path.unlink()
+            logger.debug(f"Removed PID file on exit (PID={pid}): {pid_file_path}")
+        else:
+            logger.debug(
+                f"PID file contains other process (PID={pid}, ours={os.getpid()}), leaving file"
+            )
+    except (ValueError, OSError) as e:
+        logger.warning(f"Could not read/remove PID file {pid_file_path}: {e}")
+
+
 def _setup_worker_logging(
     log_path: Optional[str] = None,
     max_bytes: int = 10485760,  # 10 MB default
@@ -143,10 +170,6 @@ def run_file_watcher_worker(
         logger.error(f"File watcher worker error: {e}", exc_info=True)
         return {"cycles": 0, "errors": 1}
     finally:
-        # Remove PID file on exit so next start is not blocked by stale PID
-        if pid_file_path and Path(pid_file_path).exists():
-            try:
-                Path(pid_file_path).unlink()
-                logger.debug(f"Removed PID file on exit: {pid_file_path}")
-            except Exception as e:
-                logger.warning(f"Could not remove PID file {pid_file_path}: {e}")
+        # Remove PID file only if it contains this process's PID (do not remove another process's file)
+        if pid_file_path:
+            _remove_pid_file_if_ours(pid_file_path)

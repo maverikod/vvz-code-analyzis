@@ -140,7 +140,7 @@ class DatabaseDriverManager:
                 socket_dir.mkdir(parents=True, exist_ok=True)
                 socket_path = str(socket_dir / f"{driver_type}_driver.sock")
 
-        # PID file check (before starting driver)
+        # Check: read PID from file and verify that process is running (never "file exists" alone)
         pid_file_path = Path(LOGS_DIR_NAME) / "database_driver.pid"
         existing_pid = self.check_pid_file(
             pid_file_path, "database_driver", "database_driver"
@@ -168,7 +168,7 @@ class DatabaseDriverManager:
         )
         process.start()
 
-        # Write PID file after driver starts
+        # Write process number (PID) to PID file; check logic reads this and verifies process exists
         try:
             pid_file_path.parent.mkdir(parents=True, exist_ok=True)
             with open(pid_file_path, "w") as f:

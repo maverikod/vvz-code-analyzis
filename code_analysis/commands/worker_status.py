@@ -117,47 +117,49 @@ class WorkerStatusCommand:
         except (psutil.NoSuchProcess, psutil.AccessDenied):
             return None
 
-    def _find_worker_processes(self) -> List[Dict[str, Any]]:
-        """Find worker processes by name pattern."""
-        processes = []
-        try:
-            for proc in psutil.process_iter(["pid", "name", "cmdline", "create_time"]):
-                try:
-                    cmdline = " ".join(proc.info["cmdline"] or [])
-                    if self.worker_type == "file_watcher":
-                        if (
-                            "file_watcher" in cmdline.lower()
-                            or "run_file_watcher_worker" in cmdline
-                        ):
-                            processes.append(proc.info)
-                    elif self.worker_type == "vectorization":
-                        if (
-                            "vectorization" in cmdline.lower()
-                            or "run_vectorization_worker" in cmdline
-                        ):
-                            processes.append(proc.info)
-                except (psutil.NoSuchProcess, psutil.AccessDenied):
-                    continue
-        except Exception as e:
-            logger.warning(f"Error finding processes: {e}")
-        return processes
-
-    def _get_pid_from_pid_file(self) -> Optional[int]:
+    def _get_pid_files_to_verify(self) -> List[Path]:
         """
-        Read PID from `<worker>.pid` file if available.
+        Return PID file paths to verify against the registry for current worker_type.
 
         Returns:
-            PID if pid file exists and contains a valid integer, otherwise None.
+            List of PID file paths (may not exist).
         """
-        pid_file = self._get_pid_file_path()
-        if not pid_file or not pid_file.exists():
-            return None
+        from ..core.constants import LOGS_DIR_NAME
 
-        try:
-            content = pid_file.read_text(encoding="utf-8").strip()
-            return int(content)
-        except Exception:
-            return None
+        if self.worker_type == "all":
+            logs_dir = Path(LOGS_DIR_NAME).resolve()
+            return [
+                logs_dir / "vectorization_worker.pid",
+                logs_dir / "file_watcher_worker.pid",
+            ]
+        pid_path = self._get_pid_file_path()
+        return [pid_path] if pid_path else []
+
+    def _verify_pid_files_against_registry(self, registered_pids: set[int]) -> None:
+        """
+        If a PID file exists and the process in it is alive but not in the registry,
+        log an error (worker running but not registered).
+        """
+        for pid_file in self._get_pid_files_to_verify():
+            if not pid_file or not pid_file.exists():
+                continue
+            try:
+                content = pid_file.read_text(encoding="utf-8").strip()
+                pid = int(content)
+            except (ValueError, OSError):
+                continue
+            try:
+                os.kill(pid, 0)
+            except OSError:
+                continue
+            if pid not in registered_pids:
+                logger.error(
+                    "PID file exists and process is alive but not in registry: "
+                    "path=%s pid=%s (worker_type=%s)",
+                    pid_file,
+                    pid,
+                    self.worker_type,
+                )
 
     def _get_recent_log_activity(self, lines: int = 10) -> Dict[str, Any]:
         """Get recent log activity."""
@@ -238,20 +240,26 @@ class WorkerStatusCommand:
             "log_activity": None,
         }
 
-        # First, try to get registered workers from WorkerManager
+        # Only registry: get workers from WorkerManager
+        registered_pids_set: set[int] = set()
         try:
             from ..core.worker_manager import get_worker_manager
 
             worker_manager = get_worker_manager()
             manager_status = worker_manager.get_worker_status()
+            by_type = manager_status.get("by_type", {})
 
-            # Get workers of this type from manager
-            workers_by_type = manager_status.get("by_type", {}).get(
-                self.worker_type, {}
-            )
-            registered_pids = workers_by_type.get("pids", [])
+            if self.worker_type == "all":
+                registered_pids = []
+                for type_name, type_status in by_type.items():
+                    registered_pids.extend(type_status.get("pids", []))
+                registered_pids = list(dict.fromkeys(registered_pids))
+            else:
+                workers_by_type = by_type.get(self.worker_type, {})
+                registered_pids = workers_by_type.get("pids", [])
 
-            # Get process details for registered workers
+            registered_pids_set = set(p for p in registered_pids if p)
+
             for pid in registered_pids:
                 if pid:
                     proc_details = self._get_process_by_pid(pid)
@@ -260,38 +268,12 @@ class WorkerStatusCommand:
         except Exception as e:
             logger.warning(f"Failed to get workers from WorkerManager: {e}")
 
-        # If no registered workers found, try to find by process name
-        if not result["processes"]:
-            processes = self._find_worker_processes()
-            for proc_info in processes:
-                pid = proc_info.get("pid")
-                if pid:
-                    proc_details = self._get_process_by_pid(pid)
-                    if proc_details:
-                        result["processes"].append(proc_details)
+        # Verify: if PID file exists and process is alive but not in registry, log error
+        self._verify_pid_files_against_registry(registered_pids_set)
 
-        # Get lock file info (for file watcher)
+        # Lock file info (for file watcher) — informational only, no fallback
         if self.worker_type == "file_watcher":
             result["lock_file"] = self._get_lock_file_info()
-
-            # Use lock pid as a strong signal of the active worker process.
-            lock_pid = None
-            if isinstance(result["lock_file"], dict):
-                lock_pid = result["lock_file"].get("pid")
-            if isinstance(lock_pid, int):
-                proc_details = self._get_process_by_pid(lock_pid)
-                if proc_details:
-                    existing_pids = {p.get("pid") for p in result["processes"]}
-                    if lock_pid not in existing_pids:
-                        result["processes"].append(proc_details)
-
-        # Fallback: PID file discovery (vectorization/file_watcher)
-        if not result["processes"]:
-            pid = self._get_pid_from_pid_file()
-            if isinstance(pid, int):
-                proc_details = self._get_process_by_pid(pid)
-                if proc_details:
-                    result["processes"].append(proc_details)
 
         # Get recent log activity
         result["log_activity"] = self._get_recent_log_activity()

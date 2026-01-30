@@ -42,21 +42,27 @@ class WorkerRegistry:
         """
         Check PID file and verify that process exists and is the correct worker.
 
-        If PID file exists:
-        1. Read PID from file
-        2. Check if process with that PID exists
-        3. Optionally verify process name matches pattern
-        4. If process doesn't exist or doesn't match, remove stale PID file
-        5. Return PID if process is alive and valid, None otherwise
+        Contract: the PID file must contain a single line - the process ID (integer).
+        We never treat "file exists" as "worker running". We always read the PID
+        from the file and check that the process is running (os.kill(pid, 0)).
+        If the file is missing or the process is dead, we return None (and remove
+        stale file when process is dead).
+
+        Steps:
+        1. If file does not exist, return None (allow start).
+        2. Read PID (integer) from file.
+        3. Check if process with that PID exists (os.kill(pid, 0)).
+        4. If process does not exist, remove stale PID file and return None.
+        5. Optionally verify process name matches pattern (psutil).
+        6. Return PID if process is alive and valid, None otherwise.
 
         Args:
-            pid_file_path: Path to PID file
-            worker_type: Worker type for logging
-            process_name_pattern: Optional pattern to match in process cmdline
-                                 (e.g., "vectorization" or "file_watcher")
+            pid_file_path: Path to PID file (file stores process number only).
+            worker_type: Worker type for logging.
+            process_name_pattern: Optional pattern to match in process cmdline.
 
         Returns:
-            PID if process is alive and valid, None if PID file should be ignored
+            PID if process is alive and valid, None if start is allowed.
         """
         if not pid_file_path.exists():
             return None

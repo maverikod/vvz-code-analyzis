@@ -10,11 +10,17 @@ email: vasilyvz@gmail.com
 
 import logging
 import threading
+import time
 from typing import Any, Callable, Optional
 
 from .constants import DEFAULT_WORKER_MONITOR_INTERVAL, DEFAULT_WORKER_STOP_TIMEOUT
 
 logger = logging.getLogger(__name__)
+
+# Do not consider a worker "dead" and do not unregister if it was registered
+# less than this many seconds ago (avoids race where process.is_alive() is
+# not yet updated or PID file is not yet written).
+REGISTRATION_GRACE_SECONDS = 60.0
 
 
 class WorkerMonitor:
@@ -152,6 +158,19 @@ class WorkerMonitor:
                         except (psutil.NoSuchProcess, psutil.AccessDenied):
                             is_alive = False
 
+                    # Grace period: do not unregister workers just registered
+                    # (avoids losing registry entries due to process.is_alive() lag).
+                    registered_at = worker_info.get("registered_at") or 0
+                    if (
+                        not is_alive
+                        and (time.time() - registered_at) < REGISTRATION_GRACE_SECONDS
+                    ):
+                        logger.debug(
+                            f"Worker {worker_type} {name} (PID: {pid}) within grace "
+                            f"period ({time.time() - registered_at:.0f}s), skipping unregister"
+                        )
+                        continue
+
                     if not is_alive:
                         logger.warning(
                             f"Worker {worker_type} {name} (PID: {pid}) is dead, attempting restart..."
@@ -169,12 +188,12 @@ class WorkerMonitor:
                                 restart_result = restart_func(
                                     *restart_args, **restart_kwargs
                                 )
-                                
+
                                 # Check if restart was successful
                                 # restart_func may return WorkerStartResult or Dict[str, Any]
                                 if restart_result:
                                     # Check if it's a WorkerStartResult (has 'success' attribute)
-                                    if hasattr(restart_result, 'success'):
+                                    if hasattr(restart_result, "success"):
                                         # WorkerStartResult - worker already registered in start method
                                         if restart_result.success:
                                             logger.info(
@@ -187,8 +206,10 @@ class WorkerMonitor:
                                             )
                                     elif isinstance(restart_result, dict):
                                         # Dict[str, Any] - need to register manually
-                                        self.register_callback(worker_type, restart_result)
-                                        new_pid = restart_result.get('pid')
+                                        self.register_callback(
+                                            worker_type, restart_result
+                                        )
+                                        new_pid = restart_result.get("pid")
                                         logger.info(
                                             f"Successfully restarted {worker_type} worker {name} "
                                             f"(new PID: {new_pid})"

@@ -344,6 +344,7 @@ class WorkerLifecycleManager:
         else:
             pid_file_path = Path(LOGS_DIR_NAME).resolve() / "file_watcher_worker.pid"
 
+        # Check: read PID from file and verify that process is running (never "file exists" alone)
         existing_pid = self.check_pid_file(
             pid_file_path, "file_watcher", "file_watcher"
         )
@@ -371,7 +372,7 @@ class WorkerLifecycleManager:
         )
         process.start()
 
-        # Write PID file after worker starts
+        # Write process number (PID) to PID file; check logic reads this and verifies process exists
         try:
             pid_file_path.parent.mkdir(parents=True, exist_ok=True)
             with open(pid_file_path, "w") as f:
@@ -441,6 +442,7 @@ class WorkerLifecycleManager:
         else:
             pid_file_path = Path(LOGS_DIR_NAME).resolve() / "vectorization_worker.pid"
 
+        # Check: read PID from file and verify that process is running (never "file exists" alone)
         existing_pid = self.check_pid_file(
             pid_file_path, "vectorization", "vectorization"
         )
@@ -467,7 +469,7 @@ class WorkerLifecycleManager:
         )
         process.start()
 
-        # Write PID file after worker starts
+        # Write process number (PID) to PID file; check logic reads this and verifies process exists
         try:
             pid_file_path.parent.mkdir(parents=True, exist_ok=True)
             with open(pid_file_path, "w") as f:

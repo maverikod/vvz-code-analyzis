@@ -568,17 +568,8 @@ def main() -> None:
     # Store worker manager in app state for shutdown
     app.state.worker_manager = worker_manager
 
-    # Start worker monitoring thread
-    import logging
-
-    monitoring_logger = logging.getLogger(__name__)
-    try:
-        worker_manager.start_monitoring(interval=DEFAULT_WORKER_MONITOR_INTERVAL)
-        monitoring_logger.info("✅ Worker monitoring started")
-    except Exception as e:
-        monitoring_logger.error(
-            f"❌ Failed to start worker monitoring: {e}", exc_info=True
-        )
+    # Worker monitoring is started only in daemon mode, AFTER workers are started,
+    # so the registry is populated before the monitor runs (avoids empty registry).
 
     # Commands are automatically registered via hooks
     # Queue manager is automatically initialized if enabled in config
@@ -1086,11 +1077,14 @@ def main() -> None:
         main_logger.setLevel(logging.INFO)
 
     # Prepare server configuration for ServerEngine
+    # Single process required: WorkerManager registry lives in this process;
+    # get_worker_status reads from it. hypercorn.asyncio.serve() is single-process.
     server_config = {
         "host": server_host,
         "port": server_port,
         "log_level": "info",
         "reload": False,
+        "workers": 1,
     }
 
     # Add SSL configuration if using mTLS
@@ -1251,7 +1245,16 @@ def main() -> None:
         print(f"❌ Failed to start workers: {e}", flush=True, file=sys.stderr)
         # Continue anyway - server can start without workers
 
-    # Run server
+    # Start worker monitoring only after workers are started, so the registry
+    # is populated in this process before the monitor runs (get_worker_status
+    # reads from the same registry).
+    try:
+        worker_manager.start_monitoring(interval=DEFAULT_WORKER_MONITOR_INTERVAL)
+        worker_logger.info("✅ Worker monitoring started (after workers)")
+    except Exception as e:
+        worker_logger.error(f"❌ Failed to start worker monitoring: {e}", exc_info=True)
+
+    # Run server (single process: hypercorn.asyncio.serve, so registry stays in this process)
     engine = ServerEngineFactory.get_engine("hypercorn")
     if not engine:
         print("❌ Hypercorn engine not available", file=sys.stderr)

@@ -97,6 +97,17 @@ async def _request_chunking_for_files(
                 f"[FILE {file_id}] Chunking completed in {chunking_duration:.3f}s"
             )
 
+            # Clear needs_chunking so file is not re-selected until next change
+            try:
+                database.execute(
+                    "UPDATE files SET needs_chunking = 0 WHERE id = ?",
+                    (file_id,),
+                )
+            except Exception as e:
+                logger.debug(
+                    f"[FILE {file_id}] Could not clear needs_chunking: {e}"
+                )
+
             chunked_count += 1
             file_duration = time.time() - file_start_time
             logger.info(

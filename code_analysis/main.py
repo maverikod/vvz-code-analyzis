@@ -250,6 +250,53 @@ def main() -> None:
         traceback.print_exc()
         sys.exit(1)
 
+    # In daemon mode, set up file logging as early as possible so that
+    # crash causes and tracebacks are visible in logs (stderr is redirected
+    # to the same file by server_manager_cli when spawning).
+    if args.daemon:
+        try:
+            log_dir = Path(full_config.get("server", {}).get("log_dir", "./logs"))
+            if not log_dir.is_absolute():
+                log_dir = (config_path.resolve().parent / log_dir).resolve()
+            log_dir.mkdir(parents=True, exist_ok=True)
+            daemon_log_file = log_dir / "mcp_server.log"
+            root_logger = logging.getLogger()
+            if not any(
+                isinstance(h, logging.FileHandler)
+                and getattr(h, "baseFilename", "") == str(daemon_log_file)
+                for h in root_logger.handlers
+            ):
+                file_handler = logging.FileHandler(daemon_log_file, encoding="utf-8")
+                file_handler.setLevel(logging.INFO)
+                file_handler.setFormatter(
+                    logging.Formatter(
+                        "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+                    )
+                )
+                root_logger.addHandler(file_handler)
+                root_logger.setLevel(logging.INFO)
+
+            # Log uncaught thread exceptions to file (Python 3.8+)
+            import threading
+
+            def _daemon_thread_excepthook(args: object) -> None:
+                # args: exc_type, exc_value, exc_traceback, thread (named tuple)
+                root_logger.error(
+                    "Uncaught exception in thread %s: %s",
+                    getattr(getattr(args, "thread", None), "name", None)
+                    or getattr(getattr(args, "thread", None), "ident", None),
+                    getattr(args, "exc_value", None),
+                    exc_info=(
+                        getattr(args, "exc_type", None),
+                        getattr(args, "exc_value", None),
+                        getattr(args, "exc_traceback", None),
+                    ),
+                )
+
+            threading.excepthook = _daemon_thread_excepthook
+        except Exception:
+            pass
+
     # Ensure state directories exist early (DB/FAISS/locks/queue).
     try:
         storage_paths = resolve_storage_paths(
@@ -593,7 +640,9 @@ def main() -> None:
             )
 
             # Generate log path for driver
-            log_path = str(storage.config_dir / "logs" / DEFAULT_DATABASE_DRIVER_LOG_FILENAME)
+            log_path = str(
+                storage.config_dir / "logs" / DEFAULT_DATABASE_DRIVER_LOG_FILENAME
+            )
             ensure_storage_dirs(storage)
 
             # Start database driver using WorkerManager
@@ -672,9 +721,7 @@ def main() -> None:
             # database.driver config is used separately via get_driver_config() in startup_database_driver()
             # ServerConfig has extra="forbid", so we must exclude unknown fields
             server_config_dict = {
-                k: v
-                for k, v in code_analysis_config.items()
-                if k != "database"
+                k: v for k, v in code_analysis_config.items() if k != "database"
             }
 
             # Check if SVO chunker is configured
@@ -870,9 +917,7 @@ def main() -> None:
             # database.driver config is used separately via get_driver_config() in startup_database_driver()
             # ServerConfig has extra="forbid", so we must exclude unknown fields
             server_config_dict = {
-                k: v
-                for k, v in code_analysis_config.items()
-                if k != "database"
+                k: v for k, v in code_analysis_config.items() if k != "database"
             }
 
             # Check if file watcher is enabled

@@ -65,7 +65,11 @@ class FormatCodeCommand(Command):
                 },
                 "root_dir": {
                     "type": "string",
-                    "description": "Optional project root directory. If provided, database will be updated after formatting.",
+                    "description": (
+                        "Optional project root directory. If provided, file_path is resolved "
+                        "relative to this directory (e.g. file_path='hello_cli.py' with root_dir='/path/to/proj' "
+                        "uses /path/to/proj/hello_cli.py). Also enables database update after formatting."
+                    ),
                     "examples": ["/abs/path/to/project"],
                 },
             },
@@ -74,7 +78,7 @@ class FormatCodeCommand(Command):
             "examples": [
                 {"file_path": "/abs/path/to/file.py"},
                 {
-                    "file_path": "/abs/path/to/file.py",
+                    "file_path": "hello_cli.py",
                     "root_dir": "/abs/path/to/project",
                 },
             ],
@@ -98,7 +102,11 @@ class FormatCodeCommand(Command):
             SuccessResult with formatting result or ErrorResult on failure.
         """
         try:
-            path = Path(file_path)
+            # Resolve path: relative to root_dir (project root) when given, else as-is (absolute or cwd-relative)
+            if root_dir:
+                path = (Path(root_dir) / file_path).resolve()
+            else:
+                path = Path(file_path).resolve()
             if not path.exists():
                 return ErrorResult(
                     code="FILE_NOT_FOUND",
@@ -403,8 +411,18 @@ class LintCodeCommand(Command):
             "properties": {
                 "file_path": {
                     "type": "string",
-                    "description": "Path to Python file to lint.",
-                    "examples": ["/abs/path/to/file.py"],
+                    "description": (
+                        "Path to Python file to lint. If root_dir is provided, resolved relative to project root."
+                    ),
+                    "examples": ["hello_cli.py", "/abs/path/to/file.py"],
+                },
+                "root_dir": {
+                    "type": "string",
+                    "description": (
+                        "Optional project root directory. If provided, file_path is resolved "
+                        "relative to this directory (e.g. file_path='hello_cli.py' -> root_dir/hello_cli.py)."
+                    ),
+                    "examples": ["/abs/path/to/project"],
                 },
                 "ignore": {
                     "type": "array",
@@ -417,13 +435,19 @@ class LintCodeCommand(Command):
             "additionalProperties": False,
             "examples": [
                 {"file_path": "/abs/path/to/file.py"},
-                {"file_path": "/abs/path/to/file.py", "ignore": ["E501"]},
+                {"file_path": "hello_cli.py", "root_dir": "/abs/path/to/project"},
+                {
+                    "file_path": "hello_cli.py",
+                    "root_dir": "/abs/path/to/project",
+                    "ignore": ["E501"],
+                },
             ],
         }
 
     async def execute(
         self: "LintCodeCommand",
         file_path: str,
+        root_dir: Optional[str] = None,
         ignore: Optional[List[str]] = None,
         **kwargs: Any,
     ) -> SuccessResult | ErrorResult:
@@ -431,7 +455,8 @@ class LintCodeCommand(Command):
 
         Args:
             self: Command instance.
-            file_path: Path to Python file to lint.
+            file_path: Path to Python file to lint (relative to root_dir if root_dir given).
+            root_dir: Optional project root; file_path is resolved relative to it.
             ignore: Optional list of error codes to ignore.
             **kwargs: Extra args (unused).
 
@@ -439,7 +464,11 @@ class LintCodeCommand(Command):
             SuccessResult with linting result or ErrorResult on failure.
         """
         try:
-            path = Path(file_path)
+            # Resolve path: relative to root_dir (project root) when given, else as-is
+            if root_dir:
+                path = (Path(root_dir) / file_path).resolve()
+            else:
+                path = Path(file_path).resolve()
             if not path.exists():
                 return ErrorResult(
                     code="FILE_NOT_FOUND",
@@ -534,19 +563,24 @@ class LintCodeCommand(Command):
             "parameters": {
                 "file_path": {
                     "description": (
-                        "Path to Python file to lint. "
-                        "**RECOMMENDED: Use absolute path for reliability.** "
-                        "Relative paths are resolved from current working directory, "
-                        "which may cause issues if working directory changes. "
-                        "File must exist and be readable."
+                        "Path to Python file to lint. If root_dir is provided, interpreted "
+                        "relative to project root (e.g. 'hello_cli.py' -> root_dir/hello_cli.py). "
+                        "Otherwise absolute path or relative to current working directory."
                     ),
                     "type": "string",
                     "required": True,
                     "examples": [
-                        "/home/user/projects/my_project/src/main.py",  # ✅ RECOMMENDED: Absolute path
-                        "code_analysis/core/backup_manager.py",  # ⚠️ Relative path (resolved from CWD)
-                        "./src/utils.py",  # ⚠️ Relative path (resolved from CWD)
+                        "hello_cli.py",  # with root_dir = project root
+                        "/home/user/projects/my_project/src/main.py",
                     ],
+                },
+                "root_dir": {
+                    "description": (
+                        "Optional project root directory. When provided, file_path is resolved "
+                        "relative to this directory."
+                    ),
+                    "type": "string",
+                    "required": False,
                 },
                 "ignore": {
                     "description": (
@@ -706,8 +740,19 @@ class TypeCheckCodeCommand(Command):
             "properties": {
                 "file_path": {
                     "type": "string",
-                    "description": "Path to Python file to type check.",
-                    "examples": ["/abs/path/to/file.py"],
+                    "description": (
+                        "Path to Python file to type check. If root_dir is provided, "
+                        "resolved relative to project root."
+                    ),
+                    "examples": ["hello_cli.py", "/abs/path/to/file.py"],
+                },
+                "root_dir": {
+                    "type": "string",
+                    "description": (
+                        "Optional project root directory. If provided, file_path is "
+                        "resolved relative to this directory."
+                    ),
+                    "examples": ["/abs/path/to/project"],
                 },
                 "config_file": {
                     "type": "string",
@@ -725,9 +770,10 @@ class TypeCheckCodeCommand(Command):
             "additionalProperties": False,
             "examples": [
                 {"file_path": "/abs/path/to/file.py"},
+                {"file_path": "hello_cli.py", "root_dir": "/abs/path/to/project"},
                 {
-                    "file_path": "/abs/path/to/file.py",
-                    "config_file": "/abs/path/to/pyproject.toml",
+                    "file_path": "hello_cli.py",
+                    "root_dir": "/abs/path/to/project",
                     "ignore_errors": False,
                 },
             ],
@@ -736,6 +782,7 @@ class TypeCheckCodeCommand(Command):
     async def execute(
         self: "TypeCheckCodeCommand",
         file_path: str,
+        root_dir: Optional[str] = None,
         config_file: Optional[str] = None,
         ignore_errors: bool = False,
         **kwargs: Any,
@@ -744,7 +791,8 @@ class TypeCheckCodeCommand(Command):
 
         Args:
             self: Command instance.
-            file_path: Path to Python file to type check.
+            file_path: Path to Python file to type check (relative to root_dir if root_dir given).
+            root_dir: Optional project root; file_path is resolved relative to it.
             config_file: Optional path to mypy config file. If omitted, the command
                 tries to auto-detect `pyproject.toml` in parent directories.
             ignore_errors: If True, treat errors as warnings.
@@ -754,7 +802,10 @@ class TypeCheckCodeCommand(Command):
             SuccessResult with type checking result or ErrorResult on failure.
         """
         try:
-            path = Path(file_path)
+            if root_dir:
+                path = (Path(root_dir) / file_path).resolve()
+            else:
+                path = Path(file_path).resolve()
             if not path.exists():
                 return ErrorResult(
                     code="FILE_NOT_FOUND",

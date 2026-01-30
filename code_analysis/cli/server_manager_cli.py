@@ -8,6 +8,7 @@ email: vasilyvz@gmail.com
 from __future__ import annotations
 
 import argparse
+import io
 import json
 import os
 import signal
@@ -15,7 +16,10 @@ import subprocess
 import sys
 import time
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Union
+
+# For stderr redirect: DEVNULL (int) or open file (TextIO)
+_StderrDest = Union[int, io.TextIOWrapper]
 
 
 DEFAULT_SHUTDOWN_GRACE_SECONDS = 10.0
@@ -211,9 +215,37 @@ def _find_daemon_pids(config_path: str) -> list[int]:
     return sorted(set(pids))
 
 
+def _daemon_log_file(config_path: str) -> Path | None:
+    """
+    Resolve daemon log file path from config so stderr can be redirected there.
+
+    Args:
+        config_path: Path to server config JSON.
+
+    Returns:
+        Path to mcp_server.log, or None if config cannot be read.
+    """
+    try:
+        cfg = json.loads(Path(config_path).read_text(encoding="utf-8"))
+    except Exception:
+        return None
+    server = cfg.get("server")
+    if not isinstance(server, dict):
+        return None
+    log_dir_str = server.get("log_dir", "./logs")
+    log_dir = Path(log_dir_str)
+    if not log_dir.is_absolute():
+        log_dir = (Path(config_path).resolve().parent / log_dir).resolve()
+    log_dir.mkdir(parents=True, exist_ok=True)
+    return log_dir / "mcp_server.log"
+
+
 def _spawn_daemon(config_path: str, pidfile: Path) -> int:
     """
     Spawn daemon server process.
+
+    stderr is redirected to server log file (from config server.log_dir)
+    so that crash tracebacks and errors are visible in logs.
 
     Args:
         config_path: Path to config JSON.
@@ -222,19 +254,31 @@ def _spawn_daemon(config_path: str, pidfile: Path) -> int:
     Returns:
         PID of spawned process.
     """
-
     python = sys.executable
     args = [python, "-m", "code_analysis.main", "--config", config_path, "--daemon"]
-    proc = subprocess.Popen(
-        args,
-        stdin=subprocess.DEVNULL,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-        start_new_session=True,
-        close_fds=True,
-    )
-    pidfile.write_text(str(proc.pid), encoding="utf-8")
-    return proc.pid
+
+    stderr_dest: _StderrDest = subprocess.DEVNULL
+    log_file_path = _daemon_log_file(config_path)
+    if log_file_path is not None:
+        try:
+            stderr_dest = open(log_file_path, "a", encoding="utf-8")
+        except OSError:
+            stderr_dest = subprocess.DEVNULL
+
+    try:
+        proc = subprocess.Popen(
+            args,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=stderr_dest,
+            start_new_session=True,
+            close_fds=True,
+        )
+        pidfile.write_text(str(proc.pid), encoding="utf-8")
+        return proc.pid
+    finally:
+        if stderr_dest is not subprocess.DEVNULL and hasattr(stderr_dest, "close"):
+            stderr_dest.close()
 
 
 def _cmd_status(config_path: str) -> int:
@@ -371,5 +415,3 @@ def server(argv: Optional[list[str]] = None) -> int:
 
 if __name__ == "__main__":
     raise SystemExit(server())
-
-

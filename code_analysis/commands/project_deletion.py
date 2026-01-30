@@ -10,12 +10,14 @@ import shutil
 import time
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Set, TYPE_CHECKING
+from typing import Any, Dict, Optional, TYPE_CHECKING
 
 from ..core.trash_utils import (
     build_trash_folder_name,
     ensure_unique_trash_path,
 )
+
+from .clear_project_data_impl import _clear_project_data_impl
 
 if TYPE_CHECKING:
     from ..core.database_client.client import DatabaseClient
@@ -23,337 +25,6 @@ else:
     DatabaseClient = Any
 
 logger = logging.getLogger(__name__)
-
-
-async def _clear_project_data_impl(database: DatabaseClient, project_id: str) -> None:
-    """Clear all data for a project using DatabaseClient atomically.
-
-    This is a helper function that implements clear_project_data for DatabaseClient.
-    All operations are performed within a single transaction for atomicity and performance.
-    """
-    clear_start = time.time()
-    logger.info(f"[CLEAR_PROJECT_DATA] Starting clear for project {project_id}")
-
-    transaction_id = None
-    try:
-        # Begin transaction
-        tx_start = time.time()
-        transaction_id = database.begin_transaction()
-        logger.info(
-            f"[CLEAR_PROJECT_DATA] Started transaction {transaction_id} in {time.time() - tx_start:.3f}s"
-        )
-
-        # Get all file IDs for this project
-        step_start = time.time()
-        files = database.select(
-            "files", where={"project_id": project_id}, columns=["id"]
-        )
-        file_ids = [f["id"] for f in files]
-        logger.info(
-            f"[CLEAR_PROJECT_DATA] Got {len(file_ids)} file IDs in {time.time() - step_start:.3f}s"
-        )
-
-        # Delete duplicates first (before files)
-        try:
-            step_start = time.time()
-            # Delete duplicate occurrences first (foreign key constraint)
-            database.execute(
-                """
-                DELETE FROM duplicate_occurrences
-                WHERE duplicate_id IN (
-                    SELECT id FROM code_duplicates WHERE project_id = ?
-                )
-                """,
-                (project_id,),
-                transaction_id=transaction_id,
-            )
-            logger.info(
-                f"[CLEAR_PROJECT_DATA] Deleted duplicate_occurrences in {time.time() - step_start:.3f}s"
-            )
-
-            step_start = time.time()
-            # Delete duplicate groups
-            database.execute(
-                "DELETE FROM code_duplicates WHERE project_id = ?",
-                (project_id,),
-                transaction_id=transaction_id,
-            )
-            logger.info(
-                f"[CLEAR_PROJECT_DATA] Deleted code_duplicates in {time.time() - step_start:.3f}s"
-            )
-        except Exception as e:
-            logger.warning(f"Failed to delete duplicates for project {project_id}: {e}")
-
-        if not file_ids:
-            # Delete datasets and vector_index even if no files
-            step_start = time.time()
-            database.execute(
-                "DELETE FROM datasets WHERE project_id = ?",
-                (project_id,),
-                transaction_id=transaction_id,
-            )
-            logger.info(
-                f"[CLEAR_PROJECT_DATA] Deleted datasets in {time.time() - step_start:.3f}s"
-            )
-
-            step_start = time.time()
-            database.execute(
-                "DELETE FROM vector_index WHERE project_id = ?",
-                (project_id,),
-                transaction_id=transaction_id,
-            )
-            logger.info(
-                f"[CLEAR_PROJECT_DATA] Deleted vector_index in {time.time() - step_start:.3f}s"
-            )
-
-            step_start = time.time()
-            database.execute(
-                "DELETE FROM projects WHERE id = ?",
-                (project_id,),
-                transaction_id=transaction_id,
-            )
-            logger.info(
-                f"[CLEAR_PROJECT_DATA] Deleted project record in {time.time() - step_start:.3f}s"
-            )
-
-            # Commit transaction
-            commit_start = time.time()
-            database.commit_transaction(transaction_id)
-            logger.info(
-                f"[CLEAR_PROJECT_DATA] Committed transaction {transaction_id} in {time.time() - commit_start:.3f}s"
-            )
-            logger.info(
-                f"[CLEAR_PROJECT_DATA] Completed clear for project {project_id} (no files) in {time.time() - clear_start:.3f}s"
-            )
-            return
-
-        # Delete data for all files
-        if file_ids:
-            step_start = time.time()
-            placeholders = ",".join("?" * len(file_ids))
-            # Get class IDs
-            classes = database.execute(
-                f"SELECT id FROM classes WHERE file_id IN ({placeholders})",
-                tuple(file_ids),
-                transaction_id=transaction_id,
-            )
-            logger.info(
-                f"[CLEAR_PROJECT_DATA] Got class IDs in {time.time() - step_start:.3f}s"
-            )
-            # Handle different result formats
-            if isinstance(classes, list):
-                classes_data = classes
-            elif isinstance(classes, dict):
-                classes_data = classes.get("data", [])
-            else:
-                classes_data = []
-            class_ids = [c["id"] for c in classes_data]
-
-            # Get content IDs for FTS
-            step_start = time.time()
-            content_rows = database.execute(
-                f"SELECT id FROM code_content WHERE file_id IN ({placeholders})",
-                tuple(file_ids),
-                transaction_id=transaction_id,
-            )
-            logger.info(
-                f"[CLEAR_PROJECT_DATA] Got content IDs in {time.time() - step_start:.3f}s"
-            )
-            # Handle different result formats
-            if isinstance(content_rows, list):
-                content_data = content_rows
-            elif isinstance(content_rows, dict):
-                content_data = content_rows.get("data", [])
-            else:
-                content_data = []
-            content_ids = [c["id"] for c in content_data]
-
-            # Delete FTS entries in batches
-            if content_ids:
-                batch_size = 1000
-                batch_count = 0
-                for i in range(0, len(content_ids), batch_size):
-                    batch = content_ids[i : i + batch_size]
-                    batch_placeholders = ",".join("?" * len(batch))
-                    try:
-                        batch_start = time.time()
-                        database.execute(
-                            f"DELETE FROM code_content_fts WHERE rowid IN ({batch_placeholders})",
-                            tuple(batch),
-                            transaction_id=transaction_id,
-                        )
-                        batch_count += 1
-                        logger.debug(
-                            f"[CLEAR_PROJECT_DATA] Deleted FTS batch {batch_count} ({len(batch)} rows) in {time.time() - batch_start:.3f}s"
-                        )
-                    except Exception as e:
-                        logger.warning(
-                            f"Failed to delete FTS batch {i//batch_size + 1} for project {project_id}: {e}"
-                        )
-                        break
-                logger.info(
-                    f"[CLEAR_PROJECT_DATA] Deleted {batch_count} FTS batches ({len(content_ids)} total rows)"
-                )
-
-            # Delete methods
-            if class_ids:
-                step_start = time.time()
-                method_placeholders = ",".join("?" * len(class_ids))
-                database.execute(
-                    f"DELETE FROM methods WHERE class_id IN ({method_placeholders})",
-                    tuple(class_ids),
-                    transaction_id=transaction_id,
-                )
-                logger.info(
-                    f"[CLEAR_PROJECT_DATA] Deleted methods in {time.time() - step_start:.3f}s"
-                )
-
-            # Delete other file-related data
-            step_start = time.time()
-            database.execute(
-                f"DELETE FROM classes WHERE file_id IN ({placeholders})",
-                tuple(file_ids),
-                transaction_id=transaction_id,
-            )
-            logger.info(
-                f"[CLEAR_PROJECT_DATA] Deleted classes in {time.time() - step_start:.3f}s"
-            )
-
-            step_start = time.time()
-            database.execute(
-                f"DELETE FROM functions WHERE file_id IN ({placeholders})",
-                tuple(file_ids),
-                transaction_id=transaction_id,
-            )
-            logger.info(
-                f"[CLEAR_PROJECT_DATA] Deleted functions in {time.time() - step_start:.3f}s"
-            )
-
-            step_start = time.time()
-            database.execute(
-                f"DELETE FROM imports WHERE file_id IN ({placeholders})",
-                tuple(file_ids),
-                transaction_id=transaction_id,
-            )
-            logger.info(
-                f"[CLEAR_PROJECT_DATA] Deleted imports in {time.time() - step_start:.3f}s"
-            )
-
-            step_start = time.time()
-            database.execute(
-                f"DELETE FROM issues WHERE file_id IN ({placeholders})",
-                tuple(file_ids),
-                transaction_id=transaction_id,
-            )
-            logger.info(
-                f"[CLEAR_PROJECT_DATA] Deleted issues in {time.time() - step_start:.3f}s"
-            )
-
-            step_start = time.time()
-            database.execute(
-                f"DELETE FROM code_content WHERE file_id IN ({placeholders})",
-                tuple(file_ids),
-                transaction_id=transaction_id,
-            )
-            logger.info(
-                f"[CLEAR_PROJECT_DATA] Deleted code_content in {time.time() - step_start:.3f}s"
-            )
-
-            step_start = time.time()
-            database.execute(
-                f"DELETE FROM ast_trees WHERE file_id IN ({placeholders})",
-                tuple(file_ids),
-                transaction_id=transaction_id,
-            )
-            logger.info(
-                f"[CLEAR_PROJECT_DATA] Deleted ast_trees in {time.time() - step_start:.3f}s"
-            )
-
-            step_start = time.time()
-            database.execute(
-                f"DELETE FROM cst_trees WHERE file_id IN ({placeholders})",
-                tuple(file_ids),
-                transaction_id=transaction_id,
-            )
-            logger.info(
-                f"[CLEAR_PROJECT_DATA] Deleted cst_trees in {time.time() - step_start:.3f}s"
-            )
-
-            step_start = time.time()
-            database.execute(
-                f"DELETE FROM code_chunks WHERE file_id IN ({placeholders})",
-                tuple(file_ids),
-                transaction_id=transaction_id,
-            )
-            logger.info(
-                f"[CLEAR_PROJECT_DATA] Deleted code_chunks in {time.time() - step_start:.3f}s"
-            )
-
-            step_start = time.time()
-            database.execute(
-                "DELETE FROM files WHERE id IN ({})".format(placeholders),
-                tuple(file_ids),
-                transaction_id=transaction_id,
-            )
-            logger.info(
-                f"[CLEAR_PROJECT_DATA] Deleted files in {time.time() - step_start:.3f}s"
-            )
-
-        # Delete project-level data
-        step_start = time.time()
-        database.execute(
-            "DELETE FROM datasets WHERE project_id = ?",
-            (project_id,),
-            transaction_id=transaction_id,
-        )
-        logger.info(
-            f"[CLEAR_PROJECT_DATA] Deleted datasets in {time.time() - step_start:.3f}s"
-        )
-
-        step_start = time.time()
-        database.execute(
-            "DELETE FROM vector_index WHERE project_id = ?",
-            (project_id,),
-            transaction_id=transaction_id,
-        )
-        logger.info(
-            f"[CLEAR_PROJECT_DATA] Deleted vector_index in {time.time() - step_start:.3f}s"
-        )
-
-        step_start = time.time()
-        database.execute(
-            "DELETE FROM projects WHERE id = ?",
-            (project_id,),
-            transaction_id=transaction_id,
-        )
-        logger.info(
-            f"[CLEAR_PROJECT_DATA] Deleted project record in {time.time() - step_start:.3f}s"
-        )
-
-        # Commit transaction
-        commit_start = time.time()
-        database.commit_transaction(transaction_id)
-        logger.info(
-            f"[CLEAR_PROJECT_DATA] Committed transaction {transaction_id} in {time.time() - commit_start:.3f}s"
-        )
-        logger.info(
-            f"[CLEAR_PROJECT_DATA] Completed clear for project {project_id} in {time.time() - clear_start:.3f}s"
-        )
-
-    except Exception as e:
-        # Rollback transaction on error
-        if transaction_id:
-            try:
-                rollback_start = time.time()
-                database.rollback_transaction(transaction_id)
-                logger.error(
-                    f"[CLEAR_PROJECT_DATA] Rolled back transaction {transaction_id} in {time.time() - rollback_start:.3f}s due to error: {e}"
-                )
-            except Exception as rollback_error:
-                logger.error(
-                    f"[CLEAR_PROJECT_DATA] Error during rollback: {rollback_error}"
-                )
-        raise
 
 
 class DeleteProjectCommand:
@@ -382,6 +53,7 @@ class DeleteProjectCommand:
         delete_from_disk: bool = False,
         version_dir: Optional[str] = None,
         trash_dir: Optional[str] = None,
+        config_path: Optional[str] = None,
     ):
         """
         Initialize delete project command.
@@ -392,7 +64,8 @@ class DeleteProjectCommand:
             dry_run: If True, only show what would be deleted
             delete_from_disk: If True, move project root to trash and delete version dir
             version_dir: Version directory path (if None, will try to get from config)
-            trash_dir: Trash directory path (if None, will try to get from config)
+            trash_dir: Trash directory path (if None, will try to get from config when config_path set)
+            config_path: Optional path to config.json to resolve trash_dir when trash_dir is None
         """
         self.database = database
         self.project_id = project_id
@@ -400,6 +73,7 @@ class DeleteProjectCommand:
         self.delete_from_disk = delete_from_disk
         self.version_dir = version_dir
         self.trash_dir = trash_dir
+        self.config_path = config_path
 
     async def execute(self) -> Dict[str, Any]:
         """
@@ -468,10 +142,26 @@ class DeleteProjectCommand:
                     # Fallback to default
                     version_dir_path = Path("data/versions").resolve()
 
-        # Resolve trash_dir if delete_from_disk
+        # Resolve trash_dir if delete_from_disk (from param or config per plan)
         trash_dir_path = None
-        if self.delete_from_disk and self.trash_dir:
-            trash_dir_path = Path(self.trash_dir).resolve()
+        if self.delete_from_disk:
+            if self.trash_dir:
+                trash_dir_path = Path(self.trash_dir).resolve()
+            elif self.config_path and Path(self.config_path).exists():
+                try:
+                    from ..core.storage_paths import (
+                        load_raw_config,
+                        resolve_storage_paths,
+                    )
+
+                    config_data = load_raw_config(Path(self.config_path))
+                    storage = resolve_storage_paths(
+                        config_data=config_data,
+                        config_path=Path(self.config_path),
+                    )
+                    trash_dir_path = storage.trash_dir
+                except Exception as e:
+                    logger.warning("Could not resolve trash_dir from config: %s", e)
 
         if self.dry_run:
             result = {
@@ -596,215 +286,3 @@ class DeleteProjectCommand:
                 "message": f"Failed to delete project: {str(e)}",
                 "project_id": self.project_id,
             }
-
-
-class DeleteUnwatchedProjectsCommand:
-    """
-    Command to delete projects that are not in the list of watched directories.
-
-    This command:
-    1. Discovers all projects in watched directories using project discovery
-    2. Finds all projects in the database
-    3. Identifies projects that are not in the discovered list
-    4. Deletes those projects
-
-    Use with caution - this operation cannot be undone.
-    """
-
-    def __init__(
-        self,
-        database: DatabaseClient,
-        watched_dirs: List[str],
-        dry_run: bool = False,
-        server_root_dir: Optional[str] = None,
-    ):
-        """
-        Initialize delete unwatched projects command.
-
-        Args:
-            database: DatabaseClient instance
-            watched_dirs: List of watched directory paths (absolute)
-            dry_run: If True, only show what would be deleted
-            server_root_dir: Server root directory (will be protected from deletion)
-        """
-        self.database = database
-        self.watched_dirs = {Path(d).resolve() for d in watched_dirs}
-        self.dry_run = dry_run
-        self.server_root_dir = (
-            Path(server_root_dir).resolve() if server_root_dir else None
-        )
-
-    async def execute(self) -> Dict[str, Any]:
-        """
-        Execute deletion of unwatched projects.
-
-        Uses project discovery to find all projects in watched directories,
-        then compares with database projects to find unwatched ones.
-
-        Returns:
-            Dictionary with deletion results
-        """
-        from ..core.project_discovery import (
-            discover_projects_in_directory,
-            NestedProjectError,
-            DuplicateProjectIdError,
-        )
-
-        # Step 1: Discover all projects in watched directories
-        discovered_project_ids: Set[str] = set()
-        discovery_errors = []
-
-        for watched_dir in self.watched_dirs:
-            try:
-                discovered_projects = discover_projects_in_directory(watched_dir)
-                discovered_project_ids.update(p.project_id for p in discovered_projects)
-                logger.debug(
-                    f"Discovered {len(discovered_projects)} project(s) in {watched_dir}"
-                )
-            except NestedProjectError as e:
-                logger.error(f"Nested project error in {watched_dir}: {e}")
-                discovery_errors.append(f"Nested project in {watched_dir}: {e}")
-            except DuplicateProjectIdError as e:
-                logger.error(f"Duplicate project_id error in {watched_dir}: {e}")
-                discovery_errors.append(f"Duplicate project_id in {watched_dir}: {e}")
-            except Exception as e:
-                logger.error(f"Error discovering projects in {watched_dir}: {e}")
-                discovery_errors.append(f"Error in {watched_dir}: {e}")
-
-        # Step 2: Get all projects from database
-        result = self.database.execute("SELECT id, root_path, name FROM projects")
-        # Handle different result formats
-        if isinstance(result, list):
-            all_projects = result
-        elif isinstance(result, dict):
-            all_projects = result.get("data", [])
-        else:
-            all_projects = []
-
-        projects_to_delete = []
-        projects_to_keep = []
-
-        # Step 3: Compare database projects with discovered projects
-        for project in all_projects:
-            project_id = project["id"]
-            root_path = project["root_path"]
-            project_name = project.get("name", "Unknown")
-
-            # Normalize project root path
-            try:
-                project_path = Path(root_path).resolve()
-            except Exception as e:
-                logger.warning(f"Invalid project path {root_path}: {e}")
-                # If path is invalid, consider it unwatched
-                projects_to_delete.append(
-                    {
-                        "project_id": project_id,
-                        "root_path": root_path,
-                        "name": project_name,
-                        "reason": "invalid_path",
-                    }
-                )
-                continue
-
-            # Protect server root directory from deletion
-            if self.server_root_dir and project_path == self.server_root_dir:
-                projects_to_keep.append(
-                    {
-                        "project_id": project_id,
-                        "root_path": root_path,
-                        "name": project_name,
-                        "reason": "server_root_protected",
-                    }
-                )
-                continue
-
-            # Check if project root path exists on disk
-            if not project_path.exists():
-                # Project root doesn't exist on disk - mark for deletion
-                projects_to_delete.append(
-                    {
-                        "project_id": project_id,
-                        "root_path": root_path,
-                        "name": project_name,
-                        "reason": "root_path_not_exists_on_disk",
-                    }
-                )
-                continue
-
-            # Check if project is in discovered projects
-            if project_id in discovered_project_ids:
-                projects_to_keep.append(
-                    {
-                        "project_id": project_id,
-                        "root_path": root_path,
-                        "name": project_name,
-                        "reason": "discovered_in_watch_dirs",
-                    }
-                )
-            else:
-                # Project exists on disk but not in watched directories
-                # Keep it (it's a valid project, just not in current watch_dirs config)
-                projects_to_keep.append(
-                    {
-                        "project_id": project_id,
-                        "root_path": root_path,
-                        "name": project_name,
-                        "reason": "exists_on_disk_but_not_in_watch_dirs",
-                    }
-                )
-
-        if not projects_to_delete:
-            return {
-                "success": True,
-                "dry_run": self.dry_run,
-                "deleted_count": 0,
-                "kept_count": len(projects_to_keep),
-                "projects_deleted": [],
-                "projects_kept": projects_to_keep,
-                "message": "No unwatched projects found",
-            }
-
-        # Delete projects
-        deleted_projects = []
-        errors = []
-
-        for project_info in projects_to_delete:
-            project_id = project_info["project_id"]
-
-            if self.dry_run:
-                deleted_projects.append(project_info)
-            else:
-                try:
-                    await _clear_project_data_impl(self.database, project_id)
-                    deleted_projects.append(project_info)
-                    logger.info(
-                        f"Deleted unwatched project {project_info['name']} "
-                        f"({project_id}): {project_info['root_path']}"
-                    )
-                except Exception as e:
-                    error_info = {
-                        "project_id": project_id,
-                        "root_path": project_info["root_path"],
-                        "name": project_info["name"],
-                        "error": str(e),
-                    }
-                    errors.append(error_info)
-                    logger.error(
-                        f"Failed to delete project {project_id}: {e}",
-                        exc_info=True,
-                    )
-
-        return {
-            "success": len(errors) == 0 and len(discovery_errors) == 0,
-            "dry_run": self.dry_run,
-            "deleted_count": len(deleted_projects),
-            "kept_count": len(projects_to_keep),
-            "projects_deleted": deleted_projects,
-            "projects_kept": projects_to_keep,
-            "discovery_errors": discovery_errors if discovery_errors else None,
-            "errors": errors if errors else None,
-            "message": (
-                f"Deleted {len(deleted_projects)} unwatched project(s), "
-                f"kept {len(projects_to_keep)} watched project(s)"
-            ),
-        }

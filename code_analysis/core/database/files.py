@@ -464,7 +464,6 @@ def update_file_data(
         # Update last_modified to be slightly different from file_mtime
         # This ensures _analyze_file will process the file and save AST/CST
         # We add a small epsilon to ensure last_modified != file_mtime
-        import time
         epsilon = 0.001
         updated_mtime = current_mtime + epsilon
         try:
@@ -918,12 +917,12 @@ def get_files_needing_chunking(
     self, project_id: str, limit: int = 10
 ) -> List[Dict[str, Any]]:
     """
-    Get files that need chunking (have docstrings but no chunks).
+    Get files that need chunking (have docstrings but no chunks, or marked needs_chunking).
 
     Files are considered needing chunking if:
     - They have docstrings (has_docstring = 1) OR
     - They have classes/functions/methods with docstrings
-    - AND they have no chunks in code_chunks table
+    - AND (they have no chunks in code_chunks table OR needs_chunking = 1)
     - AND they are NOT marked as deleted (deleted = 0 or NULL)
 
     **Important**: Deleted files are ALWAYS excluded from this query.
@@ -936,7 +935,7 @@ def get_files_needing_chunking(
         List of file records that need chunking
     """
     return self._fetchall(
-        "\n                SELECT DISTINCT f.id, f.project_id, f.path, f.has_docstring\n                FROM files f\n                WHERE f.project_id = ?\n                AND (f.deleted = 0 OR f.deleted IS NULL)\n                AND (\n                    f.has_docstring = 1\n                    OR EXISTS (\n                        SELECT 1 FROM classes c\n                        WHERE c.file_id = f.id AND c.docstring IS NOT NULL AND c.docstring != ''\n                    )\n                    OR EXISTS (\n                        SELECT 1 FROM functions fn\n                        WHERE fn.file_id = f.id AND fn.docstring IS NOT NULL AND fn.docstring != ''\n                    )\n                    OR EXISTS (\n                        SELECT 1 FROM methods m\n                        JOIN classes c ON m.class_id = c.id\n                        WHERE c.file_id = f.id AND m.docstring IS NOT NULL AND m.docstring != ''\n                    )\n                )\n                AND NOT EXISTS (\n                    SELECT 1 FROM code_chunks cc\n                    WHERE cc.file_id = f.id\n                )\n                ORDER BY f.updated_at DESC\n                LIMIT ?\n                ",
+        "\n                SELECT DISTINCT f.id, f.project_id, f.path, f.has_docstring\n                FROM files f\n                WHERE f.project_id = ?\n                AND (f.deleted = 0 OR f.deleted IS NULL)\n                AND (\n                    f.has_docstring = 1\n                    OR EXISTS (\n                        SELECT 1 FROM classes c\n                        WHERE c.file_id = f.id AND c.docstring IS NOT NULL AND c.docstring != ''\n                    )\n                    OR EXISTS (\n                        SELECT 1 FROM functions fn\n                        WHERE fn.file_id = f.id AND fn.docstring IS NOT NULL AND fn.docstring != ''\n                    )\n                    OR EXISTS (\n                        SELECT 1 FROM methods m\n                        JOIN classes c ON m.class_id = c.id\n                        WHERE c.file_id = f.id AND m.docstring IS NOT NULL AND m.docstring != ''\n                    )\n                )\n                AND (f.needs_chunking = 1 OR NOT EXISTS (\n                    SELECT 1 FROM code_chunks cc\n                    WHERE cc.file_id = f.id\n                ))\n                ORDER BY f.updated_at DESC\n                LIMIT ?\n                ",
         (project_id, limit),
     )
 
@@ -1022,7 +1021,6 @@ def mark_file_deleted(
     """
     import shutil
     from pathlib import Path
-    from ..project_resolution import normalize_abs_path
 
     # Try to get project root from database for validation
     project_root = None
@@ -1536,7 +1534,6 @@ def update_file_data_atomic(
             }
 
         # Calculate file metadata
-        lines = len(source_code.splitlines())
         import time
 
         file_mtime = time.time()  # Use current time as mtime for atomic update
@@ -1762,14 +1759,14 @@ def update_file_data_atomic(
         for node in ast.walk(tree):
             if isinstance(node, ast.Import):
                 for alias in node.names:
-                    import_id = self.add_import(
+                    self.add_import(
                         file_id, alias.name, None, "import", node.lineno
                     )
                     imports_added += 1
             elif isinstance(node, ast.ImportFrom):
                 module = node.module or ""
                 for alias in node.names:
-                    import_id = self.add_import(
+                    self.add_import(
                         file_id, alias.name, module, "from", node.lineno
                     )
                     imports_added += 1

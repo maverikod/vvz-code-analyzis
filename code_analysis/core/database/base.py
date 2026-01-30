@@ -444,6 +444,7 @@ class CodeDatabase:
                     deleted BOOLEAN DEFAULT 0,
                     original_path TEXT,
                     version_dir TEXT,
+                    needs_chunking INTEGER DEFAULT 0,
                     created_at REAL DEFAULT (julianday('now')),
                     updated_at REAL DEFAULT (julianday('now')),
                     FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE,
@@ -1161,6 +1162,16 @@ class CodeDatabase:
             except Exception as e:
                 logger.warning(f"Could not add version_dir column to files: {e}")
 
+        if "needs_chunking" not in files_columns:
+            try:
+                logger.info("Migrating files table: adding needs_chunking column")
+                self._execute(
+                    "ALTER TABLE files ADD COLUMN needs_chunking INTEGER DEFAULT 0"
+                )
+                self._commit()
+            except Exception as e:
+                logger.warning(f"Could not add needs_chunking column to files: {e}")
+
         # Create index after adding deleted column
         if "deleted" in files_columns or "deleted" not in files_columns:
             try:
@@ -1641,6 +1652,12 @@ class CodeDatabase:
                         },
                         {"name": "original_path", "type": "TEXT", "not_null": False},
                         {"name": "version_dir", "type": "TEXT", "not_null": False},
+                        {
+                            "name": "needs_chunking",
+                            "type": "INTEGER",
+                            "not_null": False,
+                            "default": "0",
+                        },
                         {
                             "name": "created_at",
                             "type": "REAL",

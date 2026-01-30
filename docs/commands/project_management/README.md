@@ -15,7 +15,7 @@ Commands for project lifecycle: create, delete, list, change project ID, delete 
 | delete_unwatched_projects| DeleteUnwatchedProjectsMCPCommand| (same)                                |
 | list_projects           | ListProjectsMCPCommand       | (same)                                   |
 
-Internal: `CreateProjectCommand` in `commands/project_creation.py`, `DeleteProjectCommand`, `DeleteUnwatchedProjectsCommand` in `commands/project_deletion.py`. All MCP commands inherit from `BaseMCPCommand`. Re-export in `commands/__init__.py`: ChangeProjectIdMCPCommand, ListProjectsMCPCommand.
+Internal: `CreateProjectCommand` in `commands/project_creation.py`, `DeleteProjectCommand` in `commands/project_deletion.py`, `DeleteUnwatchedProjectsCommand` in `commands/delete_unwatched_projects_command.py`. All MCP commands inherit from `BaseMCPCommand`. Re-export in `commands/__init__.py`: ChangeProjectIdMCPCommand, ListProjectsMCPCommand.
 
 ## Detailed Command Descriptions
 

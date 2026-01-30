@@ -63,6 +63,14 @@ class CSTConvertAndSaveCommand(BaseMCPCommand):
                     "type": "string",
                     "description": "Server root directory (optional, for database access). If not provided, will be resolved from config.",
                 },
+                "include_nodes": {
+                    "type": "boolean",
+                    "description": (
+                        "If True, include full list of CST node metadata in response (can be large). "
+                        "Default False to keep response small and avoid connection/buffer issues."
+                    ),
+                    "default": False,
+                },
             },
             "required": ["project_id", "source_code", "file_path"],
             "additionalProperties": False,
@@ -75,6 +83,7 @@ class CSTConvertAndSaveCommand(BaseMCPCommand):
         file_path: str,
         save_to_file: bool = True,
         root_dir: Optional[str] = None,
+        include_nodes: bool = False,
         **kwargs,
     ) -> SuccessResult:
         """
@@ -98,9 +107,10 @@ class CSTConvertAndSaveCommand(BaseMCPCommand):
             file_path: File path (relative to project root)
             save_to_file: Whether to save code to file on disk (default: True)
             root_dir: Optional server root directory
+            include_nodes: If True, include full nodes list in response (default False to keep response small)
 
         Returns:
-            SuccessResult with tree_id, file_id, ast_tree_id, cst_tree_id, and metadata
+            SuccessResult with tree_id, file_id, ast_tree_id, cst_tree_id, total_nodes; nodes list if include_nodes=True
         """
         try:
             # Validate source code is not empty
@@ -110,7 +120,6 @@ class CSTConvertAndSaveCommand(BaseMCPCommand):
                     code="EMPTY_CODE",
                     details={},
                 )
-
 
             # Resolve server root_dir for database access
             if not root_dir:
@@ -124,7 +133,11 @@ class CSTConvertAndSaveCommand(BaseMCPCommand):
                 storage = resolve_storage_paths(
                     config_data=config_data, config_path=config_path
                 )
-                root_dir = str(storage.config_dir.parent) if hasattr(storage, 'config_dir') else "/"
+                root_dir = (
+                    str(storage.config_dir.parent)
+                    if hasattr(storage, "config_dir")
+                    else "/"
+                )
 
             # Open database
             database = self._open_database(root_dir, auto_analyze=False)
@@ -161,7 +174,10 @@ class CSTConvertAndSaveCommand(BaseMCPCommand):
                     return ErrorResult(
                         message=f"Watch directory path not found for watch_dir_id {project.watch_dir_id}",
                         code="WATCH_DIR_NOT_FOUND",
-                        details={"project_id": project_id, "watch_dir_id": project.watch_dir_id},
+                        details={
+                            "project_id": project_id,
+                            "watch_dir_id": project.watch_dir_id,
+                        },
                     )
 
                 watch_dir_path = watch_dir_paths[0].get("absolute_path")
@@ -169,7 +185,10 @@ class CSTConvertAndSaveCommand(BaseMCPCommand):
                     return ErrorResult(
                         message=f"Watch directory path is NULL for watch_dir_id {project.watch_dir_id}",
                         code="WATCH_DIR_NULL",
-                        details={"project_id": project_id, "watch_dir_id": project.watch_dir_id},
+                        details={
+                            "project_id": project_id,
+                            "watch_dir_id": project.watch_dir_id,
+                        },
                     )
 
                 abs_path = Path(watch_dir_path) / project.name / file_path
@@ -195,7 +214,10 @@ class CSTConvertAndSaveCommand(BaseMCPCommand):
                     return ErrorResult(
                         message=f"Syntax error in source code: {e}",
                         code="SYNTAX_ERROR",
-                        details={"error": str(e), "line": e.lineno if e.lineno else None},
+                        details={
+                            "error": str(e),
+                            "line": e.lineno if e.lineno else None,
+                        },
                     )
                 except Exception as e:
                     logger.exception("Error parsing AST: %s", e)
@@ -276,7 +298,9 @@ class CSTConvertAndSaveCommand(BaseMCPCommand):
                         limit=1,
                     )
                     ast_tree_id = ast_rows[0].get("id") if ast_rows else None
-                    logger.debug(f"AST saved with id={ast_tree_id} for file_id={file_id}")
+                    logger.debug(
+                        f"AST saved with id={ast_tree_id} for file_id={file_id}"
+                    )
                 except Exception as e:
                     logger.error(f"Error saving AST: {e}", exc_info=True)
                     return ErrorResult(
@@ -302,7 +326,9 @@ class CSTConvertAndSaveCommand(BaseMCPCommand):
                         limit=1,
                     )
                     cst_tree_id = cst_rows[0].get("id") if cst_rows else None
-                    logger.debug(f"CST saved with id={cst_tree_id} for file_id={file_id}")
+                    logger.debug(
+                        f"CST saved with id={cst_tree_id} for file_id={file_id}"
+                    )
                 except Exception as e:
                     logger.error(f"Error saving CST: {e}", exc_info=True)
                     return ErrorResult(
@@ -311,9 +337,8 @@ class CSTConvertAndSaveCommand(BaseMCPCommand):
                         details={"error": str(e)},
                     )
 
-                # Convert metadata to dictionaries
-                nodes = [meta.to_dict() for meta in cst_tree.metadata_map.values()]
-
+                # Build response; omit full nodes list by default to keep response small
+                total_nodes = len(cst_tree.metadata_map)
                 data = {
                     "success": True,
                     "tree_id": cst_tree.tree_id,
@@ -323,9 +348,14 @@ class CSTConvertAndSaveCommand(BaseMCPCommand):
                     "cst_saved": True,
                     "ast_tree_id": ast_tree_id,
                     "cst_tree_id": cst_tree_id,
-                    "nodes": nodes,
-                    "total_nodes": len(nodes),
+                    "total_nodes": total_nodes,
                 }
+                if include_nodes:
+                    data["nodes"] = [
+                        meta.to_dict() for meta in cst_tree.metadata_map.values()
+                    ]
+                else:
+                    data["nodes"] = []
 
                 return SuccessResult(data=data)
 
@@ -425,6 +455,15 @@ class CSTConvertAndSaveCommand(BaseMCPCommand):
                     "description": "Server root directory (optional, for database access). If not provided, will be resolved from config.",
                     "type": "string",
                     "required": False,
+                },
+                "include_nodes": {
+                    "description": (
+                        "If True, include full list of CST node metadata in response (can be large). "
+                        "Default False to keep response small and avoid connection/buffer issues."
+                    ),
+                    "type": "boolean",
+                    "required": False,
+                    "default": False,
                 },
             },
             "return_value": {

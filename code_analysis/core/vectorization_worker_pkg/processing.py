@@ -427,10 +427,10 @@ async def process_chunks(self, poll_interval: int = 30) -> Dict[str, Any]:
                                                             AND m.docstring != ''
                                                       )
                                                   )
-                                                  AND NOT EXISTS (
+                                                  AND (f.needs_chunking = 1 OR NOT EXISTS (
                                                       SELECT 1 FROM code_chunks cc 
                                                       WHERE cc.file_id = f.id
-                                                  )
+                                                  ))
                                                 LIMIT ?
                                                 """,
                                                 (project_id, 5),

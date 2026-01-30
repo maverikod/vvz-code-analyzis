@@ -910,6 +910,7 @@ class DeleteProjectMCPCommand(BaseMCPCommand):
                     delete_from_disk=delete_from_disk,
                     version_dir=version_dir,
                     trash_dir=trash_dir,
+                    config_path=str(config_path),
                 )
                 result = await cmd.execute()
 
@@ -1428,8 +1429,8 @@ class DeleteUnwatchedProjectsMCPCommand(BaseMCPCommand):
     name = "delete_unwatched_projects"
     version = "1.0.0"
     descr = (
-        "Delete projects that are not in the list of watched directories. "
-        "This operation cannot be undone."
+        "Delete only orphaned project records from DB (root_path not on disk or invalid). "
+        "Keeps projects that exist on disk but are outside watch_dirs. Cannot be undone."
     )
     category = "project_management"
     author = "Vasiliy Zdanovskiy"
@@ -1563,7 +1564,9 @@ class DeleteUnwatchedProjectsMCPCommand(BaseMCPCommand):
             database = self._open_database(str(root_path), auto_analyze=False)
             try:
                 # Import and execute command
-                from .project_deletion import DeleteUnwatchedProjectsCommand
+                from .delete_unwatched_projects_command import (
+                    DeleteUnwatchedProjectsCommand,
+                )
 
                 cmd = DeleteUnwatchedProjectsCommand(
                     database=database,
@@ -1607,47 +1610,32 @@ class DeleteUnwatchedProjectsMCPCommand(BaseMCPCommand):
             "author": cls.author,
             "email": cls.email,
             "detailed_description": (
-                "The delete_unwatched_projects command deletes projects that are not in the list of "
-                "watched directories. It discovers all projects in watched directories and compares "
-                "them with database projects to find unwatched ones, then deletes those projects.\n\n"
+                "The delete_unwatched_projects command deletes only ORPHANED project records from "
+                "the database: projects whose root_path does not exist on disk or is invalid. It does "
+                "NOT delete projects that exist on disk but are outside the current watched directories "
+                "(those are kept; reason exists_on_disk_but_not_in_watch_dirs). File-operating commands "
+                "work only within watched directories; this command only cleans DB records for projects "
+                "that no longer have a valid root on disk.\n\n"
                 "Operation flow:\n"
-                "1. Validates root_dir exists and is a directory\n"
-                "2. Gets watched directories from config.json (code_analysis.worker.watch_dirs) or from parameter\n"
-                "3. Also checks dynamic_watch_file if configured\n"
-                "4. Discovers all projects in watched directories using project discovery\n"
-                "5. Gets all projects from database\n"
-                "6. Compares database projects with discovered projects:\n"
-                "   - Projects in discovered list: Kept\n"
-                "   - Projects not in discovered list: Marked for deletion\n"
-                "   - Server root directory: Always protected from deletion\n"
-                "7. If dry_run=True:\n"
-                "   - Lists projects that would be deleted\n"
-                "   - Lists projects that would be kept\n"
-                "   - Does not perform actual deletion\n"
-                "8. If dry_run=False:\n"
-                "   - Deletes unwatched projects using clear_project_data\n"
-                "   - Removes all project data (files, chunks, datasets, etc.)\n"
-                "9. Returns deletion summary\n\n"
-                "Project Discovery:\n"
-                "- Scans watched directories for projects (looks for projectid files)\n"
-                "- Uses project discovery to find all projects\n"
-                "- Handles nested project errors and duplicate project_id errors\n"
-                "- Collects discovery errors for reporting\n\n"
+                "1. Gets watched directories from config or parameter\n"
+                "2. Discovers all projects in watched directories using project discovery\n"
+                "3. Gets all projects from database\n"
+                "4. For each DB project: invalid path or server root protected; root_path not exists -> "
+                "marked for deletion (orphaned); root exists and in discovered list -> kept; root exists "
+                "but not in discovered list -> KEPT (exists_on_disk_but_not_in_watch_dirs).\n"
+                "5. If dry_run=True: reports what would be deleted/kept; no actual deletion\n"
+                "6. If dry_run=False: deletes only marked (orphaned) project data via clear_project_data\n"
+                "7. Returns deletion summary\n\n"
                 "Protection:\n"
                 "- Server root directory is always protected from deletion\n"
-                "- Projects in watched directories are kept\n"
-                "- Only unwatched projects are deleted\n\n"
-                "Use cases:\n"
-                "- Clean up projects that are no longer in watched directories\n"
-                "- Remove orphaned projects from database\n"
-                "- Maintain database cleanliness\n"
-                "- Free up database space\n\n"
+                "- Projects that exist on disk but are not in watch_dirs are KEPT (no file operations "
+                "outside watched dirs)\n"
+                "- Only orphaned DB records (root_path missing/invalid) are deleted\n\n"
+                "Use cases: Remove orphaned project records from database (root moved or deleted on disk); "
+                "maintain database cleanliness.\n\n"
                 "Important notes:\n"
                 "- This operation is PERMANENT and cannot be undone\n"
                 "- Always use dry_run=True first to preview what will be deleted\n"
-                "- Watched directories are read from config.json if not provided\n"
-                "- Server root directory is automatically protected\n"
-                "- Discovery errors are reported but don't stop the process\n"
                 "- Use with extreme caution"
             ),
             "parameters": {
@@ -1702,7 +1690,7 @@ class DeleteUnwatchedProjectsMCPCommand(BaseMCPCommand):
                         "root_dir": "/home/user/projects/code_analysis",
                     },
                     "explanation": (
-                        "Deletes projects not in watched directories from config.json. "
+                        "Deletes only orphaned project records (root_path missing on disk) using config. "
                         "WARNING: This is permanent and cannot be undone."
                     ),
                 },
@@ -1713,7 +1701,7 @@ class DeleteUnwatchedProjectsMCPCommand(BaseMCPCommand):
                         "watched_dirs": ["/home/user/projects", "/var/lib/projects"],
                     },
                     "explanation": (
-                        "Deletes projects not in the specified watched directories. "
+                        "Deletes only orphaned project records (root_path missing on disk); watched_dirs override config. "
                         "Overrides config.json watched_dirs."
                     ),
                 },
@@ -1846,7 +1834,11 @@ class ListProjectsMCPCommand(BaseMCPCommand):
         """
         return {
             "type": "object",
-            "description": "List all projects in the database with their UUID and metadata",
+            "description": (
+                "List all projects in the database with their UUID and metadata. "
+                "Allowed parameter: watched_dir_id (optional). Does NOT accept root_dir; "
+                "database path is resolved from server configuration."
+            ),
             "properties": {
                 "watched_dir_id": {
                     "type": "string",
@@ -1896,6 +1888,8 @@ class ListProjectsMCPCommand(BaseMCPCommand):
                 "The list_projects command retrieves all projects from the database "
                 "and returns their complete metadata including UUID, root path, name, "
                 "comment, watch directory identifier, and last update timestamp.\n\n"
+                "Parameters: Only watched_dir_id (optional). This command does NOT accept root_dir; "
+                "database path is resolved from server configuration.\n\n"
                 "Operation flow:\n"
                 "1. Resolves database path from server configuration (config.json)\n"
                 "2. Opens database connection\n"
@@ -1913,7 +1907,7 @@ class ListProjectsMCPCommand(BaseMCPCommand):
                 "- If watched_dir_id is provided, only projects from that watched directory are returned\n"
                 "- Empty database or no matching projects returns empty list (count: 0)\n"
                 "- Each project entry includes: id (UUID), root_path, name, comment, watch_dir_id, updated_at\n"
-                "- Database path is automatically resolved from server configuration, no root_dir parameter needed"
+                "- Do not pass root_dir; it is rejected. Database path is resolved from server config only."
             ),
             "parameters": {
                 "watched_dir_id": {
@@ -1921,7 +1915,8 @@ class ListProjectsMCPCommand(BaseMCPCommand):
                         "Optional watched directory identifier (UUID4). "
                         "If provided, only projects belonging to this watched directory will be returned. "
                         "If not provided or omitted, all projects from all watched directories are returned. "
-                        "The watched_dir_id can be found in the watch_dirs table or obtained from project metadata."
+                        "The watched_dir_id can be found in the watch_dirs table or obtained from project metadata. "
+                        "This command has no other parameters; root_dir is not accepted (database path from server config)."
                     ),
                     "type": "string",
                     "required": False,
@@ -2129,6 +2124,84 @@ class ListProjectsMCPCommand(BaseMCPCommand):
                 database.disconnect()
         except Exception as e:
             return self._handle_error(e, "LIST_PROJECTS_ERROR", "list_projects")
+
+
+class ListWatchDirsMCPCommand(BaseMCPCommand):
+    """
+    List all watch directories with their IDs and paths.
+
+    Allows models without project source code to discover watch_dir_id
+    for create_project (e.g. call help('list_watch_dirs'), then call_server,
+    then use returned id in create_project).
+    """
+
+    name = "list_watch_dirs"
+    version = "1.0.0"
+    descr = "List watch directories (id and path) for use with create_project"
+    category = "project_management"
+    author = "Vasiliy Zdanovskiy"
+    email = "vasilyvz@gmail.com"
+    use_queue = False
+
+    @classmethod
+    def get_schema(
+        cls: type["ListWatchDirsMCPCommand"],
+    ) -> Dict[str, Any]:
+        return {
+            "type": "object",
+            "description": (
+                "List all watch directories. Returns id (use as watch_dir_id in create_project) "
+                "and absolute_path. Database path is resolved from server config."
+            ),
+            "properties": {},
+            "required": [],
+            "additionalProperties": False,
+        }
+
+    async def execute(
+        self: "ListWatchDirsMCPCommand",
+        **kwargs: Any,
+    ) -> SuccessResult | ErrorResult:
+        try:
+            from ..core.storage_paths import load_raw_config, resolve_storage_paths
+
+            config_path = self._resolve_config_path()
+            config_data = load_raw_config(config_path)
+            storage = resolve_storage_paths(
+                config_data=config_data, config_path=config_path
+            )
+            from ..core.database_client.client import DatabaseClient
+            from .base_mcp_command import _get_socket_path_from_db_path
+
+            socket_path = _get_socket_path_from_db_path(storage.db_path)
+            database = DatabaseClient(socket_path=socket_path)
+            database.connect()
+            try:
+                result = database.execute(
+                    """
+                    SELECT wd.id, wd.name, wdp.absolute_path
+                    FROM watch_dirs wd
+                    LEFT JOIN watch_dir_paths wdp ON wd.id = wdp.watch_dir_id
+                    ORDER BY wd.created_at
+                    """
+                )
+                rows = result.get("data", []) if isinstance(result, dict) else []
+                items = [
+                    {
+                        "id": r.get("id"),
+                        "name": r.get("name"),
+                        "absolute_path": r.get("absolute_path"),
+                    }
+                    for r in rows
+                ]
+                return SuccessResult(
+                    data={"watch_dirs": items, "count": len(items)},
+                    message=f"Found {len(items)} watch directory(ies)",
+                )
+            finally:
+                database.disconnect()
+        except Exception as e:
+            return self._handle_error(e, "LIST_WATCH_DIRS_ERROR", "list_watch_dirs")
 
 
 class CreateProjectMCPCommand(BaseMCPCommand):

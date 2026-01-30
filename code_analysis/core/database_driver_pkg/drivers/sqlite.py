@@ -75,8 +75,39 @@ class SQLiteDriver(BaseDatabaseDriver):
             self._transaction_manager = SQLiteTransactionManager(self.db_path)
             self._schema_manager = SQLiteSchemaManager(self.conn)
             self._operations = SQLiteOperations(self.conn)
+
+            # Ensure migrations for columns used by workers (e.g. needs_chunking)
+            self._ensure_files_table_migrations()
         except Exception as e:
             raise DriverConnectionError(f"Failed to connect to database: {e}") from e
+
+    def _ensure_files_table_migrations(self) -> None:
+        """Run migrations on files table (e.g. needs_chunking) if column is missing.
+
+        Workers (file_watcher, vectorization) use raw SQL that references these columns.
+        This ensures the column exists when driver opens the DB (sync_schema may not run).
+        """
+        if not self._schema_manager:
+            return
+        try:
+            info = self._schema_manager.get_table_info("files")
+            columns = {row["name"] for row in info}
+            if "needs_chunking" not in columns:
+                logger.info(
+                    "Migrating files table: adding needs_chunking column (driver)"
+                )
+                self.conn.execute(
+                    "ALTER TABLE files ADD COLUMN needs_chunking INTEGER DEFAULT 0"
+                )
+                self.conn.commit()
+        except Exception as e:
+            logger.warning(
+                "Could not add needs_chunking column to files in driver: %s", e
+            )
+            try:
+                self.conn.rollback()
+            except Exception:
+                pass
 
     def disconnect(self) -> None:
         """Close SQLite connection.
@@ -227,7 +258,12 @@ class SQLiteDriver(BaseDatabaseDriver):
             table_name, where, columns, limit, offset, order_by
         )
 
-    def execute(self, sql: str, params: Optional[tuple] = None, transaction_id: Optional[str] = None) -> Dict[str, Any]:
+    def execute(
+        self,
+        sql: str,
+        params: Optional[tuple] = None,
+        transaction_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
         """Execute raw SQL statement.
 
         Args:

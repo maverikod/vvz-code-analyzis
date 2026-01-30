@@ -43,7 +43,7 @@ Important notes:
 |-----------|------|----------|-------------|
 | `watched_dir_id` | string | No | Optional watched directory identifier (UUID4). If provided, only projects from this watched directory will be returned. If not provided, all projects from all watched directories are returned. |
 
-**Schema:** `additionalProperties: false` — only the parameters above are accepted.
+**Schema:** `additionalProperties: false` — only the parameters above are accepted. This command does **not** accept `root_dir`; database path is resolved from server configuration.
 
 ---
 

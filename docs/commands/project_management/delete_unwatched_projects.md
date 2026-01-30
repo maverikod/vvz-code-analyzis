@@ -12,41 +12,29 @@ email: vasilyvz@gmail.com
 
 ## Purpose (Предназначение)
 
-The delete_unwatched_projects command deletes projects that are not in the list of watched directories. It discovers all projects in watched directories and compares them with database projects to find unwatched ones, then deletes those projects.
+The delete_unwatched_projects command deletes **only orphaned** project records from the database: projects whose `root_path` does not exist on disk or is invalid. It does **not** delete projects that exist on disk but are outside the current watched directories (those are kept; reason `exists_on_disk_but_not_in_watch_dirs`). File-operating commands work only within watched directories; this command only cleans DB records for projects that no longer have a valid root on disk.
 
 Operation flow:
-1. Validates root_dir exists and is a directory
-2. Gets watched directories from config.json (code_analysis.worker.watch_dirs) or from parameter
-3. Also checks dynamic_watch_file if configured
-4. Discovers all projects in watched directories using project discovery
-5. Gets all projects from database
-6. Compares database projects with discovered projects:
-   - Projects in discovered list: Kept
-   - Projects not in discovered list: Marked for deletion
-   - Server root directory: Always protected from deletion
-7. If dry_run=True:
-   - Lists projects that would be deleted
-   - Lists projects that would be kept
-   - Does not perform actual deletion
-8. If dry_run=False:
-   - Deletes unwatched projects using clear_project_data
-   - Removes all project data (files, chunks, datasets, etc.)
-9. Returns deletion summary
-
-Project Discovery:
-- Scans watched directories for projects (looks for projectid files)
-- Uses project discovery to find all projects
-- Handles nested project errors and duplicate project_id errors
-- Collects discovery errors for reporting
+1. Gets watched directories from config or parameter
+2. Discovers all projects in watched directories using project discovery
+3. Gets all projects from database
+4. For each DB project:
+   - Invalid path or server root (protected): kept or special handling
+   - Root path does not exist on disk: **marked for deletion** (orphaned record)
+   - Root exists, project in discovered list: kept (`discovered_in_watch_dirs`)
+   - Root exists, project not in discovered list: **kept** (`exists_on_disk_but_not_in_watch_dirs`) — we do not delete or operate outside watched dirs
+5. If dry_run=True: reports what would be deleted/kept; no actual deletion
+6. If dry_run=False: deletes only marked (orphaned) project data via clear_project_data
+7. Returns deletion summary
 
 Protection:
 - Server root directory is always protected from deletion
-- Projects in watched directories are kept
-- Only unwatched projects are deleted
+- Projects that exist on disk but are not in watch_dirs are **kept** (no file operations outside watched dirs)
+- Only orphaned DB records (root_path missing/invalid) are deleted
 
 Use cases:
-- Clean up projects that are no longer in watched directories
-- Remove orphaned projects from database
+- Remove orphaned project records from database (root moved or deleted on disk)
+- Maintain database cleanliness
 - Maintain database cleanliness
 - Free up database space
 

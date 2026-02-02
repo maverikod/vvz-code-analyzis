@@ -405,7 +405,7 @@ class FileChangeProcessor:
                     f"[project={project_id}] [DELETED FILE] {file_path_str} | action: soft_delete"
                 )
                 if self.version_dir:
-                    self.database._execute(
+                    self.database.execute(
                         """
                         UPDATE files 
                         SET deleted = 1, deleted_at = julianday('now')
@@ -413,12 +413,13 @@ class FileChangeProcessor:
                         """,
                         (file_path_str, project_id),
                     )
-                    self.database._commit()
-                    # Check if row was updated
-                    row = self.database._fetchone(
+                    # Check if row was updated (DatabaseClient has no _commit; execute is auto-commit)
+                    res = self.database.execute(
                         "SELECT id FROM files WHERE path = ? AND project_id = ? AND deleted = 1",
                         (file_path_str, project_id),
                     )
+                    data = res.get("data", [])
+                    row = data[0] if data else None
                     if row:
                         stats["deleted_files"] += 1
                         logger.info(
@@ -509,10 +510,12 @@ class FileChangeProcessor:
                         "falling back to mark_file_needs_chunking"
                     )
                     # Check if file already exists before UPDATE
-                    existing = self.database._fetchone(
+                    res = self.database.execute(
                         "SELECT id FROM files WHERE path = ? AND project_id = ?",
                         (abs_file_path, project_id),
                     )
+                    data = res.get("data", [])
+                    existing = data[0] if data else None
                     if not existing:
                         # New file: insert/update file record first
                         path_obj = Path(abs_file_path)
@@ -534,7 +537,7 @@ class FileChangeProcessor:
                             )
 
                         try:
-                            self.database._execute(
+                            self.database.execute(
                                 """
                                 INSERT INTO files (path, lines, last_modified, has_docstring, project_id, created_at)
                                 VALUES (?, ?, ?, ?, ?, julianday('now'))
@@ -547,7 +550,6 @@ class FileChangeProcessor:
                                     project_id,
                                 ),
                             )
-                            self.database._commit()
                         except Exception as e:
                             logger.error(
                                 f"[QUEUE] Failed to add new file record: {abs_file_path} ({e})"
@@ -555,22 +557,20 @@ class FileChangeProcessor:
                             return False
 
                         # Retry marking for chunking
-                        self.database._execute(
+                        self.database.execute(
                             """
                             UPDATE files SET needs_chunking = 1 WHERE path = ? AND project_id = ?
                             """,
                             (abs_file_path, project_id),
                         )
-                        self.database._commit()
                     else:
                         # File already existed: just mark for chunking
-                        self.database._execute(
+                        self.database.execute(
                             """
                             UPDATE files SET needs_chunking = 1 WHERE path = ? AND project_id = ?
                             """,
                             (abs_file_path, project_id),
                         )
-                        self.database._commit()
                     return True
 
             # Path is already normalized by normalize_file_path above
@@ -607,7 +607,7 @@ class FileChangeProcessor:
                 # Add/update file and get file_id (add_file handles both INSERT and UPDATE)
                 # This ensures relative_path and watch_dir_id are always set correctly
                 # Use execute() for add_file
-                self.database._execute(
+                self.database.execute(
                     """
                     INSERT OR REPLACE INTO files (path, lines, last_modified, has_docstring, project_id, created_at, updated_at)
                     VALUES (?, ?, ?, ?, ?, julianday('now'), julianday('now'))
@@ -620,12 +620,13 @@ class FileChangeProcessor:
                         project_id,
                     ),
                 )
-                self.database._commit()
-                # Get file_id by querying
-                file_row = self.database._fetchone(
+                # Get file_id by querying (DatabaseClient: execute returns data list)
+                res = self.database.execute(
                     "SELECT id FROM files WHERE path = ? AND project_id = ? LIMIT 1",
                     (abs_file_path, project_id),
                 )
+                data = res.get("data", [])
+                file_row = data[0] if data else None
                 file_id = file_row.get("id", 0) if file_row else 0
                 logger.debug(
                     f"[QUEUE] File added/updated in database: {abs_file_path} | "
@@ -664,13 +665,12 @@ class FileChangeProcessor:
             # Mark for chunking (vectorization worker will process)
             # Note: Immediate vectorization is not done here because this is sync context
             # Worker will handle vectorization in background
-            self.database._execute(
+            self.database.execute(
                 """
                 UPDATE files SET needs_chunking = 1 WHERE path = ? AND project_id = ?
                 """,
                 (abs_file_path, project_id),
             )
-            self.database._commit()
             logger.debug(
                 f"[QUEUE] File marked for worker vectorization: {abs_file_path}"
             )

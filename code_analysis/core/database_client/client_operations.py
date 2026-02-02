@@ -9,7 +9,7 @@ email: vasilyvz@gmail.com
 
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 from ..database_driver_pkg.request import (
     DeleteRequest,
@@ -39,7 +39,11 @@ class _ClientOperationsMixin:
         request = InsertRequest(table_name=table_name, data=data)
         response = self.rpc_client.call("insert", request.to_dict())
         result_data = self._extract_result_data(response)
-        data_inner = result_data.get("data", result_data) if isinstance(result_data, dict) else {}
+        data_inner = (
+            result_data.get("data", result_data)
+            if isinstance(result_data, dict)
+            else {}
+        )
         return data_inner.get("row_id", 0) if isinstance(data_inner, dict) else 0
 
     def update(
@@ -65,7 +69,11 @@ class _ClientOperationsMixin:
         request = UpdateRequest(table_name=table_name, where=where, data=data)
         response = self.rpc_client.call("update", request.to_dict())
         result_data = self._extract_result_data(response)
-        data_inner = result_data.get("data", result_data) if isinstance(result_data, dict) else {}
+        data_inner = (
+            result_data.get("data", result_data)
+            if isinstance(result_data, dict)
+            else {}
+        )
         return data_inner.get("affected_rows", 0) if isinstance(data_inner, dict) else 0
 
     def delete(self, table_name: str, where: Dict[str, Any]) -> int:
@@ -85,7 +93,11 @@ class _ClientOperationsMixin:
         request = DeleteRequest(table_name=table_name, where=where)
         response = self.rpc_client.call("delete", request.to_dict())
         result_data = self._extract_result_data(response)
-        data_inner = result_data.get("data", result_data) if isinstance(result_data, dict) else {}
+        data_inner = (
+            result_data.get("data", result_data)
+            if isinstance(result_data, dict)
+            else {}
+        )
         return data_inner.get("affected_rows", 0) if isinstance(data_inner, dict) else 0
 
     def select(
@@ -177,6 +189,46 @@ class _ClientOperationsMixin:
         # Fallback: if result is not a dict, return empty dict
         return {}
 
+    def execute_batch(
+        self,
+        operations: List[Tuple[str, Optional[Union[tuple, list]]]],
+        transaction_id: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        """Execute multiple SQL statements in one RPC round-trip.
+
+        Args:
+            operations: List of (sql, params) where params is optional tuple or list
+            transaction_id: Optional transaction ID for all operations
+
+        Returns:
+            List of result dicts (same shape as execute(): data, affected_rows, lastrowid)
+
+        Raises:
+            RPCClientError: If RPC call fails
+            RPCResponseError: If response contains error
+        """
+        rpc_ops = []
+        for sql, params in operations:
+            rpc_ops.append(
+                {
+                    "sql": sql,
+                    "params": list(params) if params is not None else None,
+                }
+            )
+        rpc_params: Dict[str, Any] = {"operations": rpc_ops}
+        if transaction_id is not None:
+            rpc_params["transaction_id"] = transaction_id
+        response = self.rpc_client.call("execute_batch", rpc_params)
+        result = self._extract_result_data(response)
+        if isinstance(result, dict):
+            # SuccessResult: {"success": True, "data": {"results": [...]}}
+            inner = result.get("data", result)
+            if isinstance(inner, dict):
+                results = inner.get("results", [])
+                if isinstance(results, list):
+                    return results
+        return []
+
     def add_code_chunk(
         self,
         file_id: int,
@@ -223,6 +275,13 @@ class _ClientOperationsMixin:
         Returns:
             Chunk ID (lastrowid)
         """
+        if embedding_vector is not None and not (
+            embedding_model and str(embedding_model).strip()
+        ):
+            raise ValueError(
+                "embedding_model is required when embedding_vector is set; "
+                "a vector without model cannot be used for search"
+            )
         sql = """
             INSERT OR REPLACE INTO code_chunks
             (

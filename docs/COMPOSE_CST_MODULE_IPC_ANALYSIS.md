@@ -17,6 +17,17 @@ Explain why `compose_cst_module` can take ~30–35 seconds and where inter-proce
 
 So the delay is mostly **IPC volume** (many small DB calls) and **heavy validation** (mypy), not a single blocking call.
 
+### Profile logging
+
+To find the bottleneck on your run, the code logs **`[PROFILE]`** lines with elapsed times:
+
+- **Command:** `compose_cst_module` steps 1–15 (resolve_project, get_tree, generate_source, validate_and_write_temp, open_db_and_backup_data, create_file_backup, begin_transaction, apply_changes, total).
+- **Validation:** `validate_file_in_temp` — compile, docstrings, flake8, mypy, total.
+- **Apply:** `_apply_changes` — delete_file_data, update_file_record, update_file_data_atomic, os_replace, commit_transaction, git_commit.
+- **DB helpers:** `_backup_file_data`, `_delete_file_data` (per file_id).
+
+Example: `grep "\[PROFILE\]" logs/mcp_server.log` after a run to see the timeline.
+
 ---
 
 ## 1. Database access: two IPC paths
@@ -147,7 +158,24 @@ So the total is consistent with **~30–35 s**, and the main levers are **mypy**
 
 ---
 
-## 9. References
+## 9. Batch RPC (implemented)
+
+To reduce the number of RPC round-trips, **execute_batch** was added:
+
+- **Driver:** `BaseDatabaseDriver.execute_batch(operations, transaction_id)` runs a list of `(sql, params)` in one RPC; default implementation loops `execute()` so all drivers work without change.
+- **RPC:** `handle_execute_batch` in `rpc_handlers_base.py`; registered in `rpc_server.py` as `execute_batch`.
+- **Client:** `DatabaseClient.execute_batch(operations, transaction_id)` sends one RPC and returns a list of result dicts (same shape as `execute()`).
+
+**compose_cst_module** uses batching:
+
+- **\_backup_file_data:** One batch of 9 SELECTs (files, classes, functions, imports, usages, issues, code_content, ast_trees, cst_trees); then optionally one batch of 1 SELECT for methods. So **2 RPCs** instead of ~11.
+- **\_delete_file_data:** One batch of 2 SELECTs (class_ids, content_ids); then one batch of all DELETEs (FTS, methods, entities, vector_index). So **2 RPCs** instead of ~16. Uses the same `transaction_id` as the command transaction.
+
+**Expected effect:** Backup + delete go from ~27 single-shot RPCs to **4** batched RPCs. Remaining DB cost is mainly `_update_file_data_atomic` (per-entity inserts) and validation (mypy). To measure: run `compose_cst_module`, then `grep "\[PROFILE\]" logs/…` and compare `_backup_file_data` and `_delete_file_data` elapsed times before/after.
+
+---
+
+## 10. References
 
 - `code_analysis/commands/cst_compose_module_command.py` — command flow, DB and validation calls.
 - `code_analysis/core/database_client/rpc_client.py` — RPC client (request–response).
@@ -157,3 +185,5 @@ So the total is consistent with **~30–35 s**, and the main levers are **mypy**
 - `code_analysis/core/cst_module/validation.py` — validation and mypy.
 - `code_analysis/core/code_quality/type_checker.py` — mypy subprocess.
 - `docs/commands/cst/compose_cst_module.md` — user-facing docs and timeout note (e.g. 40–60 s for proxy).
+- `code_analysis/core/database_client/client_operations.py` — `execute_batch` client method.
+- `code_analysis/core/database_driver_pkg/rpc_handlers_base.py` — `handle_execute_batch`.

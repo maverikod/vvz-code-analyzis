@@ -12,6 +12,7 @@ from __future__ import annotations
 import logging
 import os
 import tempfile
+import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -101,7 +102,7 @@ class ComposeCSTModuleCommand(BaseMCPCommand):
 
     def _backup_file_data(self, database, file_id: int) -> Optional[Dict[str, Any]]:
         """
-        Backup all file data from database.
+        Backup all file data from database using batch RPC.
 
         Args:
             database: Database instance
@@ -110,149 +111,159 @@ class ComposeCSTModuleCommand(BaseMCPCommand):
         Returns:
             Dictionary with backed up data or None if file not found
         """
-        # Get file record using select
-        file_rows = database.select("files", where={"id": file_id}, limit=1)
+        t0 = time.perf_counter()
+
+        def _extract_rows(result: Dict[str, Any]) -> List[Dict[str, Any]]:
+            """Extract row list from execute/execute_batch result."""
+            if isinstance(result, dict):
+                data = result.get("data", [])
+                return data if isinstance(data, list) else []
+            return []
+
+        backup_ops = [
+            ("SELECT * FROM files WHERE id = ?", (file_id,)),
+            ("SELECT * FROM classes WHERE file_id = ?", (file_id,)),
+            ("SELECT * FROM functions WHERE file_id = ?", (file_id,)),
+            ("SELECT * FROM imports WHERE file_id = ?", (file_id,)),
+            ("SELECT * FROM usages WHERE file_id = ?", (file_id,)),
+            ("SELECT * FROM issues WHERE file_id = ?", (file_id,)),
+            ("SELECT * FROM code_content WHERE file_id = ?", (file_id,)),
+            ("SELECT * FROM ast_trees WHERE file_id = ?", (file_id,)),
+            ("SELECT * FROM cst_trees WHERE file_id = ?", (file_id,)),
+        ]
+        results = database.execute_batch(backup_ops)
+        if len(results) < 9:
+            return None
+        file_rows = _extract_rows(results[0])
         if not file_rows:
             return None
         file_record = file_rows[0]
 
-        # Use DatabaseClient API
-        classes_result = database.execute(
-            "SELECT * FROM classes WHERE file_id = ?", (file_id,)
-        )
-        functions_result = database.execute(
-            "SELECT * FROM functions WHERE file_id = ?", (file_id,)
-        )
-        imports_result = database.execute(
-            "SELECT * FROM imports WHERE file_id = ?", (file_id,)
-        )
-        usages_result = database.execute(
-            "SELECT * FROM usages WHERE file_id = ?", (file_id,)
-        )
-        issues_result = database.execute(
-            "SELECT * FROM issues WHERE file_id = ?", (file_id,)
-        )
-        code_content_result = database.execute(
-            "SELECT * FROM code_content WHERE file_id = ?", (file_id,)
-        )
-        ast_trees_result = database.execute(
-            "SELECT * FROM ast_trees WHERE file_id = ?", (file_id,)
-        )
-        cst_trees_result = database.execute(
-            "SELECT * FROM cst_trees WHERE file_id = ?", (file_id,)
-        )
-
-        # Handle different result formats
-        def extract_data(result):
-            """Extract data from database.execute result."""
-            if isinstance(result, list):
-                return result
-            elif isinstance(result, dict):
-                return result.get("data", [])
-            else:
-                return []
-
         backup_data = {
             "file_record": file_record,
-            "classes": extract_data(classes_result),
-            "functions": extract_data(functions_result),
-            "imports": extract_data(imports_result),
-            "usages": extract_data(usages_result),
-            "issues": extract_data(issues_result),
-            "code_content": extract_data(code_content_result),
-            "ast_trees": extract_data(ast_trees_result),
-            "cst_trees": extract_data(cst_trees_result),
+            "classes": _extract_rows(results[1]),
+            "functions": _extract_rows(results[2]),
+            "imports": _extract_rows(results[3]),
+            "usages": _extract_rows(results[4]),
+            "issues": _extract_rows(results[5]),
+            "code_content": _extract_rows(results[6]),
+            "ast_trees": _extract_rows(results[7]),
+            "cst_trees": _extract_rows(results[8]),
         }
 
-        # Get methods for all classes
         class_ids = [row["id"] for row in backup_data["classes"]]
         if class_ids:
             placeholders = ",".join("?" * len(class_ids))
-            methods_result = database.execute(
-                f"SELECT * FROM methods WHERE class_id IN ({placeholders})",
-                tuple(class_ids),
+            methods_results = database.execute_batch(
+                [
+                    (
+                        f"SELECT * FROM methods WHERE class_id IN ({placeholders})",
+                        tuple(class_ids),
+                    )
+                ]
             )
-            backup_data["methods"] = extract_data(methods_result)
+            backup_data["methods"] = (
+                _extract_rows(methods_results[0]) if methods_results else []
+            )
         else:
             backup_data["methods"] = []
 
+        logger.info(
+            "[PROFILE] _backup_file_data file_id=%s elapsed=%.3fs",
+            file_id,
+            time.perf_counter() - t0,
+        )
         return backup_data
 
-    def _delete_file_data(self, database, file_id: int) -> None:
+    def _delete_file_data(
+        self,
+        database,
+        file_id: int,
+        transaction_id: Optional[str] = None,
+    ) -> None:
         """
-        Delete all file data within transaction.
+        Delete all file data within transaction using batch RPC.
 
         Args:
             database: Database instance
             file_id: File ID
+            transaction_id: Optional transaction ID (must be set when inside a transaction)
         """
-        # Get class and content IDs
-        class_result = database.execute(
-            "SELECT id FROM classes WHERE file_id = ?", (file_id,)
-        )
-        # Handle different result formats
-        if isinstance(class_result, list):
-            class_data = class_result
-        elif isinstance(class_result, dict):
-            class_data = class_result.get("data", [])
-        else:
-            class_data = []
-        class_ids = [row["id"] for row in class_data]
+        t0 = time.perf_counter()
 
-        content_result = database.execute(
-            "SELECT id FROM code_content WHERE file_id = ?", (file_id,)
+        select_ops = [
+            ("SELECT id FROM classes WHERE file_id = ?", (file_id,)),
+            ("SELECT id FROM code_content WHERE file_id = ?", (file_id,)),
+        ]
+        select_results = database.execute_batch(select_ops, transaction_id)
+        if len(select_results) < 2:
+            logger.warning("_delete_file_data: execute_batch returned < 2 results")
+            return
+        class_data = (
+            select_results[0].get("data", [])
+            if isinstance(select_results[0], dict)
+            else []
         )
-        # Handle different result formats
-        if isinstance(content_result, list):
-            content_data = content_result
-        elif isinstance(content_result, dict):
-            content_data = content_result.get("data", [])
-        else:
-            content_data = []
+        content_data = (
+            select_results[1].get("data", [])
+            if isinstance(select_results[1], dict)
+            else []
+        )
+        class_ids = [row["id"] for row in class_data]
         content_ids = [row["id"] for row in content_data]
 
-        # Delete FTS index
+        delete_ops: List[tuple] = []
         if content_ids:
             placeholders = ",".join("?" * len(content_ids))
-            database.execute(
-                f"DELETE FROM code_content_fts WHERE rowid IN ({placeholders})",
-                tuple(content_ids),
+            delete_ops.append(
+                (
+                    f"DELETE FROM code_content_fts WHERE rowid IN ({placeholders})",
+                    tuple(content_ids),
+                )
             )
-
-        # Delete methods
         if class_ids:
             placeholders = ",".join("?" * len(class_ids))
-            database.execute(
-                f"DELETE FROM methods WHERE class_id IN ({placeholders})",
-                tuple(class_ids),
+            delete_ops.append(
+                (
+                    f"DELETE FROM methods WHERE class_id IN ({placeholders})",
+                    tuple(class_ids),
+                )
             )
-
-        # Delete main entities
-        database.execute("DELETE FROM classes WHERE file_id = ?", (file_id,))
-        database.execute("DELETE FROM functions WHERE file_id = ?", (file_id,))
-        database.execute("DELETE FROM imports WHERE file_id = ?", (file_id,))
-        database.execute("DELETE FROM issues WHERE file_id = ?", (file_id,))
-        database.execute("DELETE FROM usages WHERE file_id = ?", (file_id,))
-        database.execute("DELETE FROM code_content WHERE file_id = ?", (file_id,))
-        database.execute("DELETE FROM ast_trees WHERE file_id = ?", (file_id,))
-        database.execute("DELETE FROM cst_trees WHERE file_id = ?", (file_id,))
-        database.execute("DELETE FROM code_chunks WHERE file_id = ?", (file_id,))
-
-        # Delete vector index
-        database.execute(
-            "DELETE FROM vector_index WHERE entity_type = 'file' AND entity_id = ?",
-            (file_id,),
+        delete_ops.extend(
+            [
+                ("DELETE FROM classes WHERE file_id = ?", (file_id,)),
+                ("DELETE FROM functions WHERE file_id = ?", (file_id,)),
+                ("DELETE FROM imports WHERE file_id = ?", (file_id,)),
+                ("DELETE FROM issues WHERE file_id = ?", (file_id,)),
+                ("DELETE FROM usages WHERE file_id = ?", (file_id,)),
+                ("DELETE FROM code_content WHERE file_id = ?", (file_id,)),
+                ("DELETE FROM ast_trees WHERE file_id = ?", (file_id,)),
+                ("DELETE FROM cst_trees WHERE file_id = ?", (file_id,)),
+                ("DELETE FROM code_chunks WHERE file_id = ?", (file_id,)),
+                (
+                    "DELETE FROM vector_index WHERE entity_type = 'file' AND entity_id = ?",
+                    (file_id,),
+                ),
+            ]
         )
         if class_ids:
             placeholders = ",".join("?" * len(class_ids))
-            database.execute(
-                f"""
-                DELETE FROM vector_index
-                WHERE entity_type IN ('class', 'function', 'method')
-                AND entity_id IN ({placeholders})
-                """,
-                tuple(class_ids),
+            delete_ops.append(
+                (
+                    f"""
+                    DELETE FROM vector_index
+                    WHERE entity_type IN ('class', 'function', 'method')
+                    AND entity_id IN ({placeholders})
+                    """,
+                    tuple(class_ids),
+                )
             )
+        database.execute_batch(delete_ops, transaction_id)
+        logger.info(
+            "[PROFILE] _delete_file_data file_id=%s elapsed=%.3fs",
+            file_id,
+            time.perf_counter() - t0,
+        )
 
     def _restore_entities(self, database, backup_data: Dict[str, Any]) -> None:
         """
@@ -973,15 +984,27 @@ class ComposeCSTModuleCommand(BaseMCPCommand):
         Returns:
             SuccessResult or ErrorResult
         """
+        t_apply = time.perf_counter()
+        t_prev = t_apply
         try:
-            # Delete old data if file exists
+            # Delete old data if file exists (within same transaction)
             if file_id:
-                self._delete_file_data(database, file_id)
+                self._delete_file_data(database, file_id, transaction_id)
+            _t = time.perf_counter()
+            logger.info(
+                "[PROFILE] _apply_changes delete_file_data elapsed=%.3fs", _t - t_prev
+            )
+            t_prev = _t
 
             # Update file record
             file_id = self._update_file_record(
                 database, project_id, root_path, target_path, source_code, file_id
             )
+            _t = time.perf_counter()
+            logger.info(
+                "[PROFILE] _apply_changes update_file_record elapsed=%.3fs", _t - t_prev
+            )
+            t_prev = _t
 
             # Add new data (AST, CST, entities)
             update_result = self._update_file_data_atomic(
@@ -991,6 +1014,12 @@ class ComposeCSTModuleCommand(BaseMCPCommand):
                 source_code=source_code,
                 file_path=str(target_path),
             )
+            _t = time.perf_counter()
+            logger.info(
+                "[PROFILE] _apply_changes update_file_data_atomic elapsed=%.3fs",
+                _t - t_prev,
+            )
+            t_prev = _t
 
             if not update_result.get("success"):
                 raise RuntimeError(
@@ -999,9 +1028,19 @@ class ComposeCSTModuleCommand(BaseMCPCommand):
 
             # Atomically replace file
             os.replace(str(temp_file), str(target_path))
+            _t = time.perf_counter()
+            logger.info(
+                "[PROFILE] _apply_changes os_replace elapsed=%.3fs", _t - t_prev
+            )
+            t_prev = _t
 
             # Commit transaction
             database.commit_transaction(transaction_id)
+            _t = time.perf_counter()
+            logger.info(
+                "[PROFILE] _apply_changes commit_transaction elapsed=%.3fs", _t - t_prev
+            )
+            t_prev = _t
 
             # Git commit (if requested)
             git_success = False
@@ -1012,6 +1051,12 @@ class ComposeCSTModuleCommand(BaseMCPCommand):
                 )
                 if not git_success:
                     logger.warning(f"Failed to create git commit: {git_error}")
+            _t = time.perf_counter()
+            logger.info(
+                "[PROFILE] _apply_changes git_commit elapsed=%.3fs (total_apply=%.3fs)",
+                _t - t_prev,
+                _t - t_apply,
+            )
 
             return SuccessResult(
                 data={
@@ -1069,6 +1114,8 @@ class ComposeCSTModuleCommand(BaseMCPCommand):
         Returns:
             SuccessResult or ErrorResult
         """
+        t_start = time.perf_counter()
+        t_prev = t_start
         try:
             # Step 1: Check project exists
             root_path = self._resolve_project_root(project_id=project_id, root_dir=None)
@@ -1083,6 +1130,12 @@ class ComposeCSTModuleCommand(BaseMCPCommand):
                     )
             finally:
                 database.disconnect()
+            _t = time.perf_counter()
+            logger.info(
+                "[PROFILE] compose_cst_module step=1 resolve_project_and_check elapsed=%.3fs",
+                _t - t_prev,
+            )
+            t_prev = _t
 
             # Step 2: Get CST tree (branch) and check it's not empty
             # If file is new and tree_id points to a different file,
@@ -1103,6 +1156,12 @@ class ComposeCSTModuleCommand(BaseMCPCommand):
                     code="EMPTY_BRANCH",
                     details={"tree_id": tree_id},
                 )
+            _t = time.perf_counter()
+            logger.info(
+                "[PROFILE] compose_cst_module step=2 get_tree elapsed=%.3fs",
+                _t - t_prev,
+            )
+            t_prev = _t
 
             # If file is new, update tree's file_path to target file
             # This ensures the tree is associated with the correct file
@@ -1180,11 +1239,23 @@ class ComposeCSTModuleCommand(BaseMCPCommand):
 
             # Ensure source ends with exactly one newline (PEP 8 / flake8 W391)
             source_code = source_code.rstrip("\n\r") + "\n"
+            _t = time.perf_counter()
+            logger.info(
+                "[PROFILE] compose_cst_module step=3_4 generate_source elapsed=%.3fs",
+                _t - t_prev,
+            )
+            t_prev = _t
 
             # Step 5: Write to temporary file and validate with flake8 and mypy
             temp_file, validation_error, validation_results = (
                 self._validate_and_write_temp(source_code, target_path)
             )
+            _t = time.perf_counter()
+            logger.info(
+                "[PROFILE] compose_cst_module step=5 validate_and_write_temp elapsed=%.3fs",
+                _t - t_prev,
+            )
+            t_prev = _t
             if validation_error:
                 return validation_error
 
@@ -1216,6 +1287,12 @@ class ComposeCSTModuleCommand(BaseMCPCommand):
                         file_id = file_record["id"]
                         # Backup file data
                         file_data_backup = self._backup_file_data(database, file_id)
+                _t = time.perf_counter()
+                logger.info(
+                    "[PROFILE] compose_cst_module step=6_7 open_db_and_backup_data elapsed=%.3fs",
+                    _t - t_prev,
+                )
+                t_prev = _t
 
                 # Step 8: Create file backup
                 if file_exists:
@@ -1225,9 +1302,22 @@ class ComposeCSTModuleCommand(BaseMCPCommand):
                         command="compose_cst_module",
                         comment=commit_message or "",
                     )
+                _t = time.perf_counter()
+                logger.info(
+                    "[PROFILE] compose_cst_module step=8 create_file_backup elapsed=%.3fs",
+                    _t - t_prev,
+                )
+                t_prev = _t
 
                 # Step 9: Begin database transaction
+                _t_begin = time.perf_counter()
                 transaction_id = database.begin_transaction()
+                _t = time.perf_counter()
+                logger.info(
+                    "[PROFILE] compose_cst_module step=9 begin_transaction elapsed=%.3fs",
+                    _t - _t_begin,
+                )
+                t_prev = _t
                 if not transaction_id:
                     if temp_file and temp_file.exists():
                         try:
@@ -1256,6 +1346,12 @@ class ComposeCSTModuleCommand(BaseMCPCommand):
                         temp_file=temp_file,
                         commit_message=commit_message,
                     )
+                    _t = time.perf_counter()
+                    logger.info(
+                        "[PROFILE] compose_cst_module step=9_15 apply_changes elapsed=%.3fs",
+                        _t - t_prev,
+                    )
+                    t_prev = _t
                     temp_file = None  # File was moved, don't delete it
 
                     # Add validation results to response
@@ -1270,6 +1366,10 @@ class ComposeCSTModuleCommand(BaseMCPCommand):
                                 for validation_type, val_result in validation_results.items()
                             }
 
+                    logger.info(
+                        "[PROFILE] compose_cst_module total elapsed=%.3fs",
+                        time.perf_counter() - t_start,
+                    )
                     return result
 
                 except Exception as error:

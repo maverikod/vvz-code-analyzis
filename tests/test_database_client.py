@@ -232,6 +232,59 @@ class TestDatabaseClient:
         finally:
             client.disconnect()
 
+    def test_execute_batch(self, rpc_server):
+        """Test execute_batch: multiple SQL statements in one RPC round-trip."""
+        _, socket_path, _ = rpc_server
+
+        client = DatabaseClient(socket_path)
+        client.connect()
+
+        try:
+            ops = [
+                ("SELECT COUNT(*) as cnt FROM test_table", None),
+                ("INSERT INTO test_table (name, age) VALUES (?, ?)", ("batch_a", 1)),
+                ("INSERT INTO test_table (name, age) VALUES (?, ?)", ("batch_b", 2)),
+                ("SELECT COUNT(*) as cnt FROM test_table", None),
+            ]
+            results = client.execute_batch(ops)
+            assert len(results) == 4
+            # First SELECT
+            assert isinstance(results[0], dict)
+            assert "data" in results[0] or "affected_rows" in results[0]
+            # Two INSERTs
+            assert isinstance(results[1], dict)
+            assert isinstance(results[2], dict)
+            # Second SELECT
+            assert isinstance(results[3], dict)
+            # Count should have increased by 2
+            data3 = results[3].get("data", [])
+            if data3 and isinstance(data3, list) and len(data3) > 0:
+                row = data3[0] if isinstance(data3[0], dict) else {}
+                assert row.get("cnt", 0) >= 2
+        finally:
+            client.disconnect()
+
+    def test_execute_batch_with_transaction(self, rpc_server):
+        """Test execute_batch within a transaction."""
+        _, socket_path, _ = rpc_server
+
+        client = DatabaseClient(socket_path)
+        client.connect()
+
+        try:
+            transaction_id = client.begin_transaction()
+            ops = [
+                ("INSERT INTO test_table (name, age) VALUES (?, ?)", ("tx_batch", 3)),
+                ("SELECT name FROM test_table WHERE name = ?", ("tx_batch",)),
+            ]
+            results = client.execute_batch(ops, transaction_id)
+            client.commit_transaction(transaction_id)
+            assert len(results) == 2
+            assert isinstance(results[0], dict)
+            assert isinstance(results[1], dict)
+        finally:
+            client.disconnect()
+
     def test_transactions(self, rpc_server):
         """Test transaction methods."""
         _, socket_path, _ = rpc_server

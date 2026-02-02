@@ -51,7 +51,9 @@ class SQLiteDriverProxy(BaseDatabaseDriver):
         self._socket_path: Optional[str] = None
         self._worker_initialized: bool = False
         self.command_timeout: float = 30.0
-        self.poll_interval: float = 0.1  # Polling interval in seconds (default: 100ms)
+        self.poll_interval: float = (
+            0.01  # Polling interval in seconds (default: 10ms; reduced for IPC latency)
+        )
         self.worker_log_path: Optional[str] = None
         self._lastrowid: Optional[int] = None
         self._socket_timeout: float = 5.0  # Socket connection timeout
@@ -80,9 +82,9 @@ class SQLiteDriverProxy(BaseDatabaseDriver):
 
         # Ensure all attributes are initialized (defensive programming)
         if not hasattr(self, "poll_interval"):
-            self.poll_interval = 0.1
+            self.poll_interval = 0.01
             logger.warning(
-                "[SQLITE_PROXY] poll_interval not initialized, using default 0.1"
+                "[SQLITE_PROXY] poll_interval not initialized, using default 0.01"
             )
         if not hasattr(self, "command_timeout"):
             self.command_timeout = 30.0
@@ -104,7 +106,7 @@ class SQLiteDriverProxy(BaseDatabaseDriver):
         worker_config = config.get("worker_config", {})
         # Use getattr to safely get current values (defensive - in case __init__ wasn't called)
         current_command_timeout = getattr(self, "command_timeout", 30.0)
-        current_poll_interval = getattr(self, "poll_interval", 0.1)
+        current_poll_interval = getattr(self, "poll_interval", 0.01)
 
         # Update from config, using current values as defaults
         new_command_timeout = worker_config.get(

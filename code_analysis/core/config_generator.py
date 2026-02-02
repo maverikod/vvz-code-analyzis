@@ -150,7 +150,7 @@ class CodeAnalysisConfigGenerator(SimpleConfigGenerator):
         if driver_type == "sqlite_proxy":
             config["code_analysis"]["database"]["driver"]["config"]["worker_config"] = {
                 "command_timeout": 30.0,
-                "poll_interval": 0.1,
+                "poll_interval": 0.01,
             }
 
         # Add default code_analysis settings if not present

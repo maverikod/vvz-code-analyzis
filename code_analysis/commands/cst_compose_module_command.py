@@ -1228,6 +1228,17 @@ class ComposeCSTModuleCommand(BaseMCPCommand):
 
                 # Step 9: Begin database transaction
                 transaction_id = database.begin_transaction()
+                if not transaction_id:
+                    if temp_file and temp_file.exists():
+                        try:
+                            temp_file.unlink()
+                        except Exception:
+                            pass
+                    return ErrorResult(
+                        message="Database transaction could not be started",
+                        code="TRANSACTION_ERROR",
+                        details={"hint": "Database driver may be busy or unavailable"},
+                    )
 
                 try:
                     # Step 10-15: Apply changes

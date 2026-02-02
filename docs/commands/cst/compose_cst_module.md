@@ -14,6 +14,8 @@ email: vasilyvz@gmail.com
 
 Compose or overwrite a Python module using a CST tree (branch from `cst_load_file`). Either overwrites the target file with the branch code or inserts the branch after a given node. Before writing, the composed source is validated (compile, docstrings, flake8, mypy). The server normalizes the source to end with exactly one newline (PEP 8 / flake8 W391) before validation. If validation fails, the file is not written and a `VALIDATION_ERROR` is returned.
 
+**Note:** This command can take 30+ seconds (mypy and DB operations). Ensure the MCP proxy or client timeout is at least 40–60 seconds for this command; otherwise the client may report the server as unavailable while the command is still running.
+
 ---
 
 ## Arguments (Аргументы)

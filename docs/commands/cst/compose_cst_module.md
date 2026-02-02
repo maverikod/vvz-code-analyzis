@@ -12,7 +12,7 @@ email: vasilyvz@gmail.com
 
 ## Purpose (Предназначение)
 
-No description in schema.
+Compose or overwrite a Python module using a CST tree (branch from `cst_load_file`). Either overwrites the target file with the branch code or inserts the branch after a given node. Before writing, the composed source is validated (compile, docstrings, flake8, mypy). The server normalizes the source to end with exactly one newline (PEP 8 / flake8 W391) before validation. If validation fails, the file is not written and a `VALIDATION_ERROR` is returned.
 
 ---
 

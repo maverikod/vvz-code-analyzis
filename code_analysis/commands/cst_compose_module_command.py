@@ -198,7 +198,7 @@ class ComposeCSTModuleCommand(BaseMCPCommand):
         else:
             class_data = []
         class_ids = [row["id"] for row in class_data]
-        
+
         content_result = database.execute(
             "SELECT id FROM code_content WHERE file_id = ?", (file_id,)
         )
@@ -512,11 +512,13 @@ class ComposeCSTModuleCommand(BaseMCPCommand):
         # Validate with flake8 and mypy
         from ..core.cst_module.validation import validate_file_in_temp
 
-        validation_success, validation_error, validation_results = validate_file_in_temp(
-            source_code=source_code,
-            temp_file_path=temp_file,
-            validate_linter=True,  # Enable flake8
-            validate_type_checker=True,  # Enable mypy
+        validation_success, validation_error, validation_results = (
+            validate_file_in_temp(
+                source_code=source_code,
+                temp_file_path=temp_file,
+                validate_linter=True,  # Enable flake8
+                validate_type_checker=True,  # Enable mypy
+            )
         )
 
         if not validation_success:
@@ -530,7 +532,9 @@ class ComposeCSTModuleCommand(BaseMCPCommand):
                         error_parts.append(
                             f"{validation_type}: {len(result.errors)} error(s)"
                         )
-            error_message = "; ".join(error_parts) if error_parts else "Validation failed"
+            error_message = (
+                "; ".join(error_parts) if error_parts else "Validation failed"
+            )
 
             # Format validation results for details
             validation_details = {
@@ -601,7 +605,7 @@ class ComposeCSTModuleCommand(BaseMCPCommand):
                 last_modified=time.time(),
                 has_docstring=has_docstring,
             )
-            
+
             # Create file in database
             created_file = database.create_file(file_obj)
             file_id = created_file.id
@@ -694,9 +698,6 @@ class ComposeCSTModuleCommand(BaseMCPCommand):
             Dictionary with update result
         """
         import ast
-        import hashlib
-        import json
-        import time
 
         try:
             # Parse AST from source_code
@@ -718,9 +719,6 @@ class ComposeCSTModuleCommand(BaseMCPCommand):
                     "file_path": file_path,
                     "file_id": file_id,
                 }
-
-            # Calculate file metadata
-            file_mtime = time.time()
 
             # Save AST tree
             ast_dump = ast.dump(tree)  # Returns list/dict structure
@@ -790,7 +788,9 @@ class ComposeCSTModuleCommand(BaseMCPCommand):
 
                         # Extract methods from class
                         for item in node.body:
-                            if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                            if isinstance(
+                                item, (ast.FunctionDef, ast.AsyncFunctionDef)
+                            ):
                                 method_docstring = ast.get_docstring(item)
                                 method_args = []
                                 if item.args:
@@ -798,7 +798,9 @@ class ComposeCSTModuleCommand(BaseMCPCommand):
                                         arg_name = arg.arg
                                         if arg.annotation:
                                             try:
-                                                arg_name += f": {ast.unparse(arg.annotation)}"
+                                                arg_name += (
+                                                    f": {ast.unparse(arg.annotation)}"
+                                                )
                                             except AttributeError:
                                                 arg_name += f": {str(arg.annotation)}"
                                         method_args.append(arg_name)
@@ -989,7 +991,7 @@ class ComposeCSTModuleCommand(BaseMCPCommand):
                 source_code=source_code,
                 file_path=str(target_path),
             )
-            
+
             if not update_result.get("success"):
                 raise RuntimeError(
                     f"Failed to update file data: {update_result.get('error')}"
@@ -1101,7 +1103,7 @@ class ComposeCSTModuleCommand(BaseMCPCommand):
                     code="EMPTY_BRANCH",
                     details={"tree_id": tree_id},
                 )
-            
+
             # If file is new, update tree's file_path to target file
             # This ensures the tree is associated with the correct file
             target_path = (root_path / file_path).resolve()
@@ -1110,7 +1112,7 @@ class ComposeCSTModuleCommand(BaseMCPCommand):
                 tree.file_path = str(target_path.resolve())
 
             # Resolve target file path (already resolved above if file is new)
-            if not 'target_path' in locals():
+            if "target_path" not in locals():
                 target_path = (root_path / file_path).resolve()
 
             if target_path.suffix != ".py":
@@ -1176,9 +1178,12 @@ class ComposeCSTModuleCommand(BaseMCPCommand):
                 # The branch tree_id contains the code we want to write
                 source_code = branch_code
 
+            # Ensure source ends with exactly one newline (PEP 8 / flake8 W391)
+            source_code = source_code.rstrip("\n\r") + "\n"
+
             # Step 5: Write to temporary file and validate with flake8 and mypy
-            temp_file, validation_error, validation_results = self._validate_and_write_temp(
-                source_code, target_path
+            temp_file, validation_error, validation_results = (
+                self._validate_and_write_temp(source_code, target_path)
             )
             if validation_error:
                 return validation_error
@@ -1199,7 +1204,7 @@ class ComposeCSTModuleCommand(BaseMCPCommand):
                     from ..core.path_normalization import normalize_path_simple
 
                     normalized_path = normalize_path_simple(str(target_path))
-                    
+
                     # Get file record using select
                     file_rows = database.select(
                         "files",
@@ -1241,7 +1246,7 @@ class ComposeCSTModuleCommand(BaseMCPCommand):
                         commit_message=commit_message,
                     )
                     temp_file = None  # File was moved, don't delete it
-                    
+
                     # Add validation results to response
                     if validation_results and isinstance(result, SuccessResult):
                         if result.data:
@@ -1253,7 +1258,7 @@ class ComposeCSTModuleCommand(BaseMCPCommand):
                                 }
                                 for validation_type, val_result in validation_results.items()
                             }
-                    
+
                     return result
 
                 except Exception as error:

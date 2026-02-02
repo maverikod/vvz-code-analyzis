@@ -9,6 +9,8 @@ import logging
 from pathlib import Path
 from typing import Any, Dict, Optional, TYPE_CHECKING
 
+from ..core.backup_manager import BackupManager
+
 if TYPE_CHECKING:
     from ..core.database_client.client import DatabaseClient
 else:
@@ -645,6 +647,24 @@ class RepairDatabaseCommand:
             else:
                 # File should be in project directory
                 target_path = self.root_dir / file_path
+
+            # Mandatory backup before overwriting existing file
+            if target_path.exists():
+                backup_root = (
+                    self.root_dir
+                    if not file_record.get("deleted")
+                    else Path(self.version_dir)
+                )
+                backup_mgr = BackupManager(backup_root)
+                backup_uuid = backup_mgr.create_backup(
+                    target_path,
+                    command="repair_database",
+                    comment="Before restore from CST",
+                )
+                if not backup_uuid:
+                    logger.warning(
+                        "Failed to create backup before repair_database restore"
+                    )
 
             # Restore file content
             target_path.parent.mkdir(parents=True, exist_ok=True)

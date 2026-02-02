@@ -315,8 +315,18 @@ class BackupManager:
             if not backup_path.exists():
                 return (False, f"Backup file not found: {backup_path}")
 
-            # Restore to original location
+            # Restore to original location (mandatory backup of current file first)
             target_path = self.root_dir / file_path
+            if target_path.exists():
+                backup_uuid_before = self.create_backup(
+                    target_path,
+                    command="restore_backup_file",
+                    comment="Before restore from backup",
+                )
+                if not backup_uuid_before:
+                    _get_logger().warning(
+                        "Failed to create backup of current file before restore"
+                    )
             target_path.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(backup_path, target_path)
 

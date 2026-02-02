@@ -14,6 +14,7 @@ from typing import Dict, Any, Optional, List
 from mcp_proxy_adapter.commands.base import Command
 from mcp_proxy_adapter.commands.result import SuccessResult, ErrorResult
 
+from ..core.backup_manager import BackupManager
 from ..core.code_quality import (
     format_code_with_black,
     lint_with_flake8,
@@ -118,6 +119,17 @@ class FormatCodeCommand(Command):
                     code="NOT_A_FILE",
                     message=f"Path is not a file: {file_path}",
                 )
+
+            # Mandatory backup before overwriting file
+            backup_root = Path(root_dir).resolve() if root_dir else path.parent
+            backup_mgr = BackupManager(backup_root)
+            backup_uuid = backup_mgr.create_backup(
+                path,
+                command="format_code",
+                comment="Before format",
+            )
+            if not backup_uuid:
+                logger.warning("Failed to create backup before format_code")
 
             success, error = format_code_with_black(path)
 

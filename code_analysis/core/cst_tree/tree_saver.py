@@ -70,6 +70,7 @@ def _update_file_data_atomic_via_client(
 
         # Save AST tree
         import json
+
         ast_dump = ast.dump(tree)  # Returns list/dict structure
         ast_data = ast_dump if isinstance(ast_dump, dict) else {"ast": ast_dump}
         try:
@@ -145,7 +146,9 @@ def _update_file_data_atomic_via_client(
                                     arg_name = arg.arg
                                     if arg.annotation:
                                         try:
-                                            arg_name += f": {ast.unparse(arg.annotation)}"
+                                            arg_name += (
+                                                f": {ast.unparse(arg.annotation)}"
+                                            )
                                         except AttributeError:
                                             arg_name += f": {str(arg.annotation)}"
                                     method_args.append(arg_name)
@@ -181,9 +184,7 @@ def _update_file_data_atomic_via_client(
                         if any(
                             node == item
                             for item in parent.body
-                            if isinstance(
-                                item, (ast.FunctionDef, ast.AsyncFunctionDef)
-                            )
+                            if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef))
                         ):
                             is_method = True
                             break
@@ -299,7 +300,7 @@ def save_tree_to_file(
 
     Process:
     1. Validate entire file through compile() (before any changes)
-    2. Create backup via BackupManager (if file exists and backup=True)
+    2. Create backup via BackupManager (mandatory if file exists)
     3. Generate source code from CST tree
     4. Write to temporary file
     5. Validate temporary file (compile, linter, type checker)
@@ -361,8 +362,8 @@ def save_tree_to_file(
                 logger.warning(f"Original file has syntax errors: {e}")
                 # Continue anyway - we're replacing it
 
-        # Step 2: Create backup
-        if backup and target_path.exists():
+        # Step 2: Create backup (mandatory before overwriting existing file)
+        if target_path.exists():
             backup_manager = BackupManager(root_dir)
             try:
                 rel_path = str(target_path.relative_to(root_dir))
@@ -380,7 +381,9 @@ def save_tree_to_file(
         source_code = tree.module.code
 
         # Step 4: Write to temporary file
-        temp_fd, temp_path_str = tempfile.mkstemp(suffix=".py", prefix="cst_save_", dir=target_path.parent)
+        temp_fd, temp_path_str = tempfile.mkstemp(
+            suffix=".py", prefix="cst_save_", dir=target_path.parent
+        )
         temp_file = Path(temp_path_str)
         try:
             with os.fdopen(temp_fd, "w", encoding="utf-8") as f:
@@ -415,13 +418,12 @@ def save_tree_to_file(
             # Check if file exists in database
             from ..database_client.objects.file import File
             from ..path_normalization import normalize_path_simple
-            
+
             normalized_path = normalize_path_simple(str(target_path))
             existing_files = database.select(
-                "files",
-                where={"path": normalized_path, "project_id": project_id}
+                "files", where={"path": normalized_path, "project_id": project_id}
             )
-            
+
             if existing_files:
                 # Update existing file
                 file_record = existing_files[0]
@@ -457,7 +459,9 @@ def save_tree_to_file(
             )
 
             if not update_result.get("success"):
-                raise RuntimeError(f"Failed to update file data: {update_result.get('error')}")
+                raise RuntimeError(
+                    f"Failed to update file data: {update_result.get('error')}"
+                )
 
             # Step 9: Commit transaction
             database.commit_transaction(transaction_id)
@@ -466,7 +470,9 @@ def save_tree_to_file(
             if commit_message:
                 from ..git_integration import create_git_commit
 
-                git_success, git_error = create_git_commit(root_dir, target_path, commit_message)
+                git_success, git_error = create_git_commit(
+                    root_dir, target_path, commit_message
+                )
                 if not git_success:
                     logger.warning(f"Failed to create git commit: {git_error}")
                     # Not critical - file is already saved
@@ -493,11 +499,15 @@ def save_tree_to_file(
                     rel_path = str(target_path.relative_to(root_dir))
                 except ValueError:
                     rel_path = str(target_path)
-                restore_success, restore_message = backup_manager.restore_file(rel_path, backup_uuid)
+                restore_success, restore_message = backup_manager.restore_file(
+                    rel_path, backup_uuid
+                )
                 if restore_success:
                     logger.info(f"File restored from backup: {restore_message}")
                 else:
-                    logger.error(f"Failed to restore file from backup: {restore_message}")
+                    logger.error(
+                        f"Failed to restore file from backup: {restore_message}"
+                    )
 
             raise
 

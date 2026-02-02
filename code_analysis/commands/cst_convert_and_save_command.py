@@ -21,6 +21,7 @@ from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 
 from .base_mcp_command import BaseMCPCommand
 from ..core.ast_utils import parse_with_comments
+from ..core.backup_manager import BackupManager
 from ..core.cst_tree.tree_builder import create_tree_from_code
 
 logger = logging.getLogger(__name__)
@@ -201,9 +202,21 @@ class CSTConvertAndSaveCommand(BaseMCPCommand):
                         details={"file_path": str(abs_path)},
                     )
 
-                # Save code to file if requested
+                # Save code to file if requested (mandatory backup before overwrite)
                 if save_to_file:
                     abs_path.parent.mkdir(parents=True, exist_ok=True)
+                    backup_root = Path(watch_dir_path) / project.name
+                    if abs_path.exists():
+                        backup_mgr = BackupManager(backup_root)
+                        backup_uuid = backup_mgr.create_backup(
+                            abs_path,
+                            command="cst_convert_and_save",
+                            comment="Before convert and save",
+                        )
+                        if not backup_uuid:
+                            logger.warning(
+                                "Failed to create backup before cst_convert_and_save"
+                            )
                     abs_path.write_text(source_code, encoding="utf-8")
                     logger.info(f"Saved code to file: {abs_path}")
 

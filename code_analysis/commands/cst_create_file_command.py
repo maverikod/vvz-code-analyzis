@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict
 
 from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 
@@ -53,10 +53,6 @@ class CSTCreateFileCommand(BaseMCPCommand):
                         "if not already formatted. Must not be empty."
                     ),
                 },
-                "root_dir": {
-                    "type": "string",
-                    "description": "Server root directory (optional, for database access). If not provided, will be resolved from config.",
-                },
             },
             "required": ["project_id", "file_path", "docstring"],
             "additionalProperties": False,
@@ -67,7 +63,6 @@ class CSTCreateFileCommand(BaseMCPCommand):
         project_id: str,
         file_path: str,
         docstring: str,
-        root_dir: Optional[str] = None,
         **kwargs,
     ) -> SuccessResult:
         """
@@ -86,28 +81,12 @@ class CSTCreateFileCommand(BaseMCPCommand):
             project_id: Project ID
             file_path: File path relative to project root
             docstring: File-level docstring
-            root_dir: Optional server root directory
 
         Returns:
             SuccessResult with tree_id and file_path
         """
         try:
-            # Resolve server root_dir for database access
-            if not root_dir:
-                from ..core.storage_paths import (
-                    load_raw_config,
-                    resolve_storage_paths,
-                )
-
-                config_path = self._resolve_config_path()
-                config_data = load_raw_config(config_path)
-                storage = resolve_storage_paths(
-                    config_data=config_data, config_path=config_path
-                )
-                root_dir = str(storage.config_dir.parent) if hasattr(storage, 'config_dir') else "/"
-
-            # Open database
-            database = self._open_database(root_dir, auto_analyze=False)
+            database = self._open_database_from_config(auto_analyze=False)
             try:
                 # Get project to resolve path
                 project = database.get_project(project_id)
@@ -141,12 +120,15 @@ class CSTCreateFileCommand(BaseMCPCommand):
                     watch_dir_paths = watch_dir_path_result
                 else:
                     watch_dir_paths = watch_dir_path_result.get("data", [])
-                
+
                 if not watch_dir_paths:
                     return ErrorResult(
                         message=f"Watch directory path not found for watch_dir_id {project.watch_dir_id}",
                         code="WATCH_DIR_NOT_FOUND",
-                        details={"project_id": project_id, "watch_dir_id": project.watch_dir_id},
+                        details={
+                            "project_id": project_id,
+                            "watch_dir_id": project.watch_dir_id,
+                        },
                     )
 
                 watch_dir_path = watch_dir_paths[0].get("absolute_path")
@@ -154,7 +136,10 @@ class CSTCreateFileCommand(BaseMCPCommand):
                     return ErrorResult(
                         message=f"Watch directory path is NULL for watch_dir_id {project.watch_dir_id}",
                         code="WATCH_DIR_NULL",
-                        details={"project_id": project_id, "watch_dir_id": project.watch_dir_id},
+                        details={
+                            "project_id": project_id,
+                            "watch_dir_id": project.watch_dir_id,
+                        },
                     )
 
                 # Form absolute path: watch_dir_path / project_name / relative_file_path
@@ -181,7 +166,8 @@ class CSTCreateFileCommand(BaseMCPCommand):
                 # Format docstring as triple-quoted string
                 docstring_value = docstring.strip()
                 if not (
-                    docstring_value.startswith('"""') or docstring_value.startswith("'''")
+                    docstring_value.startswith('"""')
+                    or docstring_value.startswith("'''")
                 ):
                     docstring_value = f'"""{docstring_value}"""'
 
@@ -275,7 +261,7 @@ class CSTCreateFileCommand(BaseMCPCommand):
                 "- Docstring is automatically formatted as triple-quoted string\n"
                 "- If docstring already has triple quotes, they are preserved\n"
                 "- Docstring becomes the only content in the file\n"
-                "- Example: 'CLI application' becomes '\"\"\"CLI application.\"\"\"'\n\n"
+                '- Example: \'CLI application\' becomes \'"""CLI application."""\'\n\n'
                 "Node Metadata:\n"
                 "- Returns node metadata for all nodes in the created file\n"
                 "- For a file with only docstring, typically returns:\n"
@@ -381,7 +367,7 @@ class CSTCreateFileCommand(BaseMCPCommand):
                     },
                     "explanation": (
                         "Creates a new file src/main.py with only a docstring. "
-                        "Docstring is automatically formatted as '\"\"\"CLI application for working with data.\"\"\"'. "
+                        'Docstring is automatically formatted as \'"""CLI application for working with data."""\'. '
                         "Returns tree_id that can be used with cst_modify_tree to add code. "
                         "Absolute path is formed as: watch_dir_path / project_name / src/main.py."
                     ),

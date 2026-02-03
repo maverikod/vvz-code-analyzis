@@ -9,6 +9,7 @@ email: vasilyvz@gmail.com
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from pathlib import Path
 from typing import Any, Dict, Optional
@@ -50,10 +51,6 @@ class CSTSaveTreeCommand(BaseMCPCommand):
                     "type": "string",
                     "description": "Target file path (relative to project root)",
                 },
-                "root_dir": {
-                    "type": "string",
-                    "description": "Server root directory (optional, for database access)",
-                },
                 "validate": {
                     "type": "boolean",
                     "default": True,
@@ -83,7 +80,6 @@ class CSTSaveTreeCommand(BaseMCPCommand):
         tree_id: str,
         project_id: str,
         file_path: str,
-        root_dir: Optional[str] = None,
         validate: bool = True,
         backup: bool = True,
         commit_message: Optional[str] = None,
@@ -91,28 +87,13 @@ class CSTSaveTreeCommand(BaseMCPCommand):
         **kwargs,
     ) -> SuccessResult:
         try:
-            # Resolve server root_dir for database access
-            if not root_dir:
-                from ..core.storage_paths import (
-                    load_raw_config,
-                    resolve_storage_paths,
-                )
-
-                config_path = self._resolve_config_path()
-                config_data = load_raw_config(config_path)
-                storage = resolve_storage_paths(
-                    config_data=config_data, config_path=config_path
-                )
-                root_dir = str(storage.config_dir.parent) if hasattr(storage, 'config_dir') else "/"
-
-            # Get database connection
-            database = self._open_database(root_dir, auto_analyze=False)
+            database = self._open_database_from_config(auto_analyze=False)
             try:
                 # Resolve absolute file path using project_id and watch_dir/project_name
                 absolute_file_path = self._resolve_file_path_from_project(
                     database, project_id, file_path
                 )
-                
+
                 # Get project root from project
                 project = database.get_project(project_id)
                 if not project:
@@ -121,11 +102,13 @@ class CSTSaveTreeCommand(BaseMCPCommand):
                         code="PROJECT_NOT_FOUND",
                         details={"project_id": project_id},
                     )
-                
+
                 project_root = Path(project.root_path)
 
-                # Save tree to file
-                result = save_tree_to_file(
+                # Save tree to file (run in thread pool to avoid blocking event loop;
+                # long DB/backup work would otherwise cause client timeouts on concurrent saves)
+                result = await asyncio.to_thread(
+                    save_tree_to_file,
                     tree_id=tree_id,
                     file_path=str(absolute_file_path),
                     root_dir=project_root,
@@ -192,7 +175,7 @@ class CSTSaveTreeCommand(BaseMCPCommand):
                 "3. Gets watch directory path from database\n"
                 "4. Forms absolute path: watch_dir_path / project_name / file_path\n"
                 "5. Validates original file (if exists) through compile()\n"
-                "6. Creates backup via BackupManager (if file exists and backup=True)\n"
+                "6. Creates backup via BackupManager (mandatory if file exists)\n"
                 "7. Generates source code from CST tree\n"
                 "8. Writes to temporary file\n"
                 "9. Validates temporary file (compile, syntax check)\n"
@@ -240,11 +223,6 @@ class CSTSaveTreeCommand(BaseMCPCommand):
                     "type": "string",
                     "required": True,
                 },
-                "root_dir": {
-                    "description": "Server root directory (optional, for database access). If not provided, will be resolved from config.",
-                    "type": "string",
-                    "required": False,
-                },
                 "validate": {
                     "description": "Whether to validate file before saving. Default is True.",
                     "type": "boolean",
@@ -252,7 +230,7 @@ class CSTSaveTreeCommand(BaseMCPCommand):
                     "default": True,
                 },
                 "backup": {
-                    "description": "Whether to create backup before saving. Default is True.",
+                    "description": "Whether to create backup (for existing files backup is always created). Default is True.",
                     "type": "boolean",
                     "required": False,
                     "default": True,

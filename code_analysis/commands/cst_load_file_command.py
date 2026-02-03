@@ -10,7 +10,6 @@ email: vasilyvz@gmail.com
 from __future__ import annotations
 
 import logging
-from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
@@ -45,10 +44,6 @@ class CSTLoadFileCommand(BaseMCPCommand):
                     "type": "string",
                     "description": "Target Python file path (relative to project root)",
                 },
-                "root_dir": {
-                    "type": "string",
-                    "description": "Server root directory (optional, for database access)",
-                },
                 "node_types": {
                     "type": "array",
                     "items": {"type": "string"},
@@ -72,30 +67,13 @@ class CSTLoadFileCommand(BaseMCPCommand):
         self,
         project_id: str,
         file_path: str,
-        root_dir: Optional[str] = None,
         node_types: Optional[List[str]] = None,
         max_depth: Optional[int] = None,
         include_children: bool = True,
         **kwargs,
     ) -> SuccessResult:
         try:
-            # Resolve server root_dir for database access
-            if not root_dir:
-                from ..core.storage_paths import (
-                    load_raw_config,
-                    resolve_storage_paths,
-                )
-
-                config_path = self._resolve_config_path()
-                config_data = load_raw_config(config_path)
-                storage = resolve_storage_paths(
-                    config_data=config_data, config_path=config_path
-                )
-                # Use server root from config or default
-                root_dir = str(storage.config_dir.parent) if hasattr(storage, 'config_dir') else "/"
-
-            # Open database
-            database = self._open_database(root_dir, auto_analyze=False)
+            database = self._open_database_from_config(auto_analyze=False)
             try:
                 # Resolve absolute path using project_id and watch_dir/project_name
                 target = self._resolve_file_path_from_project(
@@ -146,7 +124,9 @@ class CSTLoadFileCommand(BaseMCPCommand):
             )
         except Exception as e:
             logger.exception("cst_load_file failed: %s", e)
-            return ErrorResult(message=f"cst_load_file failed: {e}", code="CST_LOAD_ERROR")
+            return ErrorResult(
+                message=f"cst_load_file failed: {e}", code="CST_LOAD_ERROR"
+            )
 
     @classmethod
     def metadata(cls: type["CSTLoadFileCommand"]) -> Dict[str, Any]:
@@ -268,7 +248,10 @@ class CSTLoadFileCommand(BaseMCPCommand):
                                 "end_line": 25,
                                 "end_col": 0,
                                 "children_count": 3,
-                                "children_ids": ["stmt:If:12:4-20:0", "smallstmt:Return:22:4-22:12"],
+                                "children_ids": [
+                                    "stmt:If:12:4-20:0",
+                                    "smallstmt:Return:22:4-22:12",
+                                ],
                             }
                         ],
                         "total_nodes": 42,

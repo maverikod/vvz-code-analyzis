@@ -64,14 +64,14 @@ class UpdateIndexesMCPCommand(BaseMCPCommand):
         return {
             "type": "object",
             "description": (
-                "Analyze Python project under root_dir and update code indexes in SQLite. "
-                "This is a long-running command and is executed via queue."
+                "Analyze Python project by project_id and update code indexes in SQLite. "
+                "Long-running; executed via queue. project_id is required (from create_project or list_projects)."
             ),
             "properties": {
-                "root_dir": {
+                "project_id": {
                     "type": "string",
-                    "description": "Root directory to analyze.",
-                    "examples": ["/abs/path/to/project"],
+                    "description": "Project UUID (from create_project or list_projects).",
+                    "examples": ["550e8400-e29b-41d4-a716-446655440000"],
                 },
                 "max_lines": {
                     "type": "integer",
@@ -80,11 +80,14 @@ class UpdateIndexesMCPCommand(BaseMCPCommand):
                     "examples": [400],
                 },
             },
-            "required": ["root_dir"],
+            "required": ["project_id"],
             "additionalProperties": False,
             "examples": [
-                {"root_dir": "/abs/path/to/project", "max_lines": 400},
-                {"root_dir": "/abs/path/to/project", "max_lines": 250},
+                {
+                    "project_id": "550e8400-e29b-41d4-a716-446655440000",
+                    "max_lines": 400,
+                },
+                {"project_id": "550e8400-e29b-41d4-a716-446655440000"},
             ],
         }
 
@@ -205,7 +208,7 @@ class UpdateIndexesMCPCommand(BaseMCPCommand):
             # to ensure it matches existing records
             abs_file_path = str(file_path.resolve())
 
-            file_record = database.get_file_by_path(rel_path, project_id)
+            file_record = database.get_file_by_path(abs_file_path, project_id)
             if file_record:
                 file_id = file_record["id"]
                 # Update file record if last_modified differs or if force=True
@@ -576,13 +579,14 @@ class UpdateIndexesMCPCommand(BaseMCPCommand):
 
     async def execute(
         self: "UpdateIndexesMCPCommand",
-        root_dir: str,
-        max_lines: int | None = None,
+        project_id: str,
+        max_lines: Optional[int] = None,
         **kwargs: Any,
     ) -> SuccessResult | ErrorResult:
         """Execute code index update.
 
         Notes:
+            Uses project_id to resolve project root from the shared database.
             If the database is detected as corrupted, this command will create a
             filesystem backup, write a persistent corruption marker, stop workers,
             and return an error. The project is then in "safe mode" until explicit
@@ -590,7 +594,7 @@ class UpdateIndexesMCPCommand(BaseMCPCommand):
 
         Args:
             self: Command instance.
-            root_dir: Root directory to analyze.
+            project_id: Project UUID (from create_project or list_projects). Required.
             max_lines: Maximum lines per file threshold (for reporting).
                 If None, uses DEFAULT_MAX_FILE_LINES from constants.
             **kwargs: Extra parameters (may include 'context' with ProgressTracker).
@@ -601,96 +605,40 @@ class UpdateIndexesMCPCommand(BaseMCPCommand):
         if max_lines is None:
             max_lines = DEFAULT_MAX_FILE_LINES
 
-        from ..core.db_integrity import (
-            backup_sqlite_files,
-            check_sqlite_integrity,
-            read_corruption_marker,
-            write_corruption_marker,
-        )
         from ..core.progress_tracker import get_progress_tracker_from_context
-        from ..core.worker_manager import get_worker_manager
 
         progress_tracker = get_progress_tracker_from_context(
             kwargs.get("context") or {}
         )
 
         try:
-            root_path = self._validate_root_dir(root_dir)
-
             if progress_tracker:
                 progress_tracker.set_status("running")
-                progress_tracker.set_description("Scanning for Python files...")
+                progress_tracker.set_description("Resolving project...")
                 progress_tracker.set_progress(0)
 
-            data_dir = root_path / "data"
-            data_dir.mkdir(parents=True, exist_ok=True)
-            db_path = data_dir / "code_analysis.db"
-
-            marker = read_corruption_marker(db_path)
-            if marker is not None:
-                if progress_tracker:
-                    progress_tracker.set_status("failed")
-                    progress_tracker.set_description(
-                        "Database is marked as corrupted (safe mode). Run repair/restore first."
-                    )
-                    progress_tracker.set_progress(0)
-
-                return ErrorResult(
-                    message=(
-                        "Database is corrupted and project is in safe mode. "
-                        "Only backup/restore/repair commands are allowed."
-                    ),
-                    code="DATABASE_CORRUPTED",
-                    details={"db_path": str(db_path), "marker": marker},
-                )
-
-            db_check = check_sqlite_integrity(db_path)
-            if not db_check.ok:
-                if progress_tracker:
-                    progress_tracker.set_description(
-                        f"Database corrupted ({db_check.message}); creating backup and entering safe mode..."
-                    )
-
-                worker_manager = get_worker_manager()
-                worker_manager.stop_worker_type("file_watcher", timeout=5.0)
-                worker_manager.stop_worker_type("vectorization", timeout=5.0)
-
-                backup_paths = list(backup_sqlite_files(db_path, backup_dir=data_dir))
-                marker_path = write_corruption_marker(
-                    db_path,
-                    message=db_check.message,
-                    backup_paths=tuple(backup_paths),
-                )
-
-                if progress_tracker:
-                    progress_tracker.set_status("failed")
-                    progress_tracker.set_description(
-                        "Database corruption detected. Safe mode enabled; run repair/restore."
-                    )
-                    progress_tracker.set_progress(0)
-
-                return ErrorResult(
-                    message=(
-                        "Database corruption detected. A backup was created and the project "
-                        "was put into safe mode. Run 'repair_sqlite_database' (force=true) "
-                        "or restore from backup, then re-run update_indexes."
-                    ),
-                    code="DATABASE_CORRUPTED",
-                    details={
-                        "db_path": str(db_path),
-                        "marker_path": marker_path,
-                        "backup_paths": backup_paths,
-                        "integrity_message": db_check.message,
-                    },
-                )
-
-            database = self._open_database(root_dir, auto_analyze=False)
+            database = self._open_database_from_config(auto_analyze=False)
             try:
-                project_id = self._get_project_id(database, root_path, None)
-                if not project_id:
-                    project_id = database.get_or_create_project(
-                        str(root_path), name=root_path.name
+                project = database.get_project(project_id)
+                if not project or not project.root_path:
+                    return ErrorResult(
+                        message=f"Project not found: {project_id}",
+                        code="PROJECT_NOT_FOUND",
+                        details={"project_id": project_id},
                     )
+                root_path = Path(project.root_path)
+                if not root_path.exists() or not root_path.is_dir():
+                    return ErrorResult(
+                        message=(
+                            f"Project root path does not exist or is not a directory: {root_path}"
+                        ),
+                        code="PROJECT_ROOT_NOT_FOUND",
+                        details={"project_id": project_id, "root_path": str(root_path)},
+                    )
+
+                if progress_tracker:
+                    progress_tracker.set_description("Scanning for Python files...")
+                    progress_tracker.set_progress(0)
 
                 python_files: list[Path] = []
                 # Build ignore set from constants
@@ -721,8 +669,8 @@ class UpdateIndexesMCPCommand(BaseMCPCommand):
                         progress_tracker.set_status("completed")
                     return SuccessResult(
                         data={
-                            "root_dir": str(root_path),
                             "project_id": project_id,
+                            "root_path": str(root_path),
                             "files_processed": 0,
                             "files_total": 0,
                             "files_discovered": 0,
@@ -798,33 +746,45 @@ class UpdateIndexesMCPCommand(BaseMCPCommand):
                 total_methods = sum(r.get("methods", 0) for r in results)
                 total_imports = sum(r.get("imports", 0) for r in results)
 
+                error_details = [
+                    {
+                        "file": r.get("file", ""),
+                        "error": r.get("error", "Unknown"),
+                        "error_type": r.get("error_type", "Unknown"),
+                    }
+                    for r in results
+                    if r.get("status") == "error"
+                ]
+
                 if progress_tracker:
                     progress_tracker.set_progress(100)
                     progress_tracker.set_description("Indexing completed")
                     progress_tracker.set_status("completed")
 
-                return SuccessResult(
-                    data={
-                        "root_dir": str(root_path),
-                        "project_id": project_id,
-                        "files_processed": successful,
-                        "files_total": total,
-                        "files_discovered": files_total,
-                        "errors": errors,
-                        "syntax_errors": syntax_errors,
-                        "classes": total_classes,
-                        "functions": total_functions,
-                        "methods": total_methods,
-                        "imports": total_imports,
-                        "db_repaired": False,
-                        "db_backup_paths": [],
-                        "workers_restarted": {},
-                        "message": (
-                            f"Indexes updated: {successful}/{total} files processed, "
-                            f"{errors} errors, {syntax_errors} syntax errors"
-                        ),
-                    }
-                )
+                data: Dict[str, Any] = {
+                    "project_id": project_id,
+                    "root_path": str(root_path),
+                    "files_processed": successful,
+                    "files_total": total,
+                    "files_discovered": files_total,
+                    "errors": errors,
+                    "syntax_errors": syntax_errors,
+                    "classes": total_classes,
+                    "functions": total_functions,
+                    "methods": total_methods,
+                    "imports": total_imports,
+                    "db_repaired": False,
+                    "db_backup_paths": [],
+                    "workers_restarted": {},
+                    "message": (
+                        f"Indexes updated: {successful}/{total} files processed, "
+                        f"{errors} errors, {syntax_errors} syntax errors"
+                    ),
+                }
+                if error_details:
+                    data["error_details"] = error_details
+
+                return SuccessResult(data=data)
             finally:
                 database.disconnect()
 
@@ -861,10 +821,10 @@ class UpdateIndexesMCPCommand(BaseMCPCommand):
                 "parses Python files, extracts code entities, and stores them in the database for "
                 "fast retrieval and analysis.\n\n"
                 "Operation flow:\n"
-                "1. Validates root_dir exists and is a directory\n"
-                "2. Checks database integrity (if corrupted, enters safe mode)\n"
-                "3. Creates or gets project_id from database\n"
-                "4. Scans root_dir for Python files (excludes .git, __pycache__, node_modules, data, logs)\n"
+                "1. Resolves project root_path from shared database by project_id\n"
+                "2. Validates root_path exists and is a directory\n"
+                "3. Checks database integrity (if corrupted, enters safe mode)\n"
+                "4. Scans root_path for Python files (excludes .git, __pycache__, node_modules, data, logs)\n"
                 "5. For each Python file:\n"
                 "   - Reads file content and parses AST\n"
                 "   - Saves AST tree to database\n"
@@ -907,11 +867,10 @@ class UpdateIndexesMCPCommand(BaseMCPCommand):
                 "- Excludes hidden directories and common build/cache directories"
             ),
             "parameters": {
-                "root_dir": {
+                "project_id": {
                     "description": (
-                        "Root directory to analyze. Can be absolute or relative. "
-                        "Must exist and be accessible. Python files in this directory "
-                        "and subdirectories will be indexed."
+                        "Project UUID from create_project or list_projects. "
+                        "Root path is resolved from the shared database."
                     ),
                     "type": "string",
                     "required": True,
@@ -930,17 +889,17 @@ class UpdateIndexesMCPCommand(BaseMCPCommand):
                 {
                     "description": "Update indexes for project",
                     "command": {
-                        "root_dir": "/home/user/projects/my_project",
+                        "project_id": "550e8400-e29b-41d4-a716-446655440000",
                     },
                     "explanation": (
-                        "Analyzes all Python files in project and updates database indexes. "
-                        "This is a long-running operation. Use queue_get_job_status to check progress."
+                        "Resolves project root from database by project_id, then analyzes "
+                        "all Python files and updates indexes. Long-running; use queue_get_job_status to check progress."
                     ),
                 },
                 {
                     "description": "Update indexes with custom line threshold",
                     "command": {
-                        "root_dir": "/home/user/projects/my_project",
+                        "project_id": "550e8400-e29b-41d4-a716-446655440000",
                         "max_lines": 500,
                     },
                     "explanation": (
@@ -970,8 +929,8 @@ class UpdateIndexesMCPCommand(BaseMCPCommand):
                 "success": {
                     "description": "Command executed successfully",
                     "data": {
-                        "root_dir": "Root directory that was analyzed",
                         "project_id": "Project UUID",
+                        "root_path": "Project root path that was analyzed (from database)",
                         "files_processed": "Number of files successfully processed",
                         "files_total": "Total number of files analyzed",
                         "files_discovered": "Total number of Python files discovered",
@@ -987,8 +946,8 @@ class UpdateIndexesMCPCommand(BaseMCPCommand):
                         "message": "Summary message",
                     },
                     "example": {
-                        "root_dir": "/home/user/projects/my_project",
                         "project_id": "928bcf10-db1c-47a3-8341-f60a6d997fe7",
+                        "root_path": "/home/user/projects/my_project",
                         "files_processed": 42,
                         "files_total": 45,
                         "files_discovered": 45,

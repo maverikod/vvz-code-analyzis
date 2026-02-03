@@ -273,60 +273,69 @@ class ComposeCSTModuleCommand(BaseMCPCommand):
             database: Database instance
             backup_data: Backed up data
         """
-        # Restore classes
+        # Restore classes (schema: id, file_id, name, line, end_line, docstring, bases)
+        # Use INSERT OR REPLACE so restore is idempotent when main transaction rolled back (rows still exist).
         for row in backup_data["classes"]:
+            line_val = row.get("start_line", row.get("line", 0))
             database.execute(
                 """
-                INSERT INTO classes (id, file_id, name, qualname, start_line, end_line, docstring, bases)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                INSERT OR REPLACE INTO classes (id, file_id, name, line, end_line, docstring, bases)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     row["id"],
                     row["file_id"],
                     row["name"],
-                    row["qualname"],
-                    row["start_line"],
-                    row["end_line"],
+                    line_val,
+                    row.get("end_line"),
                     row.get("docstring"),
                     row.get("bases"),
                 ),
             )
 
-        # Restore methods
+        # Restore methods (schema: id, class_id, name, line, end_line, args, docstring, ...)
         for row in backup_data["methods"]:
+            line_val = row.get("start_line", row.get("line", 0))
+            args_val = row.get("parameters", row.get("args"))
             database.execute(
                 """
-                INSERT INTO methods (id, class_id, name, qualname, start_line, end_line, docstring, parameters)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                INSERT OR REPLACE INTO methods (id, class_id, name, line, end_line, args, docstring,
+                    is_abstract, has_pass, has_not_implemented, complexity)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     row["id"],
                     row["class_id"],
                     row["name"],
-                    row["qualname"],
-                    row["start_line"],
-                    row["end_line"],
+                    line_val,
+                    row.get("end_line"),
+                    args_val,
                     row.get("docstring"),
-                    row.get("parameters"),
+                    row.get("is_abstract", 0),
+                    row.get("has_pass", 0),
+                    row.get("has_not_implemented", 0),
+                    row.get("complexity"),
                 ),
             )
 
-        # Restore functions
+        # Restore functions (schema: id, file_id, name, line, end_line, args, docstring, complexity)
         for row in backup_data["functions"]:
+            line_val = row.get("start_line", row.get("line", 0))
+            args_val = row.get("parameters", row.get("args"))
             database.execute(
                 """
-                INSERT INTO functions (id, file_id, name, qualname, start_line, end_line, docstring, parameters)
+                INSERT OR REPLACE INTO functions (id, file_id, name, line, end_line, args, docstring, complexity)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     row["id"],
                     row["file_id"],
                     row["name"],
-                    row["qualname"],
-                    row["start_line"],
-                    row["end_line"],
+                    line_val,
+                    row.get("end_line"),
+                    args_val,
                     row.get("docstring"),
-                    row.get("parameters"),
+                    row.get("complexity"),
                 ),
             )
 
@@ -342,7 +351,7 @@ class ComposeCSTModuleCommand(BaseMCPCommand):
         for row in backup_data["imports"]:
             database.execute(
                 """
-                INSERT INTO imports (id, file_id, module, name, alias, import_type, line)
+                INSERT OR REPLACE INTO imports (id, file_id, module, name, alias, import_type, line)
                 VALUES (?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
@@ -360,7 +369,7 @@ class ComposeCSTModuleCommand(BaseMCPCommand):
         for row in backup_data["usages"]:
             database.execute(
                 """
-                INSERT INTO usages (id, file_id, entity_type, entity_name, line, column)
+                INSERT OR REPLACE INTO usages (id, file_id, entity_type, entity_name, line, column)
                 VALUES (?, ?, ?, ?, ?, ?)
                 """,
                 (
@@ -377,7 +386,7 @@ class ComposeCSTModuleCommand(BaseMCPCommand):
         for row in backup_data["issues"]:
             database.execute(
                 """
-                INSERT INTO issues (id, file_id, issue_type, message, line, column)
+                INSERT OR REPLACE INTO issues (id, file_id, issue_type, message, line, column)
                 VALUES (?, ?, ?, ?, ?, ?)
                 """,
                 (
@@ -394,7 +403,7 @@ class ComposeCSTModuleCommand(BaseMCPCommand):
         for row in backup_data["code_content"]:
             database.execute(
                 """
-                INSERT INTO code_content (id, file_id, content, start_line, end_line)
+                INSERT OR REPLACE INTO code_content (id, file_id, content, start_line, end_line)
                 VALUES (?, ?, ?, ?, ?)
                 """,
                 (
@@ -418,7 +427,7 @@ class ComposeCSTModuleCommand(BaseMCPCommand):
         for row in backup_data["ast_trees"]:
             database.execute(
                 """
-                INSERT INTO ast_trees (id, file_id, project_id, ast_json, ast_hash, file_mtime)
+                INSERT OR REPLACE INTO ast_trees (id, file_id, project_id, ast_json, ast_hash, file_mtime)
                 VALUES (?, ?, ?, ?, ?, ?)
                 """,
                 (
@@ -435,7 +444,7 @@ class ComposeCSTModuleCommand(BaseMCPCommand):
         for row in backup_data["cst_trees"]:
             database.execute(
                 """
-                INSERT INTO cst_trees (id, file_id, project_id, cst_code, cst_hash, file_mtime)
+                INSERT OR REPLACE INTO cst_trees (id, file_id, project_id, cst_code, cst_hash, file_mtime)
                 VALUES (?, ?, ?, ?, ?, ?)
                 """,
                 (
@@ -986,6 +995,14 @@ class ComposeCSTModuleCommand(BaseMCPCommand):
         """
         t_apply = time.perf_counter()
         t_prev = t_apply
+        logger.info(
+            "[CHAIN] compose_cst_module _apply_changes entry transaction_id=%s",
+            (
+                (transaction_id[:8] + "...")
+                if transaction_id and len(transaction_id) > 8
+                else transaction_id
+            ),
+        )
         try:
             # Delete old data if file exists (within same transaction)
             if file_id:
@@ -1035,6 +1052,9 @@ class ComposeCSTModuleCommand(BaseMCPCommand):
             t_prev = _t
 
             # Commit transaction
+            logger.info(
+                "[CHAIN] compose_cst_module calling database.commit_transaction"
+            )
             database.commit_transaction(transaction_id)
             _t = time.perf_counter()
             logger.info(
@@ -1074,10 +1094,17 @@ class ComposeCSTModuleCommand(BaseMCPCommand):
 
         except Exception as error:
             # Rollback transaction
+            logger.warning(
+                "[CHAIN] compose_cst_module _apply_changes failed: %s; attempting rollback",
+                type(error).__name__,
+            )
             try:
                 database.rollback_transaction(transaction_id)
             except Exception as rollback_error:
-                logger.error(f"Error during rollback: {rollback_error}")
+                logger.error(
+                    "[CHAIN] compose_cst_module rollback_transaction failed: %s",
+                    rollback_error,
+                )
 
             # Handle rollback
             self._handle_rollback(
@@ -1116,10 +1143,16 @@ class ComposeCSTModuleCommand(BaseMCPCommand):
         """
         t_start = time.perf_counter()
         t_prev = t_start
+        logger.info(
+            "[CHAIN] compose_cst_module execute entry project_id=%s file_path=%s tree_id=%s",
+            project_id,
+            file_path,
+            tree_id,
+        )
         try:
             # Step 1: Check project exists
-            root_path = self._resolve_project_root(project_id=project_id, root_dir=None)
-            database = self._open_database(str(root_path), auto_analyze=False)
+            root_path = self._resolve_project_root(project_id)
+            database = self._open_database_from_config(auto_analyze=False)
             try:
                 project = database.get_project(project_id)
                 if not project:
@@ -1260,7 +1293,10 @@ class ComposeCSTModuleCommand(BaseMCPCommand):
                 return validation_error
 
             # Step 6: Get database connection
-            database = self._open_database(str(root_path), auto_analyze=False)
+            logger.info(
+                "[CHAIN] compose_cst_module opening database root_path=%s", root_path
+            )
+            database = self._open_database_from_config(auto_analyze=False)
             backup_manager = None
             backup_uuid = None
             file_data_backup = None
@@ -1310,6 +1346,9 @@ class ComposeCSTModuleCommand(BaseMCPCommand):
                 t_prev = _t
 
                 # Step 9: Begin database transaction
+                logger.info(
+                    "[CHAIN] compose_cst_module calling database.begin_transaction"
+                )
                 _t_begin = time.perf_counter()
                 transaction_id = database.begin_transaction()
                 _t = time.perf_counter()
@@ -1318,6 +1357,14 @@ class ComposeCSTModuleCommand(BaseMCPCommand):
                     _t - _t_begin,
                 )
                 t_prev = _t
+                logger.info(
+                    "[CHAIN] compose_cst_module begin_transaction returned transaction_id=%s",
+                    (
+                        transaction_id[:8] + "..."
+                        if transaction_id and len(transaction_id) > 8
+                        else transaction_id
+                    ),
+                )
                 if not transaction_id:
                     if temp_file and temp_file.exists():
                         try:
@@ -1389,4 +1436,9 @@ class ComposeCSTModuleCommand(BaseMCPCommand):
                         )
 
         except Exception as e:
+            logger.error(
+                "[CHAIN] compose_cst_module execute failed: %s",
+                e,
+                exc_info=True,
+            )
             return self._handle_error(e, "CST_COMPOSE_ERROR", "compose_cst_module")

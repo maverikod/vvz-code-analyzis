@@ -1880,28 +1880,19 @@ class ListProjectsMCPCommand(BaseMCPCommand):
             "email": cls.email,
             "detailed_description": (
                 "The list_projects command retrieves all projects from the database "
-                "and returns their complete metadata including UUID, root path, name, "
-                "comment, watch directory identifier, and last update timestamp.\n\n"
-                "Parameters: Only watched_dir_id (optional). This command does NOT accept root_dir; "
-                "database path is resolved from server configuration.\n\n"
+                "and returns for each project: project id, watch_dir (observed directory path), "
+                "and project directory name, plus root_path, comment, watch_dir_id, updated_at.\n\n"
+                "Parameters: Only watched_dir_id (optional). Database path is from server config only.\n\n"
                 "Operation flow:\n"
-                "1. Resolves database path from server configuration (config.json)\n"
-                "2. Opens database connection\n"
-                "3. If watched_dir_id is provided, filters projects by watched_dir_id\n"
-                "4. Queries projects from the projects table\n"
-                "5. Returns list of projects with their metadata\n\n"
+                "1. Opens database from server configuration (config.json)\n"
+                "2. If watched_dir_id is provided, filters projects by watched_dir_id\n"
+                "3. For each project, resolves watch_dir path from watch_dir_paths table\n"
+                "4. Returns list with id, watch_dir (path), name (project dir name), and other metadata\n\n"
                 "Use cases:\n"
-                "- Discover all projects in the database\n"
-                "- Get project UUIDs for use in other commands\n"
-                "- Filter projects by watched directory\n"
-                "- Verify project registration\n"
-                "- Audit project metadata\n\n"
-                "Important notes:\n"
-                "- Returns all projects if watched_dir_id is not provided\n"
-                "- If watched_dir_id is provided, only projects from that watched directory are returned\n"
-                "- Empty database or no matching projects returns empty list (count: 0)\n"
-                "- Each project entry includes: id (UUID), root_path, name, comment, watch_dir_id, updated_at\n"
-                "- Do not pass root_dir; it is rejected. Database path is resolved from server config only."
+                "- Discover all projects and get project_id for other commands\n"
+                "- Get watch_dir path and project directory name per project\n"
+                "- Filter projects by watched directory\n\n"
+                "Important: Each project always includes id, watch_dir (path or None), and name."
             ),
             "parameters": {
                 "watched_dir_id": {
@@ -1980,13 +1971,11 @@ class ListProjectsMCPCommand(BaseMCPCommand):
                     "description": "Command executed successfully",
                     "data": {
                         "projects": (
-                            "List of project dictionaries, each containing:\n"
+                            "List of project dictionaries. Each project always includes:\n"
                             "- id: Project UUID (string)\n"
-                            "- root_path: Project root directory path (string)\n"
-                            "- name: Project name (string, may be None)\n"
-                            "- comment: Optional comment/description (string, may be None)\n"
-                            "- watch_dir_id: Watched directory identifier (string, UUID4, may be None)\n"
-                            "- updated_at: Last update timestamp (ISO format string or None)"
+                            "- watch_dir: Watched directory absolute path (string, or None if not linked)\n"
+                            "- name: Project directory name (string, may be None)\n"
+                            "Additional fields: root_path, comment, watch_dir_id, updated_at."
                         ),
                         "count": "Number of projects found (integer)",
                     },
@@ -1994,16 +1983,18 @@ class ListProjectsMCPCommand(BaseMCPCommand):
                         "projects": [
                             {
                                 "id": "928bcf10-db1c-47a3-8341-f60a6d997fe7",
-                                "root_path": "/home/user/projects/vast_srv",
+                                "watch_dir": "/home/user/watch_dirs/main",
                                 "name": "vast_srv",
+                                "root_path": "/home/user/watch_dirs/main/vast_srv",
                                 "comment": None,
                                 "watch_dir_id": "550e8400-e29b-41d4-a716-446655440000",
                                 "updated_at": "2026-01-15T10:30:00.123456",
                             },
                             {
                                 "id": "36ebabd4-a480-4175-8129-2789f89beb40",
-                                "root_path": "/home/user/projects/code_analysis",
+                                "watch_dir": "/home/user/watch_dirs/main",
                                 "name": "code_analysis",
+                                "root_path": "/home/user/watch_dirs/main/code_analysis",
                                 "comment": "Main code analysis tool",
                                 "watch_dir_id": "550e8400-e29b-41d4-a716-446655440000",
                                 "updated_at": "2026-01-15T11:45:00.789012",
@@ -2038,10 +2029,7 @@ class ListProjectsMCPCommand(BaseMCPCommand):
             SuccessResult with list of projects or ErrorResult on failure.
         """
         try:
-            # Use _open_database so schema is initialized when DB is empty
-            config_path = self._resolve_config_path()
-            root_dir = str(Path(config_path).resolve().parent)
-            database = self._open_database(root_dir, auto_analyze=False)
+            database = self._open_database_from_config(auto_analyze=False)
 
             try:
                 # Get all projects using DatabaseClient
@@ -2071,13 +2059,25 @@ class ListProjectsMCPCommand(BaseMCPCommand):
                         p for p in project_objects if p.watch_dir_id == watched_dir_id
                     ]
 
-                # Convert Project objects to dictionaries for compatibility
+                # Resolve watch_dir path for each project and build response.
+                # Always return: project id, watch_dir (path), project dir name (name).
                 projects = []
                 for project in project_objects:
+                    watch_dir_path: Optional[str] = None
+                    if project.watch_dir_id:
+                        rows = database.select(
+                            "watch_dir_paths",
+                            where={"watch_dir_id": project.watch_dir_id},
+                            columns=["absolute_path"],
+                            limit=1,
+                        )
+                        if rows and rows[0].get("absolute_path"):
+                            watch_dir_path = rows[0]["absolute_path"]
                     project_dict = {
                         "id": project.id,
-                        "root_path": project.root_path,
+                        "watch_dir": watch_dir_path,
                         "name": project.name,
+                        "root_path": project.root_path,
                         "comment": project.comment,
                         "watch_dir_id": project.watch_dir_id,
                         "updated_at": (

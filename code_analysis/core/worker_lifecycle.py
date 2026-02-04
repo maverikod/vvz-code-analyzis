@@ -487,3 +487,79 @@ class WorkerLifecycleManager:
             pid=process.pid,
             message=f"Vectorization worker started (PID {process.pid})",
         )
+
+    def start_indexing_worker(
+        self,
+        *,
+        db_path: str,
+        poll_interval: int = 30,
+        batch_size: int = 5,
+        worker_log_path: Optional[str] = None,
+        worker_logs_dir: Optional[str] = None,
+    ) -> WorkerStartResult:
+        """
+        Start indexing worker in a separate process and register it.
+
+        Worker processes files with needs_chunking=1 via driver index_file RPC.
+        Must run before vectorization worker (startup order) so indexer clears
+        needs_chunking before vectorization chunks.
+
+        CRITICAL: Uses multiprocessing.Process, not threading.Thread or async.
+
+        Args:
+            db_path: Path to database file.
+            poll_interval: Poll interval seconds (default 30).
+            batch_size: Max files per project per cycle (default 5).
+            worker_log_path: Log path for worker process.
+            worker_logs_dir: Absolute directory for worker log and PID file (optional).
+                             If provided, PID file is {worker_logs_dir}/indexing_worker.pid.
+
+        Returns:
+            WorkerStartResult.
+        """
+        from .indexing_worker_pkg.runner import run_indexing_worker
+
+        if worker_logs_dir:
+            pid_file_path = Path(worker_logs_dir).resolve() / "indexing_worker.pid"
+        else:
+            pid_file_path = Path(LOGS_DIR_NAME).resolve() / "indexing_worker.pid"
+
+        existing_pid = self.check_pid_file(pid_file_path, "indexing", "indexing")
+        if existing_pid is not None:
+            return WorkerStartResult(
+                success=False,
+                worker_type="indexing",
+                pid=existing_pid,
+                message="Indexing worker already running",
+            )
+
+        process = multiprocessing.Process(
+            target=run_indexing_worker,
+            args=(db_path,),
+            kwargs={
+                "poll_interval": int(poll_interval),
+                "batch_size": int(batch_size),
+                "worker_log_path": worker_log_path,
+                "pid_file_path": str(pid_file_path),
+            },
+            daemon=True,
+        )
+        process.start()
+
+        try:
+            pid_file_path.parent.mkdir(parents=True, exist_ok=True)
+            with open(pid_file_path, "w") as f:
+                f.write(str(process.pid))
+        except Exception as e:
+            logger.warning(f"Failed to write PID file: {e}")
+
+        self.register_worker(
+            "indexing",
+            {"pid": process.pid, "process": process, "name": "indexing_universal"},
+        )
+        return WorkerStartResult(
+            success=True,
+            worker_type="indexing",
+            pid=process.pid,
+            message=f"Indexing worker started (PID {process.pid})",
+        )

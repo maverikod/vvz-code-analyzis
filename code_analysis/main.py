@@ -376,7 +376,8 @@ def main() -> None:
         # Start database driver first
         await asyncio.to_thread(startup_database_driver)
 
-        # Start vectorization and file watcher workers
+        # Indexing worker before vectorization (indexer clears needs_chunking first)
+        await asyncio.to_thread(startup_indexing_worker)
         await asyncio.to_thread(startup_vectorization_worker)
         await asyncio.to_thread(startup_file_watcher_worker)
 
@@ -481,6 +482,16 @@ def main() -> None:
                 except Exception as e:
                     logger.error(
                         f"❌ [BACKGROUND] Failed to start database driver: {e}",
+                        exc_info=True,
+                    )
+
+                try:
+                    logger.info("🚀 [BACKGROUND] Starting indexing worker...")
+                    startup_indexing_worker()
+                    logger.info("✅ [BACKGROUND] Indexing worker started")
+                except Exception as e:
+                    logger.error(
+                        f"❌ [BACKGROUND] Failed to start indexing worker: {e}",
                         exc_info=True,
                     )
 
@@ -660,6 +671,78 @@ def main() -> None:
                 file=sys.stderr,
             )
             logger.error(f"❌ Failed to start database driver: {e}", exc_info=True)
+
+    # Start indexing worker on startup (before vectorization so indexer clears needs_chunking first)
+    def startup_indexing_worker() -> None:
+        """Start indexing worker in background process on server startup.
+
+        Worker processes files with needs_chunking=1 via driver index_file RPC.
+        Must run before vectorization worker (startup order).
+
+        Returns:
+            None
+        """
+        import logging
+        from pathlib import Path
+
+        from code_analysis.core.worker_manager import get_worker_manager
+
+        logger = logging.getLogger(__name__)
+        logger.info("🔍 startup_indexing_worker called")
+
+        try:
+            from mcp_proxy_adapter.config import get_config
+
+            cfg = get_config()
+            app_config = getattr(cfg, "config_data", {})
+            if not app_config and getattr(cfg, "config_path", None):
+                import json
+
+                with open(cfg.config_path, "r", encoding="utf-8") as f:
+                    app_config = json.load(f)
+
+            code_analysis_config = app_config.get("code_analysis", {}) or {}
+            indexing_cfg = code_analysis_config.get("indexing_worker") or {}
+            if isinstance(indexing_cfg, dict) and not indexing_cfg.get("enabled", True):
+                logger.info("ℹ️  Indexing worker is disabled in config, skipping")
+                return
+
+            config_path = BaseMCPCommand._resolve_config_path()
+            config_data = load_raw_config(config_path)
+            storage = resolve_storage_paths(
+                config_data=config_data, config_path=config_path
+            )
+            db_path = storage.db_path
+
+            poll_interval = 30
+            batch_size = 5
+            worker_log_path = str(storage.config_dir / "logs" / "indexing_worker.log")
+            if isinstance(indexing_cfg, dict):
+                poll_interval = indexing_cfg.get("poll_interval", 30)
+                batch_size = indexing_cfg.get("batch_size", 5)
+                if indexing_cfg.get("log_path"):
+                    worker_log_path = indexing_cfg["log_path"]
+
+            worker_logs_dir = str(Path(worker_log_path).resolve().parent)
+            worker_manager = get_worker_manager()
+            result = worker_manager.start_indexing_worker(
+                db_path=str(db_path),
+                poll_interval=int(poll_interval),
+                batch_size=int(batch_size),
+                worker_log_path=worker_log_path,
+                worker_logs_dir=worker_logs_dir,
+            )
+            if result.success:
+                logger.info(f"✅ Indexing worker started: {result.message}")
+                print(f"✅ {result.message}", flush=True)
+            else:
+                logger.warning(f"⚠️  Failed to start indexing worker: {result.message}")
+                print(f"⚠️  {result.message}", flush=True)
+        except Exception as e:
+            logger.error(f"❌ Failed to start indexing worker: {e}", exc_info=True)
+            print(
+                f"❌ Failed to start indexing worker: {e}", flush=True, file=sys.stderr
+            )
 
     # Start vectorization worker on startup
     def startup_vectorization_worker() -> None:

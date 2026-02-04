@@ -55,3 +55,7 @@ Add a background **indexing worker** (by analogy with the vectorization worker) 
 | E | E.2 Tests | [16_E2_tests.md](16_E2_tests.md) |
 
 Order of implementation, risks, and success criteria: [99_ORDER_RISKS_CRITERIA.md](99_ORDER_RISKS_CRITERIA.md).
+
+## Implementation status
+
+**All phases (A through E) are implemented.** See [INDEXING_WORKER_PLAN.md](INDEXING_WORKER_PLAN.md#implementation-status-completed) for the step-level checklist. Tests: `tests/test_indexing_worker.py`.

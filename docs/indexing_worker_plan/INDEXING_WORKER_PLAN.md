@@ -30,6 +30,18 @@ Start from the overview and step index:
 
 1. Phase A → Phase B → Phase C → Phase D → Phase E (see [99_ORDER_RISKS_CRITERIA.md](indexing_worker_plan/99_ORDER_RISKS_CRITERIA.md)).
 
+## Implementation status (completed)
+
+| Phase | Steps | Status |
+|-------|--------|--------|
+| **A** | A.1 driver RPC, A.2 client `index_file`, A.3 clear `needs_chunking` in driver | Done |
+| **B** | B.1 package layout, B.2 discovery query, B.3 backoff, B.4 logging/PID | Done |
+| **C** | C.1 lifecycle, C.2 WorkerManager, C.3 registry/stop, C.4 main startup, C.5 config | Done |
+| **D** | D.1 get_worker_status (indexing_worker_stats), D.2 start_worker/stop_worker | Done |
+| **E** | E.1 docs (INDEXING_WORKER.md, SEARCH_AND_VECTORIZATION_DATA_FLOW.md), E.2 tests | Done |
+
+All steps are implemented. Unit and integration tests in `tests/test_indexing_worker.py` pass.
+
 ---
 
 ## Principles

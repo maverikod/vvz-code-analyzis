@@ -56,17 +56,20 @@ def create_driver(driver_name: str, config: Dict[str, Any]) -> BaseDatabaseDrive
     )
     import os
 
-    # Direct sqlite driver can only be used in DB worker process
+    # Direct sqlite driver can only be used in DB worker or DB driver process
     if driver_name == "sqlite":
         is_worker = os.getenv("CODE_ANALYSIS_DB_WORKER", "0") == "1"
-        logger.info(f"[create_driver] sqlite driver check: is_worker={is_worker}")
-        if not is_worker:
+        is_driver = os.getenv("CODE_ANALYSIS_DB_DRIVER", "0") == "1"
+        logger.info(
+            f"[create_driver] sqlite driver check: is_worker={is_worker}, is_driver={is_driver}"
+        )
+        if not is_worker and not is_driver:
             logger.error(
-                "Direct 'sqlite' driver can only be used in DB worker process. "
+                "Direct 'sqlite' driver can only be used in DB worker or DB driver process. "
                 "Use 'sqlite_proxy' driver instead."
             )
             raise RuntimeError(
-                "Direct SQLite driver can only be used in DB worker process. "
+                "Direct SQLite driver can only be used in DB worker or DB driver process. "
                 "Use sqlite_proxy driver instead."
             )
 
@@ -89,13 +92,17 @@ def create_driver(driver_name: str, config: Dict[str, Any]) -> BaseDatabaseDrive
         logger.info("[create_driver] Instantiating driver class")
         print("[create_driver] Instantiating driver class", flush=True)
         driver = driver_class()
-        logger.info("[create_driver] Driver instance created, calling connect() with config")
+        logger.info(
+            "[create_driver] Driver instance created, calling connect() with config"
+        )
         print(
             "[create_driver] Driver instance created, calling connect() with config",
             flush=True,
         )
         driver.connect(config)
-        logger.info(f"[create_driver] Database driver '{driver_name}' initialized successfully")
+        logger.info(
+            f"[create_driver] Database driver '{driver_name}' initialized successfully"
+        )
         print(
             f"[create_driver] Database driver '{driver_name}' initialized successfully",
             flush=True,

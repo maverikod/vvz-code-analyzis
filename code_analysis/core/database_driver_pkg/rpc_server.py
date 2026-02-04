@@ -29,13 +29,24 @@ from ..constants import (
     RPC_SERVER_SOCKET_TIMEOUT,
 )
 
+from code_analysis.core.database_client.protocol import (
+    DeleteRequest,
+    InsertRequest,
+    SelectRequest,
+    UpdateRequest,
+    BaseResult,
+    DataResult,
+    ErrorResult,
+    SuccessResult,
+    ErrorCode,
+    RPCError,
+    RPCRequest,
+    RPCResponse,
+)
 from .drivers.base import BaseDatabaseDriver
 from .exceptions import RPCServerError
-from .request import DeleteRequest, InsertRequest, SelectRequest, UpdateRequest
 from .request_queue import RequestPriority, RequestQueue
-from .result import BaseResult, DataResult, ErrorResult, SuccessResult
 from .rpc_handlers import RPCHandlers
-from .rpc_protocol import ErrorCode, RPCError, RPCRequest, RPCResponse
 from .serialization import serialize_response
 
 logger = logging.getLogger(__name__)
@@ -368,6 +379,12 @@ class RPCServer:
         try:
             method = request.method
             params = request.params
+            tid = params.get("transaction_id") if isinstance(params, dict) else None
+            logger.info(
+                "[CHAIN] rpc_server _process_request method=%s tid=%s",
+                method,
+                (str(tid)[:8] + "…") if tid and len(str(tid)) > 8 else tid,
+            )
 
             # Variable to hold result (can be SuccessResult, DataResult, or ErrorResult)
             result: SuccessResult | DataResult | ErrorResult
@@ -419,6 +436,7 @@ class RPCServer:
                     "create_table": self.handlers.handle_create_table,
                     "drop_table": self.handlers.handle_drop_table,
                     "execute": self.handlers.handle_execute,
+                    "execute_batch": self.handlers.handle_execute_batch,
                     "begin_transaction": self.handlers.handle_begin_transaction,
                     "commit_transaction": self.handlers.handle_commit_transaction,
                     "rollback_transaction": self.handlers.handle_rollback_transaction,
@@ -428,6 +446,7 @@ class RPCServer:
                     "query_cst": self.handlers.handle_query_cst,
                     "modify_ast": self.handlers.handle_modify_ast,
                     "modify_cst": self.handlers.handle_modify_cst,
+                    "index_file": self.handlers.handle_index_file,
                 }
 
                 handler = handler_map.get(method)
@@ -447,6 +466,11 @@ class RPCServer:
                 if result.is_error() and isinstance(result, ErrorResult):
                     # Convert ErrorResult to RPCError
                     rpc_error = result.to_rpc_error()
+                    logger.warning(
+                        "[CHAIN] rpc_server _process_request method=%s handler_error=%s",
+                        method,
+                        getattr(rpc_error, "message", rpc_error),
+                    )
                     return RPCResponse(
                         error=rpc_error,
                         request_id=request.request_id,
@@ -468,7 +492,12 @@ class RPCServer:
                     request_id=request.request_id,
                 )
         except Exception as e:
-            logger.error(f"Error processing request: {e}", exc_info=True)
+            logger.error(
+                "[CHAIN] rpc_server _process_request method=%s exception: %s",
+                method,
+                e,
+                exc_info=True,
+            )
             return RPCResponse(
                 error=RPCError(
                     code=ErrorCode.INTERNAL_ERROR,

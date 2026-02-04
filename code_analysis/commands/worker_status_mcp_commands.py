@@ -35,7 +35,7 @@ class GetWorkerStatusMCPCommand(BaseMCPCommand):
             "properties": {
                 "worker_type": {
                     "type": "string",
-                    "enum": ["file_watcher", "vectorization"],
+                    "enum": ["file_watcher", "vectorization", "indexing"],
                     "description": "Type of worker to check",
                 },
                 "log_path": {
@@ -45,10 +45,6 @@ class GetWorkerStatusMCPCommand(BaseMCPCommand):
                 "lock_file_path": {
                     "type": "string",
                     "description": "Path to lock file (optional, for file_watcher)",
-                },
-                "root_dir": {
-                    "type": "string",
-                    "description": "Root directory for database access (optional, for worker cycle stats)",
                 },
             },
             "required": ["worker_type"],
@@ -60,7 +56,6 @@ class GetWorkerStatusMCPCommand(BaseMCPCommand):
         worker_type: str,
         log_path: Optional[str] = None,
         lock_file_path: Optional[str] = None,
-        root_dir: Optional[str] = None,
         **kwargs,
     ) -> SuccessResult | ErrorResult:
         """
@@ -70,7 +65,6 @@ class GetWorkerStatusMCPCommand(BaseMCPCommand):
             worker_type: Type of worker (file_watcher or vectorization)
             log_path: Path to worker log file
             lock_file_path: Path to lock file (for file_watcher)
-            root_dir: Optional root directory for database access (for worker stats)
 
         Returns:
             SuccessResult with worker status or ErrorResult on failure
@@ -83,61 +77,66 @@ class GetWorkerStatusMCPCommand(BaseMCPCommand):
             )
             result = await command.execute()
 
-            # Add worker statistics from database if root_dir provided
-            if root_dir:
+            try:
+                db = self._open_database_from_config(auto_analyze=False)
                 try:
-                    db = self._open_database(root_dir, auto_analyze=False)
-                    try:
-                        if worker_type == "file_watcher":
-                            stats = db.get_file_watcher_stats()
-                            if stats:
-                                # Calculate processing speed (files per second)
-                                if stats.get("average_processing_time_seconds"):
-                                    avg_time = stats["average_processing_time_seconds"]
-                                    if avg_time and avg_time > 0:
-                                        stats["processing_speed_files_per_second"] = (
-                                            round(1.0 / avg_time, 2)
-                                        )
-                                    else:
-                                        stats["processing_speed_files_per_second"] = (
-                                            None
-                                        )
-                                else:
-                                    stats["processing_speed_files_per_second"] = None
-
-                                # Calculate percentage of processed files
-                                files_total = stats.get("files_total_at_start", 0)
-                                files_processed = stats.get("files_processed", 0)
-                                if files_total and files_total > 0:
-                                    stats["files_processed_percent"] = round(
-                                        (files_processed / files_total) * 100, 2
+                    if worker_type == "file_watcher":
+                        get_fw = getattr(db, "get_file_watcher_stats", None)
+                        stats = get_fw() if callable(get_fw) else None
+                        if stats:
+                            if stats.get("average_processing_time_seconds"):
+                                avg_time = stats["average_processing_time_seconds"]
+                                if avg_time and avg_time > 0:
+                                    stats["processing_speed_files_per_second"] = round(
+                                        1.0 / avg_time, 2
                                     )
                                 else:
-                                    stats["files_processed_percent"] = None
-
-                                result["cycle_stats"] = stats
-                        elif worker_type == "vectorization":
-                            stats = db.get_vectorization_stats()
-                            if stats:
-                                # Calculate processing speed (chunks per second)
-                                if stats.get("average_processing_time_seconds"):
-                                    avg_time = stats["average_processing_time_seconds"]
-                                    if avg_time and avg_time > 0:
-                                        stats["processing_speed_chunks_per_second"] = (
-                                            round(1.0 / avg_time, 2)
-                                        )
-                                    else:
-                                        stats["processing_speed_chunks_per_second"] = (
-                                            None
-                                        )
+                                    stats["processing_speed_files_per_second"] = None
+                            else:
+                                stats["processing_speed_files_per_second"] = None
+                            files_total = stats.get("files_total_at_start", 0)
+                            files_processed = stats.get("files_processed", 0)
+                            if files_total and files_total > 0:
+                                stats["files_processed_percent"] = round(
+                                    (files_processed / files_total) * 100, 2
+                                )
+                            else:
+                                stats["files_processed_percent"] = None
+                            result["cycle_stats"] = stats
+                    elif worker_type == "vectorization":
+                        get_vs = getattr(db, "get_vectorization_stats", None)
+                        stats = get_vs() if callable(get_vs) else None
+                        if stats:
+                            if stats.get("average_processing_time_seconds"):
+                                avg_time = stats["average_processing_time_seconds"]
+                                if avg_time and avg_time > 0:
+                                    stats["processing_speed_chunks_per_second"] = round(
+                                        1.0 / avg_time, 2
+                                    )
                                 else:
                                     stats["processing_speed_chunks_per_second"] = None
-                                result["cycle_stats"] = stats
-                    finally:
-                        db.disconnect()
-                except Exception as e:
-                    logger.warning(f"Failed to get worker stats from database: {e}")
-                    # Don't fail the command if stats are unavailable
+                            else:
+                                stats["processing_speed_chunks_per_second"] = None
+                            result["cycle_stats"] = stats
+                    elif worker_type == "indexing":
+                        get_is = getattr(db, "get_indexing_stats", None)
+                        stats = get_is() if callable(get_is) else None
+                        if stats:
+                            if stats.get("average_processing_time_seconds"):
+                                avg_time = stats["average_processing_time_seconds"]
+                                if avg_time and avg_time > 0:
+                                    stats["processing_speed_files_per_second"] = round(
+                                        1.0 / avg_time, 2
+                                    )
+                                else:
+                                    stats["processing_speed_files_per_second"] = None
+                            else:
+                                stats["processing_speed_files_per_second"] = None
+                            result["cycle_stats"] = stats
+                finally:
+                    db.disconnect()
+            except Exception as e:
+                logger.warning("Failed to get worker stats from database: %s", e)
 
             return SuccessResult(data=result)
         except Exception as e:
@@ -171,7 +170,7 @@ class GetWorkerStatusMCPCommand(BaseMCPCommand):
                 "The command provides comprehensive information about worker processes including "
                 "CPU/memory usage, uptime, lock file status, and log activity.\n\n"
                 "Operation flow:\n"
-                "1. Validates worker_type parameter (file_watcher or vectorization)\n"
+                "1. Validates worker_type parameter (file_watcher, vectorization, or indexing)\n"
                 "2. Attempts to get registered workers from WorkerManager\n"
                 "3. If no registered workers, searches for processes by name pattern\n"
                 "4. For file_watcher, checks lock file status if provided\n"
@@ -181,7 +180,8 @@ class GetWorkerStatusMCPCommand(BaseMCPCommand):
                 "8. Returns comprehensive status summary\n\n"
                 "Worker Types:\n"
                 "- file_watcher: Monitors file system changes and updates database\n"
-                "- vectorization: Processes code chunks and generates embeddings\n\n"
+                "- vectorization: Processes code chunks and generates embeddings\n"
+                "- indexing: Indexes files with needs_chunking=1 (AST, CST, fulltext)\n\n"
                 "Process Discovery Methods:\n"
                 "1. WorkerManager: Gets registered workers (most reliable)\n"
                 "2. Process name search: Searches running processes by cmdline pattern\n"
@@ -218,13 +218,13 @@ class GetWorkerStatusMCPCommand(BaseMCPCommand):
             "parameters": {
                 "worker_type": {
                     "description": (
-                        "Type of worker to check. Must be one of: 'file_watcher' or 'vectorization'. "
+                        "Type of worker to check. Must be one of: 'file_watcher', 'vectorization', or 'indexing'. "
                         "Determines which worker processes to monitor."
                     ),
                     "type": "string",
                     "required": True,
-                    "enum": ["file_watcher", "vectorization"],
-                    "examples": ["file_watcher", "vectorization"],
+                    "enum": ["file_watcher", "vectorization", "indexing"],
+                    "examples": ["file_watcher", "vectorization", "indexing"],
                 },
                 "log_path": {
                     "description": (
@@ -295,7 +295,7 @@ class GetWorkerStatusMCPCommand(BaseMCPCommand):
                         {
                             "case": "Invalid worker type",
                             "message": "Invalid worker_type",
-                            "solution": "Use 'file_watcher' or 'vectorization'",
+                            "solution": "Use 'file_watcher', 'vectorization', or 'indexing'",
                         },
                         {
                             "case": "Permission denied",
@@ -445,26 +445,17 @@ class GetDatabaseStatusMCPCommand(BaseMCPCommand):
         """Get JSON schema for command parameters."""
         return {
             "type": "object",
-            "properties": {
-                "root_dir": {
-                    "type": "string",
-                    "description": "Root directory of the project (contains data/code_analysis.db)",
-                },
-            },
-            "required": ["root_dir"],
+            "properties": {},
+            "required": [],
             "additionalProperties": False,
         }
 
     async def execute(
         self,
-        root_dir: str,
         **kwargs,
     ) -> SuccessResult | ErrorResult:
         """
-        Execute get database status command.
-
-        Args:
-            root_dir: Root directory of the project
+        Execute get database status command. Database path from server config.
 
         Returns:
             SuccessResult with database status or ErrorResult on failure
@@ -472,9 +463,6 @@ class GetDatabaseStatusMCPCommand(BaseMCPCommand):
         try:
             from datetime import datetime
 
-            self._validate_root_dir(root_dir)
-
-            # Get database path from config (same way as _open_database does)
             from ..core.storage_paths import (
                 load_raw_config,
                 resolve_storage_paths,
@@ -489,8 +477,7 @@ class GetDatabaseStatusMCPCommand(BaseMCPCommand):
             ensure_storage_dirs(storage)
             db_path = storage.db_path
 
-            # Use unified database access method (not direct path construction)
-            db = self._open_database(root_dir, auto_analyze=False)
+            db = self._open_database_from_config(auto_analyze=False)
 
             try:
 
@@ -706,9 +693,13 @@ class GetDatabaseStatusMCPCommand(BaseMCPCommand):
                     "chunks_updated_24h": chunks_updated_24h,
                 }
 
-                # Get worker statistics
-                file_watcher_stats = db.get_file_watcher_stats()
-                vectorization_stats = db.get_vectorization_stats()
+                # Get worker statistics (optional; DatabaseClient may not expose these)
+                get_fw = getattr(db, "get_file_watcher_stats", None)
+                get_vs = getattr(db, "get_vectorization_stats", None)
+                get_is = getattr(db, "get_indexing_stats", None)
+                file_watcher_stats = get_fw() if callable(get_fw) else None
+                vectorization_stats = get_vs() if callable(get_vs) else None
+                indexing_stats = get_is() if callable(get_is) else None
 
                 # Calculate processing speed (files/chunks per second) from average time
                 if file_watcher_stats and file_watcher_stats.get(
@@ -750,9 +741,23 @@ class GetDatabaseStatusMCPCommand(BaseMCPCommand):
                     if vectorization_stats:
                         vectorization_stats["processing_speed_chunks_per_second"] = None
 
+                if indexing_stats and indexing_stats.get(
+                    "average_processing_time_seconds"
+                ):
+                    avg_time = indexing_stats["average_processing_time_seconds"]
+                    if avg_time and avg_time > 0:
+                        indexing_stats["processing_speed_files_per_second"] = round(
+                            1.0 / avg_time, 2
+                        )
+                    else:
+                        indexing_stats["processing_speed_files_per_second"] = None
+                elif indexing_stats:
+                    indexing_stats["processing_speed_files_per_second"] = None
+
                 result["worker_stats"] = {
                     "file_watcher": file_watcher_stats,
                     "vectorization": vectorization_stats,
+                    "indexing": indexing_stats,
                 }
 
                 # Get files needing chunking (sample)

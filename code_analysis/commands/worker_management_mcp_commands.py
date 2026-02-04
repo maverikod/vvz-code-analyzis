@@ -71,24 +71,24 @@ class StartWorkerMCPCommand(BaseMCPCommand):
             "type": "object",
             "description": (
                 "Start a background worker process. "
-                "Supported worker_type values: 'file_watcher', 'vectorization'."
+                "Supported worker_type values: 'file_watcher', 'vectorization', 'indexing'."
             ),
             "properties": {
                 "worker_type": {
                     "type": "string",
-                    "enum": ["file_watcher", "vectorization"],
+                    "enum": ["file_watcher", "vectorization", "indexing"],
                     "description": "Type of worker to start.",
                     "examples": ["file_watcher"],
                 },
-                "root_dir": {
+                "project_id": {
                     "type": "string",
-                    "description": "Project root directory (used to resolve storage paths for vectorization worker).",
-                    "examples": ["/abs/path/to/project"],
+                    "description": "Project UUID (used to resolve project root and storage paths).",
+                    "examples": ["550e8400-e29b-41d4-a716-446655440000"],
                 },
                 "watch_dirs": {
                     "type": "array",
                     "items": {"type": "string"},
-                    "description": "Directories to watch (file_watcher only; default: [root_dir]).",
+                    "description": "Directories to watch (file_watcher only; default: project root).",
                     "examples": [["/abs/path/to/project"]],
                 },
                 "scan_interval": {
@@ -121,19 +121,19 @@ class StartWorkerMCPCommand(BaseMCPCommand):
                     "examples": ["/abs/path/to/logs/vectorization_worker.log"],
                 },
             },
-            "required": ["worker_type", "root_dir"],
+            "required": ["worker_type", "project_id"],
             "additionalProperties": False,
             "examples": [
                 {
                     "worker_type": "file_watcher",
-                    "root_dir": "/abs/path/to/project",
+                    "project_id": "550e8400-e29b-41d4-a716-446655440000",
                     "watch_dirs": ["/abs/path/to/project"],
                     "scan_interval": 60,
                     "worker_log_path": "/abs/path/to/project/logs/file_watcher.log",
                 },
                 {
                     "worker_type": "vectorization",
-                    "root_dir": "/abs/path/to/project",
+                    "project_id": "550e8400-e29b-41d4-a716-446655440000",
                     "poll_interval": 30,
                     "batch_size": 10,
                     "vector_dim": 384,
@@ -145,7 +145,7 @@ class StartWorkerMCPCommand(BaseMCPCommand):
     async def execute(
         self: "StartWorkerMCPCommand",
         worker_type: str,
-        root_dir: str,
+        project_id: str,
         watch_dirs: Optional[List[str]] = None,
         scan_interval: int = 60,
         poll_interval: int = 30,
@@ -160,8 +160,8 @@ class StartWorkerMCPCommand(BaseMCPCommand):
         Args:
             self: Command instance.
             worker_type: Worker type to start.
-            root_dir: Project root directory (used to resolve storage paths for vectorization worker).
-            watch_dirs: Optional watch dirs for file watcher (projects discovered automatically).
+            project_id: Project UUID (used to resolve project root and storage paths).
+            watch_dirs: Optional watch dirs for file watcher (default: project root).
             scan_interval: Scan interval seconds.
             poll_interval: Poll interval seconds.
             batch_size: Vectorization batch size.
@@ -173,7 +173,7 @@ class StartWorkerMCPCommand(BaseMCPCommand):
             SuccessResult with start result or ErrorResult on failure.
         """
         try:
-            root_path = self._validate_root_dir(root_dir)
+            root_path = self._resolve_project_root(project_id)
 
             # Resolve service state paths from server config (DB/FAISS/locks).
             config_path = self._resolve_config_path()
@@ -239,6 +239,21 @@ class StartWorkerMCPCommand(BaseMCPCommand):
                     svo_config=svo_config,
                     batch_size=batch_size,
                     poll_interval=poll_interval,
+                    worker_log_path=log_path,
+                    worker_logs_dir=worker_logs_dir,
+                )
+                return SuccessResult(data=res.__dict__)
+
+            if worker_type == "indexing":
+                log_path = worker_log_path or str(
+                    (root_path / "logs" / "indexing_worker.log").resolve()
+                )
+                worker_logs_dir = str(Path(log_path).resolve().parent)
+                worker_manager = get_worker_manager()
+                res = worker_manager.start_indexing_worker(
+                    db_path=str(db_path),
+                    poll_interval=poll_interval,
+                    batch_size=batch_size,
                     worker_log_path=log_path,
                     worker_logs_dir=worker_logs_dir,
                 )
@@ -331,7 +346,7 @@ class StartWorkerMCPCommand(BaseMCPCommand):
                     ),
                     "type": "string",
                     "required": True,
-                    "enum": ["file_watcher", "vectorization"],
+                    "enum": ["file_watcher", "vectorization", "indexing"],
                 },
                 "root_dir": {
                     "description": (
@@ -523,7 +538,7 @@ class StopWorkerMCPCommand(BaseMCPCommand):
             "properties": {
                 "worker_type": {
                     "type": "string",
-                    "enum": ["file_watcher", "vectorization"],
+                    "enum": ["file_watcher", "vectorization", "indexing"],
                     "description": "Type of worker to stop.",
                     "examples": ["file_watcher"],
                 },
@@ -631,7 +646,7 @@ class StopWorkerMCPCommand(BaseMCPCommand):
                     ),
                     "type": "string",
                     "required": True,
-                    "enum": ["file_watcher", "vectorization"],
+                    "enum": ["file_watcher", "vectorization", "indexing"],
                 },
                 "timeout": {
                     "description": (

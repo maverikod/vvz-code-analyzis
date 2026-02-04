@@ -17,7 +17,7 @@ from ..db_driver import create_driver
 logger = logging.getLogger(__name__)
 
 # Schema version constant
-SCHEMA_VERSION = "1.3.0"  # Current schema version (added files_total_at_start and files_vectorized to vectorization_stats)
+SCHEMA_VERSION = "1.4.0"  # indexing_worker_stats table for indexing worker cycle stats
 
 # Migration methods registry: version -> migration function
 # Each migration function receives driver instance and performs version-specific migrations
@@ -185,6 +185,27 @@ class CodeDatabase:
             logger.error(f"Schema sync failed, connection blocked: {e}")
             raise  # Re-raise to prevent database usage
 
+    def _do_sync_schema(self) -> Dict[str, Any]:
+        """
+        Synchronize database schema via driver (implementation).
+
+        Used by sync_schema() and by __getattr__ when sync_schema is requested
+        before the full class is visible (e.g. in some test import orders).
+        """
+        schema_definition = self._get_schema_definition()
+        backup_dir = self.driver_config.get("config", {}).get("backup_dir")
+        if not backup_dir:
+            db_path = self.driver_config.get("config", {}).get("path")
+            if db_path:
+                db_path_obj = Path(db_path)
+                if db_path_obj.parent.name == "data":
+                    backup_dir = str(db_path_obj.parent.parent / "backups")
+                else:
+                    backup_dir = str(db_path_obj.parent / "backups")
+            else:
+                raise RuntimeError("Cannot determine backup_dir for schema sync")
+        return self.driver.sync_schema(schema_definition, Path(backup_dir))
+
     def __getattr__(self, name: str) -> Any:
         """
         Dynamic method support for mypy/static analysis.
@@ -192,7 +213,11 @@ class CodeDatabase:
         The `code_analysis.core.database` package attaches many module-level functions
         to this class at import time (facade pattern). Declaring `__getattr__`
         prevents `attr-defined` errors for those dynamically-injected methods.
+        Fallback: if sync_schema is requested (e.g. before class is fully bound),
+        return _do_sync_schema so __init__ can complete.
         """
+        if name == "sync_schema":
+            return getattr(self, "_do_sync_schema")
         raise AttributeError(name)
 
     def _execute(self, sql: str, params: Optional[tuple] = None) -> None:
@@ -822,6 +847,22 @@ class CodeDatabase:
                 )
             """
         )
+        # Create indexing_worker_stats table for tracking indexing cycle statistics
+        self._execute(
+            """
+                CREATE TABLE IF NOT EXISTS indexing_worker_stats (
+                    cycle_id TEXT PRIMARY KEY,
+                    cycle_start_time REAL NOT NULL,
+                    cycle_end_time REAL,
+                    files_total_at_start INTEGER NOT NULL DEFAULT 0,
+                    files_indexed INTEGER NOT NULL DEFAULT 0,
+                    files_failed INTEGER NOT NULL DEFAULT 0,
+                    total_processing_time_seconds REAL NOT NULL DEFAULT 0.0,
+                    average_processing_time_seconds REAL,
+                    last_updated REAL DEFAULT (julianday('now'))
+                )
+            """
+        )
         self._commit()
         self._migrate_to_uuid_projects()
         self._migrate_schema()
@@ -870,6 +911,7 @@ class CodeDatabase:
             "CREATE INDEX IF NOT EXISTS idx_duplicate_occurrences_file ON duplicate_occurrences(file_id)",
             "CREATE INDEX IF NOT EXISTS idx_file_watcher_stats_start_time ON file_watcher_stats(cycle_start_time)",
             "CREATE INDEX IF NOT EXISTS idx_vectorization_stats_start_time ON vectorization_stats(cycle_start_time)",
+            "CREATE INDEX IF NOT EXISTS idx_indexing_worker_stats_start_time ON indexing_worker_stats(cycle_start_time)",
         ]
         for index_sql in indexes:
             self._execute(index_sql)
@@ -2434,6 +2476,60 @@ def get_schema_definition() -> Dict[str, Any]:
                 "unique_constraints": [],
                 "check_constraints": [],
             },
+            "indexing_worker_stats": {
+                "columns": [
+                    {
+                        "name": "cycle_id",
+                        "type": "TEXT",
+                        "not_null": True,
+                        "primary_key": True,
+                    },
+                    {
+                        "name": "cycle_start_time",
+                        "type": "REAL",
+                        "not_null": True,
+                    },
+                    {"name": "cycle_end_time", "type": "REAL", "not_null": False},
+                    {
+                        "name": "files_total_at_start",
+                        "type": "INTEGER",
+                        "not_null": True,
+                        "default": "0",
+                    },
+                    {
+                        "name": "files_indexed",
+                        "type": "INTEGER",
+                        "not_null": True,
+                        "default": "0",
+                    },
+                    {
+                        "name": "files_failed",
+                        "type": "INTEGER",
+                        "not_null": True,
+                        "default": "0",
+                    },
+                    {
+                        "name": "total_processing_time_seconds",
+                        "type": "REAL",
+                        "not_null": True,
+                        "default": "0.0",
+                    },
+                    {
+                        "name": "average_processing_time_seconds",
+                        "type": "REAL",
+                        "not_null": False,
+                    },
+                    {
+                        "name": "last_updated",
+                        "type": "REAL",
+                        "not_null": False,
+                        "default": "julianday('now')",
+                    },
+                ],
+                "foreign_keys": [],
+                "unique_constraints": [],
+                "check_constraints": [],
+            },
         },
         "indexes": [
             {
@@ -2744,6 +2840,13 @@ def get_schema_definition() -> Dict[str, Any]:
                 "unique": False,
                 "where_clause": None,
             },
+            {
+                "name": "idx_indexing_worker_stats_start_time",
+                "table": "indexing_worker_stats",
+                "columns": ["cycle_start_time"],
+                "unique": False,
+                "where_clause": None,
+            },
         ],
         "virtual_tables": [
             {
@@ -2775,20 +2878,4 @@ def get_schema_definition() -> Dict[str, Any]:
         Raises:
             RuntimeError: If schema sync fails (connection is blocked)
         """
-        schema_definition = self._get_schema_definition()
-
-        # Get backup_dir from driver config (should be set from StoragePaths)
-        backup_dir = self.driver_config.get("config", {}).get("backup_dir")
-        if not backup_dir:
-            # Fallback: infer from db_path
-            db_path = self.driver_config.get("config", {}).get("path")
-            if db_path:
-                db_path_obj = Path(db_path)
-                if db_path_obj.parent.name == "data":
-                    backup_dir = str(db_path_obj.parent.parent / "backups")
-                else:
-                    backup_dir = str(db_path_obj.parent / "backups")
-            else:
-                raise RuntimeError("Cannot determine backup_dir for schema sync")
-
-        return self.driver.sync_schema(schema_definition, Path(backup_dir))
+        return self._do_sync_schema()

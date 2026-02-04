@@ -3,6 +3,7 @@ Processing loop for IndexingWorker.
 
 One cycle: discover projects with needs_chunking=1, per project take a batch of files,
 call database.index_file(path, project_id). Backoff on DB unavailability.
+Writes cycle stats to indexing_worker_stats (start/update/end) via database.execute().
 
 Author: Vasiliy Zdanovskiy
 email: vasilyvz@gmail.com
@@ -12,6 +13,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
+import uuid
 from typing import Any, Dict, List
 
 logger = logging.getLogger(__name__)
@@ -114,6 +117,41 @@ async def process_cycle(self: Any, poll_interval: int = 30) -> Dict[str, Any]:
 
             logger.info("[CYCLE #%s] Starting indexing cycle", cycle_count)
 
+            cycle_id = str(uuid.uuid4())
+            cycle_start_time = time.time()
+
+            # Start indexing_worker_stats cycle (same pattern as vectorization)
+            database.execute(
+                """
+                UPDATE indexing_worker_stats
+                SET cycle_end_time = ?, last_updated = julianday('now')
+                WHERE cycle_end_time IS NULL
+                """,
+                (cycle_start_time,),
+            )
+            files_total_result = database.execute(
+                """
+                SELECT COUNT(*) as count FROM files
+                WHERE (deleted = 0 OR deleted IS NULL) AND needs_chunking = 1
+                """,
+                None,
+            )
+            files_total_at_start = 0
+            if isinstance(files_total_result, dict) and files_total_result.get("data"):
+                row = files_total_result["data"][0]
+                files_total_at_start = row.get("count", 0) or 0
+            database.execute(
+                """
+                INSERT INTO indexing_worker_stats (
+                    cycle_id, cycle_start_time, files_total_at_start,
+                    files_indexed, files_failed,
+                    total_processing_time_seconds, average_processing_time_seconds,
+                    last_updated
+                ) VALUES (?, ?, ?, 0, 0, 0.0, NULL, julianday('now'))
+                """,
+                (cycle_id, cycle_start_time, files_total_at_start),
+            )
+
             try:
                 projects_result = database.execute(
                     "SELECT DISTINCT project_id FROM files "
@@ -151,8 +189,10 @@ async def process_cycle(self: Any, poll_interval: int = 30) -> Dict[str, Any]:
                             path = row.get("path")
                             if not path or not project_id:
                                 continue
+                            file_start = time.time()
                             try:
                                 result = database.index_file(path, project_id)
+                                elapsed = time.time() - file_start
                                 if result.get("success"):
                                     total_indexed += 1
                                     logger.debug("Indexed %s", path)
@@ -163,9 +203,62 @@ async def process_cycle(self: Any, poll_interval: int = 30) -> Dict[str, Any]:
                                         path,
                                         result.get("error", "unknown"),
                                     )
+                                database.execute(
+                                    """
+                                    UPDATE indexing_worker_stats
+                                    SET
+                                        files_indexed = files_indexed + ?,
+                                        files_failed = files_failed + ?,
+                                        total_processing_time_seconds = total_processing_time_seconds + ?,
+                                        last_updated = julianday('now')
+                                    WHERE cycle_id = ?
+                                    """,
+                                    (
+                                        1 if result.get("success") else 0,
+                                        0 if result.get("success") else 1,
+                                        elapsed,
+                                        cycle_id,
+                                    ),
+                                )
+                                database.execute(
+                                    """
+                                    UPDATE indexing_worker_stats
+                                    SET average_processing_time_seconds = CASE
+                                        WHEN (files_indexed + files_failed) > 0
+                                        THEN total_processing_time_seconds / (files_indexed + files_failed)
+                                        ELSE NULL
+                                    END
+                                    WHERE cycle_id = ?
+                                    """,
+                                    (cycle_id,),
+                                )
                             except Exception as e:
                                 total_errors += 1
+                                elapsed = time.time() - file_start
                                 logger.warning("Index error for %s: %s", path, e)
+                                database.execute(
+                                    """
+                                    UPDATE indexing_worker_stats
+                                    SET
+                                        files_failed = files_failed + 1,
+                                        total_processing_time_seconds = total_processing_time_seconds + ?,
+                                        last_updated = julianday('now')
+                                    WHERE cycle_id = ?
+                                    """,
+                                    (elapsed, cycle_id),
+                                )
+                                database.execute(
+                                    """
+                                    UPDATE indexing_worker_stats
+                                    SET average_processing_time_seconds = CASE
+                                        WHEN (files_indexed + files_failed) > 0
+                                        THEN total_processing_time_seconds / (files_indexed + files_failed)
+                                        ELSE NULL
+                                    END
+                                    WHERE cycle_id = ?
+                                    """,
+                                    (cycle_id,),
+                                )
             except Exception as e:
                 logger.error("Error in indexing cycle: %s", e, exc_info=True)
                 err_str = str(e).lower()
@@ -179,6 +272,19 @@ async def process_cycle(self: Any, poll_interval: int = 30) -> Dict[str, Any]:
                     db_status_logged = False
                     backoff = 1.0
                     continue
+
+            # End indexing_worker_stats cycle
+            try:
+                database.execute(
+                    """
+                    UPDATE indexing_worker_stats
+                    SET cycle_end_time = ?, last_updated = julianday('now')
+                    WHERE cycle_id = ?
+                    """,
+                    (time.time(), cycle_id),
+                )
+            except Exception as e:
+                logger.debug("Failed to end indexing cycle stats: %s", e)
 
             if not self._stop_event.is_set():
                 for _ in range(poll_interval):

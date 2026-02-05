@@ -5,8 +5,6 @@ email: vasilyvz@gmail.com
 
 All places in the codebase where a log message is written (logger.info/debug/warning/error/critical/exception, logging.*, main_logger.*, worker_logger.*, analysis_logger.*). Use the checkbox to mark reviewed or updated for unified format/importance.
 
-**This is the usage inventory** for the unified logging package (`code_analysis.logging`). Format and importance criteria: [UNIFIED_LOG_FORMAT.md](UNIFIED_LOG_FORMAT.md), [LOG_IMPORTANCE_CRITERIA.md](LOG_IMPORTANCE_CRITERIA.md).
-
 TSV version for spreadsheets: [LOG_WRITE_SITES.tsv](LOG_WRITE_SITES.tsv) (same columns: Место отметки, Путь к файлу, Номер строки). Total: 1289 sites.
 
 | Место отметки | Путь к файлу | Номер строки |

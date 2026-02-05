@@ -495,6 +495,30 @@ class CodeAnalysisConfigValidator:
                         )
                     )
 
+            # Validate indexing_worker section (optional)
+            indexing_worker = code_analysis.get("indexing_worker")
+            if indexing_worker and isinstance(indexing_worker, dict):
+                if indexing_worker.get("poll_interval") is not None and indexing_worker.get("poll_interval", 0) < 1:
+                    self.validation_results.append(
+                        ValidationResult(
+                            level="error",
+                            message="code_analysis.indexing_worker.poll_interval must be at least 1",
+                            section="code_analysis",
+                            key="indexing_worker.poll_interval",
+                            suggestion="Set poll_interval to 1 or higher",
+                        )
+                    )
+                if indexing_worker.get("batch_size") is not None and indexing_worker.get("batch_size", 0) < 1:
+                    self.validation_results.append(
+                        ValidationResult(
+                            level="error",
+                            message="code_analysis.indexing_worker.batch_size must be at least 1",
+                            section="code_analysis",
+                            key="indexing_worker.batch_size",
+                            suggestion="Set batch_size to 1 or higher",
+                        )
+                    )
+
     def _validate_database_driver_section(self) -> None:
         """Validate code_analysis.database.driver section."""
         code_analysis = self.config_data.get("code_analysis", {})
@@ -1206,6 +1230,34 @@ class CodeAnalysisConfigValidator:
                     "embedding.timeout",
                     embedding.get("timeout"),
                     (int, float, type(None)),
+                )
+
+            # Indexing worker section (optional)
+            indexing_worker = code_analysis.get("indexing_worker", {})
+            if indexing_worker and isinstance(indexing_worker, dict):
+                self._validate_field_type(
+                    "code_analysis",
+                    "indexing_worker.enabled",
+                    indexing_worker.get("enabled"),
+                    (bool, type(None)),
+                )
+                self._validate_field_type(
+                    "code_analysis",
+                    "indexing_worker.poll_interval",
+                    indexing_worker.get("poll_interval"),
+                    (int, type(None)),
+                )
+                self._validate_field_type(
+                    "code_analysis",
+                    "indexing_worker.batch_size",
+                    indexing_worker.get("batch_size"),
+                    (int, type(None)),
+                )
+                self._validate_field_type(
+                    "code_analysis",
+                    "indexing_worker.log_path",
+                    indexing_worker.get("log_path"),
+                    (str, type(None)),
                 )
 
             # Database driver section

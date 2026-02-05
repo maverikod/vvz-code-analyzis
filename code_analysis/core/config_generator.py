@@ -167,6 +167,15 @@ class CodeAnalysisConfigGenerator(SimpleConfigGenerator):
         if "min_chunk_length" not in config["code_analysis"]:
             config["code_analysis"]["min_chunk_length"] = 30
 
+        # Indexing worker (auto-start at server startup)
+        if "indexing_worker" not in config["code_analysis"]:
+            config["code_analysis"]["indexing_worker"] = {
+                "enabled": True,
+                "poll_interval": 30,
+                "batch_size": 5,
+                "log_path": "logs/indexing_worker.log",
+            }
+
         # Save updated config
         with open(base_config_path, "w", encoding="utf-8") as f:
             json.dump(config, f, indent=2, ensure_ascii=False)

@@ -11,9 +11,12 @@ from pathlib import Path
 
 import pytest
 
-from code_analysis.core.database_driver_pkg.request import InsertRequest
-from code_analysis.core.database_driver_pkg.result import SuccessResult
-from code_analysis.core.database_driver_pkg.rpc_protocol import RPCRequest, RPCResponse
+from code_analysis.core.database_client.protocol import (
+    InsertRequest,
+    SuccessResult,
+    RPCRequest,
+    RPCResponse,
+)
 from code_analysis.core.database_driver_pkg.serialization import (
     RPCEncoder,
     deserialize_from_dict,

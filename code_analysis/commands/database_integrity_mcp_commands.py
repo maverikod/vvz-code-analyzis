@@ -55,30 +55,20 @@ class GetDatabaseCorruptionStatusMCPCommand(BaseMCPCommand):
         """
         return {
             "type": "object",
-            "description": "Get database safe-mode/corruption status for a project.",
-            "properties": {
-                "root_dir": {
-                    "type": "string",
-                    "description": "Project root directory (contains data/code_analysis.db).",
-                    "examples": ["/abs/path/to/project"],
-                }
-            },
-            "required": ["root_dir"],
+            "description": "Get database safe-mode/corruption status for the shared DB (one DB for all projects).",
+            "properties": {},
+            "required": [],
             "additionalProperties": False,
-            "examples": [{"root_dir": "/abs/path/to/project"}],
+            "examples": [{}],
         }
 
     async def execute(
         self: "GetDatabaseCorruptionStatusMCPCommand",
-        root_dir: str,
         **kwargs: Any,
     ) -> SuccessResult | ErrorResult:
         """Execute corruption status command.
 
-        Args:
-            self: Command instance.
-            root_dir: Project root directory.
-            **kwargs: Extra args (unused).
+        Uses the shared database path from server config (one DB for all projects).
 
         Returns:
             SuccessResult with status payload or ErrorResult on failure.
@@ -90,8 +80,8 @@ class GetDatabaseCorruptionStatusMCPCommand(BaseMCPCommand):
                 read_corruption_marker,
             )
 
-            root_path = self._validate_root_dir(root_dir)
-            db_path = (root_path / "data" / "code_analysis.db").resolve()
+            storage = BaseMCPCommand._get_shared_storage()
+            db_path = storage.db_path
 
             marker = read_corruption_marker(db_path)
             marker_path = str(corruption_marker_path(db_path))
@@ -99,7 +89,6 @@ class GetDatabaseCorruptionStatusMCPCommand(BaseMCPCommand):
             check = check_sqlite_integrity(db_path)
             return SuccessResult(
                 data={
-                    "root_dir": str(root_path),
                     "db_path": str(db_path),
                     "marker_path": marker_path,
                     "marker_present": marker is not None,
@@ -142,11 +131,10 @@ class GetDatabaseCorruptionStatusMCPCommand(BaseMCPCommand):
                 "of a project's SQLite database. It reports both the persistent corruption "
                 "marker status and the current physical integrity check result.\n\n"
                 "Operation flow:\n"
-                "1. Validates root_dir exists and is a directory\n"
-                "2. Resolves database path: root_dir/data/code_analysis.db\n"
-                "3. Reads persistent corruption marker (if present)\n"
-                "4. Runs SQLite integrity check (PRAGMA quick_check)\n"
-                "5. Returns combined status information\n\n"
+                "1. Resolves database path from server config (one shared DB for all projects)\n"
+                "2. Reads persistent corruption marker (if present)\n"
+                "3. Runs SQLite integrity check (PRAGMA quick_check)\n"
+                "4. Returns combined status information\n\n"
                 "Corruption Marker:\n"
                 "- Persistent marker file stored next to database\n"
                 "- Created when corruption is detected\n"
@@ -180,35 +168,19 @@ class GetDatabaseCorruptionStatusMCPCommand(BaseMCPCommand):
             "parameters": {
                 "root_dir": {
                     "description": (
-                        "Project root directory path. Can be absolute or relative. "
-                        "Must contain data/code_analysis.db file."
+                        "Optional; ignored. Database path is taken from server config (shared DB)."
                     ),
                     "type": "string",
-                    "required": True,
-                    "examples": [
-                        "/home/user/projects/my_project",
-                        ".",
-                        "./code_analysis",
-                    ],
+                    "required": False,
+                    "examples": [],
                 },
             },
             "usage_examples": [
                 {
-                    "description": "Check database corruption status",
-                    "command": {
-                        "root_dir": "/home/user/projects/my_project",
-                    },
+                    "description": "Check shared database corruption status",
+                    "command": {},
                     "explanation": (
-                        "Checks both corruption marker and integrity status for the project database."
-                    ),
-                },
-                {
-                    "description": "Verify database health before operations",
-                    "command": {
-                        "root_dir": ".",
-                    },
-                    "explanation": (
-                        "Checks database status in current directory before running DB operations."
+                        "Checks both corruption marker and integrity status for the shared database."
                     ),
                 },
             ],
@@ -228,8 +200,7 @@ class GetDatabaseCorruptionStatusMCPCommand(BaseMCPCommand):
                 "success": {
                     "description": "Status check completed successfully",
                     "data": {
-                        "root_dir": "Project root directory path",
-                        "db_path": "Path to database file",
+                        "db_path": "Path to shared database file (from server config)",
                         "marker_path": "Path to corruption marker file",
                         "marker_present": "True if corruption marker exists",
                         "marker": (
@@ -242,8 +213,7 @@ class GetDatabaseCorruptionStatusMCPCommand(BaseMCPCommand):
                         "integrity_message": "Message from integrity check",
                     },
                     "example_healthy": {
-                        "root_dir": "/home/user/projects/my_project",
-                        "db_path": "/home/user/projects/my_project/data/code_analysis.db",
+                        "db_path": "/var/code_analysis/data/code_analysis.db",
                         "marker_path": "/home/user/projects/my_project/data/code_analysis.db.corrupt-marker",
                         "marker_present": False,
                         "marker": None,
@@ -251,8 +221,7 @@ class GetDatabaseCorruptionStatusMCPCommand(BaseMCPCommand):
                         "integrity_message": "quick_check: ok",
                     },
                     "example_corrupted": {
-                        "root_dir": "/home/user/projects/my_project",
-                        "db_path": "/home/user/projects/my_project/data/code_analysis.db",
+                        "db_path": "/var/code_analysis/data/code_analysis.db",
                         "marker_path": "/home/user/projects/my_project/data/code_analysis.db.corrupt-marker",
                         "marker_present": True,
                         "marker": {
@@ -316,42 +285,38 @@ class BackupDatabaseMCPCommand(BaseMCPCommand):
         """
         return {
             "type": "object",
-            "description": "Create filesystem backup of data/code_analysis.db for the project.",
+            "description": "Create filesystem backup of the shared database (one DB for all projects).",
             "properties": {
                 "root_dir": {
                     "type": "string",
-                    "description": "Project root directory (contains data/code_analysis.db).",
-                    "examples": ["/abs/path/to/project"],
+                    "description": "Optional; ignored. DB path from server config.",
+                    "examples": [],
                 },
                 "backup_dir": {
                     "type": "string",
-                    "description": "Optional directory where backup files will be stored (default: root_dir/data).",
-                    "examples": ["/abs/path/to/project/data"],
+                    "description": "Optional directory for backup files (default: backup_dir from server config).",
+                    "examples": ["/abs/path/to/backups"],
                 },
             },
-            "required": ["root_dir"],
+            "required": [],
             "additionalProperties": False,
-            "examples": [
-                {"root_dir": "/abs/path/to/project"},
-                {
-                    "root_dir": "/abs/path/to/project",
-                    "backup_dir": "/abs/path/to/project/data",
-                },
-            ],
+            "examples": [{}, {"backup_dir": "/abs/path/to/backups"}],
         }
 
     async def execute(
         self: "BackupDatabaseMCPCommand",
-        root_dir: str,
+        root_dir: Optional[str] = None,
         backup_dir: Optional[str] = None,
         **kwargs: Any,
     ) -> SuccessResult | ErrorResult:
         """Execute database backup command.
 
+        Uses shared DB path from server config (one DB for all projects).
+
         Args:
             self: Command instance.
-            root_dir: Project root directory.
-            backup_dir: Optional backup directory path.
+            root_dir: Optional; ignored.
+            backup_dir: Optional backup directory (default: from server config).
             **kwargs: Extra args (unused).
 
         Returns:
@@ -360,20 +325,15 @@ class BackupDatabaseMCPCommand(BaseMCPCommand):
         try:
             from ..core.db_integrity import backup_sqlite_files
 
-            root_path = self._validate_root_dir(root_dir)
-            db_path = (root_path / "data" / "code_analysis.db").resolve()
-            out_dir = (
-                Path(backup_dir).resolve()
-                if backup_dir
-                else (root_path / "data").resolve()
-            )
+            storage = BaseMCPCommand._get_shared_storage()
+            db_path = storage.db_path
+            out_dir = Path(backup_dir).resolve() if backup_dir else storage.backup_dir
 
             backups = backup_sqlite_files(
                 db_path, backup_dir=out_dir, include_sidecars=True
             )
             return SuccessResult(
                 data={
-                    "root_dir": str(root_path),
                     "db_path": str(db_path),
                     "backup_dir": str(out_dir),
                     "backup_paths": list(backups),
@@ -410,12 +370,11 @@ class BackupDatabaseMCPCommand(BaseMCPCommand):
                 "SQLite database file and its sidecar files (WAL, SHM, journal). "
                 "This is a safety measure before destructive operations like repair.\n\n"
                 "Operation flow:\n"
-                "1. Validates root_dir exists and is a directory\n"
-                "2. Resolves database path: root_dir/data/code_analysis.db\n"
-                "3. Determines backup directory (default: root_dir/data)\n"
-                "4. Creates timestamped backups of database file\n"
-                "5. Creates backups of sidecar files if present (-wal, -shm, -journal)\n"
-                "6. Returns list of created backup file paths\n\n"
+                "1. Resolves database path from server config (one shared DB for all projects)\n"
+                "2. Determines backup directory (default: backup_dir from server config)\n"
+                "3. Creates timestamped backups of database file\n"
+                "4. Creates backups of sidecar files if present (-wal, -shm, -journal)\n"
+                "5. Returns list of created backup file paths\n\n"
                 "Backup Files:\n"
                 "- Main database file: code_analysis.db.corrupt-backup.TIMESTAMP\n"
                 "- WAL file (if present): code_analysis.db-wal.corrupt-backup.TIMESTAMP\n"
@@ -443,59 +402,35 @@ class BackupDatabaseMCPCommand(BaseMCPCommand):
             ),
             "parameters": {
                 "root_dir": {
-                    "description": (
-                        "Project root directory path. Can be absolute or relative. "
-                        "Must contain data/code_analysis.db file."
-                    ),
+                    "description": "Optional; ignored. DB path from server config.",
                     "type": "string",
-                    "required": True,
-                    "examples": [
-                        "/home/user/projects/my_project",
-                        ".",
-                        "./code_analysis",
-                    ],
+                    "required": False,
+                    "examples": [],
                 },
                 "backup_dir": {
                     "description": (
                         "Optional directory where backup files will be stored. "
-                        "If not provided, defaults to root_dir/data. "
+                        "If not provided, uses backup_dir from server config. "
                         "Directory is created if it doesn't exist."
                     ),
                     "type": "string",
                     "required": False,
-                    "examples": [
-                        "/home/user/projects/my_project/data",
-                        "/backups/my_project",
-                    ],
+                    "examples": ["/backups/code_analysis"],
                 },
             },
             "usage_examples": [
                 {
-                    "description": "Backup database to default location",
-                    "command": {
-                        "root_dir": "/home/user/projects/my_project",
-                    },
+                    "description": "Backup shared database to default location",
+                    "command": {},
                     "explanation": (
-                        "Creates backups in root_dir/data with timestamped filenames."
+                        "Creates backups in server config backup_dir with timestamped filenames."
                     ),
                 },
                 {
                     "description": "Backup database to custom location",
-                    "command": {
-                        "root_dir": "/home/user/projects/my_project",
-                        "backup_dir": "/backups/my_project",
-                    },
+                    "command": {"backup_dir": "/backups/code_analysis"},
                     "explanation": (
-                        "Creates backups in specified directory instead of default location."
-                    ),
-                },
-                {
-                    "description": "Backup before repair operation",
-                    "command": {
-                        "root_dir": ".",
-                    },
-                    "explanation": (
-                        "Creates safety backup before running repair_sqlite_database."
+                        "Creates backups in specified directory instead of default."
                     ),
                 },
             ],
@@ -531,8 +466,7 @@ class BackupDatabaseMCPCommand(BaseMCPCommand):
                 "success": {
                     "description": "Backup created successfully",
                     "data": {
-                        "root_dir": "Project root directory path",
-                        "db_path": "Path to database file",
+                        "db_path": "Path to shared database file (from server config)",
                         "backup_dir": "Directory where backups were created",
                         "backup_paths": (
                             "List of created backup file paths. Includes:\n"
@@ -542,12 +476,11 @@ class BackupDatabaseMCPCommand(BaseMCPCommand):
                         "count": "Number of backup files created",
                     },
                     "example": {
-                        "root_dir": "/home/user/projects/my_project",
-                        "db_path": "/home/user/projects/my_project/data/code_analysis.db",
-                        "backup_dir": "/home/user/projects/my_project/data",
+                        "db_path": "/var/code_analysis/data/code_analysis.db",
+                        "backup_dir": "/var/code_analysis/backups",
                         "backup_paths": [
-                            "/home/user/projects/my_project/data/code_analysis.db.corrupt-backup.20240115-143025",
-                            "/home/user/projects/my_project/data/code_analysis.db-wal.corrupt-backup.20240115-143025",
+                            "/var/code_analysis/backups/code_analysis.db.corrupt-backup.20240115-143025",
+                            "/var/code_analysis/backups/code_analysis.db-wal.corrupt-backup.20240115-143025",
                         ],
                         "count": 2,
                     },
@@ -607,12 +540,12 @@ class RepairSQLiteDatabaseMCPCommand(BaseMCPCommand):
         """
         return {
             "type": "object",
-            "description": "Backup and recreate data/code_analysis.db, then clear safe-mode marker.",
+            "description": "Backup and recreate the shared database, then clear safe-mode marker (one DB for all projects).",
             "properties": {
                 "root_dir": {
                     "type": "string",
-                    "description": "Project root directory (contains data/code_analysis.db).",
-                    "examples": ["/abs/path/to/project"],
+                    "description": "Optional; ignored. DB path from server config.",
+                    "examples": [],
                 },
                 "force": {
                     "type": "boolean",
@@ -622,31 +555,31 @@ class RepairSQLiteDatabaseMCPCommand(BaseMCPCommand):
                 },
                 "backup_dir": {
                     "type": "string",
-                    "description": "Optional directory where backup files will be stored (default: root_dir/data).",
-                    "examples": ["/abs/path/to/project/data"],
+                    "description": "Optional directory for backups (default: backup_dir from server config).",
+                    "examples": ["/abs/path/to/backups"],
                 },
             },
-            "required": ["root_dir"],
+            "required": [],
             "additionalProperties": False,
-            "examples": [
-                {"root_dir": "/abs/path/to/project", "force": True},
-            ],
+            "examples": [{"force": True}],
         }
 
     async def execute(
         self: "RepairSQLiteDatabaseMCPCommand",
-        root_dir: str,
+        root_dir: Optional[str] = None,
         force: bool = False,
         backup_dir: Optional[str] = None,
         **kwargs: Any,
     ) -> SuccessResult | ErrorResult:
         """Execute SQLite repair command.
 
+        Uses shared DB path from server config (one DB for all projects).
+
         Args:
             self: Command instance.
-            root_dir: Project root directory.
+            root_dir: Optional; ignored.
             force: Must be True to perform repair.
-            backup_dir: Optional directory where backups will be stored.
+            backup_dir: Optional directory for backups (default: from server config).
             **kwargs: Extra args (unused).
 
         Returns:
@@ -661,13 +594,14 @@ class RepairSQLiteDatabaseMCPCommand(BaseMCPCommand):
             )
             from ..core.worker_manager import get_worker_manager
 
+            storage = BaseMCPCommand._get_shared_storage()
+            db_path = storage.db_path
+            out_dir = Path(backup_dir).resolve() if backup_dir else storage.backup_dir
+
             if not force:
                 # Non-destructive mode: allow clearing marker when DB is healthy.
                 # This is useful when a marker was created due to transient errors
                 # (e.g. "database is locked") or after manual recovery.
-                root_path = self._validate_root_dir(root_dir)
-                db_path = (root_path / "data" / "code_analysis.db").resolve()
-
                 marker = read_corruption_marker(db_path)
                 if marker is not None:
                     integrity = check_sqlite_integrity(db_path)
@@ -675,7 +609,6 @@ class RepairSQLiteDatabaseMCPCommand(BaseMCPCommand):
                         marker_cleared = clear_corruption_marker(db_path)
                         return SuccessResult(
                             data={
-                                "root_dir": str(root_path),
                                 "db_path": str(db_path),
                                 "mode": "marker_clear_only",
                                 "integrity_ok": True,
@@ -694,21 +627,12 @@ class RepairSQLiteDatabaseMCPCommand(BaseMCPCommand):
                     ),
                 )
 
-            root_path = self._validate_root_dir(root_dir)
-            db_path = (root_path / "data" / "code_analysis.db").resolve()
-            out_dir = (
-                Path(backup_dir).resolve()
-                if backup_dir
-                else (root_path / "data").resolve()
-            )
-
             stop_result = get_worker_manager().stop_all_workers(timeout=10.0)
             repair = ensure_sqlite_integrity_or_recreate(db_path, backup_dir=out_dir)
             marker_cleared = clear_corruption_marker(db_path)
 
             return SuccessResult(
                 data={
-                    "root_dir": str(root_path),
                     "db_path": str(db_path),
                     "backup_dir": str(out_dir),
                     "workers_stopped": stop_result,
@@ -754,7 +678,7 @@ class RepairSQLiteDatabaseMCPCommand(BaseMCPCommand):
                 "by backing it up and recreating it from scratch. This is a destructive "
                 "operation that removes all data from the database.\n\n"
                 "Operation flow:\n"
-                "1. Validates root_dir exists and is a directory\n"
+                "1. Resolves database path from server config (one shared DB for all projects)\n"
                 "2. If force=False, checks if only marker clearing is needed\n"
                 "3. If force=False and DB is healthy, clears marker only\n"
                 "4. If force=False and DB is corrupted, requires force=True\n"
@@ -796,17 +720,10 @@ class RepairSQLiteDatabaseMCPCommand(BaseMCPCommand):
             ),
             "parameters": {
                 "root_dir": {
-                    "description": (
-                        "Project root directory path. Can be absolute or relative. "
-                        "Must contain data/code_analysis.db file."
-                    ),
+                    "description": "Optional; ignored. DB path from server config.",
                     "type": "string",
-                    "required": True,
-                    "examples": [
-                        "/home/user/projects/my_project",
-                        ".",
-                        "./code_analysis",
-                    ],
+                    "required": False,
+                    "examples": [],
                 },
                 "force": {
                     "description": (
@@ -822,24 +739,18 @@ class RepairSQLiteDatabaseMCPCommand(BaseMCPCommand):
                 "backup_dir": {
                     "description": (
                         "Optional directory where backup files will be stored. "
-                        "If not provided, defaults to root_dir/data. "
+                        "If not provided, uses backup_dir from server config. "
                         "Backup is created automatically before repair."
                     ),
                     "type": "string",
                     "required": False,
-                    "examples": [
-                        "/home/user/projects/my_project/data",
-                        "/backups/my_project",
-                    ],
+                    "examples": ["/backups/code_analysis"],
                 },
             },
             "usage_examples": [
                 {
                     "description": "Clear marker without data loss",
-                    "command": {
-                        "root_dir": "/home/user/projects/my_project",
-                        "force": False,
-                    },
+                    "command": {"force": False},
                     "explanation": (
                         "Clears corruption marker if database is healthy. "
                         "No data loss, safe operation."
@@ -847,22 +758,15 @@ class RepairSQLiteDatabaseMCPCommand(BaseMCPCommand):
                 },
                 {
                     "description": "Repair corrupted database",
-                    "command": {
-                        "root_dir": "/home/user/projects/my_project",
-                        "force": True,
-                    },
+                    "command": {"force": True},
                     "explanation": (
-                        "Backs up and recreates database. All data is lost. "
+                        "Backs up and recreates shared database. All data is lost. "
                         "Must run update_indexes after repair."
                     ),
                 },
                 {
                     "description": "Repair with custom backup location",
-                    "command": {
-                        "root_dir": "/home/user/projects/my_project",
-                        "force": True,
-                        "backup_dir": "/backups/my_project",
-                    },
+                    "command": {"force": True, "backup_dir": "/backups/code_analysis"},
                     "explanation": (
                         "Repairs database and stores backup in custom location."
                     ),
@@ -906,8 +810,7 @@ class RepairSQLiteDatabaseMCPCommand(BaseMCPCommand):
                 "success": {
                     "description": "Repair completed successfully",
                     "data": {
-                        "root_dir": "Project root directory path",
-                        "db_path": "Path to database file",
+                        "db_path": "Path to shared database file (from server config)",
                         "backup_dir": "Directory where backups were created",
                         "workers_stopped": "Result of stopping workers",
                         "repair": {
@@ -921,8 +824,7 @@ class RepairSQLiteDatabaseMCPCommand(BaseMCPCommand):
                         "mode": "Repair mode (only present if force=False and marker cleared)",
                     },
                     "example_marker_clear": {
-                        "root_dir": "/home/user/projects/my_project",
-                        "db_path": "/home/user/projects/my_project/data/code_analysis.db",
+                        "db_path": "/var/code_analysis/data/code_analysis.db",
                         "mode": "marker_clear_only",
                         "integrity_ok": True,
                         "integrity_message": "quick_check: ok",
@@ -930,9 +832,8 @@ class RepairSQLiteDatabaseMCPCommand(BaseMCPCommand):
                         "next_step": "Re-run the blocked command (marker cleared)",
                     },
                     "example_full_repair": {
-                        "root_dir": "/home/user/projects/my_project",
-                        "db_path": "/home/user/projects/my_project/data/code_analysis.db",
-                        "backup_dir": "/home/user/projects/my_project/data",
+                        "db_path": "/var/code_analysis/data/code_analysis.db",
+                        "backup_dir": "/var/code_analysis/backups",
                         "workers_stopped": {"stopped": True, "count": 2},
                         "repair": {
                             "ok": True,
@@ -941,8 +842,8 @@ class RepairSQLiteDatabaseMCPCommand(BaseMCPCommand):
                                 "Database was corrupted; backed up 2 file(s) and recreated"
                             ),
                             "backup_paths": [
-                                "/home/user/projects/my_project/data/code_analysis.db.corrupt-backup.20240115-143025",
-                                "/home/user/projects/my_project/data/code_analysis.db-wal.corrupt-backup.20240115-143025",
+                                "/var/code_analysis/backups/code_analysis.db.corrupt-backup.20240115-143025",
+                                "/var/code_analysis/backups/code_analysis.db-wal.corrupt-backup.20240115-143025",
                             ],
                         },
                         "marker_cleared": True,

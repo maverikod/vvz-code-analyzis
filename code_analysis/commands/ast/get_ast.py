@@ -28,66 +28,49 @@ class GetASTMCPCommand(BaseMCPCommand):
         return {
             "type": "object",
             "properties": {
-                "root_dir": {
+                "project_id": {
                     "type": "string",
-                    "description": "Project root directory (contains data/code_analysis.db)",
+                    "description": "Project UUID (from create_project or list_projects).",
                 },
                 "file_path": {
                     "type": "string",
-                    "description": "Path to Python file (absolute or relative to project root)",
+                    "description": "Path to Python file (relative to project root)",
                 },
                 "include_json": {
                     "type": "boolean",
                     "description": "Include full AST JSON in response",
                     "default": True,
                 },
-                "project_id": {
-                    "type": "string",
-                    "description": "Optional project UUID; if omitted, inferred by root_dir",
-                },
             },
-            "required": ["root_dir", "file_path"],
+            "required": ["project_id", "file_path"],
             "additionalProperties": False,
         }
 
     async def execute(
         self,
-        root_dir: str,
+        project_id: str,
         file_path: str,
         include_json: bool = True,
-        project_id: Optional[str] = None,
         **kwargs,
     ) -> SuccessResult:
         try:
             from pathlib import Path
 
-            root_path = self._validate_root_dir(root_dir)
-            db = self._open_database(root_dir)
-            proj_id = self._get_project_id(db, root_path, project_id)
-            if not proj_id:
-                return ErrorResult(
-                    message="Project not found", code="PROJECT_NOT_FOUND"
-                )
+            root_path = self._resolve_project_root(project_id)
+            db = self._open_database_from_config(auto_analyze=False)
 
-            # Normalize file path: convert absolute to relative if needed
             file_path_obj = Path(file_path)
             if file_path_obj.is_absolute():
                 try:
-                    # Try to make relative to root_dir
                     normalized_path = file_path_obj.relative_to(root_path)
                     file_path = str(normalized_path)
                 except ValueError:
-                    # File is outside root_dir, use absolute path as-is
                     pass
             else:
-                # Already relative, use as-is
                 file_path = str(file_path_obj)
 
-            # Get file_id first - try multiple path formats
             file_record = None
-
-            # Try 1: exact path match
-            file_record = db.get_file_by_path(file_path, proj_id)
+            file_record = db.get_file_by_path(file_path, project_id)
 
             # Try 2: if not found, try with versioned path pattern
             if not file_record:
@@ -97,7 +80,7 @@ class GetASTMCPCommand(BaseMCPCommand):
                 # Search for files where path ends with the requested path
                 result = db.execute(
                     "SELECT * FROM files WHERE project_id = ? AND path LIKE ?",
-                    (proj_id, f"%{file_path}"),
+                    (project_id, f"%{file_path}"),
                 )
                 data = result.get("data", [])
                 if data:
@@ -108,7 +91,7 @@ class GetASTMCPCommand(BaseMCPCommand):
                 filename = file_path.split("/")[-1]
                 result = db.execute(
                     "SELECT * FROM files WHERE project_id = ? AND path LIKE ?",
-                    (proj_id, f"%{filename}"),
+                    (project_id, f"%{filename}"),
                 )
                 rows = result.get("data", [])
                 # If multiple matches, prefer the one that matches the path structure

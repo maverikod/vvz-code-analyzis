@@ -79,13 +79,12 @@ class ChangeProjectIdMCPCommand(BaseMCPCommand):
                 "Description is optional and can be updated independently or together with project_id."
             ),
             "properties": {
-                "root_dir": {
+                "project_id": {
                     "type": "string",
                     "description": (
-                        "Project root directory (contains projectid file and optionally "
-                        "data/code_analysis.db). Must be an absolute path or relative to current working directory."
+                        "Current project identifier (UUID4). Project root path is resolved from database."
                     ),
-                    "examples": ["/abs/path/to/project", "./project"],
+                    "examples": ["61d708de-e9fe-11f0-b3c3-2ba372fd1d94"],
                 },
                 "new_project_id": {
                     "type": "string",
@@ -125,15 +124,15 @@ class ChangeProjectIdMCPCommand(BaseMCPCommand):
                     "examples": [True, False],
                 },
             },
-            "required": ["root_dir", "new_project_id"],
+            "required": ["project_id", "new_project_id"],
             "additionalProperties": False,
             "examples": [
                 {
-                    "root_dir": "/abs/path/to/project",
+                    "project_id": "61d708de-e9fe-11f0-b3c3-2ba372fd1d94",
                     "new_project_id": "8772a086-688d-4198-a0c4-f03817cc0e6c",
                 },
                 {
-                    "root_dir": "/abs/path/to/project",
+                    "project_id": "61d708de-e9fe-11f0-b3c3-2ba372fd1d94",
                     "new_project_id": "8772a086-688d-4198-a0c4-f03817cc0e6c",
                     "old_project_id": "61d708de-e9fe-11f0-b3c3-2ba372fd1d94",
                     "update_database": True,
@@ -414,7 +413,7 @@ class ChangeProjectIdMCPCommand(BaseMCPCommand):
 
     async def execute(
         self: "ChangeProjectIdMCPCommand",
-        root_dir: str,
+        project_id: str,
         new_project_id: str,
         old_project_id: Optional[str] = None,
         description: Optional[str] = None,
@@ -426,7 +425,7 @@ class ChangeProjectIdMCPCommand(BaseMCPCommand):
 
         Args:
             self: Command instance.
-            root_dir: Project root directory.
+            project_id: Current project identifier (root path resolved from database).
             new_project_id: New project identifier (UUID v4).
             old_project_id: Optional current project_id for validation.
             description: Optional new project description.
@@ -437,8 +436,7 @@ class ChangeProjectIdMCPCommand(BaseMCPCommand):
             SuccessResult with change summary or ErrorResult on failure.
         """
         try:
-            # Step 1: Validate and normalize root_dir
-            root_path = self._validate_root_dir(root_dir)
+            root_path = self._resolve_project_root(project_id)
             projectid_path = root_path / "projectid"
 
             # Step 2: Validate new_project_id format (must be UUID v4)
@@ -493,8 +491,8 @@ class ChangeProjectIdMCPCommand(BaseMCPCommand):
                         return self._handle_error(
                             ValidationError(
                                 f"Failed to load current project_id: {str(e)}",
-                                field="root_dir",
-                                details={"root_dir": str(root_dir), "error": str(e)},
+                                field="project_id",
+                                details={"project_id": project_id, "error": str(e)},
                             ),
                             "PROJECTID_LOAD_ERROR",
                             "change_project_id",
@@ -555,7 +553,7 @@ class ChangeProjectIdMCPCommand(BaseMCPCommand):
                 return self._handle_error(
                     ValidationError(
                         f"Failed to write projectid file: {str(e)}",
-                        field="root_dir",
+                        field="project_id",
                         details={
                             "projectid_path": str(projectid_path),
                             "error": str(e),
@@ -582,11 +580,13 @@ class ChangeProjectIdMCPCommand(BaseMCPCommand):
                         config_data=config_data, config_path=config_path
                     )
 
-                    # Open database
-                    database = self._open_database(str(root_path), auto_analyze=False)
+                    database = self._open_database_from_config(auto_analyze=False)
                     try:
-                        # Check if project exists with old ID or by root_path
-                        existing_project_id = database.get_project_id(str(root_path))
+                        existing_project_id = (
+                            BaseMCPCommand._get_project_id_by_root_path(
+                                database, str(root_path)
+                            )
+                        )
                         if existing_project_id:
                             if (
                                 current_project_id
@@ -1451,13 +1451,6 @@ class DeleteUnwatchedProjectsMCPCommand(BaseMCPCommand):
                 "This operation cannot be undone."
             ),
             "properties": {
-                "root_dir": {
-                    "type": "string",
-                    "description": (
-                        "Server root directory (contains config.json and data/code_analysis.db). "
-                        "Must be an absolute path or relative to current working directory."
-                    ),
-                },
                 "watched_dirs": {
                     "type": "array",
                     "items": {"type": "string"},
@@ -1475,13 +1468,12 @@ class DeleteUnwatchedProjectsMCPCommand(BaseMCPCommand):
                     "default": False,
                 },
             },
-            "required": ["root_dir"],
+            "required": [],
             "additionalProperties": False,
         }
 
     async def execute(
         self: "DeleteUnwatchedProjectsMCPCommand",
-        root_dir: str,
         watched_dirs: Optional[List[str]] = None,
         dry_run: bool = False,
         **kwargs: Any,
@@ -1491,7 +1483,6 @@ class DeleteUnwatchedProjectsMCPCommand(BaseMCPCommand):
 
         Args:
             self: Command instance.
-            root_dir: Server root directory.
             watched_dirs: Optional list of watched directories.
             dry_run: If True, only show what would be deleted.
             **kwargs: Extra args (unused).
@@ -1500,33 +1491,23 @@ class DeleteUnwatchedProjectsMCPCommand(BaseMCPCommand):
             SuccessResult with deletion summary or ErrorResult on failure.
         """
         try:
-            # Validate and normalize root_dir
-            root_path = self._validate_root_dir(root_dir)
-
-            # Get watched_dirs from config if not provided
+            config_path = self._resolve_config_path()
+            config_dir = config_path.parent.resolve()
             if watched_dirs is None:
-                config_path = self._resolve_config_path()
                 from ..core.storage_paths import load_raw_config
 
                 config_data = load_raw_config(config_path)
                 worker_config = config_data.get("code_analysis", {}).get("worker", {})
                 config_watch_dirs = worker_config.get("watch_dirs", [])
-
-                # Extract paths from watch_dirs config (can be list of dicts or list of strings)
                 watched_dirs = []
                 for item in config_watch_dirs:
-                    if isinstance(item, dict):
-                        # New format: {"id": "uuid", "path": "/path"}
-                        if "path" in item:
-                            watched_dirs.append(item["path"])
+                    if isinstance(item, dict) and "path" in item:
+                        watched_dirs.append(item["path"])
                     elif isinstance(item, str):
-                        # Old format: just string path
                         watched_dirs.append(item)
-
-                # Also check dynamic_watch_file
                 dynamic_watch_file = worker_config.get("dynamic_watch_file")
                 if dynamic_watch_file:
-                    dynamic_path = Path(root_path) / dynamic_watch_file
+                    dynamic_path = config_dir / dynamic_watch_file
                     if dynamic_path.exists():
                         try:
                             import json
@@ -1534,7 +1515,6 @@ class DeleteUnwatchedProjectsMCPCommand(BaseMCPCommand):
                             with open(dynamic_path, "r", encoding="utf-8") as f:
                                 dynamic_dirs = json.load(f)
                                 if isinstance(dynamic_dirs, list):
-                                    # Extract paths from dynamic_dirs if they are dicts
                                     for item in dynamic_dirs:
                                         if isinstance(item, dict) and "path" in item:
                                             watched_dirs.append(item["path"])
@@ -1548,16 +1528,14 @@ class DeleteUnwatchedProjectsMCPCommand(BaseMCPCommand):
                     ValidationError(
                         "No watched directories found in config and none provided",
                         field="watched_dirs",
-                        details={"root_dir": str(root_dir)},
+                        details={},
                     ),
                     "NO_WATCHED_DIRS",
                     "delete_unwatched_projects",
                 )
 
-            # Open database
-            database = self._open_database(str(root_path), auto_analyze=False)
+            database = self._open_database_from_config(auto_analyze=False)
             try:
-                # Import and execute command
                 from .delete_unwatched_projects_command import (
                     DeleteUnwatchedProjectsCommand,
                 )
@@ -1566,7 +1544,7 @@ class DeleteUnwatchedProjectsMCPCommand(BaseMCPCommand):
                     database=database,
                     watched_dirs=watched_dirs,
                     dry_run=dry_run,
-                    server_root_dir=str(root_path),
+                    server_root_dir=str(config_dir),
                 )
                 result = await cmd.execute()
 
@@ -2239,13 +2217,6 @@ class CreateProjectMCPCommand(BaseMCPCommand):
                 "Creates project subdirectory in watch_dir, creates projectid file, and registers project in database."
             ),
             "properties": {
-                "root_dir": {
-                    "type": "string",
-                    "description": (
-                        "Server root directory (contains config.json and data/code_analysis.db). "
-                        "Must be an absolute path or relative to current working directory."
-                    ),
-                },
                 "watch_dir_id": {
                     "type": "string",
                     "description": (
@@ -2273,13 +2244,12 @@ class CreateProjectMCPCommand(BaseMCPCommand):
                     ),
                 },
             },
-            "required": ["root_dir", "watch_dir_id", "project_name", "description"],
+            "required": ["watch_dir_id", "project_name", "description"],
             "additionalProperties": False,
         }
 
     async def execute(
         self: "CreateProjectMCPCommand",
-        root_dir: str,
         watch_dir_id: str,
         project_name: str,
         description: str,
@@ -2291,7 +2261,6 @@ class CreateProjectMCPCommand(BaseMCPCommand):
 
         Args:
             self: Command instance.
-            root_dir: Server root directory.
             watch_dir_id: Watch directory ID from watch_dirs table.
             project_name: Name of project subdirectory to create.
             description: Project description (required).
@@ -2302,11 +2271,7 @@ class CreateProjectMCPCommand(BaseMCPCommand):
             SuccessResult with project_id or ErrorResult on failure.
         """
         try:
-            # Validate and normalize root_dir
-            root_path = self._validate_root_dir(root_dir)
-
-            # Open database
-            database = self._open_database(str(root_path), auto_analyze=False)
+            database = self._open_database_from_config(auto_analyze=False)
             try:
                 # Import and execute command
                 from .project_creation import CreateProjectCommand

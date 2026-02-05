@@ -61,53 +61,48 @@ class FormatCodeCommand(Command):
             "properties": {
                 "file_path": {
                     "type": "string",
-                    "description": "Path to Python file to format.",
-                    "examples": ["/abs/path/to/file.py"],
+                    "description": "Path to Python file (relative to project root if project_id given, else absolute).",
+                    "examples": ["/abs/path/to/file.py", "hello_cli.py"],
                 },
-                "root_dir": {
+                "project_id": {
                     "type": "string",
-                    "description": (
-                        "Optional project root directory. If provided, file_path is resolved "
-                        "relative to this directory (e.g. file_path='hello_cli.py' with root_dir='/path/to/proj' "
-                        "uses /path/to/proj/hello_cli.py). Also enables database update after formatting."
-                    ),
-                    "examples": ["/abs/path/to/project"],
+                    "description": "Optional project UUID. If provided, file_path is relative to project root and DB is updated after format.",
+                    "examples": ["550e8400-e29b-41d4-a716-446655440000"],
                 },
             },
             "required": ["file_path"],
             "additionalProperties": False,
             "examples": [
                 {"file_path": "/abs/path/to/file.py"},
-                {
-                    "file_path": "hello_cli.py",
-                    "root_dir": "/abs/path/to/project",
-                },
+                {"file_path": "hello_cli.py", "project_id": "550e8400-e29b-41d4-a716-446655440000"},
             ],
         }
 
     async def execute(
         self: "FormatCodeCommand",
         file_path: str,
-        root_dir: Optional[str] = None,
+        project_id: Optional[str] = None,
         **kwargs: Any,
     ) -> SuccessResult | ErrorResult:
         """Execute code formatting.
 
         Args:
             self: Command instance.
-            file_path: Path to Python file to format.
-            root_dir: Optional project root directory. If provided, database will be updated after formatting.
+            file_path: Path to Python file (relative to project root if project_id given).
+            project_id: Optional project UUID. If provided, DB is updated after format.
             **kwargs: Extra args (unused).
 
         Returns:
             SuccessResult with formatting result or ErrorResult on failure.
         """
         try:
-            # Resolve path: relative to root_dir (project root) when given, else as-is (absolute or cwd-relative)
-            if root_dir:
-                path = (Path(root_dir) / file_path).resolve()
+            if project_id:
+                root_path = self._resolve_project_root(project_id)
+                path = (root_path / file_path).resolve()
+                backup_root = root_path
             else:
                 path = Path(file_path).resolve()
+                backup_root = path.parent
             if not path.exists():
                 return ErrorResult(
                     code="FILE_NOT_FOUND",
@@ -120,8 +115,6 @@ class FormatCodeCommand(Command):
                     message=f"Path is not a file: {file_path}",
                 )
 
-            # Mandatory backup before overwriting file
-            backup_root = Path(root_dir).resolve() if root_dir else path.parent
             backup_mgr = BackupManager(backup_root)
             backup_uuid = backup_mgr.create_backup(
                 path,
@@ -139,67 +132,38 @@ class FormatCodeCommand(Command):
                     message=error or "Formatting failed",
                 )
 
-            # Optional: Update database if root_dir is provided
             database_updated = False
-            if root_dir:
+            if project_id:
                 try:
-                    from ..core.project_resolution import get_project_id
-                    from pathlib import Path as PathType
                     from .base_mcp_command import BaseMCPCommand
+                    import os
 
-                    root_path = PathType(root_dir)
-                    if not root_path.exists() or not root_path.is_dir():
-                        logger.warning(
-                            f"Invalid root_dir: {root_dir}, skipping database update"
+                    database = BaseMCPCommand._open_database_from_config(auto_analyze=False)
+                    try:
+                        file_stat = os.stat(path)
+                        last_modified = file_stat.st_mtime
+                        files = database.select(
+                            "files",
+                            where={"path": str(path), "project_id": project_id},
                         )
-                    else:
-                        # Open database using BaseMCPCommand helper
-                        database = BaseMCPCommand._open_database(
-                            str(root_path), auto_analyze=False
-                        )
-
-                        try:
-                            # Get project_id
-                            project_id = get_project_id(root_path)
-                            if project_id:
-                                # Update file last_modified after formatting
-                                # Note: Formatting doesn't change code structure, only formatting
-                                # We update last_modified to reflect new file_mtime
-                                import os
-
-                                file_stat = os.stat(path)
-                                last_modified = file_stat.st_mtime
-
-                                # Find file by path and project_id
-                                files = database.select(
-                                    "files",
-                                    where={"path": str(path), "project_id": project_id},
-                                )
-                                if files:
-                                    file_id = files[0]["id"]
-                                    # Update last_modified
-                                    database.update(
-                                        "files",
-                                        where={"id": file_id},
-                                        data={"last_modified": last_modified},
-                                    )
-                                    database_updated = True
-                                    logger.debug(
-                                        f"Database updated after formatting: {file_path} | "
-                                        f"last_modified={last_modified}"
-                                    )
-                                else:
-                                    logger.debug(
-                                        f"File not found in database: {file_path}, skipping update"
-                                    )
-                            else:
-                                logger.debug(
-                                    f"Project ID not found for {root_dir}, skipping database update"
-                                )
-                        finally:
-                            database.disconnect()
+                        if files:
+                            file_id = files[0]["id"]
+                            database.update(
+                                "files",
+                                where={"id": file_id},
+                                data={"last_modified": last_modified},
+                            )
+                            database_updated = True
+                            logger.debug(
+                                f"Database updated after formatting: {file_path} | last_modified={last_modified}"
+                            )
+                        else:
+                            logger.debug(
+                                f"File not found in database: {file_path}, skipping update"
+                            )
+                    finally:
+                        database.disconnect()
                 except Exception as e:
-                    # Don't fail formatting if database update fails
                     logger.warning(
                         f"Error updating database after formatting: {e}", exc_info=True
                     )
@@ -424,17 +388,14 @@ class LintCodeCommand(Command):
                 "file_path": {
                     "type": "string",
                     "description": (
-                        "Path to Python file to lint. If root_dir is provided, resolved relative to project root."
+                        "Path to Python file to lint. If project_id is provided, relative to project root."
                     ),
                     "examples": ["hello_cli.py", "/abs/path/to/file.py"],
                 },
-                "root_dir": {
+                "project_id": {
                     "type": "string",
-                    "description": (
-                        "Optional project root directory. If provided, file_path is resolved "
-                        "relative to this directory (e.g. file_path='hello_cli.py' -> root_dir/hello_cli.py)."
-                    ),
-                    "examples": ["/abs/path/to/project"],
+                    "description": "Optional project UUID. If provided, file_path is relative to project root.",
+                    "examples": ["550e8400-e29b-41d4-a716-446655440000"],
                 },
                 "ignore": {
                     "type": "array",
@@ -447,19 +408,15 @@ class LintCodeCommand(Command):
             "additionalProperties": False,
             "examples": [
                 {"file_path": "/abs/path/to/file.py"},
-                {"file_path": "hello_cli.py", "root_dir": "/abs/path/to/project"},
-                {
-                    "file_path": "hello_cli.py",
-                    "root_dir": "/abs/path/to/project",
-                    "ignore": ["E501"],
-                },
+                {"file_path": "hello_cli.py", "project_id": "550e8400-e29b-41d4-a716-446655440000"},
+                {"file_path": "hello_cli.py", "project_id": "550e8400-e29b-41d4-a716-446655440000", "ignore": ["E501"]},
             ],
         }
 
     async def execute(
         self: "LintCodeCommand",
         file_path: str,
-        root_dir: Optional[str] = None,
+        project_id: Optional[str] = None,
         ignore: Optional[List[str]] = None,
         **kwargs: Any,
     ) -> SuccessResult | ErrorResult:
@@ -467,8 +424,8 @@ class LintCodeCommand(Command):
 
         Args:
             self: Command instance.
-            file_path: Path to Python file to lint (relative to root_dir if root_dir given).
-            root_dir: Optional project root; file_path is resolved relative to it.
+            file_path: Path to Python file to lint (relative to project root if project_id given).
+            project_id: Optional project UUID; file_path is resolved relative to project root.
             ignore: Optional list of error codes to ignore.
             **kwargs: Extra args (unused).
 
@@ -476,9 +433,9 @@ class LintCodeCommand(Command):
             SuccessResult with linting result or ErrorResult on failure.
         """
         try:
-            # Resolve path: relative to root_dir (project root) when given, else as-is
-            if root_dir:
-                path = (Path(root_dir) / file_path).resolve()
+            if project_id:
+                root_path = self._resolve_project_root(project_id)
+                path = (root_path / file_path).resolve()
             else:
                 path = Path(file_path).resolve()
             if not path.exists():
@@ -753,18 +710,15 @@ class TypeCheckCodeCommand(Command):
                 "file_path": {
                     "type": "string",
                     "description": (
-                        "Path to Python file to type check. If root_dir is provided, "
-                        "resolved relative to project root."
+                        "Path to Python file to type check. If project_id is provided, "
+                        "relative to project root."
                     ),
                     "examples": ["hello_cli.py", "/abs/path/to/file.py"],
                 },
-                "root_dir": {
+                "project_id": {
                     "type": "string",
-                    "description": (
-                        "Optional project root directory. If provided, file_path is "
-                        "resolved relative to this directory."
-                    ),
-                    "examples": ["/abs/path/to/project"],
+                    "description": "Optional project UUID. If provided, file_path is relative to project root.",
+                    "examples": ["550e8400-e29b-41d4-a716-446655440000"],
                 },
                 "config_file": {
                     "type": "string",
@@ -782,19 +736,15 @@ class TypeCheckCodeCommand(Command):
             "additionalProperties": False,
             "examples": [
                 {"file_path": "/abs/path/to/file.py"},
-                {"file_path": "hello_cli.py", "root_dir": "/abs/path/to/project"},
-                {
-                    "file_path": "hello_cli.py",
-                    "root_dir": "/abs/path/to/project",
-                    "ignore_errors": False,
-                },
+                {"file_path": "hello_cli.py", "project_id": "550e8400-e29b-41d4-a716-446655440000"},
+                {"file_path": "hello_cli.py", "project_id": "550e8400-e29b-41d4-a716-446655440000", "ignore_errors": False},
             ],
         }
 
     async def execute(
         self: "TypeCheckCodeCommand",
         file_path: str,
-        root_dir: Optional[str] = None,
+        project_id: Optional[str] = None,
         config_file: Optional[str] = None,
         ignore_errors: bool = False,
         **kwargs: Any,
@@ -803,10 +753,9 @@ class TypeCheckCodeCommand(Command):
 
         Args:
             self: Command instance.
-            file_path: Path to Python file to type check (relative to root_dir if root_dir given).
-            root_dir: Optional project root; file_path is resolved relative to it.
-            config_file: Optional path to mypy config file. If omitted, the command
-                tries to auto-detect `pyproject.toml` in parent directories.
+            file_path: Path to Python file to type check (relative to project root if project_id given).
+            project_id: Optional project UUID; file_path is relative to project root.
+            config_file: Optional path to mypy config file.
             ignore_errors: If True, treat errors as warnings.
             **kwargs: Extra args (unused).
 
@@ -814,8 +763,9 @@ class TypeCheckCodeCommand(Command):
             SuccessResult with type checking result or ErrorResult on failure.
         """
         try:
-            if root_dir:
-                path = (Path(root_dir) / file_path).resolve()
+            if project_id:
+                root_path = self._resolve_project_root(project_id)
+                path = (root_path / file_path).resolve()
             else:
                 path = Path(file_path).resolve()
             if not path.exists():

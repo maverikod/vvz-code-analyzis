@@ -7,7 +7,7 @@ email: vasilyvz@gmail.com
 
 from typing import Any, Dict, Optional
 
-from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
+from mcp_proxy_adapter.commands.result import SuccessResult
 
 from ..base_mcp_command import BaseMCPCommand
 
@@ -25,46 +25,35 @@ class GetClassHierarchyMCPCommand(BaseMCPCommand):
 
     @classmethod
     def get_schema(cls) -> Dict[str, Any]:
+        base_props = cls._get_base_schema_properties()
         return {
             "type": "object",
             "properties": {
-                "root_dir": {
-                    "type": "string",
-                    "description": "Project root directory (contains data/code_analysis.db)",
-                },
+                **base_props,
                 "class_name": {
                     "type": "string",
                     "description": "Optional class name to get hierarchy for (if null, returns all hierarchies)",
                 },
                 "file_path": {
                     "type": "string",
-                    "description": "Optional file path to filter by (absolute or relative)",
-                },
-                "project_id": {
-                    "type": "string",
-                    "description": "Optional project UUID; if omitted, inferred by root_dir",
+                    "description": "Optional file path to filter by (relative to project root)",
                 },
             },
-            "required": ["root_dir"],
+            "required": ["project_id"],
             "additionalProperties": False,
         }
 
     async def execute(
         self,
-        root_dir: str,
+        project_id: str,
         class_name: Optional[str] = None,
         file_path: Optional[str] = None,
-        project_id: Optional[str] = None,
         **kwargs,
     ) -> SuccessResult:
         try:
-            root_path = self._validate_root_dir(root_dir)
-            db = self._open_database(root_dir)
-            proj_id = self._get_project_id(db, root_path, project_id)
-            if not proj_id:
-                return ErrorResult(
-                    message="Project not found", code="PROJECT_NOT_FOUND"
-                )
+            root_path = self._resolve_project_root(project_id)
+            db = self._open_database()
+            proj_id = project_id
 
             # Get class hierarchy from database
             # Classes table has 'bases' field (JSON array of base class names)
@@ -91,7 +80,6 @@ class GetClassHierarchyMCPCommand(BaseMCPCommand):
                 from pathlib import Path
 
                 file_path_obj = Path(file_path)
-                root_path = Path(root_dir).resolve()
                 if file_path_obj.is_absolute():
                     try:
                         normalized_path = file_path_obj.relative_to(root_path)

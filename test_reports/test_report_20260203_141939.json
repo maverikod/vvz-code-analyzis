@@ -1,0 +1,203 @@
+{
+  "timestamp": "2026-02-03T14:19:39.003884",
+  "total_tests": 13,
+  "total_passed": 5,
+  "total_failed": 0,
+  "total_skipped": 8,
+  "total_duration": 0.0183413028717041,
+  "suites": [
+    {
+      "name": "Test Data Setup",
+      "tests": [
+        {
+          "name": "test_data_available",
+          "status": "passed",
+          "duration": 0.00016736984252929688,
+          "message": "test_data directory found",
+          "error": null
+        },
+        {
+          "name": "test_database_setup",
+          "status": "passed",
+          "duration": 0.012900352478027344,
+          "message": "Test database created",
+          "error": null
+        },
+        {
+          "name": "test_projects_load",
+          "status": "passed",
+          "duration": 0.000400543212890625,
+          "message": "Loaded 1 projects",
+          "error": null
+        },
+        {
+          "name": "test_files_load",
+          "status": "passed",
+          "duration": 0.002117156982421875,
+          "message": "Loaded 0 files",
+          "error": null
+        }
+      ],
+      "total": 4,
+      "passed": 4,
+      "failed": 0,
+      "skipped": 0,
+      "duration": 0.01558542251586914
+    },
+    {
+      "name": "Server Startup",
+      "tests": [
+        {
+          "name": "server_start",
+          "status": "passed",
+          "duration": 0.001056671142578125,
+          "message": "Server started successfully",
+          "error": null
+        }
+      ],
+      "total": 1,
+      "passed": 1,
+      "failed": 0,
+      "skipped": 0,
+      "duration": 0.001056671142578125
+    },
+    {
+      "name": "Database Operations",
+      "tests": [
+        {
+          "name": "database_operations",
+          "status": "skipped",
+          "duration": 0.0,
+          "message": "Database operations tests - pending new architecture",
+          "error": null
+        }
+      ],
+      "total": 1,
+      "passed": 0,
+      "failed": 0,
+      "skipped": 1,
+      "duration": 0.0
+    },
+    {
+      "name": "AST/CST Operations",
+      "tests": [
+        {
+          "name": "ast_cst_operations",
+          "status": "skipped",
+          "duration": 0.0,
+          "message": "AST/CST operations tests - pending new architecture",
+          "error": null
+        }
+      ],
+      "total": 1,
+      "passed": 0,
+      "failed": 0,
+      "skipped": 1,
+      "duration": 0.0
+    },
+    {
+      "name": "Commands",
+      "tests": [
+        {
+          "name": "commands",
+          "status": "skipped",
+          "duration": 0.0,
+          "message": "Command tests - pending new architecture",
+          "error": null
+        }
+      ],
+      "total": 1,
+      "passed": 0,
+      "failed": 0,
+      "skipped": 1,
+      "duration": 0.0
+    },
+    {
+      "name": "Workers",
+      "tests": [
+        {
+          "name": "workers",
+          "status": "skipped",
+          "duration": 0.0,
+          "message": "Worker tests - pending new architecture",
+          "error": null
+        }
+      ],
+      "total": 1,
+      "passed": 0,
+      "failed": 0,
+      "skipped": 1,
+      "duration": 0.0
+    },
+    {
+      "name": "Performance",
+      "tests": [
+        {
+          "name": "performance",
+          "status": "skipped",
+          "duration": 0.0,
+          "message": "Performance tests - pending new architecture",
+          "error": null
+        }
+      ],
+      "total": 1,
+      "passed": 0,
+      "failed": 0,
+      "skipped": 1,
+      "duration": 0.0
+    },
+    {
+      "name": "Error Scenarios",
+      "tests": [
+        {
+          "name": "error_scenarios",
+          "status": "skipped",
+          "duration": 0.0,
+          "message": "Error scenario tests - pending new architecture",
+          "error": null
+        }
+      ],
+      "total": 1,
+      "passed": 0,
+      "failed": 0,
+      "skipped": 1,
+      "duration": 0.0
+    },
+    {
+      "name": "Concurrent Operations",
+      "tests": [
+        {
+          "name": "concurrent_operations",
+          "status": "skipped",
+          "duration": 0.0,
+          "message": "Concurrent operation tests - pending new architecture",
+          "error": null
+        }
+      ],
+      "total": 1,
+      "passed": 0,
+      "failed": 0,
+      "skipped": 1,
+      "duration": 0.0
+    },
+    {
+      "name": "End-to-End Workflows",
+      "tests": [
+        {
+          "name": "end_to_end_workflows",
+          "status": "skipped",
+          "duration": 0.0,
+          "message": "End-to-end workflow tests - pending new architecture",
+          "error": null
+        }
+      ],
+      "total": 1,
+      "passed": 0,
+      "failed": 0,
+      "skipped": 1,
+      "duration": 0.0
+    }
+  ],
+  "coverage": null,
+  "performance": null
+}

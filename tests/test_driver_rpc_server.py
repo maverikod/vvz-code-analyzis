@@ -17,14 +17,14 @@ from pathlib import Path
 import pytest
 
 from code_analysis.core.database_driver_pkg.driver_factory import create_driver
-from code_analysis.core.database_driver_pkg.request import (
+from code_analysis.core.database_client.protocol import (
     DeleteRequest,
     InsertRequest,
     SelectRequest,
     UpdateRequest,
+    RPCRequest,
 )
 from code_analysis.core.database_driver_pkg.request_queue import RequestQueue
-from code_analysis.core.database_driver_pkg.rpc_protocol import RPCRequest
 from code_analysis.core.database_driver_pkg.rpc_server import RPCServer
 
 

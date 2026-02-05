@@ -5,11 +5,20 @@ Author: Vasiliy Zdanovskiy
 email: vasilyvz@gmail.com
 """
 
+from __future__ import annotations
+
+from typing import Any, Dict, List, Optional, Tuple
+
 
 class CodeAnalysisError(Exception):
     """Base exception for code analysis operations."""
 
-    def __init__(self, message: str, code: str = None, details: dict = None):
+    def __init__(
+        self,
+        message: str,
+        code: Optional[str] = None,
+        details: Optional[Dict[str, Any]] = None,
+    ):
         """
         Initialize exception.
 
@@ -27,7 +36,12 @@ class CodeAnalysisError(Exception):
 class ValidationError(CodeAnalysisError):
     """Raised when validation fails."""
 
-    def __init__(self, message: str, field: str = None, details: dict = None):
+    def __init__(
+        self,
+        message: str,
+        field: Optional[str] = None,
+        details: Optional[Dict[str, Any]] = None,
+    ):
         """
         Initialize validation error.
 
@@ -43,7 +57,12 @@ class ValidationError(CodeAnalysisError):
 class RefactoringError(CodeAnalysisError):
     """Raised when refactoring operations fail."""
 
-    def __init__(self, message: str, operation: str = None, details: dict = None):
+    def __init__(
+        self,
+        message: str,
+        operation: Optional[str] = None,
+        details: Optional[Dict[str, Any]] = None,
+    ):
         """
         Initialize refactoring error.
 
@@ -59,7 +78,12 @@ class RefactoringError(CodeAnalysisError):
 class DatabaseError(CodeAnalysisError):
     """Raised when database operations fail."""
 
-    def __init__(self, message: str, operation: str = None, details: dict = None):
+    def __init__(
+        self,
+        message: str,
+        operation: Optional[str] = None,
+        details: Optional[Dict[str, Any]] = None,
+    ):
         """
         Initialize database error.
 
@@ -78,14 +102,14 @@ class DatabaseOperationError(CodeAnalysisError):
     def __init__(
         self,
         message: str,
-        operation: str = None,
-        db_path: str = None,
-        sql: str = None,
-        params: tuple = None,
-        root_dir: str = None,
-        timeout: float = None,
-        cause: Exception = None,
-        details: dict = None,
+        operation: Optional[str] = None,
+        db_path: Optional[str] = None,
+        sql: Optional[str] = None,
+        params: Optional[Tuple[Any, ...]] = None,
+        root_dir: Optional[str] = None,
+        timeout: Optional[float] = None,
+        cause: Optional[Exception] = None,
+        details: Optional[Dict[str, Any]] = None,
     ):
         """
         Initialize database operation error.
@@ -114,7 +138,12 @@ class DatabaseOperationError(CodeAnalysisError):
 class AnalysisError(CodeAnalysisError):
     """Raised when analysis operations fail."""
 
-    def __init__(self, message: str, analysis_type: str = None, details: dict = None):
+    def __init__(
+        self,
+        message: str,
+        analysis_type: Optional[str] = None,
+        details: Optional[Dict[str, Any]] = None,
+    ):
         """
         Initialize analysis error.
 
@@ -130,7 +159,12 @@ class AnalysisError(CodeAnalysisError):
 class ConfigurationError(CodeAnalysisError):
     """Raised when configuration is invalid."""
 
-    def __init__(self, message: str, config_key: str = None, details: dict = None):
+    def __init__(
+        self,
+        message: str,
+        config_key: Optional[str] = None,
+        details: Optional[Dict[str, Any]] = None,
+    ):
         """
         Initialize configuration error.
 
@@ -149,7 +183,12 @@ class ConfigurationError(CodeAnalysisError):
 class ProjectIdError(CodeAnalysisError):
     """Raised when project_id cannot be loaded or validated."""
 
-    def __init__(self, message: str, project_id: str = None, details: dict = None):
+    def __init__(
+        self,
+        message: str,
+        project_id: Optional[str] = None,
+        details: Optional[Dict[str, Any]] = None,
+    ):
         """
         Initialize project ID error.
 
@@ -168,8 +207,8 @@ class MultipleProjectIdError(CodeAnalysisError):
     def __init__(
         self,
         message: str,
-        projectid_paths: list = None,
-        details: dict = None,
+        projectid_paths: Optional[List[str]] = None,
+        details: Optional[Dict[str, Any]] = None,
     ):
         """
         Initialize multiple project ID error.
@@ -189,9 +228,9 @@ class ProjectIdMismatchError(CodeAnalysisError):
     def __init__(
         self,
         message: str,
-        file_project_id: str = None,
-        db_project_id: str = None,
-        details: dict = None,
+        file_project_id: Optional[str] = None,
+        db_project_id: Optional[str] = None,
+        details: Optional[Dict[str, Any]] = None,
     ):
         """
         Initialize project ID mismatch error.
@@ -210,7 +249,12 @@ class ProjectIdMismatchError(CodeAnalysisError):
 class ProjectNotFoundError(CodeAnalysisError):
     """Raised when project is not found."""
 
-    def __init__(self, message: str, project_id: str = None, details: dict = None):
+    def __init__(
+        self,
+        message: str,
+        project_id: Optional[str] = None,
+        details: Optional[Dict[str, Any]] = None,
+    ):
         """
         Initialize project not found error.
 
@@ -229,8 +273,8 @@ class InvalidProjectIdFormatError(CodeAnalysisError):
     def __init__(
         self,
         message: str,
-        projectid_path: str = None,
-        details: dict = None,
+        projectid_path: Optional[str] = None,
+        details: Optional[Dict[str, Any]] = None,
     ):
         """
         Initialize invalid project ID format error.
@@ -252,9 +296,9 @@ class NestedProjectError(CodeAnalysisError):
     def __init__(
         self,
         message: str,
-        child_project: str = None,
-        parent_project: str = None,
-        details: dict = None,
+        child_project: Optional[str] = None,
+        parent_project: Optional[str] = None,
+        details: Optional[Dict[str, Any]] = None,
     ):
         """
         Initialize nested project error.
@@ -276,10 +320,10 @@ class DuplicateProjectIdError(CodeAnalysisError):
     def __init__(
         self,
         message: str,
-        project_id: str = None,
-        existing_root: str = None,
-        duplicate_root: str = None,
-        details: dict = None,
+        project_id: Optional[str] = None,
+        existing_root: Optional[str] = None,
+        duplicate_root: Optional[str] = None,
+        details: Optional[Dict[str, Any]] = None,
     ):
         """
         Initialize duplicate project ID error.
@@ -291,9 +335,7 @@ class DuplicateProjectIdError(CodeAnalysisError):
             duplicate_root: Optional path to duplicate project root
             details: Optional additional details
         """
-        super().__init__(
-            message, code="DUPLICATE_PROJECT_ID_ERROR", details=details
-        )
+        super().__init__(message, code="DUPLICATE_PROJECT_ID_ERROR", details=details)
         self.project_id = project_id
         self.existing_root = existing_root
         self.duplicate_root = duplicate_root
@@ -308,9 +350,9 @@ class GitOperationError(CodeAnalysisError):
     def __init__(
         self,
         message: str,
-        operation: str = None,
-        git_command: str = None,
-        details: dict = None,
+        operation: Optional[str] = None,
+        git_command: Optional[str] = None,
+        details: Optional[Dict[str, Any]] = None,
     ):
         """
         Initialize git operation error.
@@ -335,9 +377,9 @@ class CSTModulePatchError(CodeAnalysisError):
     def __init__(
         self,
         message: str,
-        patch_type: str = None,
-        file_path: str = None,
-        details: dict = None,
+        patch_type: Optional[str] = None,
+        file_path: Optional[str] = None,
+        details: Optional[Dict[str, Any]] = None,
     ):
         """
         Initialize CST module patch error.
@@ -359,9 +401,9 @@ class DocstringValidationError(CSTModulePatchError):
     def __init__(
         self,
         message: str,
-        file_path: str = None,
-        validation_errors: list = None,
-        details: dict = None,
+        file_path: Optional[str] = None,
+        validation_errors: Optional[List[str]] = None,
+        details: Optional[Dict[str, Any]] = None,
     ):
         """
         Initialize docstring validation error.
@@ -372,7 +414,9 @@ class DocstringValidationError(CSTModulePatchError):
             validation_errors: Optional list of validation error messages
             details: Optional additional details
         """
-        super().__init__(message, patch_type="docstring", file_path=file_path, details=details)
+        super().__init__(
+            message, patch_type="docstring", file_path=file_path, details=details
+        )
         self.validation_errors = validation_errors or []
 
 
@@ -385,9 +429,9 @@ class QueryParseError(CodeAnalysisError):
     def __init__(
         self,
         message: str,
-        query_string: str = None,
-        parse_position: int = None,
-        details: dict = None,
+        query_string: Optional[str] = None,
+        parse_position: Optional[int] = None,
+        details: Optional[Dict[str, Any]] = None,
     ):
         """
         Initialize query parse error.

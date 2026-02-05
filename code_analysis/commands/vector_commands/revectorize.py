@@ -15,7 +15,6 @@ from mcp_proxy_adapter.commands.result import SuccessResult, ErrorResult
 from ..base_mcp_command import BaseMCPCommand
 from ...core.faiss_manager import FaissIndexManager
 from ...core.storage_paths import resolve_storage_paths, get_faiss_index_path
-from ...core.project_resolution import normalize_root_dir
 
 logger = logging.getLogger(__name__)
 
@@ -57,13 +56,9 @@ class RevectorizeCommand(BaseMCPCommand):
         return {
             "type": "object",
             "properties": {
-                "root_dir": {
-                    "type": "string",
-                    "description": "Root directory of the project (contains projectid file)",
-                },
                 "project_id": {
                     "type": "string",
-                    "description": "Project UUID (must match root_dir/projectid)",
+                    "description": "Project UUID (from create_project or list_projects).",
                 },
                 "force": {
                     "type": "boolean",
@@ -71,13 +66,12 @@ class RevectorizeCommand(BaseMCPCommand):
                     "default": False,
                 },
             },
-            "required": ["root_dir", "project_id"],
+            "required": ["project_id"],
             "additionalProperties": False,
         }
 
     async def execute(
         self: "RevectorizeCommand",
-        root_dir: str,
         project_id: str,
         force: bool = False,
         **kwargs: Any,
@@ -86,32 +80,24 @@ class RevectorizeCommand(BaseMCPCommand):
 
         Args:
             self: Command instance.
-            root_dir: Root directory of the project.
-            project_id: Project UUID (must match root_dir/projectid).
+            project_id: Project UUID (from create_project or list_projects).
             force: Force revectorization even if embeddings exist.
 
         Returns:
             SuccessResult with revectorization statistics or ErrorResult on failure.
         """
         try:
-            root_path = normalize_root_dir(root_dir)
-
-            # Validate project_id matches root_dir/projectid
-            self._require_project_id_gate(root_dir, project_id)
-
-            database = self._open_database(root_dir)
+            self._resolve_project_root(project_id)
+            database = self._open_database_from_config(auto_analyze=False)
             try:
-                actual_project_id = self._get_project_id(
-                    database, root_path, project_id
-                )
-                if not actual_project_id:
+                project = database.get_project(project_id)
+                if not project:
                     return ErrorResult(
                         message=f"Project not found: {project_id}",
                         code="PROJECT_NOT_FOUND",
                     )
 
-                # Resolve storage paths
-                config_path = root_path / "config.json"
+                config_path = self._resolve_config_path()
                 if not config_path.exists():
                     return ErrorResult(
                         message=f"Configuration file not found: {config_path}",
@@ -122,6 +108,8 @@ class RevectorizeCommand(BaseMCPCommand):
 
                 with open(config_path, "r", encoding="utf-8") as f:
                     config_dict = json.load(f)
+
+                self._ensure_project_root_under_watch_dir(root_path, config_dict)
 
                 storage_paths = resolve_storage_paths(
                     config_data=config_dict, config_path=config_path
@@ -134,7 +122,9 @@ class RevectorizeCommand(BaseMCPCommand):
                 # Initialize SVO client manager
                 from ...core.svo_client_manager import SVOClientManager
 
-                svo_client_manager = SVOClientManager(config_dict, root_dir=root_path)
+                svo_client_manager = SVOClientManager(
+                    config_dict, root_dir=config_path.parent
+                )
                 await svo_client_manager.initialize()
 
                 try:
@@ -143,14 +133,14 @@ class RevectorizeCommand(BaseMCPCommand):
                         database,
                         svo_client_manager,
                         storage_paths,
-                        actual_project_id,
+                        project_id,
                         vector_dim,
                         force,
                     )
 
                     return SuccessResult(
                         data={
-                            "project_id": actual_project_id,
+                            "project_id": project_id,
                             "chunks_revectorized": result["chunks_revectorized"],
                             "vectors_in_index": result.get("vectors_in_index", 0),
                             "index_path": result.get("index_path"),

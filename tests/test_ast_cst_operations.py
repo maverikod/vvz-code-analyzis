@@ -25,8 +25,7 @@ from code_analysis.core.database_driver_pkg.rpc_handlers_ast_modify import (
 from code_analysis.core.database_driver_pkg.rpc_handlers_cst_modify import (
     _RPCHandlersCSTModifyMixin,
 )
-from code_analysis.core.database_driver_pkg.result import ErrorResult
-from code_analysis.core.database_driver_pkg.rpc_protocol import ErrorCode
+from code_analysis.core.database_client.protocol import ErrorResult, ErrorCode
 
 
 class TestASTNode:

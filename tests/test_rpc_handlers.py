@@ -10,12 +10,10 @@ from unittest.mock import Mock
 
 from code_analysis.core.database_driver_pkg.rpc_handlers import RPCHandlers
 from code_analysis.core.database_driver_pkg.drivers.base import BaseDatabaseDriver
-from code_analysis.core.database_driver_pkg.result import (
+from code_analysis.core.database_client.protocol import (
     DataResult,
     ErrorResult,
     SuccessResult,
-)
-from code_analysis.core.database_driver_pkg.request import (
     DeleteRequest,
     InsertRequest,
     SelectRequest,
@@ -267,7 +265,7 @@ class TestRPCHandlersExecute:
         assert result.data["affected_rows"] == 1
         assert result.data["lastrowid"] == 123
         mock_driver.execute.assert_called_once_with(
-            "INSERT INTO users (name) VALUES (?)", ("John",)
+            "INSERT INTO users (name) VALUES (?)", ("John",), None
         )
 
     def test_handle_execute_missing_sql(self, handlers):

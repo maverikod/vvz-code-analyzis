@@ -9,11 +9,10 @@ from __future__ import annotations
 
 from typing import Any, Dict, List
 
-from ..database_driver_pkg.rpc_protocol import RPCResponse
-
 from .objects.ast_cst import ASTNode, CSTNode
 from .objects.tree_action import TreeAction
 from .objects.xpath_filter import XPathFilter
+from .protocol import ErrorCode, RPCResponse
 from .result import Result
 
 
@@ -121,15 +120,13 @@ class _ClientAPIASTCSTMixin:
             Result object
         """
         if response.is_error():
-            from ..database_driver_pkg.rpc_protocol import ErrorCode
-
             error = response.error
             if error:
                 error_code = error.code
                 description = error.message
                 details = error.data
             else:
-                error_code = ErrorCode.UNKNOWN_ERROR
+                error_code = ErrorCode.INTERNAL_ERROR
                 description = "Unknown error"
                 details = None
             return Result.error(

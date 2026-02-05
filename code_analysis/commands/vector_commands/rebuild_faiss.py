@@ -15,7 +15,6 @@ from mcp_proxy_adapter.commands.result import SuccessResult, ErrorResult
 from ..base_mcp_command import BaseMCPCommand
 from ...core.faiss_manager import FaissIndexManager
 from ...core.storage_paths import resolve_storage_paths, get_faiss_index_path
-from ...core.project_resolution import normalize_root_dir
 
 logger = logging.getLogger(__name__)
 
@@ -57,22 +56,17 @@ class RebuildFaissCommand(BaseMCPCommand):
         return {
             "type": "object",
             "properties": {
-                "root_dir": {
-                    "type": "string",
-                    "description": "Root directory of the project (contains projectid file)",
-                },
                 "project_id": {
                     "type": "string",
-                    "description": "Project UUID (must match root_dir/projectid)",
+                    "description": "Project UUID (from create_project or list_projects).",
                 },
             },
-            "required": ["root_dir", "project_id"],
+            "required": ["project_id"],
             "additionalProperties": False,
         }
 
     async def execute(
         self: "RebuildFaissCommand",
-        root_dir: str,
         project_id: str,
         **kwargs: Any,
     ) -> SuccessResult | ErrorResult:
@@ -80,31 +74,23 @@ class RebuildFaissCommand(BaseMCPCommand):
 
         Args:
             self: Command instance.
-            root_dir: Root directory of the project.
-            project_id: Project UUID (must match root_dir/projectid).
+            project_id: Project UUID (from create_project or list_projects).
 
         Returns:
             SuccessResult with rebuild statistics or ErrorResult on failure.
         """
         try:
-            root_path = normalize_root_dir(root_dir)
-
-            # Validate project_id matches root_dir/projectid
-            self._require_project_id_gate(root_dir, project_id)
-
-            database = self._open_database(root_dir)
+            self._resolve_project_root(project_id)
+            database = self._open_database_from_config(auto_analyze=False)
             try:
-                actual_project_id = self._get_project_id(
-                    database, root_path, project_id
-                )
-                if not actual_project_id:
+                project = database.get_project(project_id)
+                if not project:
                     return ErrorResult(
                         message=f"Project not found: {project_id}",
                         code="PROJECT_NOT_FOUND",
                     )
 
-                # Resolve storage paths
-                config_path = root_path / "config.json"
+                config_path = self._resolve_config_path()
                 if not config_path.exists():
                     return ErrorResult(
                         message=f"Configuration file not found: {config_path}",
@@ -120,19 +106,17 @@ class RebuildFaissCommand(BaseMCPCommand):
                     config_data=config_dict, config_path=config_path
                 )
 
-                # Get vector dimension
                 code_analysis_config = config_dict.get("code_analysis", config_dict)
                 vector_dim = int(code_analysis_config.get("vector_dim", 384))
 
-                # One index per project: {faiss_dir}/{project_id}.bin
-                index_path = get_faiss_index_path(
-                    storage_paths.faiss_dir, actual_project_id
-                )
+                index_path = get_faiss_index_path(storage_paths.faiss_dir, project_id)
 
-                # Initialize SVO client manager
+                # Initialize SVO client manager (root_dir = config dir for cert paths)
                 from ...core.svo_client_manager import SVOClientManager
 
-                svo_client_manager = SVOClientManager(config_dict, root_dir=root_path)
+                svo_client_manager = SVOClientManager(
+                    config_dict, root_dir=config_path.parent
+                )
                 await svo_client_manager.initialize()
 
                 try:
@@ -144,14 +128,14 @@ class RebuildFaissCommand(BaseMCPCommand):
                     vectors_count = await faiss_manager.rebuild_from_database(
                         database,
                         svo_client_manager,
-                        project_id=actual_project_id,
+                        project_id=project_id,
                     )
 
                     faiss_manager.close()
 
                     return SuccessResult(
                         data={
-                            "project_id": actual_project_id,
+                            "project_id": project_id,
                             "index_path": str(index_path),
                             "vectors_count": vectors_count,
                         }
@@ -211,7 +195,7 @@ class RebuildFaissCommand(BaseMCPCommand):
                 "root_dir": {
                     "description": (
                         "Project root directory path. Can be absolute or relative. "
-                        "Must contain projectid file and config.json."
+                        "Must contain projectid file. Server config (storage paths, SVO) is loaded from server config, not from root_dir."
                     ),
                     "type": "string",
                     "required": True,

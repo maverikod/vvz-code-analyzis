@@ -1,0 +1,153 @@
+
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Test Pipeline Report</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; }
+        h1 { color: #333; }
+        .summary { background: #f5f5f5; padding: 15px; border-radius: 5px; margin: 20px 0; }
+        .suite { margin: 20px 0; border: 1px solid #ddd; padding: 15px; border-radius: 5px; }
+        .test { margin: 10px 0; padding: 10px; background: #f9f9f9; border-radius: 3px; }
+        .passed { color: green; }
+        .failed { color: red; }
+        .skipped { color: orange; }
+        .error { color: red; font-weight: bold; }
+    </style>
+</head>
+<body>
+    <h1>Test Pipeline Report</h1>
+    <div class="summary">
+        <h2>Summary</h2>
+        <p><strong>Timestamp:</strong> 2026-02-03T14:19:39.003884</p>
+        <p><strong>Total Tests:</strong> 13</p>
+        <p><strong>Passed:</strong> <span class="passed">5</span></p>
+        <p><strong>Failed:</strong> <span class="failed">0</span></p>
+        <p><strong>Skipped:</strong> <span class="skipped">8</span></p>
+        <p><strong>Duration:</strong> 0.02s</p>
+    </div>
+
+    <div class="suite">
+        <h3>Test Data Setup</h3>
+        <p>Total: 4, Passed: <span class="passed">4</span>, 
+           Failed: <span class="failed">0</span>, 
+           Skipped: <span class="skipped">0</span>, 
+           Duration: 0.02s</p>
+
+        <div class="test">
+            <strong class="passed">test_data_available</strong> - 
+            <span class="passed">passed</span> (0.000s)
+<p>test_data directory found</p></div>
+        <div class="test">
+            <strong class="passed">test_database_setup</strong> - 
+            <span class="passed">passed</span> (0.013s)
+<p>Test database created</p></div>
+        <div class="test">
+            <strong class="passed">test_projects_load</strong> - 
+            <span class="passed">passed</span> (0.000s)
+<p>Loaded 1 projects</p></div>
+        <div class="test">
+            <strong class="passed">test_files_load</strong> - 
+            <span class="passed">passed</span> (0.002s)
+<p>Loaded 0 files</p></div></div>
+    <div class="suite">
+        <h3>Server Startup</h3>
+        <p>Total: 1, Passed: <span class="passed">1</span>, 
+           Failed: <span class="failed">0</span>, 
+           Skipped: <span class="skipped">0</span>, 
+           Duration: 0.00s</p>
+
+        <div class="test">
+            <strong class="passed">server_start</strong> - 
+            <span class="passed">passed</span> (0.001s)
+<p>Server started successfully</p></div></div>
+    <div class="suite">
+        <h3>Database Operations</h3>
+        <p>Total: 1, Passed: <span class="passed">0</span>, 
+           Failed: <span class="failed">0</span>, 
+           Skipped: <span class="skipped">1</span>, 
+           Duration: 0.00s</p>
+
+        <div class="test">
+            <strong class="skipped">database_operations</strong> - 
+            <span class="skipped">skipped</span> (0.000s)
+<p>Database operations tests - pending new architecture</p></div></div>
+    <div class="suite">
+        <h3>AST/CST Operations</h3>
+        <p>Total: 1, Passed: <span class="passed">0</span>, 
+           Failed: <span class="failed">0</span>, 
+           Skipped: <span class="skipped">1</span>, 
+           Duration: 0.00s</p>
+
+        <div class="test">
+            <strong class="skipped">ast_cst_operations</strong> - 
+            <span class="skipped">skipped</span> (0.000s)
+<p>AST/CST operations tests - pending new architecture</p></div></div>
+    <div class="suite">
+        <h3>Commands</h3>
+        <p>Total: 1, Passed: <span class="passed">0</span>, 
+           Failed: <span class="failed">0</span>, 
+           Skipped: <span class="skipped">1</span>, 
+           Duration: 0.00s</p>
+
+        <div class="test">
+            <strong class="skipped">commands</strong> - 
+            <span class="skipped">skipped</span> (0.000s)
+<p>Command tests - pending new architecture</p></div></div>
+    <div class="suite">
+        <h3>Workers</h3>
+        <p>Total: 1, Passed: <span class="passed">0</span>, 
+           Failed: <span class="failed">0</span>, 
+           Skipped: <span class="skipped">1</span>, 
+           Duration: 0.00s</p>
+
+        <div class="test">
+            <strong class="skipped">workers</strong> - 
+            <span class="skipped">skipped</span> (0.000s)
+<p>Worker tests - pending new architecture</p></div></div>
+    <div class="suite">
+        <h3>Performance</h3>
+        <p>Total: 1, Passed: <span class="passed">0</span>, 
+           Failed: <span class="failed">0</span>, 
+           Skipped: <span class="skipped">1</span>, 
+           Duration: 0.00s</p>
+
+        <div class="test">
+            <strong class="skipped">performance</strong> - 
+            <span class="skipped">skipped</span> (0.000s)
+<p>Performance tests - pending new architecture</p></div></div>
+    <div class="suite">
+        <h3>Error Scenarios</h3>
+        <p>Total: 1, Passed: <span class="passed">0</span>, 
+           Failed: <span class="failed">0</span>, 
+           Skipped: <span class="skipped">1</span>, 
+           Duration: 0.00s</p>
+
+        <div class="test">
+            <strong class="skipped">error_scenarios</strong> - 
+            <span class="skipped">skipped</span> (0.000s)
+<p>Error scenario tests - pending new architecture</p></div></div>
+    <div class="suite">
+        <h3>Concurrent Operations</h3>
+        <p>Total: 1, Passed: <span class="passed">0</span>, 
+           Failed: <span class="failed">0</span>, 
+           Skipped: <span class="skipped">1</span>, 
+           Duration: 0.00s</p>
+
+        <div class="test">
+            <strong class="skipped">concurrent_operations</strong> - 
+            <span class="skipped">skipped</span> (0.000s)
+<p>Concurrent operation tests - pending new architecture</p></div></div>
+    <div class="suite">
+        <h3>End-to-End Workflows</h3>
+        <p>Total: 1, Passed: <span class="passed">0</span>, 
+           Failed: <span class="failed">0</span>, 
+           Skipped: <span class="skipped">1</span>, 
+           Duration: 0.00s</p>
+
+        <div class="test">
+            <strong class="skipped">end_to_end_workflows</strong> - 
+            <span class="skipped">skipped</span> (0.000s)
+<p>End-to-end workflow tests - pending new architecture</p></div></div>
+</body>
+</html>

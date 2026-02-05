@@ -12,14 +12,16 @@ from __future__ import annotations
 import logging
 from typing import Any, Dict
 
-from .request import (
+from code_analysis.core.database_client.protocol import (
     DeleteRequest,
     InsertRequest,
     SelectRequest,
     UpdateRequest,
+    DataResult,
+    ErrorResult,
+    SuccessResult,
+    ErrorCode,
 )
-from .result import DataResult, ErrorResult, SuccessResult
-from .rpc_protocol import ErrorCode
 
 logger = logging.getLogger(__name__)
 
@@ -160,6 +162,14 @@ class _RPCHandlersBaseMixin:
                 )
             params_tuple = params.get("params")
             transaction_id = params.get("transaction_id")
+            sql_preview = (
+                (sql.strip()[:60] + "…") if len(sql.strip()) > 60 else sql.strip()
+            )
+            logger.info(
+                "[CHAIN] handler handle_execute sql_preview=%s tid=%s",
+                sql_preview,
+                (transaction_id[:8] + "…") if transaction_id else None,
+            )
             result = self.driver.execute(sql, params_tuple, transaction_id)
             # For execute(), we need to preserve the full result structure
             # including affected_rows, lastrowid, and data (if present)
@@ -167,6 +177,54 @@ class _RPCHandlersBaseMixin:
             return SuccessResult(data=result)
         except Exception as e:
             logger.error(f"Error in handle_execute: {e}", exc_info=True)
+            return ErrorResult(
+                error_code=ErrorCode.DATABASE_ERROR,
+                description=str(e),
+            )
+
+    def handle_execute_batch(
+        self, params: Dict[str, Any]
+    ) -> SuccessResult | ErrorResult:
+        """Handle execute_batch RPC: run multiple SQL statements in one round-trip.
+
+        Args:
+            params: Dict with 'operations' (list of {sql, params}) and optional 'transaction_id'.
+
+        Returns:
+            SuccessResult with data.results = list of result dicts, or ErrorResult.
+        """
+        try:
+            operations_raw = params.get("operations")
+            if not isinstance(operations_raw, list):
+                return ErrorResult(
+                    error_code=ErrorCode.VALIDATION_ERROR,
+                    description="operations (list) is required",
+                )
+            operations: list = []
+            for item in operations_raw:
+                if not isinstance(item, dict):
+                    return ErrorResult(
+                        error_code=ErrorCode.VALIDATION_ERROR,
+                        description="Each operation must be {sql, params}",
+                    )
+                sql = item.get("sql")
+                if not sql:
+                    return ErrorResult(
+                        error_code=ErrorCode.VALIDATION_ERROR,
+                        description="Each operation must have 'sql'",
+                    )
+                p = item.get("params")
+                operations.append((sql, tuple(p) if p is not None else None))
+            transaction_id = params.get("transaction_id")
+            logger.info(
+                "[CHAIN] handler handle_execute_batch n_ops=%s tid=%s",
+                len(operations),
+                (transaction_id[:8] + "…") if transaction_id else None,
+            )
+            results = self.driver.execute_batch(operations, transaction_id)
+            return SuccessResult(data={"results": results})
+        except Exception as e:
+            logger.error(f"Error in handle_execute_batch: {e}", exc_info=True)
             return ErrorResult(
                 error_code=ErrorCode.DATABASE_ERROR,
                 description=str(e),

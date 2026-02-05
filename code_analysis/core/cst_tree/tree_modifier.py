@@ -18,6 +18,29 @@ from .tree_builder import _build_tree_index, get_tree
 logger = logging.getLogger(__name__)
 
 
+def _apply_libcst_codegen_compat() -> None:
+    """
+    Work around libcst codegen passing default_semicolon to nodes that do not accept it.
+
+    In libcst 1.8.x the codegen caller may pass default_semicolon= to _codegen_impl(),
+    but SimpleStatementLine._codegen_impl(self, state) does not accept it, causing
+    TypeError. We wrap _codegen_impl to accept **kwargs and ignore them.
+    """
+    orig = cst.SimpleStatementLine._codegen_impl
+
+    def _codegen_impl_compat(
+        self: cst.SimpleStatementLine,
+        state: object,
+        **kwargs: object,
+    ) -> None:
+        orig(self, state)
+
+    cst.SimpleStatementLine._codegen_impl = _codegen_impl_compat  # type: ignore[method-assign]
+
+
+_apply_libcst_codegen_compat()
+
+
 def modify_tree(tree_id: str, operations: List[TreeOperation]) -> CSTTree:
     """
     Modify tree with atomic operations.
@@ -48,23 +71,21 @@ def modify_tree(tree_id: str, operations: List[TreeOperation]) -> CSTTree:
     modified_module = tree.module
 
     try:
-        # Apply all operations
+        # Apply all operations; after each one update tree and rebuild index
+        # so that node_map points at nodes in the current module (needed for
+        # identity checks in replace/delete when applying the next operation).
         for op in operations:
             modified_module = _apply_operation(modified_module, tree, op)
+            tree.module = modified_module
+            tree.node_map.clear()
+            tree.metadata_map.clear()
+            tree.parent_map.clear()
+            _build_tree_index(
+                tree, node_types=None, max_depth=None, include_children=True
+            )
 
         # Validate the modified module
         _validate_module(modified_module)
-
-        # Update tree
-        tree.module = modified_module
-
-        # Rebuild index after modification
-        # Clear old indices to avoid stale references
-        tree.node_map.clear()
-        tree.metadata_map.clear()
-        tree.parent_map.clear()
-        # Rebuild index with all nodes (no filters)
-        _build_tree_index(tree, node_types=None, max_depth=None, include_children=True)
 
         return tree
 

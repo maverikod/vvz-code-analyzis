@@ -47,7 +47,7 @@ class FindDuplicatesMCPCommand(BaseMCPCommand):
                 **base_props,
                 "file_path": {
                     "type": "string",
-                    "description": "Optional path to specific file to analyze (absolute or relative to root_dir)",
+                    "description": "Optional path to specific file to analyze (relative to project root)",
                 },
                 "min_lines": {
                     "type": "integer",
@@ -74,15 +74,14 @@ class FindDuplicatesMCPCommand(BaseMCPCommand):
                     "maximum": 1.0,
                 },
             },
-            "required": ["root_dir"],
+            "required": ["project_id"],
             "additionalProperties": False,
         }
 
     async def execute(
         self,
-        root_dir: str,
+        project_id: str,
         file_path: Optional[str] = None,
-        project_id: Optional[str] = None,
         min_lines: int = 5,
         min_similarity: float = 0.8,
         use_semantic: bool = True,
@@ -92,9 +91,8 @@ class FindDuplicatesMCPCommand(BaseMCPCommand):
         """Execute duplicate detection.
 
         Args:
-            root_dir: Project root directory.
+            project_id: Project UUID.
             file_path: Optional path to specific file to analyze.
-            project_id: Optional project UUID.
             min_lines: Minimum lines for duplicate block.
             min_similarity: Minimum similarity threshold for AST.
             use_semantic: Use semantic vectors for logical duplicates.
@@ -104,15 +102,9 @@ class FindDuplicatesMCPCommand(BaseMCPCommand):
             SuccessResult with duplicate groups.
         """
         try:
-            root_path = self._validate_root_dir(root_dir)
-            db = self._open_database(root_dir)
-            proj_id = self._get_project_id(db, root_path, project_id)
-
-            if not proj_id:
-                db.disconnect()
-                return ErrorResult(
-                    message="Project not found", code="PROJECT_NOT_FOUND"
-                )
+            root_path = self._resolve_project_root(project_id)
+            db = self._open_database()
+            proj_id = project_id
 
             detector = DuplicateDetector(
                 min_lines=min_lines,

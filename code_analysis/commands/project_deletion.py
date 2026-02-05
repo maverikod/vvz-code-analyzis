@@ -199,6 +199,35 @@ class DeleteProjectCommand:
                 f"{file_count} files, {chunk_count} chunks"
             )
 
+            # 1b. Delete FAISS index file for this project (so no project data remains on disk)
+            try:
+                config_path = Path(self.config_path) if self.config_path else None
+                if not config_path or not config_path.exists():
+                    from .base_mcp_command import BaseMCPCommand
+                    config_path = BaseMCPCommand._resolve_config_path()
+                if config_path.exists():
+                    from ..core.storage_paths import (
+                        load_raw_config,
+                        resolve_storage_paths,
+                        get_faiss_index_path,
+                    )
+                    config_data = load_raw_config(config_path)
+                    storage = resolve_storage_paths(
+                        config_data=config_data, config_path=config_path
+                    )
+                    faiss_index_path = get_faiss_index_path(
+                        storage.faiss_dir, self.project_id
+                    )
+                    if faiss_index_path.exists():
+                        faiss_index_path.unlink()
+                        logger.info(
+                            f"[DELETE_PROJECT] Deleted FAISS index {faiss_index_path}"
+                        )
+            except Exception as e:
+                logger.warning(
+                    f"[DELETE_PROJECT] Could not delete FAISS index for {self.project_id}: {e}"
+                )
+
             # 2. If delete_from_disk: move project root to trash, then delete version dir
             if self.delete_from_disk and trash_dir_path:
                 root_path_obj = Path(root_path)

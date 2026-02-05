@@ -31,6 +31,12 @@ Every command doc file contains:
 
 Schema source of truth: `code_analysis/commands/**/*.py` → `get_schema()` and `execute()`.
 
+### Versioning before write (backup + optional git)
+
+Before any command modifies existing code, the file is placed in **versions** (backup to `old_code` via BackupManager). This is mandatory for all write commands.
+
+**Optional git:** when the project is a git repository, pass `commit_message` to create a git commit *after* the change. Commands that support it: `cst_save_tree`, `compose_cst_module`. Git does not replace backup: backup is always created before write; git commit is an extra version snapshot after write.
+
 ---
 
 ## Blocks and command list

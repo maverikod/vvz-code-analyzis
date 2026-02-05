@@ -44,10 +44,10 @@ class FulltextSearchMCPCommand(BaseMCPCommand):
                 "Requires a built database (run update_indexes/restore_database first)."
             ),
             "properties": {
-                "root_dir": {
+                "project_id": {
                     "type": "string",
-                    "description": "Root directory of the project (contains data/code_analysis.db)",
-                    "examples": ["/abs/path/to/project"],
+                    "description": "Project UUID (from create_project or list_projects).",
+                    "examples": ["550e8400-e29b-41d4-a716-446655440000"],
                 },
                 "query": {
                     "type": "string",
@@ -65,68 +65,40 @@ class FulltextSearchMCPCommand(BaseMCPCommand):
                     "default": 20,
                     "examples": [5, 20, 100],
                 },
-                "project_id": {
-                    "type": "string",
-                    "description": "Optional project UUID; if omitted, inferred by root_dir",
-                },
             },
-            "required": ["root_dir", "query"],
+            "required": ["project_id", "query"],
             "additionalProperties": False,
             "examples": [
-                {
-                    "root_dir": "/abs/path/to/project",
-                    "query": "structure analysis",
-                    "limit": 5,
-                },
-                {
-                    "root_dir": "/abs/path/to/project",
-                    "query": "MyClass",
-                    "entity_type": "class",
-                    "limit": 20,
-                },
+                {"project_id": "550e8400-e29b-41d4-a716-446655440000", "query": "structure analysis", "limit": 5},
+                {"project_id": "550e8400-e29b-41d4-a716-446655440000", "query": "MyClass", "entity_type": "class", "limit": 20},
             ],
         }
 
     async def execute(
         self,
-        root_dir: str,
+        project_id: str,
         query: str,
         entity_type: Optional[str] = None,
         limit: int = 20,
-        project_id: Optional[str] = None,
         **kwargs,
     ) -> SuccessResult | ErrorResult:
         """
         Execute full-text search.
 
         Args:
-            root_dir: Root directory of the project
+            project_id: Project UUID (from create_project or list_projects).
             query: Search query text
             entity_type: Optional filter by entity type
             limit: Maximum number of results
-            project_id: Optional project UUID
 
         Returns:
             SuccessResult with search results or ErrorResult on failure
         """
         try:
-            root_path = self._validate_root_dir(root_dir)
-            database = self._open_database(root_dir)
+            self._resolve_project_root(project_id)
+            database = self._open_database_from_config(auto_analyze=False)
             try:
-                actual_project_id = self._get_project_id(
-                    database, root_path, project_id
-                )
-                if not actual_project_id:
-                    return ErrorResult(
-                        message=(
-                            f"Project not found: {project_id}"
-                            if project_id
-                            else "Failed to get or create project"
-                        ),
-                        code="PROJECT_NOT_FOUND",
-                    )
-
-                search_cmd = SearchCommand(database, actual_project_id)
+                search_cmd = SearchCommand(database, project_id)
                 results = search_cmd.full_text_search(
                     query, entity_type=entity_type, limit=limit
                 )
@@ -174,7 +146,7 @@ class FulltextSearchMCPCommand(BaseMCPCommand):
                 "1. Validates root_dir exists and is a directory\n"
                 "2. Opens database connection\n"
                 "3. Resolves project_id (from parameter or inferred from root_dir)\n"
-                "4. Performs FTS5 search in code_chunks_fts table\n"
+                "4. Performs FTS5 search in code_content_fts table (BM25 ranking)\n"
                 "5. Filters by entity_type if provided (class, method, function)\n"
                 "6. Limits results to specified limit\n"
                 "7. Returns matching chunks with file paths and metadata\n\n"
@@ -363,60 +335,40 @@ class ListClassMethodsMCPCommand(BaseMCPCommand):
         return {
             "type": "object",
             "properties": {
-                "root_dir": {
+                "project_id": {
                     "type": "string",
-                    "description": "Root directory of the project (contains data/code_analysis.db)",
+                    "description": "Project UUID (from create_project or list_projects).",
                 },
                 "class_name": {
                     "type": "string",
                     "description": "Name of the class",
                 },
-                "project_id": {
-                    "type": "string",
-                    "description": "Optional project UUID; if omitted, inferred by root_dir",
-                },
             },
-            "required": ["root_dir", "class_name"],
+            "required": ["project_id", "class_name"],
             "additionalProperties": False,
         }
 
     async def execute(
         self,
-        root_dir: str,
+        project_id: str,
         class_name: str,
-        project_id: Optional[str] = None,
         **kwargs,
     ) -> SuccessResult | ErrorResult:
         """
         Execute class methods listing.
 
         Args:
-            root_dir: Root directory of the project
+            project_id: Project UUID (from create_project or list_projects).
             class_name: Name of the class
-            project_id: Optional project UUID
 
         Returns:
             SuccessResult with methods list or ErrorResult on failure
         """
         try:
-            root_path = self._validate_root_dir(root_dir)
-            database = self._open_database(root_dir)
+            self._resolve_project_root(project_id)
+            database = self._open_database_from_config(auto_analyze=False)
             try:
-                actual_project_id = self._get_project_id(
-                    database, root_path, project_id
-                )
-                if not actual_project_id:
-                    return ErrorResult(
-                        message=(
-                            f"Project not found: {project_id}"
-                            if project_id
-                            else "Failed to get or create project"
-                        ),
-                        code="PROJECT_NOT_FOUND",
-                    )
-
-                search_cmd = SearchCommand(database, actual_project_id)
-                # Pass class_name directly to search_methods
+                search_cmd = SearchCommand(database, project_id)
                 methods = search_cmd.search_methods(class_name=class_name)
 
                 return SuccessResult(
@@ -612,59 +564,40 @@ class FindClassesMCPCommand(BaseMCPCommand):
         return {
             "type": "object",
             "properties": {
-                "root_dir": {
+                "project_id": {
                     "type": "string",
-                    "description": "Root directory of the project (contains data/code_analysis.db)",
+                    "description": "Project UUID (from create_project or list_projects).",
                 },
                 "pattern": {
                     "type": "string",
                     "description": "Name pattern to search (optional, if not provided returns all classes)",
                 },
-                "project_id": {
-                    "type": "string",
-                    "description": "Optional project UUID; if omitted, inferred by root_dir",
-                },
             },
-            "required": ["root_dir"],
+            "required": ["project_id"],
             "additionalProperties": False,
         }
 
     async def execute(
         self,
-        root_dir: str,
+        project_id: str,
         pattern: Optional[str] = None,
-        project_id: Optional[str] = None,
         **kwargs,
     ) -> SuccessResult | ErrorResult:
         """
         Execute class search.
 
         Args:
-            root_dir: Root directory of the project
+            project_id: Project UUID (from create_project or list_projects).
             pattern: Optional name pattern to search
-            project_id: Optional project UUID
 
         Returns:
             SuccessResult with classes list or ErrorResult on failure
         """
         try:
-            root_path = self._validate_root_dir(root_dir)
-            database = self._open_database(root_dir)
+            self._resolve_project_root(project_id)
+            database = self._open_database_from_config(auto_analyze=False)
             try:
-                actual_project_id = self._get_project_id(
-                    database, root_path, project_id
-                )
-                if not actual_project_id:
-                    return ErrorResult(
-                        message=(
-                            f"Project not found: {project_id}"
-                            if project_id
-                            else "Failed to get or create project"
-                        ),
-                        code="PROJECT_NOT_FOUND",
-                    )
-
-                search_cmd = SearchCommand(database, actual_project_id)
+                search_cmd = SearchCommand(database, project_id)
                 classes = search_cmd.search_classes(pattern)
 
                 return SuccessResult(

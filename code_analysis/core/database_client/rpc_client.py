@@ -21,7 +21,7 @@ from pathlib import Path
 from queue import Empty, Queue
 from typing import Any, Dict, Optional
 
-from ..database_driver_pkg.rpc_protocol import RPCRequest, RPCResponse
+from .protocol import RPCRequest, RPCResponse
 from .exceptions import (
     ConnectionError,
     RPCClientError,
@@ -64,23 +64,31 @@ class RPCClient:
         self._connection_pool: Queue[socket.socket] = Queue(maxsize=pool_size)
         self._lock = threading.Lock()
         self._closed = False
+        self._connected = False
 
     def connect(self) -> None:
         """Connect to RPC server.
 
         Pre-creates connections in the pool for better performance.
+
+        Raises:
+            ConnectionError: If client is closed or no connection could be created.
         """
         if self._closed:
             raise ConnectionError("RPC client is closed")
 
         # Pre-create connections in pool
+        created = 0
         for _ in range(self.pool_size):
             try:
                 sock = self._create_connection()
                 self._connection_pool.put(sock)
+                created += 1
             except Exception as e:
                 logger.warning(f"Failed to pre-create connection: {e}")
-                # Continue with fewer connections in pool
+        if created == 0:
+            raise ConnectionError(f"Cannot connect to RPC server at {self.socket_path}")
+        self._connected = True
 
     def disconnect(self) -> None:
         """Disconnect from RPC server and close all connections."""
@@ -89,6 +97,7 @@ class RPCClient:
                 return
 
             self._closed = True
+            self._connected = False
 
             # Close all connections in pool
             while not self._connection_pool.empty():
@@ -102,12 +111,12 @@ class RPCClient:
                     break
 
     def is_connected(self) -> bool:
-        """Check if client is connected.
+        """Check if client is connected (connect() was called and disconnect() not yet).
 
         Returns:
             True if connected, False otherwise
         """
-        return not self._closed and Path(self.socket_path).exists()
+        return self._connected and not self._closed
 
     def call(
         self,
@@ -137,12 +146,21 @@ class RPCClient:
             request_id = str(uuid.uuid4())
 
         request = RPCRequest(method=method, params=params, request_id=request_id)
+        tid = (params or {}).get("transaction_id") if isinstance(params, dict) else None
+        logger.info(
+            "[CHAIN] rpc_client call method=%s tid=%s request_id=%s",
+            method,
+            (tid[:8] + "…") if tid and len(str(tid)) > 8 else tid,
+            request_id[:8] + "…" if request_id and len(request_id) > 8 else request_id,
+        )
 
         # Retry logic
         last_error: Optional[Exception] = None
         for attempt in range(self.max_retries):
             try:
-                return self._send_request(request)
+                out = self._send_request(request)
+                logger.info("[CHAIN] rpc_client call method=%s success", method)
+                return out
             except (ConnectionError, TimeoutError) as e:
                 last_error = e
                 if attempt < self.max_retries - 1:
@@ -154,6 +172,7 @@ class RPCClient:
                     raise
             except Exception as e:
                 # Non-retryable errors
+                logger.warning("[CHAIN] rpc_client call method=%s error: %s", method, e)
                 raise RPCClientError(f"RPC call failed: {e}") from e
 
         # Should not reach here, but just in case

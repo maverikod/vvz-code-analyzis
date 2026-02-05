@@ -11,14 +11,16 @@ email: vasilyvz@gmail.com
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 
 class BaseDatabaseDriver(ABC):
-    """Base class for all database drivers.
+    """Base class for all database drivers (DB-agnostic abstraction).
 
     All drivers must implement table-level operations.
     Drivers work with tables, columns, and cells - not objects.
+    Batch execution (execute_batch) is part of the interface with a default
+    implementation; concrete drivers may override for DB-specific optimization.
     """
 
     @abstractmethod
@@ -152,7 +154,12 @@ class BaseDatabaseDriver(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    def execute(self, sql: str, params: Optional[tuple] = None, transaction_id: Optional[str] = None) -> Dict[str, Any]:
+    def execute(
+        self,
+        sql: str,
+        params: Optional[tuple] = None,
+        transaction_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
         """Execute raw SQL statement.
 
         Args:
@@ -167,6 +174,27 @@ class BaseDatabaseDriver(ABC):
             DriverOperationError: If operation fails
         """
         raise NotImplementedError
+
+    def execute_batch(
+        self,
+        operations: List[Tuple[str, Optional[tuple]]],
+        transaction_id: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        """Execute multiple SQL statements in one logical batch (universal driver interface).
+
+        Part of the DB-agnostic driver contract. When transaction_id is provided,
+        all statements run on the same connection/transaction. Concrete drivers
+        may override for DB-specific batch optimization (e.g. native batch APIs);
+        this default implementation runs each (sql, params) via execute().
+
+        Args:
+            operations: List of (sql, params) tuples; params may be None.
+            transaction_id: Optional transaction ID; when set, same connection used.
+
+        Returns:
+            List of result dicts (same shape as execute(): affected_rows, lastrowid, data).
+        """
+        return [self.execute(sql, params, transaction_id) for sql, params in operations]
 
     @abstractmethod
     def begin_transaction(self) -> str:

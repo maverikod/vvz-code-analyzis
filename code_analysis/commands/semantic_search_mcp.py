@@ -55,9 +55,9 @@ class SemanticSearchMCPCommand(BaseMCPCommand):
         return {
             "type": "object",
             "properties": {
-                "root_dir": {
+                "project_id": {
                     "type": "string",
-                    "description": "Root directory of the project (contains data/code_analysis.db)",
+                    "description": "Project UUID (from create_project or list_projects).",
                 },
                 "query": {
                     "type": "string",
@@ -71,69 +71,43 @@ class SemanticSearchMCPCommand(BaseMCPCommand):
                     "type": "number",
                     "description": "Minimum similarity score (0.0-1.0)",
                 },
-                "project_id": {
-                    "type": "string",
-                    "description": "Optional project UUID; if omitted, inferred by root_dir",
-                },
             },
-            "required": ["root_dir", "query"],
+            "required": ["project_id", "query"],
             "additionalProperties": False,
         }
 
     async def execute(
         self: "SemanticSearchMCPCommand",
-        root_dir: str,
+        project_id: str,
         query: str,
         k: int = 10,
         min_score: Optional[float] = None,
-        project_id: Optional[str] = None,
         **kwargs,
     ) -> SuccessResult | ErrorResult:
         """Execute semantic search.
 
         Args:
             self: Command instance.
-            root_dir: Root directory of the project.
+            project_id: Project UUID (from create_project or list_projects).
             query: Search query text.
             k: Number of results to return.
             min_score: Optional minimum similarity score threshold.
-            project_id: Optional project UUID.
 
         Returns:
             SuccessResult with search results or ErrorResult on failure.
         """
         try:
-            root_path = self._validate_root_dir(root_dir)
-            database = self._open_database(root_dir)
+            root_path = self._resolve_project_root(project_id)
+            database = self._open_database_from_config(auto_analyze=False)
             try:
-                actual_project_id = self._get_project_id(
-                    database, root_path, project_id
-                )
-                if not actual_project_id:
-                    return ErrorResult(
-                        message=(
-                            f"Project not found: {project_id}"
-                            if project_id
-                            else "Failed to get or create project"
-                        ),
-                        code="PROJECT_NOT_FOUND",
-                    )
-
                 import json
 
-                config_path = root_path / "config.json"
+                config_path = self._resolve_config_path()
                 if not config_path.exists():
-                    # Fallback to server config (project root often has no config.json)
-                    config_path = Path(self._resolve_config_path())
-                    if not config_path.exists():
-                        return ErrorResult(
-                            message=(
-                                f"Configuration file not found in project ({root_path / 'config.json'}) "
-                                f"and server config not found: {config_path}"
-                            ),
-                            code="CONFIG_NOT_FOUND",
-                        )
-
+                    return ErrorResult(
+                        message=f"Server configuration file not found: {config_path}",
+                        code="CONFIG_NOT_FOUND",
+                    )
                 with open(config_path, "r", encoding="utf-8") as f:
                     config_dict = json.load(f)
 
@@ -147,9 +121,7 @@ class SemanticSearchMCPCommand(BaseMCPCommand):
                 )
 
                 # One index per project: {faiss_dir}/{project_id}.bin
-                index_path = get_faiss_index_path(
-                    storage_paths.faiss_dir, actual_project_id
-                )
+                index_path = get_faiss_index_path(storage_paths.faiss_dir, project_id)
 
                 if not index_path.exists():
                     return ErrorResult(
@@ -157,7 +129,7 @@ class SemanticSearchMCPCommand(BaseMCPCommand):
                         code="FAISS_INDEX_NOT_FOUND",
                         details={
                             "index_path": str(index_path),
-                            "project_id": actual_project_id,
+                            "project_id": project_id,
                         },
                     )
 
@@ -181,9 +153,9 @@ class SemanticSearchMCPCommand(BaseMCPCommand):
                 # Get query embedding using real embedding service
                 from ..core.svo_client_manager import SVOClientManager
 
-                # Create SVOClientManager from config
-                # Pass the full config_dict and root_dir - SVOClientManager will extract code_analysis.embedding
-                svo_client_manager = SVOClientManager(config_dict, root_dir=root_path)
+                # Config and cert paths in config are relative to config file directory (server root)
+                config_root = config_path.parent
+                svo_client_manager = SVOClientManager(config_dict, root_dir=config_root)
                 await svo_client_manager.initialize()
 
                 try:
@@ -268,13 +240,15 @@ class SemanticSearchMCPCommand(BaseMCPCommand):
                         c.chunk_type,
                         c.chunk_text,
                         c.line,
-                        f.path AS file_path
+                        f.path AS file_path,
+                        c.bm25_score,
+                        c.token_count
                     FROM code_chunks c
                     JOIN files f ON f.id = c.file_id
                     WHERE c.project_id = ?
                       AND c.vector_id IN ({placeholders})
                     """,
-                    [actual_project_id, *ids],
+                    [project_id, *ids],
                 )
                 rows = result.get("data", [])
                 by_vector_id: dict[int, dict[str, Any]] = {
@@ -289,18 +263,21 @@ class SemanticSearchMCPCommand(BaseMCPCommand):
                     row = by_vector_id.get(int(vid))
                     if not row:
                         continue
-                    results.append(
-                        {
-                            "score": score,
-                            "distance": float(dist),
-                            "vector_id": int(vid),
-                            "chunk_uuid": row.get("chunk_uuid"),
-                            "chunk_type": row.get("chunk_type"),
-                            "file_path": row.get("file_path"),
-                            "line": row.get("line"),
-                            "text": row.get("chunk_text"),
-                        }
-                    )
+                    item: dict[str, Any] = {
+                        "score": score,
+                        "distance": float(dist),
+                        "vector_id": int(vid),
+                        "chunk_uuid": row.get("chunk_uuid"),
+                        "chunk_type": row.get("chunk_type"),
+                        "file_path": row.get("file_path"),
+                        "line": row.get("line"),
+                        "text": row.get("chunk_text"),
+                    }
+                    if row.get("bm25_score") is not None:
+                        item["bm25_score"] = float(row["bm25_score"])
+                    if row.get("token_count") is not None:
+                        item["token_count"] = int(row["token_count"])
+                    results.append(item)
 
                 return SuccessResult(
                     data={
@@ -308,7 +285,7 @@ class SemanticSearchMCPCommand(BaseMCPCommand):
                         "k": int(k),
                         "min_score": min_score,
                         "index_path": str(index_path),
-                        "project_id": actual_project_id,
+                        "project_id": project_id,
                         "results": results,
                         "count": len(results),
                     }
@@ -350,7 +327,7 @@ class SemanticSearchMCPCommand(BaseMCPCommand):
                 "1. Validates root_dir exists and is a directory\n"
                 "2. Opens database connection\n"
                 "3. Resolves project_id (from parameter or inferred from root_dir)\n"
-                "4. Loads config.json to get vector_dim and embedding service config\n"
+                "4. Loads server config to get vector_dim and embedding service config\n"
                 "5. Resolves FAISS index path (one index per project: {faiss_dir}/{project_id}.bin)\n"
                 "6. Loads FAISS index using FaissIndexManager\n"
                 "7. Gets query embedding from embedding service (SVOClientManager)\n"
@@ -379,7 +356,7 @@ class SemanticSearchMCPCommand(BaseMCPCommand):
                 "root_dir": {
                     "description": (
                         "Project root directory path. Can be absolute or relative. "
-                        "Must contain data/code_analysis.db file and config.json."
+                        "Must contain data/code_analysis.db (or project registered in server DB). Embedding/config from server only."
                     ),
                     "type": "string",
                     "required": True,
@@ -477,8 +454,8 @@ class SemanticSearchMCPCommand(BaseMCPCommand):
                 },
                 "CONFIG_NOT_FOUND": {
                     "description": "Configuration file not found",
-                    "example": "root_dir='/path' but config.json missing",
-                    "solution": "Ensure config.json exists in root_dir with embedding service configuration.",
+                    "example": "Server config.json missing",
+                    "solution": "Ensure server config has embedding service configuration (code_analysis.embedding).",
                 },
                 "FAISS_INDEX_NOT_FOUND": {
                     "description": "FAISS index not found",
@@ -492,7 +469,7 @@ class SemanticSearchMCPCommand(BaseMCPCommand):
                     "description": "Failed to get embedding from service",
                     "example": "Service unavailable, invalid response, or zero norm vector",
                     "solution": (
-                        "Check embedding service configuration in config.json. "
+                        "Check embedding service configuration in server config. "
                         "Ensure service is available and responding correctly."
                     ),
                 },

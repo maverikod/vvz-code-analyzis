@@ -41,6 +41,7 @@ class FileToPackageSplitter(BaseRefactorer):
             Tuple of (success, message)
         """
         try:
+            self.load_file()
             if not self.tree:
                 return False, "Failed to parse file AST"
 

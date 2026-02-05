@@ -7,7 +7,7 @@ email: vasilyvz@gmail.com
 
 import pytest
 
-from code_analysis.core.database_driver_pkg.rpc_protocol import (
+from code_analysis.core.database_client.protocol import (
     ErrorCode,
     RPCError,
     RPCRequest,

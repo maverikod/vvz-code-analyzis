@@ -320,6 +320,10 @@ class TestCommandsIntegration:
                     assert hasattr(result, "error")
 
     @pytest.mark.asyncio
+    @pytest.mark.skipif(
+        not VAST_SRV_DIR.exists(),
+        reason="test_data/vast_srv not found (optional test data)",
+    )
     async def test_commands_concurrent_execution(
         self, rpc_server_with_schema, tmp_path
     ):

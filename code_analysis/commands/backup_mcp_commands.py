@@ -30,30 +30,28 @@ class ListBackupFilesMCPCommand(BaseMCPCommand):
     @classmethod
     def get_schema(cls) -> Dict[str, Any]:
         """Get command schema."""
+        base_props = cls._get_base_schema_properties()
         return {
             "type": "object",
             "properties": {
-                "root_dir": {
-                    "type": "string",
-                    "description": "Project root directory",
-                },
+                **base_props,
             },
-            "required": ["root_dir"],
+            "required": ["project_id"],
             "additionalProperties": False,
         }
 
-    async def execute(self, root_dir: str, **kwargs) -> SuccessResult | ErrorResult:
+    async def execute(self, project_id: str, **kwargs) -> SuccessResult | ErrorResult:
         """
         List all backed up files.
 
         Args:
-            root_dir: Project root directory
+            project_id: Project UUID.
 
         Returns:
             List of backed up files
         """
         try:
-            root_path = self._validate_root_dir(root_dir)
+            root_path = self._resolve_project_root(project_id)
             manager = BackupManager(root_path)
 
             files = manager.list_files()
@@ -252,37 +250,35 @@ class ListBackupVersionsMCPCommand(BaseMCPCommand):
     @classmethod
     def get_schema(cls) -> Dict[str, Any]:
         """Get command schema."""
+        base_props = cls._get_base_schema_properties()
         return {
             "type": "object",
             "properties": {
-                "root_dir": {
-                    "type": "string",
-                    "description": "Project root directory",
-                },
+                **base_props,
                 "file_path": {
                     "type": "string",
-                    "description": "Original file path (relative to root_dir)",
+                    "description": "Original file path (relative to project root)",
                 },
             },
-            "required": ["root_dir", "file_path"],
+            "required": ["project_id", "file_path"],
             "additionalProperties": False,
         }
 
     async def execute(
-        self, root_dir: str, file_path: str, **kwargs
+        self, project_id: str, file_path: str, **kwargs
     ) -> SuccessResult | ErrorResult:
         """
         List all versions of a backed up file.
 
         Args:
-            root_dir: Project root directory
-            file_path: Original file path (relative to root_dir)
+            project_id: Project UUID.
+            file_path: Original file path (relative to project root).
 
         Returns:
             List of versions with timestamp, size_bytes, size_lines
         """
         try:
-            root_path = self._validate_root_dir(root_dir)
+            root_path = self._resolve_project_root(project_id)
             manager = BackupManager(root_path)
 
             versions = manager.list_versions(file_path)
@@ -494,29 +490,27 @@ class RestoreBackupFileMCPCommand(BaseMCPCommand):
     @classmethod
     def get_schema(cls) -> Dict[str, Any]:
         """Get command schema."""
+        base_props = cls._get_base_schema_properties()
         return {
             "type": "object",
             "properties": {
-                "root_dir": {
-                    "type": "string",
-                    "description": "Project root directory",
-                },
+                **base_props,
                 "file_path": {
                     "type": "string",
-                    "description": "Original file path (relative to root_dir)",
+                    "description": "Original file path (relative to project root)",
                 },
                 "backup_uuid": {
                     "type": "string",
                     "description": "UUID of backup to restore (optional, uses latest if not provided)",
                 },
             },
-            "required": ["root_dir", "file_path"],
+            "required": ["project_id", "file_path"],
             "additionalProperties": False,
         }
 
     async def execute(
         self,
-        root_dir: str,
+        project_id: str,
         file_path: str,
         backup_uuid: Optional[str] = None,
         **kwargs,
@@ -525,15 +519,15 @@ class RestoreBackupFileMCPCommand(BaseMCPCommand):
         Restore file from backup.
 
         Args:
-            root_dir: Project root directory
-            file_path: Original file path (relative to root_dir)
-            backup_uuid: UUID of backup to restore (optional, uses latest)
+            project_id: Project UUID.
+            file_path: Original file path (relative to project root).
+            backup_uuid: UUID of backup to restore (optional, uses latest).
 
         Returns:
             Success or error result
         """
         try:
-            root_path = self._validate_root_dir(root_dir)
+            root_path = self._resolve_project_root(project_id)
             manager = BackupManager(root_path)
 
             success, message = manager.restore_file(file_path, backup_uuid)
@@ -762,37 +756,35 @@ class DeleteBackupMCPCommand(BaseMCPCommand):
     @classmethod
     def get_schema(cls) -> Dict[str, Any]:
         """Get command schema."""
+        base_props = cls._get_base_schema_properties()
         return {
             "type": "object",
             "properties": {
-                "root_dir": {
-                    "type": "string",
-                    "description": "Project root directory",
-                },
+                **base_props,
                 "backup_uuid": {
                     "type": "string",
                     "description": "UUID of backup to delete",
                 },
             },
-            "required": ["root_dir", "backup_uuid"],
+            "required": ["project_id", "backup_uuid"],
             "additionalProperties": False,
         }
 
     async def execute(
-        self, root_dir: str, backup_uuid: str, **kwargs
+        self, project_id: str, backup_uuid: str, **kwargs
     ) -> SuccessResult | ErrorResult:
         """
         Delete backup from history.
 
         Args:
-            root_dir: Project root directory
-            backup_uuid: UUID of backup to delete
+            project_id: Project UUID.
+            backup_uuid: UUID of backup to delete.
 
         Returns:
             Success or error result
         """
         try:
-            root_path = self._validate_root_dir(root_dir)
+            root_path = self._resolve_project_root(project_id)
             manager = BackupManager(root_path)
 
             success, message = manager.delete_backup(backup_uuid)
@@ -989,30 +981,28 @@ class ClearAllBackupsMCPCommand(BaseMCPCommand):
     @classmethod
     def get_schema(cls) -> Dict[str, Any]:
         """Get command schema."""
+        base_props = cls._get_base_schema_properties()
         return {
             "type": "object",
             "properties": {
-                "root_dir": {
-                    "type": "string",
-                    "description": "Project root directory",
-                },
+                **base_props,
             },
-            "required": ["root_dir"],
+            "required": ["project_id"],
             "additionalProperties": False,
         }
 
-    async def execute(self, root_dir: str, **kwargs) -> SuccessResult | ErrorResult:
+    async def execute(self, project_id: str, **kwargs) -> SuccessResult | ErrorResult:
         """
         Clear all backups and history.
 
         Args:
-            root_dir: Project root directory
+            project_id: Project UUID.
 
         Returns:
             Success or error result
         """
         try:
-            root_path = self._validate_root_dir(root_dir)
+            root_path = self._resolve_project_root(project_id)
             manager = BackupManager(root_path)
 
             success, message = manager.clear_all()

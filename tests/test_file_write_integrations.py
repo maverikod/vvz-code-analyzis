@@ -64,37 +64,11 @@ def test_project(test_db, temp_dir, project_id):
 
 @pytest.fixture
 def test_file_with_content(test_db, temp_dir, test_project):
-    """Create test file with content."""
+    """Create test file with substantial content (ClassA/B, function_a/b)."""
+    from tests.test_fixture_content import FILE_CONTENT_CLASS_A_B
+
     file_path = temp_dir / "test_module.py"
-    file_content = '''"""
-Test module.
-
-Author: Vasiliy Zdanovskiy
-email: vasilyvz@gmail.com
-"""
-
-class ClassA:
-    """Class A."""
-    
-    def method_a(self):
-        """Method A."""
-        pass
-
-class ClassB:
-    """Class B."""
-    
-    def method_b(self):
-        """Method B."""
-        pass
-
-def function_a():
-    """Function A."""
-    pass
-
-def function_b():
-    """Function B."""
-    pass
-'''
+    file_content = FILE_CONTENT_CLASS_A_B
     file_path.write_text(file_content, encoding="utf-8")
     
     import os

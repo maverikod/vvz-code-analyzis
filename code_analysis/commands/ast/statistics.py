@@ -25,41 +25,30 @@ class ASTStatisticsMCPCommand(BaseMCPCommand):
 
     @classmethod
     def get_schema(cls) -> Dict[str, Any]:
+        base_props = cls._get_base_schema_properties()
         return {
             "type": "object",
             "properties": {
-                "root_dir": {
-                    "type": "string",
-                    "description": "Project root directory (contains data/code_analysis.db)",
-                },
+                **base_props,
                 "file_path": {
                     "type": "string",
-                    "description": "Optional file path to compute stats for (absolute or relative)",
-                },
-                "project_id": {
-                    "type": "string",
-                    "description": "Optional project UUID; if omitted, inferred by root_dir",
+                    "description": "Optional file path to compute stats for (relative to project root)",
                 },
             },
-            "required": ["root_dir"],
+            "required": ["project_id"],
             "additionalProperties": False,
         }
 
     async def execute(
         self,
-        root_dir: str,
+        project_id: str,
         file_path: Optional[str] = None,
-        project_id: Optional[str] = None,
         **kwargs,
     ) -> SuccessResult:
         try:
-            root_path = self._validate_root_dir(root_dir)
-            db = self._open_database(root_dir)
-            proj_id = self._get_project_id(db, root_path, project_id)
-            if not proj_id:
-                return ErrorResult(
-                    message="Project not found", code="PROJECT_NOT_FOUND"
-                )
+            root_path = self._resolve_project_root(project_id)
+            db = self._open_database()
+            proj_id = project_id
 
             # Get AST statistics from database
             if file_path:

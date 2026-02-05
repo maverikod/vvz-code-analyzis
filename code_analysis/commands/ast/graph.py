@@ -9,7 +9,7 @@ from typing import Any, Dict, Optional
 
 from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 
-from code_analysis.commands.base_mcp_command import BaseMCPCommand
+from ..base_mcp_command import BaseMCPCommand
 
 
 class ExportGraphMCPCommand(BaseMCPCommand):
@@ -46,13 +46,11 @@ class ExportGraphMCPCommand(BaseMCPCommand):
         Returns:
             JSON schema describing command parameters.
         """
+        base_props = cls._get_base_schema_properties()
         return {
             "type": "object",
             "properties": {
-                "root_dir": {
-                    "type": "string",
-                    "description": "Project root directory (contains data/code_analysis.db)",
-                },
+                **base_props,
                 "graph_type": {
                     "type": "string",
                     "description": "Type of graph: 'dependencies', 'hierarchy', or 'call_graph'",
@@ -73,48 +71,38 @@ class ExportGraphMCPCommand(BaseMCPCommand):
                     "type": "integer",
                     "description": "Optional limit on number of edges",
                 },
-                "project_id": {
-                    "type": "string",
-                    "description": "Optional project UUID; if omitted, inferred by root_dir",
-                },
             },
-            "required": ["root_dir"],
+            "required": ["project_id"],
             "additionalProperties": False,
         }
 
     async def execute(
         self: "ExportGraphMCPCommand",
-        root_dir: str,
+        project_id: str,
         graph_type: str = "dependencies",
         format: str = "dot",
         file_path: Optional[str] = None,
         limit: Optional[int] = None,
-        project_id: Optional[str] = None,
         **kwargs: Any,
     ) -> SuccessResult | ErrorResult:
         """Export a graph.
 
         Args:
             self: Command instance.
-            root_dir: Project root directory.
+            project_id: Project UUID.
             graph_type: Graph type: dependencies, hierarchy, or call_graph.
             format: Output format: dot or json.
             file_path: Optional file path filter.
             limit: Optional limit on number of edges.
-            project_id: Optional project UUID.
 
         Returns:
             SuccessResult with graph data or ErrorResult on failure.
         """
         try:
-            root_path = self._validate_root_dir(root_dir)
-            db = self._open_database(root_dir)
+            root_path = self._resolve_project_root(project_id)
+            db = self._open_database()
             try:
-                proj_id = self._get_project_id(db, root_path, project_id)
-                if not proj_id:
-                    return ErrorResult(
-                        message="Project not found", code="PROJECT_NOT_FOUND"
-                    )
+                proj_id = project_id
 
                 edge_limit = int(limit) if limit is not None else 5000
                 edge_limit = max(1, min(edge_limit, 50000))

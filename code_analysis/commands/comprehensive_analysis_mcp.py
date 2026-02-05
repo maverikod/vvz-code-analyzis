@@ -127,15 +127,14 @@ class ComprehensiveAnalysisMCPCommand(BaseMCPCommand):
                     "description": "Optional path to mypy config file",
                 },
             },
-            "required": ["root_dir"],
+            "required": ["project_id"],
             "additionalProperties": False,
         }
 
     async def execute(
         self,
-        root_dir: str,
+        project_id: str,
         file_path: Optional[str] = None,
-        project_id: Optional[str] = None,
         max_lines: int = DEFAULT_MAX_FILE_LINES,
         check_placeholders: bool = True,
         check_stubs: bool = True,
@@ -154,9 +153,8 @@ class ComprehensiveAnalysisMCPCommand(BaseMCPCommand):
         """Execute comprehensive analysis.
 
         Args:
-            root_dir: Project root directory.
+            project_id: Project UUID.
             file_path: Optional path to specific file to analyze.
-            project_id: Optional project UUID.
             max_lines: Maximum lines threshold for long files.
             check_placeholders: Check for placeholders.
             check_stubs: Check for stubs.
@@ -180,6 +178,8 @@ class ComprehensiveAnalysisMCPCommand(BaseMCPCommand):
             kwargs.get("context") or {}
         )
 
+        root_path = self._resolve_project_root(project_id)
+
         # Setup dedicated log file for comprehensive analysis
         analysis_logger = logging.getLogger("comprehensive_analysis")
         analysis_logger.setLevel(logging.INFO)
@@ -188,7 +188,6 @@ class ComprehensiveAnalysisMCPCommand(BaseMCPCommand):
         analysis_logger.handlers = []
 
         # Create logs directory if it doesn't exist
-        root_path = self._validate_root_dir(root_dir)
         logs_dir = root_path / "logs"
         logs_dir.mkdir(exist_ok=True)
 
@@ -210,23 +209,8 @@ class ComprehensiveAnalysisMCPCommand(BaseMCPCommand):
         analysis_logger.propagate = False  # Don't propagate to root logger
 
         try:
-            db = self._open_database(root_dir)
-
-            # Resolve project_id: if explicitly provided, use it; otherwise infer from root_dir
-            # If project_id is None and we can't infer it, we'll analyze all projects
-            proj_id = None
-            if project_id:
-                # Explicit project_id provided - validate it exists
-                proj_id = self._get_project_id(db, root_path, project_id)
-                if not proj_id:
-                    db.disconnect()
-                    return ErrorResult(
-                        message="Project not found", code="PROJECT_NOT_FOUND"
-                    )
-            else:
-                # No explicit project_id - try to infer from root_dir
-                # If inference fails, proj_id remains None and we analyze all projects
-                proj_id = self._get_project_id(db, root_path, None)
+            db = self._open_database()
+            proj_id = project_id
 
             if progress_tracker:
                 progress_tracker.set_status("running")

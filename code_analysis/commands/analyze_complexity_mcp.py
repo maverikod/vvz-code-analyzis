@@ -44,7 +44,7 @@ class AnalyzeComplexityMCPCommand(BaseMCPCommand):
                 **base_props,
                 "file_path": {
                     "type": "string",
-                    "description": "Optional path to specific file to analyze (absolute or relative to root_dir)",
+                    "description": "Optional path to specific file to analyze (relative to project root)",
                 },
                 "min_complexity": {
                     "type": "integer",
@@ -52,39 +52,31 @@ class AnalyzeComplexityMCPCommand(BaseMCPCommand):
                     "default": 1,
                 },
             },
-            "required": ["root_dir"],
+            "required": ["project_id"],
             "additionalProperties": False,
         }
 
     async def execute(
         self,
-        root_dir: str,
+        project_id: str,
         file_path: Optional[str] = None,
-        project_id: Optional[str] = None,
         min_complexity: int = 1,
         **kwargs,
     ) -> SuccessResult:
         """Execute complexity analysis.
 
         Args:
-            root_dir: Project root directory.
+            project_id: Project UUID.
             file_path: Optional path to specific file to analyze.
-            project_id: Optional project UUID.
             min_complexity: Minimum complexity threshold for filtering.
 
         Returns:
             SuccessResult with complexity analysis data.
         """
         try:
-            root_path = self._validate_root_dir(root_dir)
-            db = self._open_database(root_dir)
-            proj_id = self._get_project_id(db, root_path, project_id)
-
-            if not proj_id:
-                db.disconnect()
-                return ErrorResult(
-                    message="Project not found", code="PROJECT_NOT_FOUND"
-                )
+            root_path = self._resolve_project_root(project_id)
+            db = self._open_database()
+            proj_id = project_id
 
             results: List[Dict[str, Any]] = []
 

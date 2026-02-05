@@ -23,12 +23,36 @@ from .sqlite_transactions import SQLiteTransactionManager
 
 logger = logging.getLogger(__name__)
 
+# Canonical schema for indexing_worker_stats (create and migrate).
+# Must stay in sync with code_analysis.core.database.base CodeDatabase.
+INDEXING_WORKER_STATS_TABLE = "indexing_worker_stats"
+INDEXING_WORKER_STATS_COLUMNS: List[tuple] = [
+    ("cycle_id", "TEXT PRIMARY KEY"),
+    ("cycle_start_time", "REAL NOT NULL"),
+    ("cycle_end_time", "REAL"),
+    ("files_total_at_start", "INTEGER NOT NULL DEFAULT 0"),
+    ("files_indexed", "INTEGER NOT NULL DEFAULT 0"),
+    ("files_failed", "INTEGER NOT NULL DEFAULT 0"),
+    ("total_processing_time_seconds", "REAL NOT NULL DEFAULT 0.0"),
+    ("average_processing_time_seconds", "REAL"),
+    ("last_updated", "REAL DEFAULT (julianday('now'))"),
+]
+INDEXING_WORKER_STATS_INDEX = (
+    "CREATE INDEX IF NOT EXISTS idx_indexing_worker_stats_start_time "
+    f"ON {INDEXING_WORKER_STATS_TABLE}(cycle_start_time)"
+)
+
 
 class SQLiteDriver(BaseDatabaseDriver):
     """SQLite driver for database driver process.
 
     Works with tables directly (insert, update, delete, select).
     All operations are table-level, not object-level.
+
+    Batching: execute_batch is inherited from BaseDatabaseDriver; the default
+    implementation runs each (sql, params) via execute() using the same
+    connection/transaction when transaction_id is set. No SQLite-specific
+    override unless native batch optimization (e.g. executemany) is added later.
     """
 
     def __init__(self) -> None:
@@ -60,6 +84,11 @@ class SQLiteDriver(BaseDatabaseDriver):
             self.conn.row_factory = sqlite3.Row
             # Enable foreign keys
             self.conn.execute("PRAGMA foreign_keys = ON")
+            # Wait up to 30s on lock instead of failing immediately
+            try:
+                self.conn.execute("PRAGMA busy_timeout = 30000")
+            except Exception as e:
+                logger.warning("Could not set busy_timeout: %s", e)
             # Enable WAL mode for better concurrency
             try:
                 self.conn.execute("PRAGMA journal_mode = WAL")
@@ -79,6 +108,7 @@ class SQLiteDriver(BaseDatabaseDriver):
             # Ensure migrations for columns used by workers (e.g. needs_chunking)
             self._ensure_files_table_migrations()
             self._ensure_code_chunks_migrations()
+            self._ensure_indexing_worker_stats_table()
         except Exception as e:
             raise DriverConnectionError(f"Failed to connect to database: {e}") from e
 
@@ -98,9 +128,82 @@ class SQLiteDriver(BaseDatabaseDriver):
                 )
                 self.conn.commit()
         except Exception as e:
-            logger.warning(
-                "Could not add token_count to code_chunks in driver: %s", e
-            )
+            logger.warning("Could not add token_count to code_chunks in driver: %s", e)
+            try:
+                self.conn.rollback()
+            except Exception:
+                pass
+
+    def _ensure_indexing_worker_stats_table(self) -> None:
+        """Create indexing_worker_stats if missing and add any missing columns (canonical structure)."""
+        if not self.conn or not self._schema_manager:
+            return
+        table = INDEXING_WORKER_STATS_TABLE
+        try:
+            info = self._schema_manager.get_table_info(table)
+        except Exception:
+            info = []
+        existing = {row["name"] for row in info} if info else set()
+
+        if not existing:
+            # Table missing: create with full canonical schema
+            try:
+                logger.info(
+                    "Creating %s table in driver (required by indexing worker)",
+                    table,
+                )
+                cols = ", ".join(
+                    f"{name} {spec}" for name, spec in INDEXING_WORKER_STATS_COLUMNS
+                )
+                self.conn.execute(
+                    f"CREATE TABLE IF NOT EXISTS {table} ({cols})"
+                )
+                self.conn.execute(INDEXING_WORKER_STATS_INDEX)
+                self.conn.commit()
+                return
+            except Exception as e:
+                logger.warning("Could not create %s in driver: %s", table, e)
+                try:
+                    self.conn.rollback()
+                except Exception:
+                    pass
+                return
+
+        # Table exists: add any missing columns (keep structure in sync)
+        for name, spec in INDEXING_WORKER_STATS_COLUMNS:
+            if name in existing:
+                continue
+            if "PRIMARY KEY" in spec:
+                continue  # PK cannot be added via ALTER
+            try:
+                logger.info(
+                    "Migrating %s: adding column %s (driver)",
+                    table,
+                    name,
+                )
+                self.conn.execute(
+                    f"ALTER TABLE {table} ADD COLUMN {name} {spec}"
+                )
+                self.conn.commit()
+                existing.add(name)
+            except Exception as e:
+                logger.warning(
+                    "Could not add column %s to %s in driver: %s",
+                    name,
+                    table,
+                    e,
+                )
+                try:
+                    self.conn.rollback()
+                except Exception:
+                    pass
+
+        # Ensure index exists
+        try:
+            self.conn.execute(INDEXING_WORKER_STATS_INDEX)
+            self.conn.commit()
+        except Exception as e:
+            logger.debug("Index for %s may already exist: %s", table, e)
             try:
                 self.conn.rollback()
             except Exception:
@@ -210,7 +313,11 @@ class SQLiteDriver(BaseDatabaseDriver):
                     if isinstance(default, str) and "(" not in default:
                         col_def += f" DEFAULT '{default}'"
                     else:
-                        col_def += f" DEFAULT ({default})" if isinstance(default, str) else f" DEFAULT {default}"
+                        col_def += (
+                            f" DEFAULT ({default})"
+                            if isinstance(default, str)
+                            else f" DEFAULT {default}"
+                        )
                 if primary_key:
                     col_def += " PRIMARY KEY"
 
@@ -319,10 +426,19 @@ class SQLiteDriver(BaseDatabaseDriver):
             DriverOperationError: If operation fails
         """
         # Use transaction connection if transaction_id is provided
+        sql_preview = (sql.strip()[:60] + "…") if len(sql.strip()) > 60 else sql.strip()
+        logger.info(
+            "[CHAIN] sqlite driver execute sql_preview=%s tid=%s",
+            sql_preview,
+            (transaction_id[:8] + "…") if transaction_id else None,
+        )
         if transaction_id:
             if not self._transaction_manager:
                 raise DriverOperationError("Transaction manager not initialized")
             if transaction_id not in self._transaction_manager._transactions:
+                logger.warning(
+                    "[CHAIN] sqlite driver execute transaction_id not in _transactions"
+                )
                 raise DriverOperationError(f"Transaction {transaction_id} not found")
             conn = self._transaction_manager._transactions[transaction_id]
         else:
@@ -332,38 +448,41 @@ class SQLiteDriver(BaseDatabaseDriver):
 
         try:
             cursor = conn.cursor()
-            if params:
-                cursor.execute(sql, params)
-            else:
-                cursor.execute(sql)
+            try:
+                if params:
+                    cursor.execute(sql, params)
+                else:
+                    cursor.execute(sql)
 
-            result: Dict[str, Any] = {
-                "affected_rows": cursor.rowcount,
-                "lastrowid": cursor.lastrowid,
-            }
+                result: Dict[str, Any] = {
+                    "affected_rows": cursor.rowcount,
+                    "lastrowid": cursor.lastrowid,
+                }
 
-            # If it's a SELECT statement, fetch data
-            if sql.strip().upper().startswith("SELECT"):
-                rows = cursor.fetchall()
-                result["data"] = [dict(row) for row in rows]
+                # If it's a SELECT statement, fetch data
+                if sql.strip().upper().startswith("SELECT"):
+                    rows = cursor.fetchall()
+                    result["data"] = [dict(row) for row in rows]
 
-            # Only commit if not in transaction (writes are persisted)
-            if not transaction_id:
-                try:
-                    conn.commit()
-                except Exception as commit_err:
-                    msg = str(commit_err).lower()
-                    # SQLite can raise when no transaction is active (e.g. autocommit or implicit commit)
-                    if "no transaction" in msg or "cannot commit" in msg:
-                        logger.debug(
-                            "Commit skipped (no active transaction): %s",
-                            commit_err,
-                        )
-                    else:
-                        raise DriverOperationError(
-                            f"Failed to commit: {commit_err}"
-                        ) from commit_err
-            return result
+                # Only commit if not in transaction (writes are persisted)
+                if not transaction_id:
+                    try:
+                        conn.commit()
+                    except Exception as commit_err:
+                        msg = str(commit_err).lower()
+                        # SQLite can raise when no transaction is active (e.g. autocommit or implicit commit)
+                        if "no transaction" in msg or "cannot commit" in msg:
+                            logger.debug(
+                                "Commit skipped (no active transaction): %s",
+                                commit_err,
+                            )
+                        else:
+                            raise DriverOperationError(
+                                f"Failed to commit: {commit_err}"
+                            ) from commit_err
+                return result
+            finally:
+                cursor.close()
         except Exception as e:
             # Only rollback if not in transaction (transaction rollback is handled separately)
             if not transaction_id:

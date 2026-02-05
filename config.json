@@ -201,6 +201,12 @@
         "max_bytes": 10485760,
         "backup_count": 5
       }
+    },
+    "indexing_worker": {
+      "enabled": true,
+      "poll_interval": 30,
+      "batch_size": 5,
+      "log_path": "logs/indexing_worker.log"
     }
   }
 }

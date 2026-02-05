@@ -6,6 +6,7 @@ email: vasilyvz@gmail.com
 """
 
 import logging
+import uuid
 from pathlib import Path
 from typing import Any, Dict, Optional
 
@@ -365,6 +366,62 @@ class BaseMCPCommand(Command):
         if rows:
             return rows[0].get("id")
         return None
+
+    @staticmethod
+    def _get_project_id(
+        db: DatabaseClient, root_path: Path, project_id: Optional[str] = None
+    ) -> Optional[str]:
+        """Resolve or create project ID. Prefer passing project_id and using _resolve_project_root."""
+        if project_id:
+            project = db.get_project(project_id)
+            if project:
+                return project_id
+            existing = BaseMCPCommand._get_project_id_by_root_path(db, str(root_path))
+            if existing and existing != project_id:
+                raise ValidationError(
+                    "Project root is already registered with a different project_id",
+                    field="project_id",
+                    details={
+                        "root_path": str(root_path),
+                        "existing_project_id": existing,
+                        "provided_project_id": project_id,
+                    },
+                )
+            project_name = root_path.name
+            result = db.execute(
+                "INSERT INTO projects (id, root_path, name, updated_at) VALUES (?, ?, ?, julianday('now'))",
+                (project_id, str(root_path), project_name),
+            )
+            affected = 0
+            if isinstance(result, dict):
+                data = result.get("data", result)
+                affected = data.get("affected_rows", 0) if isinstance(data, dict) else 0
+            if affected == 0:
+                raise DatabaseError(
+                    "Failed to create project",
+                    operation="create_project",
+                    details={"project_id": project_id, "root_path": str(root_path)},
+                )
+            return project_id
+        existing_id = BaseMCPCommand._get_project_id_by_root_path(db, str(root_path))
+        if existing_id:
+            return existing_id
+        new_id = str(uuid.uuid4())
+        result = db.execute(
+            "INSERT INTO projects (id, root_path, name, updated_at) VALUES (?, ?, ?, julianday('now'))",
+            (new_id, str(root_path), root_path.name),
+        )
+        affected = 0
+        if isinstance(result, dict):
+            data = result.get("data", result)
+            affected = data.get("affected_rows", 0) if isinstance(data, dict) else 0
+        if affected == 0:
+            raise DatabaseError(
+                "Failed to create project",
+                operation="create_project",
+                details={"root_path": str(root_path)},
+            )
+        return new_id
 
     @staticmethod
     def _resolve_config_path() -> Path:

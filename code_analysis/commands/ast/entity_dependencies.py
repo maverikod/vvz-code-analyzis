@@ -221,16 +221,11 @@ class GetEntityDependenciesMCPCommand(BaseMCPCommand):
 
     @classmethod
     def get_schema(cls) -> Dict[str, Any]:
+        base_props = cls._get_base_schema_properties()
         return {
             "type": "object",
             "properties": {
-                "root_dir": {
-                    "type": "string",
-                    "description": (
-                        "Project root directory (contains data/code_analysis.db). "
-                        "Can be absolute or relative."
-                    ),
-                },
+                **base_props,
                 "entity_type": {
                     "type": "string",
                     "description": (
@@ -260,35 +255,24 @@ class GetEntityDependenciesMCPCommand(BaseMCPCommand):
                         "Optional class name when entity_type is 'method' and entity_name is used."
                     ),
                 },
-                "project_id": {
-                    "type": "string",
-                    "description": (
-                        "Optional project UUID; if omitted, inferred by root_dir."
-                    ),
-                },
             },
-            "required": ["root_dir", "entity_type"],
+            "required": ["project_id", "entity_type"],
             "additionalProperties": False,
         }
 
     async def execute(
         self,
-        root_dir: str,
+        project_id: str,
         entity_type: str,
         entity_id: Optional[int] = None,
         entity_name: Optional[str] = None,
         target_class: Optional[str] = None,
-        project_id: Optional[str] = None,
         **kwargs,
     ) -> SuccessResult:
         try:
-            root_path = self._validate_root_dir(root_dir)
-            db = self._open_database(root_dir)
-            proj_id = self._get_project_id(db, root_path, project_id)
-            if not proj_id:
-                return ErrorResult(
-                    message="Project not found", code="PROJECT_NOT_FOUND"
-                )
+            root_path = self._resolve_project_root(project_id)
+            db = self._open_database()
+            proj_id = project_id
             if entity_type not in CALLER_TYPES:
                 return ErrorResult(
                     message=f"entity_type must be one of {CALLER_TYPES!r}",
@@ -532,16 +516,11 @@ class GetEntityDependentsMCPCommand(BaseMCPCommand):
 
     @classmethod
     def get_schema(cls) -> Dict[str, Any]:
+        base_props = cls._get_base_schema_properties()
         return {
             "type": "object",
             "properties": {
-                "root_dir": {
-                    "type": "string",
-                    "description": (
-                        "Project root directory (contains data/code_analysis.db). "
-                        "Can be absolute or relative."
-                    ),
-                },
+                **base_props,
                 "entity_type": {
                     "type": "string",
                     "description": (
@@ -571,35 +550,24 @@ class GetEntityDependentsMCPCommand(BaseMCPCommand):
                         "Optional class name when entity_type is 'method' and entity_name is used."
                     ),
                 },
-                "project_id": {
-                    "type": "string",
-                    "description": (
-                        "Optional project UUID; if omitted, inferred by root_dir."
-                    ),
-                },
             },
-            "required": ["root_dir", "entity_type"],
+            "required": ["project_id", "entity_type"],
             "additionalProperties": False,
         }
 
     async def execute(
         self,
-        root_dir: str,
+        project_id: str,
         entity_type: str,
         entity_id: Optional[int] = None,
         entity_name: Optional[str] = None,
         target_class: Optional[str] = None,
-        project_id: Optional[str] = None,
         **kwargs,
     ) -> SuccessResult:
         try:
-            root_path = self._validate_root_dir(root_dir)
-            db = self._open_database(root_dir)
-            proj_id = self._get_project_id(db, root_path, project_id)
-            if not proj_id:
-                return ErrorResult(
-                    message="Project not found", code="PROJECT_NOT_FOUND"
-                )
+            root_path = self._resolve_project_root(project_id)
+            db = self._open_database()
+            proj_id = project_id
             if entity_type not in CALLEE_TYPES:
                 return ErrorResult(
                     message=f"entity_type must be one of {CALLEE_TYPES!r}",

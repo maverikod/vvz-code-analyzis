@@ -12,16 +12,25 @@ import os
 import threading
 import time
 import uuid
-from pathlib import Path
 
 import pytest
 
 from code_analysis.core.database_client.client import DatabaseClient
-from code_analysis.core.database_client.objects.project import Project
 from code_analysis.core.database_client.objects.file import File
+from code_analysis.core.database_client.objects.project import Project
 from code_analysis.core.database_driver_pkg.driver_factory import create_driver
 from code_analysis.core.database_driver_pkg.request_queue import RequestQueue
 from code_analysis.core.database_driver_pkg.rpc_server import RPCServer
+
+from tests.test_fixture_content import DEFAULT_TEST_FILE_CONTENT
+
+
+def pytest_configure(config) -> None:
+    """Register custom marks."""
+    config.addinivalue_line(
+        "markers",
+        "integration: mark test as integration (slower, real DB/driver).",
+    )
 
 
 @pytest.fixture
@@ -173,10 +182,7 @@ def test_project(database_client, tmp_path):
 
     # Create projectid file
     projectid_file = tmp_path / "projectid"
-    projectid_data = {
-        "id": project_id,
-        "description": "Test project"
-    }
+    projectid_data = {"id": project_id, "description": "Test project"}
     projectid_file.write_text(json.dumps(projectid_data, indent=4), encoding="utf-8")
 
     return project_id, tmp_path
@@ -187,29 +193,10 @@ def test_file(database_client, test_project, tmp_path):
     """Create test file in database and filesystem."""
     project_id, root_path = test_project
 
-    # Create test file
+    # Create test file (substantial content for fulltext/semantic search tests)
     file_path = tmp_path / "test_file.py"
-    file_content = '''"""
-Test file.
-
-Author: Vasiliy Zdanovskiy
-email: vasilyvz@gmail.com
-"""
-
-
-class TestClass:
-    """Test class."""
-    
-    def test_method(self):
-        """Test method."""
-        pass
-
-
-def test_function():
-    """Test function."""
-    pass
-'''
-    file_path.write_text(file_content, encoding="utf-8")
+    file_path.write_text(DEFAULT_TEST_FILE_CONTENT, encoding="utf-8")
+    file_content = DEFAULT_TEST_FILE_CONTENT
 
     file_mtime = os.path.getmtime(file_path)
     lines = len(file_content.splitlines())

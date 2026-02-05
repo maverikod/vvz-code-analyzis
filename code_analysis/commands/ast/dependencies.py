@@ -28,9 +28,9 @@ class FindDependenciesMCPCommand(BaseMCPCommand):
         return {
             "type": "object",
             "properties": {
-                "root_dir": {
+                "project_id": {
                     "type": "string",
-                    "description": "Project root directory (contains data/code_analysis.db)",
+                    "description": "Project UUID (from create_project or list_projects).",
                 },
                 "entity_name": {
                     "type": "string",
@@ -54,34 +54,24 @@ class FindDependenciesMCPCommand(BaseMCPCommand):
                     "description": "Offset for pagination",
                     "default": 0,
                 },
-                "project_id": {
-                    "type": "string",
-                    "description": "Optional project UUID; if omitted, inferred by root_dir",
-                },
             },
-            "required": ["root_dir", "entity_name"],
+            "required": ["project_id", "entity_name"],
             "additionalProperties": False,
         }
 
     async def execute(
         self,
-        root_dir: str,
+        project_id: str,
         entity_name: str,
         entity_type: Optional[str] = None,
         target_class: Optional[str] = None,
         limit: Optional[int] = None,
         offset: int = 0,
-        project_id: Optional[str] = None,
         **kwargs,
     ) -> SuccessResult:
         try:
-            root_path = self._validate_root_dir(root_dir)
-            db = self._open_database(root_dir)
-            proj_id = self._get_project_id(db, root_path, project_id)
-            if not proj_id:
-                return ErrorResult(
-                    message="Project not found", code="PROJECT_NOT_FOUND"
-                )
+            self._resolve_project_root(project_id)
+            db = self._open_database_from_config(auto_analyze=False)
 
             # Find dependencies from database
             # Uses multiple sources for comprehensive results:
@@ -99,7 +89,7 @@ class FindDependenciesMCPCommand(BaseMCPCommand):
                     JOIN files f ON i.file_id = f.id
                     WHERE f.project_id = ? AND (i.name = ? OR i.module LIKE ?)
                 """
-                import_params = [proj_id, entity_name, f"%{entity_name}%"]
+                import_params = [project_id, entity_name, f"%{entity_name}%"]
 
                 import_query += " ORDER BY f.path, i.line"
                 if limit:
@@ -129,7 +119,7 @@ class FindDependenciesMCPCommand(BaseMCPCommand):
                     JOIN files f ON c.file_id = f.id
                     WHERE f.project_id = ? AND c.bases LIKE ?
                 """
-                inheritance_params = [proj_id, f"%{entity_name}%"]
+                inheritance_params = [project_id, f"%{entity_name}%"]
 
                 inheritance_query += " ORDER BY f.path, c.line"
                 if limit:
@@ -170,7 +160,7 @@ class FindDependenciesMCPCommand(BaseMCPCommand):
                     JOIN files f ON u.file_id = f.id
                     WHERE f.project_id = ? AND u.target_name = ?
                 """
-                usage_params = [proj_id, entity_name]
+                usage_params = [project_id, entity_name]
 
                 if entity_type:
                     usage_query += " AND u.target_type = ?"

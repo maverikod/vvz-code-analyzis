@@ -39,6 +39,16 @@
   - Configuration data files
 - **Example**: `code_analysis.db`, `test.db`
 
+## Testing Commands (MCP Only)
+
+**When testing or verifying server commands:** use ONLY MCP proxy tools (e.g. `call_server`, `help`, `list_servers`) from the agent context. Do NOT use terminal scripts, console commands, or direct HTTP to test commands. This restriction applies only to testing/verification of commands.
+
+## Versioning Before Write (Backup + Optional Git)
+
+**Before modifying existing code:** the file MUST be placed in versions (backup to `old_code` via BackupManager). This is mandatory for all write commands.
+
+**Optional git:** when the project is a git repository, you can pass `commit_message` to create a git commit *after* the change. Commands that support it: `cst_save_tree`, `compose_cst_module`. Git does not replace backup: backup (old_code) is always created before write; git commit is an extra version snapshot after write.
+
 ## Rules
 
 1. **ALL documentation files (.md) MUST be in `docs/`**

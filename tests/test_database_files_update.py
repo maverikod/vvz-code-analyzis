@@ -54,26 +54,11 @@ def test_project(test_db, temp_dir, project_id):
 
 @pytest.fixture
 def test_file(test_db, temp_dir, test_project):
-    """Create test file in database and filesystem."""
+    """Create test file in database and filesystem (substantial content for search)."""
+    from tests.test_fixture_content import DEFAULT_TEST_FILE_CONTENT
+
     file_path = temp_dir / "test_file.py"
-    file_content = '''"""
-Test file.
-
-Author: Vasiliy Zdanovskiy
-email: vasilyvz@gmail.com
-"""
-
-class TestClass:
-    """Test class."""
-    
-    def test_method(self):
-        """Test method."""
-        pass
-
-def test_function():
-    """Test function."""
-    pass
-'''
+    file_content = DEFAULT_TEST_FILE_CONTENT
     file_path.write_text(file_content, encoding="utf-8")
     
     import os
@@ -116,37 +101,36 @@ def test_function():
         (file_id, test_project, file_content, cst_hash, file_mtime),
     )
     
-    # Add some entities directly via SQL
-    # Insert class (column is 'line', not 'line_number')
+    # Add some entities directly via SQL (line numbers match DEFAULT_TEST_FILE_CONTENT)
     test_db._execute(
         """
         INSERT INTO classes (file_id, name, line, docstring, bases)
         VALUES (?, ?, ?, ?, ?)
         """,
-        (file_id, "TestClass", 7, "Test class.", "[]"),
+        (file_id, "TestClass", 10, "Helper class for validation and configuration in tests.", "[]"),
     )
     class_row = test_db._fetchone(
         "SELECT id FROM classes WHERE file_id = ? AND name = ?", (file_id, "TestClass")
     )
     class_id = class_row["id"] if class_row else None
-    
-    # Insert method
+
+    # Insert method (test_method starts at line 14 in DEFAULT_TEST_FILE_CONTENT)
     if class_id:
         test_db._execute(
             """
             INSERT INTO methods (class_id, name, line, args, docstring)
             VALUES (?, ?, ?, ?, ?)
             """,
-            (class_id, "test_method", 10, "[]", "Test method."),
+            (class_id, "test_method", 14, "[]", "Validates input configuration and returns True if settings are correct."),
         )
-    
-    # Insert function
+
+    # Insert function (test_function starts at line 22)
     test_db._execute(
         """
         INSERT INTO functions (file_id, name, line, args, docstring)
         VALUES (?, ?, ?, ?, ?)
         """,
-        (file_id, "test_function", 14, "[]", "Test function."),
+        (file_id, "test_function", 22, "[]", "Processes raw data and returns normalized result."),
     )
     
     test_db._commit()

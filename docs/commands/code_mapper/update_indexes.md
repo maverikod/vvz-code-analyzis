@@ -15,10 +15,10 @@ email: vasilyvz@gmail.com
 The update_indexes command analyzes Python project files and updates code indexes in the SQLite database. This is a long-running command executed via queue that parses Python files, extracts code entities, and stores them in the database for fast retrieval and analysis.
 
 Operation flow:
-1. Validates root_dir exists and is a directory
-2. Checks database integrity (if corrupted, enters safe mode)
-3. Creates or gets project_id from database
-4. Scans root_dir for Python files (excludes .git, __pycache__, node_modules, data, logs)
+1. Resolves project root_path from shared database by project_id
+2. Validates root_path exists and is a directory
+3. Checks database integrity (if corrupted, enters safe mode)
+4. Scans root_path for Python files (excludes .git, __pycache__, node_modules, data, logs)
 5. For each Python file:
    - Reads file content and parses AST
    - Saves AST tree to database
@@ -70,7 +70,8 @@ Important notes:
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `root_dir` | string | **Yes** | Root directory to analyze. |
+| `project_id` | string | **Yes** | Project UUID from create_project or list_projects. Root path is resolved from the shared database. |
+| `root_dir` | string | No | Ignored; root path is taken from database by project_id. |
 | `max_lines` | integer | No | Maximum lines per file threshold. Default: `400`. |
 
 **Schema:** `additionalProperties: false` — only the parameters above are accepted.
@@ -114,16 +115,16 @@ All MCP commands return either a **success** result (with `data`) or an **error*
 **Update indexes for project**
 ```json
 {
-  "root_dir": "/home/user/projects/my_project"
+  "project_id": "550e8400-e29b-41d4-a716-446655440000"
 }
 ```
 
-Analyzes all Python files in project and updates database indexes. This is a long-running operation. Use queue_get_job_status to check progress.
+Resolves project root from database by project_id, then analyzes all Python files and updates indexes. Long-running; use queue_get_job_status to check progress.
 
 **Update indexes with custom line threshold**
 ```json
 {
-  "root_dir": "/home/user/projects/my_project",
+  "project_id": "550e8400-e29b-41d4-a716-446655440000",
   "max_lines": 500
 }
 ```

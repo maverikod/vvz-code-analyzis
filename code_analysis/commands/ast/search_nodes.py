@@ -25,52 +25,41 @@ class SearchASTNodesMCPCommand(BaseMCPCommand):
 
     @classmethod
     def get_schema(cls) -> Dict[str, Any]:
+        base_props = cls._get_base_schema_properties()
         return {
             "type": "object",
             "properties": {
-                "root_dir": {
-                    "type": "string",
-                    "description": "Project root directory (contains data/code_analysis.db)",
-                },
+                **base_props,
                 "node_type": {
                     "type": "string",
                     "description": "AST node type to search (e.g., ClassDef, FunctionDef)",
                 },
                 "file_path": {
                     "type": "string",
-                    "description": "Optional file path to limit search (absolute or relative)",
+                    "description": "Optional file path to limit search (relative to project root)",
                 },
                 "limit": {
                     "type": "integer",
                     "description": "Maximum results",
                     "default": 100,
                 },
-                "project_id": {
-                    "type": "string",
-                    "description": "Optional project UUID; if omitted, inferred by root_dir",
-                },
             },
-            "required": ["root_dir"],
+            "required": ["project_id"],
             "additionalProperties": False,
         }
 
     async def execute(
         self,
-        root_dir: str,
+        project_id: str,
         node_type: Optional[str] = None,
         file_path: Optional[str] = None,
         limit: int = 100,
-        project_id: Optional[str] = None,
         **kwargs,
     ) -> SuccessResult:
         try:
-            root_path = self._validate_root_dir(root_dir)
-            db = self._open_database(root_dir)
-            proj_id = self._get_project_id(db, root_path, project_id)
-            if not proj_id:
-                return ErrorResult(
-                    message="Project not found", code="PROJECT_NOT_FOUND"
-                )
+            root_path = self._resolve_project_root(project_id)
+            db = self._open_database()
+            proj_id = project_id
 
             # Search AST nodes by type
             # We can search in classes, functions, methods tables
@@ -92,7 +81,6 @@ class SearchASTNodesMCPCommand(BaseMCPCommand):
                     from pathlib import Path
 
                     file_path_obj = Path(file_path)
-                    root_path = Path(root_dir).resolve()
                     if file_path_obj.is_absolute():
                         try:
                             normalized_path = file_path_obj.relative_to(root_path)
@@ -147,7 +135,6 @@ class SearchASTNodesMCPCommand(BaseMCPCommand):
                     from pathlib import Path
 
                     file_path_obj = Path(file_path)
-                    root_path = Path(root_dir).resolve()
                     if file_path_obj.is_absolute():
                         try:
                             normalized_path = file_path_obj.relative_to(root_path)
@@ -203,7 +190,6 @@ class SearchASTNodesMCPCommand(BaseMCPCommand):
                     from pathlib import Path
 
                     file_path_obj = Path(file_path)
-                    root_path = Path(root_dir).resolve()
                     if file_path_obj.is_absolute():
                         try:
                             normalized_path = file_path_obj.relative_to(root_path)

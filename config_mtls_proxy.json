@@ -1,0 +1,103 @@
+{
+  "server": {
+    "host": "172.28.0.1",
+    "port": 15000,
+    "protocol": "mtls",
+    "servername": "172.28.0.1",
+    "ssl": {
+      "cert": "/home/vasilyvz/projects/tools/code_analysis/mtls_certificates/mtls_certificates/server/code-analysis-server.crt",
+      "key": "/home/vasilyvz/projects/tools/code_analysis/mtls_certificates/mtls_certificates/server/code-analysis-server.key",
+      "ca": "/home/vasilyvz/projects/tools/code_analysis/mtls_certificates/mtls_certificates/ca/ca.crt",
+      "crl": null,
+      "dnscheck": false,
+      "check_hostname": null
+    },
+    "rules": null,
+    "log_dir": "./logs",
+    "debug": false,
+    "log_level": "INFO",
+    "advertised_host": null
+  },
+  "client": {
+    "enabled": false,
+    "protocol": "http",
+    "ssl": null
+  },
+  "registration": {
+    "enabled": true,
+    "protocol": "mtls",
+    "register_url": "https://172.28.0.2:3004/register",
+    "unregister_url": "https://172.28.0.2:3004/unregister",
+    "heartbeat_interval": 30,
+    "ssl": {
+      "cert": "/home/vasilyvz/projects/tools/code_analysis/mtls_certificates/mtls_certificates/client/code-analysis.crt",
+      "key": "/home/vasilyvz/projects/tools/code_analysis/mtls_certificates/mtls_certificates/client/code-analysis.key",
+      "ca": "/home/vasilyvz/projects/tools/code_analysis/mtls_certificates/mtls_certificates/ca/ca.crt",
+      "crl": null,
+      "dnscheck": false,
+      "check_hostname": null
+    },
+    "server_id": "code-analysis-server",
+    "server_name": "Code Analysis Server",
+    "instance_uuid": "550e8400-e29b-41d4-a716-446655440000",
+    "auto_on_startup": true,
+    "auto_on_shutdown": true,
+    "heartbeat": {
+      "url": "https://172.28.0.2:3004/proxy/heartbeat",
+      "interval": 30
+    }
+  },
+  "server_validation": {
+    "enabled": false,
+    "protocol": "http",
+    "ssl": null,
+    "timeout": 10,
+    "use_token": false,
+    "use_roles": false,
+    "tokens": {},
+    "roles": {},
+    "auth_header": "X-API-Key",
+    "roles_header": "X-Roles",
+    "health_path": "/health",
+    "check_hostname": false
+  },
+  "auth": {
+    "use_token": false,
+    "use_roles": false,
+    "tokens": {},
+    "roles": {}
+  },
+  "queue_manager": {
+    "enabled": true,
+    "in_memory": true,
+    "registry_path": null,
+    "shutdown_timeout": 30.0,
+    "max_concurrent_jobs": 10,
+    "max_queue_size": null,
+    "per_job_type_limits": null,
+    "completed_job_retention_seconds": 21600,
+    "default_poll_interval": 0.0,
+    "default_max_wait_time": null
+  },
+  "code_analysis": {
+    "db_path": "data/code_analysis.db",
+    "database": {
+      "driver": {
+        "type": "sqlite_proxy",
+        "config": {
+          "path": "data/code_analysis.db",
+          "worker_config": {
+            "command_timeout": 30.0,
+            "poll_interval": 0.01
+          }
+        }
+      }
+    },
+    "host": "172.28.0.1",
+    "port": 15000,
+    "log": "logs/code_analysis.log",
+    "faiss_index_path": "data/faiss_index.bin",
+    "vector_dim": 384,
+    "min_chunk_length": 30
+  }
+}

@@ -16,6 +16,7 @@ from .exceptions import (
     TimeoutError,
     ValidationError,
 )
+from .protocol import ErrorCode
 from .result import Result
 from .rpc_client import RPCClient
 
@@ -23,6 +24,7 @@ __all__ = [
     "DatabaseClient",
     "RPCClient",
     "Result",
+    "ErrorCode",
     "DatabaseClientError",
     "RPCClientError",
     "ConnectionError",

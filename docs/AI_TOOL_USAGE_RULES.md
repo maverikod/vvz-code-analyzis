@@ -1130,6 +1130,7 @@ save_result = mcp_MCP-Proxy-2_call_server(
 # 5. Atomically replaces original
 # 6. Updates database
 # 7. On any error: rollback and restore backup
+# Note: Backup (old_code) is mandatory before write. commit_message is optional (git commit after save).
 
 # Step 6: Validate and analyze (same as traditional approach)
 mcp_MCP-Proxy-2_call_server(

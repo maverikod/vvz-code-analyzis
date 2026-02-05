@@ -650,17 +650,29 @@ class FaissIndexManager:
                         embedding = getattr(chunks_with_emb[0], "embedding")
                         if embedding is not None:
                             embedding_array = np.array(embedding, dtype="float32")
-                            # Save embedding to database for future use
-                            try:
-                                embedding_json = json.dumps(embedding_array.tolist())
-                                database._execute(
-                                    "UPDATE code_chunks SET embedding_vector = ?, embedding_model = ? WHERE id = ?",
-                                    (embedding_json, embedding_model, chunk_id),
-                                )
-                            except Exception as e:
+                            # Get model from response; do not save vector without model
+                            save_model = getattr(
+                                chunks_with_emb[0], "embedding_model", None
+                            ) or embedding_model
+                            if save_model and str(save_model).strip():
+                                try:
+                                    embedding_json = json.dumps(
+                                        embedding_array.tolist()
+                                    )
+                                    database._execute(
+                                        "UPDATE code_chunks SET embedding_vector = ?, embedding_model = ? WHERE id = ?",
+                                        (embedding_json, save_model, chunk_id),
+                                    )
+                                except Exception as e:
+                                    logger.warning(
+                                        f"Failed to save embedding to database: {e}"
+                                    )
+                            else:
                                 logger.warning(
-                                    f"Failed to save embedding to database: {e}"
+                                    "Embedding service returned no model; not saving vector to DB"
                                 )
+                                missing_embeddings += 1
+                                continue
                     else:
                         missing_embeddings += 1
                 except Exception as e:

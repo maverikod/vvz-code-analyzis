@@ -25,13 +25,11 @@ class ListCodeEntitiesMCPCommand(BaseMCPCommand):
 
     @classmethod
     def get_schema(cls) -> Dict[str, Any]:
+        base_props = cls._get_base_schema_properties()
         return {
             "type": "object",
             "properties": {
-                "root_dir": {
-                    "type": "string",
-                    "description": "Project root directory (contains data/code_analysis.db)",
-                },
+                **base_props,
                 "entity_type": {
                     "type": "string",
                     "description": "Type of entity: 'class', 'function', 'method', or null for all",
@@ -39,7 +37,7 @@ class ListCodeEntitiesMCPCommand(BaseMCPCommand):
                 },
                 "file_path": {
                     "type": "string",
-                    "description": "Optional file path to filter by (absolute or relative)",
+                    "description": "Optional file path to filter by (relative to project root)",
                 },
                 "limit": {
                     "type": "integer",
@@ -50,33 +48,24 @@ class ListCodeEntitiesMCPCommand(BaseMCPCommand):
                     "description": "Offset for pagination",
                     "default": 0,
                 },
-                "project_id": {
-                    "type": "string",
-                    "description": "Optional project UUID; if omitted, inferred by root_dir",
-                },
             },
-            "required": ["root_dir"],
+            "required": ["project_id"],
             "additionalProperties": False,
         }
 
     async def execute(
         self,
-        root_dir: str,
+        project_id: str,
         entity_type: Optional[str] = None,
         file_path: Optional[str] = None,
         limit: Optional[int] = None,
         offset: int = 0,
-        project_id: Optional[str] = None,
         **kwargs,
     ) -> SuccessResult:
         try:
-            root_path = self._validate_root_dir(root_dir)
-            db = self._open_database(root_dir)
-            proj_id = self._get_project_id(db, root_path, project_id)
-            if not proj_id:
-                return ErrorResult(
-                    message="Project not found", code="PROJECT_NOT_FOUND"
-                )
+            root_path = self._resolve_project_root(project_id)
+            db = self._open_database()
+            proj_id = project_id
 
             # List entities from database
             entities = []

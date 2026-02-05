@@ -30,9 +30,9 @@ class ListProjectFilesMCPCommand(BaseMCPCommand):
         return {
             "type": "object",
             "properties": {
-                "root_dir": {
+                "project_id": {
                     "type": "string",
-                    "description": "Project root directory (contains data/code_analysis.db)",
+                    "description": "Project UUID (from create_project or list_projects).",
                 },
                 "file_pattern": {
                     "type": "string",
@@ -47,35 +47,24 @@ class ListProjectFilesMCPCommand(BaseMCPCommand):
                     "description": "Offset for pagination",
                     "default": 0,
                 },
-                "project_id": {
-                    "type": "string",
-                    "description": "Optional project UUID; if omitted, inferred by root_dir",
-                },
             },
-            "required": ["root_dir"],
+            "required": ["project_id"],
             "additionalProperties": False,
         }
 
     async def execute(
         self,
-        root_dir: str,
+        project_id: str,
         file_pattern: Optional[str] = None,
         limit: Optional[int] = None,
         offset: int = 0,
-        project_id: Optional[str] = None,
         **kwargs,
     ) -> SuccessResult:
         try:
-            root_path = self._validate_root_dir(root_dir)
-            db = self._open_database(root_dir)
-            proj_id = self._get_project_id(db, root_path, project_id)
-            if not proj_id:
-                return ErrorResult(
-                    message="Project not found", code="PROJECT_NOT_FOUND"
-                )
+            self._resolve_project_root(project_id)
+            db = self._open_database_from_config(auto_analyze=False)
 
-            # Get files from database
-            files = db.get_project_files(proj_id, include_deleted=False)
+            files = db.get_project_files(project_id, include_deleted=False)
 
             # Apply file_pattern filter if provided
             if file_pattern:
@@ -86,7 +75,7 @@ class ListProjectFilesMCPCommand(BaseMCPCommand):
             # Apply pagination
             total = len(files)
             if offset > 0 or limit:
-                files = files[offset : offset + limit if limit else None]
+                files = files[offset : offset + (limit or len(files))]
 
             db.disconnect()
 

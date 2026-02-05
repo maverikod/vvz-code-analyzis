@@ -7,10 +7,10 @@ email: vasilyvz@gmail.com
 
 import pytest
 
-from code_analysis.core.database_driver_pkg.rpc_protocol import ErrorCode
-from code_analysis.core.database_driver_pkg.result import (
+from code_analysis.core.database_client.protocol import (
     DataResult,
     ErrorResult,
+    ErrorCode,
     SuccessResult,
 )
 

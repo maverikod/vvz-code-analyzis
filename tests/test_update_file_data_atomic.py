@@ -59,26 +59,11 @@ def test_project(temp_db, tmp_path):
 
 @pytest.fixture
 def test_file(temp_db, tmp_path, test_project):
-    """Create test file in database."""
+    """Create test file in database (substantial content for search tests)."""
+    from tests.test_fixture_content import DEFAULT_TEST_FILE_CONTENT
+
     file_path = tmp_path / "test_file.py"
-    file_content = '''"""
-Test file.
-
-Author: Vasiliy Zdanovskiy
-email: vasilyvz@gmail.com
-"""
-
-class TestClass:
-    """Test class."""
-    
-    def test_method(self):
-        """Test method."""
-        pass
-
-def test_function():
-    """Test function."""
-    pass
-'''
+    file_content = DEFAULT_TEST_FILE_CONTENT
     file_path.write_text(file_content, encoding="utf-8")
 
     file_mtime = os.path.getmtime(file_path)

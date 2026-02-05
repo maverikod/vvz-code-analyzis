@@ -162,13 +162,15 @@ class MultiProjectFileWatcherWorker:
                                     logger.info("Initializing watch directories...")
                                     self._initialize_watch_dirs(database)
                                     watch_dirs_initialized = True
-                                    logger.info("Watch directories initialization completed")
+                                    logger.info(
+                                        "Watch directories initialization completed"
+                                    )
                                 except Exception as init_e:
                                     logger.error(
                                         f"Failed to initialize watch_dirs: {init_e}",
                                         exc_info=True,
                                     )
-                                        # Continue anyway - will retry on next cycle
+                                    # Continue anyway - will retry on next cycle
                             else:
                                 db_status_logged = False  # Already logged as available
                         except Exception as conn_e:
@@ -676,9 +678,7 @@ class MultiProjectFileWatcherWorker:
                                             cmd = UpdateIndexesMCPCommand()
                                             result = loop.run_until_complete(
                                                 cmd.execute(
-                                                    root_dir=str(
-                                                        project_root_obj.root_path
-                                                    ),
+                                                    project_id=project_root_obj.project_id,
                                                     max_lines=DEFAULT_MAX_FILE_LINES,
                                                 )
                                             )

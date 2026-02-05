@@ -9,9 +9,9 @@ email: vasilyvz@gmail.com
 
 from __future__ import annotations
 
-from typing import Any, Dict
+from typing import Any
 
-from ..database_driver_pkg.rpc_protocol import RPCResponse
+from .protocol import RPCResponse
 from .exceptions import RPCResponseError
 
 

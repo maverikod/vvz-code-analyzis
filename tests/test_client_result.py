@@ -6,7 +6,7 @@ email: vasilyvz@gmail.com
 """
 
 from code_analysis.core.database_client.result import Result
-from code_analysis.core.database_driver_pkg.rpc_protocol import ErrorCode
+from code_analysis.core.database_client.protocol import ErrorCode
 
 
 class TestResult:

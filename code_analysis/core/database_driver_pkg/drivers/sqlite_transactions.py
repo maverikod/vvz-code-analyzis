@@ -9,12 +9,15 @@ email: vasilyvz@gmail.com
 
 from __future__ import annotations
 
+import logging
 import sqlite3
 import uuid
 from pathlib import Path
 from typing import Dict
 
 from ..exceptions import TransactionError
+
+logger = logging.getLogger(__name__)
 
 
 class SQLiteTransactionManager:
@@ -40,10 +43,18 @@ class SQLiteTransactionManager:
         """
         try:
             transaction_id = str(uuid.uuid4())
+            logger.info(
+                "[CHAIN] sqlite_transactions begin_transaction tid=%s",
+                transaction_id[:8] + "…",
+            )
             # Create separate connection for transaction
             trans_conn = sqlite3.connect(str(self.db_path), check_same_thread=False)
             trans_conn.row_factory = sqlite3.Row
             trans_conn.execute("PRAGMA foreign_keys = ON")
+            try:
+                trans_conn.execute("PRAGMA busy_timeout = 30000")
+            except Exception:
+                pass
             trans_conn.execute("BEGIN TRANSACTION")
             self._transactions[transaction_id] = trans_conn
             return transaction_id
@@ -62,7 +73,15 @@ class SQLiteTransactionManager:
         Raises:
             TransactionError: If transaction cannot be committed
         """
+        logger.info(
+            "[CHAIN] sqlite_transactions commit_transaction tid=%s n_open=%s",
+            (transaction_id[:8] + "…") if len(transaction_id) > 8 else transaction_id,
+            len(self._transactions),
+        )
         if transaction_id not in self._transactions:
+            logger.warning(
+                "[CHAIN] sqlite_transactions commit_transaction tid not found"
+            )
             raise TransactionError(f"Transaction {transaction_id} not found")
 
         try:
@@ -86,7 +105,15 @@ class SQLiteTransactionManager:
         Raises:
             TransactionError: If transaction cannot be rolled back
         """
+        logger.info(
+            "[CHAIN] sqlite_transactions rollback_transaction tid=%s n_open=%s",
+            (transaction_id[:8] + "…") if len(transaction_id) > 8 else transaction_id,
+            len(self._transactions),
+        )
         if transaction_id not in self._transactions:
+            logger.warning(
+                "[CHAIN] sqlite_transactions rollback_transaction tid not found"
+            )
             raise TransactionError(f"Transaction {transaction_id} not found")
 
         try:

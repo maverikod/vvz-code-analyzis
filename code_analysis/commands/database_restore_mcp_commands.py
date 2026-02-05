@@ -127,14 +127,9 @@ class RestoreDatabaseFromConfigMCPCommand(BaseMCPCommand):
                 "then sequentially index each configured directory into the same DB."
             ),
             "properties": {
-                "root_dir": {
-                    "type": "string",
-                    "description": "Server/project root directory (contains config and data/code_analysis.db).",
-                    "examples": ["/abs/path/to/server_root"],
-                },
                 "config_file": {
                     "type": "string",
-                    "description": "Path to JSON config file (absolute or relative to root_dir).",
+                    "description": "Path to JSON config file (absolute or relative to server config directory).",
                     "default": "config.json",
                     "examples": ["config.json"],
                 },
@@ -151,31 +146,28 @@ class RestoreDatabaseFromConfigMCPCommand(BaseMCPCommand):
                     "examples": [False],
                 },
             },
-            "required": ["root_dir"],
+            "required": [],
             "additionalProperties": False,
             "examples": [
-                {"root_dir": "/abs/path/to/server_root"},
-                {"root_dir": "/abs/path/to/server_root", "config_file": "config.json"},
+                {},
+                {"config_file": "config.json"},
             ],
         }
 
     async def execute(
         self: "RestoreDatabaseFromConfigMCPCommand",
-        root_dir: str,
         config_file: str = "config.json",
         max_lines: int | None = None,
         dry_run: bool = False,
         **kwargs: Any,
     ) -> SuccessResult | ErrorResult:
         """
-        Execute restore command.
+        Execute restore command. Config and DB path from server config.
 
         Args:
             self: Command instance.
-            root_dir: Server/project root directory (DB location).
-            config_file: JSON config path.
+            config_file: JSON config path (relative to server config dir or absolute).
             max_lines: Maximum lines per file threshold (for reporting).
-                If None, uses DEFAULT_MAX_FILE_LINES from constants.
             dry_run: If True, do not modify DB.
             **kwargs: Extra args (unused).
 
@@ -186,7 +178,7 @@ class RestoreDatabaseFromConfigMCPCommand(BaseMCPCommand):
             max_lines = DEFAULT_MAX_FILE_LINES
 
         try:
-            server_root = self._validate_root_dir(root_dir)
+            server_root = self._resolve_config_path().parent.resolve()
             cfg_path = Path(config_file)
             if not cfg_path.is_absolute():
                 cfg_path = (server_root / cfg_path).resolve()
@@ -226,7 +218,8 @@ class RestoreDatabaseFromConfigMCPCommand(BaseMCPCommand):
                     p = (cfg_root / p).resolve()
                 scan_roots.append(p)
 
-            db_path = (server_root / "data" / "code_analysis.db").resolve()
+            storage = BaseMCPCommand._get_shared_storage()
+            db_path = storage.db_path
 
             plan = {
                 "db_path": str(db_path),
@@ -241,7 +234,9 @@ class RestoreDatabaseFromConfigMCPCommand(BaseMCPCommand):
             workers_stopped = get_worker_manager().stop_all_workers(timeout=10.0)
 
             # Step 2: auto-backup DB file (+ sidecars)
-            backup_paths = list(backup_sqlite_files(db_path, backup_dir=db_path.parent))
+            backup_paths = list(
+                backup_sqlite_files(db_path, backup_dir=storage.backup_dir)
+            )
 
             # Step 3: recreate DB file from scratch + clear marker
             recreate_sqlite_database_file(db_path)
@@ -256,8 +251,7 @@ class RestoreDatabaseFromConfigMCPCommand(BaseMCPCommand):
                     code="NO_SCAN_DIRS",
                 )
 
-            temp_root_dir = str(scan_roots[0])
-            db = BaseMCPCommand._open_database(temp_root_dir, auto_analyze=False)
+            db = BaseMCPCommand._open_database_from_config(auto_analyze=False)
             cmd = None
             try:
                 from .code_mapper_mcp_command import UpdateIndexesMCPCommand

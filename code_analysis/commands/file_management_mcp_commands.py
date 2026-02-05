@@ -38,13 +38,9 @@ class CleanupDeletedFilesMCPCommand(BaseMCPCommand):
         return {
             "type": "object",
             "properties": {
-                "root_dir": {
-                    "type": "string",
-                    "description": "Root directory of the project (contains data/code_analysis.db)",
-                },
                 "project_id": {
                     "type": "string",
-                    "description": "Optional project UUID; if omitted, all projects",
+                    "description": "Optional project UUID (from list_projects); if omitted, all projects",
                 },
                 "dry_run": {
                     "type": "boolean",
@@ -61,13 +57,12 @@ class CleanupDeletedFilesMCPCommand(BaseMCPCommand):
                     "default": False,
                 },
             },
-            "required": ["root_dir"],
+            "required": [],
             "additionalProperties": False,
         }
 
     async def execute(
         self,
-        root_dir: str,
         project_id: Optional[str] = None,
         dry_run: bool = False,
         older_than_days: Optional[int] = None,
@@ -78,8 +73,7 @@ class CleanupDeletedFilesMCPCommand(BaseMCPCommand):
         Execute cleanup deleted files command.
 
         Args:
-            root_dir: Root directory of the project
-            project_id: Optional project UUID (all projects if None)
+            project_id: Optional project UUID (all projects if None).
             dry_run: If True, only show what would be deleted
             older_than_days: Only delete files deleted more than N days ago
             hard_delete: If True, permanently delete
@@ -88,25 +82,14 @@ class CleanupDeletedFilesMCPCommand(BaseMCPCommand):
             SuccessResult with cleanup statistics or ErrorResult on failure
         """
         try:
-            root_path = self._validate_root_dir(root_dir)
-            database = self._open_database(root_dir, auto_analyze=False)
-
-            # Resolve project_id if not provided
-            actual_project_id = None
             if project_id:
-                actual_project_id = self._get_project_id(
-                    database, root_path, project_id
-                )
-                if not actual_project_id:
-                    return ErrorResult(
-                        message=f"Project not found: {project_id}",
-                        code="PROJECT_NOT_FOUND",
-                    )
+                self._resolve_project_root(project_id)
+            database = self._open_database_from_config(auto_analyze=False)
 
             try:
                 command = CleanupDeletedFilesCommand(
                     database=database,
-                    project_id=actual_project_id,
+                    project_id=project_id,
                     dry_run=dry_run,
                     older_than_days=older_than_days,
                     hard_delete=hard_delete,
@@ -336,17 +319,13 @@ class UnmarkDeletedFileMCPCommand(BaseMCPCommand):
         return {
             "type": "object",
             "properties": {
-                "root_dir": {
+                "project_id": {
                     "type": "string",
-                    "description": "Root directory of the project (contains data/code_analysis.db)",
+                    "description": "Project UUID (from create_project or list_projects).",
                 },
                 "file_path": {
                     "type": "string",
                     "description": "File path (current in version_dir or original_path)",
-                },
-                "project_id": {
-                    "type": "string",
-                    "description": "Optional project UUID; if omitted, inferred by root_dir",
                 },
                 "dry_run": {
                     "type": "boolean",
@@ -354,15 +333,14 @@ class UnmarkDeletedFileMCPCommand(BaseMCPCommand):
                     "default": False,
                 },
             },
-            "required": ["root_dir", "file_path"],
+            "required": ["project_id", "file_path"],
             "additionalProperties": False,
         }
 
     async def execute(
         self,
-        root_dir: str,
+        project_id: str,
         file_path: str,
-        project_id: Optional[str] = None,
         dry_run: bool = False,
         **kwargs,
     ) -> SuccessResult | ErrorResult:
@@ -370,34 +348,22 @@ class UnmarkDeletedFileMCPCommand(BaseMCPCommand):
         Execute unmark deleted file command.
 
         Args:
-            root_dir: Root directory of the project
+            project_id: Project UUID (from create_project or list_projects).
             file_path: File path (current in version_dir or original_path)
-            project_id: Optional project UUID
             dry_run: If True, only show what would be restored
 
         Returns:
             SuccessResult with restoration information or ErrorResult on failure
         """
         try:
-            root_path = self._validate_root_dir(root_dir)
-            database = self._open_database(root_dir, auto_analyze=False)
-
-            actual_project_id = self._get_project_id(database, root_path, project_id)
-            if not actual_project_id:
-                return ErrorResult(
-                    message=(
-                        f"Project not found: {project_id}"
-                        if project_id
-                        else "Failed to get or create project"
-                    ),
-                    code="PROJECT_NOT_FOUND",
-                )
+            self._resolve_project_root(project_id)
+            database = self._open_database_from_config(auto_analyze=False)
 
             try:
                 command = UnmarkDeletedFileCommand(
                     database=database,
                     file_path=file_path,
-                    project_id=actual_project_id,
+                    project_id=project_id,
                     dry_run=dry_run,
                 )
                 result = await command.execute()
@@ -601,13 +567,9 @@ class CollapseVersionsMCPCommand(BaseMCPCommand):
         return {
             "type": "object",
             "properties": {
-                "root_dir": {
-                    "type": "string",
-                    "description": "Root directory of the project (contains data/code_analysis.db)",
-                },
                 "project_id": {
                     "type": "string",
-                    "description": "Optional project UUID; if omitted, inferred by root_dir",
+                    "description": "Project UUID (from create_project or list_projects).",
                 },
                 "keep_latest": {
                     "type": "boolean",
@@ -620,14 +582,13 @@ class CollapseVersionsMCPCommand(BaseMCPCommand):
                     "default": False,
                 },
             },
-            "required": ["root_dir"],
+            "required": ["project_id"],
             "additionalProperties": False,
         }
 
     async def execute(
         self,
-        root_dir: str,
-        project_id: Optional[str] = None,
+        project_id: str,
         keep_latest: bool = True,
         dry_run: bool = False,
         **kwargs,
@@ -636,8 +597,7 @@ class CollapseVersionsMCPCommand(BaseMCPCommand):
         Execute collapse versions command.
 
         Args:
-            root_dir: Root directory of the project
-            project_id: Optional project UUID
+            project_id: Project UUID (from create_project or list_projects).
             keep_latest: If True, keep latest version
             dry_run: If True, only show what would be collapsed
 
@@ -645,24 +605,13 @@ class CollapseVersionsMCPCommand(BaseMCPCommand):
             SuccessResult with collapse statistics or ErrorResult on failure
         """
         try:
-            root_path = self._validate_root_dir(root_dir)
-            database = self._open_database(root_dir, auto_analyze=False)
-
-            actual_project_id = self._get_project_id(database, root_path, project_id)
-            if not actual_project_id:
-                return ErrorResult(
-                    message=(
-                        f"Project not found: {project_id}"
-                        if project_id
-                        else "Failed to get or create project"
-                    ),
-                    code="PROJECT_NOT_FOUND",
-                )
+            self._resolve_project_root(project_id)
+            database = self._open_database_from_config(auto_analyze=False)
 
             try:
                 command = CollapseVersionsCommand(
                     database=database,
-                    project_id=actual_project_id,
+                    project_id=project_id,
                     keep_latest=keep_latest,
                     dry_run=dry_run,
                 )
@@ -885,13 +834,9 @@ class RepairDatabaseMCPCommand(BaseMCPCommand):
         return {
             "type": "object",
             "properties": {
-                "root_dir": {
-                    "type": "string",
-                    "description": "Root directory of the project (contains data/code_analysis.db)",
-                },
                 "project_id": {
                     "type": "string",
-                    "description": "Optional project UUID; if omitted, inferred by root_dir",
+                    "description": "Project UUID (from create_project or list_projects).",
                 },
                 "version_dir": {
                     "type": "string",
@@ -904,14 +849,13 @@ class RepairDatabaseMCPCommand(BaseMCPCommand):
                     "default": False,
                 },
             },
-            "required": ["root_dir"],
+            "required": ["project_id"],
             "additionalProperties": False,
         }
 
     async def execute(
         self,
-        root_dir: str,
-        project_id: Optional[str] = None,
+        project_id: str,
         version_dir: str = "data/versions",
         dry_run: bool = False,
         **kwargs,
@@ -920,9 +864,8 @@ class RepairDatabaseMCPCommand(BaseMCPCommand):
         Execute repair database command.
 
         Args:
-            root_dir: Root directory of the project
-            project_id: Optional project UUID
-            version_dir: Version directory for deleted files
+            project_id: Project UUID (from create_project or list_projects).
+            version_dir: Version directory for deleted files (relative to project root)
             dry_run: If True, only show what would be repaired
 
         Returns:
@@ -931,28 +874,16 @@ class RepairDatabaseMCPCommand(BaseMCPCommand):
         try:
             from pathlib import Path
 
-            root_path = self._validate_root_dir(root_dir)
-            database = self._open_database(root_dir, auto_analyze=False)
+            root_path = self._resolve_project_root(project_id)
+            database = self._open_database_from_config(auto_analyze=False)
 
-            actual_project_id = self._get_project_id(database, root_path, project_id)
-            if not actual_project_id:
-                return ErrorResult(
-                    message=(
-                        f"Project not found: {project_id}"
-                        if project_id
-                        else "Failed to get or create project"
-                    ),
-                    code="PROJECT_NOT_FOUND",
-                )
-
-            # Resolve version_dir path
             if not Path(version_dir).is_absolute():
                 version_dir = str(root_path / version_dir)
 
             try:
                 command = RepairDatabaseCommand(
                     database=database,
-                    project_id=actual_project_id,
+                    project_id=project_id,
                     root_dir=root_path,
                     version_dir=version_dir,
                     dry_run=dry_run,

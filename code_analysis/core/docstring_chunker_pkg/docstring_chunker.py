@@ -279,8 +279,17 @@ class DocstringChunker:
             embedding_json: Optional[str] = None
             embedding_model: Optional[str] = None
             if emb is not None:
-                embedding_json = json.dumps(emb)
-                embedding_model = self.embedding_model
+                model = self.embedding_model and str(self.embedding_model).strip()
+                if model:
+                    embedding_json = json.dumps(emb)
+                    embedding_model = model
+                else:
+                    # add_code_chunk requires embedding_model when embedding_vector is set.
+                    # Save chunk without vector so batch_processor can vectorize later.
+                    logger.debug(
+                        f"[FILE {file_id}] Chunk has embedding but no model name; "
+                        f"saving without vector for {file_path} (line={it.line})"
+                    )
 
             try:
                 # DatabaseClient.add_code_chunk is sync (runs in executor); direct DB may be async

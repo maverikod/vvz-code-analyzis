@@ -47,27 +47,11 @@ def test_file_with_content(test_db, test_project, tmp_path):
     )
     test_db._commit()
     
-    # Create test file with classes and functions
+    # Create test file with classes and functions (substantial content for FTS/chunks)
+    from tests.test_fixture_content import FILE_CONTENT_MYCLASS
+
     test_file = tmp_path / "test_file.py"
-    file_content = '''"""
-File docstring.
-"""
-
-class MyClass:
-    """Class docstring."""
-    
-    def __init__(self, value: int):
-        """Init method docstring."""
-        self.value = value
-    
-    def get_value(self) -> int:
-        """Get value method docstring."""
-        return self.value
-
-def standalone_function(param: str) -> str:
-    """Function docstring."""
-    return param.upper()
-'''
+    file_content = FILE_CONTENT_MYCLASS
     test_file.write_text(file_content, encoding="utf-8")
     file_mtime = os.path.getmtime(test_file)
     lines = len(file_content.splitlines())

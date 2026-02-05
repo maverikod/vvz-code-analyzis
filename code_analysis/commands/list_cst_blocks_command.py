@@ -34,35 +34,28 @@ class ListCSTBlocksCommand(BaseMCPCommand):
 
     @classmethod
     def get_schema(cls) -> Dict[str, Any]:
+        base_props = cls._get_base_schema_properties()
         return {
             "type": "object",
             "properties": {
-                "project_id": {
-                    "type": "string",
-                    "description": "Project ID (UUID4). If provided, root_dir will be resolved from database. Either project_id or root_dir must be provided.",
-                },
-                "root_dir": {
-                    "type": "string",
-                    "description": "Project root directory. Required if project_id is not provided.",
-                },
+                **base_props,
                 "file_path": {
                     "type": "string",
                     "description": "Target python file path (relative to project root)",
                 },
             },
-            "required": ["file_path"],
+            "required": ["project_id", "file_path"],
             "additionalProperties": False,
         }
 
     async def execute(
         self,
+        project_id: str,
         file_path: str,
-        project_id: Optional[str] = None,
-        root_dir: Optional[str] = None,
         **kwargs,
     ) -> SuccessResult:
         try:
-            root_path = self._resolve_project_root(project_id=project_id, root_dir=root_dir)
+            root_path = self._resolve_project_root(project_id)
             target = root_path / file_path
             target = target.resolve()
 

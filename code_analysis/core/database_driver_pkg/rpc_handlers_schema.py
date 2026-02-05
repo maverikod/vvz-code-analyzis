@@ -12,8 +12,12 @@ from __future__ import annotations
 import logging
 from typing import Any, Dict
 
-from .result import DataResult, ErrorResult, SuccessResult
-from .rpc_protocol import ErrorCode
+from code_analysis.core.database_client.protocol import (
+    DataResult,
+    ErrorResult,
+    SuccessResult,
+    ErrorCode,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -85,7 +89,16 @@ class _RPCHandlersSchemaMixin:
             SuccessResult with transaction_id or ErrorResult
         """
         try:
+            logger.info("[CHAIN] handler handle_begin_transaction calling driver")
             transaction_id = self.driver.begin_transaction()
+            logger.info(
+                "[CHAIN] handler handle_begin_transaction returned tid=%s",
+                (
+                    (transaction_id[:8] + "…")
+                    if transaction_id and len(transaction_id) > 8
+                    else transaction_id
+                ),
+            )
             return SuccessResult(data={"transaction_id": transaction_id})
         except Exception as e:
             logger.error(f"Error in handle_begin_transaction: {e}", exc_info=True)
@@ -112,6 +125,14 @@ class _RPCHandlersSchemaMixin:
                     error_code=ErrorCode.VALIDATION_ERROR,
                     description="transaction_id parameter is required",
                 )
+            logger.info(
+                "[CHAIN] handler handle_commit_transaction tid=%s",
+                (
+                    (transaction_id[:8] + "…")
+                    if len(transaction_id) > 8
+                    else transaction_id
+                ),
+            )
             success = self.driver.commit_transaction(transaction_id)
             return SuccessResult(data={"success": success})
         except Exception as e:
@@ -139,6 +160,14 @@ class _RPCHandlersSchemaMixin:
                     error_code=ErrorCode.VALIDATION_ERROR,
                     description="transaction_id parameter is required",
                 )
+            logger.info(
+                "[CHAIN] handler handle_rollback_transaction tid=%s",
+                (
+                    (transaction_id[:8] + "…")
+                    if len(transaction_id) > 8
+                    else transaction_id
+                ),
+            )
             success = self.driver.rollback_transaction(transaction_id)
             return SuccessResult(data={"success": success})
         except Exception as e:

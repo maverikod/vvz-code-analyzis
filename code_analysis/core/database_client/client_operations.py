@@ -9,14 +9,17 @@ email: vasilyvz@gmail.com
 
 from __future__ import annotations
 
+import logging
 from typing import Any, Dict, List, Optional, Tuple, Union
 
-from ..database_driver_pkg.request import (
+from .protocol import (
     DeleteRequest,
     InsertRequest,
     SelectRequest,
     UpdateRequest,
 )
+
+logger = logging.getLogger(__name__)
 
 
 class _ClientOperationsMixin:
@@ -171,6 +174,12 @@ class _ClientOperationsMixin:
         rpc_params = {"sql": sql, "params": params}
         if transaction_id is not None:
             rpc_params["transaction_id"] = transaction_id
+        sql_preview = (sql.strip()[:80] + "…") if len(sql.strip()) > 80 else sql.strip()
+        logger.info(
+            "[CHAIN] client execute method=execute sql_preview=%s tid=%s",
+            sql_preview,
+            (transaction_id[:8] + "…") if transaction_id else None,
+        )
         response = self.rpc_client.call("execute", rpc_params)
         result = self._extract_result_data(response)
         # _extract_result_data() returns the full result dict from RPC
@@ -218,6 +227,11 @@ class _ClientOperationsMixin:
         rpc_params: Dict[str, Any] = {"operations": rpc_ops}
         if transaction_id is not None:
             rpc_params["transaction_id"] = transaction_id
+        logger.info(
+            "[CHAIN] client execute_batch n_ops=%s tid=%s",
+            len(operations),
+            (transaction_id[:8] + "…") if transaction_id else None,
+        )
         response = self.rpc_client.call("execute_batch", rpc_params)
         result = self._extract_result_data(response)
         if isinstance(result, dict):

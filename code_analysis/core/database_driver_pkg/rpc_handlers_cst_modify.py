@@ -21,8 +21,11 @@ from code_analysis.core.database_client.objects.ast_cst import CSTNode
 from code_analysis.core.database_client.objects.tree_action import TreeAction
 from code_analysis.core.database_client.objects.xpath_filter import XPathFilter
 
-from .result import DataResult, ErrorResult
-from .rpc_protocol import ErrorCode
+from code_analysis.core.database_client.protocol import (
+    DataResult,
+    ErrorResult,
+    ErrorCode,
+)
 
 logger = logging.getLogger(__name__)
 

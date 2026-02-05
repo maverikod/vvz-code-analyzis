@@ -12,7 +12,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Dict, Generic, Optional, TypeVar
 
-from ..database_driver_pkg.rpc_protocol import ErrorCode
+from .protocol import ErrorCode
 
 T = TypeVar("T")
 

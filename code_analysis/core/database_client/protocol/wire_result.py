@@ -1,5 +1,5 @@
 """
-Base result classes for RPC database operations.
+Base result classes for RPC database operations (wire format).
 
 Provides abstract base classes and concrete implementations for different
 types of operation results (success, error, data).

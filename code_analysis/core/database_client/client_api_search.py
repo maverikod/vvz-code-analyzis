@@ -42,13 +42,15 @@ class _ClientAPISearchMixin:
             RPCClientError: If RPC call fails.
             RPCResponseError: If response contains error.
         """
+        # FTS5 bm25() returns negative score (less negative = more relevant). Order ASC for best first.
         sql = """
             SELECT
                 fts.entity_type,
                 fts.entity_name,
                 fts.content,
                 fts.docstring,
-                f.path AS file_path
+                f.path AS file_path,
+                bm25(code_content_fts) AS bm25_score
             FROM code_content_fts fts
             JOIN code_content c ON c.id = fts.rowid
             JOIN files f ON f.id = c.file_id
@@ -58,7 +60,7 @@ class _ClientAPISearchMixin:
         if entity_type:
             sql += " AND fts.entity_type = ?"
             params.append(entity_type)
-        sql += " ORDER BY rank LIMIT ?"
+        sql += " ORDER BY bm25(code_content_fts) ASC LIMIT ?"
         params.append(limit)
 
         result = self.execute(sql, tuple(params))

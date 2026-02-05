@@ -69,7 +69,7 @@ This document lists all search-related commands and how they work. Use it to cho
 ## 5. List class methods (`list_class_methods`)
 
 - **Source:** `commands/search_mcp_commands.py` → `ListClassMethodsMCPCommand`
-- **Backend:** `database.search_methods(project_id, class_name=...)`.
+- **Backend:** `SearchCommand.search_methods` → `search_classes(project_id, name)` then `get_class_methods(class_id)` per class; methods returned as dicts via `to_dict()`.
 - **Parameters:** `project_id`, `class_name`.
 - **Returns:** `methods[]` with method name, signature, file_path, line.
 - **Docs:** [list_class_methods.md](commands/search/list_class_methods.md).

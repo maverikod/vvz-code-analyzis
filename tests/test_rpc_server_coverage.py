@@ -16,7 +16,7 @@ from unittest.mock import Mock, patch
 
 from code_analysis.core.database_driver_pkg.rpc_server import RPCServer
 from code_analysis.core.database_driver_pkg.request_queue import RequestQueue
-from code_analysis.core.database_driver_pkg.rpc_protocol import RPCRequest
+from code_analysis.core.database_client.protocol import RPCRequest
 from code_analysis.core.database_driver_pkg.exceptions import RPCServerError
 
 

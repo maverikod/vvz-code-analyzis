@@ -847,7 +847,9 @@ class CodeDatabase:
                 )
             """
         )
-        # Create indexing_worker_stats table for tracking indexing cycle statistics
+        # Create indexing_worker_stats table for tracking indexing cycle statistics.
+        # Canonical schema for driver auto-create/migrate: database_driver_pkg.drivers.sqlite
+        # INDEXING_WORKER_STATS_COLUMNS (keep in sync when adding columns).
         self._execute(
             """
                 CREATE TABLE IF NOT EXISTS indexing_worker_stats (

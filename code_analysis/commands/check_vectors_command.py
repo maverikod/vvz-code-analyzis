@@ -298,40 +298,20 @@ class CheckVectorsCommand(BaseMCPCommand):
     @classmethod
     def get_schema(cls) -> Dict[str, Any]:
         """Get JSON schema for command parameters."""
+        base_props = cls._get_base_schema_properties()
         schema = {
             "type": "object",
             "properties": {
-                "root_dir": {
-                    "type": "string",
-                    "description": (
-                        "Root directory path of the project OR project UUID4 identifier. "
-                        "If a valid UUID4 string is provided, the project will be looked up "
-                        "in the database and its root_path will be used. "
-                        "If a file system path is provided, it will be used directly. "
-                        "Database will be located at {root_dir}/data/code_analysis.db. "
-                        "Example paths: '/home/user/my_project', './current_project'. "
-                        "Example UUID: '550e8400-e29b-41d4-a716-446655440000'"
-                    ),
-                },
-                "project_id": {
-                    "type": "string",
-                    "description": (
-                        "Optional project UUID to filter statistics by specific project. "
-                        "If not provided, returns statistics for all projects in the database. "
-                        "Format: UUID4 string (e.g., '550e8400-e29b-41d4-a716-446655440000')"
-                    ),
-                    "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
-                },
+                **base_props,
             },
-            "required": ["root_dir"],
+            "required": ["project_id"],
             "additionalProperties": False,
         }
         return schema
 
     async def execute(
         self,
-        root_dir: Optional[str] = None,
-        project_id: Optional[str] = None,
+        project_id: str,
         **kwargs,
     ) -> SuccessResult:
         """
@@ -341,12 +321,7 @@ class CheckVectorsCommand(BaseMCPCommand):
         vectorization status from the database.
 
         Args:
-            root_dir: Root directory path OR project UUID4 identifier.
-                     If UUID4 is provided, project will be looked up in database.
-                     If path is provided, it will be used directly.
-            project_id: Optional project UUID to filter by. If provided, statistics
-                       will be limited to chunks belonging to this project.
-                       If None, returns statistics for all projects.
+            project_id: Project UUID.
 
         Returns:
             SuccessResult with the following data structure:
@@ -367,93 +342,18 @@ class CheckVectorsCommand(BaseMCPCommand):
                     },
                     ...
                 ],
-                "project_id": str,                      # Project ID if filtered (optional)
+                "project_id": str,                      # Project ID
                 "root_dir": str                         # Resolved root directory path
             }
 
         Raises:
-            ErrorResult with code "MISSING_PARAMETER" if root_dir is not provided
-            ErrorResult with code "PROJECT_NOT_FOUND" if project_id (UUID) not found in database
-            ErrorResult with code "INVALID_UUID" if root_dir is UUID but invalid format
+            ErrorResult with code "PROJECT_NOT_FOUND" if project_id not found in database
             ErrorResult with code "CHECK_VECTORS_ERROR" for other errors
         """
         try:
-            # Validate root_dir (required)
-            if not root_dir:
-                return ErrorResult(
-                    message="root_dir is required (either project path or UUID4 identifier)",
-                    code="MISSING_PARAMETER",
-                )
-
-            # Determine if root_dir is UUID4 or path
-            actual_root_dir = root_dir
-            resolved_project_id = None
-
-            # Check if root_dir is a valid UUID4
-            try:
-                uuid.UUID(root_dir)
-                # It's a UUID, need to look up project in database
-                # First, we need to open database to query project
-                # Use a temporary root_dir to open database (from config)
-                from ..core.storage_paths import (
-                    ensure_storage_dirs,
-                    load_raw_config,
-                    resolve_storage_paths,
-                )
-
-                config_path = BaseMCPCommand._resolve_config_path()
-                config_data = load_raw_config(config_path)
-                storage = resolve_storage_paths(
-                    config_data=config_data, config_path=config_path
-                )
-                ensure_storage_dirs(storage)
-                db_path = storage.db_path
-
-                # Use DatabaseClient
-                from ..core.database_client.client import DatabaseClient
-                from .base_mcp_command import _get_socket_path_from_db_path
-
-                socket_path = _get_socket_path_from_db_path(db_path)
-                temp_db = DatabaseClient(socket_path=socket_path)
-                temp_db.connect()
-
-                try:
-                    # Get project by UUID using DatabaseClient API
-                    project = temp_db.get_project(root_dir)
-                    if not project:
-                        return ErrorResult(
-                            message=f"Project with UUID {root_dir} not found in database",
-                            code="PROJECT_NOT_FOUND",
-                        )
-
-                    # Use project's root_path
-                    actual_root_dir = project.root_path
-                    resolved_project_id = root_dir
-                finally:
-                    temp_db.disconnect()
-
-            except ValueError:
-                # Not a valid UUID, treat as path
-                actual_root_dir = root_dir
-
-            # Validate and open database
-            root_path = self._validate_root_dir(actual_root_dir)
-            db = self._open_database(actual_root_dir)
-
-            # Determine project_id for filtering
-            proj_id = None
-            if project_id:
-                # Use provided project_id
-                proj_id = self._get_project_id(db, root_path, project_id)
-                if not proj_id:
-                    db.disconnect()
-                    return ErrorResult(
-                        message=f"Project with ID {project_id} not found",
-                        code="PROJECT_NOT_FOUND",
-                    )
-            elif resolved_project_id:
-                # Use resolved project_id from UUID lookup
-                proj_id = resolved_project_id
+            root_path = self._resolve_project_root(project_id)
+            db = self._open_database()
+            proj_id = project_id
 
             try:
                 # Total chunks

@@ -34,13 +34,9 @@ class StartRepairWorkerMCPCommand(BaseMCPCommand):
         return {
             "type": "object",
             "properties": {
-                "root_dir": {
-                    "type": "string",
-                    "description": "Root directory of the project (contains data/code_analysis.db)",
-                },
                 "project_id": {
                     "type": "string",
-                    "description": "Optional project UUID; if omitted, inferred by root_dir",
+                    "description": "Project UUID (from create_project or list_projects).",
                 },
                 "version_dir": {
                     "type": "string",
@@ -58,14 +54,13 @@ class StartRepairWorkerMCPCommand(BaseMCPCommand):
                     "default": 30,
                 },
             },
-            "required": ["root_dir"],
+            "required": ["project_id"],
             "additionalProperties": False,
         }
 
     async def execute(
         self,
-        root_dir: str,
-        project_id: Optional[str] = None,
+        project_id: str,
         version_dir: str = "data/versions",
         batch_size: int = 10,
         poll_interval: int = 30,
@@ -75,9 +70,8 @@ class StartRepairWorkerMCPCommand(BaseMCPCommand):
         Execute start repair worker command.
 
         Args:
-            root_dir: Root directory of the project
-            project_id: Optional project UUID
-            version_dir: Version directory for deleted files
+            project_id: Project UUID (from create_project or list_projects).
+            version_dir: Version directory for deleted files (relative to project root)
             batch_size: Number of files to process per batch
             poll_interval: Interval in seconds between repair cycles
 
@@ -85,35 +79,20 @@ class StartRepairWorkerMCPCommand(BaseMCPCommand):
             SuccessResult with start result or ErrorResult on failure
         """
         try:
-            root_path = self._validate_root_dir(root_dir)
-            database = self._open_database(root_dir, auto_analyze=False)
+            root_path = self._resolve_project_root(project_id)
+            database = self._open_database_from_config(auto_analyze=False)
 
-            actual_project_id = self._get_project_id(database, root_path, project_id)
-            if not actual_project_id:
-                return ErrorResult(
-                    message=(
-                        f"Project not found: {project_id}"
-                        if project_id
-                        else "Failed to get or create project"
-                    ),
-                    code="PROJECT_NOT_FOUND",
-                )
-
-            # Resolve paths
             if not Path(version_dir).is_absolute():
                 version_dir = str(root_path / version_dir)
 
-            db_path = (
-                root_path / database.db_path
-                if hasattr(database, "db_path")
-                else root_path / "data" / "code_analysis.db"
-            )
+            storage = BaseMCPCommand._get_shared_storage()
+            db_path = storage.db_path
             worker_log_path = root_path / "logs" / "repair_worker.log"
 
             try:
                 manager = RepairWorkerManager(
                     db_path=db_path,
-                    project_id=actual_project_id,
+                    project_id=project_id,
                     root_dir=root_path,
                     version_dir=version_dir,
                     worker_log_path=worker_log_path,
@@ -163,7 +142,7 @@ class StartRepairWorkerMCPCommand(BaseMCPCommand):
                 "3. Resolves project_id (from parameter or inferred from root_dir)\n"
                 "4. Verifies project exists in database\n"
                 "5. Resolves version_dir path (relative to root_dir if not absolute)\n"
-                "6. Resolves database path and worker log path\n"
+                "6. Resolves shared database path from server config and worker log path\n"
                 "7. Checks if repair worker is already running\n"
                 "8. Starts worker process using multiprocessing\n"
                 "9. Registers worker in WorkerManager\n"
@@ -201,7 +180,7 @@ class StartRepairWorkerMCPCommand(BaseMCPCommand):
                 "root_dir": {
                     "description": (
                         "Project root directory path. Can be absolute or relative. "
-                        "Must contain data/code_analysis.db file."
+                        "Used for version_dir and logs; database path comes from server config (shared DB)."
                     ),
                     "type": "string",
                     "required": True,
@@ -663,28 +642,26 @@ class RepairWorkerStatusMCPCommand(BaseMCPCommand):
     @classmethod
     def get_schema(cls) -> Dict[str, Any]:
         """Get JSON schema for command parameters."""
+        base_props = cls._get_base_schema_properties()
         return {
             "type": "object",
             "properties": {
-                "root_dir": {
-                    "type": "string",
-                    "description": "Root directory of the project (for log path, optional)",
-                },
+                **base_props,
             },
-            "required": [],
+            "required": ["project_id"],
             "additionalProperties": False,
         }
 
     async def execute(
         self,
-        root_dir: Optional[str] = None,
+        project_id: str,
         **kwargs,
     ) -> SuccessResult | ErrorResult:
         """
         Execute repair worker status command.
 
         Args:
-            root_dir: Root directory of the project (for log path, optional)
+            project_id: Project UUID (used to resolve log path).
 
         Returns:
             SuccessResult with worker status or ErrorResult on failure
@@ -692,11 +669,8 @@ class RepairWorkerStatusMCPCommand(BaseMCPCommand):
         try:
             from .repair_worker_management import RepairWorkerManager
 
-            # Create manager with minimal config
-            worker_log_path = None
-            if root_dir:
-                root_path = self._validate_root_dir(root_dir)
-                worker_log_path = root_path / "logs" / "repair_worker.log"
+            root_path = self._resolve_project_root(project_id)
+            worker_log_path = root_path / "logs" / "repair_worker.log"
 
             manager = RepairWorkerManager(
                 db_path=Path("/tmp/dummy.db"),  # Not used for status

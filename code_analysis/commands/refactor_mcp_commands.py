@@ -9,7 +9,8 @@ email: vasilyvz@gmail.com
 
 import json
 import logging
-from typing import Any, Dict, Optional
+from pathlib import Path
+from typing import Any, Dict
 
 from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 
@@ -33,16 +34,14 @@ class SplitClassMCPCommand(BaseMCPCommand):
 
     @classmethod
     def get_schema(cls) -> Dict[str, Any]:
+        base_props = cls._get_base_schema_properties()
         return {
             "type": "object",
             "properties": {
-                "root_dir": {
-                    "type": "string",
-                    "description": "Project root directory (contains data/code_analysis.db)",
-                },
+                **base_props,
                 "file_path": {
                     "type": "string",
-                    "description": "Path to Python file (absolute or relative to project root)",
+                    "description": "Path to Python file (relative to project root)",
                 },
                 "config": {
                     "type": "object",
@@ -71,12 +70,8 @@ class SplitClassMCPCommand(BaseMCPCommand):
                     "description": "If true, preview changes without applying them",
                     "default": False,
                 },
-                "project_id": {
-                    "type": "string",
-                    "description": "Optional project UUID; if omitted, inferred by root_dir",
-                },
             },
-            "required": ["root_dir", "file_path", "config"],
+            "required": ["project_id", "file_path", "config"],
             "additionalProperties": False,
         }
 
@@ -363,21 +358,16 @@ class SplitClassMCPCommand(BaseMCPCommand):
 
     async def execute(
         self,
-        root_dir: str,
+        project_id: str,
         file_path: str,
         config: Any,
         dry_run: bool = False,
-        project_id: Optional[str] = None,
         **kwargs,
     ) -> SuccessResult:
         try:
-            root_path = self._validate_root_dir(root_dir)
-            db = self._open_database(root_dir)
-            proj_id = self._get_project_id(db, root_path, project_id)
-            if not proj_id:
-                return ErrorResult(
-                    message="Project not found", code="PROJECT_NOT_FOUND"
-                )
+            root_path = self._resolve_project_root(project_id)
+            db = self._open_database()
+            proj_id = project_id
 
             # Parse config if it's a string
             if isinstance(config, str):
@@ -439,7 +429,7 @@ class SplitClassMCPCommand(BaseMCPCommand):
                         except ValueError:
                             # File is outside root, use absolute path
                             rel_path = str(file_path_obj)
-                        
+
                         update_result = db.update_file_data(
                             file_path=rel_path,
                             project_id=proj_id,
@@ -496,13 +486,10 @@ class ExtractSuperclassMCPCommand(BaseMCPCommand):
         return {
             "type": "object",
             "properties": {
-                "root_dir": {
-                    "type": "string",
-                    "description": "Project root directory (contains data/code_analysis.db)",
-                },
+                **cls._get_base_schema_properties(),
                 "file_path": {
                     "type": "string",
-                    "description": "Path to Python file (absolute or relative to project root)",
+                    "description": "Path to Python file (relative to project root)",
                 },
                 "config": {
                     "type": "object",
@@ -533,12 +520,8 @@ class ExtractSuperclassMCPCommand(BaseMCPCommand):
                     "description": "If true, preview changes without applying them",
                     "default": False,
                 },
-                "project_id": {
-                    "type": "string",
-                    "description": "Optional project UUID; if omitted, inferred by root_dir",
-                },
             },
-            "required": ["root_dir", "file_path", "config"],
+            "required": ["project_id", "file_path", "config"],
             "additionalProperties": False,
         }
 
@@ -827,21 +810,16 @@ class ExtractSuperclassMCPCommand(BaseMCPCommand):
 
     async def execute(
         self,
-        root_dir: str,
+        project_id: str,
         file_path: str,
         config: Any,
         dry_run: bool = False,
-        project_id: Optional[str] = None,
         **kwargs,
     ) -> SuccessResult:
         try:
-            root_path = self._validate_root_dir(root_dir)
-            db = self._open_database(root_dir)
-            proj_id = self._get_project_id(db, root_path, project_id)
-            if not proj_id:
-                return ErrorResult(
-                    message="Project not found", code="PROJECT_NOT_FOUND"
-                )
+            root_path = self._resolve_project_root(project_id)
+            db = self._open_database()
+            proj_id = project_id
 
             # Parse config if it's a string
             if isinstance(config, str):
@@ -896,7 +874,7 @@ class ExtractSuperclassMCPCommand(BaseMCPCommand):
                         except ValueError:
                             # File is outside root, use absolute path
                             rel_path = str(file_path_obj)
-                        
+
                         update_result = db.update_file_data(
                             file_path=rel_path,
                             project_id=proj_id,
@@ -920,7 +898,7 @@ class ExtractSuperclassMCPCommand(BaseMCPCommand):
                             exc_info=True,
                         )
                         # Don't fail the operation, just log the error
-                
+
                 db.disconnect()
 
                 if result.get("success"):
@@ -952,16 +930,14 @@ class SplitFileToPackageMCPCommand(BaseMCPCommand):
 
     @classmethod
     def get_schema(cls) -> Dict[str, Any]:
+        base_props = cls._get_base_schema_properties()
         return {
             "type": "object",
             "properties": {
-                "root_dir": {
-                    "type": "string",
-                    "description": "Project root directory (contains data/code_analysis.db)",
-                },
+                **base_props,
                 "file_path": {
                     "type": "string",
-                    "description": "Path to Python file (absolute or relative to project root)",
+                    "description": "Path to Python file (relative to project root)",
                 },
                 "config": {
                     "type": "object",
@@ -988,12 +964,8 @@ class SplitFileToPackageMCPCommand(BaseMCPCommand):
                     ),
                     "additionalProperties": True,
                 },
-                "project_id": {
-                    "type": "string",
-                    "description": "Optional project UUID; if omitted, inferred by root_dir",
-                },
             },
-            "required": ["root_dir", "file_path", "config"],
+            "required": ["project_id", "file_path", "config"],
             "additionalProperties": False,
         }
 
@@ -1254,20 +1226,15 @@ class SplitFileToPackageMCPCommand(BaseMCPCommand):
 
     async def execute(
         self,
-        root_dir: str,
+        project_id: str,
         file_path: str,
         config: Any,
-        project_id: Optional[str] = None,
         **kwargs,
     ) -> SuccessResult:
         try:
-            root_path = self._validate_root_dir(root_dir)
-            db = self._open_database(root_dir)
-            proj_id = self._get_project_id(db, root_path, project_id)
-            if not proj_id:
-                return ErrorResult(
-                    message="Project not found", code="PROJECT_NOT_FOUND"
-                )
+            root_path = self._resolve_project_root(project_id)
+            db = self._open_database()
+            proj_id = project_id
 
             if isinstance(config, str):
                 config = json.loads(config)

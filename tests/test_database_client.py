@@ -16,6 +16,7 @@ import pytest
 from code_analysis.core.database_client.client import DatabaseClient
 from code_analysis.core.database_client.exceptions import (
     ConnectionError,
+    RPCClientError,
     RPCResponseError,
 )
 from code_analysis.core.database_driver_pkg.driver_factory import create_driver
@@ -375,19 +376,19 @@ class TestDatabaseClient:
             client.disconnect()
 
     def test_error_handling(self, rpc_server):
-        """Test error handling."""
+        """Test error handling: server errors surface as RPCClientError (wrapping RPCResponseError)."""
         _, socket_path, _ = rpc_server
 
         client = DatabaseClient(socket_path)
         client.connect()
 
         try:
-            # Try to insert into non-existent table
-            with pytest.raises(RPCResponseError):
+            # Try to insert into non-existent table (server returns error; client raises RPCClientError)
+            with pytest.raises((RPCClientError, RPCResponseError)):
                 client.insert("nonexistent_table", {"data": "test"})
 
             # Try to select from non-existent table
-            with pytest.raises(RPCResponseError):
+            with pytest.raises((RPCClientError, RPCResponseError)):
                 client.select("nonexistent_table")
         finally:
             client.disconnect()

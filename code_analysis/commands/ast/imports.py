@@ -25,16 +25,14 @@ class GetImportsMCPCommand(BaseMCPCommand):
 
     @classmethod
     def get_schema(cls) -> Dict[str, Any]:
+        base_props = cls._get_base_schema_properties()
         return {
             "type": "object",
             "properties": {
-                "root_dir": {
-                    "type": "string",
-                    "description": "Project root directory (contains data/code_analysis.db)",
-                },
+                **base_props,
                 "file_path": {
                     "type": "string",
-                    "description": "Optional file path to filter by (absolute or relative)",
+                    "description": "Optional file path to filter by (relative to project root)",
                 },
                 "import_type": {
                     "type": "string",
@@ -54,34 +52,25 @@ class GetImportsMCPCommand(BaseMCPCommand):
                     "description": "Offset for pagination",
                     "default": 0,
                 },
-                "project_id": {
-                    "type": "string",
-                    "description": "Optional project UUID; if omitted, inferred by root_dir",
-                },
             },
-            "required": ["root_dir"],
+            "required": ["project_id"],
             "additionalProperties": False,
         }
 
     async def execute(
         self,
-        root_dir: str,
+        project_id: str,
         file_path: Optional[str] = None,
         import_type: Optional[str] = None,
         module_name: Optional[str] = None,
         limit: Optional[int] = None,
         offset: int = 0,
-        project_id: Optional[str] = None,
         **kwargs,
     ) -> SuccessResult:
         try:
-            root_path = self._validate_root_dir(root_dir)
-            db = self._open_database(root_dir)
-            proj_id = self._get_project_id(db, root_path, project_id)
-            if not proj_id:
-                return ErrorResult(
-                    message="Project not found", code="PROJECT_NOT_FOUND"
-                )
+            root_path = self._resolve_project_root(project_id)
+            db = self._open_database()
+            proj_id = project_id
 
             # Get imports from database
             query = "SELECT * FROM imports WHERE file_id IN (SELECT id FROM files WHERE project_id = ?)"
@@ -92,7 +81,6 @@ class GetImportsMCPCommand(BaseMCPCommand):
 
                 # Normalize file path
                 file_path_obj = Path(file_path)
-                root_path = Path(root_dir).resolve()
                 if file_path_obj.is_absolute():
                     try:
                         normalized_path = file_path_obj.relative_to(root_path)

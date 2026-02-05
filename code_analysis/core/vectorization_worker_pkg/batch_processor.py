@@ -231,7 +231,14 @@ async def process_embedding_ready_chunks(
                                     f"model={embedding_model}"
                                 )
 
-                                # Save to DB for future use
+                                # Save to DB only when model is set (vector without model is invalid)
+                                if not (embedding_model and str(embedding_model).strip()):
+                                    logger.warning(
+                                        f"[CHUNK {chunk_id}] Chunker returned embedding without model, "
+                                        "skipping save and FAISS (vector not written)"
+                                    )
+                                    batch_errors += 1
+                                    continue
                                 save_start = time.time()
                                 embedding_json = json.dumps(
                                     embedding.tolist()

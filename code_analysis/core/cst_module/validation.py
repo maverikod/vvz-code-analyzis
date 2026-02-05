@@ -9,9 +9,10 @@ email: vasilyvz@gmail.com
 """
 
 from dataclasses import dataclass, field
+import logging
+import time
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
-import logging
 
 from .utils import compile_module
 from .docstring_validator import validate_module_docstrings
@@ -64,6 +65,8 @@ def validate_file_in_temp(
           }
     """
     results: Dict[str, ValidationResult] = {}
+    t_start = time.perf_counter()
+    t_prev = t_start
 
     # Ensure temporary file exists and contains source_code
     try:
@@ -83,6 +86,9 @@ def validate_file_in_temp(
 
     # 1. Compilation check
     compile_success, compile_error = compile_module(source_code, str(temp_file_path))
+    _t = time.perf_counter()
+    logger.info("[PROFILE] validate_file_in_temp compile elapsed=%.3fs", _t - t_prev)
+    t_prev = _t
     results["compile"] = ValidationResult(
         success=compile_success,
         error_message=compile_error if not compile_success else None,
@@ -99,6 +105,9 @@ def validate_file_in_temp(
     docstring_success, docstring_error, docstring_errors = validate_module_docstrings(
         source_code
     )
+    _t = time.perf_counter()
+    logger.info("[PROFILE] validate_file_in_temp docstrings elapsed=%.3fs", _t - t_prev)
+    t_prev = _t
     results["docstrings"] = ValidationResult(
         success=docstring_success,
         error_message=docstring_error,
@@ -110,19 +119,27 @@ def validate_file_in_temp(
         linter_success, linter_error, linter_errors = lint_with_flake8(
             temp_file_path, ignore=None
         )
+        _t = time.perf_counter()
+        logger.info("[PROFILE] validate_file_in_temp flake8 elapsed=%.3fs", _t - t_prev)
+        t_prev = _t
         results["linter"] = ValidationResult(
             success=linter_success,
             error_message=linter_error,
             errors=linter_errors,
         )
     else:
-        results["linter"] = ValidationResult(success=True, error_message=None, errors=[])
+        results["linter"] = ValidationResult(
+            success=True, error_message=None, errors=[]
+        )
 
     # 4. Type checker (optional)
     if validate_type_checker:
-        type_check_success, type_check_error, type_check_errors = (
-            type_check_with_mypy(temp_file_path, config_file=None, ignore_errors=False)
+        type_check_success, type_check_error, type_check_errors = type_check_with_mypy(
+            temp_file_path, config_file=None, ignore_errors=False
         )
+        _t = time.perf_counter()
+        logger.info("[PROFILE] validate_file_in_temp mypy elapsed=%.3fs", _t - t_prev)
+        t_prev = _t
         results["type_checker"] = ValidationResult(
             success=type_check_success,
             error_message=type_check_error,
@@ -150,10 +167,13 @@ def validate_file_in_temp(
                     )
         error_message = "; ".join(error_parts) if error_parts else "Validation failed"
 
+    logger.info(
+        "[PROFILE] validate_file_in_temp total elapsed=%.3fs",
+        time.perf_counter() - t_start,
+    )
     logger.debug(
         f"Validation completed: success={overall_success}, "
         f"results={[(k, v.success) for k, v in results.items()]}"
     )
 
     return (overall_success, error_message, results)
-

@@ -38,56 +38,41 @@ class ListLongFilesMCPCommand(BaseMCPCommand):
         return {
             "type": "object",
             "properties": {
-                "root_dir": {
+                "project_id": {
                     "type": "string",
-                    "description": "Root directory of the project (contains data/code_analysis.db)",
+                    "description": "Project UUID (from create_project or list_projects).",
                 },
                 "max_lines": {
                     "type": "integer",
                     "description": "Maximum lines threshold (default: 400)",
                     "default": 400,
                 },
-                "project_id": {
-                    "type": "string",
-                    "description": "Optional project UUID; if omitted, inferred by root_dir",
-                },
             },
-            "required": ["root_dir"],
+            "required": ["project_id"],
             "additionalProperties": False,
         }
 
     async def execute(
         self,
-        root_dir: str,
+        project_id: str,
         max_lines: int = DEFAULT_MAX_FILE_LINES,
-        project_id: Optional[str] = None,
         **kwargs,
     ) -> SuccessResult | ErrorResult:
         """
         Execute list long files command.
 
         Args:
-            root_dir: Root directory of the project
+            project_id: Project UUID (from create_project or list_projects).
             max_lines: Maximum lines threshold
-            project_id: Optional project UUID
 
         Returns:
             SuccessResult with long files list or ErrorResult on failure
         """
         try:
-            root_path = self._validate_root_dir(root_dir)
-            db = self._open_database(root_dir)
-            proj_id = self._get_project_id(db, root_path, project_id)
+            self._resolve_project_root(project_id)
+            db = self._open_database_from_config(auto_analyze=False)
 
-            if not proj_id:
-                db.disconnect()
-                return ErrorResult(
-                    message="Project not found",
-                    code="PROJECT_NOT_FOUND",
-                    details={"root_dir": str(root_path)},
-                )
-
-            command = ListLongFilesCommand(db, proj_id, max_lines)
+            command = ListLongFilesCommand(db, project_id, max_lines)
             result = await command.execute()
             db.disconnect()
 
@@ -257,22 +242,17 @@ class ListErrorsByCategoryMCPCommand(BaseMCPCommand):
         return {
             "type": "object",
             "properties": {
-                "root_dir": {
-                    "type": "string",
-                    "description": "Root directory of the project (contains data/code_analysis.db)",
-                },
                 "project_id": {
                     "type": "string",
-                    "description": "Optional project UUID; if omitted, inferred by root_dir (or all projects if not found)",
+                    "description": "Optional project UUID (from list_projects); if omitted, all projects",
                 },
             },
-            "required": ["root_dir"],
+            "required": [],
             "additionalProperties": False,
         }
 
     async def execute(
         self,
-        root_dir: str,
         project_id: Optional[str] = None,
         **kwargs,
     ) -> SuccessResult | ErrorResult:
@@ -280,31 +260,17 @@ class ListErrorsByCategoryMCPCommand(BaseMCPCommand):
         Execute list errors by category command.
 
         Args:
-            root_dir: Root directory of the project
-            project_id: Optional project UUID
+            project_id: Optional project UUID (all projects if None).
 
         Returns:
             SuccessResult with errors grouped by category or ErrorResult on failure
         """
         try:
-            root_path = self._validate_root_dir(root_dir)
-            db = self._open_database(root_dir)
-
-            # Try to get project_id, but allow None (all projects)
-            proj_id = None
             if project_id:
-                proj_id = project_id
-            else:
-                try:
-                    proj_id = self._get_project_id(db, root_path, None)
-                except Exception:
-                    # If project not found, use None to get all projects
-                    logger.info(
-                        f"Project not found for {root_dir}, listing errors from all projects"
-                    )
-                    proj_id = None
+                self._resolve_project_root(project_id)
+            db = self._open_database_from_config(auto_analyze=False)
 
-            command = ListErrorsByCategoryCommand(db, proj_id)
+            command = ListErrorsByCategoryCommand(db, project_id)
             result = await command.execute()
             db.disconnect()
 

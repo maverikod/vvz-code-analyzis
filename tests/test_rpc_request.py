@@ -7,7 +7,7 @@ email: vasilyvz@gmail.com
 
 import pytest
 
-from code_analysis.core.database_driver_pkg.request import (
+from code_analysis.core.database_client.protocol import (
     DeleteRequest,
     InsertRequest,
     SelectRequest,

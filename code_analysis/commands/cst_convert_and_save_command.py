@@ -60,10 +60,6 @@ class CSTConvertAndSaveCommand(BaseMCPCommand):
                     "description": "Whether to save code to file on disk. Default is True.",
                     "default": True,
                 },
-                "root_dir": {
-                    "type": "string",
-                    "description": "Server root directory (optional, for database access). If not provided, will be resolved from config.",
-                },
                 "include_nodes": {
                     "type": "boolean",
                     "description": (
@@ -83,7 +79,6 @@ class CSTConvertAndSaveCommand(BaseMCPCommand):
         source_code: str,
         file_path: str,
         save_to_file: bool = True,
-        root_dir: Optional[str] = None,
         include_nodes: bool = False,
         **kwargs,
     ) -> SuccessResult:
@@ -122,26 +117,7 @@ class CSTConvertAndSaveCommand(BaseMCPCommand):
                     details={},
                 )
 
-            # Resolve server root_dir for database access
-            if not root_dir:
-                from ..core.storage_paths import (
-                    load_raw_config,
-                    resolve_storage_paths,
-                )
-
-                config_path = self._resolve_config_path()
-                config_data = load_raw_config(config_path)
-                storage = resolve_storage_paths(
-                    config_data=config_data, config_path=config_path
-                )
-                root_dir = (
-                    str(storage.config_dir.parent)
-                    if hasattr(storage, "config_dir")
-                    else "/"
-                )
-
-            # Open database
-            database = self._open_database(root_dir, auto_analyze=False)
+            database = self._open_database_from_config(auto_analyze=False)
             try:
                 # Get project
                 project = database.get_project(project_id)

@@ -65,12 +65,27 @@ class SearchCommand:
         """
         Search methods, optionally filtered by class name.
 
+        Resolves class name to class_id via search_classes, then collects
+        methods via get_class_methods for each matching class.
+
         Args:
-            class_name: Optional class name to filter by
+            class_name: Optional class name to filter by (required for results)
 
         Returns:
-            List of matching methods
+            List of method dicts (name, line, file path, etc.)
         """
-        return self.database.search_methods(
-            name_pattern=None, class_name=class_name, project_id=self.project_id
+        if not class_name:
+            return []
+        classes = self.database.search_classes(
+            project_id=self.project_id, name=class_name
         )
+        if not classes:
+            return []
+        result: List[Dict[str, Any]] = []
+        for cls in classes:
+            if cls.id is None:
+                continue
+            methods = self.database.get_class_methods(cls.id)
+            for m in methods:
+                result.append(m.to_dict())
+        return result

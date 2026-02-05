@@ -11,6 +11,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from code_analysis.core.unified_logging import importance_from_level
+
 logger = logging.getLogger(__name__)
 
 # Event type patterns for File Watcher Worker
@@ -37,6 +39,25 @@ VECTORIZATION_EVENT_PATTERNS = {
     "circuit_breaker": r"circuit.*breaker|circuit.*open|circuit.*closed",
 }
 
+# Event type patterns for Indexing Worker
+INDEXING_EVENT_PATTERNS = {
+    "cycle": r"\[CYCLE #\d+\]|Starting indexing cycle",
+    "indexed": r"Indexed|index_file",
+    "error": r"ERROR|✗|failed",
+    "info": r"INFO",
+    "warning": r"WARNING",
+    "database": r"Database is now available|Database is unavailable",
+}
+
+# Event type patterns for Database Driver
+DATABASE_DRIVER_EVENT_PATTERNS = {
+    "rpc": r"rpc_server|_process_request|handle_",
+    "execute": r"execute|sql_preview",
+    "error": r"ERROR|✗|failed",
+    "info": r"INFO",
+    "warning": r"WARNING",
+}
+
 
 class LogViewerCommand:
     """
@@ -59,6 +80,8 @@ class LogViewerCommand:
         event_types: Optional[List[str]] = None,
         log_levels: Optional[List[str]] = None,
         search_pattern: Optional[str] = None,
+        importance_min: Optional[int] = None,  # 0-10
+        importance_max: Optional[int] = None,  # 0-10
         tail: Optional[int] = None,  # Last N lines
         limit: int = 1000,  # Maximum lines to return
     ):
@@ -73,6 +96,8 @@ class LogViewerCommand:
             event_types: List of event types to filter (e.g., ["new_file", "changed_file"])
             log_levels: List of log levels to filter (e.g., ["INFO", "ERROR"])
             search_pattern: Text pattern to search for (regex supported)
+            importance_min: Minimum importance 0-10 (inclusive)
+            importance_max: Maximum importance 0-10 (inclusive)
             tail: Return last N lines (if specified, ignores time filters)
             limit: Maximum number of lines to return
         """
@@ -85,6 +110,8 @@ class LogViewerCommand:
         self.search_pattern = (
             re.compile(search_pattern, re.IGNORECASE) if search_pattern else None
         )
+        self.importance_min = importance_min
+        self.importance_max = importance_max
         self.tail = tail
         self.limit = limit
 
@@ -93,6 +120,10 @@ class LogViewerCommand:
             self.event_patterns = FILE_WATCHER_EVENT_PATTERNS
         elif worker_type == "vectorization":
             self.event_patterns = VECTORIZATION_EVENT_PATTERNS
+        elif worker_type == "indexing":
+            self.event_patterns = INDEXING_EVENT_PATTERNS
+        elif worker_type == "database_driver":
+            self.event_patterns = DATABASE_DRIVER_EVENT_PATTERNS
         else:
             self.event_patterns = {}
 
@@ -139,78 +170,95 @@ class LogViewerCommand:
         """
         Parse a log line and extract information.
 
-        Expected format: "YYYY-MM-DD HH:MM:SS | LEVEL | message"
+        Supports:
+        - Unified: "YYYY-MM-DD HH:MM:SS | LEVEL | IMPORTANCE | message"
+        - Legacy:  "YYYY-MM-DD HH:MM:SS | LEVEL | message" (importance from level)
+        - Alt:     "YYYY-MM-DD HH:MM:SS - LEVEL - message"
+        - Loose:   "YYYY-MM-DD HH:MM:SS ..." (level from regex, importance from level)
 
         Args:
             line: Log line to parse
 
         Returns:
-            Dictionary with parsed information or None if line doesn't match format
+            Dictionary with timestamp, level, importance (0-10), message, raw; or None if empty.
         """
         if not line.strip():
             return None
 
-        # Try to parse structured format: "YYYY-MM-DD HH:MM:SS | LEVEL | message"
-        parts = line.split(" | ", 2)
+        def make_entry(
+            ts: Optional[datetime],
+            lvl: str,
+            msg: str,
+            imp: Optional[int] = None,
+        ) -> Dict[str, Any]:
+            importance = imp if imp is not None else importance_from_level(lvl)
+            return {
+                "timestamp": ts,
+                "level": lvl,
+                "importance": max(0, min(10, importance)),
+                "message": msg,
+                "raw": line,
+            }
+
+        # Unified format: "YYYY-MM-DD HH:MM:SS | LEVEL | IMPORTANCE | message"
+        parts = line.split(" | ", 3)
+        if len(parts) >= 4:
+            timestamp_str, level, importance_str, message = (
+                parts[0],
+                parts[1],
+                parts[2],
+                parts[3],
+            )
+            try:
+                timestamp = datetime.strptime(
+                    timestamp_str.strip(), "%Y-%m-%d %H:%M:%S"
+                )
+                imp = None
+                try:
+                    imp = int(importance_str.strip())
+                except (ValueError, AttributeError):
+                    pass
+                return make_entry(timestamp, level.strip(), message.strip(), imp)
+            except ValueError:
+                pass
+
+        # Legacy 3-part: "YYYY-MM-DD HH:MM:SS | LEVEL | message"
         if len(parts) == 3:
             timestamp_str, level, message = parts
             try:
                 timestamp = datetime.strptime(
                     timestamp_str.strip(), "%Y-%m-%d %H:%M:%S"
                 )
-                return {
-                    "timestamp": timestamp,
-                    "level": level.strip(),
-                    "message": message.strip(),
-                    "raw": line,
-                }
+                return make_entry(timestamp, level.strip(), message.strip())
             except ValueError:
                 pass
 
-        # Try alternative format: "YYYY-MM-DD HH:MM:SS - LEVEL - message"
-        parts = line.split(" - ", 2)
-        if len(parts) == 3:
-            timestamp_str, level, message = parts
+        # Alternative format: "YYYY-MM-DD HH:MM:SS - LEVEL - message"
+        parts_alt = line.split(" - ", 2)
+        if len(parts_alt) == 3:
+            timestamp_str, level, message = parts_alt
             try:
                 timestamp = datetime.strptime(
                     timestamp_str.strip(), "%Y-%m-%d %H:%M:%S"
                 )
-                return {
-                    "timestamp": timestamp,
-                    "level": level.strip(),
-                    "message": message.strip(),
-                    "raw": line,
-                }
+                return make_entry(timestamp, level.strip(), message.strip())
             except ValueError:
                 pass
 
-        # If no structured format, try to extract timestamp from beginning
-        # Format: "YYYY-MM-DD HH:MM:SS ..."
+        # Loose: "YYYY-MM-DD HH:MM:SS ..."
         match = re.match(r"(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})", line)
         if match:
             try:
                 timestamp = datetime.strptime(match.group(1), "%Y-%m-%d %H:%M:%S")
-                # Try to extract level
                 level_match = re.search(
                     r"\b(DEBUG|INFO|WARNING|ERROR|CRITICAL)\b", line
                 )
                 level = level_match.group(1) if level_match else "UNKNOWN"
-                return {
-                    "timestamp": timestamp,
-                    "level": level,
-                    "message": line,
-                    "raw": line,
-                }
+                return make_entry(timestamp, level, line)
             except ValueError:
                 pass
 
-        # Return as unparsed line
-        return {
-            "timestamp": None,
-            "level": "UNKNOWN",
-            "message": line,
-            "raw": line,
-        }
+        return make_entry(None, "UNKNOWN", line)
 
     def _matches_event_type(self, parsed_line: Dict[str, Any]) -> bool:
         """
@@ -264,11 +312,18 @@ class LogViewerCommand:
         if not self._matches_event_type(parsed_line):
             return False
 
-        # Search pattern filter
+        # Search pattern filter (regex on message)
         if self.search_pattern:
             message = parsed_line.get("message", "")
             if not self.search_pattern.search(message):
                 return False
+
+        # Importance filter (0-10)
+        importance = parsed_line.get("importance", 4)
+        if self.importance_min is not None and importance < self.importance_min:
+            return False
+        if self.importance_max is not None and importance > self.importance_max:
+            return False
 
         return True
 
@@ -293,6 +348,8 @@ class LogViewerCommand:
                 "search_pattern": (
                     self.search_pattern.pattern if self.search_pattern else None
                 ),
+                "importance_min": self.importance_min,
+                "importance_max": self.importance_max,
                 "tail": self.tail,
             },
         }
@@ -312,6 +369,9 @@ class LogViewerCommand:
             if self.tail:
                 lines = lines[-self.tail :]
 
+            entries_list: List[Dict[str, Any]] = []
+            filtered_count = 0
+
             # Parse and filter lines
             for line in lines:
                 parsed = self._parse_log_line(line.rstrip("\n"))
@@ -319,12 +379,27 @@ class LogViewerCommand:
                     continue
 
                 if self._matches_filters(parsed):
-                    result["entries"].append(parsed)
-                    result["filtered_lines"] += 1
+                    # Serialize for JSON: timestamp as ISO, include importance
+                    entry = {
+                        "timestamp": (
+                            parsed["timestamp"].isoformat()
+                            if parsed.get("timestamp")
+                            else None
+                        ),
+                        "level": parsed.get("level", "UNKNOWN"),
+                        "importance": parsed.get("importance", 4),
+                        "message": parsed.get("message", ""),
+                        "raw": parsed.get("raw", ""),
+                    }
+                    entries_list.append(entry)
+                    filtered_count += 1
 
                     # Apply limit
-                    if len(result["entries"]) >= self.limit:
+                    if len(entries_list) >= self.limit:
                         break
+
+            result["entries"] = entries_list
+            result["filtered_lines"] = filtered_count
 
             result["message"] = (
                 f"Found {result['filtered_lines']} matching entries "
@@ -373,24 +448,30 @@ class ListLogFilesCommand:
         result = {
             "log_files": [],
             "total_files": 0,
+            "scanned_dirs": [str(d) for d in self.log_dirs],
         }
 
         # Default log directories if not specified
         if not self.log_dirs:
             self.log_dirs = [Path("logs")]
+            result["scanned_dirs"] = ["logs"]
 
-        # Known log file patterns
+        # Known log file patterns (one log file per worker type)
         log_patterns = {
             "file_watcher": ["file_watcher.log*", "file_watcher*.log*"],
             "vectorization": ["vectorization_worker.log*", "vectorization*.log*"],
+            "indexing": ["indexing_worker.log*", "indexing*.log*"],
+            "database_driver": ["database_driver.log*", "database_driver*.log*"],
             "analysis": ["comprehensive_analysis.log*", "comprehensive_analysis*.log*"],
             "server": [
                 "mcp_proxy_adapter.log*",
                 "mcp_proxy_adapter*.log*",
+                "mcp_server.log*",
                 "*.log*",  # Fallback: all .log files
             ],
         }
 
+        log_files_list: List[Dict[str, Any]] = []
         try:
             for log_dir in self.log_dirs:
                 if not log_dir.exists():
@@ -426,16 +507,22 @@ class ListLogFilesCommand:
                             # Apply worker_type filter if specified
                             if self.worker_type and detected_type != self.worker_type:
                                 # Special handling: if worker_type is "server", include all non-worker logs
-                                if self.worker_type == "server" and detected_type not in [
-                                    "file_watcher",
-                                    "vectorization",
-                                    "analysis",
-                                ]:
+                                if (
+                                    self.worker_type == "server"
+                                    and detected_type
+                                    not in [
+                                        "file_watcher",
+                                        "vectorization",
+                                        "indexing",
+                                        "database_driver",
+                                        "analysis",
+                                    ]
+                                ):
                                     pass  # Include server logs
                                 else:
                                     continue
 
-                            result["log_files"].append(
+                            log_files_list.append(
                                 {
                                     "path": str(log_file),
                                     "size": stat.st_size,
@@ -448,16 +535,16 @@ class ListLogFilesCommand:
 
             # Remove duplicates and sort by modified time (newest first)
             seen_paths = set()
-            unique_files = []
-            for log_file in sorted(
-                result["log_files"], key=lambda x: x["modified"], reverse=True
+            unique_files: List[Dict[str, Any]] = []
+            for item in sorted(
+                log_files_list, key=lambda x: x["modified"], reverse=True
             ):
-                if log_file["path"] not in seen_paths:
-                    unique_files.append(log_file)
-                    seen_paths.add(log_file["path"])
+                if item["path"] not in seen_paths:
+                    unique_files.append(item)
+                    seen_paths.add(item["path"])
 
             result["log_files"] = unique_files
-            result["total_files"] = len(result["log_files"])
+            result["total_files"] = len(unique_files)
             result["message"] = f"Found {result['total_files']} log files"
 
         except Exception as e:
@@ -474,18 +561,99 @@ class ListLogFilesCommand:
             filename: Name of the log file
 
         Returns:
-            Type of log: "file_watcher", "vectorization", "analysis", "server", or "unknown"
+            Type of log: "file_watcher", "vectorization", "indexing",
+            "database_driver", "analysis", "server", or "unknown"
         """
         filename_lower = filename.lower()
         if "file_watcher" in filename_lower:
             return "file_watcher"
         elif "vectorization" in filename_lower:
             return "vectorization"
+        elif "indexing_worker" in filename_lower or "indexing" in filename_lower:
+            return "indexing"
+        elif "database_driver" in filename_lower:
+            return "database_driver"
         elif "comprehensive_analysis" in filename_lower:
             return "analysis"
-        elif "mcp_proxy_adapter" in filename_lower:
+        elif "mcp_proxy_adapter" in filename_lower or "mcp_server" in filename_lower:
             return "server"
         elif filename_lower.endswith(".log") or filename_lower.endswith(".log."):
-            # Default to server for other .log files
             return "server"
         return "unknown"
+
+
+class RotateLogsCommand:
+    """
+    Manually rotate a log file: rename current to .1, .1 to .2, etc., then create new empty log.
+
+    Same naming as logging.handlers.RotatingFileHandler (log -> log.1 -> log.2 ...).
+    The running worker may continue writing to the previous file (now .1) until it restarts
+    or reopens the log.
+    """
+
+    def __init__(
+        self,
+        log_path: str,
+        backup_count: int = 5,
+    ):
+        """
+        Initialize rotate logs command.
+
+        Args:
+            log_path: Path to the log file to rotate.
+            backup_count: Number of backup files to keep (default 5); keeps log.1 .. log.N.
+        """
+        self.log_path = Path(log_path)
+        self.backup_count = max(1, min(backup_count, 99))
+
+    def _rotation_path(self, n: int) -> Path:
+        """Path for rotated file: log -> log.1, log.1 -> log.2, etc."""
+        return Path(str(self.log_path) + "." + str(n))
+
+    async def execute(self) -> Dict[str, Any]:
+        """
+        Perform rotation: shift .1->.2, .2->.3, ... then log->.1, create new empty log.
+
+        Returns:
+            Dict with rotated_paths (list of paths created/renamed), main_path, error (if any).
+        """
+        result: Dict[str, Any] = {
+            "log_path": str(self.log_path),
+            "backup_count": self.backup_count,
+            "rotated_paths": [],
+            "message": None,
+        }
+        if not self.log_path.exists():
+            result["message"] = (
+                f"Log file does not exist: {self.log_path}; nothing to rotate"
+            )
+            return result
+
+        try:
+            # Rotate existing backups: .(N-1) -> .N, .(N-2) -> .(N-1), ... .1 -> .2
+            for i in range(self.backup_count - 1, 0, -1):
+                src = self._rotation_path(i)
+                if src.exists():
+                    dst = self._rotation_path(i + 1)
+                    if dst.exists():
+                        dst.unlink()
+                    src.rename(dst)
+                    result["rotated_paths"].append(str(dst))
+
+            # Current log -> .1
+            dst1 = self._rotation_path(1)
+            if dst1.exists():
+                dst1.unlink()
+            self.log_path.rename(dst1)
+            result["rotated_paths"].insert(0, str(dst1))
+
+            # Create new empty log file (same path)
+            self.log_path.touch()
+            result["message"] = (
+                f"Rotated {self.log_path} to {dst1}; created new empty log. "
+                f"Backups: {result['rotated_paths']}"
+            )
+        except OSError as e:
+            logger.error("Log rotation failed for %s: %s", self.log_path, e)
+            result["error"] = str(e)
+        return result

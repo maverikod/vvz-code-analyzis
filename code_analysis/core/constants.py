@@ -13,15 +13,11 @@ from typing import Set
 # File Extensions
 # ============================================================================
 
-# File extensions to process
+# File extensions to scan and add to DB for indexing.
+# Only .py is indexed (AST/CST); other extensions were causing index errors.
+# Config files can be tracked elsewhere via CONFIG_FILE_EXTENSIONS if needed.
 CODE_FILE_EXTENSIONS: Set[str] = {
     ".py",
-    ".json",
-    ".yaml",
-    ".yml",
-    ".toml",
-    ".ini",
-    ".cfg",
 }
 
 # Configuration file extensions

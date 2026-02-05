@@ -8,7 +8,11 @@ email: vasilyvz@gmail.com
 import os
 import pytest
 from unittest.mock import patch
-from code_analysis.core.settings_manager import SettingsManager, get_settings, get_setting
+from code_analysis.core.settings_manager import (
+    SettingsManager,
+    get_settings,
+    get_setting,
+)
 
 
 class TestSettingsManagerSingleton:
@@ -39,12 +43,12 @@ class TestSettingsManagerDefaults:
         SettingsManager._cli_overrides = {}
 
     def test_code_file_extensions_default(self):
-        """Test default code file extensions."""
+        """Test default code file extensions (only .py for indexing)."""
         settings = SettingsManager()
         extensions = settings.get("code_file_extensions")
         assert isinstance(extensions, set)
         assert ".py" in extensions
-        assert ".json" in extensions
+        assert len(extensions) >= 1
 
     def test_max_file_lines_default(self):
         """Test default max file lines."""
@@ -117,11 +121,13 @@ class TestSettingsManagerCLIOverrides:
     def test_cli_override_multiple_settings(self):
         """Test CLI override for multiple settings."""
         settings = SettingsManager()
-        settings.set_cli_overrides({
-            "server_port": 16000,
-            "poll_interval": 60,
-            "batch_size": 20,
-        })
+        settings.set_cli_overrides(
+            {
+                "server_port": 16000,
+                "poll_interval": 60,
+                "batch_size": 20,
+            }
+        )
         assert settings.get("server_port") == 16000
         assert settings.get("poll_interval") == 60
         assert settings.get("batch_size") == 20
@@ -171,7 +177,9 @@ class TestSettingsManagerEnvironmentVariables:
 
     def test_env_var_code_file_extensions(self):
         """Test loading code file extensions from environment."""
-        with patch.dict(os.environ, {"CODE_ANALYSIS_CODE_FILE_EXTENSIONS": ".py,.js,.ts"}):
+        with patch.dict(
+            os.environ, {"CODE_ANALYSIS_CODE_FILE_EXTENSIONS": ".py,.js,.ts"}
+        ):
             SettingsManager._instance = None
             SettingsManager._initialized = False
             settings = SettingsManager()
@@ -369,4 +377,3 @@ class TestGetSettingFunction:
         settings.set_cli_overrides({"server_port": 16000})
         value = get_setting("server_port")
         assert value == 16000
-

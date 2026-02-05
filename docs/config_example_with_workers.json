@@ -1,17 +1,10 @@
 {
   "server": {
-    "host": "172.28.0.1",
-    "port": 15000,
-    "protocol": "mtls",
-    "servername": "172.28.0.1",
-    "ssl": {
-      "cert": "/home/vasilyvz/projects/tools/code_analysis/mtls_certificates/mtls_certificates/server/code-analysis-server.crt",
-      "key": "/home/vasilyvz/projects/tools/code_analysis/mtls_certificates/mtls_certificates/server/code-analysis-server.key",
-      "ca": "/home/vasilyvz/projects/tools/code_analysis/mtls_certificates/mtls_certificates/ca/ca.crt",
-      "crl": null,
-      "dnscheck": false,
-      "check_hostname": null
-    },
+    "host": "0.0.0.0",
+    "port": 8080,
+    "protocol": "http",
+    "servername": "localhost",
+    "ssl": null,
     "rules": null,
     "log_dir": "./logs",
     "debug": false,
@@ -24,26 +17,19 @@
     "ssl": null
   },
   "registration": {
-    "enabled": true,
-    "protocol": "mtls",
-    "register_url": "https://172.28.0.2:3004/register",
-    "unregister_url": "https://172.28.0.2:3004/unregister",
+    "enabled": false,
+    "protocol": "http",
+    "register_url": "http://localhost:3005/register",
+    "unregister_url": "http://localhost:3005/unregister",
     "heartbeat_interval": 30,
-    "ssl": {
-      "cert": "/home/vasilyvz/projects/tools/code_analysis/mtls_certificates/mtls_certificates/client/code-analysis.crt",
-      "key": "/home/vasilyvz/projects/tools/code_analysis/mtls_certificates/mtls_certificates/client/code-analysis.key",
-      "ca": "/home/vasilyvz/projects/tools/code_analysis/mtls_certificates/mtls_certificates/ca/ca.crt",
-      "crl": null,
-      "dnscheck": false,
-      "check_hostname": null
-    },
-    "server_id": "code-analysis-server",
-    "server_name": "Code Analysis Server",
-    "instance_uuid": "550e8400-e29b-41d4-a716-446655440000",
+    "ssl": null,
+    "server_id": null,
+    "server_name": null,
+    "instance_uuid": null,
     "auto_on_startup": true,
     "auto_on_shutdown": true,
     "heartbeat": {
-      "url": "https://172.28.0.2:3004/proxy/heartbeat",
+      "url": "http://localhost:3005/proxy/heartbeat",
       "interval": 30
     }
   },
@@ -93,14 +79,14 @@
         }
       }
     },
-    "host": "172.28.0.1",
+    "host": "0.0.0.0",
     "port": 15000,
     "log": "logs/code_analysis.log",
     "faiss_index_path": "data/faiss_index.bin",
     "vector_dim": 384,
     "min_chunk_length": 30,
     "vectorization_retry_attempts": 3,
-    "vectorization_retry_delay": 1,
+    "vectorization_retry_delay": 1.0,
     "indexing_worker": {
       "enabled": true,
       "poll_interval": 30,
@@ -118,7 +104,7 @@
       "poll_interval": 30,
       "batch_size": 5,
       "watch_dirs": [
-        {"id": "550e8400-e29b-41d4-a716-446655440001", "path": "/home/vasilyvz/projects/tools/code_analysis"}
+        {"id": "example-uuid-here", "path": "/absolute/path/to/watch"}
       ],
       "log_path": "logs/vectorization_worker.log"
     },

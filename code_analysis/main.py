@@ -266,13 +266,15 @@ def main() -> None:
                 and getattr(h, "baseFilename", "") == str(daemon_log_file)
                 for h in root_logger.handlers
             ):
+                from code_analysis.logging import (
+                    create_unified_formatter,
+                    install_unified_record_factory,
+                )
+
+                install_unified_record_factory()
                 file_handler = logging.FileHandler(daemon_log_file, encoding="utf-8")
                 file_handler.setLevel(logging.INFO)
-                file_handler.setFormatter(
-                    logging.Formatter(
-                        "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-                    )
-                )
+                file_handler.setFormatter(create_unified_formatter())
                 root_logger.addHandler(file_handler)
                 root_logger.setLevel(logging.INFO)
 
@@ -810,10 +812,10 @@ def main() -> None:
                 return
 
             # Filter out 'database' field - it's not part of ServerConfig model
-            # database.driver config is used separately via get_driver_config() in startup_database_driver()
-            # ServerConfig has extra="forbid", so we must exclude unknown fields
+            # ServerConfig has extra="forbid": only pass keys that exist on the model.
+            _allowed = set(ServerConfig.model_fields.keys())
             server_config_dict = {
-                k: v for k, v in code_analysis_config.items() if k != "database"
+                k: v for k, v in code_analysis_config.items() if k in _allowed
             }
 
             # Check if SVO chunker is configured
@@ -1008,11 +1010,11 @@ def main() -> None:
                 )
                 return
 
-            # Filter out 'database' field - it's not part of ServerConfig model
-            # database.driver config is used separately via get_driver_config() in startup_database_driver()
-            # ServerConfig has extra="forbid", so we must exclude unknown fields
+            # ServerConfig has extra="forbid": only pass keys that exist on the model.
+            # Excludes e.g. "database" (used by driver), not by ServerConfig.
+            _allowed = set(ServerConfig.model_fields.keys())
             server_config_dict = {
-                k: v for k, v in code_analysis_config.items() if k != "database"
+                k: v for k, v in code_analysis_config.items() if k in _allowed
             }
 
             # Check if file watcher is enabled
@@ -1145,17 +1147,20 @@ def main() -> None:
 
     main_logger = logging.getLogger(__name__)
     if not main_logger.handlers:
-        # Configure logging if not already configured
+        # Configure logging if not already configured (unified format with importance)
+        from code_analysis.logging import (
+            create_unified_formatter,
+            install_unified_record_factory,
+        )
+
+        install_unified_record_factory()
         log_dir = Path(app_config.get("server", {}).get("log_dir", "./logs"))
         log_dir.mkdir(parents=True, exist_ok=True)
         log_file = log_dir / "mcp_server.log"
 
         handler = logging.FileHandler(log_file, encoding="utf-8")
         handler.setLevel(logging.INFO)
-        formatter = logging.Formatter(
-            "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-        )
-        handler.setFormatter(formatter)
+        handler.setFormatter(create_unified_formatter())
         main_logger.addHandler(handler)
         main_logger.setLevel(logging.INFO)
 
@@ -1283,10 +1288,25 @@ def main() -> None:
             )
             # Continue anyway - other workers may still work if driver is already running
 
-        # Step 2: Start other workers (vectorization, file_watcher)
+        # Step 2: Start other workers (indexing, vectorization, file_watcher)
         worker_logger.info(
-            "🔍 Starting other workers (vectorization, file_watcher) synchronously"
+            "🔍 Starting other workers (indexing, vectorization, file_watcher) synchronously"
         )
+
+        try:
+            worker_logger.info("🚀 Starting indexing worker...")
+            startup_indexing_worker()
+            worker_logger.info("✅ Indexing worker started successfully")
+        except Exception as e:
+            worker_logger.error(
+                f"❌ Failed to start indexing worker: {e}",
+                exc_info=True,
+            )
+            print(
+                f"❌ Failed to start indexing worker: {e}",
+                flush=True,
+                file=sys.stderr,
+            )
 
         try:
             worker_logger.info("🚀 Starting vectorization worker...")

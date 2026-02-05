@@ -1,6 +1,8 @@
 """
 Unified logging package: format with importance (0-10) for project log output.
 
+Inventory of log write sites (usage): docs/LOG_WRITE_SITES.tsv and docs/LOG_WRITE_SITES.md.
+
 Author: Vasiliy Zdanovskiy
 email: vasilyvz@gmail.com
 """

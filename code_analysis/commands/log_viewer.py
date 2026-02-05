@@ -11,7 +11,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from code_analysis.core.unified_logging import importance_from_level
+from code_analysis.logging import importance_from_level
 
 logger = logging.getLogger(__name__)
 

@@ -5,6 +5,8 @@ email: vasilyvz@gmail.com
 
 Commands for fulltext and structural search: fulltext search, list class methods, find classes.
 
+**Overview of all search types (fulltext, semantic, AST, CST, usages, etc.):** [SEARCH_TYPES.md](../SEARCH_TYPES.md).
+
 ## Commands → File Mapping
 
 | MCP Command Name   | Class                    | Source File                        |

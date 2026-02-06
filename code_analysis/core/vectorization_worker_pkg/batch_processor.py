@@ -11,7 +11,6 @@ email: vasilyvz@gmail.com
 
 from __future__ import annotations
 
-import asyncio
 import json
 import logging
 import time
@@ -44,9 +43,7 @@ async def process_embedding_ready_chunks(
     batch_processed = 0
     batch_errors = 0
     empty_iterations = 0
-    # Get max_empty_iterations and empty_delay from worker config
     max_empty_iterations = getattr(self, "max_empty_iterations", 3)
-    empty_delay = getattr(self, "empty_delay", 5.0)
 
     while not self._stop_event.is_set():
         # Get chunks with embeddings in DB but without vector_id
@@ -84,26 +81,39 @@ async def process_embedding_ready_chunks(
         if not chunks:
             empty_iterations += 1
             if empty_iterations >= max_empty_iterations:
-                # Add delay to prevent busy-wait when no chunks available
-                logger.info(
-                    f"No chunks available after {empty_iterations} iterations, "
-                    f"adding delay of {empty_delay}s to prevent CPU spinning"
+                from ..worker_status_file import (
+                    STATUS_OPERATION_IDLE,
+                    write_worker_status,
                 )
-                # Wait before next check to reduce CPU load
-                delay_seconds = int(empty_delay)
-                for _ in range(delay_seconds):
-                    if self._stop_event.is_set():
-                        break
-                    await asyncio.sleep(1)
+
+                write_worker_status(
+                    getattr(self, "status_file_path", None),
+                    STATUS_OPERATION_IDLE,
+                    current_file=None,
+                    progress_percent=None,
+                )
+                logger.info(
+                    f"No chunks available for this project after {empty_iterations} "
+                    f"iterations; breaking to let cycle try next project (no delay)"
+                )
             else:
                 logger.info(
-                    f"No chunks needing vector_id assignment in this cycle (iteration {empty_iterations}/{max_empty_iterations})"
+                    f"No chunks needing vector_id assignment in this cycle "
+                    f"(iteration {empty_iterations}/{max_empty_iterations})"
                 )
             break
 
         logger.info(
             f"Processing batch of {len(chunks)} chunks that have embeddings but need vector_id"
         )
+
+        # Profiling: accumulate time per phase to diagnose GPU/CPU/DB bottlenecks
+        batch_start_wall = time.time()
+        total_db_read_s = 0.0
+        total_svo_s = 0.0
+        total_faiss_s = 0.0
+        total_db_update_s = 0.0
+        svo_requests_count = 0
 
         for chunk in chunks:
             if self._stop_event.is_set():
@@ -151,6 +161,7 @@ async def process_embedding_ready_chunks(
                 )
                 row = row_data[0] if row_data else None
                 db_check_duration = time.time() - db_check_start
+                total_db_read_s += db_check_duration
                 logger.debug(
                     f"[TIMING] [CHUNK {chunk_id}] DB check took {db_check_duration:.3f}s"
                 )
@@ -203,6 +214,8 @@ async def process_embedding_ready_chunks(
                             embedding_request_duration = (
                                 time.time() - embedding_request_start
                             )
+                            total_svo_s += embedding_request_duration
+                            svo_requests_count += 1
                             logger.debug(
                                 f"[TIMING] [CHUNK {chunk_id}] Chunker service request took {embedding_request_duration:.3f}s"
                             )
@@ -232,7 +245,9 @@ async def process_embedding_ready_chunks(
                                 )
 
                                 # Save to DB only when model is set (vector without model is invalid)
-                                if not (embedding_model and str(embedding_model).strip()):
+                                if not (
+                                    embedding_model and str(embedding_model).strip()
+                                ):
                                     logger.warning(
                                         f"[CHUNK {chunk_id}] Chunker returned embedding without model, "
                                         "skipping save and FAISS (vector not written)"
@@ -254,6 +269,7 @@ async def process_embedding_ready_chunks(
                                     ),
                                 )
                                 save_duration = time.time() - save_start
+                                total_db_update_s += save_duration
                                 logger.debug(
                                     f"[TIMING] [CHUNK {chunk_id}] Saved embedding to DB in {save_duration:.3f}s"
                                 )
@@ -316,6 +332,7 @@ async def process_embedding_ready_chunks(
                 faiss_add_start = time.time()
                 vector_id = self.faiss_manager.add_vector(embedding_array)
                 faiss_add_duration = time.time() - faiss_add_start
+                total_faiss_s += faiss_add_duration
                 logger.debug(
                     f"[TIMING] [CHUNK {chunk_id}] FAISS add_vector took {faiss_add_duration:.3f}s, "
                     f"assigned vector_id={vector_id}"
@@ -328,6 +345,7 @@ async def process_embedding_ready_chunks(
                     (vector_id, embedding_model, chunk_id),
                 )
                 db_update_duration = time.time() - db_update_start
+                total_db_update_s += db_update_duration
                 logger.debug(
                     f"[TIMING] [CHUNK {chunk_id}] Database update_chunk_vector_id took {db_update_duration:.3f}s"
                 )
@@ -353,7 +371,8 @@ async def process_embedding_ready_chunks(
                 batch_errors += 1
                 continue
 
-        # Save FAISS index after batch
+        # Save FAISS index after batch and log profile summary
+        faiss_save_s = 0.0
         if batch_processed > 0:
             faiss_save_start = time.time()
             try:
@@ -362,8 +381,29 @@ async def process_embedding_ready_chunks(
                 )
                 self.faiss_manager.save_index()
                 faiss_save_duration = time.time() - faiss_save_start
+                faiss_save_s = faiss_save_duration
                 logger.debug(
                     f"[TIMING] FAISS index save took {faiss_save_duration:.3f}s"
+                )
+                batch_wall_s = time.time() - batch_start_wall
+                chunks_per_sec = (
+                    batch_processed / batch_wall_s if batch_wall_s > 0 else 0.0
+                )
+                logger.info(
+                    "[PROFILE] batch_size=%s processed=%s errors=%s total_s=%.3f "
+                    "chunks_per_sec=%.2f db_read_s=%.3f svo_s=%.3f svo_requests=%s "
+                    "faiss_s=%.3f db_update_s=%.3f faiss_save_s=%.3f",
+                    len(chunks),
+                    batch_processed,
+                    batch_errors,
+                    batch_wall_s,
+                    chunks_per_sec,
+                    total_db_read_s,
+                    total_svo_s,
+                    svo_requests_count,
+                    total_faiss_s,
+                    total_db_update_s,
+                    faiss_save_s,
                 )
             except Exception as e:
                 logger.error(f"Error saving FAISS index: {e}")

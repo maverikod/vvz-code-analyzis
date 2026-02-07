@@ -6,7 +6,9 @@ email: vasilyvz@gmail.com
 """
 
 import argparse
+import os
 import sys
+import types
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any, AsyncIterator
@@ -296,6 +298,37 @@ def main() -> None:
                 )
 
             threading.excepthook = _daemon_thread_excepthook
+
+            # On SIGSEGV/SIGABRT dump traceback to stderr (which is redirected to log by CLI)
+            try:
+                import faulthandler
+
+                faulthandler.enable()
+            except Exception:
+                pass
+
+            # Log uncaught main-thread exceptions to file so crash cause is visible
+            _original_excepthook = sys.excepthook
+
+            def _daemon_excepthook(
+                exc_type: type[BaseException],
+                exc_value: BaseException,
+                exc_tb: types.TracebackType | None,
+            ) -> None:
+                root_logger.error(
+                    "Uncaught exception in main thread (process will exit): %s",
+                    exc_value,
+                    exc_info=(exc_type, exc_value, exc_tb),
+                )
+                _original_excepthook(exc_type, exc_value, exc_tb)
+
+            sys.excepthook = _daemon_excepthook
+
+            root_logger.info(
+                "Daemon main() entered, pid=%s (logging to %s)",
+                os.getpid(),
+                daemon_log_file,
+            )
         except Exception:
             pass
 
@@ -649,13 +682,21 @@ def main() -> None:
             )
             ensure_storage_dirs(storage)
 
+            # Force driver to use the same absolute DB path as storage (avoids cwd-dependent
+            # resolution: driver process may have different cwd and would open wrong DB otherwise)
+            driver_config_resolved = {
+                "type": driver_config.get("type"),
+                "config": dict(driver_config.get("config", {})),
+            }
+            driver_config_resolved["config"]["path"] = str(storage.db_path.resolve())
+
             # Start database driver using WorkerManager
             logger.info("🚀 Starting database driver...")
             print("🚀 Starting database driver...", flush=True)
 
             worker_manager = get_worker_manager()
             result = worker_manager.start_database_driver(
-                driver_config=driver_config,
+                driver_config=driver_config_resolved,
                 log_path=log_path,
             )
 
@@ -1207,6 +1248,9 @@ def main() -> None:
             None
         """
         try:
+            main_logger.info(
+                "cleanup_workers() invoked (shutdown path); stopping workers"
+            )
             main_logger.info("🛑 Server shutdown: stopping all workers")
             shutdown_cfg = (
                 app_config.get("process_management")
@@ -1244,9 +1288,12 @@ def main() -> None:
         Returns:
             None
         """
-        main_logger.info(f"Received signal {signum}, stopping all workers...")
+        main_logger.info(
+            "Received signal %s, stopping all workers then exiting",
+            signum,
+        )
         cleanup_workers()
-
+        main_logger.info("Signal handler: calling sys.exit(0) after cleanup")
         # If process doesn't exit gracefully, it will be killed by external process manager
         # (e.g., systemd, supervisor, or server_manager_cli with _kill_process_group)
         # This handler ensures workers are stopped before exit
@@ -1363,7 +1410,24 @@ def main() -> None:
         print("❌ Hypercorn engine not available", file=sys.stderr)
         sys.exit(1)
 
-    engine.run_server(app, server_config)
+    main_logger.info(
+        "Starting Hypercorn server on %s:%s (pid=%s)",
+        server_host,
+        server_port,
+        os.getpid(),
+    )
+    try:
+        engine.run_server(app, server_config)
+        main_logger.info("Hypercorn run_server returned (server loop ended normally)")
+    except Exception as e:
+        main_logger.error(
+            "Hypercorn run_server raised: %s",
+            e,
+            exc_info=True,
+        )
+        raise
+    finally:
+        main_logger.info("main() exiting after server loop")
 
 
 if __name__ == "__main__":

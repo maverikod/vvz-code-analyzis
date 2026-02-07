@@ -28,6 +28,7 @@ email: vasilyvz@gmail.com
 ## What was added
 
 - **faulthandler.enable()** in daemon mode (in `main.py`). On SIGSEGV/SIGABRT the interpreter will dump a traceback to stderr. Since the daemon’s stderr is redirected to `mcp_server.log` by `server_manager_cli`, the next segfault/abort should produce a trace in the log.
+- **Main process heartbeat**: a daemon thread logs `Main process heartbeat (pid=...)` every 60 seconds. When the main process dies (crash or kill), the last heartbeat in the log shows the last moment it was alive (within ~60 s).
 
 ## What to do next
 

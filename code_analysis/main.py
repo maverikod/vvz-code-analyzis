@@ -252,6 +252,9 @@ def main() -> None:
         traceback.print_exc()
         sys.exit(1)
 
+    # Optional: stop event for daemon heartbeat thread (set in finally on shutdown)
+    heartbeat_stop = None
+
     # In daemon mode, set up file logging as early as possible so that
     # crash causes and tracebacks are visible in logs (stderr is redirected
     # to the same file by server_manager_cli when spawning).
@@ -323,6 +326,17 @@ def main() -> None:
                 _original_excepthook(exc_type, exc_value, exc_tb)
 
             sys.excepthook = _daemon_excepthook
+
+            # Periodic heartbeat so log shows last moment main process was alive
+            heartbeat_stop = threading.Event()
+
+            def _heartbeat_worker() -> None:
+                log = logging.getLogger(__name__)
+                while not heartbeat_stop.wait(timeout=60.0):
+                    log.info("Main process heartbeat (pid=%s)", os.getpid())
+
+            _hb_thread = threading.Thread(target=_heartbeat_worker, daemon=True)
+            _hb_thread.start()
 
             root_logger.info(
                 "Daemon main() entered, pid=%s (logging to %s)",
@@ -1427,6 +1441,8 @@ def main() -> None:
         )
         raise
     finally:
+        if heartbeat_stop is not None:
+            heartbeat_stop.set()
         main_logger.info("main() exiting after server loop")
 
 

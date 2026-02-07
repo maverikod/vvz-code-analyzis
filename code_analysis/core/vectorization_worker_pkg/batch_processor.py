@@ -14,7 +14,7 @@ from __future__ import annotations
 import json
 import logging
 import time
-from typing import Any, Optional, Tuple
+from typing import Any, List, Optional, Tuple
 
 import numpy as np
 
@@ -115,7 +115,73 @@ async def process_embedding_ready_chunks(
         total_db_update_s = 0.0
         svo_requests_count = 0
 
+        # First pass: load DB row per chunk and collect chunks that need SVO (no embedding in DB)
+        chunk_rows: List[Tuple[Any, Any]] = []
+        need_svo: List[Tuple[int, str, str]] = []
         for chunk in chunks:
+            if self._stop_event.is_set():
+                break
+            chunk_id = chunk["id"]
+            db_check_start = time.time()
+            row_result = database.execute(
+                "SELECT embedding_vector, embedding_model FROM code_chunks WHERE id = ?",
+                (chunk_id,),
+            )
+            row_data = (
+                row_result.get("data", []) if isinstance(row_result, dict) else []
+            )
+            row = row_data[0] if row_data else None
+            total_db_read_s += time.time() - db_check_start
+            chunk_rows.append((chunk, row))
+            if row and row.get("embedding_vector"):
+                continue
+            chunk_text = chunk.get("chunk_text", "")
+            chunk_type = chunk.get("chunk_type", "DocBlock")
+            if chunk_text and self.svo_client_manager:
+                need_svo.append((chunk_id, chunk_text, chunk_type))
+
+        # Batch fetch embeddings from chunker for chunks that need it
+        svo_map: dict = {}
+        if need_svo and self.svo_client_manager:
+            get_batch = getattr(self.svo_client_manager, "get_chunks_batch", None)
+            if callable(get_batch):
+                try:
+                    svo_start = time.time()
+                    texts = [t for (_, t, _) in need_svo]
+                    batch_results = await get_batch(texts, type="DocBlock")
+                    total_svo_s += time.time() - svo_start
+                    svo_requests_count = 1
+                    for k, (cid, _, _) in enumerate(need_svo):
+                        if k < len(batch_results) and batch_results[k]:
+                            first = batch_results[k][0]
+                            emb = getattr(first, "embedding", None)
+                            if emb is None and hasattr(first, "vector"):
+                                emb = first.vector
+                            model = getattr(first, "embedding_model", None)
+                            if emb is not None and model and str(model).strip():
+                                svo_map[cid] = (
+                                    np.array(
+                                        emb.tolist() if hasattr(emb, "tolist") else emb,
+                                        dtype="float32",
+                                    ),
+                                    model,
+                                )
+                                embedding_json = json.dumps(
+                                    emb.tolist() if hasattr(emb, "tolist") else emb
+                                )
+                                database.execute(
+                                    "UPDATE code_chunks SET embedding_vector = ?, embedding_model = ? WHERE id = ?",
+                                    (embedding_json, model, cid),
+                                )
+                except Exception as svo_e:
+                    logger.debug(
+                        "get_chunks_batch failed for batch_processor: %s; "
+                        "will use per-chunk get_chunks in loop",
+                        svo_e,
+                    )
+                    svo_map = {}
+
+        for chunk, row in chunk_rows:
             if self._stop_event.is_set():
                 break
 
@@ -149,28 +215,18 @@ async def process_embedding_ready_chunks(
                 ast_binding = ", ".join(ast_info) if ast_info else "no AST binding"
                 logger.debug(f"[CHUNK {chunk_id}] AST binding: {ast_binding}")
 
-                # Check if chunk has embedding_vector in database
-                db_check_start = time.time()
-                row_result = database.execute(
-                    "SELECT embedding_vector, embedding_model FROM code_chunks WHERE id = ?",
-                    (chunk_id,),
-                )
-                # Extract data from result - execute() returns dict with "data" key containing list
-                row_data = (
-                    row_result.get("data", []) if isinstance(row_result, dict) else []
-                )
-                row = row_data[0] if row_data else None
-                db_check_duration = time.time() - db_check_start
-                total_db_read_s += db_check_duration
-                logger.debug(
-                    f"[TIMING] [CHUNK {chunk_id}] DB check took {db_check_duration:.3f}s"
-                )
-
                 embedding_array: Optional[np.ndarray] = None
                 embedding_model: Optional[str] = None
 
-                if row and row.get("embedding_vector"):  # embedding_vector exists
-                    # Load embedding from database
+                # Use pre-fetched batch result if available
+                if chunk_id in svo_map:
+                    embedding_array, embedding_model = svo_map[chunk_id]
+                    logger.debug(
+                        f"[CHUNK {chunk_id}] Using embedding from get_chunks_batch "
+                        f"(dim={len(embedding_array)}, {ast_binding})"
+                    )
+                elif row and row.get("embedding_vector"):
+                    # Load embedding from database (from first pass)
                     load_start = time.time()
                     try:
                         embedding_list = json.loads(row["embedding_vector"])
@@ -187,7 +243,7 @@ async def process_embedding_ready_chunks(
                             f"({ast_binding}): {e}"
                         )
 
-                # If no embedding in DB, try to get it from chunker service (SVO)
+                # If still no embedding, try per-chunk get_chunks (fallback when batch failed or unavailable)
                 if embedding_array is None and self.svo_client_manager:
                     logger.info(
                         f"Chunk {chunk_id} has no embedding in DB ({ast_binding}), "

@@ -174,52 +174,122 @@ class DocstringChunker:
             )
             embedding_start_time = time.time()
             try:
-                for i, item in enumerate(items):
+                get_batch = getattr(self.svo_client_manager, "get_chunks_batch", None)
+                if callable(get_batch):
                     try:
-                        chunks = await self.svo_client_manager.get_chunks(
-                            text=item.text, type="DocBlock"
-                        )
-                        if chunks and len(chunks) > 0:
-                            chunk_embedding_model = None
-                            for j, ch in enumerate(chunks):
-                                chunk_text = _chunk_text_from_svo(ch)
-                                emb = getattr(ch, "embedding", None)
-                                if emb is None and hasattr(ch, "vector"):
-                                    emb = ch.vector
-                                if chunk_embedding_model is None:
-                                    chunk_embedding_model = getattr(
-                                        ch, "embedding_model", None
+                        texts = [item.text for item in items]
+                        batch_results = await get_batch(texts, type="DocBlock")
+                        for i, item in enumerate(items):
+                            chunks = (
+                                batch_results[i]
+                                if i < len(batch_results) and batch_results[i]
+                                else []
+                            )
+                            if chunks:
+                                chunk_embedding_model = None
+                                for j, ch in enumerate(chunks):
+                                    chunk_text = _chunk_text_from_svo(ch)
+                                    emb = getattr(ch, "embedding", None)
+                                    if emb is None and hasattr(ch, "vector"):
+                                        emb = ch.vector
+                                    if chunk_embedding_model is None:
+                                        chunk_embedding_model = getattr(
+                                            ch, "embedding_model", None
+                                        )
+                                    tc = getattr(ch, "token_count", None)
+                                    if tc is None and chunk_text:
+                                        tc = _token_count_from_text(chunk_text)
+                                    rows_to_persist.append(
+                                        (
+                                            item,
+                                            j,
+                                            chunk_text,
+                                            emb,
+                                            chunk_embedding_model,
+                                            tc,
+                                        )
                                     )
-                                tc = getattr(ch, "token_count", None)
-                                if tc is None and chunk_text:
-                                    tc = _token_count_from_text(chunk_text)
+                                if chunk_embedding_model and not self.embedding_model:
+                                    self.embedding_model = chunk_embedding_model
+                            else:
+                                tc = _token_count_from_text(item.text)
                                 rows_to_persist.append(
                                     (
                                         item,
-                                        j,
-                                        chunk_text,
-                                        emb,
-                                        chunk_embedding_model,
-                                        tc,
+                                        0,
+                                        item.text,
+                                        None,
+                                        None,
+                                        tc if tc else None,
                                     )
                                 )
-                            if chunk_embedding_model and not self.embedding_model:
-                                self.embedding_model = chunk_embedding_model
-                        else:
-                            # Chunker returned [] (text too short) - one row without embedding
+                    except Exception as batch_e:
+                        logger.warning(
+                            f"[FILE {file_id}] get_chunks_batch failed: {batch_e}, "
+                            "falling back to per-item get_chunks"
+                        )
+                        rows_to_persist = []
+                        get_batch = None
+                if not callable(get_batch):
+                    for i, item in enumerate(items):
+                        try:
+                            chunks = await self.svo_client_manager.get_chunks(
+                                text=item.text, type="DocBlock"
+                            )
+                            if chunks and len(chunks) > 0:
+                                chunk_embedding_model = None
+                                for j, ch in enumerate(chunks):
+                                    chunk_text = _chunk_text_from_svo(ch)
+                                    emb = getattr(ch, "embedding", None)
+                                    if emb is None and hasattr(ch, "vector"):
+                                        emb = ch.vector
+                                    if chunk_embedding_model is None:
+                                        chunk_embedding_model = getattr(
+                                            ch, "embedding_model", None
+                                        )
+                                    tc = getattr(ch, "token_count", None)
+                                    if tc is None and chunk_text:
+                                        tc = _token_count_from_text(chunk_text)
+                                    rows_to_persist.append(
+                                        (
+                                            item,
+                                            j,
+                                            chunk_text,
+                                            emb,
+                                            chunk_embedding_model,
+                                            tc,
+                                        )
+                                    )
+                                if chunk_embedding_model and not self.embedding_model:
+                                    self.embedding_model = chunk_embedding_model
+                            else:
+                                tc = _token_count_from_text(item.text)
+                                rows_to_persist.append(
+                                    (
+                                        item,
+                                        0,
+                                        item.text,
+                                        None,
+                                        None,
+                                        tc if tc else None,
+                                    )
+                                )
+                        except Exception as e:
+                            logger.warning(
+                                f"[FILE {file_id}] [DOCSTRING {i+1}/{len(items)}] Failed to get chunks: {e} "
+                                "(persisting one row without embedding)"
+                            )
                             tc = _token_count_from_text(item.text)
                             rows_to_persist.append(
-                                (item, 0, item.text, None, None, tc if tc else None)
+                                (
+                                    item,
+                                    0,
+                                    item.text,
+                                    None,
+                                    None,
+                                    tc if tc else None,
+                                )
                             )
-                    except Exception as e:
-                        logger.warning(
-                            f"[FILE {file_id}] [DOCSTRING {i+1}/{len(items)}] Failed to get chunks: {e} "
-                            "(persisting one row without embedding)"
-                        )
-                        tc = _token_count_from_text(item.text)
-                        rows_to_persist.append(
-                            (item, 0, item.text, None, None, tc if tc else None)
-                        )
             except Exception as e:
                 logger.warning(
                     f"[FILE {file_id}] Chunker failed: {e}; persisting docstrings without embeddings"

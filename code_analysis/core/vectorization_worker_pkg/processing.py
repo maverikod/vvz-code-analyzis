@@ -16,6 +16,12 @@ import time
 import uuid
 from typing import Any, Dict
 
+from ..worker_status_file import (
+    STATUS_OPERATION_IDLE,
+    STATUS_OPERATION_POLLING,
+    STATUS_OPERATION_VECTORIZING,
+    write_worker_status,
+)
 from .batch_processor import process_embedding_ready_chunks
 
 logger = logging.getLogger(__name__)
@@ -150,6 +156,11 @@ async def process_chunks(self, poll_interval: int = 30) -> Dict[str, Any]:
                     continue
 
             # Database is available, proceed with cycle
+            write_worker_status(
+                getattr(self, "status_file_path", None),
+                STATUS_OPERATION_POLLING,
+                current_file=None,
+            )
             logger.info(f"[CYCLE #{cycle_count}] Starting vectorization cycle")
 
             # Start worker statistics cycle
@@ -433,7 +444,7 @@ async def process_chunks(self, poll_interval: int = 30) -> Dict[str, Any]:
                                                   ))
                                                 LIMIT ?
                                                 """,
-                                                (project_id, 5),
+                                                (project_id, 30),
                                             )
                                             # Extract data from result - execute() returns dict with "data" key
                                             files_to_chunk = (
@@ -478,6 +489,21 @@ async def process_chunks(self, poll_interval: int = 30) -> Dict[str, Any]:
 
                             try:
                                 batch_start_time = time.time()
+                                write_worker_status(
+                                    getattr(self, "status_file_path", None),
+                                    STATUS_OPERATION_VECTORIZING,
+                                    current_file=None,
+                                    progress_percent=(
+                                        round(
+                                            (total_processed + total_errors)
+                                            / chunks_total_at_start
+                                            * 100,
+                                            1,
+                                        )
+                                        if chunks_total_at_start
+                                        else None
+                                    ),
+                                )
                                 batch_processed, batch_errors = (
                                     await process_embedding_ready_chunks(self, database)
                                 )
@@ -485,6 +511,21 @@ async def process_chunks(self, poll_interval: int = 30) -> Dict[str, Any]:
 
                                 total_processed += batch_processed
                                 total_errors += batch_errors
+                                write_worker_status(
+                                    getattr(self, "status_file_path", None),
+                                    STATUS_OPERATION_VECTORIZING,
+                                    current_file=None,
+                                    progress_percent=(
+                                        round(
+                                            (total_processed + total_errors)
+                                            / chunks_total_at_start
+                                            * 100,
+                                            1,
+                                        )
+                                        if chunks_total_at_start
+                                        else None
+                                    ),
+                                )
 
                                 if batch_processed > 0:
                                     cycle_activity = True
@@ -617,20 +658,26 @@ async def process_chunks(self, poll_interval: int = 30) -> Dict[str, Any]:
                     f"[CYCLE #{cycle_count}] No activity in {cycle_duration:.3f}s"
                 )
 
-            # Wait for next cycle (with early exit check)
-            # Increase poll interval if services are unavailable (circuit breaker)
+            write_worker_status(
+                getattr(self, "status_file_path", None),
+                STATUS_OPERATION_IDLE,
+                current_file=None,
+            )
+            # Wait for next cycle (with early exit check).
+            # If we did work this cycle, sleep briefly (2s) then re-check; else full poll_interval.
             actual_poll_interval = poll_interval
             if self.svo_client_manager:
                 circuit_state = self.svo_client_manager.get_circuit_state()
                 if circuit_state == "open":
                     backoff_delay = self.svo_client_manager.get_backoff_delay()
-                    # Use backoff delay if it's longer than poll_interval
                     if backoff_delay > poll_interval:
                         actual_poll_interval = int(backoff_delay)
                         logger.debug(
                             f"Circuit breaker is OPEN, increasing poll interval "
                             f"to {actual_poll_interval}s (backoff: {backoff_delay:.1f}s)"
                         )
+            if cycle_activity:
+                actual_poll_interval = min(actual_poll_interval, 2)
 
             if not self._stop_event.is_set():
                 logger.debug(f"Waiting {actual_poll_interval}s before next cycle...")

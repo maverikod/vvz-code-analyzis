@@ -654,6 +654,13 @@ class UpdateIndexesMCPCommand(BaseMCPCommand):
                             python_files.append(Path(walk_root) / file)
 
                 files_total = len(python_files)
+                # Log update_indexes start for correlation with status snapshots (see docs/WORKER_AND_DB_STATUS_ANALYSIS.md)
+                logger.info(
+                    "[update_indexes START] project_id=%s files_total=%s root_path=%s",
+                    project_id,
+                    files_total,
+                    str(root_path),
+                )
                 if progress_tracker:
                     progress_tracker.set_description(
                         f"Processing {files_total} Python file(s) for indexing..."
@@ -760,6 +767,15 @@ class UpdateIndexesMCPCommand(BaseMCPCommand):
                     progress_tracker.set_progress(100)
                     progress_tracker.set_description("Indexing completed")
                     progress_tracker.set_status("completed")
+
+                # Log update_indexes end for correlation with status snapshots
+                logger.info(
+                    "[update_indexes END] project_id=%s files_processed=%s files_total=%s errors=%s",
+                    project_id,
+                    successful,
+                    total,
+                    errors,
+                )
 
                 data: Dict[str, Any] = {
                     "project_id": project_id,

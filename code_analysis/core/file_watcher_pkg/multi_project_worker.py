@@ -62,6 +62,7 @@ class MultiProjectFileWatcherWorker:
         scan_interval: int = 60,
         version_dir: Optional[str] = None,
         ignore_patterns: Optional[List[str]] = None,
+        status_file_path: Optional[Path] = None,
     ) -> None:
         """
         Initialize multi-project file watcher.
@@ -73,6 +74,7 @@ class MultiProjectFileWatcherWorker:
             scan_interval: Delay between cycles in seconds.
             version_dir: Version directory for deleted files (optional).
             ignore_patterns: Glob patterns to ignore (optional).
+            status_file_path: Optional path to write current_operation/current_file for monitoring.
         """
         self.db_path = db_path
         self.watch_dirs = list(watch_dirs)
@@ -80,6 +82,7 @@ class MultiProjectFileWatcherWorker:
         self.locks_dir = Path(locks_dir).resolve()
         self.version_dir = version_dir
         self.ignore_patterns = ignore_patterns or []
+        self.status_file_path = Path(status_file_path) if status_file_path else None
 
         self._stop_event = multiprocessing.Event()
         self._pid = os.getpid()
@@ -343,6 +346,17 @@ class MultiProjectFileWatcherWorker:
         """
         import time
 
+        from ..worker_status_file import (
+            STATUS_OPERATION_IDLE,
+            STATUS_OPERATION_SCANNING,
+            write_worker_status,
+        )
+
+        write_worker_status(
+            getattr(self, "status_file_path", None),
+            STATUS_OPERATION_SCANNING,
+            current_file=None,
+        )
         # Count total files on disk before starting cycle
         logger.info("Counting total files on disk across all projects...")
         files_total_on_disk = self._count_files_on_disk()
@@ -390,11 +404,18 @@ class MultiProjectFileWatcherWorker:
         )
 
         total_processing_time = 0.0
+        progress_done = 0.0
 
         for spec in self.watch_dirs:
             if self._stop_event.is_set():
                 break
 
+            write_worker_status(
+                getattr(self, "status_file_path", None),
+                STATUS_OPERATION_SCANNING,
+                current_file=str(spec.watch_dir),
+                progress_percent=round(progress_done, 1) if progress_done else 0,
+            )
             watch_dir_start = time.time()
             watch_dir_stats = self._scan_watch_dir(spec, processor, database)
             watch_dir_duration = time.time() - watch_dir_start
@@ -405,6 +426,13 @@ class MultiProjectFileWatcherWorker:
             cycle_stats["changed_files"] += watch_dir_stats.get("changed_files", 0)
             cycle_stats["deleted_files"] += watch_dir_stats.get("deleted_files", 0)
             cycle_stats["errors"] += watch_dir_stats.get("errors", 0)
+            if files_total_on_disk:
+                processed = (
+                    cycle_stats["new_files"]
+                    + cycle_stats["changed_files"]
+                    + cycle_stats["deleted_files"]
+                )
+                progress_done = min(100.0, (processed / files_total_on_disk) * 100.0)
 
             # Update statistics after each watch_dir
             database.execute(
@@ -443,7 +471,12 @@ class MultiProjectFileWatcherWorker:
             """,
             (time.time(), cycle_id),
         )
-
+        write_worker_status(
+            getattr(self, "status_file_path", None),
+            STATUS_OPERATION_IDLE,
+            current_file=None,
+            progress_percent=100.0 if files_total_on_disk else None,
+        )
         return cycle_stats
 
     def _scan_watch_dir(
@@ -746,13 +779,18 @@ class MultiProjectFileWatcherWorker:
             total_new = sum(len(d.new_files) for d in delta.values())
             total_changed = sum(len(d.changed_files) for d in delta.values())
             total_deleted = sum(len(d.deleted_files) for d in delta.values())
+            per_project = " | ".join(
+                f"{pid} new={len(d.new_files)} changed={len(d.changed_files)} deleted={len(d.deleted_files)}"
+                for pid, d in sorted(delta.items())
+            )
             logger.info(
                 f"[SCAN END] Watch directory: {watch_dir} | "
                 f"time: {scan_end.strftime('%Y-%m-%d %H:%M:%S')} | "
                 f"duration: {scan_duration:.2f}s | "
                 f"files_scanned: {len(scanned_files)} | "
                 f"projects: {len(delta)} | "
-                f"delta: new={total_new}, changed={total_changed}, deleted={total_deleted}"
+                f"delta: new={total_new}, changed={total_changed}, deleted={total_deleted} | "
+                f"per_project: {per_project}"
             )
 
             # Queue phase - batch DB operations

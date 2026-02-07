@@ -21,6 +21,37 @@ from .scanner import find_missing_files
 
 logger = logging.getLogger(__name__)
 
+# Julian day for 1970-01-01 00:00:00 UTC (used to normalize last_modified to Unix)
+_JD_UNIX_EPOCH = 2440587.5
+
+
+def _last_modified_to_unix(value: Any) -> Optional[float]:
+    """Normalize last_modified from DB to Unix timestamp for comparison with os.stat().st_mtime.
+
+    files.last_modified is stored as Unix timestamp by the file watcher; other code paths
+    may expose it as datetime (DatabaseClient parses with Julian convention) or raw float.
+    This ensures the file watcher always compares like-with-like and avoids mass false
+    'changed' detection (see docs/WORKER_AND_DB_STATUS_ANALYSIS.md).
+
+    Args:
+        value: last_modified from DB: None, datetime, or float (Unix or Julian).
+
+    Returns:
+        Unix timestamp (seconds since 1970-01-01 UTC) or None.
+    """
+    if value is None:
+        return None
+    if hasattr(value, "timestamp"):
+        return value.timestamp()
+    try:
+        v = float(value)
+        if v >= 1e9:
+            return v
+        # Value looks like Julian day: convert to Unix
+        return (v - _JD_UNIX_EPOCH) * 86400.0
+    except (TypeError, ValueError):
+        return None
+
 
 @dataclass
 class FileDelta:
@@ -118,15 +149,24 @@ class FileChangeProcessor:
                 db_files_list = self.database.get_project_files(
                     project_id, include_deleted=False
                 )
-                # Convert File objects to dict format
-                db_files = [
-                    {
-                        "id": f.id,
-                        "path": f.path,
-                        "last_modified": f.last_modified,
-                    }
-                    for f in db_files_list
-                ]
+                # Convert to dict and normalize last_modified to Unix for comparison with scan mtime
+                db_files = []
+                for f in db_files_list:
+                    if isinstance(f, dict):
+                        fid, path, lm = (
+                            f.get("id"),
+                            f.get("path"),
+                            f.get("last_modified"),
+                        )
+                    else:
+                        fid, path, lm = f.id, f.path, getattr(f, "last_modified", None)
+                    db_files.append(
+                        {
+                            "id": fid,
+                            "path": path,
+                            "last_modified": _last_modified_to_unix(lm),
+                        }
+                    )
 
                 # Create mapping of path -> file record
                 db_files_map = {f["path"]: f for f in db_files}
@@ -144,10 +184,8 @@ class FileChangeProcessor:
                             # New file
                             new_files.append((file_path_str, mtime, size))
                         else:
-                            # Existing file - check if changed
+                            # Existing file - check if changed (last_modified already Unix from _last_modified_to_unix)
                             db_mtime = db_file.get("last_modified")
-                            if db_mtime is not None and hasattr(db_mtime, "timestamp"):
-                                db_mtime = db_mtime.timestamp()
                             if db_mtime is None or abs(mtime - float(db_mtime)) > 0.1:
                                 # File changed (tolerance 0.1 seconds for filesystem precision)
                                 changed_files.append((file_path_str, mtime, size))

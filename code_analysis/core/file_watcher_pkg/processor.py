@@ -145,21 +145,26 @@ class FileChangeProcessor:
             changed_files: List[tuple[str, float, int]] = []
 
             try:
-                # Get files from database for this project (read-only)
-                db_files_list = self.database.get_project_files(
-                    project_id, include_deleted=False
-                )
-                # Convert to dict and normalize last_modified to Unix for comparison with scan mtime
+                # Get files from database for this project (read-only).
+                # Prefer raw rows so last_modified stays Unix; get_project_files() parses as Julian
+                # and causes mass false 'changed' (see docs/WORKER_AND_DB_STATUS_ANALYSIS.md).
+                get_raw = getattr(self.database, "get_project_file_rows", None)
+                if get_raw is not None:
+                    db_files_list = get_raw(project_id, include_deleted=False)
+                else:
+                    db_files_list = self.database.get_project_files(
+                        project_id, include_deleted=False
+                    )
+                # Build dict list and normalize last_modified to Unix for comparison with scan mtime
                 db_files = []
                 for f in db_files_list:
                     if isinstance(f, dict):
-                        fid, path, lm = (
-                            f.get("id"),
-                            f.get("path"),
-                            f.get("last_modified"),
-                        )
+                        fid = f.get("id")
+                        path = f.get("path")
+                        lm = f.get("last_modified")
                     else:
-                        fid, path, lm = f.id, f.path, getattr(f, "last_modified", None)
+                        fid, path = f.id, f.path
+                        lm = getattr(f, "last_modified", None)
                     db_files.append(
                         {
                             "id": fid,
@@ -197,6 +202,18 @@ class FileChangeProcessor:
 
                 # Find missing files (in DB but not on disk)
                 deleted_files = list(find_missing_files(project_files, db_files))
+
+                # Debug: log one sample of changed files to verify mtime comparison (e.g. after raw last_modified fix)
+                if changed_files and logger.isEnabledFor(logging.DEBUG):
+                    fp, disk_mt, _ = changed_files[0]
+                    db_rec = db_files_map.get(fp)
+                    db_mt = db_rec.get("last_modified") if db_rec else None
+                    logger.debug(
+                        "[compute_delta] sample changed: path=%s db_mtime=%s disk_mtime=%s",
+                        fp[-80:] if len(fp) > 80 else fp,
+                        db_mt,
+                        disk_mt,
+                    )
 
                 deltas[project_id] = FileDelta(
                     new_files=new_files,

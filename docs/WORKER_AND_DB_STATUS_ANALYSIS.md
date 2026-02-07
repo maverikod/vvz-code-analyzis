@@ -62,14 +62,50 @@ The file watcher treats a file as "changed" when:
 
 So the dominant effect is in vast_srv: many files moved from "indexed" to "needing_indexing" and chunks decreased; at the same time the watcher added 72 new files.
 
+## Root cause (determined)
+
+The only code path that **both** sets `needs_chunking=1` for many files **and** deletes their chunks is **`mark_file_needs_chunking`**. It is called in bulk only from:
+
+1. **`UpdateIndexesMCPCommand.execute`** (update_indexes) — after each file it processes: `database.mark_file_needs_chunking(rel_path, project_id)`. So a run over N files causes N files to get the flag and have their chunks deleted.
+2. **File watcher auto-indexing** — when the file watcher **creates a new project** (no row in `projects` for that `project_id` and no row for that `root_path`), it runs **update_indexes** in a background thread for that project (`multi_project_worker.py` ~691–740). So all Python files in the newly created project are processed by update_indexes → each gets `mark_file_needs_chunking` → chunks deleted, needs_chunking=1.
+
+The file watcher **does not** call `mark_file_needs_chunking`; it only does `UPDATE files SET needs_chunking = 1` (no chunk deletion). So mass chunk deletion can only come from update_indexes (manual or auto).
+
+**Conclusion:** The drop (indexed −875, chunks −120) was caused by **update_indexes** running over a large set of files — either:
+- **Explicit:** A user or script called the `update_indexes` command (e.g. via MCP) for vast_srv, or
+- **Automatic:** The file watcher treated vast_srv as a **newly created project** (e.g. project row was missing after DB restore, or first scan with empty `projects` table, or path mismatch so lookup by `root_path` failed) and started auto-indexing, which runs full update_indexes for that project.
+
+To confirm in logs: search for:
+- `[update_indexes START]` and `[update_indexes END]` — include `trigger=manual` or `trigger=auto_indexing`
+- `[AUTO_INDEXING]` — logged when file watcher starts update_indexes for a newly created project (before background thread)
+- `Auto-created project` and `[AUTO_INDEXING] Started background thread` — same event
+
 ## Conclusions
 
-1. **Most plausible explanation for the 5-minute drop:** A bulk operation (e.g. **update_indexes** over vast_srv or a large subset) marked many files with `needs_chunking=1` and deleted their chunks. That would explain both −875 indexed and −120 chunks (and the increase in needing_indexing).
-2. **Alternative:** A bug or misconfiguration (e.g. **last_modified** format mismatch) could cause the file watcher to treat many existing files as "changed" and set needs_chunking=1 for them (chunks would only drop if something also deletes chunks; the watcher itself only sets the flag, but if indexing or another path then runs and deletes chunks before re-chunking, the net effect would be similar).
+1. **Cause of the 5-minute drop:** update_indexes (manual or via file watcher auto-indexing for a “new” project) ran over many files; each call to `mark_file_needs_chunking` set needs_chunking=1 and deleted that file’s chunks.
+2. **last_modified mismatch:** Would only cause the file watcher to set needs_chunking=1 for many files; it does not delete chunks. Normalization to Unix was still implemented to avoid mass false “changed” and to keep semantics correct.
 3. **Recommendations (implemented):**
    - **update_indexes logging:** Start and end of `update_indexes` are logged with `[update_indexes START]` / `[update_indexes END]` (project_id, files_total / files_processed, errors). See `code_mapper_mcp_command.py`.
    - **last_modified as Unix:** In the file watcher path, `last_modified` is normalized to Unix in `processor.py` via `_last_modified_to_unix()`. This handles DB values stored as Unix, or exposed as datetime/Julian from the client, so comparison with scan mtime is correct and mass false "changed" is avoided.
    - **Per-project scan counts:** Each scan logs `per_project: project_id new=N changed=M deleted=K | ...` in `[SCAN END]` so mass re-marking per project is visible. See `multi_project_worker.py`.
+
+## Why files are classified as "new" vs "changed"
+
+In `processor.compute_delta`, for each file from the scan:
+
+- **New:** `db_files_map.get(file_path_str)` is `None` — the path from the scanner is **not present** in the DB. So the file is treated as newly added on disk.
+- **Changed:** The path **is** in `db_files_map`, but `db_mtime is None` or `abs(disk_mtime - db_mtime) > 0.1`. So the file is considered modified.
+
+**Path format must match.** The scanner uses `path_key = normalized.absolute_path` (absolute resolved string from `normalize_file_path`). The DB stores `files.path` as absolute path (see `database/files.py` add_file). So both use the same convention. If they ever differed (e.g. relative in DB, absolute in scan, or different resolution of symlinks), existing files would not be found in `db_files_map` and would be classified as **new** (high "new" count, zero "changed" for those).
+
+**Observed case (vast_srv):** Logs showed `new=0 changed=490` — paths matched, but almost all files were "changed" because `last_modified` from the client was interpreted as Julian day instead of Unix timestamp, so `abs(mtime - db_mtime) > 0.1` for every file. Fix: use `get_project_file_rows()` (raw `last_modified`) in the file watcher so comparison is Unix vs Unix; `_last_modified_to_unix()` remains as fallback when raw rows are not available.
+
+**Summary:**
+
+| Classification | Condition | Typical cause if mass |
+|----------------|-----------|------------------------|
+| **new**        | Path not in DB | Path format mismatch (scanner path ≠ DB path), or file really new. |
+| **changed**    | Path in DB, mtime diff > 0.1s | `last_modified` scale mismatch (e.g. Julian vs Unix), or file really modified. |
 
 ## References
 

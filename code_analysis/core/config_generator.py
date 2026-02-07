@@ -56,6 +56,20 @@ class CodeAnalysisConfigGenerator(SimpleConfigGenerator):
         code_analysis_db_path: Optional[str] = None,
         code_analysis_driver_type: Optional[str] = None,
         code_analysis_driver_path: Optional[str] = None,
+        code_analysis_log: Optional[str] = None,
+        code_analysis_faiss_index_path: Optional[str] = None,
+        code_analysis_vector_dim: Optional[int] = None,
+        code_analysis_min_chunk_length: Optional[int] = None,
+        code_analysis_retry_attempts: Optional[int] = None,
+        code_analysis_retry_delay: Optional[float] = None,
+        indexing_worker_enabled: Optional[bool] = None,
+        indexing_worker_poll_interval: Optional[int] = None,
+        indexing_worker_batch_size: Optional[int] = None,
+        indexing_worker_log_path: Optional[str] = None,
+        file_watcher_enabled: Optional[bool] = None,
+        file_watcher_scan_interval: Optional[int] = None,
+        file_watcher_log_path: Optional[str] = None,
+        file_watcher_version_dir: Optional[str] = None,
     ) -> str:
         """
         Generate configuration file for code-analysis-server.
@@ -90,6 +104,20 @@ class CodeAnalysisConfigGenerator(SimpleConfigGenerator):
             code_analysis_db_path: Database path for code_analysis section
             code_analysis_driver_type: Driver type (sqlite, sqlite_proxy, etc.)
             code_analysis_driver_path: Driver database path
+            code_analysis_log: Code analysis log file path
+            code_analysis_faiss_index_path: FAISS index file path
+            code_analysis_vector_dim: Vector dimension for embeddings
+            code_analysis_min_chunk_length: Minimum chunk length
+            code_analysis_retry_attempts: Vectorization retry attempts
+            code_analysis_retry_delay: Vectorization retry delay (seconds)
+            indexing_worker_enabled: Enable indexing worker
+            indexing_worker_poll_interval: Indexing worker poll interval
+            indexing_worker_batch_size: Indexing worker batch size
+            indexing_worker_log_path: Indexing worker log path
+            file_watcher_enabled: Enable file watcher
+            file_watcher_scan_interval: File watcher scan interval (seconds)
+            file_watcher_log_path: File watcher log path
+            file_watcher_version_dir: File watcher version directory
 
         Returns:
             Path to generated configuration file
@@ -153,28 +181,94 @@ class CodeAnalysisConfigGenerator(SimpleConfigGenerator):
                 "poll_interval": 0.01,
             }
 
-        # Add default code_analysis settings if not present
-        if "host" not in config["code_analysis"]:
-            config["code_analysis"]["host"] = server_host or "0.0.0.0"
-        if "port" not in config["code_analysis"]:
-            config["code_analysis"]["port"] = server_port or 15000
-        if "log" not in config["code_analysis"]:
-            config["code_analysis"]["log"] = "logs/code_analysis.log"
-        if "faiss_index_path" not in config["code_analysis"]:
-            config["code_analysis"]["faiss_index_path"] = "data/faiss_index.bin"
-        if "vector_dim" not in config["code_analysis"]:
-            config["code_analysis"]["vector_dim"] = 384
-        if "min_chunk_length" not in config["code_analysis"]:
-            config["code_analysis"]["min_chunk_length"] = 30
+        # Apply code_analysis settings from args or defaults (only what is used in code)
+        ca = config["code_analysis"]
+        ca["host"] = (
+            server_host if server_host is not None else ca.get("host", "0.0.0.0")
+        )
+        ca["port"] = server_port if server_port is not None else ca.get("port", 15000)
+        ca["log"] = (
+            code_analysis_log
+            if code_analysis_log is not None
+            else ca.get("log", "logs/code_analysis.log")
+        )
+        ca["faiss_index_path"] = (
+            code_analysis_faiss_index_path
+            if code_analysis_faiss_index_path is not None
+            else ca.get("faiss_index_path", "data/faiss_index.bin")
+        )
+        ca["vector_dim"] = (
+            code_analysis_vector_dim
+            if code_analysis_vector_dim is not None
+            else ca.get("vector_dim", 384)
+        )
+        ca["min_chunk_length"] = (
+            code_analysis_min_chunk_length
+            if code_analysis_min_chunk_length is not None
+            else ca.get("min_chunk_length", 30)
+        )
+        if code_analysis_retry_attempts is not None:
+            ca["vectorization_retry_attempts"] = code_analysis_retry_attempts
+        elif "vectorization_retry_attempts" not in ca:
+            ca["vectorization_retry_attempts"] = 3
+        if code_analysis_retry_delay is not None:
+            ca["vectorization_retry_delay"] = code_analysis_retry_delay
+        elif "vectorization_retry_delay" not in ca:
+            ca["vectorization_retry_delay"] = 1.0
 
-        # Indexing worker (auto-start at server startup)
-        if "indexing_worker" not in config["code_analysis"]:
-            config["code_analysis"]["indexing_worker"] = {
-                "enabled": True,
-                "poll_interval": 30,
-                "batch_size": 5,
-                "log_path": "logs/indexing_worker.log",
-            }
+        # Indexing worker (from args or default)
+        if "indexing_worker" not in ca:
+            ca["indexing_worker"] = {}
+        iw = ca["indexing_worker"]
+        if indexing_worker_enabled is not None:
+            iw["enabled"] = indexing_worker_enabled
+        else:
+            iw.setdefault("enabled", True)
+        if indexing_worker_poll_interval is not None:
+            iw["poll_interval"] = indexing_worker_poll_interval
+        else:
+            iw.setdefault("poll_interval", 30)
+        if indexing_worker_batch_size is not None:
+            iw["batch_size"] = indexing_worker_batch_size
+        else:
+            iw.setdefault("batch_size", 5)
+        if indexing_worker_log_path is not None:
+            iw["log_path"] = indexing_worker_log_path
+        else:
+            iw.setdefault("log_path", "logs/indexing_worker.log")
+
+        # File watcher (from args or default block)
+        if (
+            file_watcher_enabled is not None
+            or file_watcher_scan_interval is not None
+            or file_watcher_log_path is not None
+            or file_watcher_version_dir is not None
+        ):
+            if "file_watcher" not in ca:
+                ca["file_watcher"] = {
+                    "enabled": True,
+                    "scan_interval": 60,
+                    "log_path": "logs/file_watcher.log",
+                    "version_dir": "data/versions",
+                }
+            fw = ca["file_watcher"]
+            if file_watcher_enabled is not None:
+                fw["enabled"] = file_watcher_enabled
+            if file_watcher_scan_interval is not None:
+                fw["scan_interval"] = file_watcher_scan_interval
+            if file_watcher_log_path is not None:
+                fw["log_path"] = file_watcher_log_path
+            if file_watcher_version_dir is not None:
+                fw["version_dir"] = file_watcher_version_dir
+        else:
+            # Ensure minimal file_watcher block so server can start (optional)
+            if "file_watcher" not in ca:
+                ca["file_watcher"] = {
+                    "enabled": True,
+                    "scan_interval": 60,
+                    "log_path": "logs/file_watcher.log",
+                    "version_dir": "data/versions",
+                }
 
         # Save updated config
         with open(base_config_path, "w", encoding="utf-8") as f:

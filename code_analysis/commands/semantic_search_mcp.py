@@ -6,7 +6,6 @@ email: vasilyvz@gmail.com
 """
 
 import logging
-from pathlib import Path
 from typing import Any, Dict, Optional
 
 from mcp_proxy_adapter.commands.result import SuccessResult, ErrorResult
@@ -63,9 +62,9 @@ class SemanticSearchMCPCommand(BaseMCPCommand):
                     "type": "string",
                     "description": "Search query text",
                 },
-                "k": {
+                "limit": {
                     "type": "integer",
-                    "description": "Number of results to return (1-100)",
+                    "description": "Maximum number of results to return (1-100). Same as fulltext_search/search_ast_nodes.",
                 },
                 "min_score": {
                     "type": "number",
@@ -80,7 +79,7 @@ class SemanticSearchMCPCommand(BaseMCPCommand):
         self: "SemanticSearchMCPCommand",
         project_id: str,
         query: str,
-        k: int = 10,
+        limit: int = 10,
         min_score: Optional[float] = None,
         **kwargs,
     ) -> SuccessResult | ErrorResult:
@@ -90,14 +89,14 @@ class SemanticSearchMCPCommand(BaseMCPCommand):
             self: Command instance.
             project_id: Project UUID (from create_project or list_projects).
             query: Search query text.
-            k: Number of results to return.
+            limit: Maximum number of results to return (same semantics as fulltext_search limit).
             min_score: Optional minimum similarity score threshold.
 
         Returns:
             SuccessResult with search results or ErrorResult on failure.
         """
         try:
-            root_path = self._resolve_project_root(project_id)
+            self._resolve_project_root(project_id)
             database = self._open_database_from_config(auto_analyze=False)
             try:
                 import json
@@ -213,7 +212,7 @@ class SemanticSearchMCPCommand(BaseMCPCommand):
                 finally:
                     await svo_client_manager.close()
 
-                distances, vector_ids = faiss_manager.search(query_vec, k=int(k))
+                distances, vector_ids = faiss_manager.search(query_vec, k=int(limit))
 
                 ids: list[int] = (
                     [int(i) for i in vector_ids.tolist()]
@@ -282,7 +281,7 @@ class SemanticSearchMCPCommand(BaseMCPCommand):
                 return SuccessResult(
                     data={
                         "query": query,
-                        "k": int(k),
+                        "limit": int(limit),
                         "min_score": min_score,
                         "index_path": str(index_path),
                         "project_id": project_id,
@@ -332,7 +331,7 @@ class SemanticSearchMCPCommand(BaseMCPCommand):
                 "6. Loads FAISS index using FaissIndexManager\n"
                 "7. Gets query embedding from embedding service (SVOClientManager)\n"
                 "8. Normalizes embedding vector\n"
-                "9. Searches FAISS index for k nearest neighbors\n"
+                "9. Searches FAISS index for limit nearest neighbors\n"
                 "10. Filters results by min_score (if provided)\n"
                 "11. Returns similar code chunks with similarity scores\n\n"
                 "Semantic Search:\n"
@@ -345,7 +344,7 @@ class SemanticSearchMCPCommand(BaseMCPCommand):
                 "- One index per project: {faiss_dir}/{project_id}.bin\n"
                 "- Must be built with update_indexes first\n"
                 "- Uses cosine similarity (normalized vectors)\n"
-                "- Supports k-nearest neighbor search\n\n"
+                "- Returns up to limit nearest neighbors\n\n"
                 "Important notes:\n"
                 "- Requires embedding service to be available\n"
                 "- Requires FAISS index (run update_indexes first)\n"
@@ -375,10 +374,10 @@ class SemanticSearchMCPCommand(BaseMCPCommand):
                         "authentication logic",
                     ],
                 },
-                "k": {
+                "limit": {
                     "description": (
-                        "Number of results to return. Range: 1-100. Default is 10. "
-                        "Returns k nearest neighbors from FAISS index."
+                        "Maximum number of results to return. Range: 1-100. Default is 10. "
+                        "Same parameter name as fulltext_search and search_ast_nodes."
                     ),
                     "type": "integer",
                     "required": False,
@@ -412,7 +411,7 @@ class SemanticSearchMCPCommand(BaseMCPCommand):
                     "command": {
                         "root_dir": "/home/user/projects/my_project",
                         "query": "database connection",
-                        "k": 10,
+                        "limit": 10,
                     },
                     "explanation": (
                         "Searches for code chunks semantically similar to 'database connection', "
@@ -424,7 +423,7 @@ class SemanticSearchMCPCommand(BaseMCPCommand):
                     "command": {
                         "root_dir": "/home/user/projects/my_project",
                         "query": "error handling",
-                        "k": 20,
+                        "limit": 20,
                         "min_score": 0.7,
                     },
                     "explanation": (
@@ -437,7 +436,7 @@ class SemanticSearchMCPCommand(BaseMCPCommand):
                     "command": {
                         "root_dir": "/home/user/projects/my_project",
                         "query": "file processing",
-                        "k": 5,
+                        "limit": 5,
                         "min_score": 0.9,
                     },
                     "explanation": (
@@ -487,7 +486,7 @@ class SemanticSearchMCPCommand(BaseMCPCommand):
                     "description": "Command executed successfully",
                     "data": {
                         "query": "Search query that was used",
-                        "k": "Number of results requested",
+                        "limit": "Maximum number of results requested (same as request parameter)",
                         "min_score": "Minimum score threshold (if provided)",
                         "index_path": "Path to FAISS index file ({faiss_dir}/{project_id}.bin)",
                         "project_id": "Project UUID",
@@ -506,7 +505,7 @@ class SemanticSearchMCPCommand(BaseMCPCommand):
                     },
                     "example": {
                         "query": "database connection",
-                        "k": 10,
+                        "limit": 10,
                         "min_score": None,
                         "index_path": "data/faiss/928bcf10-db1c-47a3-8341-f60a6d997fe7.bin",
                         "project_id": "928bcf10-db1c-47a3-8341-f60a6d997fe7",
@@ -539,7 +538,7 @@ class SemanticSearchMCPCommand(BaseMCPCommand):
                 "Run update_indexes first to build the FAISS index",
                 "Ensure embedding service is configured and available",
                 "Use min_score to filter low-quality results",
-                "Adjust k based on expected result count",
+                "Adjust limit based on expected result count",
                 "Similarity scores help identify most relevant matches",
                 "Query text should describe the concept you're searching for",
             ],

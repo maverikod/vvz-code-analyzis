@@ -130,11 +130,15 @@ def run_indexing_worker(
             db_path,
         )
 
+    status_file_path = (
+        Path(worker_log_path).with_suffix(".status.json") if worker_log_path else None
+    )
     worker = IndexingWorker(
         db_path=db_path_obj,
         socket_path=socket_path,
         batch_size=batch_size,
         poll_interval=poll_interval,
+        status_file_path=status_file_path,
     )
 
     try:

@@ -29,6 +29,7 @@ class IndexingWorker:
         socket_path: Optional[str] = None,
         batch_size: int = 5,
         poll_interval: int = 30,
+        status_file_path: Optional[Path] = None,
     ):
         """Initialize indexing worker.
 
@@ -37,11 +38,13 @@ class IndexingWorker:
             socket_path: Path to database driver socket (for DatabaseClient)
             batch_size: Max files per project per cycle (default 5)
             poll_interval: Seconds between cycles (default 30)
+            status_file_path: Optional path to write current_operation/current_file for monitoring
         """
         self.db_path = db_path
         self.socket_path = socket_path
         self.batch_size = batch_size
         self.poll_interval = poll_interval
+        self.status_file_path = Path(status_file_path) if status_file_path else None
         self._stop_event = multiprocessing.Event()
 
     def stop(self) -> None:

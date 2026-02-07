@@ -41,6 +41,10 @@ Current design:
 
 So the vectorizer “almost doesn’t work” from the GPU’s point of view: it feeds the GPU with very few, separate requests instead of a steady stream of batched work.
 
+## Conclusion: worker slows process at least 3×
+
+Measured chunker throughput (warm): ~4–5 chunks/min. Observed vectorization throughput: ~1 vector/min. The worker (poll_interval, batch_size, one request per chunk) therefore **slows chunk/vector processing at least 3×** compared to what the chunker could do. See `docs/CHUNKER_TIMING_BENCHMARK.md` for timings and the same conclusion.
+
 ## Recommendations
 
 1. **Increase `batch_size`** (e.g. 50–200) so each batch does more chunks and more GPU calls per cycle (still one call per chunk, but more chunks per batch).

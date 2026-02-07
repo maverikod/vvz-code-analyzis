@@ -689,7 +689,15 @@ class MultiProjectFileWatcherWorker:
                                 f"and watch_dir_id: {watch_dir_id}"
                             )
 
-                            # Start automatic indexing for newly created project in background thread
+                            # Start automatic indexing for newly created project in background thread.
+                            # This runs update_indexes which calls mark_file_needs_chunking per file
+                            # (sets needs_chunking=1 and deletes chunks). See docs/WORKER_AND_DB_STATUS_ANALYSIS.md.
+                            logger.info(
+                                "[AUTO_INDEXING] Starting update_indexes for newly created project "
+                                "project_id=%s root_path=%s (each file will get needs_chunking=1, chunks deleted)",
+                                project_root_obj.project_id,
+                                str(project_root_obj.root_path),
+                            )
                             try:
                                 import threading
                                 import asyncio
@@ -713,6 +721,7 @@ class MultiProjectFileWatcherWorker:
                                                 cmd.execute(
                                                     project_id=project_root_obj.project_id,
                                                     max_lines=DEFAULT_MAX_FILE_LINES,
+                                                    trigger="auto_indexing",
                                                 )
                                             )
 
@@ -740,8 +749,9 @@ class MultiProjectFileWatcherWorker:
                                 )
                                 thread.start()
                                 logger.info(
-                                    f"Started background indexing thread for newly created project "
-                                    f"{project_root_obj.project_id}"
+                                    "[AUTO_INDEXING] Started background thread for project_id=%s "
+                                    "(update_indexes running; check [update_indexes START] with trigger=auto_indexing)",
+                                    project_root_obj.project_id,
                                 )
                             except Exception as e:
                                 logger.warning(

@@ -156,6 +156,27 @@ class AnalysisError(CodeAnalysisError):
         self.analysis_type = analysis_type
 
 
+class ChunkerResponseError(CodeAnalysisError):
+    """Raised when chunker response is invalid (e.g. embedding without model name)."""
+
+    def __init__(
+        self,
+        message: str,
+        file_path: Optional[str] = None,
+        details: Optional[Dict[str, Any]] = None,
+    ):
+        """
+        Initialize chunker response error.
+
+        Args:
+            message: Error message
+            file_path: Optional file path where the error occurred
+            details: Optional additional details
+        """
+        super().__init__(message, code="CHUNKER_RESPONSE_ERROR", details=details)
+        self.file_path = file_path
+
+
 class ConfigurationError(CodeAnalysisError):
     """Raised when configuration is invalid."""
 

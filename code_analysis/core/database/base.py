@@ -185,6 +185,48 @@ class CodeDatabase:
             logger.error(f"Schema sync failed, connection blocked: {e}")
             raise  # Re-raise to prevent database usage
 
+    @classmethod
+    def from_existing_driver(
+        cls,
+        driver: Any,
+        driver_config: Optional[Dict[str, Any]] = None,
+    ) -> "CodeDatabase":
+        """
+        Build CodeDatabase that reuses an already-connected driver (no connect, no sync_schema).
+
+        Use in the database driver process when handling index_file RPC: the process
+        already has a single driver connection; creating a second CodeDatabase(driver_config)
+        would open a second connection and call sync_schema(), causing lock contention
+        (e.g. "Schema synchronization failed: disk I/O error"). This factory avoids
+        that by reusing the existing driver.
+
+        Args:
+            driver: Already-connected driver instance (e.g. from RPCServer).
+            driver_config: Optional config for backup_dir inference. If None, built from
+                           driver.db_path when present.
+
+        Returns:
+            CodeDatabase instance using the given driver. Do not call sync_schema on it.
+        """
+        db_path = getattr(driver, "db_path", None)
+        if driver_config is None and db_path is not None:
+            driver_config = {
+                "type": "sqlite",
+                "config": {"path": str(Path(db_path).resolve())},
+            }
+        elif driver_config is None:
+            driver_config = {"type": "sqlite", "config": {}}
+        logger.debug(
+            "CodeDatabase.from_existing_driver: reusing driver (no connect, no sync_schema)"
+        )
+        obj = object.__new__(cls)
+        obj.driver = driver
+        obj._driver_type = "sqlite"
+        obj._lock = None
+        obj._transaction_active = False
+        obj.driver_config = driver_config
+        return obj
+
     def _do_sync_schema(self) -> Dict[str, Any]:
         """
         Synchronize database schema via driver (implementation).
@@ -222,34 +264,62 @@ class CodeDatabase:
 
     def _execute(self, sql: str, params: Optional[tuple] = None) -> None:
         """Execute SQL statement with optional locking."""
+        result = None
         if self._lock:
             with self._lock:
-                self.driver.execute(sql, params)
+                result = self.driver.execute(sql, params)
         else:
-            self.driver.execute(sql, params)
+            result = self.driver.execute(sql, params)
+        if isinstance(result, dict):
+            setattr(self, "_last_execute_result", result)
 
     def _fetchone(
         self, sql: str, params: Optional[tuple] = None
     ) -> Optional[Dict[str, Any]]:
         """Fetch one row with optional locking."""
+        # Prefer execute() returning {"data": [...]} (database_driver_pkg has no fetchone)
         if self._lock:
             with self._lock:
-                return self.driver.fetchone(sql, params)
+                result = self.driver.execute(sql, params)
         else:
+            result = self.driver.execute(sql, params)
+        if isinstance(result, dict) and "data" in result:
+            data = result.get("data", [])
+            return data[0] if data else None
+        # Driver with fetchone (e.g. db_driver/sqlite)
+        if hasattr(self.driver, "fetchone"):
+            if self._lock:
+                with self._lock:
+                    return self.driver.fetchone(sql, params)
             return self.driver.fetchone(sql, params)
+        return None
 
     def _fetchall(
         self, sql: str, params: Optional[tuple] = None
     ) -> List[Dict[str, Any]]:
         """Fetch all rows with optional locking."""
+        # Prefer execute() returning {"data": [...]} (database_driver_pkg has no fetchall)
         if self._lock:
             with self._lock:
-                return self.driver.fetchall(sql, params)
+                result = self.driver.execute(sql, params)
         else:
+            result = self.driver.execute(sql, params)
+        if isinstance(result, dict) and "data" in result:
+            data = result.get("data", [])
+            return list(data) if data else []
+        # Driver with fetchall (e.g. db_driver/sqlite)
+        if hasattr(self.driver, "fetchall"):
+            if self._lock:
+                with self._lock:
+                    return self.driver.fetchall(sql, params)
             return self.driver.fetchall(sql, params)
+        return []
 
     def _commit(self) -> None:
         """Commit transaction with optional locking."""
+        if not hasattr(self.driver, "commit"):
+            # Driver auto-commits in execute() (e.g. database_driver_pkg)
+            return
         if self._lock:
             with self._lock:
                 self.driver.commit()
@@ -258,6 +328,8 @@ class CodeDatabase:
 
     def _rollback(self) -> None:
         """Rollback transaction with optional locking."""
+        if not hasattr(self.driver, "rollback"):
+            return
         if self._lock:
             with self._lock:
                 self.driver.rollback()
@@ -367,11 +439,16 @@ class CodeDatabase:
 
     def _lastrowid(self) -> Optional[int]:
         """Get last row ID with optional locking."""
-        if self._lock:
-            with self._lock:
-                return self.driver.lastrowid()
-        else:
-            return self.driver.lastrowid()
+        if hasattr(self.driver, "lastrowid"):
+            lastrowid = self.driver.lastrowid
+            val = lastrowid() if callable(lastrowid) else lastrowid
+            if self._lock:
+                with self._lock:
+                    val = lastrowid() if callable(lastrowid) else lastrowid
+            return val
+        # Driver returns lastrowid in execute() result (e.g. database_driver_pkg)
+        res = getattr(self, "_last_execute_result", None)
+        return res.get("lastrowid") if isinstance(res, dict) else None
 
     def _get_table_info(self, table_name: str) -> List[Dict[str, Any]]:
         """Get table information with optional locking."""

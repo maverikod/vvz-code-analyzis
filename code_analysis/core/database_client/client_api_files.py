@@ -441,6 +441,28 @@ class _ClientAPIFilesMixin:
         affected_rows = self.delete("files", where={"id": file_id})
         return affected_rows > 0
 
+    def get_project_file_rows(
+        self, project_id: str, include_deleted: bool = False
+    ) -> List[Dict[str, Any]]:
+        """Get file rows for a project with raw last_modified (no Julian parsing).
+
+        Used by the file watcher so last_modified is compared as Unix timestamp
+        against os.stat().st_mtime. get_project_files() parses last_modified as
+        Julian and breaks the comparison, causing mass false 'changed' detection.
+
+        Args:
+            project_id: Project identifier
+            include_deleted: Whether to include deleted files
+
+        Returns:
+            List of dicts with id, path, last_modified (raw from DB)
+        """
+        where = {"project_id": project_id}
+        if not include_deleted:
+            where["deleted"] = 0
+        rows = self.select("files", where=where, order_by=["path"])
+        return list(rows) if rows else []
+
     def get_project_files(
         self, project_id: str, include_deleted: bool = False
     ) -> List[File]:

@@ -2,6 +2,6 @@ pyyaml>=6.0
 click>=8.0
 mcp>=1.0.0
 pydantic>=2.1.0
-svo-client>=2.2.12
+svo-client>=2.2.13
 lark>=1.1.0
 libcst>=1.1.0

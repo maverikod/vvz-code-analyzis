@@ -33,23 +33,23 @@ _chunker_logger: Optional[logging.Logger] = None
 def _get_chunker_logger(root_dir: Optional[Path] = None) -> logging.Logger:
     """
     Get or create logger for chunker requests.
-    
+
     Args:
         root_dir: Optional root directory path. If not provided, will try to infer
             from current working directory or use "logs/" relative path.
-    
+
     Returns:
         Logger instance configured to write to logs/chunker_requests.log
     """
     global _chunker_logger
-    
+
     if _chunker_logger is None:
         _chunker_logger = logging.getLogger("code_analysis.chunker_requests")
         _chunker_logger.setLevel(logging.INFO)
-        
+
         # Don't propagate to root logger
         _chunker_logger.propagate = False
-        
+
         # Create file handler if not exists
         if not _chunker_logger.handlers:
             # Determine log directory
@@ -63,28 +63,29 @@ def _get_chunker_logger(root_dir: Optional[Path] = None) -> logging.Logger:
                 else:
                     # Fallback to relative path
                     log_dir = Path("logs")
-            
+
             log_dir.mkdir(parents=True, exist_ok=True)
             log_file = log_dir / "chunker_requests.log"
-            
+
             handler = logging.FileHandler(log_file, encoding="utf-8")
             handler.setLevel(logging.INFO)
-            
+
             # Format: timestamp | level | message
             formatter = logging.Formatter(
-                "%(asctime)s | %(levelname)s | %(message)s",
-                datefmt="%Y-%m-%d %H:%M:%S"
+                "%(asctime)s | %(levelname)s | %(message)s", datefmt="%Y-%m-%d %H:%M:%S"
             )
             handler.setFormatter(formatter)
-            
+
             _chunker_logger.addHandler(handler)
-    
+
     return _chunker_logger
+
 
 # Try to import embed_client (vectorization only)
 try:
     from embed_client.async_client import EmbeddingServiceAsyncClient
     from embed_client.client_factory import ClientFactory
+
     EMBED_CLIENT_AVAILABLE = True
 except ImportError:
     EmbeddingServiceAsyncClient = None  # type: ignore
@@ -94,6 +95,7 @@ except ImportError:
 # Try to import svo_client (chunker - chunks and vectorizes)
 try:
     from svo_client import ChunkerClient
+
     CHUNKER_CLIENT_AVAILABLE = True
 except ImportError:
     ChunkerClient = None  # type: ignore
@@ -149,23 +151,27 @@ class SVOClientManager:
         """
         # Store root_dir for chunker logger
         self._root_dir = Path(root_dir) if root_dir else None
-        
+
         cfg = self._to_dict(server_config)
-        
+
         # Handle both formats: full config dict with "code_analysis" key, or ServerConfig object
         if "code_analysis" in cfg:
             ca_cfg = cfg.get("code_analysis") or {}
         else:
             # server_config is already a ServerConfig object (parsed code_analysis section)
             ca_cfg = cfg
-        
+
         # Convert nested objects to dicts if needed
         if hasattr(ca_cfg, "chunker") and hasattr(ca_cfg.chunker, "enabled"):
             # ServerConfig object - extract directly
             chunker_cfg = self._to_dict(ca_cfg.chunker) if ca_cfg.chunker else {}
             emb_cfg = self._to_dict(ca_cfg.embedding) if ca_cfg.embedding else {}
             worker_dict = self._to_dict(ca_cfg.worker) if ca_cfg.worker else {}
-            worker_cfg = worker_dict.get("circuit_breaker") or {} if isinstance(worker_dict, dict) else {}
+            worker_cfg = (
+                worker_dict.get("circuit_breaker") or {}
+                if isinstance(worker_dict, dict)
+                else {}
+            )
             self.vector_dim: int = int(ca_cfg.vector_dim or 384)
             self.chunker_enabled: bool = bool(chunker_cfg.get("enabled", False))
             self.embedding_enabled: bool = bool(emb_cfg.get("enabled", False))
@@ -198,7 +204,7 @@ class SVOClientManager:
         self._chunker_status_logged: bool = False
         self._embedding_available: bool = True
         self._embedding_status_logged: bool = False
-        
+
         # Chunk size limits from chunker service (fetched dynamically)
         self._min_chunk_length: Optional[int] = None
         self._max_chunk_length: Optional[int] = None
@@ -210,8 +216,14 @@ class SVOClientManager:
         self._chunker_client: Optional[Any] = None
 
         # Extract chunker configuration (ensure dict format)
-        chunker_cfg_dict = self._to_dict(chunker_cfg) if not isinstance(chunker_cfg, dict) else chunker_cfg
-        self._chunker_url: str = str(chunker_cfg_dict.get("url") or chunker_cfg_dict.get("host") or "localhost")
+        chunker_cfg_dict = (
+            self._to_dict(chunker_cfg)
+            if not isinstance(chunker_cfg, dict)
+            else chunker_cfg
+        )
+        self._chunker_url: str = str(
+            chunker_cfg_dict.get("url") or chunker_cfg_dict.get("host") or "localhost"
+        )
         self._chunker_port: int = int(chunker_cfg_dict.get("port", 8009))
         self._chunker_protocol: str = str(chunker_cfg_dict.get("protocol", "http"))
         self._chunker_cert_file: Optional[str] = chunker_cfg_dict.get("cert_file")
@@ -219,14 +231,20 @@ class SVOClientManager:
         self._chunker_ca_cert_file: Optional[str] = chunker_cfg_dict.get("ca_cert_file")
         self._chunker_crl_file: Optional[str] = chunker_cfg_dict.get("crl_file")
         self._chunker_timeout: Optional[float] = chunker_cfg_dict.get("timeout")
-        self._chunker_check_hostname: bool = bool(chunker_cfg_dict.get("check_hostname", False))
+        self._chunker_check_hostname: bool = bool(
+            chunker_cfg_dict.get("check_hostname", False)
+        )
 
         # Embedding client (embed-client - only vectorization)
         self._embedding_client: Optional[Any] = None
 
         # Extract embedding configuration (ensure dict format)
-        emb_cfg_dict = self._to_dict(emb_cfg) if not isinstance(emb_cfg, dict) else emb_cfg
-        self._embedding_url: str = str(emb_cfg_dict.get("url") or emb_cfg_dict.get("host") or "localhost")
+        emb_cfg_dict = (
+            self._to_dict(emb_cfg) if not isinstance(emb_cfg, dict) else emb_cfg
+        )
+        self._embedding_url: str = str(
+            emb_cfg_dict.get("url") or emb_cfg_dict.get("host") or "localhost"
+        )
         self._embedding_port: int = int(emb_cfg_dict.get("port", 8001))
         self._embedding_protocol: str = str(emb_cfg_dict.get("protocol", "http"))
         # Store certificate paths as-is (will be resolved relative to config file location if needed)
@@ -235,8 +253,10 @@ class SVOClientManager:
         self._embedding_ca_cert_file: Optional[str] = emb_cfg_dict.get("ca_cert_file")
         self._embedding_crl_file: Optional[str] = emb_cfg_dict.get("crl_file")
         self._embedding_timeout: Optional[float] = emb_cfg_dict.get("timeout")
-        self._embedding_check_hostname: bool = bool(emb_cfg_dict.get("check_hostname", False))
-        
+        self._embedding_check_hostname: bool = bool(
+            emb_cfg_dict.get("check_hostname", False)
+        )
+
         # Store root path for resolving relative certificate paths
         # Priority: explicit root_dir > infer from config > current working directory
         self._root_path: Optional[Path] = None
@@ -246,11 +266,15 @@ class SVOClientManager:
             # Try to infer from db_path or log path
             db_path = ca_cfg.get("db_path")
             if db_path:
-                self._root_path = Path(db_path).parent.parent  # data/code_analysis.db -> project root
+                self._root_path = Path(
+                    db_path
+                ).parent.parent  # data/code_analysis.db -> project root
             else:
                 log_path = ca_cfg.get("log")
                 if log_path:
-                    self._root_path = Path(log_path).parent.parent  # logs/code_analysis.log -> project root
+                    self._root_path = Path(
+                        log_path
+                    ).parent.parent  # logs/code_analysis.log -> project root
 
         # Async init/close markers
         self._initialized: bool = False
@@ -278,7 +302,7 @@ class SVOClientManager:
                     }
                     if self._chunker_timeout:
                         chunker_kwargs["timeout"] = self._chunker_timeout
-                    
+
                     # Map certificate files to ChunkerClient parameters
                     if self._chunker_protocol in ("mtls", "https"):
                         if self._chunker_cert_file:
@@ -296,11 +320,11 @@ class SVOClientManager:
                             if not ca_cert_path.is_absolute() and self._root_path:
                                 ca_cert_path = self._root_path / ca_cert_path
                             chunker_kwargs["ca"] = str(ca_cert_path.resolve())
-                    
+
                     # Create ChunkerClient and enter context manager
                     self._chunker_client = ChunkerClient(**chunker_kwargs)
                     await self._chunker_client.__aenter__()
-                    
+
                     # Fetch chunk size limits from chunker service
                     await self._fetch_chunk_limits()
 
@@ -363,7 +387,9 @@ class SVOClientManager:
                                 ca_cert_path = Path(self._embedding_ca_cert_file)
                                 if not ca_cert_path.is_absolute() and self._root_path:
                                     ca_cert_path = self._root_path / ca_cert_path
-                                client_kwargs["ca_cert_file"] = str(ca_cert_path.resolve())
+                                client_kwargs["ca_cert_file"] = str(
+                                    ca_cert_path.resolve()
+                                )
                             if self._embedding_crl_file:
                                 crl_path = Path(self._embedding_crl_file)
                                 if not crl_path.is_absolute() and self._root_path:
@@ -375,14 +401,16 @@ class SVOClientManager:
                                 ca_cert_path = Path(self._embedding_ca_cert_file)
                                 if not ca_cert_path.is_absolute() and self._root_path:
                                     ca_cert_path = self._root_path / ca_cert_path
-                                client_kwargs["ca_cert_file"] = str(ca_cert_path.resolve())
+                                client_kwargs["ca_cert_file"] = str(
+                                    ca_cert_path.resolve()
+                                )
                     else:
                         ssl_enabled = False
 
                     # Add check_hostname if SSL is enabled
                     if ssl_enabled:
                         client_kwargs["verify"] = self._embedding_check_hostname
-                    
+
                     # Create client
                     self._embedding_client = ClientFactory.create_client(
                         base_url=base_url,
@@ -449,7 +477,9 @@ class SVOClientManager:
                 try:
                     await self._embedding_client.__aexit__(None, None, None)
                 except Exception as e:
-                    logger.warning("Error closing embedding client: %s", e, exc_info=True)
+                    logger.warning(
+                        "Error closing embedding client: %s", e, exc_info=True
+                    )
                 finally:
                     self._embedding_client = None
 
@@ -530,7 +560,7 @@ class SVOClientManager:
                 f"({self._min_chunk_length} characters). Skipping chunker, will save to DB without embedding."
             )
             return []  # Return empty list - caller should save to DB without embedding
-        
+
         if self._max_chunk_length is not None and text_length > self._max_chunk_length:
             logger.debug(
                 f"Text length ({text_length}) exceeds chunker maximum "
@@ -545,12 +575,12 @@ class SVOClientManager:
             f"REQUEST | text_length={len(text)} | text_preview={text_preview!r} | "
             f"kwargs={kwargs}"
         )
-        
+
         try:
             # Call chunker service - it returns chunks with embeddings
             chunks = await self._chunker_client.chunk_text(text=text, **kwargs)
             request_duration = time.time() - request_start_time
-            
+
             # Log success
             chunks_count = len(chunks) if chunks else 0
             has_embeddings = False
@@ -558,15 +588,18 @@ class SVOClientManager:
                 first_chunk = chunks[0]
                 emb = getattr(first_chunk, "embedding", None)
                 has_embeddings = emb is not None and (
-                    (isinstance(emb, list) and len(emb) > 0) or
-                    (hasattr(first_chunk, "vector") and first_chunk.vector is not None)
+                    (isinstance(emb, list) and len(emb) > 0)
+                    or (
+                        hasattr(first_chunk, "vector")
+                        and first_chunk.vector is not None
+                    )
                 )
-            
+
             chunker_log.info(
                 f"SUCCESS | duration={request_duration:.3f}s | "
                 f"chunks_count={chunks_count} | has_embeddings={has_embeddings}"
             )
-            
+
             was_unavailable = not self._chunker_available
             self._record_success()
             # Service is available
@@ -582,7 +615,7 @@ class SVOClientManager:
             return chunks
         except Exception as e:
             request_duration = time.time() - request_start_time
-            
+
             # Log error
             error_type = type(e).__name__
             error_msg = str(e)
@@ -600,7 +633,7 @@ class SVOClientManager:
                 or "unavailable" in error_str
                 or "failed after" in error_str
             )
-            
+
             if is_unavailable_error:
                 if self._chunker_available:
                     # Status changed: available -> unavailable
@@ -621,6 +654,78 @@ class SVOClientManager:
                     e,
                     exc_info=True,
                 )
+            raise
+
+    async def get_chunks_batch(
+        self, texts: List[str], **kwargs: Any
+    ) -> List[List[Any]]:
+        """
+        Get chunks with embeddings for multiple texts in one request (chunk_batch).
+
+        Uses chunker command "chunk_batch" when the client supports it (svo_client
+        ChunkerClient.chunk_texts). One list of SemanticChunk per input text;
+        texts below min_chunk_length get an empty list at that index.
+
+        Args:
+            texts: List of texts to chunk and vectorize.
+            **kwargs: Additional chunking parameters (type, language, etc.).
+
+        Returns:
+            List of lists of chunk objects (one list per input text, same order).
+        """
+        self._maybe_transition()
+        if not self._chunker_client or not self.chunker_enabled:
+            raise RuntimeError(
+                "Chunker service is not available or not enabled. "
+                "Ensure code_analysis.chunker.enabled=true and service is running."
+            )
+        if not texts:
+            return []
+
+        # Filter by min length: call chunk_texts only for valid texts; fill [] for short
+        valid_indices: List[int] = []
+        valid_texts: List[str] = []
+        for i, text in enumerate(texts):
+            if self._min_chunk_length is not None and len(text) < self._min_chunk_length:
+                continue
+            valid_indices.append(i)
+            valid_texts.append(text)
+
+        result: List[List[Any]] = [[] for _ in texts]
+        if not valid_texts:
+            return result
+
+        chunker_log = _get_chunker_logger(self._root_dir)
+        request_start_time = time.time()
+        chunker_log.info(
+            f"BATCH REQUEST | texts_count={len(valid_texts)} | "
+            f"kwargs={kwargs}"
+        )
+        try:
+            batch = await self._chunker_client.chunk_texts(
+                texts=valid_texts, **kwargs
+            )
+            request_duration = time.time() - request_start_time
+            for k, idx in enumerate(valid_indices):
+                if k < len(batch):
+                    result[idx] = batch[k]
+            chunker_log.info(
+                f"BATCH SUCCESS | duration={request_duration:.3f}s | "
+                f"texts_count={len(valid_texts)}"
+            )
+            self._record_success()
+            if not self._chunker_available:
+                self._chunker_available = True
+                self._chunker_status_logged = True
+                asyncio.create_task(self._fetch_chunk_limits())
+            return result
+        except Exception as e:
+            request_duration = time.time() - request_start_time
+            chunker_log.error(
+                f"BATCH ERROR | duration={request_duration:.3f}s | "
+                f"error_type={type(e).__name__} | error={str(e)}"
+            )
+            self._record_failure()
             raise
 
     async def get_embeddings(self, chunks: Iterable[Any], **kwargs: Any) -> List[Any]:
@@ -741,7 +846,7 @@ class SVOClientManager:
                 or "unavailable" in error_str
                 or "failed after" in error_str
             )
-            
+
             if is_unavailable_error:
                 if self._embedding_available:
                     # Status changed: available -> unavailable
@@ -814,26 +919,26 @@ class SVOClientManager:
     async def _fetch_chunk_limits(self) -> None:
         """
         Fetch chunk size limits from chunker service.
-        
+
         Called during initialization and after service recovery.
         """
         if not self._chunker_client:
             return
-        
+
         try:
             config_result = await self._chunker_client.get_chunk_config()
-            
+
             if isinstance(config_result, dict):
                 # Try different response formats:
                 # 1. Direct format: {"config": {...}, "descriptions": {...}}
                 config = config_result.get("config")
-                
+
                 # 2. Wrapped format: {"success": True, "data": {"config": {...}, "descriptions": {...}}}
                 if config is None:
                     data = config_result.get("data", {})
                     if isinstance(data, dict):
                         config = data.get("config")
-                
+
                 # 3. MCP double-wrapped: {"success": True, "result": {"success": True, "data": {...}}}
                 if config is None:
                     result = config_result.get("result", {})
@@ -841,28 +946,28 @@ class SVOClientManager:
                         data = result.get("data", {})
                         if isinstance(data, dict):
                             config = data.get("config")
-                
+
                 if config and isinstance(config, dict):
                     chunk_size = config.get("chunk_size", {})
                     if isinstance(chunk_size, dict):
                         self._min_chunk_length = chunk_size.get("min_chunk_length")
                         self._max_chunk_length = chunk_size.get("max_chunk_length")
-                        
+
                         logger.info(
                             f"Chunker limits fetched: min={self._min_chunk_length}, "
                             f"max={self._max_chunk_length}"
                         )
                     else:
-                        logger.warning(
-                            f"chunk_size is not a dict: {type(chunk_size)}"
-                        )
+                        logger.warning(f"chunk_size is not a dict: {type(chunk_size)}")
                 else:
                     logger.warning(
                         f"Could not extract config from get_chunk_config response. "
                         f"Keys: {list(config_result.keys())}"
                     )
             else:
-                logger.warning(f"get_chunk_config returned non-dict: {type(config_result)}")
+                logger.warning(
+                    f"get_chunk_config returned non-dict: {type(config_result)}"
+                )
         except Exception as e:
             logger.warning(
                 f"Failed to fetch chunk limits from chunker service: {e}. "
@@ -879,7 +984,6 @@ class SVOClientManager:
         if hasattr(chunk, "text") and getattr(chunk, "text") is not None:
             return str(getattr(chunk, "text"))
         return str(chunk)
-
 
     @staticmethod
     def _to_dict(cfg: Any) -> dict[str, Any]:

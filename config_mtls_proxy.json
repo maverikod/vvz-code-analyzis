@@ -20,8 +20,15 @@
   },
   "client": {
     "enabled": false,
-    "protocol": "http",
-    "ssl": null
+    "protocol": "mtls",
+    "ssl": {
+      "cert": "/home/vasilyvz/projects/tools/code_analysis/mtls_certificates/mtls_certificates/client/code-analysis.crt",
+      "key": "/home/vasilyvz/projects/tools/code_analysis/mtls_certificates/mtls_certificates/client/code-analysis.key",
+      "ca": "/home/vasilyvz/projects/tools/code_analysis/mtls_certificates/mtls_certificates/ca/ca.crt",
+      "crl": null,
+      "dnscheck": false,
+      "check_hostname": null
+    }
   },
   "registration": {
     "enabled": true,
@@ -49,8 +56,15 @@
   },
   "server_validation": {
     "enabled": false,
-    "protocol": "http",
-    "ssl": null,
+    "protocol": "mtls",
+    "ssl": {
+      "cert": "/home/vasilyvz/projects/tools/code_analysis/mtls_certificates/mtls_certificates/server/code-analysis-server.crt",
+      "key": "/home/vasilyvz/projects/tools/code_analysis/mtls_certificates/mtls_certificates/server/code-analysis-server.key",
+      "ca": "/home/vasilyvz/projects/tools/code_analysis/mtls_certificates/mtls_certificates/ca/ca.crt",
+      "crl": null,
+      "dnscheck": false,
+      "check_hostname": null
+    },
     "timeout": 10,
     "use_token": false,
     "use_roles": false,
@@ -123,10 +137,32 @@
       "log_path": "logs/vectorization_worker.log"
     },
     "chunker": {
-      "enabled": false,
+      "enabled": true,
       "url": "localhost",
       "port": 8009,
-      "protocol": "http"
+      "protocol": "mtls",
+      "cert_file": "/home/vasilyvz/projects/tools/code_analysis/mtls_certificates/mtls_certificates/client/code-analysis.crt",
+      "key_file": "/home/vasilyvz/projects/tools/code_analysis/mtls_certificates/mtls_certificates/client/code-analysis.key",
+      "ca_cert_file": "/home/vasilyvz/projects/tools/code_analysis/mtls_certificates/mtls_certificates/ca/ca.crt",
+      "crl_file": null,
+      "retry_attempts": 3,
+      "retry_delay": 5.0,
+      "timeout": 60.0,
+      "check_hostname": false
+    },
+    "embedding": {
+      "enabled": true,
+      "url": "localhost",
+      "port": 8001,
+      "protocol": "mtls",
+      "cert_file": "/home/vasilyvz/projects/tools/code_analysis/mtls_certificates/mtls_certificates/client/code-analysis.crt",
+      "key_file": "/home/vasilyvz/projects/tools/code_analysis/mtls_certificates/mtls_certificates/client/code-analysis.key",
+      "ca_cert_file": "/home/vasilyvz/projects/tools/code_analysis/mtls_certificates/mtls_certificates/ca/ca.crt",
+      "crl_file": null,
+      "retry_attempts": 3,
+      "retry_delay": 5.0,
+      "timeout": 60.0,
+      "check_hostname": false
     }
   }
 }

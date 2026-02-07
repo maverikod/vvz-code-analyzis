@@ -6,9 +6,59 @@ email: vasilyvz@gmail.com
 """
 
 import json
+import subprocess
+from pathlib import Path
+
+import pytest
 
 from code_analysis.core.config import get_driver_config
 from code_analysis.core.config_validator import CodeAnalysisConfigValidator
+
+
+def _create_dummy_ssl_certs_in_dir(dir_path: Path) -> None:
+    """Create minimal valid PEM cert/key in dir_path for file-based validation tests.
+
+    Generates a CA and a server cert signed by that CA so base validator
+    (cert chain validation) passes.
+    """
+    try:
+        # CA (self-signed)
+        subprocess.run(
+            [
+                "openssl", "req", "-x509", "-newkey", "rsa:2048",
+                "-keyout", str(dir_path / "ca.key"),
+                "-out", str(dir_path / "ca.crt"),
+                "-days", "1", "-nodes", "-subj", "/CN=TestCA",
+            ],
+            check=True,
+            capture_output=True,
+        )
+        # Server key and CSR
+        subprocess.run(
+            [
+                "openssl", "req", "-new", "-newkey", "rsa:2048",
+                "-keyout", str(dir_path / "server.key"),
+                "-out", str(dir_path / "server.csr"),
+                "-nodes", "-subj", "/CN=localhost",
+            ],
+            check=True,
+            capture_output=True,
+        )
+        # Sign server cert with CA
+        subprocess.run(
+            [
+                "openssl", "x509", "-req", "-in", str(dir_path / "server.csr"),
+                "-CA", str(dir_path / "ca.crt"),
+                "-CAkey", str(dir_path / "ca.key"),
+                "-CAcreateserial",
+                "-out", str(dir_path / "server.crt"),
+                "-days", "1",
+            ],
+            check=True,
+            capture_output=True,
+        )
+    except (subprocess.CalledProcessError, FileNotFoundError) as e:
+        pytest.skip(f"openssl not available or failed: {e}")
 
 
 class TestDriverConfigValidation:
@@ -17,7 +67,7 @@ class TestDriverConfigValidation:
     def test_valid_driver_config(self):
         """Test validation with valid driver config."""
         config = {
-            "server": {"host": "localhost", "port": 15000, "protocol": "http"},
+            "server": {"host": "localhost", "port": 15000, "protocol": "mtls", "ssl": {"cert": "server.crt", "key": "server.key", "ca": "ca.crt"}},
             "queue_manager": {"enabled": True},
             "code_analysis": {
                 "database": {
@@ -46,7 +96,7 @@ class TestDriverConfigValidation:
     def test_missing_driver_type(self):
         """Test validation with missing driver type."""
         config = {
-            "server": {"host": "localhost", "port": 15000, "protocol": "http"},
+            "server": {"host": "localhost", "port": 15000, "protocol": "mtls", "ssl": {"cert": "server.crt", "key": "server.key", "ca": "ca.crt"}},
             "queue_manager": {"enabled": True},
             "code_analysis": {
                 "database": {
@@ -71,7 +121,7 @@ class TestDriverConfigValidation:
     def test_missing_driver_config(self):
         """Test validation with missing driver config."""
         config = {
-            "server": {"host": "localhost", "port": 15000, "protocol": "http"},
+            "server": {"host": "localhost", "port": 15000, "protocol": "mtls", "ssl": {"cert": "server.crt", "key": "server.key", "ca": "ca.crt"}},
             "queue_manager": {"enabled": True},
             "code_analysis": {
                 "database": {
@@ -94,7 +144,7 @@ class TestDriverConfigValidation:
     def test_invalid_driver_type(self):
         """Test validation with invalid driver type."""
         config = {
-            "server": {"host": "localhost", "port": 15000, "protocol": "http"},
+            "server": {"host": "localhost", "port": 15000, "protocol": "mtls", "ssl": {"cert": "server.crt", "key": "server.key", "ca": "ca.crt"}},
             "queue_manager": {"enabled": True},
             "code_analysis": {
                 "database": {
@@ -120,7 +170,7 @@ class TestDriverConfigValidation:
     def test_missing_path_for_sqlite(self):
         """Test validation with missing path for sqlite driver."""
         config = {
-            "server": {"host": "localhost", "port": 15000, "protocol": "http"},
+            "server": {"host": "localhost", "port": 15000, "protocol": "mtls", "ssl": {"cert": "server.crt", "key": "server.key", "ca": "ca.crt"}},
             "queue_manager": {"enabled": True},
             "code_analysis": {
                 "database": {
@@ -144,7 +194,7 @@ class TestDriverConfigValidation:
     def test_invalid_worker_config_timeout(self):
         """Test validation with invalid worker_config command_timeout."""
         config = {
-            "server": {"host": "localhost", "port": 15000, "protocol": "http"},
+            "server": {"host": "localhost", "port": 15000, "protocol": "mtls", "ssl": {"cert": "server.crt", "key": "server.key", "ca": "ca.crt"}},
             "queue_manager": {"enabled": True},
             "code_analysis": {
                 "database": {
@@ -174,7 +224,7 @@ class TestDriverConfigValidation:
     def test_invalid_worker_config_poll_interval(self):
         """Test validation with invalid worker_config poll_interval."""
         config = {
-            "server": {"host": "localhost", "port": 15000, "protocol": "http"},
+            "server": {"host": "localhost", "port": 15000, "protocol": "mtls", "ssl": {"cert": "server.crt", "key": "server.key", "ca": "ca.crt"}},
             "queue_manager": {"enabled": True},
             "code_analysis": {
                 "database": {
@@ -204,7 +254,7 @@ class TestDriverConfigValidation:
     def test_valid_sqlite_driver(self):
         """Test validation with valid sqlite driver (not proxy)."""
         config = {
-            "server": {"host": "localhost", "port": 15000, "protocol": "http"},
+            "server": {"host": "localhost", "port": 15000, "protocol": "mtls", "ssl": {"cert": "server.crt", "key": "server.key", "ca": "ca.crt"}},
             "queue_manager": {"enabled": True},
             "code_analysis": {
                 "database": {
@@ -428,8 +478,9 @@ class TestDriverConfigFileValidation:
     def test_validate_config_file_with_driver(self, tmp_path):
         """Test validation of config file with driver section."""
         config_file = tmp_path / "config.json"
+        _create_dummy_ssl_certs_in_dir(tmp_path)
         config = {
-            "server": {"host": "localhost", "port": 15000, "protocol": "http"},
+            "server": {"host": "localhost", "port": 15000, "protocol": "mtls", "ssl": {"cert": "server.crt", "key": "server.key", "ca": "ca.crt"}},
             "queue_manager": {"enabled": True},
             "code_analysis": {
                 "database": {
@@ -461,7 +512,7 @@ class TestDriverConfigFileValidation:
         """Test validation of config file with invalid driver config."""
         config_file = tmp_path / "config.json"
         config = {
-            "server": {"host": "localhost", "port": 15000, "protocol": "http"},
+            "server": {"host": "localhost", "port": 15000, "protocol": "mtls", "ssl": {"cert": "server.crt", "key": "server.key", "ca": "ca.crt"}},
             "queue_manager": {"enabled": True},
             "code_analysis": {
                 "database": {
@@ -488,7 +539,7 @@ class TestDriverConfigFileValidation:
     def test_driver_not_dict(self):
         """Test validation when driver is not a dictionary."""
         config = {
-            "server": {"host": "localhost", "port": 15000, "protocol": "http"},
+            "server": {"host": "localhost", "port": 15000, "protocol": "mtls", "ssl": {"cert": "server.crt", "key": "server.key", "ca": "ca.crt"}},
             "queue_manager": {"enabled": True},
             "code_analysis": {
                 "database": {
@@ -509,7 +560,7 @@ class TestDriverConfigFileValidation:
     def test_driver_type_not_string(self):
         """Test validation when driver type is not a string."""
         config = {
-            "server": {"host": "localhost", "port": 15000, "protocol": "http"},
+            "server": {"host": "localhost", "port": 15000, "protocol": "mtls", "ssl": {"cert": "server.crt", "key": "server.key", "ca": "ca.crt"}},
             "queue_manager": {"enabled": True},
             "code_analysis": {
                 "database": {
@@ -535,7 +586,7 @@ class TestDriverConfigFileValidation:
     def test_driver_config_not_dict(self):
         """Test validation when driver config is not a dictionary."""
         config = {
-            "server": {"host": "localhost", "port": 15000, "protocol": "http"},
+            "server": {"host": "localhost", "port": 15000, "protocol": "mtls", "ssl": {"cert": "server.crt", "key": "server.key", "ca": "ca.crt"}},
             "queue_manager": {"enabled": True},
             "code_analysis": {
                 "database": {
@@ -559,7 +610,7 @@ class TestDriverConfigFileValidation:
     def test_empty_path_string(self):
         """Test validation with empty path string."""
         config = {
-            "server": {"host": "localhost", "port": 15000, "protocol": "http"},
+            "server": {"host": "localhost", "port": 15000, "protocol": "mtls", "ssl": {"cert": "server.crt", "key": "server.key", "ca": "ca.crt"}},
             "queue_manager": {"enabled": True},
             "code_analysis": {
                 "database": {
@@ -585,7 +636,7 @@ class TestDriverConfigFileValidation:
     def test_worker_config_command_timeout_not_number(self):
         """Test validation when command_timeout is not a number."""
         config = {
-            "server": {"host": "localhost", "port": 15000, "protocol": "http"},
+            "server": {"host": "localhost", "port": 15000, "protocol": "mtls", "ssl": {"cert": "server.crt", "key": "server.key", "ca": "ca.crt"}},
             "queue_manager": {"enabled": True},
             "code_analysis": {
                 "database": {
@@ -622,7 +673,7 @@ class TestDriverConfigFileValidation:
     def test_worker_config_poll_interval_not_number(self):
         """Test validation when poll_interval is not a number."""
         config = {
-            "server": {"host": "localhost", "port": 15000, "protocol": "http"},
+            "server": {"host": "localhost", "port": 15000, "protocol": "mtls", "ssl": {"cert": "server.crt", "key": "server.key", "ca": "ca.crt"}},
             "queue_manager": {"enabled": True},
             "code_analysis": {
                 "database": {
@@ -657,7 +708,7 @@ class TestDriverConfigFileValidation:
     def test_worker_config_command_timeout_zero(self):
         """Test validation when command_timeout is zero."""
         config = {
-            "server": {"host": "localhost", "port": 15000, "protocol": "http"},
+            "server": {"host": "localhost", "port": 15000, "protocol": "mtls", "ssl": {"cert": "server.crt", "key": "server.key", "ca": "ca.crt"}},
             "queue_manager": {"enabled": True},
             "code_analysis": {
                 "database": {
@@ -687,7 +738,7 @@ class TestDriverConfigFileValidation:
     def test_worker_config_poll_interval_zero(self):
         """Test validation when poll_interval is zero."""
         config = {
-            "server": {"host": "localhost", "port": 15000, "protocol": "http"},
+            "server": {"host": "localhost", "port": 15000, "protocol": "mtls", "ssl": {"cert": "server.crt", "key": "server.key", "ca": "ca.crt"}},
             "queue_manager": {"enabled": True},
             "code_analysis": {
                 "database": {
@@ -717,7 +768,7 @@ class TestDriverConfigFileValidation:
     def test_valid_postgres_driver(self):
         """Test validation with valid postgres driver."""
         config = {
-            "server": {"host": "localhost", "port": 15000, "protocol": "http"},
+            "server": {"host": "localhost", "port": 15000, "protocol": "mtls", "ssl": {"cert": "server.crt", "key": "server.key", "ca": "ca.crt"}},
             "queue_manager": {"enabled": True},
             "code_analysis": {
                 "database": {
@@ -744,7 +795,7 @@ class TestDriverConfigFileValidation:
     def test_valid_mysql_driver(self):
         """Test validation with valid mysql driver."""
         config = {
-            "server": {"host": "localhost", "port": 15000, "protocol": "http"},
+            "server": {"host": "localhost", "port": 15000, "protocol": "mtls", "ssl": {"cert": "server.crt", "key": "server.key", "ca": "ca.crt"}},
             "queue_manager": {"enabled": True},
             "code_analysis": {
                 "database": {
@@ -771,7 +822,7 @@ class TestDriverConfigFileValidation:
     def test_no_driver_section(self):
         """Test validation when driver section is missing (should pass)."""
         config = {
-            "server": {"host": "localhost", "port": 15000, "protocol": "http"},
+            "server": {"host": "localhost", "port": 15000, "protocol": "mtls", "ssl": {"cert": "server.crt", "key": "server.key", "ca": "ca.crt"}},
             "queue_manager": {"enabled": True},
             "code_analysis": {
                 "database": {},
@@ -788,7 +839,7 @@ class TestDriverConfigFileValidation:
     def test_no_database_section(self):
         """Test validation when database section is missing (should pass)."""
         config = {
-            "server": {"host": "localhost", "port": 15000, "protocol": "http"},
+            "server": {"host": "localhost", "port": 15000, "protocol": "mtls", "ssl": {"cert": "server.crt", "key": "server.key", "ca": "ca.crt"}},
             "queue_manager": {"enabled": True},
             "code_analysis": {},
         }
@@ -803,8 +854,9 @@ class TestDriverConfigFileValidation:
     def test_validate_file_method(self, tmp_path):
         """Test validate_file method."""
         config_file = tmp_path / "config.json"
+        _create_dummy_ssl_certs_in_dir(tmp_path)
         config = {
-            "server": {"host": "localhost", "port": 15000, "protocol": "http"},
+            "server": {"host": "localhost", "port": 15000, "protocol": "mtls", "ssl": {"cert": "server.crt", "key": "server.key", "ca": "ca.crt"}},
             "queue_manager": {"enabled": True},
             "code_analysis": {
                 "database": {

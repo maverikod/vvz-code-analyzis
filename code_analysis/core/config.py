@@ -288,6 +288,10 @@ class ServerConfig(BaseModel):
         },
         description="File watcher worker configuration",
     )
+    indexing_worker: Optional[Dict[str, Any]] = Field(
+        default=None,
+        description="Indexing worker configuration (enabled, poll_interval, batch_size, log_path).",
+    )
 
     @field_validator("port")
     @classmethod

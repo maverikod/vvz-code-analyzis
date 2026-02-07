@@ -51,6 +51,11 @@ class _RPCHandlersIndexFileMixin:
                 error_code=ErrorCode.INTERNAL_ERROR,
                 description="Driver has no db_path (index_file only supported for SQLite driver)",
             )
+        logger.info(
+            "[index_file] Starting: file_path=%s project_id=%s",
+            file_path,
+            project_id,
+        )
         try:
             # Resolve project root from DB
             exec_result = self.driver.execute(
@@ -71,23 +76,20 @@ class _RPCHandlersIndexFileMixin:
                     description=f"Project has no root_path: {project_id}",
                 )
 
-            # Reuse CodeDatabase.update_file_data in driver process (same DB file via direct sqlite)
+            # Reuse existing driver connection: do NOT create a second CodeDatabase(driver_config)
+            # (that would open a second connection and call sync_schema(), causing lock contention
+            # and "Schema synchronization failed: disk I/O error"). Use from_existing_driver so
+            # only one connection touches the DB in this process.
             from code_analysis.core.database import CodeDatabase
 
-            driver_config = {
-                "type": "sqlite",
-                "config": {"path": str(Path(self.driver.db_path).resolve())},
-            }
-            db = CodeDatabase(driver_config)
-            try:
-                update_result = db.update_file_data(
-                    file_path, project_id, Path(root_path)
-                )
-            finally:
-                try:
-                    db.driver.disconnect()
-                except Exception as disc_err:
-                    logger.debug("CodeDatabase disconnect in index_file: %s", disc_err)
+            logger.debug(
+                "[index_file] Using from_existing_driver (single connection, no sync_schema)"
+            )
+            db = CodeDatabase.from_existing_driver(self.driver)
+            update_result = db.update_file_data(
+                file_path, project_id, Path(root_path)
+            )
+            # Do not disconnect db.driver: it is the RPC server's shared connection.
 
             if not update_result.get("success"):
                 error_msg = update_result.get("error", "Unknown error")
@@ -112,6 +114,10 @@ class _RPCHandlersIndexFileMixin:
                 )
                 # Still return success; index completed
 
+            logger.info(
+                "[index_file] Completed: file_path=%s success=True",
+                update_result.get("file_path", file_path),
+            )
             return SuccessResult(data=update_result)
         except Exception as e:
             logger.error("index_file failed for %s: %s", file_path, e, exc_info=True)

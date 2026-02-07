@@ -10,7 +10,7 @@ This document lists all search-related commands and how they work. Use it to cho
 | Type              | Command             | Input              | Use case |
 |-------------------|---------------------|--------------------|----------|
 | Full-text (FTS5)   | `fulltext_search`   | query, project_id  | Find text in code/docstrings |
-| Semantic (vectors) | `semantic_search`   | query, root_dir, k | Find conceptually similar code |
+| Semantic (vectors) | `semantic_search`   | query, project_id, limit | Find conceptually similar code |
 | AST by type        | `search_ast_nodes`  | project_id, node_type | Find classes/functions/methods |
 | Classes by name    | `find_classes`     | project_id, pattern| List/filter classes (SQL LIKE) |
 | Methods of class   | `list_class_methods`| project_id, class_name | List methods of a class |
@@ -39,7 +39,7 @@ This document lists all search-related commands and how they work. Use it to cho
 - **Source:** `commands/semantic_search_mcp.py` → `SemanticSearchMCPCommand`
 - **Backend:** Embedding service + FAISS index over code chunks.
 - **Requires:** Vector index built (vectorization worker / `revectorize`); embedding service available.
-- **Parameters:** `root_dir` or `project_id`, `query`, optional `k` (default 10), `entity_type`, etc.
+- **Parameters:** `project_id`, `query`; optional `limit` (default 10), `min_score`. Same `limit` as fulltext_search.
 - **Returns:** Similar chunks with distance/similarity.
 - **Docs:** See command help / COMMANDS_GUIDE.
 

@@ -11,9 +11,23 @@ from typing import Any, Dict, List, Optional
 from mcp_proxy_adapter.commands.result import SuccessResult, ErrorResult
 
 from .base_mcp_command import BaseMCPCommand
-from .log_viewer import LogViewerCommand, ListLogFilesCommand
+from .log_viewer import (
+    ListLogFilesCommand,
+    LogViewerCommand,
+    RotateLogsCommand,
+)
 
 logger = logging.getLogger(__name__)
+
+# Default log filenames per worker type (one log per worker)
+WORKER_LOG_FILENAMES = {
+    "file_watcher": "file_watcher.log",
+    "vectorization": "vectorization_worker.log",
+    "indexing": "indexing_worker.log",
+    "database_driver": "database_driver.log",
+    "analysis": "comprehensive_analysis.log",
+    "server": "mcp_server.log",
+}
 
 
 class ViewWorkerLogsMCPCommand(BaseMCPCommand):
@@ -39,8 +53,14 @@ class ViewWorkerLogsMCPCommand(BaseMCPCommand):
                 },
                 "worker_type": {
                     "type": "string",
-                    "enum": ["file_watcher", "vectorization", "analysis"],
-                    "description": "Type of worker (file_watcher, vectorization, or analysis)",
+                    "enum": [
+                        "file_watcher",
+                        "vectorization",
+                        "indexing",
+                        "database_driver",
+                        "analysis",
+                    ],
+                    "description": "Type of worker (file_watcher, vectorization, indexing, database_driver, or analysis)",
                     "default": "file_watcher",
                 },
                 "from_time": {
@@ -68,6 +88,18 @@ class ViewWorkerLogsMCPCommand(BaseMCPCommand):
                     "type": "string",
                     "description": "Text pattern to search for (regex supported)",
                 },
+                "importance_min": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 10,
+                    "description": "Minimum importance 0-10 (inclusive)",
+                },
+                "importance_max": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 10,
+                    "description": "Maximum importance 0-10 (inclusive)",
+                },
                 "tail": {
                     "type": "integer",
                     "description": "Return last N lines (if specified, ignores time filters)",
@@ -78,19 +110,21 @@ class ViewWorkerLogsMCPCommand(BaseMCPCommand):
                     "default": 1000,
                 },
             },
-            "required": ["log_path"],
+            "required": [],
             "additionalProperties": False,
         }
 
     async def execute(
         self,
-        log_path: str,
+        log_path: Optional[str] = None,
         worker_type: str = "file_watcher",
         from_time: Optional[str] = None,
         to_time: Optional[str] = None,
         event_types: Optional[List[str]] = None,
         log_levels: Optional[List[str]] = None,
         search_pattern: Optional[str] = None,
+        importance_min: Optional[int] = None,
+        importance_max: Optional[int] = None,
         tail: Optional[int] = None,
         limit: int = 1000,
         **kwargs,
@@ -99,13 +133,15 @@ class ViewWorkerLogsMCPCommand(BaseMCPCommand):
         Execute view worker logs command.
 
         Args:
-            log_path: Path to log file
-            worker_type: Type of worker (file_watcher or vectorization)
+            log_path: Path to log file (optional if worker_type given and config available)
+            worker_type: Type of worker (file_watcher, vectorization, indexing, database_driver, analysis)
             from_time: Start time filter
             to_time: End time filter
             event_types: List of event types to filter
             log_levels: List of log levels to filter
-            search_pattern: Text pattern to search for
+            search_pattern: Text pattern to search for (regex)
+            importance_min: Minimum importance 0-10 (inclusive)
+            importance_max: Maximum importance 0-10 (inclusive)
             tail: Return last N lines
             limit: Maximum number of lines to return
 
@@ -113,14 +149,24 @@ class ViewWorkerLogsMCPCommand(BaseMCPCommand):
             SuccessResult with log entries or ErrorResult on failure
         """
         try:
+            resolved_path = log_path
+            if not resolved_path:
+                resolved_path = self._resolve_worker_log_path(worker_type)
+            if not resolved_path:
+                return ErrorResult(
+                    code="MISSING_LOG_PATH",
+                    message="Provide log_path or ensure worker_type is set and server config is available to resolve default log path",
+                )
             command = LogViewerCommand(
-                log_path=log_path,
+                log_path=resolved_path,
                 worker_type=worker_type,
                 from_time=from_time,
                 to_time=to_time,
                 event_types=event_types,
                 log_levels=log_levels,
                 search_pattern=search_pattern,
+                importance_min=importance_min,
+                importance_max=importance_max,
                 tail=tail,
                 limit=limit,
             )
@@ -128,6 +174,19 @@ class ViewWorkerLogsMCPCommand(BaseMCPCommand):
             return SuccessResult(data=result)
         except Exception as e:
             return self._handle_error(e, "LOG_VIEW_ERROR", "view_worker_logs")
+
+    def _resolve_worker_log_path(self, worker_type: str) -> Optional[str]:
+        """Resolve default log path for worker_type from server config (config_dir/logs/<name>)."""
+        try:
+            storage = BaseMCPCommand._get_shared_storage()
+            log_name = WORKER_LOG_FILENAMES.get(worker_type)
+            if not log_name:
+                return None
+            path = storage.config_dir / "logs" / log_name
+            return str(path)
+        except Exception as e:
+            logger.debug("Could not resolve worker log path from config: %s", e)
+            return None
 
     @classmethod
     def metadata(cls: type["ViewWorkerLogsMCPCommand"]) -> Dict[str, Any]:
@@ -160,12 +219,13 @@ class ViewWorkerLogsMCPCommand(BaseMCPCommand):
                 "2. Parses time filters (from_time, to_time) if provided\n"
                 "3. Selects event patterns based on worker_type\n"
                 "4. Reads log file line by line\n"
-                "5. Parses each log line to extract timestamp, level, and message\n"
+                "5. Parses each log line (unified or legacy format) to extract timestamp, level, importance (0-10), and message\n"
                 "6. Applies filters:\n"
-                "   - Time range filter (from_time to to_time)\n"
+                "   - Time range filter (from_time to to_time; partial interval supported)\n"
                 "   - Event type filter (matches event patterns)\n"
                 "   - Log level filter (INFO, ERROR, WARNING, etc.)\n"
-                "   - Search pattern filter (regex matching)\n"
+                "   - Importance filter (importance_min, importance_max 0-10)\n"
+                "   - Search pattern filter (regex on message)\n"
                 "7. If tail specified, returns last N lines (ignores time filters)\n"
                 "8. Limits results to specified limit\n"
                 "9. Returns structured log entries\n\n"
@@ -202,29 +262,40 @@ class ViewWorkerLogsMCPCommand(BaseMCPCommand):
                 "- If tail is specified, time filters are ignored\n"
                 "- Search pattern supports regex (case-insensitive)\n"
                 "- Default limit is 1000 lines to prevent large responses\n"
-                "- Log lines are parsed to extract timestamp, level, and message"
+                "- Log lines are parsed to extract timestamp, level, importance (0-10), and message\n"
+                "- importance_min/importance_max are filters only (they select which lines are returned); "
+                "importance is assigned when logs are written. As logs gradually fill up, filtering by "
+                "importance becomes more useful (e.g. importance_min=6 for warnings and above)."
             ),
             "parameters": {
                 "log_path": {
                     "description": (
-                        "Path to log file. Can be absolute or relative. "
-                        "File must exist and be readable."
+                        "Path to log file. Optional if worker_type is set and server config "
+                        "provides config_dir (then default is config_dir/logs/<worker>.log). "
+                        "Can be absolute or relative. File must exist and be readable."
                     ),
                     "type": "string",
-                    "required": True,
+                    "required": False,
                     "examples": [
                         "logs/file_watcher.log",
-                        "/home/user/projects/my_project/logs/vectorization.log",
+                        "/home/user/projects/my_project/logs/vectorization_worker.log",
                     ],
                 },
                 "worker_type": {
                     "description": (
-                        "Type of worker. Options: 'file_watcher', 'vectorization', 'analysis'. "
-                        "Default is 'file_watcher'. Determines which event patterns are used."
+                        "Type of worker. Options: 'file_watcher', 'vectorization', 'indexing', "
+                        "'database_driver', 'analysis'. Default is 'file_watcher'. "
+                        "Used to resolve default log path when log_path is omitted and for event patterns."
                     ),
                     "type": "string",
                     "required": False,
-                    "enum": ["file_watcher", "vectorization", "analysis"],
+                    "enum": [
+                        "file_watcher",
+                        "vectorization",
+                        "indexing",
+                        "database_driver",
+                        "analysis",
+                    ],
                     "default": "file_watcher",
                 },
                 "from_time": {
@@ -269,17 +340,39 @@ class ViewWorkerLogsMCPCommand(BaseMCPCommand):
                     ),
                     "type": "array",
                     "required": False,
-                    "items": {"type": "string", "enum": ["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]},
+                    "items": {
+                        "type": "string",
+                        "enum": ["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
+                    },
                     "examples": [["ERROR", "WARNING"], ["INFO"]],
                 },
                 "search_pattern": {
                     "description": (
                         "Text pattern to search for. Supports regex (case-insensitive). "
-                        "Only log lines matching the pattern are returned."
+                        "Only log lines whose message matches the pattern are returned."
                     ),
                     "type": "string",
                     "required": False,
                     "examples": ["error", "failed", "circuit.*breaker"],
+                },
+                "importance_min": {
+                    "description": (
+                        "Minimum importance 0-10 (inclusive). See LOG_IMPORTANCE_CRITERIA.md. "
+                        "If log line has no explicit importance, it is derived from level (DEBUG=2, INFO=4, WARNING=6, ERROR=8, CRITICAL=10)."
+                    ),
+                    "type": "integer",
+                    "required": False,
+                    "minimum": 0,
+                    "maximum": 10,
+                },
+                "importance_max": {
+                    "description": (
+                        "Maximum importance 0-10 (inclusive). Use with importance_min to filter by importance range."
+                    ),
+                    "type": "integer",
+                    "required": False,
+                    "minimum": 0,
+                    "maximum": 10,
                 },
                 "tail": {
                     "description": (
@@ -343,6 +436,16 @@ class ViewWorkerLogsMCPCommand(BaseMCPCommand):
                         "Returns ERROR level logs containing 'failed' in vectorization.log."
                     ),
                 },
+                {
+                    "description": "Filter by importance (errors and above)",
+                    "command": {
+                        "worker_type": "file_watcher",
+                        "importance_min": 8,
+                    },
+                    "explanation": (
+                        "Returns log entries with importance >= 8 (errors and critical)."
+                    ),
+                },
             ],
             "error_cases": {
                 "LOG_VIEW_ERROR": {
@@ -360,11 +463,11 @@ class ViewWorkerLogsMCPCommand(BaseMCPCommand):
                     "data": {
                         "entries": (
                             "List of log entries. Each entry contains:\n"
-                            "- timestamp: Log timestamp (datetime)\n"
+                            "- timestamp: Log timestamp (ISO format)\n"
                             "- level: Log level (DEBUG, INFO, WARNING, ERROR, CRITICAL)\n"
+                            "- importance: Importance 0-10 (see LOG_IMPORTANCE_CRITERIA.md)\n"
                             "- message: Log message\n"
-                            "- event_type: Detected event type (if matched)\n"
-                            "- line_number: Line number in log file"
+                            "- raw: Original log line"
                         ),
                         "total_lines": "Total number of lines read from log file",
                         "filtered_lines": "Number of lines after filtering",
@@ -375,9 +478,9 @@ class ViewWorkerLogsMCPCommand(BaseMCPCommand):
                             {
                                 "timestamp": "2025-01-26T10:30:00",
                                 "level": "INFO",
+                                "importance": 4,
                                 "message": "[NEW FILE] src/main.py",
-                                "event_type": "new_file",
-                                "line_number": 42,
+                                "raw": "2025-01-26 10:30:00 | INFO | 4 | [NEW FILE] src/main.py",
                             },
                         ],
                         "total_lines": 1000,
@@ -395,7 +498,8 @@ class ViewWorkerLogsMCPCommand(BaseMCPCommand):
                 "Use tail parameter to view recent logs quickly",
                 "Use time filters to narrow down to specific time periods",
                 "Combine event_types and log_levels for precise filtering",
-                "Use search_pattern for text-based searches",
+                "Use search_pattern for regex search on message",
+                "Use importance_min/importance_max to filter by severity (0-10)",
                 "Set appropriate limit to prevent large responses",
                 "Use list_worker_logs first to find available log files",
             ],
@@ -426,8 +530,15 @@ class ListWorkerLogsMCPCommand(BaseMCPCommand):
                 },
                 "worker_type": {
                     "type": "string",
-                    "enum": ["file_watcher", "vectorization", "analysis", "server"],
-                    "description": "Filter by worker type (file_watcher, vectorization, analysis) or server logs (optional)",
+                    "enum": [
+                        "file_watcher",
+                        "vectorization",
+                        "indexing",
+                        "database_driver",
+                        "analysis",
+                        "server",
+                    ],
+                    "description": "Filter by worker type (optional)",
                 },
             },
             "required": [],
@@ -451,7 +562,17 @@ class ListWorkerLogsMCPCommand(BaseMCPCommand):
             SuccessResult with log files list or ErrorResult on failure
         """
         try:
-            command = ListLogFilesCommand(log_dirs=log_dirs, worker_type=worker_type)
+            resolved_dirs = log_dirs
+            if not resolved_dirs:
+                try:
+                    storage = BaseMCPCommand._get_shared_storage()
+                    config_logs = str(storage.config_dir / "logs")
+                    resolved_dirs = [config_logs, "logs"]
+                except Exception:
+                    resolved_dirs = ["logs"]
+            command = ListLogFilesCommand(
+                log_dirs=resolved_dirs, worker_type=worker_type
+            )
             result = await command.execute()
             return SuccessResult(data=result)
         except Exception as e:
@@ -529,47 +650,46 @@ class ListWorkerLogsMCPCommand(BaseMCPCommand):
                 "worker_type": {
                     "description": (
                         "Filter by worker type. Optional. Options: 'file_watcher', 'vectorization', "
-                        "'analysis', 'server'. If not specified, returns all log files."
+                        "'indexing', 'database_driver', 'analysis', 'server'. If not specified, returns all log files."
                     ),
                     "type": "string",
                     "required": False,
-                    "enum": ["file_watcher", "vectorization", "analysis", "server"],
+                    "enum": [
+                        "file_watcher",
+                        "vectorization",
+                        "indexing",
+                        "database_driver",
+                        "analysis",
+                        "server",
+                    ],
                 },
             },
             "usage_examples": [
                 {
                     "description": "List all log files in default logs directory",
                     "command": {},
-                    "explanation": (
-                        "Lists all log files in the 'logs' directory."
-                    ),
+                    "explanation": ("Lists all log files in the 'logs' directory."),
                 },
                 {
                     "description": "List file_watcher logs",
                     "command": {
                         "worker_type": "file_watcher",
                     },
-                    "explanation": (
-                        "Lists only file_watcher log files."
-                    ),
+                    "explanation": ("Lists only file_watcher log files."),
                 },
                 {
                     "description": "List logs from custom directories",
                     "command": {
                         "log_dirs": ["logs", "custom_logs", "/var/log/code_analysis"],
                     },
-                    "explanation": (
-                        "Scans multiple directories for log files."
-                    ),
+                    "explanation": ("Scans multiple directories for log files."),
                 },
                 {
                     "description": "List server logs",
                     "command": {
                         "worker_type": "server",
                     },
-                    "explanation": (
-                        "Lists server log files (MCP proxy, etc.)."
-                    ),
+                    "explanation": ("Lists server log files (MCP proxy, etc.)."),
                 },
             ],
             "error_cases": {
@@ -631,4 +751,188 @@ class ListWorkerLogsMCPCommand(BaseMCPCommand):
                 "Use returned log file paths with view_worker_logs command",
                 "Check file sizes to identify large log files that may need rotation",
             ],
+        }
+
+
+class RotateWorkerLogsMCPCommand(BaseMCPCommand):
+    """Manually rotate a worker log file (current -> .1, .1 -> .2, ... new empty log)."""
+
+    name = "rotate_worker_logs"
+    version = "1.0.0"
+    descr = "Manually rotate a worker log file"
+    category = "logging"
+    author = "Vasiliy Zdanovskiy"
+    email = "vasilyvz@gmail.com"
+    use_queue = False
+
+    @classmethod
+    def get_schema(cls) -> Dict[str, Any]:
+        """Get JSON schema for command parameters."""
+        return {
+            "type": "object",
+            "properties": {
+                "log_path": {
+                    "type": "string",
+                    "description": "Path to log file to rotate (optional if worker_type given)",
+                },
+                "worker_type": {
+                    "type": "string",
+                    "enum": [
+                        "file_watcher",
+                        "vectorization",
+                        "indexing",
+                        "database_driver",
+                        "analysis",
+                        "server",
+                    ],
+                    "description": "Worker type to resolve default log path (optional)",
+                },
+                "backup_count": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 99,
+                    "description": "Number of backup files to keep (default 5)",
+                    "default": 5,
+                },
+            },
+            "required": [],
+            "additionalProperties": False,
+        }
+
+    async def execute(
+        self,
+        log_path: Optional[str] = None,
+        worker_type: Optional[str] = None,
+        backup_count: int = 5,
+        **kwargs,
+    ) -> SuccessResult | ErrorResult:
+        """
+        Execute manual log rotation.
+
+        Args:
+            log_path: Path to log file (optional if worker_type and config available)
+            worker_type: Resolve default log path by worker type
+            backup_count: Number of backup files to keep (1-99)
+
+        Returns:
+            SuccessResult with rotated_paths and message or ErrorResult on failure
+        """
+        try:
+            resolved_path = log_path
+            if not resolved_path and worker_type:
+                resolved_path = self._resolve_worker_log_path(worker_type)
+            if not resolved_path:
+                return ErrorResult(
+                    code="MISSING_LOG_PATH",
+                    message="Provide log_path or worker_type to resolve default log path",
+                )
+            command = RotateLogsCommand(
+                log_path=resolved_path,
+                backup_count=backup_count,
+            )
+            result = await command.execute()
+            if result.get("error"):
+                return ErrorResult(
+                    code="ROTATE_LOG_ERROR",
+                    message=result["error"],
+                )
+            return SuccessResult(data=result)
+        except Exception as e:
+            return self._handle_error(e, "ROTATE_LOG_ERROR", "rotate_worker_logs")
+
+    def _resolve_worker_log_path(self, worker_type: str) -> Optional[str]:
+        """Resolve default log path for worker_type from server config."""
+        try:
+            storage = BaseMCPCommand._get_shared_storage()
+            log_name = WORKER_LOG_FILENAMES.get(worker_type)
+            if not log_name:
+                return None
+            path = storage.config_dir / "logs" / log_name
+            return str(path)
+        except Exception as e:
+            logger.debug("Could not resolve worker log path from config: %s", e)
+            return None
+
+    @classmethod
+    def metadata(cls: type["RotateWorkerLogsMCPCommand"]) -> Dict[str, Any]:
+        """Get detailed command metadata for AI models."""
+        return {
+            "name": cls.name,
+            "version": cls.version,
+            "description": cls.descr,
+            "category": cls.category,
+            "author": cls.author,
+            "email": cls.email,
+            "detailed_description": (
+                "The rotate_worker_logs command manually rotates a worker log file: "
+                "the current log is renamed to .1, .1 to .2, etc. (same as RotatingFileHandler), "
+                "then a new empty log file is created. Use when you want to archive logs without "
+                "waiting for size-based rotation. The running worker may continue writing to the "
+                "previous file (now .1) until it restarts or reopens the log.\n\n"
+                "Parameters: log_path (optional if worker_type set), worker_type, backup_count (default 5)."
+            ),
+            "parameters": {
+                "log_path": {
+                    "description": "Path to the log file to rotate. Optional if worker_type is set.",
+                    "type": "string",
+                    "required": False,
+                },
+                "worker_type": {
+                    "description": (
+                        "Worker type to resolve default log path (e.g. file_watcher -> config_dir/logs/file_watcher.log). "
+                        "Use when log_path is omitted."
+                    ),
+                    "type": "string",
+                    "required": False,
+                    "enum": [
+                        "file_watcher",
+                        "vectorization",
+                        "indexing",
+                        "database_driver",
+                        "analysis",
+                        "server",
+                    ],
+                },
+                "backup_count": {
+                    "description": "Number of backup files to keep (1-99). Default 5.",
+                    "type": "integer",
+                    "required": False,
+                    "default": 5,
+                },
+            },
+            "usage_examples": [
+                {
+                    "description": "Rotate file_watcher log",
+                    "command": {"worker_type": "file_watcher"},
+                    "explanation": "Rotates the default file_watcher log (e.g. logs/file_watcher.log -> .1, new empty log).",
+                },
+                {
+                    "description": "Rotate by path with 3 backups",
+                    "command": {
+                        "log_path": "logs/vectorization_worker.log",
+                        "backup_count": 3,
+                    },
+                    "explanation": "Rotates the given log file and keeps 3 backup copies.",
+                },
+            ],
+            "error_cases": {
+                "MISSING_LOG_PATH": {
+                    "description": "Neither log_path nor worker_type provided or path could not be resolved",
+                    "solution": "Provide log_path or worker_type and ensure server config is available.",
+                },
+                "ROTATE_LOG_ERROR": {
+                    "description": "OS error during rotation (permission, disk, etc.)",
+                    "solution": "Check file permissions and disk space.",
+                },
+            },
+            "return_value": {
+                "success": {
+                    "data": {
+                        "log_path": "Path that was rotated",
+                        "backup_count": "Number of backups kept",
+                        "rotated_paths": "List of paths after rotation (e.g. [log.1, log.2])",
+                        "message": "Human-readable summary",
+                    },
+                },
+            },
         }

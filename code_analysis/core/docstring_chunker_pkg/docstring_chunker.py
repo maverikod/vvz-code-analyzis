@@ -25,6 +25,8 @@ import uuid
 from dataclasses import dataclass
 from typing import Any, Iterable, List, Optional, Tuple
 
+from ..exceptions import ChunkerResponseError
+
 logger = logging.getLogger(__name__)
 
 
@@ -354,12 +356,21 @@ class DocstringChunker:
                     embedding_json = json.dumps(emb)
                     embedding_model = model
                 else:
-                    # add_code_chunk requires embedding_model when embedding_vector is set.
-                    # Save chunk without vector so batch_processor can vectorize later.
-                    logger.debug(
-                        f"[FILE {file_id}] Chunk has embedding but no model name; "
-                        f"saving without vector for {file_path} (line={it.line})"
+                    err = ChunkerResponseError(
+                        "Chunker returned chunk with embedding but no model name. "
+                        "Chunker server must include 'model' or 'embedding_model' in each chunk; "
+                        "see docs/CHUNKER_MODEL_FIELD.md",
+                        file_path=file_path,
+                        details={"file_id": file_id, "line": it.line},
                     )
+                    logger.critical(
+                        "%s (file_path=%s, file_id=%s, line=%s)",
+                        err.message,
+                        file_path,
+                        file_id,
+                        it.line,
+                    )
+                    raise err
 
             try:
                 # DatabaseClient.add_code_chunk is sync (runs in executor); direct DB may be async

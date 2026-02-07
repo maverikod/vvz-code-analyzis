@@ -16,6 +16,24 @@ from ..core.config_generator import CodeAnalysisConfigGenerator
 from ..core.config_validator import CodeAnalysisConfigValidator
 
 
+def _indexing_worker_enabled(args: argparse.Namespace) -> Optional[bool]:
+    """Resolve indexing worker enabled from CLI (None = do not override)."""
+    if hasattr(args, "indexing_worker_disabled") and args.indexing_worker_disabled:
+        return False
+    if hasattr(args, "indexing_worker_enabled") and args.indexing_worker_enabled:
+        return True
+    return None
+
+
+def _file_watcher_enabled(args: argparse.Namespace) -> Optional[bool]:
+    """Resolve file watcher enabled from CLI (None = do not override)."""
+    if hasattr(args, "file_watcher_disabled") and args.file_watcher_disabled:
+        return False
+    if hasattr(args, "file_watcher_enabled") and args.file_watcher_enabled:
+        return True
+    return None
+
+
 def cmd_generate(args: argparse.Namespace) -> int:
     """
     Generate configuration file.
@@ -88,6 +106,66 @@ def cmd_generate(args: argparse.Namespace) -> int:
             code_analysis_driver_path=(
                 args.code_analysis_driver_path
                 if hasattr(args, "code_analysis_driver_path")
+                else None
+            ),
+            code_analysis_log=(
+                args.code_analysis_log if hasattr(args, "code_analysis_log") else None
+            ),
+            code_analysis_faiss_index_path=(
+                args.code_analysis_faiss_index_path
+                if hasattr(args, "code_analysis_faiss_index_path")
+                else None
+            ),
+            code_analysis_vector_dim=(
+                args.code_analysis_vector_dim
+                if hasattr(args, "code_analysis_vector_dim")
+                else None
+            ),
+            code_analysis_min_chunk_length=(
+                args.code_analysis_min_chunk_length
+                if hasattr(args, "code_analysis_min_chunk_length")
+                else None
+            ),
+            code_analysis_retry_attempts=(
+                args.code_analysis_retry_attempts
+                if hasattr(args, "code_analysis_retry_attempts")
+                else None
+            ),
+            code_analysis_retry_delay=(
+                args.code_analysis_retry_delay
+                if hasattr(args, "code_analysis_retry_delay")
+                else None
+            ),
+            indexing_worker_enabled=_indexing_worker_enabled(args),
+            indexing_worker_poll_interval=(
+                args.indexing_worker_poll_interval
+                if hasattr(args, "indexing_worker_poll_interval")
+                else None
+            ),
+            indexing_worker_batch_size=(
+                args.indexing_worker_batch_size
+                if hasattr(args, "indexing_worker_batch_size")
+                else None
+            ),
+            indexing_worker_log_path=(
+                args.indexing_worker_log_path
+                if hasattr(args, "indexing_worker_log_path")
+                else None
+            ),
+            file_watcher_enabled=_file_watcher_enabled(args),
+            file_watcher_scan_interval=(
+                args.file_watcher_scan_interval
+                if hasattr(args, "file_watcher_scan_interval")
+                else None
+            ),
+            file_watcher_log_path=(
+                args.file_watcher_log_path
+                if hasattr(args, "file_watcher_log_path")
+                else None
+            ),
+            file_watcher_version_dir=(
+                args.file_watcher_version_dir
+                if hasattr(args, "file_watcher_version_dir")
                 else None
             ),
         )
@@ -357,6 +435,86 @@ def main(argv: Optional[list[str]] = None) -> int:
         "--code-analysis-driver-path",
         type=str,
         help="Database path for driver config (default: same as --code-analysis-db-path)",
+    )
+    gen_parser.add_argument(
+        "--code-analysis-log",
+        type=str,
+        help="Code analysis log file path (default: logs/code_analysis.log)",
+    )
+    gen_parser.add_argument(
+        "--code-analysis-faiss-index-path",
+        type=str,
+        help="FAISS index file path (default: data/faiss_index.bin)",
+    )
+    gen_parser.add_argument(
+        "--code-analysis-vector-dim",
+        type=int,
+        help="Vector dimension for embeddings (default: 384)",
+    )
+    gen_parser.add_argument(
+        "--code-analysis-min-chunk-length",
+        type=int,
+        help="Minimum chunk length (default: 30)",
+    )
+    gen_parser.add_argument(
+        "--code-analysis-retry-attempts",
+        type=int,
+        help="Vectorization retry attempts (default: 3)",
+    )
+    gen_parser.add_argument(
+        "--code-analysis-retry-delay",
+        type=float,
+        help="Vectorization retry delay in seconds (default: 1.0)",
+    )
+    gen_parser.add_argument(
+        "--indexing-worker-enabled",
+        action="store_true",
+        help="Enable indexing worker (default: True)",
+    )
+    gen_parser.add_argument(
+        "--indexing-worker-disabled",
+        action="store_true",
+        help="Disable indexing worker",
+    )
+    gen_parser.add_argument(
+        "--indexing-worker-poll-interval",
+        type=int,
+        help="Indexing worker poll interval in seconds (default: 30)",
+    )
+    gen_parser.add_argument(
+        "--indexing-worker-batch-size",
+        type=int,
+        help="Indexing worker batch size (default: 5)",
+    )
+    gen_parser.add_argument(
+        "--indexing-worker-log-path",
+        type=str,
+        help="Indexing worker log path (default: logs/indexing_worker.log)",
+    )
+    gen_parser.add_argument(
+        "--file-watcher-enabled",
+        action="store_true",
+        help="Enable file watcher (default: True)",
+    )
+    gen_parser.add_argument(
+        "--file-watcher-disabled",
+        action="store_true",
+        help="Disable file watcher",
+    )
+    gen_parser.add_argument(
+        "--file-watcher-scan-interval",
+        type=int,
+        help="File watcher scan interval in seconds (default: 60)",
+    )
+    gen_parser.add_argument(
+        "--file-watcher-log-path",
+        type=str,
+        help="File watcher log path (default: logs/file_watcher.log)",
+    )
+    gen_parser.add_argument(
+        "--file-watcher-version-dir",
+        type=str,
+        help="File watcher version directory (default: data/versions)",
     )
 
     gen_parser.set_defaults(func=cmd_generate)

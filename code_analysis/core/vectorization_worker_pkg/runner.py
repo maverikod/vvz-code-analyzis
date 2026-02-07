@@ -349,6 +349,13 @@ def run_vectorization_worker(
         except Exception:
             pass  # Use defaults
 
+    # Status file for monitoring (current_operation, current_file)
+    status_file_path = (
+        Path(worker_log_path).with_suffix(".status.json")
+        if worker_log_path
+        else None
+    )
+
     # Create and run worker (universal mode - no project_id, no faiss_manager at init)
     # Pass socket_path to worker for DatabaseClient initialization
     worker = VectorizationWorker(
@@ -363,6 +370,7 @@ def run_vectorization_worker(
         max_empty_iterations=max_empty_iterations,
         empty_delay=empty_delay,
         socket_path=socket_path,  # Pass socket_path for DatabaseClient
+        status_file_path=status_file_path,
     )
 
     async def _run_worker_with_svo() -> Dict[str, Any]:

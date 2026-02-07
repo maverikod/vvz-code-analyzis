@@ -37,6 +37,7 @@ class VectorizationWorker:
         max_empty_iterations: int = 3,
         empty_delay: float = 5.0,
         socket_path: Optional[str] = None,
+        status_file_path: Optional[Path] = None,
     ):
         """
         Initialize universal vectorization worker.
@@ -57,6 +58,7 @@ class VectorizationWorker:
             max_empty_iterations: Max consecutive empty iterations before adding delay (default: 3)
             empty_delay: Delay in seconds when no chunks available (default: 5.0)
             socket_path: Path to database driver socket (for DatabaseClient)
+            status_file_path: Optional path to write current_operation/current_file for monitoring
         """
         self.db_path = db_path
         self.faiss_dir = Path(faiss_dir)
@@ -69,6 +71,7 @@ class VectorizationWorker:
         self.max_empty_iterations = max_empty_iterations
         self.empty_delay = empty_delay
         self.socket_path = socket_path
+        self.status_file_path = Path(status_file_path) if status_file_path else None
         self._stop_event = multiprocessing.Event()
 
     def stop(self) -> None:

@@ -66,7 +66,8 @@ Important notes:
 - If tail is specified, time filters are ignored
 - Search pattern supports regex (case-insensitive)
 - Default limit is 1000 lines to prevent large responses
-- Log lines are parsed to extract timestamp, level, and message
+- Log lines are parsed to extract timestamp, level, importance (0–10), and message
+- **Importance as filter:** `importance_min` and `importance_max` are **filter** parameters: they only select which log lines are returned. Importance is assigned when logs are written (unified format or derived from level; see LOG_IMPORTANCE_CRITERIA.md). As logs gradually fill up, filtering by importance becomes more useful to focus on higher-impact entries (e.g. importance_min=6 for warnings and above).
 
 ---
 
@@ -74,15 +75,17 @@ Important notes:
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `log_path` | string | **Yes** | Path to log file |
-| `worker_type` | string | No | Type of worker (file_watcher, vectorization, or analysis) Default: `"file_watcher"`. |
+| `log_path` | string | No | Path to log file (optional if worker_type set and config provides log path) |
+| `worker_type` | string | No | Type of worker (file_watcher, vectorization, indexing, database_driver, analysis). Default: `"file_watcher"`. |
 | `from_time` | string | No | Start time filter (ISO format or 'YYYY-MM-DD HH:MM:SS') |
 | `to_time` | string | No | End time filter (ISO format or 'YYYY-MM-DD HH:MM:SS') |
 | `event_types` | array | No | List of event types to filter (e.g., ['new_file', 'changed_file', 'deleted_file', 'cycle', 'error']) |
 | `log_levels` | array | No | List of log levels to filter (e.g., ['INFO', 'ERROR']) |
+| `importance_min` | integer | No | Minimum importance 0–10 (inclusive); only lines with importance ≥ this are returned (filter) |
+| `importance_max` | integer | No | Maximum importance 0–10 (inclusive); only lines with importance ≤ this are returned (filter) |
 | `search_pattern` | string | No | Text pattern to search for (regex supported) |
 | `tail` | integer | No | Return last N lines (if specified, ignores time filters) |
-| `limit` | integer | No | Maximum number of lines to return Default: `1000`. |
+| `limit` | integer | No | Maximum number of lines to return. Default: `1000`. |
 
 **Schema:** `additionalProperties: false` — only the parameters above are accepted.
 

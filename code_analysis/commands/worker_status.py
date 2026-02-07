@@ -12,6 +12,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from ..core.worker_status_file import read_worker_status
+
 logger = logging.getLogger(__name__)
 
 
@@ -44,6 +46,24 @@ class WorkerStatusCommand:
         self.worker_type = worker_type
         self.log_path = Path(log_path) if log_path else None
         self.lock_file_path = Path(lock_file_path) if lock_file_path else None
+
+    def _get_status_file_path(self) -> Optional[Path]:
+        """
+        Get worker status file path (current_operation, current_file) from log path.
+
+        Convention: same directory as log, same base name, .status.json suffix.
+        E.g. logs/vectorization_worker.log -> logs/vectorization_worker.status.json.
+        """
+        if not self.log_path:
+            return None
+        if self.log_path.suffix != ".log":
+            return None
+        return self.log_path.with_suffix(".status.json")
+
+    def _get_worker_progress(self) -> Optional[Dict[str, Any]]:
+        """Read current_operation and current_file from worker status file."""
+        status_path = self._get_status_file_path()
+        return read_worker_status(status_path)
 
     def _get_pid_file_path(self) -> Optional[Path]:
         """
@@ -238,6 +258,10 @@ class WorkerStatusCommand:
             "processes": [],
             "lock_file": None,
             "log_activity": None,
+            "current_operation": None,
+            "current_file": None,
+            "progress_percent": None,
+            "progress_updated_at": None,
         }
 
         # Only registry: get workers from WorkerManager
@@ -277,6 +301,14 @@ class WorkerStatusCommand:
 
         # Get recent log activity
         result["log_activity"] = self._get_recent_log_activity()
+
+        # Read worker progress (current_operation, current_file, progress_percent) from status file
+        status_data = self._get_worker_progress()
+        if status_data:
+            result["current_operation"] = status_data.get("current_operation")
+            result["current_file"] = status_data.get("current_file")
+            result["progress_percent"] = status_data.get("progress_percent")
+            result["progress_updated_at"] = status_data.get("updated_at")
 
         # Summary
         result["summary"] = {

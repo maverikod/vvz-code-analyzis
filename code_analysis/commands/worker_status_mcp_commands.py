@@ -70,6 +70,34 @@ class GetWorkerStatusMCPCommand(BaseMCPCommand):
             SuccessResult with worker status or ErrorResult on failure
         """
         try:
+            # Resolve log_path from config when not provided (so status file can be read)
+            if log_path is None:
+                try:
+                    from pathlib import Path
+
+                    from ..core.storage_paths import (
+                        load_raw_config,
+                        resolve_storage_paths,
+                    )
+
+                    config_path = self._resolve_config_path()
+                    config_data = load_raw_config(config_path)
+                    storage = resolve_storage_paths(
+                        config_data=config_data, config_path=config_path
+                    )
+                    ca = config_data.get("code_analysis") or {}
+                    if worker_type == "vectorization":
+                        rel = (ca.get("worker") or {}).get("log_path")
+                    elif worker_type == "file_watcher":
+                        rel = (ca.get("file_watcher") or {}).get("log_path")
+                    elif worker_type == "indexing":
+                        rel = (ca.get("indexing_worker") or {}).get("log_path")
+                    else:
+                        rel = None
+                    if rel and storage.config_dir:
+                        log_path = str((storage.config_dir / rel).resolve())
+                except Exception as e:
+                    logger.debug("Could not resolve log_path from config: %s", e)
             command = WorkerStatusCommand(
                 worker_type=worker_type,
                 log_path=log_path,
@@ -509,6 +537,7 @@ class GetDatabaseStatusMCPCommand(BaseMCPCommand):
                         p.id,
                         p.name,
                         (SELECT COUNT(*) FROM files WHERE project_id = p.id AND (deleted = 0 OR deleted IS NULL)) as file_count,
+                        (SELECT COUNT(*) FROM files WHERE project_id = p.id AND (deleted = 0 OR deleted IS NULL) AND (needs_chunking = 0 OR needs_chunking IS NULL)) as files_indexed,
                         (SELECT COUNT(DISTINCT f.id) 
                          FROM files f
                          WHERE f.project_id = p.id 
@@ -532,6 +561,7 @@ class GetDatabaseStatusMCPCommand(BaseMCPCommand):
                 project_list = []
                 for p in projects_with_stats:
                     file_count = p["file_count"] or 0
+                    files_indexed = p.get("files_indexed") or 0
                     chunked_files = p["chunked_files"] or 0
                     chunk_count = p["chunk_count"] or 0
                     vectorized_chunks = p["vectorized_chunks"] or 0
@@ -542,6 +572,11 @@ class GetDatabaseStatusMCPCommand(BaseMCPCommand):
                     files_processed_by_watcher = file_count
 
                     # Calculate percentages
+                    files_indexed_percent = (
+                        round((files_indexed / file_count * 100), 2)
+                        if file_count > 0
+                        else 0
+                    )
                     chunked_percent = (
                         round((chunked_files / file_count * 100), 2)
                         if file_count > 0
@@ -569,6 +604,8 @@ class GetDatabaseStatusMCPCommand(BaseMCPCommand):
                             "file_count": file_count,
                             "files_processed_by_watcher": files_processed_by_watcher,
                             "files_processed_percent": files_processed_percent,
+                            "files_indexed": files_indexed,
+                            "files_indexed_percent": files_indexed_percent,
                             "files_vectorized": files_vectorized,
                             "files_vectorized_percent": files_vectorized_percent,
                             "chunked_files": chunked_files,
@@ -622,9 +659,35 @@ class GetDatabaseStatusMCPCommand(BaseMCPCommand):
                 data = query_result.get("data", [])
                 files_with_chunks = data[0]["count"] if data else 0
 
+                # Files that have been indexed (indexing worker ran index_file; needs_chunking=0)
+                query_result = db.execute(
+                    """
+                    SELECT COUNT(*) as count FROM files
+                    WHERE (deleted = 0 OR deleted IS NULL)
+                    AND (needs_chunking = 0 OR needs_chunking IS NULL)
+                    """
+                )
+                data = query_result.get("data", [])
+                files_indexed = data[0]["count"] if data else 0
+
+                # Files pending indexing (needs_chunking=1), same structure as chunks not_vectorized
+                query_result = db.execute(
+                    """
+                    SELECT COUNT(*) as count FROM files
+                    WHERE (deleted = 0 OR deleted IS NULL) AND needs_chunking = 1
+                    """
+                )
+                data = query_result.get("data", [])
+                files_needing_indexing = data[0]["count"] if data else 0
+
                 active_files = total_files - deleted_files
                 chunked_percent = (
                     round((files_with_chunks / active_files * 100), 2)
+                    if active_files > 0
+                    else 0
+                )
+                indexed_percent = (
+                    round((files_indexed / active_files * 100), 2)
                     if active_files > 0
                     else 0
                 )
@@ -634,6 +697,9 @@ class GetDatabaseStatusMCPCommand(BaseMCPCommand):
                     "deleted": deleted_files,
                     "active": active_files,
                     "with_docstring": files_with_docstring,
+                    "indexed": files_indexed,
+                    "indexed_percent": indexed_percent,
+                    "needing_indexing": files_needing_indexing,
                     "needing_chunking": files_needing_chunking,
                     "chunked": files_with_chunks,
                     "chunked_percent": chunked_percent,
@@ -760,6 +826,27 @@ class GetDatabaseStatusMCPCommand(BaseMCPCommand):
                     "indexing": indexing_stats,
                 }
 
+                # Get files needing indexing (sample) - same structure as needing_vectorization_sample
+                query_result = db.execute(
+                    """
+                    SELECT f.id, f.path, f.has_docstring, f.last_modified
+                    FROM files f
+                    WHERE (f.deleted = 0 OR f.deleted IS NULL) AND f.needs_chunking = 1
+                    ORDER BY f.updated_at ASC
+                    LIMIT 10
+                    """
+                )
+                files_needing_indexing_sample = query_result.get("data", [])
+                result["files"]["needing_indexing_sample"] = [
+                    {
+                        "id": f["id"],
+                        "path": f["path"],
+                        "has_docstring": bool(f["has_docstring"]),
+                        "last_modified": f["last_modified"],
+                    }
+                    for f in files_needing_indexing_sample
+                ]
+
                 # Get files needing chunking (sample)
                 query_result = db.execute(
                     """
@@ -847,10 +934,10 @@ class GetDatabaseStatusMCPCommand(BaseMCPCommand):
                 "4. Gets file size if database exists\n"
                 "5. Opens database connection\n"
                 "6. Queries project statistics\n"
-                "7. Queries file statistics (total, deleted, with docstrings, needing chunking)\n"
+                "7. Queries file statistics (total, deleted, indexed, needing indexing, needing chunking)\n"
                 "8. Queries chunk statistics (total, vectorized, not vectorized)\n"
                 "9. Queries recent activity (last 24 hours)\n"
-                "10. Gets samples of files needing chunking\n"
+                "10. Gets samples of files needing indexing and needing chunking\n"
                 "11. Gets samples of chunks needing vectorization\n"
                 "12. Returns comprehensive status report\n\n"
                 "File Statistics:\n"
@@ -858,6 +945,10 @@ class GetDatabaseStatusMCPCommand(BaseMCPCommand):
                 "- deleted: Number of deleted files\n"
                 "- active: Number of active (non-deleted) files\n"
                 "- with_docstring: Files that have docstrings\n"
+                "- indexed: Files indexed by indexing worker (needs_chunking=0)\n"
+                "- indexed_percent: Percentage of active files indexed\n"
+                "- needing_indexing: Active files with needs_chunking=1 (pending indexer)\n"
+                "- needing_indexing_sample: Sample of files needing indexing (up to 10)\n"
                 "- needing_chunking: Active files without chunks\n"
                 "- needing_chunking_sample: Sample of files needing chunking (up to 10)\n\n"
                 "Chunk Statistics:\n"
@@ -972,6 +1063,13 @@ class GetDatabaseStatusMCPCommand(BaseMCPCommand):
                             "deleted": "Number of deleted files",
                             "active": "Number of active (non-deleted) files",
                             "with_docstring": "Files with docstrings",
+                            "indexed": "Files indexed by indexing worker (needs_chunking=0)",
+                            "indexed_percent": "Percentage of active files indexed",
+                            "needing_indexing": "Active files with needs_chunking=1 (pending indexer)",
+                            "needing_indexing_sample": (
+                                "Sample of files needing indexing (up to 10). "
+                                "Each contains: id, path, has_docstring, last_modified"
+                            ),
                             "needing_chunking": "Active files without chunks",
                             "needing_chunking_sample": (
                                 "Sample of files needing chunking (up to 10). "
@@ -1017,12 +1115,23 @@ class GetDatabaseStatusMCPCommand(BaseMCPCommand):
                             "deleted": 50,
                             "active": 1450,
                             "with_docstring": 1200,
-                            "needing_chunking": 25,
-                            "needing_chunking_sample": [
+                            "indexed": 1400,
+                            "indexed_percent": 96.55,
+                            "needing_indexing": 50,
+                            "needing_indexing_sample": [
                                 {
                                     "id": 1001,
                                     "path": "src/new_file.py",
                                     "has_docstring": False,
+                                    "last_modified": "2024-01-15T10:00:00",
+                                }
+                            ],
+                            "needing_chunking": 25,
+                            "needing_chunking_sample": [
+                                {
+                                    "id": 1002,
+                                    "path": "src/unchunked.py",
+                                    "has_docstring": True,
                                     "last_modified": "2024-01-15T10:00:00",
                                 }
                             ],
@@ -1067,11 +1176,12 @@ class GetDatabaseStatusMCPCommand(BaseMCPCommand):
             "best_practices": [
                 "Check exists field first to verify database exists",
                 "Monitor file_size_mb to track database growth",
-                "Check files.needing_chunking to identify pending work",
+                "Check files.indexed and files.indexed_percent to track indexing progress",
+                "Check files.needing_indexing and needing_indexing_sample for indexer backlog",
+                "Check files.needing_chunking to identify chunking backlog",
                 "Check chunks.not_vectorized to see vectorization backlog",
-                "Use vectorization_percent to track vectorization progress",
-                "Review needing_chunking_sample to see specific files needing processing",
-                "Review needing_vectorization_sample to see specific chunks needing vectorization",
+                "Use indexed_percent and vectorization_percent to track progress",
+                "Review needing_indexing_sample and needing_vectorization_sample for specific items",
                 "Monitor recent_activity to see database update frequency",
                 "Use this command regularly to monitor database health",
                 "Check projects.total to verify project registration",

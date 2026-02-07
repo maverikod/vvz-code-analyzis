@@ -19,6 +19,12 @@ from mcp_proxy_adapter.core.config.simple_config_validator import (
     SimpleConfigValidator,
 )
 
+# Allowed keys in code_analysis section: ServerConfig fields + "database" (driver only).
+# Config must contain only what is used in code.
+from code_analysis.core.config import ServerConfig
+
+ALLOWED_CODE_ANALYSIS_KEYS = frozenset(ServerConfig.model_fields) | {"database"}
+
 
 class ValidationResult:
     """Validation result with level, message, and optional details."""
@@ -158,6 +164,7 @@ class CodeAnalysisConfigValidator:
         self._validate_code_analysis_section()
         self._validate_database_driver_section()
         self._validate_file_existence()
+        self._validate_external_servers_mtls()
         self._validate_protocol_consistency()
         self._validate_uuid_format()
         self._validate_field_types()
@@ -349,6 +356,19 @@ class CodeAnalysisConfigValidator:
         if not code_analysis:
             return
 
+        # Reject unknown keys: config must contain only what is used in code.
+        for key in code_analysis:
+            if key not in ALLOWED_CODE_ANALYSIS_KEYS:
+                self.validation_results.append(
+                    ValidationResult(
+                        level="error",
+                        message=f"Unknown key 'code_analysis.{key}'; allowed keys: {', '.join(sorted(ALLOWED_CODE_ANALYSIS_KEYS))}",
+                        section="code_analysis",
+                        key=key,
+                        suggestion=f"Remove '{key}' or use only allowed keys",
+                    )
+                )
+
         # Validate worker section
         worker = code_analysis.get("worker")
         if worker and isinstance(worker, dict):
@@ -498,7 +518,10 @@ class CodeAnalysisConfigValidator:
             # Validate indexing_worker section (optional)
             indexing_worker = code_analysis.get("indexing_worker")
             if indexing_worker and isinstance(indexing_worker, dict):
-                if indexing_worker.get("poll_interval") is not None and indexing_worker.get("poll_interval", 0) < 1:
+                if (
+                    indexing_worker.get("poll_interval") is not None
+                    and indexing_worker.get("poll_interval", 0) < 1
+                ):
                     self.validation_results.append(
                         ValidationResult(
                             level="error",
@@ -508,7 +531,10 @@ class CodeAnalysisConfigValidator:
                             suggestion="Set poll_interval to 1 or higher",
                         )
                     )
-                if indexing_worker.get("batch_size") is not None and indexing_worker.get("batch_size", 0) < 1:
+                if (
+                    indexing_worker.get("batch_size") is not None
+                    and indexing_worker.get("batch_size", 0) < 1
+                ):
                     self.validation_results.append(
                         ValidationResult(
                             level="error",
@@ -815,6 +841,99 @@ class CodeAnalysisConfigValidator:
                                         suggestion=f"Parent directory will be created automatically: {file_path.parent}",
                                     )
                                 )
+
+    def _validate_external_servers_mtls(self) -> None:
+        """Require protocol 'mtls' for all external/server connection sections."""
+        # Server (our MCP server)
+        server = self.config_data.get("server", {})
+        if server:
+            protocol = server.get("protocol")
+            if protocol and protocol != "mtls":
+                self.validation_results.append(
+                    ValidationResult(
+                        level="error",
+                        message=f"server.protocol must be 'mtls', got '{protocol}'",
+                        section="server",
+                        key="protocol",
+                        suggestion="Set server.protocol to 'mtls'",
+                    )
+                )
+
+        # Registration (outgoing to proxy) — require mtls whenever section has protocol
+        registration = self.config_data.get("registration", {})
+        if registration and "protocol" in registration:
+            protocol = registration.get("protocol")
+            if protocol and protocol != "mtls":
+                self.validation_results.append(
+                    ValidationResult(
+                        level="error",
+                        message=f"registration.protocol must be 'mtls', got '{protocol}'",
+                        section="registration",
+                        key="protocol",
+                        suggestion="Set registration.protocol to 'mtls'",
+                    )
+                )
+
+        # Client (outgoing) — require mtls whenever section has protocol
+        client = self.config_data.get("client", {})
+        if client and "protocol" in client:
+            protocol = client.get("protocol")
+            if protocol and protocol != "mtls":
+                self.validation_results.append(
+                    ValidationResult(
+                        level="error",
+                        message=f"client.protocol must be 'mtls', got '{protocol}'",
+                        section="client",
+                        key="protocol",
+                        suggestion="Set client.protocol to 'mtls'",
+                    )
+                )
+
+        # Server validation (outgoing) — require mtls whenever section has protocol
+        server_validation = self.config_data.get("server_validation", {})
+        if server_validation and "protocol" in server_validation:
+            protocol = server_validation.get("protocol")
+            if protocol and protocol != "mtls":
+                self.validation_results.append(
+                    ValidationResult(
+                        level="error",
+                        message=f"server_validation.protocol must be 'mtls', got '{protocol}'",
+                        section="server_validation",
+                        key="protocol",
+                        suggestion="Set server_validation.protocol to 'mtls'",
+                    )
+                )
+
+        # code_analysis.chunker (external chunker service) — require mtls when section present
+        code_analysis = self.config_data.get("code_analysis", {})
+        chunker = code_analysis.get("chunker", {}) if code_analysis else {}
+        if chunker and "protocol" in chunker:
+            protocol = chunker.get("protocol")
+            if protocol and protocol != "mtls":
+                self.validation_results.append(
+                    ValidationResult(
+                        level="error",
+                        message=f"code_analysis.chunker.protocol must be 'mtls', got '{protocol}'",
+                        section="code_analysis",
+                        key="chunker.protocol",
+                        suggestion="Set code_analysis.chunker.protocol to 'mtls'",
+                    )
+                )
+
+        # code_analysis.embedding (external embedding service) — require mtls when section present
+        embedding = code_analysis.get("embedding", {}) if code_analysis else {}
+        if embedding and "protocol" in embedding:
+            protocol = embedding.get("protocol")
+            if protocol and protocol != "mtls":
+                self.validation_results.append(
+                    ValidationResult(
+                        level="error",
+                        message=f"code_analysis.embedding.protocol must be 'mtls', got '{protocol}'",
+                        section="code_analysis",
+                        key="embedding.protocol",
+                        suggestion="Set code_analysis.embedding.protocol to 'mtls'",
+                    )
+                )
 
     def _validate_protocol_consistency(self) -> None:
         """Validate protocol consistency across sections."""
@@ -1260,6 +1379,60 @@ class CodeAnalysisConfigValidator:
                     (str, type(None)),
                 )
 
+            # File watcher section (optional)
+            file_watcher = code_analysis.get("file_watcher", {})
+            if file_watcher and isinstance(file_watcher, dict):
+                self._validate_field_type(
+                    "code_analysis",
+                    "file_watcher.enabled",
+                    file_watcher.get("enabled"),
+                    (bool, type(None)),
+                )
+                self._validate_field_type(
+                    "code_analysis",
+                    "file_watcher.scan_interval",
+                    file_watcher.get("scan_interval"),
+                    (int, float, type(None)),
+                )
+                self._validate_field_type(
+                    "code_analysis",
+                    "file_watcher.log_path",
+                    file_watcher.get("log_path"),
+                    (str, type(None)),
+                )
+                self._validate_field_type(
+                    "code_analysis",
+                    "file_watcher.version_dir",
+                    file_watcher.get("version_dir"),
+                    (str, type(None)),
+                )
+                self._validate_field_type(
+                    "code_analysis",
+                    "file_watcher.max_scan_duration",
+                    file_watcher.get("max_scan_duration"),
+                    (int, float, type(None)),
+                )
+                self._validate_field_type(
+                    "code_analysis",
+                    "file_watcher.ignore_patterns",
+                    file_watcher.get("ignore_patterns"),
+                    (list, type(None)),
+                )
+                log_rotation = file_watcher.get("log_rotation", {})
+                if log_rotation and isinstance(log_rotation, dict):
+                    self._validate_field_type(
+                        "code_analysis",
+                        "file_watcher.log_rotation.max_bytes",
+                        log_rotation.get("max_bytes"),
+                        (int, type(None)),
+                    )
+                    self._validate_field_type(
+                        "code_analysis",
+                        "file_watcher.log_rotation.backup_count",
+                        log_rotation.get("backup_count"),
+                        (int, type(None)),
+                    )
+
             # Database driver section
             database = code_analysis.get("database", {})
             if database and isinstance(database, dict):
@@ -1420,6 +1593,40 @@ class CodeAnalysisConfigValidator:
                                 suggestion="Set port to a value between 1 and 65535",
                             )
                         )
+
+            # File watcher section: scan_interval and max_scan_duration must be >= 0
+            file_watcher = code_analysis.get("file_watcher", {})
+            if file_watcher and isinstance(file_watcher, dict):
+                scan_interval = file_watcher.get("scan_interval")
+                if (
+                    scan_interval is not None
+                    and isinstance(scan_interval, (int, float))
+                    and scan_interval < 0
+                ):
+                    self.validation_results.append(
+                        ValidationResult(
+                            level="error",
+                            message="code_analysis.file_watcher.scan_interval must be >= 0",
+                            section="code_analysis",
+                            key="file_watcher.scan_interval",
+                            suggestion="Set scan_interval to 0 or higher",
+                        )
+                    )
+                max_scan_duration = file_watcher.get("max_scan_duration")
+                if (
+                    max_scan_duration is not None
+                    and isinstance(max_scan_duration, (int, float))
+                    and max_scan_duration < 0
+                ):
+                    self.validation_results.append(
+                        ValidationResult(
+                            level="error",
+                            message="code_analysis.file_watcher.max_scan_duration must be >= 0",
+                            section="code_analysis",
+                            key="file_watcher.max_scan_duration",
+                            suggestion="Set max_scan_duration to 0 or higher",
+                        )
+                    )
 
     def get_validation_summary(self) -> Dict[str, Any]:
         """

@@ -321,8 +321,11 @@ class DocstringChunker:
             )
             return 0
 
+        with_embedding = sum(1 for r in rows_to_persist if r[3] is not None)
+        without_embedding = len(rows_to_persist) - with_embedding
         logger.info(
-            f"[FILE {file_id}] Persisting {len(rows_to_persist)} chunks to database..."
+            f"[FILE {file_id}] Persisting {len(rows_to_persist)} chunks "
+            f"({with_embedding} with embedding, {without_embedding} without) to database..."
         )
         persist_start_time = time.time()
         written = 0

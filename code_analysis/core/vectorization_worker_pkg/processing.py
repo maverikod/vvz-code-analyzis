@@ -22,7 +22,10 @@ from ..worker_status_file import (
     STATUS_OPERATION_VECTORIZING,
     write_worker_status,
 )
-from .batch_processor import process_embedding_ready_chunks
+from .batch_processor import (
+    process_chunks_missing_embedding_params,
+    process_embedding_ready_chunks,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -162,6 +165,7 @@ async def process_chunks(self, poll_interval: int = 30) -> Dict[str, Any]:
                 current_file=None,
             )
             logger.info(f"[CYCLE #{cycle_count}] Starting vectorization cycle")
+            logger.info(f"[STEP] Cycle #{cycle_count} started")
 
             # Start worker statistics cycle
             # Use execute() for worker stats methods that are not yet in DatabaseClient
@@ -385,14 +389,65 @@ async def process_chunks(self, poll_interval: int = 30) -> Dict[str, Any]:
                                 index_path=str(index_path),
                                 vector_dim=self.vector_dim,
                             )
+                            original_faiss_manager = getattr(
+                                self, "faiss_manager", None
+                            )
+                            original_project_id = getattr(self, "project_id", None)
+                            self.faiss_manager = faiss_manager
+                            self.project_id = project_id
+
+                            # Step 0: Re-embed chunks missing at least one of (embedding_model, embedding_vector)
+                            logger.info(
+                                f"[STEP] Step 0: Re-embed chunks missing params (project={project_id})"
+                            )
+                            try:
+                                fill_count, fill_errors = (
+                                    await process_chunks_missing_embedding_params(
+                                        self, database
+                                    )
+                                )
+                                logger.info(
+                                    f"[STEP] Step 0 done: filled={fill_count}, errors={fill_errors}"
+                                )
+                                if fill_count or fill_errors:
+                                    logger.info(
+                                        f"Filled missing embedding params: {fill_count} updated, {fill_errors} errors"
+                                    )
+                                # Step 5 (mandatory): add to index and batch update after writing to DB
+                                if fill_count > 0:
+                                    logger.info(
+                                        f"[STEP] Step 5 after Step 0: process_embedding_ready_chunks (project={project_id})"
+                                    )
+                                    step5_processed, step5_errors = (
+                                        await process_embedding_ready_chunks(
+                                            self, database
+                                        )
+                                    )
+                                    logger.info(
+                                        f"[STEP] Step 5 after Step 0 done: processed={step5_processed}, errors={step5_errors}"
+                                    )
+                                    if step5_processed or step5_errors:
+                                        logger.info(
+                                            f"After fill: added to FAISS and set vector_id: {step5_processed} chunks, {step5_errors} errors"
+                                        )
+                            finally:
+                                self.faiss_manager = original_faiss_manager
+                                self.project_id = original_project_id
 
                             # Step 1: Request chunking for files that need it
+                            logger.info(
+                                f"[STEP] Step 1: Query files needing chunking (project={project_id}, limit={self.max_files_per_pass})"
+                            )
                             # Skip chunking requests if circuit breaker is open
-                            # Temporarily set faiss_manager for chunking
+                            # Set faiss_manager and project_id so Step 5 inside chunking sees correct project
                             original_faiss_manager_chunking = getattr(
                                 self, "faiss_manager", None
                             )
+                            original_project_id_chunking = getattr(
+                                self, "project_id", None
+                            )
                             self.faiss_manager = faiss_manager
+                            self.project_id = project_id
 
                             try:
                                 if self.svo_client_manager:
@@ -444,7 +499,7 @@ async def process_chunks(self, poll_interval: int = 30) -> Dict[str, Any]:
                                                   ))
                                                 LIMIT ?
                                                 """,
-                                                (project_id, 30),
+                                                (project_id, self.max_files_per_pass),
                                             )
                                             # Extract data from result - execute() returns dict with "data" key
                                             files_to_chunk = (
@@ -453,6 +508,9 @@ async def process_chunks(self, poll_interval: int = 30) -> Dict[str, Any]:
                                                 else []
                                             )
 
+                                            logger.info(
+                                                f"[STEP] Step 1: Found {len(files_to_chunk)} files to chunk"
+                                            )
                                             if files_to_chunk:
                                                 logger.info(
                                                     f"Found {len(files_to_chunk)} files needing chunking in project {project_id}, "
@@ -475,10 +533,14 @@ async def process_chunks(self, poll_interval: int = 30) -> Dict[str, Any]:
                                         f"SVO client manager not available, skipping chunking requests for project {project_id}"
                                     )
                             finally:
-                                # Restore original faiss_manager
+                                # Restore original faiss_manager and project_id
                                 self.faiss_manager = original_faiss_manager_chunking
+                                self.project_id = original_project_id_chunking
 
                             # Step 2: Assign vector_id in FAISS for chunks that already have embeddings.
+                            logger.info(
+                                f"[STEP] Step 2: process_embedding_ready_chunks (project={project_id}, assign vector_id)"
+                            )
                             # Temporarily set faiss_manager for batch processor
                             original_faiss_manager = getattr(
                                 self, "faiss_manager", None
@@ -508,6 +570,9 @@ async def process_chunks(self, poll_interval: int = 30) -> Dict[str, Any]:
                                     await process_embedding_ready_chunks(self, database)
                                 )
                                 batch_duration = time.time() - batch_start_time
+                                logger.info(
+                                    f"[STEP] Step 2 done: processed={batch_processed}, errors={batch_errors}, duration={batch_duration:.3f}s"
+                                )
 
                                 total_processed += batch_processed
                                 total_errors += batch_errors

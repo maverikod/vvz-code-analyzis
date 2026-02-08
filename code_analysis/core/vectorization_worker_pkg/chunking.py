@@ -34,6 +34,8 @@ async def _request_chunking_for_files(
     """
     from ..docstring_chunker_pkg import DocstringChunker
 
+    from .batch_processor import process_embedding_ready_chunks
+
     chunker = DocstringChunker(
         database=database,
         svo_client_manager=self.svo_client_manager,
@@ -133,6 +135,12 @@ async def _request_chunking_for_files(
             logger.info(
                 f"[FILE {file_id}] Successfully chunked file {file_path} in {file_duration:.3f}s total"
             )
+
+            # Step 5 (mandatory): add to index and batch update after writing to DB
+            logger.info(
+                f"[STEP] Step 5 after file: process_embedding_ready_chunks (project={project_id}, file_id={file_id})"
+            )
+            await process_embedding_ready_chunks(self, database)
 
         except Exception as e:
             logger.error(

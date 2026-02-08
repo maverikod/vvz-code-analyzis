@@ -27,11 +27,12 @@ This document clarifies who runs full schema synchronization (with `SchemaCompar
 - **Used by:** The database driver process (started by the server) that handles RPCs such as `index_file`, `execute`, `sync_schema` (RPC), etc.
 - **sync_schema:** Implemented by `SQLiteSchemaManager` in `database_driver_pkg/drivers/sqlite_schema.py`. It only creates **missing** tables by name; it does not run `SchemaComparator` or `generate_migration_sql`, and never creates or references `temp_files`.
 
-So the RPC driver process never runs the `temp_files` migration. Recovery (temp_files → files) is **not** done on connect; it is done by the **repair_sqlite_database** command so that repair logic lives in one place.
+So the RPC driver process never runs the `temp_files` migration. Recovery (temp_files → files) uses a **single implementation** in `core/db_integrity.recover_files_table_if_needed(db_path)` and is used in two places so indexing works without manual steps.
 
-## Recovery via repair_sqlite_database
+## Recovery (temp_files → files)
 
-If the DB was left with `temp_files` and no `files` (e.g. aborted migration in db_driver), run **repair_sqlite_database** with **force=false**. The command calls `recover_files_table_if_needed(db_path)` from `core/db_integrity`: if table `files` is missing and `temp_files` exists, it renames `temp_files` to `files` and returns success with `mode: "files_table_recovered"`. No destructive recreate; indexing can then proceed.
+- **On driver connect:** Before opening the DB connection, the RPC driver calls `recover_files_table_if_needed(db_path)`. If the DB has `temp_files` and no `files`, it renames `temp_files` to `files`. So after an aborted migration, the next driver start (e.g. server restart) fixes the schema and index_file works.
+- **Explicit repair:** **repair_sqlite_database** with **force=false** also calls `recover_files_table_if_needed(db_path)` and returns `mode: "files_table_recovered"` when it performed the rename. Use when you want to fix the DB without restarting the server.
 
 ## Recommendations
 
@@ -45,6 +46,7 @@ If the DB was left with `temp_files` and no `files` (e.g. aborted migration in d
 |-----------|------|------|
 | Full migration (temp_files) | `core/db_driver/sqlite.py` | `sync_schema()` with SchemaComparator; single transaction for all statements |
 | Migration SQL generation | `core/database/schema_sync.py` | `SchemaComparator.generate_migration_sql()`; RENAME to temp_*, INSERT FROM temp_*, DROP temp_* |
-| Recovery (temp_files → files) | `core/db_integrity.py` | `recover_files_table_if_needed(db_path)`; used by repair_sqlite_database (force=false) |
+| Recovery (temp_files → files) | `core/db_integrity.py` | `recover_files_table_if_needed(db_path)`; single implementation |
+| Driver on connect | `core/database_driver_pkg/drivers/sqlite.py` | Calls recover_files_table_if_needed(db_path) before opening connection |
 | repair_sqlite_database command | `commands/database_integrity_mcp_commands.py` | Calls recover_files_table_if_needed when force=false before CONFIRM_REQUIRED |
 | Simplified sync (no temp_files) | `core/database_driver_pkg/drivers/sqlite_schema.py` | `SQLiteSchemaManager.sync_schema()`; only creates missing tables |

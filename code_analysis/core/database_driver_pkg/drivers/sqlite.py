@@ -80,6 +80,16 @@ class SQLiteDriver(BaseDatabaseDriver):
             self.db_path.parent.mkdir(parents=True, exist_ok=True)
             logger.info("SQLite driver connecting to db_path=%s", self.db_path)
 
+            # Fix broken schema (temp_files, no files) before opening so index_file works.
+            # Same logic as repair_sqlite_database(force=false); single impl in db_integrity.
+            from ...db_integrity import recover_files_table_if_needed
+
+            if recover_files_table_if_needed(self.db_path):
+                logger.info(
+                    "Recovered files table on connect (temp_files -> files) at %s",
+                    self.db_path,
+                )
+
             # Create connection
             self.conn = sqlite3.connect(str(self.db_path), check_same_thread=False)
             self.conn.row_factory = sqlite3.Row
@@ -106,8 +116,6 @@ class SQLiteDriver(BaseDatabaseDriver):
             self._schema_manager = SQLiteSchemaManager(self.conn)
             self._operations = SQLiteOperations(self.conn)
 
-            # Recovery of temp_files -> files is done by repair_sqlite_database (db_integrity),
-            # not on connect, to avoid duplicating repair logic in the migration path.
             # Ensure migrations for columns used by workers (e.g. needs_chunking)
             self._ensure_files_table_migrations()
             self._ensure_code_chunks_migrations()

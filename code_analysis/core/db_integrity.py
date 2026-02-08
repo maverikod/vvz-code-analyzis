@@ -221,6 +221,46 @@ def ensure_sqlite_integrity_or_recreate(
     )
 
 
+def recover_files_table_if_needed(
+    db_path: Path, *, timeout_seconds: float = 2.0
+) -> bool:
+    """If table 'files' is missing but 'temp_files' exists, rename temp_files to files.
+
+    Used after an aborted schema migration (e.g. in db_driver) that left only temp_files.
+    Call this from repair_sqlite_database (or similar) so recovery is explicit, not on connect.
+
+    Args:
+        db_path: Path to SQLite db file.
+        timeout_seconds: Connection timeout.
+
+    Returns:
+        True if the rename was performed; False if schema was already OK or recovery not applicable.
+    """
+    if not db_path.exists():
+        return False
+    try:
+        conn = sqlite3.connect(str(db_path), timeout=timeout_seconds)
+        try:
+            cur = conn.cursor()
+            cur.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name='files'"
+            )
+            if cur.fetchone() is not None:
+                return False
+            cur.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name='temp_files'"
+            )
+            if cur.fetchone() is None:
+                return False
+            cur.execute("ALTER TABLE temp_files RENAME TO files")
+            conn.commit()
+            return True
+        finally:
+            conn.close()
+    except Exception:
+        return False
+
+
 def corruption_marker_path(db_path: Path) -> Path:
     """Return path to persistent corruption marker for a SQLite db.
 

@@ -591,6 +591,7 @@ class RepairSQLiteDatabaseMCPCommand(BaseMCPCommand):
                 clear_corruption_marker,
                 ensure_sqlite_integrity_or_recreate,
                 read_corruption_marker,
+                recover_files_table_if_needed,
             )
             from ..core.worker_manager import get_worker_manager
 
@@ -617,6 +618,17 @@ class RepairSQLiteDatabaseMCPCommand(BaseMCPCommand):
                                 "next_step": "Re-run the blocked command (marker cleared)",
                             }
                         )
+
+                # Non-destructive: recover files table if migration left temp_files (no files).
+                if recover_files_table_if_needed(db_path):
+                    return SuccessResult(
+                        data={
+                            "db_path": str(db_path),
+                            "mode": "files_table_recovered",
+                            "files_table_recovered": True,
+                            "next_step": "Re-run indexing or update_indexes; no force=true needed",
+                        }
+                    )
 
                 return ErrorResult(
                     code="CONFIRM_REQUIRED",

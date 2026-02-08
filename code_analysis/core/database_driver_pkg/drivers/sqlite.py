@@ -106,8 +106,8 @@ class SQLiteDriver(BaseDatabaseDriver):
             self._schema_manager = SQLiteSchemaManager(self.conn)
             self._operations = SQLiteOperations(self.conn)
 
-            # If DB was left with temp_files (no files) by an aborted migration, fix it so index_file works.
-            self._recover_files_table_if_needed()
+            # Recovery of temp_files -> files is done by repair_sqlite_database (db_integrity),
+            # not on connect, to avoid duplicating repair logic in the migration path.
             # Ensure migrations for columns used by workers (e.g. needs_chunking)
             self._ensure_files_table_migrations()
             self._ensure_code_chunks_migrations()
@@ -241,47 +241,6 @@ class SQLiteDriver(BaseDatabaseDriver):
             self.conn.commit()
         except Exception as e:
             logger.debug("Index for %s may already exist: %s", table, e)
-            try:
-                self.conn.rollback()
-            except Exception:
-                pass
-
-    def _recover_files_table_if_needed(self) -> None:
-        """If table 'files' is missing but 'temp_files' exists, rename temp_files to files.
-
-        Called on every connect() so that an aborted migration (e.g. in another process) leaving
-        only temp_files is fixed and index_file works. No-op if schema is already OK.
-        """
-        logger.info(
-            "_recover_files_table_if_needed called (only place that runs SQL referencing temp_files)"
-        )
-        if not self.conn:
-            return
-        try:
-            cur = self.conn.cursor()
-            cur.execute(
-                "SELECT name FROM sqlite_master WHERE type='table' AND name='files'"
-            )
-            if cur.fetchone() is not None:
-                logger.debug(
-                    "_recover_files_table_if_needed: table 'files' exists, skip"
-                )
-                return
-            cur.execute(
-                "SELECT name FROM sqlite_master WHERE type='table' AND name='temp_files'"
-            )
-            if cur.fetchone() is None:
-                logger.debug(
-                    "_recover_files_table_if_needed: 'temp_files' missing, skip"
-                )
-                return
-            logger.info(
-                "Recovering from failed migration: renaming temp_files back to files"
-            )
-            self.conn.execute("ALTER TABLE temp_files RENAME TO files")
-            self.conn.commit()
-        except Exception as e:
-            logger.warning("Could not recover files table: %s", e)
             try:
                 self.conn.rollback()
             except Exception:

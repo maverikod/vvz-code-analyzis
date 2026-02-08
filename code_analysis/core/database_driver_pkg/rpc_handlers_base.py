@@ -160,7 +160,18 @@ class _RPCHandlersBaseMixin:
                     error_code=ErrorCode.VALIDATION_ERROR,
                     description="sql parameter is required",
                 )
-            params_tuple = params.get("params")
+            raw_params = params.get("params")
+            if raw_params is None:
+                params_tuple = None
+            elif isinstance(raw_params, (list, tuple)):
+                params_tuple = tuple(raw_params) if raw_params else ()
+            elif isinstance(raw_params, dict):
+                params_tuple = raw_params
+            else:
+                return ErrorResult(
+                    error_code=ErrorCode.VALIDATION_ERROR,
+                    description=f"'params' must be list, tuple, dict, or null; got {type(raw_params).__name__}",
+                )
             transaction_id = params.get("transaction_id")
             sql_preview = (
                 (sql.strip()[:60] + "…") if len(sql.strip()) > 60 else sql.strip()
@@ -171,6 +182,14 @@ class _RPCHandlersBaseMixin:
                 (transaction_id[:8] + "…") if transaction_id else None,
             )
             result = self.driver.execute(sql, params_tuple, transaction_id)
+            # Log SELECT result size for diagnostics (e.g. non-vectorized chunks query)
+            if isinstance(result, dict) and "data" in result:
+                data_val = result["data"]
+                if isinstance(data_val, list):
+                    logger.info(
+                        "[CHAIN] handle_execute SELECT n_rows=%s",
+                        len(data_val),
+                    )
             # For execute(), we need to preserve the full result structure
             # including affected_rows, lastrowid, and data (if present)
             # Return as SuccessResult with full result dict to preserve all fields
@@ -214,7 +233,16 @@ class _RPCHandlersBaseMixin:
                         description="Each operation must have 'sql'",
                     )
                 p = item.get("params")
-                operations.append((sql, tuple(p) if p is not None else None))
+                if p is None:
+                    bind_params = None
+                elif isinstance(p, (list, tuple)):
+                    bind_params = tuple(p)
+                else:
+                    return ErrorResult(
+                        error_code=ErrorCode.VALIDATION_ERROR,
+                        description=f"Each operation 'params' must be list, tuple, or null; got {type(p).__name__}",
+                    )
+                operations.append((sql, bind_params))
             transaction_id = params.get("transaction_id")
             logger.info(
                 "[CHAIN] handler handle_execute_batch n_ops=%s tid=%s",

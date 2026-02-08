@@ -263,13 +263,64 @@ async def process_cycle(self: Any, poll_interval: int = 30) -> Dict[str, Any]:
                                     if result.get("success"):
                                         total_indexed += 1
                                         logger.debug("Indexed %s", path)
+                                        try:
+                                            database.execute(
+                                                "DELETE FROM indexing_errors WHERE project_id = ? AND file_path = ?",
+                                                (project_id, path),
+                                            )
+                                        except Exception:
+                                            pass
+                                        config_path = getattr(self, "config_path", None)
+                                        if config_path:
+                                            file_id = row.get("id")
+                                            if file_id is not None:
+                                                try:
+                                                    from .vectorize_after_index import (
+                                                        vectorize_file_after_index,
+                                                    )
+
+                                                    vectorize_file_after_index(
+                                                        self.db_path,
+                                                        config_path,
+                                                        path,
+                                                        project_id,
+                                                        int(file_id),
+                                                    )
+                                                except Exception as vec_err:
+                                                    logger.warning(
+                                                        "Vectorize after index failed for %s: %s",
+                                                        path,
+                                                        vec_err,
+                                                    )
                                     else:
                                         total_errors += 1
+                                        err_msg = result.get("error", "unknown")
                                         logger.warning(
                                             "Index failed for %s: %s",
                                             path,
-                                            result.get("error", "unknown"),
+                                            err_msg,
                                         )
+                                        try:
+                                            database.execute(
+                                                """
+                                                INSERT OR REPLACE INTO indexing_errors
+                                                (project_id, file_path, error_type, error_message, created_at)
+                                                VALUES (?, ?, ?, ?, julianday('now'))
+                                                """,
+                                                (
+                                                    project_id,
+                                                    path,
+                                                    "index_error",
+                                                    err_msg,
+                                                ),
+                                            )
+                                            if "temp_files" in (err_msg or ""):
+                                                logger.error(
+                                                    "[indexing_errors] Stored temp_files-related error (caller=index_file): %s",
+                                                    err_msg,
+                                                )
+                                        except Exception:
+                                            pass
                                     database.execute(
                                         """
                                         UPDATE indexing_worker_stats
@@ -310,6 +361,28 @@ async def process_cycle(self: Any, poll_interval: int = 30) -> Dict[str, Any]:
                                         logger.warning(
                                             "Index error for %s: %s", path, e
                                         )
+                                    except Exception:
+                                        pass
+                                    try:
+                                        err_str = str(e)
+                                        database.execute(
+                                            """
+                                            INSERT OR REPLACE INTO indexing_errors
+                                            (project_id, file_path, error_type, error_message, created_at)
+                                            VALUES (?, ?, ?, ?, julianday('now'))
+                                            """,
+                                            (
+                                                project_id,
+                                                path,
+                                                "index_exception",
+                                                err_str,
+                                            ),
+                                        )
+                                        if "temp_files" in err_str:
+                                            logger.error(
+                                                "[indexing_errors] Stored temp_files-related exception (caller=index_file): %s",
+                                                err_str,
+                                            )
                                     except Exception:
                                         pass
                                     try:

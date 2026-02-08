@@ -363,7 +363,10 @@ class SQLiteDriver(BaseDatabaseDriver):
                 logger.info(f"Running migration for version {migration_version}")
                 migration_func(self)
 
-            # Begin transaction for atomic schema changes
+            # Begin transaction for atomic schema changes. All statements must run in
+            # this single transaction (no per-statement commit) so that e.g. after
+            # "ALTER TABLE files RENAME TO temp_files", the following
+            # "INSERT INTO files ... FROM temp_files" sees temp_files in the same connection.
             self.begin_transaction()
             try:
                 # Disable FK checks so table rename/copy does not fail on referenced tables
@@ -374,7 +377,10 @@ class SQLiteDriver(BaseDatabaseDriver):
                         self.execute(sql)
                     except Exception as e:
                         logger.error(
-                            "Migration failed at statement %s: %s", i, sql[:200]
+                            "Migration failed at statement %s: %s: %s",
+                            i,
+                            sql[:200],
+                            e,
                         )
                         raise
                     result["changes_applied"].append(sql)
@@ -395,9 +401,7 @@ class SQLiteDriver(BaseDatabaseDriver):
                 except Exception:
                     pass
                 self.rollback()
-                raise RuntimeError(
-                    f"Schema sync failed during migration: {e}"
-                ) from e
+                raise RuntimeError(f"Schema sync failed during migration: {e}") from e
 
         except Exception as e:
             result["error"] = str(e)

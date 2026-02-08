@@ -86,9 +86,7 @@ class _RPCHandlersIndexFileMixin:
                 "[index_file] Using from_existing_driver (single connection, no sync_schema)"
             )
             db = CodeDatabase.from_existing_driver(self.driver)
-            update_result = db.update_file_data(
-                file_path, project_id, Path(root_path)
-            )
+            update_result = db.update_file_data(file_path, project_id, Path(root_path))
             # Do not disconnect db.driver: it is the RPC server's shared connection.
 
             if not update_result.get("success"):
@@ -114,14 +112,30 @@ class _RPCHandlersIndexFileMixin:
                 )
                 # Still return success; index completed
 
+            # Clear indexing error for this file on successful write
+            try:
+                self.driver.execute(
+                    "DELETE FROM indexing_errors WHERE project_id = ? AND file_path = ?",
+                    (project_id, abs_path),
+                    None,
+                )
+            except Exception:
+                pass
+
             logger.info(
                 "[index_file] Completed: file_path=%s success=True",
                 update_result.get("file_path", file_path),
             )
             return SuccessResult(data=update_result)
         except Exception as e:
+            err_msg = str(e)
             logger.error("index_file failed for %s: %s", file_path, e, exc_info=True)
+            if "temp_files" in err_msg:
+                logger.error(
+                    "[index_file] temp_files-related failure (may indicate schema migration state): %s",
+                    err_msg,
+                )
             return ErrorResult(
                 error_code=ErrorCode.DATABASE_ERROR,
-                description=str(e),
+                description=err_msg,
             )

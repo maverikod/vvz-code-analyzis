@@ -106,12 +106,54 @@ class SQLiteDriver(BaseDatabaseDriver):
             self._schema_manager = SQLiteSchemaManager(self.conn)
             self._operations = SQLiteOperations(self.conn)
 
+            # Recover from failed schema migration: if "files" is missing but "temp_files" exists, rename back.
+            # Runs on every connect() so any leftover temp_files (e.g. from aborted migration in another process)
+            # is restored to "files" before index_file or other operations run.
+            self._recover_files_table_if_needed()
             # Ensure migrations for columns used by workers (e.g. needs_chunking)
             self._ensure_files_table_migrations()
             self._ensure_code_chunks_migrations()
             self._ensure_indexing_worker_stats_table()
+            self._ensure_indexing_errors_table()
         except Exception as e:
             raise DriverConnectionError(f"Failed to connect to database: {e}") from e
+
+    def _ensure_indexing_errors_table(self) -> None:
+        """Create indexing_errors table if missing (file_path + error when indexing fails)."""
+        if not self.conn:
+            return
+        try:
+            cur = self.conn.cursor()
+            cur.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name='indexing_errors'"
+            )
+            if cur.fetchone() is not None:
+                return
+            logger.info("Creating indexing_errors table (driver)")
+            self.conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS indexing_errors (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    project_id TEXT NOT NULL,
+                    file_path TEXT NOT NULL,
+                    error_type TEXT,
+                    error_message TEXT,
+                    created_at REAL DEFAULT (julianday('now')),
+                    UNIQUE(project_id, file_path)
+                )
+                """
+            )
+            self.conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_indexing_errors_project_path "
+                "ON indexing_errors(project_id, file_path)"
+            )
+            self.conn.commit()
+        except Exception as e:
+            logger.warning("Could not create indexing_errors table: %s", e)
+            try:
+                self.conn.rollback()
+            except Exception:
+                pass
 
     def _ensure_code_chunks_migrations(self) -> None:
         """Add code_chunks.token_count if missing (worker add_code_chunk needs it)."""
@@ -201,6 +243,38 @@ class SQLiteDriver(BaseDatabaseDriver):
             self.conn.commit()
         except Exception as e:
             logger.debug("Index for %s may already exist: %s", table, e)
+            try:
+                self.conn.rollback()
+            except Exception:
+                pass
+
+    def _recover_files_table_if_needed(self) -> None:
+        """Recover from failed schema migration: if table 'files' is missing but 'temp_files' exists, rename back.
+
+        A partial schema sync (e.g. ALTER TABLE files RENAME TO temp_files then crash) can leave
+        only temp_files. This restores the 'files' table so index_file and other operations succeed.
+        """
+        if not self.conn:
+            return
+        try:
+            cur = self.conn.cursor()
+            cur.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name='files'"
+            )
+            if cur.fetchone() is not None:
+                return
+            cur.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name='temp_files'"
+            )
+            if cur.fetchone() is None:
+                return
+            logger.info(
+                "Recovering from failed migration: renaming temp_files back to files"
+            )
+            self.conn.execute("ALTER TABLE temp_files RENAME TO files")
+            self.conn.commit()
+        except Exception as e:
+            logger.warning("Could not recover files table: %s", e)
             try:
                 self.conn.rollback()
             except Exception:

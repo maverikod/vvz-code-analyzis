@@ -106,9 +106,8 @@ class SQLiteDriver(BaseDatabaseDriver):
             self._schema_manager = SQLiteSchemaManager(self.conn)
             self._operations = SQLiteOperations(self.conn)
 
-            # Normal schema: migration that uses temp_files runs only in db_driver (config_cli schema)
-            # in a single transaction; it does not commit until done, so we never get temp_files left over.
-            # Do not run recovery on every connect(); if the DB is ever in a bad state, use a one-time repair.
+            # If DB was left with temp_files (no files) by an aborted migration, fix it so index_file works.
+            self._recover_files_table_if_needed()
             # Ensure migrations for columns used by workers (e.g. needs_chunking)
             self._ensure_files_table_migrations()
             self._ensure_code_chunks_migrations()
@@ -248,11 +247,10 @@ class SQLiteDriver(BaseDatabaseDriver):
                 pass
 
     def _recover_files_table_if_needed(self) -> None:
-        """One-time repair: if table 'files' is missing but 'temp_files' exists, rename temp_files to files.
+        """If table 'files' is missing but 'temp_files' exists, rename temp_files to files.
 
-        Not called on connect(). Normal operation relies on db_driver sync_schema running the full
-        migration in one transaction. Use this only for repair (e.g. dedicated repair command or
-        manual fix after an external/corrupt state). Returns without error if schema is already OK.
+        Called on every connect() so that an aborted migration (e.g. in another process) leaving
+        only temp_files is fixed and index_file works. No-op if schema is already OK.
         """
         logger.info(
             "_recover_files_table_if_needed called (only place that runs SQL referencing temp_files)"

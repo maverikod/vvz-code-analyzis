@@ -462,8 +462,8 @@ class FileChangeProcessor:
                 if self.version_dir:
                     self.database.execute(
                         """
-                        UPDATE files 
-                        SET deleted = 1, deleted_at = julianday('now')
+                        UPDATE files
+                        SET deleted = 1, updated_at = julianday('now')
                         WHERE path = ? AND project_id = ?
                         """,
                         (file_path_str, project_id),

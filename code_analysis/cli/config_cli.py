@@ -8,12 +8,16 @@ email: vasilyvz@gmail.com
 """
 
 import argparse
+import json
+import os
+import subprocess
 import sys
 from pathlib import Path
-from typing import Optional
+from typing import Any, Dict, Optional
 
 from ..core.config_generator import CodeAnalysisConfigGenerator
 from ..core.config_validator import CodeAnalysisConfigValidator
+from ..core.database import CodeDatabase
 
 
 def _indexing_worker_enabled(args: argparse.Namespace) -> Optional[bool]:
@@ -32,6 +36,106 @@ def _file_watcher_enabled(args: argparse.Namespace) -> Optional[bool]:
     if hasattr(args, "file_watcher_enabled") and args.file_watcher_enabled:
         return True
     return None
+
+
+def _get_db_path_from_config(config: Dict[str, Any]) -> Path:
+    """Get database path from code_analysis config."""
+    ca = config.get("code_analysis", {})
+    path = ca.get("db_path") or (ca.get("database", {}) or {}).get("driver", {}).get("config", {}).get("path")
+    if not path:
+        raise ValueError(
+            "Config must contain code_analysis.db_path or code_analysis.database.driver.config.path"
+        )
+    return Path(path).resolve()
+
+
+def _db_open_by_other_processes(db_path: Path) -> bool:
+    """Return True if the database file is open by other process(es)."""
+    try:
+        out = subprocess.run(
+            ["lsof", str(db_path)],
+            capture_output=True,
+            timeout=5,
+            text=True,
+        )
+        if out.returncode != 0:
+            return False
+        lines = [l for l in (out.stdout or "").strip().splitlines() if l]
+        return len(lines) > 0
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        return False
+
+
+def _stop_server(config_path: Path) -> bool:
+    """Stop code-analysis server and workers. Return True if stopped or already stopped."""
+    try:
+        r = subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "code_analysis.cli.server_manager_cli",
+                "--config",
+                str(config_path),
+                "stop",
+            ],
+            capture_output=True,
+            timeout=30,
+            text=True,
+        )
+        return r.returncode == 0
+    except (subprocess.TimeoutExpired, Exception):
+        return False
+
+
+def cmd_schema(args: argparse.Namespace) -> int:
+    """
+    Apply database schema (tables and indexes) to the configured database.
+
+    Stops server/workers first if database is in use, then runs migration.
+    Uses direct SQLite driver; no database worker required.
+    """
+    config_path = Path(args.file)
+    if not config_path.exists():
+        print(f"Error: config file not found: {config_path}", file=sys.stderr)
+        return 1
+    try:
+        with open(config_path, "r", encoding="utf-8") as f:
+            config = json.load(f)
+        db_path = _get_db_path_from_config(config)
+    except Exception as e:
+        print(f"Error: {e}", file=sys.stderr)
+        return 1
+
+    if not args.no_stop and _db_open_by_other_processes(db_path):
+        print("Database is in use. Stopping server and workers...", flush=True)
+        if _stop_server(config_path):
+            print("Server stopped.", flush=True)
+        else:
+            print(
+                "Warning: could not stop server. If migration fails, run manually:\n"
+                "  python -m code_analysis.cli.server_manager_cli --config config.json stop",
+                file=sys.stderr,
+            )
+
+    os.environ["CODE_ANALYSIS_DB_DRIVER"] = "1"
+    driver_config = {
+        "type": "sqlite",
+        "config": {"path": str(db_path)},
+    }
+    try:
+        print("Connecting...", flush=True)
+        db = CodeDatabase(driver_config)
+        print("Applying schema (compare, backup if needed, migrate)...", flush=True)
+        result = db.sync_schema()
+        db.close()
+        n = len(result.get("changes_applied") or [])
+        if result.get("backup_uuid"):
+            print(f"Backup: {result['backup_uuid']}", flush=True)
+        print(f"Schema applied. Changes: {n}", flush=True)
+        return 0
+    except Exception as e:
+        print(f"Schema apply failed: {e}", file=sys.stderr)
+        return 1
 
 
 def cmd_generate(args: argparse.Namespace) -> int:
@@ -530,6 +634,24 @@ def main(argv: Optional[list[str]] = None) -> int:
         help="Path to configuration file",
     )
     val_parser.set_defaults(func=cmd_validate)
+
+    # Schema command: apply database schema (tables and indexes)
+    schema_parser = subparsers.add_parser(
+        "schema",
+        help="Apply database schema (create tables and indexes). Run once for new DB or after schema changes.",
+    )
+    schema_parser.add_argument(
+        "--file",
+        type=str,
+        default="config.json",
+        help="Path to config file (default: config.json)",
+    )
+    schema_parser.add_argument(
+        "--no-stop",
+        action="store_true",
+        help="Do not stop server/workers when DB is in use (migration may fail with 'database is locked')",
+    )
+    schema_parser.set_defaults(func=cmd_schema)
 
     args = parser.parse_args(argv)
 

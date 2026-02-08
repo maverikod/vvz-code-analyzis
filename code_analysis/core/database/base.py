@@ -161,7 +161,7 @@ class CodeDatabase:
         # DO NOT call _create_schema() here
         # Schema creation happens via sync_schema() in driver
 
-        # Connect driver before schema sync (required for SQLiteDriverProxy to initialize worker)
+        # Connect driver (schema is not applied here; use CLI: python -m code_analysis.cli.config_cli schema)
         try:
             logger.info(f"[CodeDatabase] Connecting driver: type={driver_type}")
             self.driver.connect(driver_cfg)
@@ -172,18 +172,6 @@ class CodeDatabase:
                 exc_info=True,
             )
             raise
-
-        # Sync schema after connection (replaces _create_schema() call)
-        try:
-            sync_result = self.sync_schema()
-            if sync_result.get("changes_applied"):
-                logger.info(
-                    f"Schema synchronized: {len(sync_result['changes_applied'])} changes applied"
-                )
-        except RuntimeError as e:
-            # Schema sync failed - connection is blocked
-            logger.error(f"Schema sync failed, connection blocked: {e}")
-            raise  # Re-raise to prevent database usage
 
     @classmethod
     def from_existing_driver(
@@ -983,7 +971,11 @@ class CodeDatabase:
             "CREATE INDEX IF NOT EXISTS idx_code_chunks_uuid ON code_chunks(chunk_uuid)",
             "CREATE INDEX IF NOT EXISTS idx_code_chunks_vector ON code_chunks(vector_id)",
             "CREATE INDEX IF NOT EXISTS idx_code_chunks_not_vectorized ON code_chunks(project_id, id) WHERE vector_id IS NULL",
+            "CREATE INDEX IF NOT EXISTS idx_code_chunks_created_at ON code_chunks(created_at)",
+            "CREATE INDEX IF NOT EXISTS idx_code_chunks_project_embedding_model ON code_chunks(project_id) WHERE embedding_model IS NOT NULL",
             "CREATE INDEX IF NOT EXISTS idx_files_deleted ON files(deleted) WHERE deleted = 1",
+            "CREATE INDEX IF NOT EXISTS idx_files_updated_at ON files(updated_at)",
+            "CREATE INDEX IF NOT EXISTS idx_files_needs_indexing ON files(project_id, updated_at) WHERE (deleted = 0 OR deleted IS NULL) AND needs_chunking = 1",
             "CREATE INDEX IF NOT EXISTS idx_code_duplicates_project ON code_duplicates(project_id)",
             "CREATE INDEX IF NOT EXISTS idx_code_duplicates_hash ON code_duplicates(duplicate_hash)",
             "CREATE INDEX IF NOT EXISTS idx_duplicate_occurrences_duplicate ON duplicate_occurrences(duplicate_id)",
@@ -2876,6 +2868,34 @@ def get_schema_definition() -> Dict[str, Any]:
                 "columns": ["project_id", "id"],
                 "unique": False,
                 "where_clause": "vector_id IS NULL",
+            },
+            {
+                "name": "idx_code_chunks_created_at",
+                "table": "code_chunks",
+                "columns": ["created_at"],
+                "unique": False,
+                "where_clause": None,
+            },
+            {
+                "name": "idx_code_chunks_project_embedding_model",
+                "table": "code_chunks",
+                "columns": ["project_id"],
+                "unique": False,
+                "where_clause": "embedding_model IS NOT NULL",
+            },
+            {
+                "name": "idx_files_updated_at",
+                "table": "files",
+                "columns": ["updated_at"],
+                "unique": False,
+                "where_clause": None,
+            },
+            {
+                "name": "idx_files_needs_indexing",
+                "table": "files",
+                "columns": ["project_id", "updated_at"],
+                "unique": False,
+                "where_clause": "(deleted = 0 OR deleted IS NULL) AND needs_chunking = 1",
             },
             {
                 "name": "idx_code_duplicates_project",

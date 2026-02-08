@@ -188,9 +188,7 @@ class _ClientOperationsMixin:
         if isinstance(result, dict):
             # Extract the actual driver result from "data" key
             driver_result = result.get("data", {})
-            # driver_result should be the full result from driver.execute()
-            # For SELECT: {"affected_rows": ..., "lastrowid": ..., "data": [...]}
-            # For other: {"affected_rows": ..., "lastrowid": ...}
+            # driver_result: SELECT has "data" list; other ops have affected_rows, lastrowid
             if isinstance(driver_result, dict):
                 return driver_result
             # Fallback: if not a dict, return empty dict

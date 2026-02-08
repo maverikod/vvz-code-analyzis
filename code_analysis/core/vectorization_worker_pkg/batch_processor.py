@@ -109,32 +109,18 @@ async def process_embedding_ready_chunks(
 
         # Profiling: accumulate time per phase to diagnose GPU/CPU/DB bottlenecks
         batch_start_wall = time.time()
-        total_db_read_s = 0.0
+        total_db_read_s = step_duration  # Single SELECT already done above
         total_svo_s = 0.0
         total_faiss_s = 0.0
         total_db_update_s = 0.0
         svo_requests_count = 0
 
-        # First pass: load DB row per chunk and collect chunks that need SVO (no embedding in DB)
-        chunk_rows: List[Tuple[Any, Any]] = []
+        # Collect chunks that need SVO (no embedding in DB). Use data from initial SELECT.
         need_svo: List[Tuple[int, str, str]] = []
         for chunk in chunks:
-            if self._stop_event.is_set():
-                break
-            chunk_id = chunk["id"]
-            db_check_start = time.time()
-            row_result = database.execute(
-                "SELECT embedding_vector, embedding_model FROM code_chunks WHERE id = ?",
-                (chunk_id,),
-            )
-            row_data = (
-                row_result.get("data", []) if isinstance(row_result, dict) else []
-            )
-            row = row_data[0] if row_data else None
-            total_db_read_s += time.time() - db_check_start
-            chunk_rows.append((chunk, row))
-            if row and row.get("embedding_vector"):
+            if chunk.get("embedding_vector"):
                 continue
+            chunk_id = chunk["id"]
             chunk_text = chunk.get("chunk_text", "")
             chunk_type = chunk.get("chunk_type", "DocBlock")
             if chunk_text and self.svo_client_manager:
@@ -181,7 +167,10 @@ async def process_embedding_ready_chunks(
                     )
                     svo_map = {}
 
-        for chunk, row in chunk_rows:
+        # Collect (chunk_id, vector_id, embedding_model) for batch UPDATE at the end
+        updates_to_apply: List[Tuple[int, int, str]] = []
+
+        for chunk in chunks:
             if self._stop_event.is_set():
                 break
 
@@ -225,16 +214,16 @@ async def process_embedding_ready_chunks(
                         f"[CHUNK {chunk_id}] Using embedding from get_chunks_batch "
                         f"(dim={len(embedding_array)}, {ast_binding})"
                     )
-                elif row and row.get("embedding_vector"):
-                    # Load embedding from database (from first pass)
+                elif chunk.get("embedding_vector"):
+                    # Use embedding from initial SELECT (no extra DB read)
                     load_start = time.time()
                     try:
-                        embedding_list = json.loads(row["embedding_vector"])
+                        embedding_list = json.loads(chunk["embedding_vector"])
                         embedding_array = np.array(embedding_list, dtype="float32")
-                        embedding_model = row["embedding_model"]
+                        embedding_model = chunk.get("embedding_model") or ""
                         load_duration = time.time() - load_start
                         logger.debug(
-                            f"[TIMING] [CHUNK {chunk_id}] Loaded embedding from DB in {load_duration:.3f}s "
+                            f"[TIMING] [CHUNK {chunk_id}] Loaded embedding from batch in {load_duration:.3f}s "
                             f"(dim={len(embedding_array)}, model={embedding_model}, {ast_binding})"
                         )
                     except Exception as e:
@@ -394,17 +383,8 @@ async def process_embedding_ready_chunks(
                     f"assigned vector_id={vector_id}"
                 )
 
-                # Update database with vector_id (AST bindings are preserved)
-                db_update_start = time.time()
-                database.execute(
-                    "UPDATE code_chunks SET vector_id = ?, embedding_model = ? WHERE id = ?",
-                    (vector_id, embedding_model, chunk_id),
-                )
-                db_update_duration = time.time() - db_update_start
-                total_db_update_s += db_update_duration
-                logger.debug(
-                    f"[TIMING] [CHUNK {chunk_id}] Database update_chunk_vector_id took {db_update_duration:.3f}s"
-                )
+                # Collect for batch UPDATE (single execute_batch after loop)
+                updates_to_apply.append((chunk_id, vector_id, embedding_model or ""))
 
                 chunk_total_duration = time.time() - chunk_start_time
                 batch_processed += 1
@@ -426,6 +406,22 @@ async def process_embedding_ready_chunks(
                 )
                 batch_errors += 1
                 continue
+
+        # Batch update: write all vector_id and embedding_model in one execute_batch
+        if updates_to_apply:
+            db_batch_start = time.time()
+            update_ops: List[Tuple[str, Optional[tuple]]] = [
+                (
+                    "UPDATE code_chunks SET vector_id = ?, embedding_model = ? WHERE id = ?",
+                    (vid, em, cid),
+                )
+                for (cid, vid, em) in updates_to_apply
+            ]
+            database.execute_batch(update_ops)
+            total_db_update_s = time.time() - db_batch_start
+            logger.debug(
+                f"[TIMING] execute_batch: {len(update_ops)} UPDATEs in {total_db_update_s:.3f}s"
+            )
 
         # Save FAISS index after batch and log profile summary
         faiss_save_s = 0.0

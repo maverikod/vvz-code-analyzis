@@ -366,14 +366,21 @@ class SQLiteDriver(BaseDatabaseDriver):
             # Begin transaction for atomic schema changes
             self.begin_transaction()
             try:
-                # Generate and apply migration SQL (driver handles data migration)
+                # Disable FK checks so table rename/copy does not fail on referenced tables
+                self.execute("PRAGMA foreign_keys = OFF")
                 migration_sql = comparator.generate_migration_sql(diff)
-                for sql in migration_sql:
-                    self.execute(sql)
+                for i, sql in enumerate(migration_sql):
+                    try:
+                        self.execute(sql)
+                    except Exception as e:
+                        logger.error(
+                            "Migration failed at statement %s: %s", i, sql[:200]
+                        )
+                        raise
                     result["changes_applied"].append(sql)
 
-                # Update schema version
                 self._set_schema_version(code_version)
+                self.execute("PRAGMA foreign_keys = ON")
                 self.commit()
 
                 result["success"] = True
@@ -383,9 +390,14 @@ class SQLiteDriver(BaseDatabaseDriver):
                 return result
 
             except Exception as e:
-                # Rollback on error
+                try:
+                    self.execute("PRAGMA foreign_keys = ON")
+                except Exception:
+                    pass
                 self.rollback()
-                raise RuntimeError(f"Schema sync failed during migration: {e}") from e
+                raise RuntimeError(
+                    f"Schema sync failed during migration: {e}"
+                ) from e
 
         except Exception as e:
             result["error"] = str(e)

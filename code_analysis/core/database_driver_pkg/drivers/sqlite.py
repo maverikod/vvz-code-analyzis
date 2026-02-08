@@ -78,6 +78,7 @@ class SQLiteDriver(BaseDatabaseDriver):
         try:
             self.db_path = Path(config["path"]).resolve()
             self.db_path.parent.mkdir(parents=True, exist_ok=True)
+            logger.info("SQLite driver connecting to db_path=%s", self.db_path)
 
             # Create connection
             self.conn = sqlite3.connect(str(self.db_path), check_same_thread=False)
@@ -155,9 +156,7 @@ class SQLiteDriver(BaseDatabaseDriver):
                 cols = ", ".join(
                     f"{name} {spec}" for name, spec in INDEXING_WORKER_STATS_COLUMNS
                 )
-                self.conn.execute(
-                    f"CREATE TABLE IF NOT EXISTS {table} ({cols})"
-                )
+                self.conn.execute(f"CREATE TABLE IF NOT EXISTS {table} ({cols})")
                 self.conn.execute(INDEXING_WORKER_STATS_INDEX)
                 self.conn.commit()
                 return
@@ -181,9 +180,7 @@ class SQLiteDriver(BaseDatabaseDriver):
                     table,
                     name,
                 )
-                self.conn.execute(
-                    f"ALTER TABLE {table} ADD COLUMN {name} {spec}"
-                )
+                self.conn.execute(f"ALTER TABLE {table} ADD COLUMN {name} {spec}")
                 self.conn.commit()
                 existing.add(name)
             except Exception as e:
@@ -446,11 +443,24 @@ class SQLiteDriver(BaseDatabaseDriver):
                 raise DriverOperationError("Database connection not established")
             conn = self.conn
 
+        # Normalize params: sqlite3 expects tuple/list (for ?) or dict (for :name).
+        # RPC may send list (JSON); avoid passing str or other invalid types.
+        bind_params: Optional[tuple | dict] = None
+        if params is not None:
+            if isinstance(params, dict):
+                bind_params = params
+            elif isinstance(params, (list, tuple)):
+                bind_params = tuple(params) if params else ()
+            else:
+                raise DriverOperationError(
+                    f"execute params must be tuple, list, or dict; got {type(params).__name__}"
+                )
+
         try:
             cursor = conn.cursor()
             try:
-                if params:
-                    cursor.execute(sql, params)
+                if bind_params is not None and bind_params != ():
+                    cursor.execute(sql, bind_params)
                 else:
                     cursor.execute(sql)
 

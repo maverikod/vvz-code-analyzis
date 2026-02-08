@@ -688,13 +688,37 @@ class SchemaComparator:
             new_table_sql.replace("CREATE TABLE IF NOT EXISTS", "CREATE TABLE")
         )
 
-        # Copy data from temp_table (old table was renamed to temp_table before this method is called)
-        # Note: At SQL execution time, temp_table will exist with old structure
+        # Copy data from temp_table (old table was renamed to temp_table before this method is called).
+        # If table has UNIQUE constraint(s), deduplicate by first unique key to avoid UNIQUE violation.
         if common_cols:
             col_list = ", ".join(sorted(common_cols))
-            statements.append(
-                f"INSERT INTO {table_name} ({col_list}) SELECT {col_list} FROM {temp_table}"
-            )
+            table_def = self.schema_definition["tables"][table_name]
+            unique_constraints = table_def.get("unique_constraints", [])
+            pk_col = None
+            for col in table_def.get("columns", []):
+                if col.get("primary_key"):
+                    pk_col = col["name"]
+                    break
+            uc_cols = None
+            if unique_constraints and unique_constraints[0]["columns"]:
+                uc = unique_constraints[0]["columns"]
+                if set(uc) <= common_cols:
+                    uc_cols = uc
+            if uc_cols and pk_col and pk_col in common_cols:
+                partition_by = ", ".join(uc_cols)
+                order_by = f"{pk_col} DESC"
+                inner_cols = ", ".join(sorted(common_cols))
+                statements.append(
+                    f"INSERT INTO {table_name} ({col_list}) "
+                    f"SELECT {inner_cols} FROM ("
+                    f"SELECT {inner_cols}, ROW_NUMBER() OVER (PARTITION BY {partition_by} ORDER BY {order_by}) AS _rn "
+                    f"FROM {temp_table}"
+                    f") WHERE _rn = 1"
+                )
+            else:
+                statements.append(
+                    f"INSERT INTO {table_name} ({col_list}) SELECT {col_list} FROM {temp_table}"
+                )
 
         # Drop old table
         statements.append(f"DROP TABLE {temp_table}")
@@ -709,6 +733,35 @@ class SchemaComparator:
             f" WHERE {index_def.where_clause}" if index_def.where_clause else ""
         )
         return f"CREATE {unique_str}INDEX IF NOT EXISTS {index_def.name} ON {index_def.table} ({columns_str}){where_clause}"
+
+    def _tables_recreate_order(self, table_names: Set[str]) -> List[str]:
+        """
+        Return table names in FK-safe order for recreation (parents before children).
+        Tables that are not in schema_definition are appended at the end.
+        """
+        tables = self.schema_definition.get("tables", {})
+        deps: Dict[str, Set[str]] = {}
+        for t in table_names:
+            refs = set()
+            for fk in tables.get(t, {}).get("foreign_keys", []):
+                r = fk.get("references_table")
+                if r and r in table_names:
+                    refs.add(r)
+            deps[t] = refs
+        result: List[str] = []
+        remaining = set(table_names)
+        while remaining:
+            chosen = None
+            for t in remaining:
+                if deps[t] <= set(result):
+                    chosen = t
+                    break
+            if chosen is None:
+                result.extend(remaining)
+                break
+            result.append(chosen)
+            remaining.discard(chosen)
+        return result
 
     def generate_migration_sql(self, diff: SchemaDiff) -> List[str]:
         """
@@ -728,51 +781,49 @@ class SchemaComparator:
         for table_name in diff.missing_tables:
             statements.append(self._generate_create_table_sql(table_name))
 
-        # Handle table changes (columns, types, constraints)
+        # Handle table changes (columns, types, constraints).
+        # Recreate tables in FK order (parents before children) to avoid FOREIGN KEY errors.
+        tables_with_type_changes = {
+            name for name, td in diff.table_diffs.items() if td.type_changes
+        }
+        ordered_recreate = (
+            self._tables_recreate_order(tables_with_type_changes)
+            if tables_with_type_changes
+            else []
+        )
+        for table_name in ordered_recreate:
+            table_diff = diff.table_diffs[table_name]
+            try:
+                current_columns = set(self._get_table_columns(table_name).keys())
+            except Exception:
+                current_columns = set()
+            temp_table = f"temp_{table_name}"
+            statements.append(f"ALTER TABLE {table_name} RENAME TO {temp_table}")
+            statements.extend(
+                self._generate_recreate_table_sql(
+                    table_name, table_diff, current_columns
+                )
+            )
+
         for table_name, table_diff in diff.table_diffs.items():
             if table_diff.type_changes:
-                # Recreate table with data migration
-                # Get current columns before rename (needed for data migration)
-                # We need to get columns from the current table state before generating
-                # the rename statement, because after rename the table will be temp_table
-                try:
-                    current_columns = set(self._get_table_columns(table_name).keys())
-                except Exception:
-                    # If table doesn't exist, use empty set
-                    current_columns = set()
-
-                # First, rename old table to temp
-                temp_table = f"temp_{table_name}"
-                statements.append(f"ALTER TABLE {table_name} RENAME TO {temp_table}")
-                # Then create new table and copy data
-                # Pass current_columns so _generate_recreate_table_sql knows which columns to copy
-                statements.extend(
-                    self._generate_recreate_table_sql(
-                        table_name, table_diff, current_columns
+                continue
+            # Add missing columns (handles ALTER TABLE logic)
+            # Note: SQLite doesn't support DEFAULT with functions in ALTER TABLE ADD COLUMN
+            for col_def in table_diff.missing_columns:
+                col_sql = f"{col_def.name} {col_def.type}"
+                if col_def.not_null:
+                    col_sql += " NOT NULL"
+                if col_def.default:
+                    default_val = col_def.default.strip()
+                    is_function = (
+                        "julianday" in default_val
+                        or default_val.startswith("(")
+                        or "(" in default_val
                     )
-                )
-            else:
-                # Add missing columns (handles ALTER TABLE logic)
-                # Note: SQLite doesn't support DEFAULT with functions in ALTER TABLE ADD COLUMN
-                # So we skip DEFAULT for function-based defaults (like julianday('now'))
-                for col_def in table_diff.missing_columns:
-                    col_sql = f"{col_def.name} {col_def.type}"
-                    if col_def.not_null:
-                        col_sql += " NOT NULL"
-                    # Only add DEFAULT if it's a constant value (not a function call)
-                    # Function-based defaults (like "julianday('now')" or "(julianday('now'))") are skipped
-                    if col_def.default:
-                        default_val = col_def.default.strip()
-                        # Check if it's a function call (contains function name or parentheses)
-                        is_function = (
-                            "julianday" in default_val
-                            or default_val.startswith("(")
-                            or "(" in default_val
-                        )
-                        if not is_function:
-                            # Only add DEFAULT for constant values
-                            col_sql += f" DEFAULT {col_def.default}"
-                    statements.append(f"ALTER TABLE {table_name} ADD COLUMN {col_sql}")
+                    if not is_function:
+                        col_sql += f" DEFAULT {col_def.default}"
+                statements.append(f"ALTER TABLE {table_name} ADD COLUMN {col_sql}")
 
         # Handle virtual tables (FTS5)
         for (

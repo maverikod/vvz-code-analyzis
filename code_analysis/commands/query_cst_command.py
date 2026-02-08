@@ -14,14 +14,14 @@ email: vasilyvz@gmail.com
 from __future__ import annotations
 
 import logging
-from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
-from mcp_proxy_adapter.commands.base import Command
 from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 
 from .base_mcp_command import BaseMCPCommand
-from ..core.exceptions import QueryParseError
+from ..core.backup_manager import BackupManager
+from ..core.cst_module import ReplaceOp, Selector, apply_replace_ops
+from ..core.exceptions import CSTModulePatchError, QueryParseError
 from ..cst_query import query_source
 
 logger = logging.getLogger(__name__)
@@ -29,8 +29,8 @@ logger = logging.getLogger(__name__)
 
 class QueryCSTCommand(BaseMCPCommand):
     name = "query_cst"
-    version = "1.0.0"
-    descr = "Query python source using CSTQuery selectors (LibCST)"
+    version = "1.1.0"
+    descr = "Query python source using CSTQuery selectors; optional find+replace in one call"
     category = "refactor"
     author = "Vasiliy Zdanovskiy"
     email = "vasilyvz@gmail.com"
@@ -61,6 +61,37 @@ class QueryCSTCommand(BaseMCPCommand):
                     "default": 200,
                     "description": "Maximum number of matches to return",
                 },
+                "replace_with": {
+                    "type": "string",
+                    "description": (
+                        "If set, replace the matched node(s) with this code (single string). "
+                        "Use code_lines for multi-line to avoid escaping. One call = find + replace."
+                    ),
+                },
+                "code_lines": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": (
+                        "If set, replace the matched node(s) with these lines (joined by newline). "
+                        "Prefer over replace_with for multi-line code."
+                    ),
+                },
+                "match_index": {
+                    "type": "integer",
+                    "default": 0,
+                    "description": (
+                        "When replacing: which match to replace (0-based). "
+                        "Ignored if replace_all is true."
+                    ),
+                },
+                "replace_all": {
+                    "type": "boolean",
+                    "default": False,
+                    "description": (
+                        "When replacing: if true, replace all matches with the same new code. "
+                        "match_index is ignored."
+                    ),
+                },
             },
             "required": ["project_id", "file_path", "selector"],
             "additionalProperties": False,
@@ -73,6 +104,10 @@ class QueryCSTCommand(BaseMCPCommand):
         selector: str,
         include_code: bool = False,
         max_results: int = 200,
+        replace_with: Optional[str] = None,
+        code_lines: Optional[List[str]] = None,
+        match_index: int = 0,
+        replace_all: bool = False,
         **kwargs,
     ) -> SuccessResult:
         try:
@@ -95,6 +130,100 @@ class QueryCSTCommand(BaseMCPCommand):
 
             source = target.read_text(encoding="utf-8")
             matches = query_source(source, selector, include_code=include_code)
+
+            # Replace mode: find + replace in one call
+            if replace_with is not None or code_lines is not None:
+                if not matches:
+                    return ErrorResult(
+                        message="No matches found for selector; nothing to replace",
+                        code="CST_QUERY_NO_MATCH",
+                        details={"selector": selector},
+                    )
+                new_code = (
+                    "\n".join(code_lines)
+                    if code_lines is not None
+                    else (replace_with or "")
+                )
+                if replace_all:
+                    ops = [
+                        ReplaceOp(
+                            Selector(
+                                kind="cst_query",
+                                query=selector,
+                                match_index=i,
+                            ),
+                            new_code,
+                        )
+                        for i in range(len(matches))
+                    ]
+                else:
+                    if match_index < 0 or match_index >= len(matches):
+                        return ErrorResult(
+                            message=(
+                                f"match_index {match_index} out of range "
+                                f"(selector matched {len(matches)} node(s))"
+                            ),
+                            code="CST_QUERY_MATCH_INDEX",
+                            details={
+                                "selector": selector,
+                                "match_index": match_index,
+                                "match_count": len(matches),
+                            },
+                        )
+                    ops = [
+                        ReplaceOp(
+                            Selector(
+                                kind="cst_query",
+                                query=selector,
+                                match_index=match_index,
+                            ),
+                            new_code,
+                        )
+                    ]
+                try:
+                    new_source, stats = apply_replace_ops(source, ops)
+                except CSTModulePatchError as e:
+                    return ErrorResult(
+                        message=str(e),
+                        code="CST_REPLACE_ERROR",
+                        details={"selector": selector},
+                    )
+                backup_manager = BackupManager(root_path)
+                backup_uuid = backup_manager.create_backup(
+                    target,
+                    command="query_cst_replace",
+                    comment="",
+                )
+                target.write_text(new_source, encoding="utf-8")
+                try:
+                    rel_path = str(target.relative_to(root_path))
+                except ValueError:
+                    rel_path = file_path
+                database = self._open_database_from_config(auto_analyze=False)
+                try:
+                    update_result = database.update_file_data(
+                        file_path=rel_path,
+                        project_id=project_id,
+                        root_dir=root_path,
+                    )
+                    if not update_result.get("success"):
+                        logger.warning(
+                            "query_cst replace: update_file_data failed: %s",
+                            update_result.get("error"),
+                        )
+                finally:
+                    database.disconnect()
+                return SuccessResult(
+                    data={
+                        "success": True,
+                        "replaced": stats.get("replaced", 0),
+                        "removed": stats.get("removed", 0),
+                        "file_path": str(target),
+                        "backup_uuid": backup_uuid or None,
+                    }
+                )
+
+            # Query-only mode
             truncated = False
             if max_results >= 0 and len(matches) > max_results:
                 matches = matches[:max_results]
@@ -208,12 +337,17 @@ class QueryCSTCommand(BaseMCPCommand):
                 "- Find nodes for refactoring operations\n"
                 "- Analyze code structure\n"
                 "- Prepare for compose_cst_module operations\n\n"
-                "Typical Workflow:\n"
+                "Typical Workflow (query only):\n"
                 "1. Use query_cst to find target nodes\n"
                 "2. Get node_id from matches\n"
                 "3. Use compose_cst_module with selector kind='node_id' or kind='cst_query'\n"
                 "4. Preview diff and compile result\n"
                 "5. Apply changes if satisfied\n\n"
+                "Replace mode (find + replace in one call):\n"
+                "Pass replace_with (string) or code_lines (array of lines). "
+                "Optionally match_index (0-based, which match to replace) or replace_all (replace every match). "
+                "File is backed up, then updated; database is refreshed. "
+                "Response is compact: replaced count, file_path, backup_uuid.\n\n"
                 "Important notes:\n"
                 "- Selector syntax follows CSTQuery rules (see docs/CST_QUERY.md)\n"
                 "- node_id is span-based and stable enough for patch workflows\n"
@@ -296,6 +430,42 @@ class QueryCSTCommand(BaseMCPCommand):
                     "default": 200,
                     "examples": [50, 200, 500],
                 },
+                "replace_with": {
+                    "description": (
+                        "If set, replace the matched node(s) with this code (single string). "
+                        "Use code_lines for multi-line. One call = find + replace; file is backed up and saved."
+                    ),
+                    "type": "string",
+                    "required": False,
+                    "examples": ["return None", "pass"],
+                },
+                "code_lines": {
+                    "description": (
+                        "If set, replace the matched node(s) with these lines (joined by newline). "
+                        "Prefer over replace_with for multi-line code."
+                    ),
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "required": False,
+                },
+                "match_index": {
+                    "description": (
+                        "When replacing: which match to replace (0-based). Default 0. Ignored if replace_all is true."
+                    ),
+                    "type": "integer",
+                    "required": False,
+                    "default": 0,
+                    "examples": [0, 1],
+                },
+                "replace_all": {
+                    "description": (
+                        "When replacing: if true, replace all matches with the same new code. match_index ignored."
+                    ),
+                    "type": "boolean",
+                    "required": False,
+                    "default": False,
+                    "examples": [False, True],
+                },
             },
             "usage_examples": [
                 {
@@ -356,6 +526,33 @@ class QueryCSTCommand(BaseMCPCommand):
                     "explanation": (
                         "Finds all return statements in utils.py. "
                         "Useful for analyzing control flow and finding early returns."
+                    ),
+                },
+                {
+                    "description": "Replace first match (find + replace in one call)",
+                    "command": {
+                        "project_id": "550e8400-e29b-41d4-a716-446655440000",
+                        "file_path": "src/utils.py",
+                        "selector": 'function[name="old_helper"] smallstmt[type="Return"]:first',
+                        "replace_with": "return default",
+                    },
+                    "explanation": (
+                        "Replaces the first return in old_helper with 'return default'. "
+                        "File is backed up and saved; response has replaced count and backup_uuid."
+                    ),
+                },
+                {
+                    "description": "Replace all matches with same code",
+                    "command": {
+                        "project_id": "550e8400-e29b-41d4-a716-446655440000",
+                        "file_path": "src/main.py",
+                        "selector": 'smallstmt[type="Pass"]',
+                        "code_lines": ["raise NotImplementedError()"],
+                        "replace_all": True,
+                    },
+                    "explanation": (
+                        "Replaces every 'pass' statement with 'raise NotImplementedError()'. "
+                        "Use code_lines for multi-line replacement."
                     ),
                 },
                 {
@@ -572,7 +769,7 @@ class QueryCSTCommand(BaseMCPCommand):
                     "command": {
                         "root_dir": "/home/user/projects/my_project",
                         "file_path": "src/main.py",
-                        "selector": 'node[start_line>=10][end_line<=20]',
+                        "selector": "node[start_line>=10][end_line<=20]",
                     },
                     "explanation": (
                         "Finds all nodes that start at or after line 10 and end at or before line 20. "
@@ -710,6 +907,21 @@ class QueryCSTCommand(BaseMCPCommand):
                         },
                     ],
                 },
+                "CST_QUERY_NO_MATCH": {
+                    "description": "Selector matched no nodes (replace mode only)",
+                    "message": "No matches found for selector; nothing to replace",
+                    "solution": "Verify selector matches at least one node in the file",
+                },
+                "CST_QUERY_MATCH_INDEX": {
+                    "description": "match_index out of range (replace mode only)",
+                    "message": "match_index {n} out of range (selector matched {m} node(s))",
+                    "solution": "Use match_index between 0 and (match_count - 1), or use replace_all",
+                },
+                "CST_REPLACE_ERROR": {
+                    "description": "Replace failed (e.g. unsupported node kind or parse error)",
+                    "message": "From CSTModulePatchError",
+                    "solution": "Ensure new code is valid Python; replace supports stmt/smallstmt/function/class/method",
+                },
             },
             "return_value": {
                 "success": {
@@ -729,6 +941,13 @@ class QueryCSTCommand(BaseMCPCommand):
                             "- start_line, start_col: Starting position (1-based line, 0-based col)\n"
                             "- end_line, end_col: Ending position (1-based line, 0-based col)\n"
                             "- code: Code snippet (if include_code=True)"
+                        ),
+                        "replace_response": (
+                            "When replace_with or code_lines is used, success data contains:\n"
+                            "- replaced: Number of nodes replaced\n"
+                            "- removed: Number of nodes removed (empty new_code)\n"
+                            "- file_path: Path to modified file\n"
+                            "- backup_uuid: Backup identifier (if backup was created)"
                         ),
                     },
                     "example": {
@@ -786,13 +1005,15 @@ class QueryCSTCommand(BaseMCPCommand):
                     "description": "Command failed",
                     "code": (
                         "Error code (e.g., INVALID_FILE, FILE_NOT_FOUND, "
-                        "CST_QUERY_PARSE_ERROR, CST_QUERY_ERROR)"
+                        "CST_QUERY_PARSE_ERROR, CST_QUERY_ERROR, CST_QUERY_NO_MATCH, "
+                        "CST_QUERY_MATCH_INDEX, CST_REPLACE_ERROR)"
                     ),
                     "message": "Human-readable error message",
                     "details": "Additional error information (if available)",
                 },
             },
             "best_practices": [
+                "For find+replace in one call: pass replace_with or code_lines (and optionally match_index or replace_all)",
                 "Use query_cst to find specific nodes before compose_cst_module",
                 "Save node_id from matches for use in compose_cst_module",
                 "Use include_code=True only when needed (can be large)",

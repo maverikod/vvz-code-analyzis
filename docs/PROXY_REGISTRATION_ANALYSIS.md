@@ -66,3 +66,7 @@ With the server running (daemon + `--host 0.0.0.0`) and registered:
 - **get_worker_status** (worker_type=indexing): success; returns summary (is_running, etc.).
 
 Conclusion: When the server process is running and registered, all tested commands work through the MCP Proxy.
+
+## mTLS: proxy must use client cert to reach our server
+
+code-analysis-server uses **mTLS**: it requires the client to present a certificate. The proxy, when calling our `server_url`, must use a client cert (e.g. mcp-proxy.crt/key) signed by the same CA. Otherwise the connection fails and the proxy returns SERVER_UNAVAILABLE. See **docs/PROXY_MTLS_UPSTREAM.md** and **scripts/test_server_mtls.sh** for details and a local test.

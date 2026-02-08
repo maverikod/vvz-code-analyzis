@@ -256,6 +256,7 @@ class StartWorkerMCPCommand(BaseMCPCommand):
                     batch_size=batch_size,
                     worker_log_path=log_path,
                     worker_logs_dir=worker_logs_dir,
+                    config_path=str(config_path) if config_path else None,
                 )
                 return SuccessResult(data=res.__dict__)
 

@@ -1,4 +1,5 @@
 ---
+description: 
 alwaysApply: true
 ---
 
@@ -24,6 +25,12 @@ alwaysApply: true
   - Migration guides
   - Analysis reports
 - **Example**: `README.md`, `ANALYSIS.md`, `MIGRATION_SUMMARY.md`
+### 📁 docs/reports
+- **Purpose**: AI analises and reports
+- **Contents**:
+  - Migration guides
+  - Analysis reports
+- **Example**: `CREATE_PROJECT_VS_GET_DATABASE_STATUS.md`, `ANALYSIS.md`, `MIGRATION_SUMMARY.md`
 
 ### 📁 log/
 - **Purpose**: Server logs

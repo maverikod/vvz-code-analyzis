@@ -16,13 +16,11 @@ if TYPE_CHECKING:
 
 
 class VectorizationWorker:
-    """Worker for vectorizing code chunks in background process.
+    """Worker that transfers already-embedded chunks into FAISS.
 
-    Universal worker that processes all projects from database.
-    Worker works only with database - no filesystem access, no watch_dirs.
-    Worker periodically queries database to discover projects with files/chunks needing vectorization.
-    Processes chunks that don't have vector_id yet, gets embeddings,
-    adds them to FAISS index, and updates database."""
+    Only processes chunks that already have embedding_vector set in the DB (ready vectors).
+    Chunking and embedding are the responsibility of the indexer; this worker only adds
+    vectors to FAISS and writes back vector_id. No filesystem access, no watch_dirs."""
 
     def __init__(
         self,

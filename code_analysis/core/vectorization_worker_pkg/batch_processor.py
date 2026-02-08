@@ -1,9 +1,9 @@
 """
 Batch processing helpers for VectorizationWorker.process_chunks.
 
-This module contains the heavy inner loop that takes chunks which already have
-embeddings stored in the DB (or can fetch them from SVO), adds them to FAISS,
-and writes back vector_id.
+This module processes only chunks that already have embedding_vector in the DB (ready vectors).
+It adds them to FAISS and writes back vector_id. Chunking and embedding are done by the indexer;
+the vectorization worker only performs the transfer.
 
 Author: Vasiliy Zdanovskiy
 email: vasilyvz@gmail.com
@@ -26,12 +26,14 @@ async def process_embedding_ready_chunks(
     database: Any,
 ) -> Tuple[int, int]:
     """
-    Process chunks that are ready to be added to FAISS (have embeddings or can get them).
+    Process chunks that already have embedding_vector (ready vectors): add to FAISS, set vector_id.
+
+    Only selects rows where embedding_vector IS NOT NULL and vector_id IS NULL.
+    Does not create embeddings; indexer is responsible for that.
 
     Notes:
-        - This function is designed to be called from VectorizationWorker.process_chunks.
-        - It expects `self` to have `batch_size`, `faiss_manager`, `svo_client_manager`,
-          and `_stop_event`.
+        - Called from VectorizationWorker.process_chunks.
+        - Expects `self` to have `batch_size`, `faiss_manager`, `svo_client_manager`, `_stop_event`.
 
     Args:
         self: VectorizationWorker instance (bound dynamically).
@@ -42,130 +44,57 @@ async def process_embedding_ready_chunks(
     """
     batch_processed = 0
     batch_errors = 0
-    empty_iterations = 0
-    max_empty_iterations = getattr(self, "max_empty_iterations", 3)
 
-    while not self._stop_event.is_set():
-        # Get chunks with embeddings in DB but without vector_id
-        # These are chunks where embedding was saved but FAISS add failed or wasn't done
-        # Project-scoped: all chunks in project
-        step_start = time.time()
-        scope_desc = f"project={self.project_id}"
-        logger.info(
-            f"[TIMING] Step 2: Starting to get non-vectorized chunks from DB ({scope_desc})"
-        )
-        # get_non_vectorized_chunks - use execute() for complex query
-        chunks_result = database.execute(
-            """
-            SELECT cc.id, cc.chunk_text, cc.class_id, cc.function_id, cc.method_id,
-                   cc.line, cc.ast_node_type, cc.embedding_vector, cc.embedding_model
-            FROM code_chunks cc
-            INNER JOIN files f ON cc.file_id = f.id
-            WHERE cc.project_id = ?
-              AND (f.deleted = 0 OR f.deleted IS NULL)
-              AND cc.embedding_vector IS NOT NULL
-              AND cc.vector_id IS NULL
-            LIMIT ?
-            """,
-            (self.project_id, self.batch_size),
-        )
-        # Extract data from result - execute() returns dict with "data" key
-        chunks = (
-            chunks_result.get("data", []) if isinstance(chunks_result, dict) else []
-        )
-        step_duration = time.time() - step_start
-        logger.info(
-            f"[TIMING] Step 2: Retrieved {len(chunks)} chunks from DB in {step_duration:.3f}s"
-        )
+    # Single query: get one set of records to process (no inner loop)
+    step_start = time.time()
+    scope_desc = f"project={self.project_id}"
+    logger.info(
+        f"[TIMING] Getting non-vectorized chunks from DB ({scope_desc}), limit={self.batch_size}"
+    )
+    chunks_result = database.execute(
+        """
+        SELECT cc.id, cc.chunk_text, cc.class_id, cc.function_id, cc.method_id,
+               cc.line, cc.ast_node_type, cc.embedding_vector, cc.embedding_model
+        FROM code_chunks cc
+        INNER JOIN files f ON cc.file_id = f.id
+        WHERE cc.project_id = ?
+          AND (f.deleted = 0 OR f.deleted IS NULL)
+          AND cc.embedding_vector IS NOT NULL
+          AND cc.vector_id IS NULL
+        LIMIT ?
+        """,
+        (self.project_id, self.batch_size),
+    )
+    chunks = (
+        chunks_result.get("data", []) if isinstance(chunks_result, dict) else []
+    )
+    step_duration = time.time() - step_start
+    logger.info(
+        f"[TIMING] Retrieved {len(chunks)} chunks in {step_duration:.3f}s"
+    )
 
-        if not chunks:
-            empty_iterations += 1
-            if empty_iterations >= max_empty_iterations:
-                from ..worker_status_file import (
-                    STATUS_OPERATION_IDLE,
-                    write_worker_status,
-                )
+    if not chunks:
+        from ..worker_status_file import (
+            STATUS_OPERATION_IDLE,
+            write_worker_status,
+        )
+        write_worker_status(
+            getattr(self, "status_file_path", None),
+            STATUS_OPERATION_IDLE,
+            current_file=None,
+            progress_percent=None,
+        )
+        return batch_processed, batch_errors
 
-                write_worker_status(
-                    getattr(self, "status_file_path", None),
-                    STATUS_OPERATION_IDLE,
-                    current_file=None,
-                    progress_percent=None,
-                )
-                logger.info(
-                    f"No chunks available for this project after {empty_iterations} "
-                    f"iterations; breaking to let cycle try next project (no delay)"
-                )
-            else:
-                logger.info(
-                    f"No chunks needing vector_id assignment in this cycle "
-                    f"(iteration {empty_iterations}/{max_empty_iterations})"
-                )
-            break
-
-        logger.info(
+    logger.info(
             f"Processing batch of {len(chunks)} chunks that have embeddings but need vector_id"
         )
 
-        # Profiling: accumulate time per phase to diagnose GPU/CPU/DB bottlenecks
+        # Profiling: accumulate time per phase
         batch_start_wall = time.time()
-        total_db_read_s = step_duration  # Single SELECT already done above
-        total_svo_s = 0.0
+        total_db_read_s = step_duration
         total_faiss_s = 0.0
         total_db_update_s = 0.0
-        svo_requests_count = 0
-
-        # Collect chunks that need SVO (no embedding in DB). Use data from initial SELECT.
-        need_svo: List[Tuple[int, str, str]] = []
-        for chunk in chunks:
-            if chunk.get("embedding_vector"):
-                continue
-            chunk_id = chunk["id"]
-            chunk_text = chunk.get("chunk_text", "")
-            chunk_type = chunk.get("chunk_type", "DocBlock")
-            if chunk_text and self.svo_client_manager:
-                need_svo.append((chunk_id, chunk_text, chunk_type))
-
-        # Batch fetch embeddings from chunker for chunks that need it
-        svo_map: dict = {}
-        if need_svo and self.svo_client_manager:
-            get_batch = getattr(self.svo_client_manager, "get_chunks_batch", None)
-            if callable(get_batch):
-                try:
-                    svo_start = time.time()
-                    texts = [t for (_, t, _) in need_svo]
-                    batch_results = await get_batch(texts, type="DocBlock")
-                    total_svo_s += time.time() - svo_start
-                    svo_requests_count = 1
-                    for k, (cid, _, _) in enumerate(need_svo):
-                        if k < len(batch_results) and batch_results[k]:
-                            first = batch_results[k][0]
-                            emb = getattr(first, "embedding", None)
-                            if emb is None and hasattr(first, "vector"):
-                                emb = first.vector
-                            model = getattr(first, "embedding_model", None)
-                            if emb is not None and model and str(model).strip():
-                                svo_map[cid] = (
-                                    np.array(
-                                        emb.tolist() if hasattr(emb, "tolist") else emb,
-                                        dtype="float32",
-                                    ),
-                                    model,
-                                )
-                                embedding_json = json.dumps(
-                                    emb.tolist() if hasattr(emb, "tolist") else emb
-                                )
-                                database.execute(
-                                    "UPDATE code_chunks SET embedding_vector = ?, embedding_model = ? WHERE id = ?",
-                                    (embedding_json, model, cid),
-                                )
-                except Exception as svo_e:
-                    logger.debug(
-                        "get_chunks_batch failed for batch_processor: %s; "
-                        "will use per-chunk get_chunks in loop",
-                        svo_e,
-                    )
-                    svo_map = {}
 
         # Collect (chunk_id, vector_id, embedding_model) for batch UPDATE at the end
         updates_to_apply: List[Tuple[int, int, str]] = []
@@ -207,15 +136,8 @@ async def process_embedding_ready_chunks(
                 embedding_array: Optional[np.ndarray] = None
                 embedding_model: Optional[str] = None
 
-                # Use pre-fetched batch result if available
-                if chunk_id in svo_map:
-                    embedding_array, embedding_model = svo_map[chunk_id]
-                    logger.debug(
-                        f"[CHUNK {chunk_id}] Using embedding from get_chunks_batch "
-                        f"(dim={len(embedding_array)}, {ast_binding})"
-                    )
-                elif chunk.get("embedding_vector"):
-                    # Use embedding from initial SELECT (no extra DB read)
+                # Use only embedding already in DB (indexer is responsible for chunking/embedding)
+                if chunk.get("embedding_vector"):
                     load_start = time.time()
                     try:
                         embedding_list = json.loads(chunk["embedding_vector"])
@@ -223,7 +145,7 @@ async def process_embedding_ready_chunks(
                         embedding_model = chunk.get("embedding_model") or ""
                         load_duration = time.time() - load_start
                         logger.debug(
-                            f"[TIMING] [CHUNK {chunk_id}] Loaded embedding from batch in {load_duration:.3f}s "
+                            f"[TIMING] [CHUNK {chunk_id}] Loaded embedding from DB in {load_duration:.3f}s "
                             f"(dim={len(embedding_array)}, model={embedding_model}, {ast_binding})"
                         )
                     except Exception as e:
@@ -232,140 +154,10 @@ async def process_embedding_ready_chunks(
                             f"({ast_binding}): {e}"
                         )
 
-                # If still no embedding, try per-chunk get_chunks (fallback when batch failed or unavailable)
-                if embedding_array is None and self.svo_client_manager:
-                    logger.info(
-                        f"Chunk {chunk_id} has no embedding in DB ({ast_binding}), "
-                        "requesting from chunker service (SVO)..."
-                    )
-                    try:
-                        if not chunk_text:
-                            logger.warning(f"Chunk {chunk_id} has no text, skipping")
-                            continue
-
-                        logger.debug(
-                            f"[CHUNK {chunk_id}] Requesting chunks with embeddings from chunker service for text:\n"
-                            f"  {chunk_text_preview!r}"
-                        )
-
-                        embedding_request_start = time.time()
-                        # Use chunker service - it chunks and returns chunks with embeddings
-                        chunk_type = chunk.get("chunk_type", "DocBlock")
-                        chunks_with_emb = None
-                        try:
-                            chunks_with_emb = await self.svo_client_manager.get_chunks(
-                                text=chunk_text, type=chunk_type
-                            )
-                            embedding_request_duration = (
-                                time.time() - embedding_request_start
-                            )
-                            total_svo_s += embedding_request_duration
-                            svo_requests_count += 1
-                            logger.debug(
-                                f"[TIMING] [CHUNK {chunk_id}] Chunker service request took {embedding_request_duration:.3f}s"
-                            )
-                        except Exception as svo_e:
-                            # Chunker service error - skip this chunk, continue processing
-                            embedding_request_duration = (
-                                time.time() - embedding_request_start
-                            )
-                            logger.debug(
-                                f"[CHUNK {chunk_id}] Chunker service error after {embedding_request_duration:.3f}s: {svo_e}. "
-                                "Skipping chunk, will retry in next cycle if service becomes available."
-                            )
-                            batch_errors += 1
-                            continue  # Skip this chunk, try next one
-
-                        if chunks_with_emb and len(chunks_with_emb) > 0:
-                            embedding = getattr(chunks_with_emb[0], "embedding", None)
-                            embedding_model = getattr(
-                                chunks_with_emb[0], "embedding_model", None
-                            )
-
-                            if embedding:
-                                embedding_array = np.array(embedding, dtype="float32")
-                                logger.debug(
-                                    f"[CHUNK {chunk_id}] Received embedding: dim={len(embedding_array)}, "
-                                    f"model={embedding_model}"
-                                )
-
-                                # Save to DB only when model is set (vector without model is invalid)
-                                if not (
-                                    embedding_model and str(embedding_model).strip()
-                                ):
-                                    logger.warning(
-                                        f"[CHUNK {chunk_id}] Chunker returned embedding without model, "
-                                        "skipping save and FAISS (vector not written)"
-                                    )
-                                    batch_errors += 1
-                                    continue
-                                save_start = time.time()
-                                embedding_json = json.dumps(
-                                    embedding.tolist()
-                                    if hasattr(embedding, "tolist")
-                                    else embedding
-                                )
-                                database.execute(
-                                    "UPDATE code_chunks SET embedding_vector = ?, embedding_model = ? WHERE id = ?",
-                                    (
-                                        embedding_json,
-                                        embedding_model,
-                                        chunk_id,
-                                    ),
-                                )
-                                save_duration = time.time() - save_start
-                                total_db_update_s += save_duration
-                                logger.debug(
-                                    f"[TIMING] [CHUNK {chunk_id}] Saved embedding to DB in {save_duration:.3f}s"
-                                )
-                                logger.info(
-                                    f"✅ Obtained and saved embedding for chunk {chunk_id} "
-                                    f"({ast_binding})"
-                                )
-                            else:
-                                logger.warning(
-                                    f"Chunk {chunk_id} embedding request returned no embedding, "
-                                    "skipping (use dedicated command to process empty chunks)"
-                                )
-                                continue
-                        else:
-                            logger.warning(
-                                f"Chunk {chunk_id} embedding request returned empty result, "
-                                "skipping (use dedicated command to process empty chunks)"
-                            )
-                            continue
-                    except Exception as e:
-                        # This catch handles errors from the outer try block (file reading, etc.)
-                        # SVO errors are already handled in the inner try-except above
-                        error_type = type(e).__name__
-                        error_msg = str(e)
-
-                        # Check if it's a Model RPC server error (infrastructure issue)
-                        is_model_rpc_error = (
-                            "Model RPC server" in error_msg
-                            or "failed after 3 attempts" in error_msg
-                            or (hasattr(e, "code") and getattr(e, "code") == -32603)
-                        )
-
-                        if is_model_rpc_error:
-                            # Infrastructure issue, not code issue
-                            logger.warning(
-                                f"Model RPC server unavailable for chunk {chunk_id} ({ast_binding}): {error_msg}. "
-                                f"Chunk will be retried in next cycle. Check Model RPC server status."
-                            )
-                        else:
-                            logger.error(
-                                f"Failed to get embedding for chunk {chunk_id} ({ast_binding}): {error_type}: {error_msg}",
-                                exc_info=True,
-                            )
-                        batch_errors += 1
-                        continue
-
-                # Skip chunks without embeddings - they should be processed via dedicated command
                 if embedding_array is None:
                     logger.debug(
-                        f"Chunk {chunk_id} has no embedding ({ast_binding}), skipping "
-                        "(use dedicated command to process empty chunks)"
+                        f"Chunk {chunk_id} has no embedding in DB ({ast_binding}), skipping "
+                        "(indexer must set embedding_vector; vectorization worker only transfers)"
                     )
                     continue
 
@@ -395,8 +187,6 @@ async def process_embedding_ready_chunks(
                 logger.debug(
                     f"[TIMING] [CHUNK {chunk_id}] Total processing time: {chunk_total_duration:.3f}s"
                 )
-                # Reset empty iterations counter when we successfully process a chunk
-                empty_iterations = 0
 
             except Exception as e:
                 logger.error(
@@ -443,16 +233,13 @@ async def process_embedding_ready_chunks(
                 )
                 logger.info(
                     "[PROFILE] batch_size=%s processed=%s errors=%s total_s=%.3f "
-                    "chunks_per_sec=%.2f db_read_s=%.3f svo_s=%.3f svo_requests=%s "
-                    "faiss_s=%.3f db_update_s=%.3f faiss_save_s=%.3f",
+                    "chunks_per_sec=%.2f db_read_s=%.3f faiss_s=%.3f db_update_s=%.3f faiss_save_s=%.3f",
                     len(chunks),
                     batch_processed,
                     batch_errors,
                     batch_wall_s,
                     chunks_per_sec,
                     total_db_read_s,
-                    total_svo_s,
-                    svo_requests_count,
                     total_faiss_s,
                     total_db_update_s,
                     faiss_save_s,

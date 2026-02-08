@@ -708,6 +708,11 @@ def main() -> None:
                 "config": dict(driver_config.get("config", {})),
             }
             driver_config_resolved["config"]["path"] = str(storage.db_path.resolve())
+            # Query journal for inspection and recovery (default: logs/database_queries.jsonl)
+            if "query_log_path" not in driver_config_resolved["config"]:
+                driver_config_resolved["config"]["query_log_path"] = str(
+                    storage.config_dir / "logs" / "database_queries.jsonl"
+                )
 
             # Start database driver using WorkerManager
             logger.info("🚀 Starting database driver...")
@@ -793,6 +798,7 @@ def main() -> None:
                 batch_size=int(batch_size),
                 worker_log_path=worker_log_path,
                 worker_logs_dir=worker_logs_dir,
+                config_path=str(config_path) if config_path else None,
             )
             if result.success:
                 logger.info(f"✅ Indexing worker started: {result.message}")

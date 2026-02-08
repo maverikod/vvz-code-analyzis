@@ -319,6 +319,7 @@ class WorkerManager:
         batch_size: int = 5,
         worker_log_path: Optional[str] = None,
         worker_logs_dir: Optional[str] = None,
+        config_path: Optional[str] = None,
     ) -> WorkerStartResult:
         """
         Start indexing worker in a separate process and register it.
@@ -329,6 +330,7 @@ class WorkerManager:
             batch_size: Max files per project per cycle (default 5).
             worker_log_path: Log path for worker process.
             worker_logs_dir: Absolute directory for worker log and PID file (optional).
+            config_path: Optional path to config; when set, vectorize file after each successful index.
 
         Returns:
             WorkerStartResult.
@@ -339,6 +341,7 @@ class WorkerManager:
             batch_size=batch_size,
             worker_log_path=worker_log_path,
             worker_logs_dir=worker_logs_dir,
+            config_path=config_path,
         )
 
     # Database driver methods

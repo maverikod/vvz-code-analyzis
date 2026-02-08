@@ -306,6 +306,45 @@ _ENTITY_CROSS_REF_INDEXES = [
 ]
 
 
+def fix_entity_cross_ref_stale_fks_in_connection(conn: sqlite3.Connection) -> bool:
+    """Recreate entity_cross_ref if any of its FK target tables are missing (stale refs).
+
+    When schema_sync renames files->temp_files then drops temp_files, entity_cross_ref
+    keeps REFERENCES temp_files(id) and breaks. This recreates the table with correct
+    REFERENCES files(id), methods(id). Also fixes when any referenced table is missing.
+
+    Args:
+        conn: Open SQLite connection (same one used for migration).
+
+    Returns:
+        True if the table was recreated; False if no fix needed.
+    """
+    cur = conn.cursor()
+    cur.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='entity_cross_ref'"
+    )
+    if cur.fetchone() is None:
+        return False
+    cur.execute("PRAGMA foreign_key_list(entity_cross_ref)")
+    rows = cur.fetchall()
+    ref_tables = {row[2] for row in rows}
+    if not ref_tables:
+        return False
+    cur.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name IN (%s)"
+        % ",".join("?" * len(ref_tables)),
+        tuple(ref_tables),
+    )
+    existing = {r[0] for r in cur.fetchall()}
+    if ref_tables <= existing:
+        return False
+    cur.execute("DROP TABLE entity_cross_ref")
+    cur.execute(_ENTITY_CROSS_REF_CREATE)
+    for idx_sql in _ENTITY_CROSS_REF_INDEXES:
+        cur.execute(idx_sql)
+    return True
+
+
 def fix_entity_cross_ref_stale_fks(
     db_path: Path, *, timeout_seconds: float = 2.0
 ) -> bool:
@@ -315,6 +354,9 @@ def fix_entity_cross_ref_stale_fks(
     FKs in entity_cross_ref to point to those names. After DROP temp_*, those FKs are
     broken. This recreates the table with correct REFERENCES files(id), methods(id).
     Data in entity_cross_ref is dropped; cross-refs are rebuilt on next indexing.
+
+    For migration code: use fix_entity_cross_ref_stale_fks_in_connection(conn) inside
+    the same transaction before commit so the DB is never left broken.
 
     Args:
         db_path: Path to SQLite db file.
@@ -328,24 +370,10 @@ def fix_entity_cross_ref_stale_fks(
     try:
         conn = sqlite3.connect(str(db_path), timeout=timeout_seconds)
         try:
-            cur = conn.cursor()
-            cur.execute(
-                "SELECT name FROM sqlite_master WHERE type='table' AND name='entity_cross_ref'"
-            )
-            if cur.fetchone() is None:
-                return False
-            cur.execute("PRAGMA foreign_key_list(entity_cross_ref)")
-            rows = cur.fetchall()
-            # rows: (id, seq, table, from, to, on_update, on_delete, match)
-            ref_tables = {row[2] for row in rows}
-            if "temp_files" not in ref_tables and "temp_methods" not in ref_tables:
-                return False
-            cur.execute("DROP TABLE entity_cross_ref")
-            cur.execute(_ENTITY_CROSS_REF_CREATE)
-            for idx_sql in _ENTITY_CROSS_REF_INDEXES:
-                cur.execute(idx_sql)
-            conn.commit()
-            return True
+            fixed = fix_entity_cross_ref_stale_fks_in_connection(conn)
+            if fixed:
+                conn.commit()
+            return fixed
         finally:
             conn.close()
     except Exception:

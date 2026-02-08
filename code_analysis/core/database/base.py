@@ -930,6 +930,19 @@ class CodeDatabase:
                 )
             """
         )
+        self._execute(
+            """
+                CREATE TABLE IF NOT EXISTS indexing_errors (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    project_id TEXT NOT NULL,
+                    file_path TEXT NOT NULL,
+                    error_type TEXT,
+                    error_message TEXT,
+                    created_at REAL DEFAULT (julianday('now')),
+                    UNIQUE(project_id, file_path)
+                )
+            """
+        )
         self._commit()
         self._migrate_to_uuid_projects()
         self._migrate_schema()
@@ -938,6 +951,7 @@ class CodeDatabase:
             "CREATE INDEX IF NOT EXISTS idx_projects_root_path ON projects(root_path)",
             "CREATE INDEX IF NOT EXISTS idx_files_project ON files(project_id)",
             "CREATE INDEX IF NOT EXISTS idx_files_path ON files(path)",
+            "CREATE INDEX IF NOT EXISTS idx_indexing_errors_project_path ON indexing_errors(project_id, file_path)",
             "CREATE INDEX IF NOT EXISTS idx_classes_name ON classes(name)",
             "CREATE INDEX IF NOT EXISTS idx_classes_file ON classes(file_id)",
             "CREATE INDEX IF NOT EXISTS idx_methods_name ON methods(name)",

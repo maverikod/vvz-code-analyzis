@@ -496,6 +496,7 @@ class WorkerLifecycleManager:
         batch_size: int = 5,
         worker_log_path: Optional[str] = None,
         worker_logs_dir: Optional[str] = None,
+        config_path: Optional[str] = None,
     ) -> WorkerStartResult:
         """
         Start indexing worker in a separate process and register it.
@@ -503,6 +504,7 @@ class WorkerLifecycleManager:
         Worker processes files with needs_chunking=1 via driver index_file RPC.
         Must run before vectorization worker (startup order) so indexer clears
         needs_chunking before vectorization chunks.
+        When config_path is set, worker vectorizes each file after successful index.
 
         CRITICAL: Uses multiprocessing.Process, not threading.Thread or async.
 
@@ -513,6 +515,7 @@ class WorkerLifecycleManager:
             worker_log_path: Log path for worker process.
             worker_logs_dir: Absolute directory for worker log and PID file (optional).
                              If provided, PID file is {worker_logs_dir}/indexing_worker.pid.
+            config_path: Optional path to config; when set, vectorize file after each successful index.
 
         Returns:
             WorkerStartResult.
@@ -533,15 +536,19 @@ class WorkerLifecycleManager:
                 message="Indexing worker already running",
             )
 
+        kwargs = {
+            "poll_interval": int(poll_interval),
+            "batch_size": int(batch_size),
+            "worker_log_path": worker_log_path,
+            "pid_file_path": str(pid_file_path),
+        }
+        if config_path is not None:
+            kwargs["config_path"] = config_path
+
         process = multiprocessing.Process(
             target=run_indexing_worker,
             args=(db_path,),
-            kwargs={
-                "poll_interval": int(poll_interval),
-                "batch_size": int(batch_size),
-                "worker_log_path": worker_log_path,
-                "pid_file_path": str(pid_file_path),
-            },
+            kwargs=kwargs,
             daemon=True,
         )
         process.start()

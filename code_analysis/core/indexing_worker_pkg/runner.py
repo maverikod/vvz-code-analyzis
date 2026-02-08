@@ -89,6 +89,7 @@ def run_indexing_worker(
     socket_path: Optional[str] = None,
     log_max_bytes: int = 10485760,
     log_backup_count: int = 5,
+    config_path: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Run indexing worker: logging, PID cleanup, create client and worker, loop until stop.
 
@@ -101,6 +102,7 @@ def run_indexing_worker(
         socket_path: Database driver socket path (optional; derived from db_path if not set)
         log_max_bytes: Max log file size before rotation (default 10 MB)
         log_backup_count: Number of rotated logs to keep (default 5)
+        config_path: Optional path to config; when set, vectorize file after each successful index
 
     Returns:
         Stats dict when stopped: indexed, errors, cycles.
@@ -139,6 +141,7 @@ def run_indexing_worker(
         batch_size=batch_size,
         poll_interval=poll_interval,
         status_file_path=status_file_path,
+        config_path=config_path,
     )
 
     try:

@@ -35,7 +35,7 @@ def get_file_by_path(
     # Normalize path to absolute (Step 5: absolute paths everywhere)
     # Ensure consistent normalization - use resolve() to handle symlinks and relative paths
     abs_path = normalize_path_simple(path)
-    
+
     # Log normalization for debugging path mismatches
     if path != abs_path:
         logger.debug(
@@ -102,9 +102,7 @@ def add_file(
     try:
         relative_path = abs_path_obj.relative_to(project_root)
     except ValueError:
-        raise ValueError(
-            f"File {abs_path} is not within project root {project_root}"
-        )
+        raise ValueError(f"File {abs_path} is not within project root {project_root}")
 
     # Validate project_id matches (if projectid file exists)
     try:
@@ -137,21 +135,23 @@ def add_file(
         """,
         (str(relative_path), abs_path, project_id),
     )
-    
+
     if existing_file:
         wrong_file_id = existing_file["id"]
         wrong_project_id = existing_file["project_id"]
-        
+
         logger.error(
             f"Data inconsistency detected: file {abs_path} exists in project {wrong_project_id} "
             f"but is being added to project {project_id}. Marking as deleted in old project and clearing related data."
         )
-        
+
         # Clear all related data for the file in wrong project
         try:
             self.clear_file_data(wrong_file_id)
-            logger.info(f"Cleared all related data for file_id={wrong_file_id} in project {wrong_project_id}")
-            
+            logger.info(
+                f"Cleared all related data for file_id={wrong_file_id} in project {wrong_project_id}"
+            )
+
             # Mark file as deleted in wrong project
             self._execute(
                 """
@@ -161,9 +161,13 @@ def add_file(
                 """,
                 (wrong_file_id,),
             )
-            logger.info(f"Marked file_id={wrong_file_id} as deleted in project {wrong_project_id}")
+            logger.info(
+                f"Marked file_id={wrong_file_id} as deleted in project {wrong_project_id}"
+            )
         except Exception as e:
-            logger.error(f"Failed to clear data and mark file as deleted: {e}", exc_info=True)
+            logger.error(
+                f"Failed to clear data and mark file as deleted: {e}", exc_info=True
+            )
             # Continue anyway - we'll still add the file to the correct project
 
     # Check if file already exists in the correct project (by relative_path or path)
@@ -175,7 +179,7 @@ def add_file(
         """,
         (project_id, str(relative_path), abs_path),
     )
-    
+
     if existing_in_correct_project:
         # Update existing file (including relative_path and watch_dir_id)
         file_id = existing_in_correct_project["id"]
@@ -186,7 +190,15 @@ def add_file(
                 last_modified = ?, has_docstring = ?, updated_at = julianday('now')
             WHERE id = ?
             """,
-            (watch_dir_id, abs_path, str(relative_path), lines, last_modified, has_docstring, file_id),
+            (
+                watch_dir_id,
+                abs_path,
+                str(relative_path),
+                lines,
+                last_modified,
+                has_docstring,
+                file_id,
+            ),
         )
         # Only commit if not in a transaction (transaction will commit all changes)
         if not self._in_transaction():
@@ -200,7 +212,15 @@ def add_file(
                 (project_id, watch_dir_id, path, relative_path, lines, last_modified, has_docstring, updated_at)
                 VALUES (?, ?, ?, ?, ?, ?, ?, julianday('now'))
             """,
-            (project_id, watch_dir_id, abs_path, str(relative_path), lines, last_modified, has_docstring),
+            (
+                project_id,
+                watch_dir_id,
+                abs_path,
+                str(relative_path),
+                lines,
+                last_modified,
+                has_docstring,
+            ),
         )
         # Only commit if not in a transaction (transaction will commit all changes)
         if not self._in_transaction():
@@ -375,7 +395,7 @@ def update_file_data(
         abs_path = normalize_path_simple(file_path)
         if not Path(abs_path).is_absolute():
             abs_path = str((Path(root_dir) / file_path).resolve())
-        
+
         # Log normalization for debugging
         if file_path != abs_path:
             logger.debug(
@@ -406,7 +426,9 @@ def update_file_data(
             raise
         except Exception as e:
             # Log but don't fail - validation is a safety check
-            logger.warning(f"[update_file_data] Failed to validate project_id for {abs_path}: {e}")
+            logger.warning(
+                f"[update_file_data] Failed to validate project_id for {abs_path}: {e}"
+            )
 
         # Get file record
         file_record = self.get_file_by_path(abs_path, project_id)
@@ -427,7 +449,7 @@ def update_file_data(
                     f"[update_file_data] Found {len(all_files)} files with same name. "
                     f"Expected: {abs_path}, Found: {[f['path'] for f in all_files[:3]]}"
                 )
-            
+
             return {
                 "success": False,
                 "error": f"File not found in database: {file_path}",
@@ -435,7 +457,7 @@ def update_file_data(
             }
 
         file_id = file_record["id"]
-        
+
         # Get current file mtime from disk
         try:
             file_path_obj = Path(abs_path)
@@ -459,7 +481,7 @@ def update_file_data(
                 "file_path": abs_path,
                 "file_id": file_id,
             }
-        
+
         # Update last_modified to be slightly different from file_mtime
         # This ensures _analyze_file will process the file and save AST/CST
         # We add a small epsilon to ensure last_modified != file_mtime
@@ -482,11 +504,14 @@ def update_file_data(
         try:
             # Import from commands package (relative to code_analysis root)
             import sys
+
             # Add parent directory to path if needed
             code_analysis_root = Path(__file__).parent.parent.parent
             if str(code_analysis_root) not in sys.path:
                 sys.path.insert(0, str(code_analysis_root))
-            from code_analysis.commands.code_mapper_mcp_command import UpdateIndexesMCPCommand
+            from code_analysis.commands.code_mapper_mcp_command import (
+                UpdateIndexesMCPCommand,
+            )
 
             # Create command instance
             update_cmd = UpdateIndexesMCPCommand()
@@ -510,14 +535,14 @@ def update_file_data(
                     "file_id": file_id,
                     "result": result,  # Include full result for debugging
                 }
-            
+
             # Log result for debugging
             if result.get("status") != "success":
                 logger.warning(
                     f"_analyze_file returned unexpected status: {result.get('status')}, "
                     f"result: {result}"
                 )
-            
+
             # After _analyze_file, file_id might have changed if file was re-added
             # Get the current file_id (this is critical - file_id can change after add_file)
             updated_file_record = self.get_file_by_path(abs_path, project_id)
@@ -570,6 +595,16 @@ def update_file_data(
                 + result.get("methods", 0)
             )
 
+            # Clear indexing error for this file on successful write
+            try:
+                self._execute(
+                    "DELETE FROM indexing_errors WHERE project_id = ? AND file_path = ?",
+                    (project_id, abs_path),
+                )
+                self._commit()
+            except Exception:
+                pass
+
             return {
                 "success": True,
                 "file_id": file_id,
@@ -581,9 +616,7 @@ def update_file_data(
             }
 
         except Exception as e:
-            logger.error(
-                f"Error analyzing file {file_path}: {e}", exc_info=True
-            )
+            logger.error(f"Error analyzing file {file_path}: {e}", exc_info=True)
             return {
                 "success": False,
                 "error": f"Failed to analyze file: {e}",
@@ -616,11 +649,11 @@ async def vectorize_file_immediately(
 ) -> Dict[str, Any]:
     """
     Immediately chunk and vectorize a file after database update.
-    
+
     This method attempts to vectorize the file immediately. If SVO client
     manager is not available or chunking fails, file is marked for worker
     processing (non-blocking fallback).
-    
+
     Process:
     1. Check if SVO client manager is available
     2. Read file content and parse AST
@@ -628,14 +661,14 @@ async def vectorize_file_immediately(
     4. If successful, chunks are saved with embeddings
     5. Worker will add vectors to FAISS in next cycle
     6. If failed, mark file for worker processing
-    
+
     Args:
         file_id: File ID
         project_id: Project ID
         file_path: File path (absolute)
         svo_client_manager: Optional SVO client manager
         faiss_manager: Optional FAISS manager
-        
+
     Returns:
         Dictionary with vectorization result:
         {
@@ -649,7 +682,9 @@ async def vectorize_file_immediately(
     """
     # If no SVO client manager, mark for worker processing
     if not svo_client_manager:
-        logger.debug(f"No SVO client manager, marking {file_path} for worker processing")
+        logger.debug(
+            f"No SVO client manager, marking {file_path} for worker processing"
+        )
         self.mark_file_needs_chunking(file_path, project_id)
         return {
             "success": True,
@@ -659,7 +694,7 @@ async def vectorize_file_immediately(
             "marked_for_worker": True,
             "error": None,
         }
-    
+
     try:
         # Validate file path and project_id using unified normalization
         # Try to get project root from database for validation
@@ -670,16 +705,16 @@ async def vectorize_file_immediately(
                 project_root = Path(db_project["root_path"])
         except Exception as e:
             logger.debug(f"Could not get project root from database: {e}")
-        
+
         # Use unified path normalization if project_root is available
         if project_root and project_root.exists():
             try:
                 from ..path_normalization import normalize_file_path
                 from ..exceptions import ProjectIdMismatchError
-                
+
                 normalized = normalize_file_path(file_path, project_root=project_root)
                 file_path = normalized.absolute_path
-                
+
                 # Validate project_id matches
                 if normalized.project_id != project_id:
                     raise ProjectIdMismatchError(
@@ -696,8 +731,10 @@ async def vectorize_file_immediately(
                 raise
             except Exception as e:
                 # Log but continue with simple normalization
-                logger.debug(f"Path normalization failed, using simple normalization: {e}")
-        
+                logger.debug(
+                    f"Path normalization failed, using simple normalization: {e}"
+                )
+
         # Read file content
         file_path_obj = Path(file_path)
         if not file_path_obj.exists():
@@ -711,9 +748,9 @@ async def vectorize_file_immediately(
                 "marked_for_worker": True,
                 "error": "File not found",
             }
-        
+
         file_content = file_path_obj.read_text(encoding="utf-8")
-        
+
         # Parse AST
         try:
             tree = ast.parse(file_content, filename=file_path)
@@ -728,17 +765,17 @@ async def vectorize_file_immediately(
                 "marked_for_worker": True,
                 "error": f"Syntax error: {e}",
             }
-        
+
         # Create chunker and process file
         from ..docstring_chunker_pkg.docstring_chunker import DocstringChunker
-        
+
         chunker = DocstringChunker(
             database=self,
             svo_client_manager=svo_client_manager,
             faiss_manager=faiss_manager,
             min_chunk_length=30,
         )
-        
+
         chunks_created = await chunker.process_file(
             file_id=file_id,
             project_id=project_id,
@@ -746,12 +783,12 @@ async def vectorize_file_immediately(
             tree=tree,
             file_content=file_content,
         )
-        
+
         logger.info(
             f"Immediately vectorized file {file_path}: "
             f"{chunks_created} chunks created"
         )
-        
+
         return {
             "success": True,
             "chunked": True,
@@ -760,7 +797,7 @@ async def vectorize_file_immediately(
             "marked_for_worker": False,
             "error": None,
         }
-        
+
     except Exception as e:
         logger.error(
             f"Error during immediate vectorization of {file_path}: {e}",
@@ -788,17 +825,17 @@ async def update_and_vectorize_file(
 ) -> Dict[str, Any]:
     """
     Update database and immediately vectorize file.
-    
+
     This is the recommended method for file write operations.
     It combines update_file_data + vectorize_file_immediately.
-    
+
     Args:
         file_path: File path (relative to root_dir or absolute)
         project_id: Project ID
         root_dir: Project root directory
         svo_client_manager: Optional SVO client manager
         faiss_manager: Optional FAISS manager
-        
+
     Returns:
         Combined result from update_file_data + vectorize_file_immediately
     """
@@ -808,14 +845,14 @@ async def update_and_vectorize_file(
         project_id=project_id,
         root_dir=root_dir,
     )
-    
+
     if not update_result.get("success"):
         return update_result
-    
+
     # Step 2: Try immediate vectorization
     file_id = update_result.get("file_id")
     abs_path = update_result.get("file_path")
-    
+
     if svo_client_manager:
         try:
             vectorization_result = await self.vectorize_file_immediately(
@@ -841,7 +878,7 @@ async def update_and_vectorize_file(
             "chunked": False,
             "marked_for_worker": True,
         }
-    
+
     # Combine results
     update_result["vectorization"] = vectorization_result
     return update_result
@@ -1036,10 +1073,10 @@ def mark_file_deleted(
         try:
             from ..path_normalization import normalize_file_path
             from ..exceptions import ProjectIdMismatchError
-            
+
             normalized = normalize_file_path(file_path, project_root=project_root)
             abs_path = normalized.absolute_path
-            
+
             # Validate project_id matches
             if normalized.project_id != project_id:
                 raise ProjectIdMismatchError(
@@ -1058,10 +1095,12 @@ def mark_file_deleted(
             # Log but continue with simple normalization
             logger.debug(f"Path normalization failed, using simple normalization: {e}")
             from ..path_normalization import normalize_path_simple
+
             abs_path = normalize_path_simple(file_path)
     else:
         # Fallback to simple normalization
         from ..path_normalization import normalize_path_simple
+
         abs_path = normalize_path_simple(file_path)
 
     row = self._fetchone(
@@ -1633,7 +1672,12 @@ def update_file_data_atomic(
                             bases.append(str(base))
                 end_line_class = getattr(node, "end_lineno", node.lineno)
                 class_id = self.add_class(
-                    file_id, node.name, node.lineno, docstring, bases, end_line=end_line_class
+                    file_id,
+                    node.name,
+                    node.lineno,
+                    docstring,
+                    bases,
+                    end_line=end_line_class,
                 )
                 classes_added += 1
                 class_nodes[node] = class_id
@@ -1709,9 +1753,7 @@ def update_file_data_atomic(
                         if any(
                             node == item
                             for item in parent.body
-                            if isinstance(
-                                item, (ast.FunctionDef, ast.AsyncFunctionDef)
-                            )
+                            if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef))
                         ):
                             is_method = True
                             break
@@ -1763,16 +1805,12 @@ def update_file_data_atomic(
         for node in ast.walk(tree):
             if isinstance(node, ast.Import):
                 for alias in node.names:
-                    self.add_import(
-                        file_id, alias.name, None, "import", node.lineno
-                    )
+                    self.add_import(file_id, alias.name, None, "import", node.lineno)
                     imports_added += 1
             elif isinstance(node, ast.ImportFrom):
                 module = node.module or ""
                 for alias in node.names:
-                    self.add_import(
-                        file_id, alias.name, module, "from", node.lineno
-                    )
+                    self.add_import(file_id, alias.name, module, "from", node.lineno)
                     imports_added += 1
 
         # Track usages (function calls, method calls, class instantiations)
@@ -1830,6 +1868,16 @@ def update_file_data_atomic(
             # Do not fail the whole file update
 
         entities_count = classes_added + functions_added + methods_added
+
+        # Clear indexing error for this file on successful write
+        try:
+            self._execute(
+                "DELETE FROM indexing_errors WHERE project_id = ? AND file_path = ?",
+                (project_id, abs_path),
+            )
+            self._commit()
+        except Exception:
+            pass
 
         return {
             "success": True,

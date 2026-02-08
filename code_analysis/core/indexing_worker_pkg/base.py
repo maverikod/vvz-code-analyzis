@@ -30,6 +30,7 @@ class IndexingWorker:
         batch_size: int = 5,
         poll_interval: int = 30,
         status_file_path: Optional[Path] = None,
+        config_path: Optional[str] = None,
     ):
         """Initialize indexing worker.
 
@@ -39,12 +40,14 @@ class IndexingWorker:
             batch_size: Max files per project per cycle (default 5)
             poll_interval: Seconds between cycles (default 30)
             status_file_path: Optional path to write current_operation/current_file for monitoring
+            config_path: Optional path to config file; when set, vectorize file after each successful index
         """
         self.db_path = db_path
         self.socket_path = socket_path
         self.batch_size = batch_size
         self.poll_interval = poll_interval
         self.status_file_path = Path(status_file_path) if status_file_path else None
+        self.config_path = config_path
         self._stop_event = multiprocessing.Event()
 
     def stop(self) -> None:

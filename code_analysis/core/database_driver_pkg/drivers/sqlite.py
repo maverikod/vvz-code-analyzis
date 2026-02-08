@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from ..exceptions import DriverConnectionError, DriverOperationError
+from ..sqlite_query_journal import SQLiteQueryJournal
 from .base import BaseDatabaseDriver
 from .sqlite_operations import SQLiteOperations
 from .sqlite_schema import SQLiteSchemaManager
@@ -62,6 +63,7 @@ class SQLiteDriver(BaseDatabaseDriver):
         self._transaction_manager: Optional[SQLiteTransactionManager] = None
         self._schema_manager: Optional[SQLiteSchemaManager] = None
         self._operations: Optional[SQLiteOperations] = None
+        self._query_journal: Optional[SQLiteQueryJournal] = None
 
     def connect(self, config: Dict[str, Any]) -> None:
         """Establish SQLite connection.
@@ -129,6 +131,29 @@ class SQLiteDriver(BaseDatabaseDriver):
             self._ensure_code_chunks_migrations()
             self._ensure_indexing_worker_stats_table()
             self._ensure_indexing_errors_table()
+
+            # Optional query journal for inspection and recovery (rotation at 100 MB by default)
+            query_log_path = config.get("query_log_path")
+            if query_log_path:
+                from ..sqlite_query_journal import (
+                    DEFAULT_JOURNAL_BACKUP_COUNT,
+                    DEFAULT_JOURNAL_MAX_BYTES,
+                )
+
+                max_bytes = config.get("query_log_max_bytes", DEFAULT_JOURNAL_MAX_BYTES)
+                backup_count = config.get(
+                    "query_log_backup_count", DEFAULT_JOURNAL_BACKUP_COUNT
+                )
+                self._query_journal = SQLiteQueryJournal(
+                    Path(query_log_path),
+                    max_bytes=max_bytes,
+                    backup_count=backup_count,
+                )
+                logger.info(
+                    "Query journal enabled: %s (max_bytes=%s)",
+                    self._query_journal.path,
+                    max_bytes,
+                )
         except Exception as e:
             raise DriverConnectionError(f"Failed to connect to database: {e}") from e
 
@@ -313,6 +338,12 @@ class SQLiteDriver(BaseDatabaseDriver):
             DriverConnectionError: If disconnection fails
         """
         try:
+            if self._query_journal:
+                try:
+                    self._query_journal.close()
+                except Exception:
+                    pass
+                self._query_journal = None
             # Close all transactions
             if self._transaction_manager:
                 self._transaction_manager.close_all()
@@ -546,10 +577,26 @@ class SQLiteDriver(BaseDatabaseDriver):
                             raise DriverOperationError(
                                 f"Failed to commit: {commit_err}"
                             ) from commit_err
+                if self._query_journal:
+                    self._query_journal.write(
+                        sql,
+                        params=bind_params,
+                        transaction_id=transaction_id,
+                        success=True,
+                    )
                 return result
             finally:
                 cursor.close()
         except Exception as e:
+            err_msg = str(e)
+            if self._query_journal:
+                self._query_journal.write(
+                    sql,
+                    params=bind_params,
+                    transaction_id=transaction_id,
+                    success=False,
+                    error=err_msg,
+                )
             # Only rollback if not in transaction (transaction rollback is handled separately)
             if not transaction_id:
                 try:

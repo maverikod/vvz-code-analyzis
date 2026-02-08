@@ -254,6 +254,9 @@ class SQLiteDriver(BaseDatabaseDriver):
         migration in one transaction. Use this only for repair (e.g. dedicated repair command or
         manual fix after an external/corrupt state). Returns without error if schema is already OK.
         """
+        logger.info(
+            "_recover_files_table_if_needed called (only place that runs SQL referencing temp_files)"
+        )
         if not self.conn:
             return
         try:
@@ -262,11 +265,17 @@ class SQLiteDriver(BaseDatabaseDriver):
                 "SELECT name FROM sqlite_master WHERE type='table' AND name='files'"
             )
             if cur.fetchone() is not None:
+                logger.debug(
+                    "_recover_files_table_if_needed: table 'files' exists, skip"
+                )
                 return
             cur.execute(
                 "SELECT name FROM sqlite_master WHERE type='table' AND name='temp_files'"
             )
             if cur.fetchone() is None:
+                logger.debug(
+                    "_recover_files_table_if_needed: 'temp_files' missing, skip"
+                )
                 return
             logger.info(
                 "Recovering from failed migration: renaming temp_files back to files"

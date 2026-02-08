@@ -402,10 +402,12 @@ def register_code_analysis_commands(reg: registry) -> None:
     from .commands.worker_status_mcp_commands import (
         GetDatabaseStatusMCPCommand,
         GetWorkerStatusMCPCommand,
+        ListIndexingErrorsMCPCommand,
     )
 
     reg.register(GetWorkerStatusMCPCommand, "custom")
     reg.register(GetDatabaseStatusMCPCommand, "custom")
+    reg.register(ListIndexingErrorsMCPCommand, "custom")
 
     # Repair worker management commands (NEW)
     try:

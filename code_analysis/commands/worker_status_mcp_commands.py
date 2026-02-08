@@ -73,8 +73,6 @@ class GetWorkerStatusMCPCommand(BaseMCPCommand):
             # Resolve log_path from config when not provided (so status file can be read)
             if log_path is None:
                 try:
-                    from pathlib import Path
-
                     from ..core.storage_paths import (
                         load_raw_config,
                         resolve_storage_paths,
@@ -1184,5 +1182,142 @@ class GetDatabaseStatusMCPCommand(BaseMCPCommand):
                 "Monitor recent_activity to see database update frequency",
                 "Use this command regularly to monitor database health",
                 "Check projects.total to verify project registration",
+            ],
+        }
+
+
+class ListIndexingErrorsMCPCommand(BaseMCPCommand):
+    """List indexing errors with optional filter by file path or project."""
+
+    name = "list_indexing_errors"
+    version = "1.0.0"
+    descr = "List indexing errors (failed index_file) with optional filter by file path or project_id"
+    category = "monitoring"
+    author = "Vasiliy Zdanovskiy"
+    email = "vasilyvz@gmail.com"
+    use_queue = False
+
+    @classmethod
+    def get_schema(cls) -> Dict[str, Any]:
+        """Get JSON schema for command parameters."""
+        return {
+            "type": "object",
+            "properties": {
+                "file_path_filter": {
+                    "type": "string",
+                    "description": (
+                        "Optional filter: only errors whose file_path contains this string "
+                        "(substring match). Example: 'test_ftp' or '/vast_srv/commands/'"
+                    ),
+                },
+                "project_id": {
+                    "type": "string",
+                    "description": "Optional filter: only errors for this project UUID.",
+                },
+                "limit": {
+                    "type": "integer",
+                    "description": "Max number of rows to return (default 200).",
+                    "default": 200,
+                },
+            },
+            "required": [],
+            "additionalProperties": False,
+        }
+
+    async def execute(
+        self,
+        file_path_filter: Optional[str] = None,
+        project_id: Optional[str] = None,
+        limit: int = 200,
+        **kwargs: Any,
+    ) -> SuccessResult | ErrorResult:
+        """
+        List rows from indexing_errors table with optional filters.
+
+        Returns:
+            SuccessResult with data.list = list of {id, project_id, file_path, error_type, error_message, created_at}.
+        """
+        try:
+            db = self._open_database_from_config(auto_analyze=False)
+            try:
+                sql = (
+                    "SELECT id, project_id, file_path, error_type, error_message, created_at "
+                    "FROM indexing_errors WHERE 1=1"
+                )
+                params: list = []
+                if project_id:
+                    sql += " AND project_id = ?"
+                    params.append(project_id)
+                if file_path_filter:
+                    sql += " AND file_path LIKE ?"
+                    params.append(f"%{file_path_filter}%")
+                sql += " ORDER BY created_at DESC LIMIT ?"
+                params.append(min(max(1, int(limit)), 1000))
+
+                r = db.execute(sql, tuple(params))
+                data_list = r.get("data", []) if isinstance(r, dict) else []
+                # Normalize rows to dicts if driver returns list of dicts
+                if data_list and isinstance(data_list[0], (list, tuple)):
+                    keys = [
+                        "id",
+                        "project_id",
+                        "file_path",
+                        "error_type",
+                        "error_message",
+                        "created_at",
+                    ]
+                    data_list = [dict(zip(keys, row)) for row in data_list]
+
+                return SuccessResult(
+                    data={
+                        "total": len(data_list),
+                        "list": data_list,
+                    }
+                )
+            finally:
+                db.disconnect()
+        except Exception as e:
+            err_msg = str(e).lower()
+            if "no such table" in err_msg and "indexing_errors" in err_msg:
+                return SuccessResult(
+                    data={"total": 0, "list": [], "table_missing": True}
+                )
+            return self._handle_error(
+                e, "LIST_INDEXING_ERRORS_ERROR", "list_indexing_errors"
+            )
+
+    @classmethod
+    def metadata(cls: type["ListIndexingErrorsMCPCommand"]) -> Dict[str, Any]:
+        """Get command metadata for help and docs."""
+        return {
+            "name": cls.name,
+            "version": cls.version,
+            "description": cls.descr,
+            "category": cls.category,
+            "author": cls.author,
+            "email": cls.email,
+            "detailed_description": (
+                "List rows from the indexing_errors table (failures recorded when index_file fails). "
+                "Optional filters: file_path_filter (substring match on file_path), project_id, and limit. "
+                "Returns data.list of {id, project_id, file_path, error_type, error_message, created_at}. "
+                "If the table does not exist (older DB), returns empty list and table_missing: true."
+            ),
+            "parameters": cls.get_schema().get("properties", {}),
+            "usage_examples": [
+                {
+                    "description": "List all errors",
+                    "command": {},
+                    "explanation": "Returns up to 200 most recent indexing errors.",
+                },
+                {
+                    "description": "Filter by file path",
+                    "command": {"file_path_filter": "test_ftp"},
+                    "explanation": "Returns errors whose file_path contains 'test_ftp'.",
+                },
+                {
+                    "description": "Filter by project",
+                    "command": {"project_id": "uuid-here"},
+                    "explanation": "Returns errors for the given project only.",
+                },
             ],
         }

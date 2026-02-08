@@ -93,4 +93,20 @@ So:
 1. **Operational:** Reduce chunker/embedding timeouts or load so that “Model RPC server failed” and “chunk_batch did not finish within 60s” are rare; then fewer chunks will be stored without embedding.
 2. **Code:** In the path that persists chunks after a successful chunker response, ensure we never write a chunk with embeddings in the response but `embedding_vector = NULL` in the DB (log and fix any such branch).
 3. **Code:** The SQLite driver already commits after each `execute()` when not inside an explicit transaction (see `database_driver_pkg/drivers/sqlite.py`), so the SELECT in `process_embedding_ready_chunks` should see rows written by the preceding `add_code_chunk` calls. No change needed unless the worker uses a different connection or transaction. The main explanation for "Retrieved 0 chunks" remains: chunks for that file were stored with `embedding_vector = NULL`.
-4. **Monitoring:** Log when we persist chunks **with** vs **without** embedding (e.g. count or flag per file) so that “Retrieved 0 chunks” can be correlated with “all chunks for this file were stored without embedding” vs “chunks had embedding but SELECT saw 0”.
+4. **Monitoring:** Log when we persist chunks **with** vs **without** embedding (e.g. count or flag per file) so that "Retrieved 0 chunks" can be correlated with "all chunks for this file were stored without embedding" vs "chunks had embedding but SELECT saw 0".
+
+---
+
+## 5. Measurement after vectorization server start (2026-02-08)
+
+Server was restarted so that the vectorization worker was running; then `get_database_status` was called at t=0, t≈3 min, t≈6 min.
+
+| Time   | chunks total | vectorized | not_vectorized | vectorization % | vast_srv vectorized_chunks |
+|--------|--------------|------------|----------------|------------------|----------------------------|
+| t=0    | 6010         | 250        | 5760           | 4.16             | 188                         |
+| t≈3 min| 6010         | 250        | 5760           | 4.16             | 188                         |
+| t≈6 min| 6010         | 250        | 5760           | 4.16             | 188                         |
+
+- **get_worker_status (vectorization)** at t≈6 min: `is_running: true`, one process (pid 323614), uptime ~7 min, `current_operation: "polling"`. So the worker was running.
+- **Log** after restart: activity at 20:30 (HTTP 200 to chunker localhost:8009); many responses with `content-length: 181` (often error payload), so chunker may be returning errors and chunks are persisted without embedding.
+- **Conclusion:** With the vectorization server running, the DB metrics did not change in 6 minutes. This matches the earlier analysis: the worker runs and calls the chunker, but either the chunker/embedding often fails (chunks stored with `embedding_vector = NULL`) or the chunker is not the bottleneck and the issue is elsewhere (e.g. embedding service). Improving chunker/embedding availability and adding per-file "with/without embedding" logging will clarify and help grow the vectorized count.

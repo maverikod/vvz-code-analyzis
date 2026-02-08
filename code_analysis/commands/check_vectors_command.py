@@ -356,79 +356,83 @@ class CheckVectorsCommand(BaseMCPCommand):
             proj_id = project_id
 
             try:
-                # Total chunks
+                # One execute_batch for all independent SELECTs (with or without project_id)
                 if proj_id:
-                    result = db.execute(
-                        "SELECT COUNT(*) as count FROM code_chunks WHERE project_id = ?",
-                        (proj_id,),
-                    )
-                else:
-                    result = db.execute("SELECT COUNT(*) as count FROM code_chunks")
-                # Extract count from result (execute returns dict with "data" key)
-                data = result.get("data", [])
-                total_chunks = data[0]["count"] if data and len(data) > 0 else 0
-
-                # Chunks with vector_id
-                if proj_id:
-                    result = db.execute(
-                        "SELECT COUNT(*) as count FROM code_chunks WHERE vector_id IS NOT NULL AND project_id = ?",
-                        (proj_id,),
-                    )
-                else:
-                    result = db.execute(
-                        "SELECT COUNT(*) as count FROM code_chunks WHERE vector_id IS NOT NULL"
-                    )
-                data = result.get("data", [])
-                chunks_with_vector = data[0]["count"] if data and len(data) > 0 else 0
-
-                # Chunks with embedding_model
-                if proj_id:
-                    result = db.execute(
-                        "SELECT COUNT(*) as count FROM code_chunks WHERE embedding_model IS NOT NULL AND project_id = ?",
-                        (proj_id,),
-                    )
-                else:
-                    result = db.execute(
-                        "SELECT COUNT(*) as count FROM code_chunks WHERE embedding_model IS NOT NULL"
-                    )
-                data = result.get("data", [])
-                chunks_with_model = data[0]["count"] if data and len(data) > 0 else 0
-
-                # Chunks without vector_id (pending vectorization)
-                if proj_id:
-                    result = db.execute(
-                        "SELECT COUNT(*) as count FROM code_chunks WHERE vector_id IS NULL AND project_id = ?",
-                        (proj_id,),
-                    )
-                else:
-                    result = db.execute(
-                        "SELECT COUNT(*) as count FROM code_chunks WHERE vector_id IS NULL"
-                    )
-                data = result.get("data", [])
-                chunks_pending = data[0]["count"] if data and len(data) > 0 else 0
-
-                # Sample chunks with vectors
-                if proj_id:
-                    result = db.execute(
-                        """
+                    vec_params = (proj_id,)
+                    check_ops = [
+                        (
+                            "SELECT COUNT(*) as count FROM code_chunks WHERE project_id = ?",
+                            vec_params,
+                        ),
+                        (
+                            "SELECT COUNT(*) as count FROM code_chunks WHERE vector_id IS NOT NULL AND project_id = ?",
+                            vec_params,
+                        ),
+                        (
+                            "SELECT COUNT(*) as count FROM code_chunks WHERE embedding_model IS NOT NULL AND project_id = ?",
+                            vec_params,
+                        ),
+                        (
+                            "SELECT COUNT(*) as count FROM code_chunks WHERE vector_id IS NULL AND project_id = ?",
+                            vec_params,
+                        ),
+                        (
+                            """
                         SELECT id, chunk_type, chunk_text, vector_id, embedding_model, source_type
                         FROM code_chunks
                         WHERE vector_id IS NOT NULL AND project_id = ?
                         LIMIT 5
                         """,
-                        (proj_id,),
-                    )
+                            vec_params,
+                        ),
+                    ]
                 else:
-                    result = db.execute(
-                        """
+                    check_ops = [
+                        ("SELECT COUNT(*) as count FROM code_chunks", None),
+                        (
+                            "SELECT COUNT(*) as count FROM code_chunks WHERE vector_id IS NOT NULL",
+                            None,
+                        ),
+                        (
+                            "SELECT COUNT(*) as count FROM code_chunks WHERE embedding_model IS NOT NULL",
+                            None,
+                        ),
+                        (
+                            "SELECT COUNT(*) as count FROM code_chunks WHERE vector_id IS NULL",
+                            None,
+                        ),
+                        (
+                            """
                         SELECT id, chunk_type, chunk_text, vector_id, embedding_model, source_type
                         FROM code_chunks
                         WHERE vector_id IS NOT NULL
                         LIMIT 5
-                        """
+                        """,
+                            None,
+                        ),
+                    ]
+                batch_results = db.execute_batch(check_ops)
+
+                def _row0(idx: int) -> int:
+                    d = (
+                        batch_results[idx].get("data", [])
+                        if idx < len(batch_results)
+                        else []
                     )
-                # Extract samples from result
-                samples = result.get("data", [])
+                    return d[0]["count"] if d else 0
+
+                def _data(idx: int) -> list:
+                    return (
+                        batch_results[idx].get("data", [])
+                        if idx < len(batch_results)
+                        else []
+                    )
+
+                total_chunks = _row0(0)
+                chunks_with_vector = _row0(1)
+                chunks_with_model = _row0(2)
+                chunks_pending = _row0(3)
+                samples = _data(4)
 
                 # Build sample data
                 sample_data = []

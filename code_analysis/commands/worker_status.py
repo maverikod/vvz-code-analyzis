@@ -388,46 +388,101 @@ class DatabaseStatusCommand:
             db.connect()
 
             try:
-                # Project statistics
-                result_data = db.execute("SELECT COUNT(*) as count FROM projects")
-                data = result_data.get("data", [])
-                project_count = data[0]["count"] if data and len(data) > 0 else 0
+                # All independent SELECTs in one execute_batch to reduce RPC round-trips
+                status_ops = [
+                    ("SELECT COUNT(*) as count FROM projects", None),
+                    ("SELECT id, name FROM projects LIMIT 10", None),
+                    ("SELECT COUNT(*) as count FROM files", None),
+                    ("SELECT COUNT(*) as count FROM files WHERE deleted = 1", None),
+                    (
+                        "SELECT COUNT(*) as count FROM files WHERE has_docstring = 1",
+                        None,
+                    ),
+                    (
+                        """
+                    SELECT COUNT(*) as count FROM files 
+                    WHERE (deleted = 0 OR deleted IS NULL)
+                    AND NOT EXISTS (SELECT 1 FROM code_chunks WHERE code_chunks.file_id = files.id)
+                    """,
+                        None,
+                    ),
+                    ("SELECT COUNT(*) as count FROM code_chunks", None),
+                    (
+                        "SELECT COUNT(*) as count FROM code_chunks WHERE embedding_vector IS NOT NULL",
+                        None,
+                    ),
+                    (
+                        "SELECT COUNT(*) as count FROM code_chunks WHERE embedding_vector IS NULL",
+                        None,
+                    ),
+                    (
+                        """
+                    SELECT COUNT(*) as count FROM files 
+                    WHERE updated_at > julianday('now', '-1 day')
+                    """,
+                        None,
+                    ),
+                    (
+                        """
+                    SELECT COUNT(*) as count FROM code_chunks 
+                    WHERE created_at > julianday('now', '-1 day')
+                    """,
+                        None,
+                    ),
+                    (
+                        """
+                    SELECT f.id, f.path, f.has_docstring, f.last_modified
+                    FROM files f
+                    WHERE (f.deleted = 0 OR f.deleted IS NULL)
+                    AND NOT EXISTS (SELECT 1 FROM code_chunks WHERE code_chunks.file_id = f.id)
+                    ORDER BY f.updated_at DESC
+                    LIMIT 10
+                    """,
+                        None,
+                    ),
+                    (
+                        """
+                    SELECT id, file_id, chunk_text, created_at
+                    FROM code_chunks
+                    WHERE embedding_vector IS NULL
+                    ORDER BY id DESC
+                    LIMIT 10
+                    """,
+                        None,
+                    ),
+                ]
+                batch_results = db.execute_batch(status_ops)
 
-                result_data = db.execute("SELECT id, name FROM projects LIMIT 10")
-                projects = result_data.get("data", [])
+                def _row0(idx: int) -> int:
+                    d = (
+                        batch_results[idx].get("data", [])
+                        if idx < len(batch_results)
+                        else []
+                    )
+                    return d[0]["count"] if d else 0
+
+                def _data(idx: int) -> list:
+                    return (
+                        batch_results[idx].get("data", [])
+                        if idx < len(batch_results)
+                        else []
+                    )
+
+                project_count = _row0(0)
+                projects = _data(1)
                 result["projects"] = {
                     "total": project_count,
                     "sample": [{"id": p["id"], "name": p["name"]} for p in projects],
                 }
-
-                # File statistics
-                result_data = db.execute("SELECT COUNT(*) as count FROM files")
-                data = result_data.get("data", [])
-                total_files = data[0]["count"] if data and len(data) > 0 else 0
-
-                result_data = db.execute(
-                    "SELECT COUNT(*) as count FROM files WHERE deleted = 1"
-                )
-                data = result_data.get("data", [])
-                deleted_files = data[0]["count"] if data and len(data) > 0 else 0
-
-                result_data = db.execute(
-                    "SELECT COUNT(*) as count FROM files WHERE has_docstring = 1"
-                )
-                data = result_data.get("data", [])
-                files_with_docstring = data[0]["count"] if data and len(data) > 0 else 0
-
-                result_data = db.execute(
-                    """
-                    SELECT COUNT(*) as count FROM files 
-                    WHERE (deleted = 0 OR deleted IS NULL)
-                    AND NOT EXISTS (SELECT 1 FROM code_chunks WHERE code_chunks.file_id = files.id)
-                    """
-                )
-                data = result_data.get("data", [])
-                files_needing_chunking = (
-                    data[0]["count"] if data and len(data) > 0 else 0
-                )
+                total_files = _row0(2)
+                deleted_files = _row0(3)
+                files_with_docstring = _row0(4)
+                files_needing_chunking = _row0(5)
+                total_chunks = _row0(6)
+                vectorized_chunks = _row0(7)
+                not_vectorized_chunks = _row0(8)
+                files_updated_24h = _row0(9)
+                chunks_updated_24h = _row0(10)
 
                 result["files"] = {
                     "total": total_files,
@@ -436,26 +491,6 @@ class DatabaseStatusCommand:
                     "with_docstring": files_with_docstring,
                     "needing_chunking": files_needing_chunking,
                 }
-
-                # Chunk statistics
-                result_data = db.execute("SELECT COUNT(*) as count FROM code_chunks")
-                data = result_data.get("data", [])
-                total_chunks = data[0]["count"] if data and len(data) > 0 else 0
-
-                result_data = db.execute(
-                    "SELECT COUNT(*) as count FROM code_chunks WHERE embedding_vector IS NOT NULL"
-                )
-                data = result_data.get("data", [])
-                vectorized_chunks = data[0]["count"] if data and len(data) > 0 else 0
-
-                result_data = db.execute(
-                    "SELECT COUNT(*) as count FROM code_chunks WHERE embedding_vector IS NULL"
-                )
-                data = result_data.get("data", [])
-                not_vectorized_chunks = (
-                    data[0]["count"] if data and len(data) > 0 else 0
-                )
-
                 result["chunks"] = {
                     "total": total_chunks,
                     "vectorized": vectorized_chunks,
@@ -466,43 +501,11 @@ class DatabaseStatusCommand:
                         else 0
                     ),
                 }
-
-                # Recent activity (last 24 hours)
-                result_data = db.execute(
-                    """
-                    SELECT COUNT(*) as count FROM files 
-                    WHERE updated_at > julianday('now', '-1 day')
-                    """
-                )
-                data = result_data.get("data", [])
-                files_updated_24h = data[0]["count"] if data and len(data) > 0 else 0
-
-                result_data = db.execute(
-                    """
-                    SELECT COUNT(*) as count FROM code_chunks 
-                    WHERE created_at > julianday('now', '-1 day')
-                    """
-                )
-                data = result_data.get("data", [])
-                chunks_updated_24h = data[0]["count"] if data and len(data) > 0 else 0
-
                 result["recent_activity"] = {
                     "files_updated_24h": files_updated_24h,
                     "chunks_updated_24h": chunks_updated_24h,
                 }
-
-                # Get files needing chunking (sample)
-                result_data = db.execute(
-                    """
-                    SELECT f.id, f.path, f.has_docstring, f.last_modified
-                    FROM files f
-                    WHERE (f.deleted = 0 OR f.deleted IS NULL)
-                    AND NOT EXISTS (SELECT 1 FROM code_chunks WHERE code_chunks.file_id = f.id)
-                    ORDER BY f.updated_at DESC
-                    LIMIT 10
-                    """
-                )
-                files_needing_chunking_sample = result_data.get("data", [])
+                files_needing_chunking_sample = _data(11)
                 result["files"]["needing_chunking_sample"] = [
                     {
                         "id": f["id"],
@@ -512,18 +515,7 @@ class DatabaseStatusCommand:
                     }
                     for f in files_needing_chunking_sample
                 ]
-
-                # Get chunks needing vectorization (sample)
-                result_data = db.execute(
-                    """
-                    SELECT id, file_id, chunk_text, created_at
-                    FROM code_chunks
-                    WHERE embedding_vector IS NULL
-                    ORDER BY id DESC
-                    LIMIT 10
-                    """
-                )
-                chunks_needing_vectorization = result_data.get("data", [])
+                chunks_needing_vectorization = _data(12)
                 result["chunks"]["needing_vectorization_sample"] = [
                     {
                         "id": c["id"],

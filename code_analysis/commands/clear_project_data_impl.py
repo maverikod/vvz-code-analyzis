@@ -173,56 +173,52 @@ async def _clear_project_data_impl(database: DatabaseClient, project_id: str) ->
             return
 
         placeholders = ",".join("?" * len(file_ids))
+        file_ids_tuple = tuple(file_ids)
 
         step_start = time.time()
-        classes = database.execute(
-            f"SELECT id FROM classes WHERE file_id IN ({placeholders})",
-            tuple(file_ids),
-            transaction_id=transaction_id,
+        select_ops: List[Tuple[str, Optional[Union[tuple, list]]]] = [
+            (
+                f"SELECT id FROM classes WHERE file_id IN ({placeholders})",
+                file_ids_tuple,
+            ),
+            (
+                f"SELECT id FROM code_content WHERE file_id IN ({placeholders})",
+                file_ids_tuple,
+            ),
+        ]
+        select_results = database.execute_batch(
+            select_ops, transaction_id=transaction_id
         )
-        if isinstance(classes, list):
-            classes_data = classes
-        elif isinstance(classes, dict):
-            classes_data = classes.get("data", [])
-        else:
-            classes_data = []
+        classes_data = (
+            select_results[0].get("data", []) if len(select_results) > 0 else []
+        )
+        content_data = (
+            select_results[1].get("data", []) if len(select_results) > 1 else []
+        )
         class_ids = [c["id"] for c in classes_data]
-        logger.info(
-            f"[CLEAR_PROJECT_DATA] Got class IDs in {time.time() - step_start:.3f}s"
-        )
-
-        step_start = time.time()
-        content_rows = database.execute(
-            f"SELECT id FROM code_content WHERE file_id IN ({placeholders})",
-            tuple(file_ids),
-            transaction_id=transaction_id,
-        )
-        if isinstance(content_rows, list):
-            content_data = content_rows
-        elif isinstance(content_rows, dict):
-            content_data = content_rows.get("data", [])
-        else:
-            content_data = []
         content_ids = [c["id"] for c in content_data]
         logger.info(
-            f"[CLEAR_PROJECT_DATA] Got content IDs in {time.time() - step_start:.3f}s"
+            f"[CLEAR_PROJECT_DATA] Got class/content IDs in {time.time() - step_start:.3f}s"
         )
 
-        # Optional schema: duplicates (run separately so batch does not fail if missing)
+        # Optional schema: duplicates (one execute_batch of two DELETEs)
         try:
-            database.execute(
-                """
+            database.execute_batch(
+                [
+                    (
+                        """
                 DELETE FROM duplicate_occurrences
                 WHERE duplicate_id IN (
                     SELECT id FROM code_duplicates WHERE project_id = ?
                 )
                 """,
-                (project_id,),
-                transaction_id=transaction_id,
-            )
-            database.execute(
-                "DELETE FROM code_duplicates WHERE project_id = ?",
-                (project_id,),
+                        (project_id,),
+                    ),
+                    (
+                        "DELETE FROM code_duplicates WHERE project_id = ?",
+                        (project_id,),
+                    ),
+                ],
                 transaction_id=transaction_id,
             )
         except Exception as e:

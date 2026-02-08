@@ -74,19 +74,26 @@ class ASTStatisticsMCPCommand(BaseMCPCommand):
                     }
                 )
             else:
-                # Project-wide stats
-                result = db.execute(
-                    "SELECT COUNT(*) as count FROM ast_trees WHERE project_id = ?",
-                    (proj_id,),
+                # Project-wide stats: one execute_batch for two independent SELECTs
+                proj_params = (proj_id,)
+                batch_results = db.execute_batch(
+                    [
+                        (
+                            "SELECT COUNT(*) as count FROM ast_trees WHERE project_id = ?",
+                            proj_params,
+                        ),
+                        (
+                            "SELECT COUNT(*) as count FROM files WHERE project_id = ? AND (deleted = 0 OR deleted IS NULL)",
+                            proj_params,
+                        ),
+                    ]
                 )
-                data = result.get("data", [])
-                ast_count = data[0]["count"] if data else 0
-                result = db.execute(
-                    "SELECT COUNT(*) as count FROM files WHERE project_id = ? AND (deleted = 0 OR deleted IS NULL)",
-                    (proj_id,),
+                ast_data = batch_results[0].get("data", []) if batch_results else []
+                file_data = (
+                    batch_results[1].get("data", []) if len(batch_results) > 1 else []
                 )
-                data = result.get("data", [])
-                file_count = data[0]["count"] if data else 0
+                ast_count = ast_data[0]["count"] if ast_data else 0
+                file_count = file_data[0]["count"] if file_data else 0
                 db.disconnect()
                 return SuccessResult(
                     data={

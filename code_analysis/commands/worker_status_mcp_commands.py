@@ -525,14 +525,11 @@ class GetDatabaseStatusMCPCommand(BaseMCPCommand):
                     "worker_stats": {},
                 }
 
-                # Project statistics with file and chunk counts
-                query_result = db.execute("SELECT COUNT(*) as count FROM projects")
-                data = query_result.get("data", [])
-                project_count = data[0]["count"] if data else 0
-
-                # Get projects with detailed statistics
-                projects_result = db.execute(
-                    """
+                # All independent SELECTs in one execute_batch to reduce RPC round-trips
+                status_ops = [
+                    ("SELECT COUNT(*) as count FROM projects", None),
+                    (
+                        """
                     SELECT 
                         p.id,
                         p.name,
@@ -554,9 +551,120 @@ class GetDatabaseStatusMCPCommand(BaseMCPCommand):
                     FROM projects p
                     ORDER BY p.name
                     LIMIT 10
-                    """
-                )
-                projects_with_stats = projects_result.get("data", [])
+                    """,
+                        None,
+                    ),
+                    ("SELECT COUNT(*) as count FROM files", None),
+                    ("SELECT COUNT(*) as count FROM files WHERE deleted = 1", None),
+                    (
+                        "SELECT COUNT(*) as count FROM files WHERE has_docstring = 1",
+                        None,
+                    ),
+                    (
+                        """
+                    SELECT COUNT(*) as count FROM files 
+                    WHERE (deleted = 0 OR deleted IS NULL)
+                    AND NOT EXISTS (SELECT 1 FROM code_chunks WHERE code_chunks.file_id = files.id)
+                    """,
+                        None,
+                    ),
+                    (
+                        """
+                    SELECT COUNT(DISTINCT f.id) as count FROM files f
+                    WHERE (f.deleted = 0 OR f.deleted IS NULL)
+                    AND EXISTS (SELECT 1 FROM code_chunks WHERE code_chunks.file_id = f.id)
+                    """,
+                        None,
+                    ),
+                    (
+                        """
+                    SELECT COUNT(*) as count FROM files
+                    WHERE (deleted = 0 OR deleted IS NULL)
+                    AND (needs_chunking = 0 OR needs_chunking IS NULL)
+                    """,
+                        None,
+                    ),
+                    (
+                        """
+                    SELECT COUNT(*) as count FROM files
+                    WHERE (deleted = 0 OR deleted IS NULL) AND needs_chunking = 1
+                    """,
+                        None,
+                    ),
+                    ("SELECT COUNT(*) as count FROM code_chunks", None),
+                    (
+                        "SELECT COUNT(*) as count FROM code_chunks WHERE vector_id IS NOT NULL",
+                        None,
+                    ),
+                    (
+                        "SELECT COUNT(*) as count FROM code_chunks WHERE vector_id IS NULL",
+                        None,
+                    ),
+                    (
+                        """
+                    SELECT COUNT(*) as count FROM files 
+                    WHERE updated_at > julianday('now', '-1 day')
+                    """,
+                        None,
+                    ),
+                    (
+                        """
+                    SELECT COUNT(*) as count FROM code_chunks 
+                    WHERE created_at > julianday('now', '-1 day')
+                    """,
+                        None,
+                    ),
+                    (
+                        """
+                    SELECT f.id, f.path, f.has_docstring, f.last_modified
+                    FROM files f
+                    WHERE (f.deleted = 0 OR f.deleted IS NULL) AND f.needs_chunking = 1
+                    ORDER BY f.updated_at ASC
+                    LIMIT 10
+                    """,
+                        None,
+                    ),
+                    (
+                        """
+                    SELECT f.id, f.path, f.has_docstring, f.last_modified
+                    FROM files f
+                    WHERE (f.deleted = 0 OR f.deleted IS NULL)
+                    AND NOT EXISTS (SELECT 1 FROM code_chunks WHERE code_chunks.file_id = f.id)
+                    ORDER BY f.updated_at DESC
+                    LIMIT 10
+                    """,
+                        None,
+                    ),
+                    (
+                        """
+                    SELECT id, file_id, chunk_text, created_at
+                    FROM code_chunks
+                    WHERE vector_id IS NULL
+                    ORDER BY id DESC
+                    LIMIT 10
+                    """,
+                        None,
+                    ),
+                ]
+                batch_results = db.execute_batch(status_ops)
+
+                def _row0(idx: int) -> int:
+                    d = (
+                        batch_results[idx].get("data", [])
+                        if idx < len(batch_results)
+                        else []
+                    )
+                    return d[0]["count"] if d else 0
+
+                def _data(idx: int) -> list:
+                    return (
+                        batch_results[idx].get("data", [])
+                        if idx < len(batch_results)
+                        else []
+                    )
+
+                project_count = _row0(0)
+                projects_with_stats = _data(1)
 
                 project_list = []
                 for p in projects_with_stats:
@@ -621,64 +729,14 @@ class GetDatabaseStatusMCPCommand(BaseMCPCommand):
                     "sample": project_list,
                 }
 
-                # File statistics
-                query_result = db.execute("SELECT COUNT(*) as count FROM files")
-                data = query_result.get("data", [])
-                total_files = data[0]["count"] if data else 0
-
-                query_result = db.execute(
-                    "SELECT COUNT(*) as count FROM files WHERE deleted = 1"
-                )
-                data = query_result.get("data", [])
-                deleted_files = data[0]["count"] if data else 0
-
-                query_result = db.execute(
-                    "SELECT COUNT(*) as count FROM files WHERE has_docstring = 1"
-                )
-                data = query_result.get("data", [])
-                files_with_docstring = data[0]["count"] if data else 0
-
-                query_result = db.execute(
-                    """
-                    SELECT COUNT(*) as count FROM files 
-                    WHERE (deleted = 0 OR deleted IS NULL)
-                    AND NOT EXISTS (SELECT 1 FROM code_chunks WHERE code_chunks.file_id = files.id)
-                    """
-                )
-                data = query_result.get("data", [])
-                files_needing_chunking = data[0]["count"] if data else 0
-
-                # Files that have been chunked (have chunks)
-                query_result = db.execute(
-                    """
-                    SELECT COUNT(DISTINCT f.id) as count FROM files f
-                    WHERE (f.deleted = 0 OR f.deleted IS NULL)
-                    AND EXISTS (SELECT 1 FROM code_chunks WHERE code_chunks.file_id = f.id)
-                    """
-                )
-                data = query_result.get("data", [])
-                files_with_chunks = data[0]["count"] if data else 0
-
-                # Files that have been indexed (indexing worker ran index_file; needs_chunking=0)
-                query_result = db.execute(
-                    """
-                    SELECT COUNT(*) as count FROM files
-                    WHERE (deleted = 0 OR deleted IS NULL)
-                    AND (needs_chunking = 0 OR needs_chunking IS NULL)
-                    """
-                )
-                data = query_result.get("data", [])
-                files_indexed = data[0]["count"] if data else 0
-
-                # Files pending indexing (needs_chunking=1), same structure as chunks not_vectorized
-                query_result = db.execute(
-                    """
-                    SELECT COUNT(*) as count FROM files
-                    WHERE (deleted = 0 OR deleted IS NULL) AND needs_chunking = 1
-                    """
-                )
-                data = query_result.get("data", [])
-                files_needing_indexing = data[0]["count"] if data else 0
+                # File statistics (from batch_results indices 2..8)
+                total_files = _row0(2)
+                deleted_files = _row0(3)
+                files_with_docstring = _row0(4)
+                files_needing_chunking = _row0(5)
+                files_with_chunks = _row0(6)
+                files_indexed = _row0(7)
+                files_needing_indexing = _row0(8)
 
                 active_files = total_files - deleted_files
                 chunked_percent = (
@@ -705,22 +763,10 @@ class GetDatabaseStatusMCPCommand(BaseMCPCommand):
                     "chunked_percent": chunked_percent,
                 }
 
-                # Chunk statistics - use vector_id (not embedding_vector) for consistency
-                query_result = db.execute("SELECT COUNT(*) as count FROM code_chunks")
-                data = query_result.get("data", [])
-                total_chunks = data[0]["count"] if data else 0
-
-                query_result = db.execute(
-                    "SELECT COUNT(*) as count FROM code_chunks WHERE vector_id IS NOT NULL"
-                )
-                data = query_result.get("data", [])
-                vectorized_chunks = data[0]["count"] if data else 0
-
-                query_result = db.execute(
-                    "SELECT COUNT(*) as count FROM code_chunks WHERE vector_id IS NULL"
-                )
-                data = query_result.get("data", [])
-                not_vectorized_chunks = data[0]["count"] if data else 0
+                # Chunk statistics (from batch_results indices 9..11)
+                total_chunks = _row0(9)
+                vectorized_chunks = _row0(10)
+                not_vectorized_chunks = _row0(11)
 
                 vectorization_percent = (
                     round((vectorized_chunks / total_chunks * 100), 2)
@@ -735,24 +781,9 @@ class GetDatabaseStatusMCPCommand(BaseMCPCommand):
                     "vectorization_percent": vectorization_percent,
                 }
 
-                # Recent activity (last 24 hours)
-                query_result = db.execute(
-                    """
-                    SELECT COUNT(*) as count FROM files 
-                    WHERE updated_at > julianday('now', '-1 day')
-                    """
-                )
-                data = query_result.get("data", [])
-                files_updated_24h = data[0]["count"] if data else 0
-
-                query_result = db.execute(
-                    """
-                    SELECT COUNT(*) as count FROM code_chunks 
-                    WHERE created_at > julianday('now', '-1 day')
-                    """
-                )
-                data = query_result.get("data", [])
-                chunks_updated_24h = data[0]["count"] if data else 0
+                # Recent activity (from batch_results indices 12..13)
+                files_updated_24h = _row0(12)
+                chunks_updated_24h = _row0(13)
 
                 result["recent_activity"] = {
                     "files_updated_24h": files_updated_24h,
@@ -826,17 +857,8 @@ class GetDatabaseStatusMCPCommand(BaseMCPCommand):
                     "indexing": indexing_stats,
                 }
 
-                # Get files needing indexing (sample) - same structure as needing_vectorization_sample
-                query_result = db.execute(
-                    """
-                    SELECT f.id, f.path, f.has_docstring, f.last_modified
-                    FROM files f
-                    WHERE (f.deleted = 0 OR f.deleted IS NULL) AND f.needs_chunking = 1
-                    ORDER BY f.updated_at ASC
-                    LIMIT 10
-                    """
-                )
-                files_needing_indexing_sample = query_result.get("data", [])
+                # Samples from batch_results indices 14..16
+                files_needing_indexing_sample = _data(14)
                 result["files"]["needing_indexing_sample"] = [
                     {
                         "id": f["id"],
@@ -846,19 +868,7 @@ class GetDatabaseStatusMCPCommand(BaseMCPCommand):
                     }
                     for f in files_needing_indexing_sample
                 ]
-
-                # Get files needing chunking (sample)
-                query_result = db.execute(
-                    """
-                    SELECT f.id, f.path, f.has_docstring, f.last_modified
-                    FROM files f
-                    WHERE (f.deleted = 0 OR f.deleted IS NULL)
-                    AND NOT EXISTS (SELECT 1 FROM code_chunks WHERE code_chunks.file_id = f.id)
-                    ORDER BY f.updated_at DESC
-                    LIMIT 10
-                    """
-                )
-                files_needing_chunking_sample = query_result.get("data", [])
+                files_needing_chunking_sample = _data(15)
                 result["files"]["needing_chunking_sample"] = [
                     {
                         "id": f["id"],
@@ -868,18 +878,7 @@ class GetDatabaseStatusMCPCommand(BaseMCPCommand):
                     }
                     for f in files_needing_chunking_sample
                 ]
-
-                # Get chunks needing vectorization (sample) - use vector_id
-                query_result = db.execute(
-                    """
-                    SELECT id, file_id, chunk_text, created_at
-                    FROM code_chunks
-                    WHERE vector_id IS NULL
-                    ORDER BY id DESC
-                    LIMIT 10
-                    """
-                )
-                chunks_needing_vectorization = query_result.get("data", [])
+                chunks_needing_vectorization = _data(16)
                 result["chunks"]["needing_vectorization_sample"] = [
                     {
                         "id": c["id"],

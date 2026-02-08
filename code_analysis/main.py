@@ -85,6 +85,11 @@ def main() -> None:
         help="Start the server (daemon mode). Without this flag the command prints startup info and exits.",
     )
     parser.add_argument(
+        "--foreground",
+        action="store_true",
+        help="Run server in foreground (no daemon). Use for debugging; faulthandler dumps to stderr on crash.",
+    )
+    parser.add_argument(
         "--host",
         help="Server host (overrides config)",
     )
@@ -1241,7 +1246,7 @@ def main() -> None:
         print(f"❌ SSL configuration invalid: {e}", file=sys.stderr)
         sys.exit(1)
 
-    if not args.daemon:
+    if not args.daemon and not args.foreground:
         _print_startup_info(
             config_path=config_path,
             server_host=server_host,
@@ -1250,6 +1255,15 @@ def main() -> None:
             app_config=app_config,
         )
         return
+
+    # In foreground mode, enable faulthandler so segfault/abort dump to stderr (terminal)
+    if args.foreground:
+        try:
+            import faulthandler
+
+            faulthandler.enable()
+        except Exception:
+            pass
 
     # Register shutdown handlers for worker cleanup (before server starts)
     import atexit

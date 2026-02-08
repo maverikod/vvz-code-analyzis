@@ -32,15 +32,32 @@ email: vasilyvz@gmail.com
 
 ## What to do next
 
-1. **Reproduce:** Start the server and use it (or wait) until the main process dies again.
+1. **Reproduce:** Start the server (daemon) and use it or wait until the main process dies again.
 2. **Inspect log:** Open `logs/mcp_server.log` and look at the **end** for:
    - `Received signal 15` / `cleanup_workers` / `run_server returned` → graceful shutdown.
+   - **Main process heartbeat** → last time the main process was alive (within ~60 s before crash).
    - A **faulthandler** traceback (thread stacks) → crash in native code / C extension.
-   - Still nothing → likely SIGKILL (e.g. OOM); try `sudo dmesg | tail -50` after the next crash.
-3. **Optional:** Run without daemon to see stderr live:  
-   `python -m code_analysis.main --config config.json`  
-   (no `--daemon`). If it crashes, the trace appears in the terminal.
+   - None of the above → likely **SIGKILL** (e.g. OOM). **Right after the crash** run:
+     ```bash
+     sudo dmesg | tail -100
+     ```
+     Look for `Out of memory`, `Killed process`, or `oom_reaper`.
+     You can run `./scripts/collect_crash_diagnostics.sh` after a crash to capture log tail and (if allowed) dmesg into a timestamped file.
+3. **Debug in foreground:** Run the server in the terminal so faulthandler dumps to stderr on crash:
+   ```bash
+   python -m code_analysis.main --config config.json --foreground
+   ```
+   (No `--daemon`; same workers + Hypercorn. Stop with Ctrl+C.)
+
+## Reproduction note
+
+A **foreground** run (with `--foreground`) was kept up for **3 minutes** with workers and indexing activity; it did **not** crash. The ungraceful exit therefore is either:
+- **Load- or time-dependent** (longer run or heavier load),
+- **OOM** (memory growth until the kernel kills the process),
+- **Daemon-specific** (e.g. different environment or parent exit).
+
+After the **next** daemon crash: check `logs/mcp_server.log` for the last **Main process heartbeat** and any **faulthandler** output; then run `sudo dmesg | tail -100` to confirm or rule out OOM.
 
 ## Summary
 
-Cause of the **ungraceful** main process exit is still **unknown**: no Python exception and no SIGTERM in the log. faulthandler is enabled so the next segfault/abort should leave a trace in `mcp_server.log`. If the process is killed by SIGKILL (e.g. OOM), only the kernel (dmesg) or the sender of the signal can explain it.
+Cause of the **ungraceful** main process exit is still **unknown**: no Python exception and no SIGTERM in the log. faulthandler and heartbeat are enabled in daemon mode. On the next crash: if **faulthandler** appears in `mcp_server.log` → native crash; if **heartbeat** is the last main-process line and no faulthandler → run **sudo dmesg** to check for OOM.

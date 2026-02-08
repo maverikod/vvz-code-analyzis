@@ -261,6 +261,97 @@ def recover_files_table_if_needed(
         return False
 
 
+# Canonical CREATE TABLE for entity_cross_ref with correct FKs (files, methods).
+# Used when table has stale FKs to temp_files/temp_methods after a partial migration.
+_ENTITY_CROSS_REF_CREATE = """
+CREATE TABLE entity_cross_ref (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    caller_class_id INTEGER NULL,
+    caller_method_id INTEGER NULL,
+    caller_function_id INTEGER NULL,
+    callee_class_id INTEGER NULL,
+    callee_method_id INTEGER NULL,
+    callee_function_id INTEGER NULL,
+    ref_type TEXT NOT NULL,
+    file_id INTEGER NULL,
+    line INTEGER NULL,
+    created_at REAL DEFAULT (julianday('now')),
+    FOREIGN KEY (caller_class_id) REFERENCES classes(id) ON DELETE CASCADE,
+    FOREIGN KEY (caller_method_id) REFERENCES methods(id) ON DELETE CASCADE,
+    FOREIGN KEY (caller_function_id) REFERENCES functions(id) ON DELETE CASCADE,
+    FOREIGN KEY (callee_class_id) REFERENCES classes(id) ON DELETE CASCADE,
+    FOREIGN KEY (callee_method_id) REFERENCES methods(id) ON DELETE CASCADE,
+    FOREIGN KEY (callee_function_id) REFERENCES functions(id) ON DELETE CASCADE,
+    FOREIGN KEY (file_id) REFERENCES files(id) ON DELETE SET NULL,
+    CHECK (
+        (caller_class_id IS NOT NULL AND caller_method_id IS NULL AND caller_function_id IS NULL)
+        OR (caller_class_id IS NULL AND caller_method_id IS NOT NULL AND caller_function_id IS NULL)
+        OR (caller_class_id IS NULL AND caller_method_id IS NULL AND caller_function_id IS NOT NULL)
+    ),
+    CHECK (
+        (callee_class_id IS NOT NULL AND callee_method_id IS NULL AND callee_function_id IS NULL)
+        OR (callee_class_id IS NULL AND callee_method_id IS NOT NULL AND callee_function_id IS NULL)
+        OR (callee_class_id IS NULL AND callee_method_id IS NULL AND callee_function_id IS NOT NULL)
+    )
+)
+"""
+_ENTITY_CROSS_REF_INDEXES = [
+    "CREATE INDEX IF NOT EXISTS idx_entity_cross_ref_caller_class ON entity_cross_ref(caller_class_id) WHERE caller_class_id IS NOT NULL",
+    "CREATE INDEX IF NOT EXISTS idx_entity_cross_ref_caller_method ON entity_cross_ref(caller_method_id) WHERE caller_method_id IS NOT NULL",
+    "CREATE INDEX IF NOT EXISTS idx_entity_cross_ref_caller_function ON entity_cross_ref(caller_function_id) WHERE caller_function_id IS NOT NULL",
+    "CREATE INDEX IF NOT EXISTS idx_entity_cross_ref_callee_class ON entity_cross_ref(callee_class_id) WHERE callee_class_id IS NOT NULL",
+    "CREATE INDEX IF NOT EXISTS idx_entity_cross_ref_callee_method ON entity_cross_ref(callee_method_id) WHERE callee_method_id IS NOT NULL",
+    "CREATE INDEX IF NOT EXISTS idx_entity_cross_ref_callee_function ON entity_cross_ref(callee_function_id) WHERE callee_function_id IS NOT NULL",
+    "CREATE INDEX IF NOT EXISTS idx_entity_cross_ref_file ON entity_cross_ref(file_id)",
+]
+
+
+def fix_entity_cross_ref_stale_fks(
+    db_path: Path, *, timeout_seconds: float = 2.0
+) -> bool:
+    """Recreate entity_cross_ref if it has FK to temp_files or temp_methods (stale after migration).
+
+    When schema_sync renames files->temp_files and methods->temp_methods, SQLite updates
+    FKs in entity_cross_ref to point to those names. After DROP temp_*, those FKs are
+    broken. This recreates the table with correct REFERENCES files(id), methods(id).
+    Data in entity_cross_ref is dropped; cross-refs are rebuilt on next indexing.
+
+    Args:
+        db_path: Path to SQLite db file.
+        timeout_seconds: Connection timeout.
+
+    Returns:
+        True if the table was recreated; False if no fix needed.
+    """
+    if not db_path.exists():
+        return False
+    try:
+        conn = sqlite3.connect(str(db_path), timeout=timeout_seconds)
+        try:
+            cur = conn.cursor()
+            cur.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name='entity_cross_ref'"
+            )
+            if cur.fetchone() is None:
+                return False
+            cur.execute("PRAGMA foreign_key_list(entity_cross_ref)")
+            rows = cur.fetchall()
+            # rows: (id, seq, table, from, to, on_update, on_delete, match)
+            ref_tables = {row[2] for row in rows}
+            if "temp_files" not in ref_tables and "temp_methods" not in ref_tables:
+                return False
+            cur.execute("DROP TABLE entity_cross_ref")
+            cur.execute(_ENTITY_CROSS_REF_CREATE)
+            for idx_sql in _ENTITY_CROSS_REF_INDEXES:
+                cur.execute(idx_sql)
+            conn.commit()
+            return True
+        finally:
+            conn.close()
+    except Exception:
+        return False
+
+
 def corruption_marker_path(db_path: Path) -> Path:
     """Return path to persistent corruption marker for a SQLite db.
 

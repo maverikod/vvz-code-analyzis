@@ -82,11 +82,19 @@ class SQLiteDriver(BaseDatabaseDriver):
 
             # Fix broken schema (temp_files, no files) before opening so index_file works.
             # Same logic as repair_sqlite_database(force=false); single impl in db_integrity.
-            from ...db_integrity import recover_files_table_if_needed
+            from ...db_integrity import (
+                fix_entity_cross_ref_stale_fks,
+                recover_files_table_if_needed,
+            )
 
             if recover_files_table_if_needed(self.db_path):
                 logger.info(
                     "Recovered files table on connect (temp_files -> files) at %s",
+                    self.db_path,
+                )
+            if fix_entity_cross_ref_stale_fks(self.db_path):
+                logger.info(
+                    "Fixed entity_cross_ref stale FKs (temp_files/temp_methods) at %s",
                     self.db_path,
                 )
 

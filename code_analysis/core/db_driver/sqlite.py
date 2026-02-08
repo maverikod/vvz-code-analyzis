@@ -389,6 +389,24 @@ class SQLiteDriver(BaseDatabaseDriver):
                 self.execute("PRAGMA foreign_keys = ON")
                 self.commit()
 
+                # After renaming files->temp_files or methods->temp_methods, entity_cross_ref
+                # FKs point at temp_*; we dropped those tables, so FKs are broken. Fix in same
+                # process so next connect does not see stale FKs.
+                changes = result.get("changes_applied") or []
+                if any(
+                    "ALTER TABLE files RENAME TO temp_files" in s
+                    or "ALTER TABLE methods RENAME TO temp_methods" in s
+                    for s in changes
+                ):
+                    from pathlib import Path
+
+                    from ..db_integrity import fix_entity_cross_ref_stale_fks
+
+                    if fix_entity_cross_ref_stale_fks(Path(self.db_path)):
+                        logger.info(
+                            "Fixed entity_cross_ref stale FKs after migration (files/methods recreated)"
+                        )
+
                 result["success"] = True
                 logger.info(
                     f"Schema synchronized: {len(result['changes_applied'])} changes applied"

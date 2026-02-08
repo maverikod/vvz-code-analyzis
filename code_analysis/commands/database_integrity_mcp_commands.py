@@ -590,6 +590,7 @@ class RepairSQLiteDatabaseMCPCommand(BaseMCPCommand):
                 check_sqlite_integrity,
                 clear_corruption_marker,
                 ensure_sqlite_integrity_or_recreate,
+                fix_entity_cross_ref_stale_fks,
                 read_corruption_marker,
                 recover_files_table_if_needed,
             )
@@ -619,13 +620,16 @@ class RepairSQLiteDatabaseMCPCommand(BaseMCPCommand):
                             }
                         )
 
-                # Non-destructive: recover files table if migration left temp_files (no files).
-                if recover_files_table_if_needed(db_path):
+                # Non-destructive: recover files table and entity_cross_ref FKs if needed.
+                files_recovered = recover_files_table_if_needed(db_path)
+                fks_fixed = fix_entity_cross_ref_stale_fks(db_path)
+                if files_recovered or fks_fixed:
                     return SuccessResult(
                         data={
                             "db_path": str(db_path),
-                            "mode": "files_table_recovered",
-                            "files_table_recovered": True,
+                            "mode": "schema_recovered",
+                            "files_table_recovered": files_recovered,
+                            "entity_cross_ref_fks_fixed": fks_fixed,
                             "next_step": "Re-run indexing or update_indexes; no force=true needed",
                         }
                     )

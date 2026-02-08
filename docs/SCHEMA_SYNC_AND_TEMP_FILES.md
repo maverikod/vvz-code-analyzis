@@ -38,7 +38,9 @@ So the RPC driver process never runs the `temp_files` migration. Recovery (temp_
 
 1. **Run full schema sync (config_cli schema) when the server and database driver process are stopped**, or at least when no indexing or other DB-heavy work is in progress, to avoid lock contention and partial state visible across processes.
 2. **Do not assume the RPC driver process ever runs the temp_files migration.** Only `db_driver/sqlite.py` (used by `config_cli schema` with the direct driver) does. If you see "no such table: main.temp_files" in indexing_errors, run **repair_sqlite_database** (force=false) to recover the files table; or run force=true to recreate the DB from scratch.
-3. **If the DB is in a bad state** (e.g. after an aborted schema change), use **repair_sqlite_database** (force=false) first; it will recover temp_files → files when applicable. For manual repair: `ALTER TABLE temp_files RENAME TO files`.
+3. **If the DB is in a bad state** (e.g. after an aborted schema change), use **repair_sqlite_database** (force=false) first; it will recover temp_files → files and fix entity_cross_ref stale FKs when applicable. For manual repair: `ALTER TABLE temp_files RENAME TO files`; then recreate entity_cross_ref if it still references temp_files/temp_methods.
+
+4. **Stale FKs in entity_cross_ref:** When migration renames `files`→`temp_files` and `methods`→`temp_methods`, SQLite updates FKs in `entity_cross_ref` to point at those names. After the migration drops `temp_*`, those FKs are broken (e.g. "no such table: main.temp_files" on DELETE FROM entity_cross_ref). The driver on connect and repair_sqlite_database (force=false) call `fix_entity_cross_ref_stale_fks(db_path)` to recreate the table with correct REFERENCES files(id), methods(id). The db_driver migration also calls it after a successful sync that recreated files or methods, so all temp_table statements stay in one connection and the schema is consistent.
 
 ## Related code
 

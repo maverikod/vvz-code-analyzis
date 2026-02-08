@@ -27,22 +27,19 @@ This document clarifies who runs full schema synchronization (with `SchemaCompar
 - **Used by:** The database driver process (started by the server) that handles RPCs such as `index_file`, `execute`, `sync_schema` (RPC), etc.
 - **sync_schema:** Implemented by `SQLiteSchemaManager` in `database_driver_pkg/drivers/sqlite_schema.py`. It only creates **missing** tables by name; it does not run `SchemaComparator` or `generate_migration_sql`, and never creates or references `temp_files`.
 
-So the RPC driver process never runs the `temp_files` migration. It only runs recovery (see below) when it opens the DB.
+So the RPC driver process never runs the `temp_files` migration. It does **not** run any recovery on connect; the schema is expected to be normal (migration in db_driver is atomic).
 
-## Recovery on connect (database_driver_pkg)
+## No recovery on connect
 
-When the **RPC driver** opens the database, it runs `_recover_files_table_if_needed()` on **every** `connect()`:
+The RPC driver **does not** call `_recover_files_table_if_needed()` on `connect()`. Relying on "recovery on every connect" would paper over a broken schema instead of keeping it correct. The migration in `db_driver/sqlite.py` runs in a single transaction and does not commit until the full sequence (RENAME → CREATE → INSERT FROM temp_files → DROP) is done, so a normal run never leaves `temp_files` behind.
 
-- If table `files` is missing and table `temp_files` exists (e.g. left over from an aborted migration in another process), it runs `ALTER TABLE temp_files RENAME TO files` and commits.
-- This ensures that after a crashed or interrupted `config_cli schema` run, the next time the driver process connects, the `files` table is restored and `index_file` and other operations can succeed.
-
-See `code_analysis/core/database_driver_pkg/drivers/sqlite.py`: `connect()` calls `_recover_files_table_if_needed()` before other migrations and table setup.
+If the DB is ever in a bad state (e.g. `files` missing, `temp_files` present from an old bug or external action), use a **one-time repair**: run `ALTER TABLE temp_files RENAME TO files` (e.g. via sqlite3 or a dedicated repair command). The method `_recover_files_table_if_needed()` exists for such repair only and is not invoked automatically.
 
 ## Recommendations
 
 1. **Run full schema sync (config_cli schema) when the server and database driver process are stopped**, or at least when no indexing or other DB-heavy work is in progress, to avoid lock contention and partial state visible across processes.
 2. **Do not assume the RPC driver process ever runs the temp_files migration.** Only `db_driver/sqlite.py` (used by `config_cli schema` with the direct driver) does. If you see "no such table: main.temp_files" in indexing_errors, the failure is either from a sync_schema run (e.g. config_cli schema) that did not complete in one transaction, or from a different code path that should not reference `temp_files`; check logs for `[indexing_errors] Stored temp_files-related` and `[index_file] temp_files-related failure` to identify the caller.
-3. **After an aborted schema sync**, restart the database driver process (or the whole server) so that `connect()` runs again and `_recover_files_table_if_needed()` can rename `temp_files` back to `files` if needed.
+3. **If the DB is in a bad state** (e.g. after an aborted or buggy schema change), run a one-time repair: `ALTER TABLE temp_files RENAME TO files` (e.g. with sqlite3 or a future repair command). Do not rely on automatic recovery on connect.
 
 ## Related code
 
@@ -50,5 +47,5 @@ See `code_analysis/core/database_driver_pkg/drivers/sqlite.py`: `connect()` call
 |-----------|------|------|
 | Full migration (temp_files) | `core/db_driver/sqlite.py` | `sync_schema()` with SchemaComparator; single transaction for all statements |
 | Migration SQL generation | `core/database/schema_sync.py` | `SchemaComparator.generate_migration_sql()`; RENAME to temp_*, INSERT FROM temp_*, DROP temp_* |
-| Recovery | `core/database_driver_pkg/drivers/sqlite.py` | `_recover_files_table_if_needed()` on connect(); renames temp_files → files |
+| One-time repair | `core/database_driver_pkg/drivers/sqlite.py` | `_recover_files_table_if_needed()` (not called on connect); renames temp_files → files for manual/repair use only |
 | Simplified sync (no temp_files) | `core/database_driver_pkg/drivers/sqlite_schema.py` | `SQLiteSchemaManager.sync_schema()`; only creates missing tables |

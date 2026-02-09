@@ -69,12 +69,15 @@ def get_project(self, project_id: str) -> Optional[Dict[str, Any]]:
 
 def get_all_projects(self) -> List[Dict[str, Any]]:
     """
-    Get all projects from database.
+    Get all projects from database (excludes trashed: deleted=1).
 
     Returns:
         List of project records as dictionaries with id, root_path, name, comment, updated_at
     """
-    rows = self._fetchall("SELECT id, root_path, name, comment, updated_at FROM projects ORDER BY name, root_path")
+    rows = self._fetchall(
+        "SELECT id, root_path, name, comment, updated_at FROM projects "
+        "WHERE (deleted = 0 OR deleted IS NULL) ORDER BY name, root_path"
+    )
     return rows if rows else []
 
 
@@ -89,9 +92,11 @@ async def clear_project_data(self, project_id: str) -> None:
     Args:
         project_id: Project ID (UUID4 string)
     """
-    file_rows = self._fetchall("SELECT id FROM files WHERE project_id = ?", (project_id,))
+    file_rows = self._fetchall(
+        "SELECT id FROM files WHERE project_id = ?", (project_id,)
+    )
     file_ids = [row["id"] for row in file_rows]
-    
+
     # Delete duplicates first (before files)
     try:
         # Delete duplicate occurrences first (foreign key constraint)
@@ -111,7 +116,28 @@ async def clear_project_data(self, project_id: str) -> None:
         )
     except Exception as e:
         logger.warning(f"Failed to delete duplicates for project {project_id}: {e}")
-    
+
+    # Tables that reference project_id (must be cleared before deleting project)
+    try:
+        self._execute("DELETE FROM cst_trees WHERE project_id = ?", (project_id,))
+    except Exception as e:
+        logger.warning(f"Failed to delete cst_trees for project {project_id}: {e}")
+    try:
+        self._execute("DELETE FROM indexing_errors WHERE project_id = ?", (project_id,))
+    except Exception as e:
+        logger.warning(
+            f"Failed to delete indexing_errors for project {project_id}: {e}"
+        )
+    try:
+        self._execute(
+            "DELETE FROM comprehensive_analysis_results WHERE project_id = ?",
+            (project_id,),
+        )
+    except Exception as e:
+        logger.warning(
+            f"Failed to delete comprehensive_analysis_results for project {project_id}: {e}"
+        )
+
     if not file_ids:
         # Delete vector_index even if no files
         self._execute("DELETE FROM vector_index WHERE project_id = ?", (project_id,))
@@ -119,14 +145,15 @@ async def clear_project_data(self, project_id: str) -> None:
         self._commit()
         logger.info(f"Cleared all data and removed project {project_id} (no files)")
         return
-    
+
     placeholders = ",".join("?" * len(file_ids))
     class_rows = self._fetchall(
         f"SELECT id FROM classes WHERE file_id IN ({placeholders})", tuple(file_ids)
     )
     class_ids = [row["id"] for row in class_rows]
     content_rows = self._fetchall(
-        f"SELECT id FROM code_content WHERE file_id IN ({placeholders})", tuple(file_ids)
+        f"SELECT id FROM code_content WHERE file_id IN ({placeholders})",
+        tuple(file_ids),
     )
     content_ids = [row["id"] for row in content_rows]
     # Delete FTS entries in batches to avoid database corruption
@@ -134,7 +161,7 @@ async def clear_project_data(self, project_id: str) -> None:
     if content_ids:
         batch_size = 1000
         for i in range(0, len(content_ids), batch_size):
-            batch = content_ids[i:i + batch_size]
+            batch = content_ids[i : i + batch_size]
             batch_placeholders = ",".join("?" * len(batch))
             try:
                 self._execute(
@@ -142,13 +169,16 @@ async def clear_project_data(self, project_id: str) -> None:
                     tuple(batch),
                 )
             except Exception as e:
-                logger.warning(f"Failed to delete FTS batch {i//batch_size + 1} for project {project_id}: {e}. Skipping FTS deletion.")
+                logger.warning(
+                    f"Failed to delete FTS batch {i//batch_size + 1} for project {project_id}: {e}. Skipping FTS deletion."
+                )
                 # If FTS is corrupted, skip remaining batches
                 break
     if class_ids:
         method_placeholders = ",".join("?" * len(class_ids))
         self._execute(
-            f"DELETE FROM methods WHERE class_id IN ({method_placeholders})", tuple(class_ids)
+            f"DELETE FROM methods WHERE class_id IN ({method_placeholders})",
+            tuple(class_ids),
         )
     if file_ids:
         self._execute(
@@ -168,7 +198,8 @@ async def clear_project_data(self, project_id: str) -> None:
         )
     if file_ids:
         self._execute(
-            f"DELETE FROM code_content WHERE file_id IN ({placeholders})", tuple(file_ids)
+            f"DELETE FROM code_content WHERE file_id IN ({placeholders})",
+            tuple(file_ids),
         )
     if file_ids:
         self._execute(
@@ -176,9 +207,15 @@ async def clear_project_data(self, project_id: str) -> None:
         )
     if file_ids:
         self._execute(
-            f"DELETE FROM code_chunks WHERE file_id IN ({placeholders})", tuple(file_ids)
+            f"DELETE FROM code_chunks WHERE file_id IN ({placeholders})",
+            tuple(file_ids),
         )
-    
+    if file_ids:
+        self._execute(
+            f"DELETE FROM comprehensive_analysis_results WHERE file_id IN ({placeholders})",
+            tuple(file_ids),
+        )
+
     self._execute("DELETE FROM vector_index WHERE project_id = ?", (project_id,))
     self._execute("DELETE FROM files WHERE project_id = ?", (project_id,))
     self._execute("DELETE FROM projects WHERE id = ?", (project_id,))

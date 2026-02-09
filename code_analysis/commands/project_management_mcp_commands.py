@@ -1285,7 +1285,14 @@ class PermanentlyDeleteFromTrashMCPCommand(BaseMCPCommand):
         **kwargs: Any,
     ) -> SuccessResult | ErrorResult:
         try:
-            from ..core.storage_paths import load_raw_config, resolve_storage_paths
+            from ..core.storage_paths import (
+                load_raw_config,
+                resolve_storage_paths,
+                get_faiss_index_path,
+            )
+            from ..core.trash_utils import get_project_id_from_trash_folder
+            from .clear_project_data_impl import _clear_project_data_impl
+            from .trash_commands import PermanentlyDeleteFromTrashCommand
 
             config_path = self._resolve_config_path()
             config_data = load_raw_config(config_path)
@@ -1294,8 +1301,35 @@ class PermanentlyDeleteFromTrashMCPCommand(BaseMCPCommand):
             )
             if not trash_dir:
                 trash_dir = str(storage.trash_dir)
-            from .trash_commands import PermanentlyDeleteFromTrashCommand
+            trash_dir_path = Path(trash_dir)
 
+            # 1. Clear project from DB in one batch (then delete folder)
+            project_id = get_project_id_from_trash_folder(
+                trash_dir_path, trash_folder_name
+            )
+            if project_id:
+                socket_path = BaseMCPCommand._get_socket_path_from_db_path(
+                    Path(storage.db_path)
+                )
+                from ..core.database_client.client import DatabaseClient
+
+                database = DatabaseClient(socket_path=socket_path)
+                database.connect()
+                try:
+                    await _clear_project_data_impl(database, project_id)
+                    faiss_index_path = get_faiss_index_path(
+                        storage.faiss_dir, project_id
+                    )
+                    if faiss_index_path.exists():
+                        faiss_index_path.unlink()
+                        logger.info(
+                            "Deleted FAISS index for project %s from trash",
+                            project_id,
+                        )
+                finally:
+                    database.disconnect()
+
+            # 2. Permanently delete folder from trash
             cmd = PermanentlyDeleteFromTrashCommand(
                 trash_dir=trash_dir,
                 trash_folder_name=trash_folder_name,
@@ -1316,6 +1350,174 @@ class PermanentlyDeleteFromTrashMCPCommand(BaseMCPCommand):
                 e,
                 "PERMANENTLY_DELETE_FROM_TRASH_ERROR",
                 "permanently_delete_from_trash",
+            )
+
+
+class RestoreProjectFromTrashMCPCommand(BaseMCPCommand):
+    """
+    Restore a project from trash (recycle bin).
+
+    Moves the folder from trash back to its original root_path, then unmarks
+    the project and its files in the database in one batch.
+    """
+
+    name = "restore_project_from_trash"
+    version = "1.0.0"
+    descr = (
+        "Restore a project from trash: move folder back, then unmark in DB (one batch)"
+    )
+    category = "project_management"
+    author = "Vasiliy Zdanovskiy"
+    email = "vasilyvz@gmail.com"
+    use_queue = False
+
+    @classmethod
+    def get_schema(
+        cls: type["RestoreProjectFromTrashMCPCommand"],
+    ) -> Dict[str, Any]:
+        return {
+            "type": "object",
+            "description": "Restore a project from trash (move files then unmark in DB)",
+            "properties": {
+                "trash_folder_name": {
+                    "type": "string",
+                    "description": (
+                        "Name of the trashed folder to restore (e.g. MyProject_2025-01-29T14-30-00Z). "
+                        "Must be a direct child of trash_dir."
+                    ),
+                },
+                "trash_dir": {
+                    "type": "string",
+                    "description": (
+                        "Optional path to trash directory. "
+                        "If omitted, uses trash_dir from server config."
+                    ),
+                },
+            },
+            "required": ["trash_folder_name"],
+            "additionalProperties": False,
+        }
+
+    async def execute(
+        self: "RestoreProjectFromTrashMCPCommand",
+        trash_folder_name: str,
+        trash_dir: Optional[str] = None,
+        **kwargs: Any,
+    ) -> SuccessResult | ErrorResult:
+        try:
+            import shutil
+
+            from ..core.storage_paths import load_raw_config, resolve_storage_paths
+            from ..core.trash_utils import get_project_id_from_trash_folder
+            from .clear_project_data_impl import unmark_project_deleted_impl
+
+            config_path = self._resolve_config_path()
+            config_data = load_raw_config(config_path)
+            storage = resolve_storage_paths(
+                config_data=config_data, config_path=config_path
+            )
+            if not trash_dir:
+                trash_dir = str(storage.trash_dir)
+            trash_dir_path = Path(trash_dir)
+            source = trash_dir_path / trash_folder_name
+
+            if not source.exists() or not source.is_dir():
+                return self._handle_error(
+                    ValidationError(
+                        f"Trashed folder not found or not a directory: {source}",
+                        field="trash_folder_name",
+                        details={"trash_folder_name": trash_folder_name},
+                    ),
+                    "NOT_FOUND",
+                    "restore_project_from_trash",
+                )
+
+            project_id = get_project_id_from_trash_folder(
+                trash_dir_path, trash_folder_name
+            )
+            if not project_id:
+                return self._handle_error(
+                    ValidationError(
+                        "No projectid file in trashed folder; cannot resolve project_id",
+                        field="trash_folder_name",
+                        details={"trash_folder_name": trash_folder_name},
+                    ),
+                    "NO_PROJECT_ID",
+                    "restore_project_from_trash",
+                )
+
+            socket_path = BaseMCPCommand._get_socket_path_from_db_path(
+                Path(storage.db_path)
+            )
+            from ..core.database_client.client import DatabaseClient
+
+            database = DatabaseClient(socket_path=socket_path)
+            database.connect()
+            try:
+                rows = database.select(
+                    "projects",
+                    where={"id": project_id},
+                    columns=["id", "root_path", "name", "deleted"],
+                )
+                if not rows:
+                    return self._handle_error(
+                        ValidationError(
+                            f"Project {project_id} not found in database",
+                            field="trash_folder_name",
+                            details={"project_id": project_id},
+                        ),
+                        "PROJECT_NOT_FOUND",
+                        "restore_project_from_trash",
+                    )
+                row = rows[0]
+                if row.get("deleted") != 1:
+                    return self._handle_error(
+                        ValidationError(
+                            f"Project {project_id} is not marked as deleted (not in trash)",
+                            field="trash_folder_name",
+                            details={"project_id": project_id},
+                        ),
+                        "NOT_IN_TRASH",
+                        "restore_project_from_trash",
+                    )
+                root_path = Path(row["root_path"])
+                if root_path.exists():
+                    return self._handle_error(
+                        ValidationError(
+                            f"Cannot restore: target path already exists: {root_path}",
+                            field="trash_folder_name",
+                            details={"root_path": str(root_path)},
+                        ),
+                        "TARGET_EXISTS",
+                        "restore_project_from_trash",
+                    )
+
+                # 1. Move folder from trash to original root_path
+                shutil.move(str(source), str(root_path))
+                logger.info(
+                    "Restored project from trash: %s -> %s",
+                    source,
+                    root_path,
+                )
+
+                # 2. Unmark project and files in one batch
+                await unmark_project_deleted_impl(database, project_id)
+            finally:
+                database.disconnect()
+
+            return SuccessResult(
+                data={
+                    "project_id": project_id,
+                    "root_path": str(root_path),
+                    "trash_folder_name": trash_folder_name,
+                },
+                message=f"Restored project {project_id} to {root_path}",
+            )
+        except Exception as e:
+            return self._handle_error(
+                e,
+                "RESTORE_PROJECT_FROM_TRASH_ERROR",
+                "restore_project_from_trash",
             )
 
 
@@ -1367,7 +1569,14 @@ class ClearTrashMCPCommand(BaseMCPCommand):
         **kwargs: Any,
     ) -> SuccessResult | ErrorResult:
         try:
-            from ..core.storage_paths import load_raw_config, resolve_storage_paths
+            from ..core.storage_paths import (
+                load_raw_config,
+                resolve_storage_paths,
+                get_faiss_index_path,
+            )
+            from ..core.trash_utils import get_project_id_from_trash_folder
+            from .clear_project_data_impl import _clear_project_data_impl
+            from .trash_commands import ClearTrashCommand
 
             config_path = self._resolve_config_path()
             config_data = load_raw_config(config_path)
@@ -1376,7 +1585,36 @@ class ClearTrashMCPCommand(BaseMCPCommand):
             )
             if not trash_dir:
                 trash_dir = str(storage.trash_dir)
-            from .trash_commands import ClearTrashCommand
+            trash_dir_path = Path(trash_dir)
+
+            # Clear DB (and FAISS) for each trashed project before deleting folders
+            if not dry_run and trash_dir_path.exists():
+                project_ids = []
+                for child in trash_dir_path.iterdir():
+                    if child.is_dir():
+                        pid = get_project_id_from_trash_folder(
+                            trash_dir_path, child.name
+                        )
+                        if pid:
+                            project_ids.append(pid)
+                if project_ids:
+                    socket_path = BaseMCPCommand._get_socket_path_from_db_path(
+                        Path(storage.db_path)
+                    )
+                    from ..core.database_client.client import DatabaseClient
+
+                    database = DatabaseClient(socket_path=socket_path)
+                    database.connect()
+                    try:
+                        for project_id in project_ids:
+                            await _clear_project_data_impl(database, project_id)
+                            faiss_index_path = get_faiss_index_path(
+                                storage.faiss_dir, project_id
+                            )
+                            if faiss_index_path.exists():
+                                faiss_index_path.unlink()
+                    finally:
+                        database.disconnect()
 
             cmd = ClearTrashCommand(trash_dir=trash_dir, dry_run=dry_run)
             result = cmd.execute()

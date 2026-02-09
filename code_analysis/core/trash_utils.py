@@ -60,6 +60,28 @@ def build_trash_folder_name(
     return f"{sanitized}_{ts}"
 
 
+def get_project_id_from_trash_folder(
+    trash_dir: Path, trash_folder_name: str
+) -> str | None:
+    """
+    Read project_id from projectid file inside a trashed project folder.
+
+    Args:
+        trash_dir: Trash directory path.
+        trash_folder_name: Name of the trashed folder (direct child of trash_dir).
+
+    Returns:
+        Project UUID string or None if file missing/invalid.
+    """
+    path = trash_dir / trash_folder_name / "projectid"
+    if not path.is_file():
+        return None
+    try:
+        return path.read_text().strip() or None
+    except OSError:
+        return None
+
+
 def ensure_unique_trash_path(trash_dir: Path, base_name: str) -> Path:
     """
     Return a path under trash_dir that does not exist yet.

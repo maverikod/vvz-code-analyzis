@@ -20,9 +20,91 @@ else:
 logger = logging.getLogger(__name__)
 
 
+def _build_mark_deleted_batch(project_id: str) -> List[Tuple[str, Tuple[Any, ...]]]:
+    """Build list of (sql, params) to mark project and its files as deleted in one batch."""
+    return [
+        ("UPDATE files SET deleted = 1 WHERE project_id = ?", (project_id,)),
+        ("UPDATE projects SET deleted = 1 WHERE id = ?", (project_id,)),
+    ]
+
+
+def _build_unmark_deleted_batch(project_id: str) -> List[Tuple[str, Tuple[Any, ...]]]:
+    """Build list of (sql, params) to unmark project and its files in one batch."""
+    return [
+        ("UPDATE files SET deleted = 0 WHERE project_id = ?", (project_id,)),
+        ("UPDATE projects SET deleted = 0 WHERE id = ?", (project_id,)),
+    ]
+
+
+async def mark_project_deleted_impl(database: DatabaseClient, project_id: str) -> None:
+    """Mark project and all its files as deleted (soft delete) in one batch.
+
+    Used when moving project to trash: mark first, then move folder.
+    """
+    logger.info(f"[MARK_PROJECT_DELETED] Marking project {project_id} as deleted")
+    transaction_id = None
+    try:
+        transaction_id = database.begin_transaction()
+        ops = _build_mark_deleted_batch(project_id)
+        database.execute_batch(
+            cast(
+                List[Tuple[str, Optional[Union[tuple, list]]]],
+                ops,
+            ),
+            transaction_id=transaction_id,
+        )
+        database.commit_transaction(transaction_id)
+        logger.info(f"[MARK_PROJECT_DELETED] Marked project {project_id} as deleted")
+    except Exception as e:
+        if transaction_id:
+            try:
+                database.rollback_transaction(transaction_id)
+            except Exception:
+                pass
+        logger.error(f"[MARK_PROJECT_DELETED] Failed for {project_id}: {e}")
+        raise
+
+
+async def unmark_project_deleted_impl(
+    database: DatabaseClient, project_id: str
+) -> None:
+    """Unmark project and all its files (restore from trash): one batch.
+
+    Used after moving folder back from trash.
+    """
+    logger.info(f"[UNMARK_PROJECT_DELETED] Unmarking project {project_id}")
+    transaction_id = None
+    try:
+        transaction_id = database.begin_transaction()
+        ops = _build_unmark_deleted_batch(project_id)
+        database.execute_batch(
+            cast(
+                List[Tuple[str, Optional[Union[tuple, list]]]],
+                ops,
+            ),
+            transaction_id=transaction_id,
+        )
+        database.commit_transaction(transaction_id)
+        logger.info(f"[UNMARK_PROJECT_DELETED] Unmarked project {project_id}")
+    except Exception as e:
+        if transaction_id:
+            try:
+                database.rollback_transaction(transaction_id)
+            except Exception:
+                pass
+        logger.error(f"[UNMARK_PROJECT_DELETED] Failed for {project_id}: {e}")
+        raise
+
+
 def _build_delete_batch_no_files(project_id: str) -> List[Tuple[str, Tuple[Any, ...]]]:
     """Build list of (sql, params) for project with no files."""
     return [
+        ("DELETE FROM cst_trees WHERE project_id = ?", (project_id,)),
+        ("DELETE FROM indexing_errors WHERE project_id = ?", (project_id,)),
+        (
+            "DELETE FROM comprehensive_analysis_results WHERE project_id = ?",
+            (project_id,),
+        ),
         ("DELETE FROM vector_index WHERE project_id = ?", (project_id,)),
         ("DELETE FROM projects WHERE id = ?", (project_id,)),
     ]
@@ -52,6 +134,13 @@ def _build_delete_batch_with_files(
             )
         )
 
+    # code_chunks first (references class_id, function_id, method_id)
+    ops.append(
+        (
+            f"DELETE FROM code_chunks WHERE file_id IN ({placeholders})",
+            tuple(file_ids),
+        )
+    )
     # Child tables (methods before classes)
     if class_ids:
         method_ph = ",".join("?" * len(class_ids))
@@ -94,12 +183,6 @@ def _build_delete_batch_with_files(
         )
     )
     ops.append(
-        (
-            f"DELETE FROM code_chunks WHERE file_id IN ({placeholders})",
-            tuple(file_ids),
-        )
-    )
-    ops.append(
         (f"DELETE FROM usages WHERE file_id IN ({placeholders})", tuple(file_ids))
     )
     # entity_cross_ref may not exist in all schemas
@@ -111,12 +194,19 @@ def _build_delete_batch_with_files(
     )
     ops.append(
         (
+            f"DELETE FROM comprehensive_analysis_results WHERE file_id IN ({placeholders})",
+            tuple(file_ids),
+        )
+    )
+    ops.append(
+        (
             "DELETE FROM files WHERE id IN ({})".format(placeholders),
             tuple(file_ids),
         )
     )
 
-    # Project-level
+    # Project-level (tables that reference project_id only)
+    ops.append(("DELETE FROM indexing_errors WHERE project_id = ?", (project_id,)))
     ops.append(("DELETE FROM vector_index WHERE project_id = ?", (project_id,)))
     ops.append(("DELETE FROM projects WHERE id = ?", (project_id,)))
 

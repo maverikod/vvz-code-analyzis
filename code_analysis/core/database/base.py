@@ -1233,6 +1233,19 @@ class CodeDatabase:
             except Exception as e:
                 logger.warning(f"Could not add version_dir column to files: {e}")
 
+        # Migration: Add deleted column to projects table (soft delete / trash)
+        try:
+            projects_table_info = self._get_table_info("projects")
+            projects_columns = {col["name"]: col["type"] for col in projects_table_info}
+            if "deleted" not in projects_columns:
+                logger.info("Migrating projects table: adding deleted column")
+                self._execute(
+                    "ALTER TABLE projects ADD COLUMN deleted BOOLEAN DEFAULT 0"
+                )
+                self._commit()
+        except Exception as e:
+            logger.warning(f"Could not add deleted column to projects: {e}")
+
         if "needs_chunking" not in files_columns:
             try:
                 logger.info("Migrating files table: adding needs_chunking column")

@@ -115,7 +115,7 @@ class _ClientAPIProjectsMixin:
         return affected_rows > 0
 
     def list_projects(self) -> List[Project]:
-        """List all projects in database.
+        """List all projects in database (excludes trashed: deleted=1).
 
         Returns:
             List of Project objects
@@ -124,5 +124,14 @@ class _ClientAPIProjectsMixin:
             RPCClientError: If RPC call fails
             RPCResponseError: If response contains error
         """
-        rows = self.select("projects", order_by=["created_at"])
+        result = self.execute(
+            "SELECT * FROM projects WHERE (deleted = 0 OR deleted IS NULL) "
+            "ORDER BY created_at",
+            (),
+        )
+        rows = (
+            result.get("data", [])
+            if isinstance(result, dict)
+            else (result if isinstance(result, list) else [])
+        )
         return db_rows_to_objects(rows, Project)

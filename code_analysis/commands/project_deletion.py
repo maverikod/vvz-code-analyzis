@@ -17,7 +17,10 @@ from ..core.trash_utils import (
     ensure_unique_trash_path,
 )
 
-from .clear_project_data_impl import _clear_project_data_impl
+from .clear_project_data_impl import (
+    _clear_project_data_impl,
+    mark_project_deleted_impl,
+)
 
 if TYPE_CHECKING:
     from ..core.database_client.client import DatabaseClient
@@ -180,53 +183,68 @@ class DeleteProjectCommand:
                     result["would_delete_version_dir"] = project_version_dir.exists()
             return result
 
-        # Perform deletion: first DB, then move to trash (if delete_from_disk)
+        # Perform deletion: if delete_from_disk -> mark in DB (batch) then move to trash;
+        # else -> full delete from DB (batch) only.
         deletion_start_time = time.time()
         logger.info(f"[DELETE_PROJECT] Starting deletion of project {self.project_id}")
 
         try:
             disk_deletion_errors = []
 
-            # 1. Delete from database first (while project dir still exists)
-            db_start = time.time()
-            logger.info(
-                f"[DELETE_PROJECT] Starting database deletion for {self.project_id}"
-            )
-            await _clear_project_data_impl(self.database, self.project_id)
-            logger.info(
-                f"[DELETE_PROJECT] Completed database deletion in {time.time() - db_start:.3f}s. "
-                f"Deleted project {self.project_id} ({project_name}) from database: "
-                f"{file_count} files, {chunk_count} chunks"
-            )
-
-            # 1b. Delete FAISS index file for this project (so no project data remains on disk)
-            try:
-                config_path = Path(self.config_path) if self.config_path else None
-                if not config_path or not config_path.exists():
-                    from .base_mcp_command import BaseMCPCommand
-                    config_path = BaseMCPCommand._resolve_config_path()
-                if config_path.exists():
-                    from ..core.storage_paths import (
-                        load_raw_config,
-                        resolve_storage_paths,
-                        get_faiss_index_path,
-                    )
-                    config_data = load_raw_config(config_path)
-                    storage = resolve_storage_paths(
-                        config_data=config_data, config_path=config_path
-                    )
-                    faiss_index_path = get_faiss_index_path(
-                        storage.faiss_dir, self.project_id
-                    )
-                    if faiss_index_path.exists():
-                        faiss_index_path.unlink()
-                        logger.info(
-                            f"[DELETE_PROJECT] Deleted FAISS index {faiss_index_path}"
-                        )
-            except Exception as e:
-                logger.warning(
-                    f"[DELETE_PROJECT] Could not delete FAISS index for {self.project_id}: {e}"
+            if self.delete_from_disk:
+                # 1a. Mark project and files as deleted in one batch, then move to trash
+                db_start = time.time()
+                logger.info(
+                    f"[DELETE_PROJECT] Marking project {self.project_id} as deleted (batch)"
                 )
+                await mark_project_deleted_impl(self.database, self.project_id)
+                logger.info(
+                    f"[DELETE_PROJECT] Marked project in {time.time() - db_start:.3f}s"
+                )
+            else:
+                # 1b. Full delete from database (one batch)
+                db_start = time.time()
+                logger.info(
+                    f"[DELETE_PROJECT] Starting database deletion for {self.project_id}"
+                )
+                await _clear_project_data_impl(self.database, self.project_id)
+                logger.info(
+                    f"[DELETE_PROJECT] Completed database deletion in {time.time() - db_start:.3f}s. "
+                    f"Deleted project {self.project_id} ({project_name}) from database: "
+                    f"{file_count} files, {chunk_count} chunks"
+                )
+
+            # 1c. Delete FAISS index file for this project when fully deleting from DB
+            if not self.delete_from_disk:
+                try:
+                    config_path = Path(self.config_path) if self.config_path else None
+                    if not config_path or not config_path.exists():
+                        from .base_mcp_command import BaseMCPCommand
+
+                        config_path = BaseMCPCommand._resolve_config_path()
+                    if config_path.exists():
+                        from ..core.storage_paths import (
+                            load_raw_config,
+                            resolve_storage_paths,
+                            get_faiss_index_path,
+                        )
+
+                        config_data = load_raw_config(config_path)
+                        storage = resolve_storage_paths(
+                            config_data=config_data, config_path=config_path
+                        )
+                        faiss_index_path = get_faiss_index_path(
+                            storage.faiss_dir, self.project_id
+                        )
+                        if faiss_index_path.exists():
+                            faiss_index_path.unlink()
+                            logger.info(
+                                f"[DELETE_PROJECT] Deleted FAISS index {faiss_index_path}"
+                            )
+                except Exception as e:
+                    logger.warning(
+                        f"[DELETE_PROJECT] Could not delete FAISS index for {self.project_id}: {e}"
+                    )
 
             # 2. If delete_from_disk: move project root to trash, then delete version dir
             if self.delete_from_disk and trash_dir_path:

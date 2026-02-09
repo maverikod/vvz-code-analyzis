@@ -75,8 +75,7 @@ Important notes:
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `root_dir` | string | **Yes** | Server/project root directory (contains config and data/code_analysis.db). |
-| `config_file` | string | No | Path to JSON config file (absolute or relative to root_dir). Default: `"config.json"`. |
+| `config_file` | string | No | Path to JSON config file (absolute or relative to server config directory). Default: `"config.json"`. |
 | `max_lines` | integer | No | Maximum lines per file threshold (for reporting). Default: `400`. |
 | `dry_run` | boolean | No | If True, only resolve dirs and show plan; do not recreate DB or index. Default: `false`. |
 

@@ -72,7 +72,8 @@ Important notes:
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `file_path` | string | **Yes** | Path to Python file to type check. |
+| `file_path` | string | **Yes** | Path to Python file to type check. If project_id is provided, relative to project root. |
+| `project_id` | string | No | Optional project UUID. If provided, file_path is relative to project root. |
 | `config_file` | string | No | Optional path to mypy config file (e.g. pyproject.toml). |
 | `ignore_errors` | boolean | No | If True, treat errors as warnings. Default: `false`. |
 

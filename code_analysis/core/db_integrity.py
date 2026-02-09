@@ -12,12 +12,16 @@ email: vasilyvz@gmail.com
 
 from __future__ import annotations
 
+import re
 import shutil
 import sqlite3
 import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import List, Optional, Tuple
+
+# Tables that were renamed during migration; FKs in other tables point to these until fixed.
+_STALE_FK_TARGETS = ("temp_files", "temp_methods")
 
 
 @dataclass(frozen=True)
@@ -306,6 +310,81 @@ _ENTITY_CROSS_REF_INDEXES = [
 ]
 
 
+def _tables_with_stale_fks(cur: sqlite3.Cursor) -> List[str]:
+    """Return list of table names that have FK pointing to temp_files or temp_methods."""
+    cur.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'"
+    )
+    all_tables = [r[0] for r in cur.fetchall()]
+    stale: List[str] = []
+    for table in all_tables:
+        if table in _STALE_FK_TARGETS:
+            continue
+        cur.execute(f"PRAGMA foreign_key_list({table})")
+        refs = {row[2] for row in cur.fetchall()}
+        if refs & set(_STALE_FK_TARGETS):
+            stale.append(table)
+    return stale
+
+
+def fix_all_stale_fks_in_connection(conn: sqlite3.Connection) -> bool:
+    """Recreate any table that has FK to temp_files or temp_methods (fixes stale refs).
+
+    When schema_sync renames files->temp_files (or methods->temp_methods), SQLite
+    updates all FKs in the database to point at temp_*. After DROP temp_*, every
+    table that referenced files/methods is left with broken FKs. This recreates
+    each such table with REFERENCES files(id) / methods(id) and preserves data.
+
+    Args:
+        conn: Open SQLite connection (same one used for migration).
+
+    Returns:
+        True if at least one table was recreated; False if no fix needed.
+    """
+    cur = conn.cursor()
+    stale_tables = _tables_with_stale_fks(cur)
+    if not stale_tables:
+        return False
+    fixed = False
+    for table in stale_tables:
+        cur.execute(
+            "SELECT sql FROM sqlite_master WHERE type='table' AND name = ?",
+            (table,),
+        )
+        row = cur.fetchone()
+        if not row or not row[0]:
+            continue
+        create_sql = row[0]
+        create_sql = create_sql.replace('REFERENCES "temp_files"', 'REFERENCES "files"')
+        create_sql = create_sql.replace("REFERENCES temp_files", "REFERENCES files")
+        create_sql = create_sql.replace('REFERENCES "temp_methods"', 'REFERENCES "methods"')
+        create_sql = create_sql.replace("REFERENCES temp_methods", "REFERENCES methods")
+        # New table name to avoid conflict
+        create_new = re.sub(
+            r"(CREATE TABLE\s+(?:\w+\.)?)" + re.escape(table) + r"(\s*\()",
+            r"\1" + table + "_new" + r"\2",
+            create_sql,
+            count=1,
+        )
+        cur.execute(
+            "SELECT sql FROM sqlite_master WHERE type='index' AND tbl_name = ? AND name NOT LIKE 'sqlite_%'",
+            (table,),
+        )
+        index_sqls = [r[0] for r in cur.fetchall() if r and r[0]]
+        cur.execute(create_new)
+        cur.execute(f"INSERT INTO {table}_new SELECT * FROM {table}")
+        cur.execute(f"DROP TABLE {table}")
+        cur.execute(f"ALTER TABLE {table}_new RENAME TO {table}")
+        for idx_sql in index_sqls:
+            if idx_sql:
+                try:
+                    cur.execute(idx_sql)
+                except sqlite3.OperationalError:
+                    pass
+        fixed = True
+    return fixed
+
+
 def fix_entity_cross_ref_stale_fks_in_connection(conn: sqlite3.Connection) -> bool:
     """Recreate entity_cross_ref if any of its FK target tables are missing (stale refs).
 
@@ -343,6 +422,36 @@ def fix_entity_cross_ref_stale_fks_in_connection(conn: sqlite3.Connection) -> bo
     for idx_sql in _ENTITY_CROSS_REF_INDEXES:
         cur.execute(idx_sql)
     return True
+
+
+def fix_all_stale_fks(
+    db_path: Path, *, timeout_seconds: float = 2.0
+) -> bool:
+    """Recreate all tables that have FK to temp_files or temp_methods (stale after migration).
+
+    Opens the DB and calls fix_all_stale_fks_in_connection. Use for one-off repair
+    of an already-broken database (e.g. after a migration that ran without the fix).
+
+    Args:
+        db_path: Path to SQLite db file.
+        timeout_seconds: Connection timeout.
+
+    Returns:
+        True if at least one table was recreated; False if no fix needed.
+    """
+    if not db_path.exists():
+        return False
+    try:
+        conn = sqlite3.connect(str(db_path), timeout=timeout_seconds)
+        try:
+            fixed = fix_all_stale_fks_in_connection(conn)
+            if fixed:
+                conn.commit()
+            return fixed
+        finally:
+            conn.close()
+    except Exception:
+        return False
 
 
 def fix_entity_cross_ref_stale_fks(

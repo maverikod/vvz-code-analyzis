@@ -51,6 +51,7 @@ COMMAND_MAP = [
     ("view_worker_logs", "code_analysis.commands.log_viewer_mcp_commands", "ViewWorkerLogsMCPCommand", "log_viewer"),
     ("list_worker_logs", "code_analysis.commands.log_viewer_mcp_commands", "ListWorkerLogsMCPCommand", "log_viewer"),
     ("rotate_worker_logs", "code_analysis.commands.log_viewer_mcp_commands", "RotateWorkerLogsMCPCommand", "log_viewer"),
+    ("analyze_timing_bottlenecks", "code_analysis.commands.log_viewer_mcp_commands", "AnalyzeTimingBottlenecksMCPCommand", "log_viewer"),
     ("get_database_corruption_status", "code_analysis.commands.database_integrity_mcp_commands", "GetDatabaseCorruptionStatusMCPCommand", "database_integrity"),
     ("backup_database", "code_analysis.commands.database_integrity_mcp_commands", "BackupDatabaseMCPCommand", "database_integrity"),
     ("repair_sqlite_database", "code_analysis.commands.database_integrity_mcp_commands", "RepairSQLiteDatabaseMCPCommand", "database_integrity"),

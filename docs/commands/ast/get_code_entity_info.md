@@ -51,12 +51,11 @@ Important notes:
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `root_dir` | string | **Yes** | Project root directory (contains data/code_analysis.db) |
+| `project_id` | string | **Yes** | Project UUID (from create_project or list_projects). Required for commands that operate on a project. |
 | `entity_type` | string | **Yes** | Type of entity: 'class', 'function', or 'method' |
 | `entity_name` | string | **Yes** | Name of the entity |
-| `file_path` | string | No | Optional file path to search in (absolute or relative) |
+| `file_path` | string | No | Optional file path to search in (relative to project root) |
 | `line` | integer | No | Optional line number for disambiguation |
-| `project_id` | string | No | Optional project UUID; if omitted, inferred by root_dir |
 
 **Schema:** `additionalProperties: false` — only the parameters above are accepted.
 

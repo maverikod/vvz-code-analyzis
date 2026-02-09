@@ -12,28 +12,22 @@ email: vasilyvz@gmail.com
 
 ## Purpose (Предназначение)
 
-The list_projects command retrieves all projects from the database and returns their complete metadata including UUID, root path, name, comment, watch directory identifier, and last update timestamp.
+The list_projects command retrieves all projects from the database and returns for each project: project id, watch_dir (observed directory path), and project directory name, plus root_path, comment, watch_dir_id, updated_at.
+
+Parameters: Only watched_dir_id (optional). Database path is from server config only.
 
 Operation flow:
-1. Resolves database path from server configuration (config.json)
-2. Opens database connection
-3. If watched_dir_id is provided, filters projects by watched_dir_id
-4. Queries projects from the projects table
-5. Returns list of projects with their metadata
+1. Opens database from server configuration (config.json)
+2. If watched_dir_id is provided, filters projects by watched_dir_id
+3. For each project, resolves watch_dir path from watch_dir_paths table
+4. Returns list with id, watch_dir (path), name (project dir name), and other metadata
 
 Use cases:
-- Discover all projects in the database
-- Get project UUIDs for use in other commands
+- Discover all projects and get project_id for other commands
+- Get watch_dir path and project directory name per project
 - Filter projects by watched directory
-- Verify project registration
-- Audit project metadata
 
-Important notes:
-- Returns all projects if watched_dir_id is not provided
-- If watched_dir_id is provided, only projects from that watched directory are returned
-- Empty database or no matching projects returns empty list (count: 0)
-- Each project entry includes: id (UUID), root_path, name, comment, watch_dir_id, updated_at
-- Database path is automatically resolved from server configuration, no root_dir parameter needed
+Important: Each project always includes id, watch_dir (path or None), and name.
 
 ---
 
@@ -43,7 +37,7 @@ Important notes:
 |-----------|------|----------|-------------|
 | `watched_dir_id` | string | No | Optional watched directory identifier (UUID4). If provided, only projects from this watched directory will be returned. If not provided, all projects from all watched directories are returned. |
 
-**Schema:** `additionalProperties: false` — only the parameters above are accepted. This command does **not** accept `root_dir`; database path is resolved from server configuration.
+**Schema:** `additionalProperties: false` — only the parameters above are accepted.
 
 ---
 
@@ -54,13 +48,11 @@ All MCP commands return either a **success** result (with `data`) or an **error*
 ### Success
 
 - **Shape:** `SuccessResult` with `data` object.
-- `projects`: List of project dictionaries, each containing:
+- `projects`: List of project dictionaries. Each project always includes:
 - id: Project UUID (string)
-- root_path: Project root directory path (string)
-- name: Project name (string, may be None)
-- comment: Optional comment/description (string, may be None)
-- watch_dir_id: Watched directory identifier (string, UUID4, may be None)
-- updated_at: Last update timestamp (ISO format string or None)
+- watch_dir: Watched directory absolute path (string, or None if not linked)
+- name: Project directory name (string, may be None)
+Additional fields: root_path, comment, watch_dir_id, updated_at.
 - `count`: Number of projects found (integer)
 
 ### Error

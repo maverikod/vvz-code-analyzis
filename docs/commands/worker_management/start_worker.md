@@ -69,8 +69,8 @@ Important notes:
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `worker_type` | string | **Yes** | Type of worker to start. |
-| `root_dir` | string | **Yes** | Project root directory (used to resolve storage paths for vectorization worker). |
-| `watch_dirs` | array | No | Directories to watch (file_watcher only; default: [root_dir]). |
+| `project_id` | string | **Yes** | Project UUID (used to resolve project root and storage paths). |
+| `watch_dirs` | array | No | Directories to watch (file_watcher only; default: project root). |
 | `scan_interval` | integer | No | Scan interval seconds (file_watcher only). Default: `60`. |
 | `poll_interval` | integer | No | Poll interval seconds (vectorization only). Default: `30`. |
 | `batch_size` | integer | No | Batch size (vectorization only). Default: `10`. |

@@ -57,8 +57,8 @@ Important notes:
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `file_path` | string | **Yes** | Path to Python file to format. |
-| `root_dir` | string | No | Optional project root directory. If provided, database will be updated after formatting. |
+| `file_path` | string | **Yes** | Path to Python file (relative to project root if project_id given, else absolute). |
+| `project_id` | string | No | Optional project UUID. If provided, file_path is relative to project root and DB is updated after format. |
 
 **Schema:** `additionalProperties: false` — only the parameters above are accepted.
 

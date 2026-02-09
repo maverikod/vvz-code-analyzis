@@ -15,12 +15,11 @@ email: vasilyvz@gmail.com
 The backup_database command creates filesystem backups of a project's SQLite database file and its sidecar files (WAL, SHM, journal). This is a safety measure before destructive operations like repair.
 
 Operation flow:
-1. Validates root_dir exists and is a directory
-2. Resolves database path: root_dir/data/code_analysis.db
-3. Determines backup directory (default: root_dir/data)
-4. Creates timestamped backups of database file
-5. Creates backups of sidecar files if present (-wal, -shm, -journal)
-6. Returns list of created backup file paths
+1. Resolves database path from server config (one shared DB for all projects)
+2. Determines backup directory (default: backup_dir from server config)
+3. Creates timestamped backups of database file
+4. Creates backups of sidecar files if present (-wal, -shm, -journal)
+5. Returns list of created backup file paths
 
 Backup Files:
 - Main database file: code_analysis.db.corrupt-backup.TIMESTAMP
@@ -56,8 +55,8 @@ Important notes:
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `root_dir` | string | **Yes** | Project root directory (contains data/code_analysis.db). |
-| `backup_dir` | string | No | Optional directory where backup files will be stored (default: root_dir/data). |
+| `root_dir` | string | No | Optional; ignored. DB path from server config. |
+| `backup_dir` | string | No | Optional directory for backup files (default: backup_dir from server config). |
 
 **Schema:** `additionalProperties: false` — only the parameters above are accepted.
 
@@ -70,8 +69,7 @@ All MCP commands return either a **success** result (with `data`) or an **error*
 ### Success
 
 - **Shape:** `SuccessResult` with `data` object.
-- `root_dir`: Project root directory path
-- `db_path`: Path to database file
+- `db_path`: Path to shared database file (from server config)
 - `backup_dir`: Directory where backups were created
 - `backup_paths`: List of created backup file paths. Includes:
 - Database file backup
@@ -89,33 +87,14 @@ All MCP commands return either a **success** result (with `data`) or an **error*
 
 ### Correct usage
 
-**Backup database to default location**
-```json
-{
-  "root_dir": "/home/user/projects/my_project"
-}
-```
-
-Creates backups in root_dir/data with timestamped filenames.
-
 **Backup database to custom location**
 ```json
 {
-  "root_dir": "/home/user/projects/my_project",
-  "backup_dir": "/backups/my_project"
+  "backup_dir": "/backups/code_analysis"
 }
 ```
 
-Creates backups in specified directory instead of default location.
-
-**Backup before repair operation**
-```json
-{
-  "root_dir": "."
-}
-```
-
-Creates safety backup before running repair_sqlite_database.
+Creates backups in specified directory instead of default.
 
 ### Incorrect usage
 

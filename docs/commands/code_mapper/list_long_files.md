@@ -40,9 +40,8 @@ Important notes:
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `root_dir` | string | **Yes** | Root directory of the project (contains data/code_analysis.db) |
+| `project_id` | string | **Yes** | Project UUID (from create_project or list_projects). |
 | `max_lines` | integer | No | Maximum lines threshold (default: 400) Default: `400`. |
-| `project_id` | string | No | Optional project UUID; if omitted, inferred by root_dir |
 
 **Schema:** `additionalProperties: false` — only the parameters above are accepted.
 

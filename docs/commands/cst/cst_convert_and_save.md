@@ -68,7 +68,7 @@ Important notes:
 | `file_path` | string | **Yes** | Target Python file path (relative to project root). Required for saving to database. |
 | `source_code` | string | **Yes** | Source code to convert to CST and save. Required. |
 | `save_to_file` | boolean | No | Whether to save code to file on disk. Default is True. Default: `true`. |
-| `root_dir` | string | No | Server root directory (optional, for database access). If not provided, will be resolved from config. |
+| `include_nodes` | boolean | No | If True, include full list of CST node metadata in response (can be large). Default False to keep response small and avoid connection/buffer issues. Default: `false`. |
 
 **Schema:** `additionalProperties: false` — only the parameters above are accepted.
 

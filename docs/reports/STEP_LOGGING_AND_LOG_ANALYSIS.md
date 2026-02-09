@@ -3,6 +3,27 @@
 Author: Vasiliy Zdanovskiy  
 email: vasilyvz@gmail.com
 
+## 0. Optional: full operation timing (for bottleneck analysis)
+
+Set in **config.json** under `code_analysis.worker`:
+
+- **`log_all_operations_timing`**: `true` | `false` (default: `false`)
+
+When **`true`**, every significant operation is logged at INFO with a single format:
+
+- **`[TIMING] <op_name> duration=X.XXXs key=val ...`**
+
+Operations logged (only when enabled):
+
+- **batch_processor:** `Step0_SELECT_missing_params`, `Step0_get_chunks_batch`, `Step0_execute_batch_UPDATE`, `Step5_SELECT_embedding_ready`, `Step5_execute_batch_UPDATE_vector_id`, `Step5_FAISS_save_index`
+- **chunking:** `file_read`, `ast_parse`, `chunker_process_file`, `DB_UPDATE_needs_chunking`, `Step5_after_file`
+- **processing:** `Step1_SELECT_files_needing_chunking`
+- **docstring_chunker:** `get_chunks_batch`, `get_chunks_one` (per docstring in fallback), `persist_chunks`
+
+Restart the server after changing the option. Use this to find bottlenecks by comparing durations (e.g. `get_chunks_batch` vs `persist_chunks` vs `Step5_FAISS_save_index`).
+
+---
+
 ## 1. Step-by-step logging added
 
 ### 1.1 Processing loop (`processing.py`)
@@ -42,6 +63,21 @@ email: vasilyvz@gmail.com
 
 - **Persist:** Before writing chunks, log counts with vs without embedding:  
   `[FILE id] Persisting N chunks (M with embedding, K without) to database...`
+
+### 1.5 Full operation timing (optional, for bottleneck analysis)
+
+Set **`code_analysis.worker.log_all_operations_timing: true`** in `config.json` to log every significant operation with duration at INFO. Each line has the form:
+
+`[TIMING] <op_name> duration=X.XXXs key=value ...`
+
+**Operations logged when enabled:**
+
+- **batch_processor:** `Step0_SELECT_missing_params`, `Step0_get_chunks_batch`, `Step0_execute_batch_UPDATE`, `Step5_SELECT_embedding_ready`, `Step5_execute_batch_UPDATE_vector_id`, `Step5_FAISS_save_index`
+- **chunking:** `file_read`, `ast_parse`, `chunker_process_file`, `DB_UPDATE_needs_chunking`, `Step5_after_file`
+- **docstring_chunker:** `get_chunks_batch`, `get_chunks_one` (per docstring when fallback), `persist_chunks`
+- **processing:** `Step1_SELECT_files_needing_chunking`
+
+Restart the server after changing the config. Use these lines to find the bottleneck (largest duration).
 
 ---
 

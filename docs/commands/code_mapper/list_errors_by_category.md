@@ -42,8 +42,7 @@ Important notes:
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `root_dir` | string | **Yes** | Root directory of the project (contains data/code_analysis.db) |
-| `project_id` | string | No | Optional project UUID; if omitted, inferred by root_dir (or all projects if not found) |
+| `project_id` | string | No | Optional project UUID (from list_projects); if omitted, all projects |
 
 **Schema:** `additionalProperties: false` — only the parameters above are accepted.
 

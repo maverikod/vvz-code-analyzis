@@ -53,8 +53,8 @@ Important notes:
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `root_dir` | string | **Yes** | Project root directory |
-| `file_path` | string | **Yes** | Original file path (relative to root_dir) |
+| `project_id` | string | **Yes** | Project UUID (from create_project or list_projects). Required for commands that operate on a project. |
+| `file_path` | string | **Yes** | Original file path (relative to project root) |
 | `backup_uuid` | string | No | UUID of backup to restore (optional, uses latest if not provided) |
 
 **Schema:** `additionalProperties: false` — only the parameters above are accepted.

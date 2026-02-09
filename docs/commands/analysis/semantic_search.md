@@ -18,12 +18,12 @@ Operation flow:
 1. Validates root_dir exists and is a directory
 2. Opens database connection
 3. Resolves project_id (from parameter or inferred from root_dir)
-4. Loads config.json to get vector_dim and embedding service config
-5. Resolves FAISS index path (one index per project)
+4. Loads server config to get vector_dim and embedding service config
+5. Resolves FAISS index path (one index per project: {faiss_dir}/{project_id}.bin)
 6. Loads FAISS index using FaissIndexManager
 7. Gets query embedding from embedding service (SVOClientManager)
 8. Normalizes embedding vector
-9. Searches FAISS index for k nearest neighbors
+9. Searches FAISS index for limit nearest neighbors
 10. Filters results by min_score (if provided)
 11. Returns similar code chunks with similarity scores
 
@@ -35,22 +35,14 @@ Semantic Search:
 - Similarity score: 1.0 / (1.0 + distance)
 
 FAISS Index:
-- One index per project
+- One index per project: {faiss_dir}/{project_id}.bin
 - Must be built with update_indexes first
 - Uses cosine similarity (normalized vectors)
-- Supports k-nearest neighbor search
-
-Use cases:
-- Find code with similar functionality
-- Search by meaning rather than exact text
-- Discover related code patterns
-- Find code implementing similar concepts
+- Returns up to limit nearest neighbors
 
 Important notes:
 - Requires embedding service to be available
 - Requires FAISS index (run update_indexes first)
-- Requires config.json with embedding service configuration
-- Results are project-scoped (only chunks from same project)
 - Similarity scores range from 0.0 to 1.0 (higher is better)
 - min_score filters results by similarity threshold
 
@@ -60,11 +52,10 @@ Important notes:
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `root_dir` | string | **Yes** | Root directory of the project (contains data/code_analysis.db) |
+| `project_id` | string | **Yes** | Project UUID (from create_project or list_projects). |
 | `query` | string | **Yes** | Search query text |
-| `k` | integer | No | Number of results to return (1-100) |
+| `limit` | integer | No | Maximum number of results to return (1-100). Same as fulltext_search/search_ast_nodes. |
 | `min_score` | number | No | Minimum similarity score (0.0-1.0) |
-| `project_id` | string | No | Optional project UUID; if omitted, inferred by root_dir |
 
 **Schema:** `additionalProperties: false` — only the parameters above are accepted.
 
@@ -78,9 +69,9 @@ All MCP commands return either a **success** result (with `data`) or an **error*
 
 - **Shape:** `SuccessResult` with `data` object.
 - `query`: Search query that was used
-- `k`: Number of results requested
+- `limit`: Maximum number of results requested (same as request parameter)
 - `min_score`: Minimum score threshold (if provided)
-- `index_path`: Path to FAISS index file
+- `index_path`: Path to FAISS index file ({faiss_dir}/{project_id}.bin)
 - `project_id`: Project UUID
 - `results`: List of similar code chunks. Each contains:
 - score: Similarity score (0.0-1.0, higher is better)
@@ -109,7 +100,7 @@ All MCP commands return either a **success** result (with `data`) or an **error*
 {
   "root_dir": "/home/user/projects/my_project",
   "query": "database connection",
-  "k": 10
+  "limit": 10
 }
 ```
 
@@ -120,7 +111,7 @@ Searches for code chunks semantically similar to 'database connection', returnin
 {
   "root_dir": "/home/user/projects/my_project",
   "query": "error handling",
-  "k": 20,
+  "limit": 20,
   "min_score": 0.7
 }
 ```
@@ -132,7 +123,7 @@ Searches for similar code with minimum similarity score of 0.7, returning up to 
 {
   "root_dir": "/home/user/projects/my_project",
   "query": "file processing",
-  "k": 5,
+  "limit": 5,
   "min_score": 0.9
 }
 ```
@@ -143,11 +134,11 @@ Finds highly similar code (score >= 0.9) related to 'file processing', returning
 
 - **PROJECT_NOT_FOUND**: root_dir='/path' but project not registered. Ensure project is registered. Run update_indexes first.
 
-- **CONFIG_NOT_FOUND**: root_dir='/path' but config.json missing. Ensure config.json exists in root_dir with embedding service configuration.
+- **CONFIG_NOT_FOUND**: Server config.json missing. Ensure server config has embedding service configuration (code_analysis.embedding).
 
-- **FAISS_INDEX_NOT_FOUND**: Index file doesn't exist for project. Run update_indexes first to build the FAISS index. Index is project-scoped and must be created before searching.
+- **FAISS_INDEX_NOT_FOUND**: Index file doesn't exist for project. Run update_indexes first to build the FAISS index. One index per project: {faiss_dir}/{project_id}.bin
 
-- **EMBEDDING_SERVICE_ERROR**: Service unavailable, invalid response, or zero norm vector. Check embedding service configuration in config.json. Ensure service is available and responding correctly.
+- **EMBEDDING_SERVICE_ERROR**: Service unavailable, invalid response, or zero norm vector. Check embedding service configuration in server config. Ensure service is available and responding correctly.
 
 - **SEARCH_ERROR**: Database error, FAISS error, or vector dimension mismatch. Check database integrity, verify FAISS index is valid, ensure vector_dim matches index configuration.
 
@@ -156,9 +147,9 @@ Finds highly similar code (score >= 0.9) related to 'file processing', returning
 | Code | Description | Action |
 |------|-------------|--------|
 | `PROJECT_NOT_FOUND` | Project not found in database | Ensure project is registered. Run update_indexes f |
-| `CONFIG_NOT_FOUND` | Configuration file not found | Ensure config.json exists in root_dir with embeddi |
+| `CONFIG_NOT_FOUND` | Configuration file not found | Ensure server config has embedding service configu |
 | `FAISS_INDEX_NOT_FOUND` | FAISS index not found | Run update_indexes first to build the FAISS index. |
-| `EMBEDDING_SERVICE_ERROR` | Failed to get embedding from service | Check embedding service configuration in config.js |
+| `EMBEDDING_SERVICE_ERROR` | Failed to get embedding from service | Check embedding service configuration in server co |
 | `SEARCH_ERROR` | General error during search | Check database integrity, verify FAISS index is va |
 
 ## Best practices
@@ -166,8 +157,7 @@ Finds highly similar code (score >= 0.9) related to 'file processing', returning
 - Run update_indexes first to build the FAISS index
 - Ensure embedding service is configured and available
 - Use min_score to filter low-quality results
-- Adjust k based on expected result count
-- Results are project-scoped (only chunks from same project)
+- Adjust limit based on expected result count
 - Similarity scores help identify most relevant matches
 - Query text should describe the concept you're searching for
 

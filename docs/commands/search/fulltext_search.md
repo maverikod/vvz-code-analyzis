@@ -18,7 +18,7 @@ Operation flow:
 1. Validates root_dir exists and is a directory
 2. Opens database connection
 3. Resolves project_id (from parameter or inferred from root_dir)
-4. Performs FTS5 search in code_chunks_fts table
+4. Performs FTS5 search in code_content_fts table (BM25 ranking)
 5. Filters by entity_type if provided (class, method, function)
 6. Limits results to specified limit
 7. Returns matching chunks with file paths and metadata
@@ -50,11 +50,10 @@ Important notes:
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `root_dir` | string | **Yes** | Root directory of the project (contains data/code_analysis.db) |
+| `project_id` | string | **Yes** | Project UUID (from create_project or list_projects). |
 | `query` | string | **Yes** | Search query text |
 | `entity_type` | string | No | Filter by entity type (class, method, function) |
 | `limit` | integer | No | Maximum number of results Default: `20`. |
-| `project_id` | string | No | Optional project UUID; if omitted, inferred by root_dir |
 
 **Schema:** `additionalProperties: false` — only the parameters above are accepted.
 

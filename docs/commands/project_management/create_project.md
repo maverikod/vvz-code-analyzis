@@ -48,8 +48,12 @@ Validation Rules:
 - project_dir must NOT be already registered in database (unless projectid exists)
 - description is optional (defaults to project directory name)
 
-Return Values (MCP response):
-- data.project_id: UUID4 identifier of the project (created or existing)
+Return Values:
+- project_id: UUID4 identifier of the project
+- already_existed: True if project was already registered, False if newly created
+- description: Project description (from file if existed, or provided)
+- old_description: Previous description if projectid file was recreated
+- watch_dir_id: UUID4 identifier of the watch directory (project is linked to this watch_dir)
 - message: Status message
 
 Use cases:
@@ -64,7 +68,6 @@ Use cases:
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `root_dir` | string | **Yes** | Server root directory (contains config.json and data/code_analysis.db). Must be an absolute path or relative to current working directory. |
 | `watch_dir_id` | string | **Yes** | Watch directory ID (UUID4) from watch_dirs table. Must exist in database. Required. |
 | `project_name` | string | **Yes** | Name of project subdirectory to create in watch_dir. Required. Must be a valid directory name. |
 | `description` | string | **Yes** | Human-readable description of the project. Required. |
@@ -81,13 +84,18 @@ All MCP commands return either a **success** result (with `data`) or an **error*
 ### Success
 
 - **Shape:** `SuccessResult` with `data` object.
-- `data.project_id`: UUID4 identifier of the project (created or existing)
-- `message`: Status message (e.g. "Project created successfully")
+- `success`: Whether operation was successful (always True)
+- `project_id`: UUID4 identifier of the project
+- `already_existed`: Whether project was already registered (True) or newly created (False)
+- `description`: Project description (from file if existed, or provided)
+- `old_description`: Previous description if projectid file was recreated, empty otherwise
+- `watch_dir_id`: UUID4 identifier of the watch directory (project is linked to this watch_dir)
+- `message`: Status message
 
 ### Error
 
 - **Shape:** `ErrorResult` with `code` and `message`.
-- **Possible codes:** WATCH_DIR_NOT_FOUND, INVALID_PROJECT_NAME, PROJECT_ALREADY_EXISTS, PROJECT_DIR_EXISTS, PROJECTID_WRITE_ERROR, DATABASE_REGISTRATION_ERROR, CREATE_PROJECT_ERROR (and others).
+- **Possible codes:** WATCHED_DIR_NOT_FOUND, WATCHED_DIR_NOT_DIRECTORY, PROJECTID_EXISTS_IN_WATCHED_DIR, PROJECT_DIR_NOT_FOUND, PROJECT_DIR_NOT_DIRECTORY, PROJECTID_WRITE_ERROR, DATABASE_REGISTRATION_ERROR, WATCH_DIR_ERROR, CREATE_PROJECT_ERROR (and others).
 
 ---
 
@@ -96,60 +104,72 @@ All MCP commands return either a **success** result (with `data`) or an **error*
 ### Correct usage
 
 **Create new project**
-
-Use `watch_dir_id` (UUID from watch_dirs table) and `project_name` (subdirectory name under that watch dir). Get `watch_dir_id` from the server configuration or from a previous `add_watch_dir` / list operation.
-
 ```json
 {
   "root_dir": "/home/user/projects/tools/code_analysis",
-  "watch_dir_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
-  "project_name": "my_project",
+  "watched_dir": "/home/user/projects/test_data",
+  "project_dir": "/home/user/projects/test_data/my_project",
   "description": "My new project for testing"
 }
 ```
 
-Creates project subdirectory `my_project` under the watch directory identified by `watch_dir_id`, creates projectid file with UUID4, and registers the project in the database.
+Creates a new project in /home/user/projects/test_data/my_project. Creates projectid file with UUID4 and registers in database.
 
-**Create project with optional project_id**
+**Register existing project with projectid file**
 ```json
 {
   "root_dir": "/home/user/projects/tools/code_analysis",
-  "watch_dir_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
-  "project_name": "existing_project",
-  "description": "Existing project re-registration",
-  "project_id": "550e8400-e29b-41d4-a716-446655440000"
+  "watched_dir": "/home/user/projects/test_data",
+  "project_dir": "/home/user/projects/test_data/existing_project"
 }
 ```
 
-Uses the provided `project_id` instead of generating a new one. Useful when re-registering a project with an existing projectid file content.
+Registers an existing project that already has projectid file. Uses existing project ID from file.
+
+**Get existing project info**
+```json
+{
+  "root_dir": "/home/user/projects/tools/code_analysis",
+  "watched_dir": "/home/user/projects/test_data",
+  "project_dir": "/home/user/projects/test_data/registered_project"
+}
+```
+
+If project is already registered in database, returns existing project info without creating new projectid file.
 
 ### Incorrect usage
 
-- **WATCH_DIR_NOT_FOUND**: `watch_dir_id` not found in database or watch directory has no path set. Verify `watch_dir_id` exists in `watch_dirs` table and that a path is configured (e.g. via worker config or `watch_dir_paths`).
+- **WATCHED_DIR_NOT_FOUND**: watched_dir='/path/to/missing'. Verify watched directory path exists and is accessible.
 
-- **INVALID_PROJECT_NAME**: `project_name` is empty or whitespace. Provide a non-empty directory name.
+- **WATCHED_DIR_NOT_DIRECTORY**: watched_dir='/path/to/file.txt'. Ensure watched_dir points to a directory, not a file.
 
-- **PROJECT_ALREADY_EXISTS**: A project with the same path is already registered. Use `list_projects` to get existing project_id or use a different `project_name`.
+- **PROJECTID_EXISTS_IN_WATCHED_DIR**: watched_dir='/path' contains projectid file. Watched directory should not contain projectid file. Use a parent directory as watched_dir, or remove projectid file if not needed.
 
-- **PROJECT_DIR_EXISTS**: Project directory already exists but is not registered. Resolve manually or use a different `project_name`.
+- **PROJECT_DIR_NOT_FOUND**: project_dir='/path/to/missing'. Verify project directory path exists and is accessible.
 
-- **PROJECTID_WRITE_ERROR**: Failed to write projectid file (permission denied or disk full). Check directory permissions and disk space.
+- **PROJECT_DIR_NOT_DIRECTORY**: project_dir='/path/to/file.txt'. Ensure project_dir points to a directory, not a file.
 
-- **DATABASE_REGISTRATION_ERROR**: Database error during registration (locked, constraint violation, or connection error). Check database integrity and connections.
+- **PROJECTID_WRITE_ERROR**: Permission denied or disk full. Check file permissions, ensure directory is writable, verify disk space is available.
 
-- **CREATE_PROJECT_ERROR**: Unexpected error during creation. Check the returned `message` for details.
+- **DATABASE_REGISTRATION_ERROR**: Database locked, constraint violation, or connection error. Check database integrity, ensure database is not locked, verify database connection is working.
+
+- **WATCH_DIR_ERROR**: Error during watch_dir lookup or creation. Check database connection and permissions. Verify watched_dir path is valid.
+
+- **CREATE_PROJECT_ERROR**: Unexpected error in validation or creation process. Check error message for specific details and resolve accordingly.
 
 ## Error codes summary
 
 | Code | Description | Action |
 |------|-------------|--------|
-| `WATCH_DIR_NOT_FOUND` | Watch directory ID not in DB or path not set | Ensure `watch_dir_id` exists in `watch_dirs` and has a path |
-| `INVALID_PROJECT_NAME` | Project name empty or invalid | Provide non-empty `project_name` |
-| `PROJECT_ALREADY_EXISTS` | Project path already registered | Use `list_projects` or different `project_name` |
-| `PROJECT_DIR_EXISTS` | Directory exists but not registered | Resolve manually or use different `project_name` |
-| `PROJECTID_WRITE_ERROR` | Failed to write projectid file | Check permissions and disk space |
-| `DATABASE_REGISTRATION_ERROR` | DB error on registration | Check DB integrity and connection |
-| `CREATE_PROJECT_ERROR` | Unexpected creation error | Check returned `message` for details |
+| `WATCHED_DIR_NOT_FOUND` | Watched directory does not exist | Verify watched directory path exists and is access |
+| `WATCHED_DIR_NOT_DIRECTORY` | Watched path is not a directory | Ensure watched_dir points to a directory, not a fi |
+| `PROJECTID_EXISTS_IN_WATCHED_DIR` | Watched directory already contains projectid file | Watched directory should not contain projectid fil |
+| `PROJECT_DIR_NOT_FOUND` | Project directory does not exist | Verify project directory path exists and is access |
+| `PROJECT_DIR_NOT_DIRECTORY` | Project path is not a directory | Ensure project_dir points to a directory, not a fi |
+| `PROJECTID_WRITE_ERROR` | Failed to write projectid file | Check file permissions, ensure directory is writab |
+| `DATABASE_REGISTRATION_ERROR` | Failed to register project in database | Check database integrity, ensure database is not l |
+| `WATCH_DIR_ERROR` | Failed to get or create watch_dir for watched_dir | Check database connection and permissions. Verify  |
+| `CREATE_PROJECT_ERROR` | General error during project creation | Check error message for specific details and resol |
 
 ## Best practices
 

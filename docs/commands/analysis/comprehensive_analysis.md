@@ -78,8 +78,7 @@ Important notes:
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `root_dir` | string | **Yes** | Project root directory (contains data/code_analysis.db) |
-| `project_id` | string | No | Optional project UUID; if omitted, inferred by root_dir |
+| `project_id` | string | **Yes** | Project UUID (from create_project or list_projects). Required for commands that operate on a project. |
 | `file_path` | string | No | Optional path to specific file to analyze |
 | `max_lines` | integer | No | Maximum lines threshold for long files Default: `400`. |
 | `check_placeholders` | boolean | No | Check for placeholders (TODO, FIXME, etc.) Default: `true`. |

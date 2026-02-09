@@ -71,7 +71,6 @@ Important notes:
 | `project_id` | string | **Yes** | Project ID (UUID4). Required. |
 | `file_path` | string | **Yes** | Target Python file path (relative to project root). File must not exist. |
 | `docstring` | string | **Yes** | File-level docstring (required). Will be automatically formatted as triple-quoted string if not already formatted. Must not be empty. |
-| `root_dir` | string | No | Server root directory (optional, for database access). If not provided, will be resolved from config. |
 
 **Schema:** `additionalProperties: false` — only the parameters above are accepted.
 

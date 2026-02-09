@@ -20,7 +20,7 @@ Operation flow:
 3. Resolves project_id (from parameter or inferred from root_dir)
 4. Verifies project exists in database
 5. Resolves version_dir path (relative to root_dir if not absolute)
-6. Resolves database path and worker log path
+6. Resolves shared database path from server config and worker log path
 7. Checks if repair worker is already running
 8. Starts worker process using multiprocessing
 9. Registers worker in WorkerManager
@@ -65,8 +65,7 @@ Important notes:
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `root_dir` | string | **Yes** | Root directory of the project (contains data/code_analysis.db) |
-| `project_id` | string | No | Optional project UUID; if omitted, inferred by root_dir |
+| `project_id` | string | **Yes** | Project UUID (from create_project or list_projects). |
 | `version_dir` | string | No | Version directory for deleted files (default: data/versions) Default: `"data/versions"`. |
 | `batch_size` | integer | No | Number of files to process per batch (default: 10) Default: `10`. |
 | `poll_interval` | integer | No | Interval in seconds between repair cycles (default: 30) Default: `30`. |

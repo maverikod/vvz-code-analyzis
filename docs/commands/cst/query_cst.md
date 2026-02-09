@@ -71,12 +71,15 @@ Use cases:
 - Analyze code structure
 - Prepare for compose_cst_module operations
 
-Typical Workflow:
+Typical Workflow (query only):
 1. Use query_cst to find target nodes
 2. Get node_id from matches
 3. Use compose_cst_module with selector kind='node_id' or kind='cst_query'
 4. Preview diff and compile result
 5. Apply changes if satisfied
+
+Replace mode (find + replace in one call):
+Pass replace_with (string) or code_lines (array of lines). Optionally match_index (0-based, which match to replace) or replace_all (replace every match). File is backed up, then updated; database is refreshed. Response is compact: replaced count, file_path, backup_uuid.
 
 Important notes:
 - Selector syntax follows CSTQuery rules (see docs/CST_QUERY.md)
@@ -93,12 +96,15 @@ Important notes:
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `project_id` | string | No | Project ID (UUID4). If provided, root_dir will be resolved from database. Either project_id or root_dir must be provided. |
-| `root_dir` | string | No | Project root directory. Required if project_id is not provided. |
+| `project_id` | string | **Yes** | Project UUID (from create_project or list_projects). Required for commands that operate on a project. |
 | `file_path` | string | **Yes** | Target python file path (relative to project root) |
 | `selector` | string | **Yes** | CSTQuery selector string |
 | `include_code` | boolean | No | If true, include code snippets for each match (can be large) Default: `false`. |
 | `max_results` | integer | No | Maximum number of matches to return Default: `200`. |
+| `replace_with` | string | No | If set, replace the matched node(s) with this code (single string). Use code_lines for multi-line to avoid escaping. One call = find + replace. |
+| `code_lines` | array | No | If set, replace the matched node(s) with these lines (joined by newline). Prefer over replace_with for multi-line code. |
+| `match_index` | integer | No | When replacing: which match to replace (0-based). Ignored if replace_all is true. Default: `0`. |
+| `replace_all` | boolean | No | When replacing: if true, replace all matches with the same new code. match_index is ignored. Default: `false`. |
 
 **Schema:** `additionalProperties: false` — only the parameters above are accepted.
 
@@ -124,11 +130,16 @@ All MCP commands return either a **success** result (with `data`) or an **error*
 - start_line, start_col: Starting position (1-based line, 0-based col)
 - end_line, end_col: Ending position (1-based line, 0-based col)
 - code: Code snippet (if include_code=True)
+- `replace_response`: When replace_with or code_lines is used, success data contains:
+- replaced: Number of nodes replaced
+- removed: Number of nodes removed (empty new_code)
+- file_path: Path to modified file
+- backup_uuid: Backup identifier (if backup was created)
 
 ### Error
 
 - **Shape:** `ErrorResult` with `code` and `message`.
-- **Possible codes:** INVALID_FILE, FILE_NOT_FOUND, CST_QUERY_PARSE_ERROR, CST_QUERY_ERROR (and others).
+- **Possible codes:** INVALID_FILE, FILE_NOT_FOUND, CST_QUERY_PARSE_ERROR, CST_QUERY_ERROR, CST_QUERY_NO_MATCH, CST_QUERY_MATCH_INDEX, CST_REPLACE_ERROR (and others).
 
 ---
 
@@ -206,6 +217,12 @@ See docs/CST_QUERY.md for syntax reference.
 
 - **CST_QUERY_ERROR**: Error during query execution. 
 
+- **CST_QUERY_NO_MATCH**: Selector matched no nodes (replace mode only). Verify selector matches at least one node in the file
+
+- **CST_QUERY_MATCH_INDEX**: match_index out of range (replace mode only). Use match_index between 0 and (match_count - 1), or use replace_all
+
+- **CST_REPLACE_ERROR**: Replace failed (e.g. unsupported node kind or parse error). Ensure new code is valid Python; replace supports stmt/smallstmt/function/class/method
+
 ## Error codes summary
 
 | Code | Description | Action |
@@ -215,9 +232,13 @@ See docs/CST_QUERY.md for syntax reference.
 | `CST_QUERY_PARSE_ERROR` | Invalid selector syntax | Check selector syntax. Ensure:
 - Proper predicate  |
 | `CST_QUERY_ERROR` | Error during query execution |  |
+| `CST_QUERY_NO_MATCH` | Selector matched no nodes (replace mode only) | Verify selector matches at least one node in the f |
+| `CST_QUERY_MATCH_INDEX` | match_index out of range (replace mode only) | Use match_index between 0 and (match_count - 1), o |
+| `CST_REPLACE_ERROR` | Replace failed (e.g. unsupported node kind or parse error) | Ensure new code is valid Python; replace supports  |
 
 ## Best practices
 
+- For find+replace in one call: pass replace_with or code_lines (and optionally match_index or replace_all)
 - Use query_cst to find specific nodes before compose_cst_module
 - Save node_id from matches for use in compose_cst_module
 - Use include_code=True only when needed (can be large)
@@ -225,6 +246,5 @@ See docs/CST_QUERY.md for syntax reference.
 - Check truncated field to see if results were limited
 - Use specific selectors to find exact nodes
 - Combine selectors with combinators for complex queries
-- Use pseudos (:first, :last, :nth) to select specific matches
 
 ---

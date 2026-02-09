@@ -54,11 +54,10 @@ Important notes:
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `root_dir` | string | **Yes** | Project root directory (contains data/code_analysis.db) |
+| `project_id` | string | **Yes** | Project UUID (from create_project or list_projects). |
 | `file_pattern` | string | No | Optional pattern to filter files (e.g., '*.py', 'core/*') |
 | `limit` | integer | No | Optional limit on number of results |
 | `offset` | integer | No | Offset for pagination Default: `0`. |
-| `project_id` | string | No | Optional project UUID; if omitted, inferred by root_dir |
 
 **Schema:** `additionalProperties: false` — only the parameters above are accepted.
 

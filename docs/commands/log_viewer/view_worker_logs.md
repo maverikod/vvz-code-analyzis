@@ -19,12 +19,13 @@ Operation flow:
 2. Parses time filters (from_time, to_time) if provided
 3. Selects event patterns based on worker_type
 4. Reads log file line by line
-5. Parses each log line to extract timestamp, level, and message
+5. Parses each log line (unified or legacy format) to extract timestamp, level, importance (0-10), and message
 6. Applies filters:
-   - Time range filter (from_time to to_time)
+   - Time range filter (from_time to to_time; partial interval supported)
    - Event type filter (matches event patterns)
    - Log level filter (INFO, ERROR, WARNING, etc.)
-   - Search pattern filter (regex matching)
+   - Importance filter (importance_min, importance_max 0-10)
+   - Search pattern filter (regex on message)
 7. If tail specified, returns last N lines (ignores time filters)
 8. Limits results to specified limit
 9. Returns structured log entries
@@ -66,8 +67,8 @@ Important notes:
 - If tail is specified, time filters are ignored
 - Search pattern supports regex (case-insensitive)
 - Default limit is 1000 lines to prevent large responses
-- Log lines are parsed to extract timestamp, level, importance (0–10), and message
-- **Importance as filter:** `importance_min` and `importance_max` are **filter** parameters: they only select which log lines are returned. Importance is assigned when logs are written (unified format or derived from level; see LOG_IMPORTANCE_CRITERIA.md). As logs gradually fill up, filtering by importance becomes more useful to focus on higher-impact entries (e.g. importance_min=6 for warnings and above).
+- Log lines are parsed to extract timestamp, level, importance (0-10), and message
+- importance_min/importance_max are filters only (they select which lines are returned); importance is assigned when logs are written. As logs gradually fill up, filtering by importance becomes more useful (e.g. importance_min=6 for warnings and above).
 
 ---
 
@@ -75,17 +76,17 @@ Important notes:
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `log_path` | string | No | Path to log file (optional if worker_type set and config provides log path) |
-| `worker_type` | string | No | Type of worker (file_watcher, vectorization, indexing, database_driver, analysis). Default: `"file_watcher"`. |
+| `log_path` | string | No | Path to log file |
+| `worker_type` | string | No | Type of worker (file_watcher, vectorization, indexing, database_driver, or analysis) Default: `"file_watcher"`. |
 | `from_time` | string | No | Start time filter (ISO format or 'YYYY-MM-DD HH:MM:SS') |
 | `to_time` | string | No | End time filter (ISO format or 'YYYY-MM-DD HH:MM:SS') |
 | `event_types` | array | No | List of event types to filter (e.g., ['new_file', 'changed_file', 'deleted_file', 'cycle', 'error']) |
 | `log_levels` | array | No | List of log levels to filter (e.g., ['INFO', 'ERROR']) |
-| `importance_min` | integer | No | Minimum importance 0–10 (inclusive); only lines with importance ≥ this are returned (filter) |
-| `importance_max` | integer | No | Maximum importance 0–10 (inclusive); only lines with importance ≤ this are returned (filter) |
 | `search_pattern` | string | No | Text pattern to search for (regex supported) |
+| `importance_min` | integer | No | Minimum importance 0-10 (inclusive) |
+| `importance_max` | integer | No | Maximum importance 0-10 (inclusive) |
 | `tail` | integer | No | Return last N lines (if specified, ignores time filters) |
-| `limit` | integer | No | Maximum number of lines to return. Default: `1000`. |
+| `limit` | integer | No | Maximum number of lines to return Default: `1000`. |
 
 **Schema:** `additionalProperties: false` — only the parameters above are accepted.
 
@@ -99,11 +100,11 @@ All MCP commands return either a **success** result (with `data`) or an **error*
 
 - **Shape:** `SuccessResult` with `data` object.
 - `entries`: List of log entries. Each entry contains:
-- timestamp: Log timestamp (datetime)
+- timestamp: Log timestamp (ISO format)
 - level: Log level (DEBUG, INFO, WARNING, ERROR, CRITICAL)
+- importance: Importance 0-10 (see LOG_IMPORTANCE_CRITERIA.md)
 - message: Log message
-- event_type: Detected event type (if matched)
-- line_number: Line number in log file
+- raw: Original log line
 - `total_lines`: Total number of lines read from log file
 - `filtered_lines`: Number of lines after filtering
 - `limit`: Limit applied
@@ -168,6 +169,16 @@ Returns only logs for new_file, changed_file, and deleted_file events.
 
 Returns ERROR level logs containing 'failed' in vectorization.log.
 
+**Filter by importance (errors and above)**
+```json
+{
+  "worker_type": "file_watcher",
+  "importance_min": 8
+}
+```
+
+Returns log entries with importance >= 8 (errors and critical).
+
 ### Incorrect usage
 
 - **LOG_VIEW_ERROR**: File not found, permission denied, or parsing error. Verify log_path exists and is readable. Check file permissions. Ensure log file format is correct.
@@ -183,7 +194,8 @@ Returns ERROR level logs containing 'failed' in vectorization.log.
 - Use tail parameter to view recent logs quickly
 - Use time filters to narrow down to specific time periods
 - Combine event_types and log_levels for precise filtering
-- Use search_pattern for text-based searches
+- Use search_pattern for regex search on message
+- Use importance_min/importance_max to filter by severity (0-10)
 - Set appropriate limit to prevent large responses
 - Use list_worker_logs first to find available log files
 

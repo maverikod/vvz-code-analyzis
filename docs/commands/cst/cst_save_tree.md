@@ -20,7 +20,7 @@ Operation flow:
 3. Gets watch directory path from database
 4. Forms absolute path: watch_dir_path / project_name / file_path
 5. Validates original file (if exists) through compile()
-6. Creates backup via BackupManager (if file exists and backup=True)
+6. Creates backup via BackupManager (mandatory if file exists)
 7. Generates source code from CST tree
 8. Writes to temporary file
 9. Validates temporary file (compile, syntax check)
@@ -65,7 +65,6 @@ Important notes:
 | `tree_id` | string | **Yes** | Tree ID from cst_load_file |
 | `project_id` | string | **Yes** | Project ID (UUID4). Required. |
 | `file_path` | string | **Yes** | Target file path (relative to project root) |
-| `root_dir` | string | No | Server root directory (optional, for database access) |
 | `validate` | boolean | No | Whether to validate file before saving Default: `true`. |
 | `backup` | boolean | No | Whether to create backup Default: `true`. |
 | `commit_message` | string | No | Optional git commit message |

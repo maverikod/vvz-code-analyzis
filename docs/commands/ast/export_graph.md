@@ -48,12 +48,11 @@ Important notes:
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `root_dir` | string | **Yes** | Project root directory (contains data/code_analysis.db) |
+| `project_id` | string | **Yes** | Project UUID (from create_project or list_projects). Required for commands that operate on a project. |
 | `graph_type` | string | No | Type of graph: 'dependencies', 'hierarchy', or 'call_graph' Default: `"dependencies"`. |
 | `format` | string | No | Output format: 'dot' (Graphviz) or 'json' Default: `"dot"`. |
 | `file_path` | string | No | Optional file path to limit scope |
 | `limit` | integer | No | Optional limit on number of edges |
-| `project_id` | string | No | Optional project UUID; if omitted, inferred by root_dir |
 
 **Schema:** `additionalProperties: false` — only the parameters above are accepted.
 

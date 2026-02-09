@@ -657,3 +657,49 @@ class RotateLogsCommand:
             logger.error("Log rotation failed for %s: %s", self.log_path, e)
             result["error"] = str(e)
         return result
+
+
+# Regex for parsing [TIMING] lines: "[TIMING] op_name duration=X.XXXs key=value ..."
+TIMING_LINE_RE = re.compile(
+    r"\[TIMING\]\s+(\S+)\s+duration=([\d.]+)s",
+    re.IGNORECASE,
+)
+
+
+def parse_timing_line(line: str) -> Optional[tuple[str, float]]:
+    """
+    Parse a log line containing [TIMING] and return (op_name, duration_sec).
+
+    Expected message format: "[TIMING] op_name duration=X.XXXs [key=value ...]"
+
+    Args:
+        line: Full log line (unified format: "date | level | importance | message").
+
+    Returns:
+        (op_name, duration_sec) if line is a valid TIMING line, else None.
+    """
+    if "[TIMING]" not in line:
+        return None
+    # Message is after last " | " in unified format, or full line
+    parts = line.split(" | ", 3)
+    message = parts[-1].strip() if len(parts) >= 4 else line.strip()
+    match = TIMING_LINE_RE.search(message)
+    if not match:
+        return None
+    op_name = match.group(1)
+    try:
+        duration = float(match.group(2))
+    except ValueError:
+        return None
+    return (op_name, duration)
+
+
+def parse_log_timestamp(line: str) -> Optional[datetime]:
+    """Parse timestamp from start of log line (YYYY-MM-DD HH:MM:SS). Returns None if not matched."""
+    match = re.match(r"(\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2})", line.strip())
+    if not match:
+        return None
+    try:
+        return datetime.strptime(match.group(1), "%Y-%m-%d %H:%M:%S")
+    except ValueError:
+        return None

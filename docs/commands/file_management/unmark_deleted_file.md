@@ -52,9 +52,8 @@ Important notes:
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `root_dir` | string | **Yes** | Root directory of the project (contains data/code_analysis.db) |
+| `project_id` | string | **Yes** | Project UUID (from create_project or list_projects). |
 | `file_path` | string | **Yes** | File path (current in version_dir or original_path) |
-| `project_id` | string | No | Optional project UUID; if omitted, inferred by root_dir |
 | `dry_run` | boolean | No | If True, only show what would be restored Default: `false`. |
 
 **Schema:** `additionalProperties: false` — only the parameters above are accepted.

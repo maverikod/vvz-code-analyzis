@@ -12,7 +12,7 @@ email: vasilyvz@gmail.com
 
 ## Purpose (Предназначение)
 
-The delete_project command completely removes a project and all its data from the database. Optionally, when delete_from_disk=True, it moves the project root directory to trash (recycle bin) instead of permanently deleting it; the version directory for this project is permanently deleted. Database removal cannot be undone.
+The delete_project command completely removes a project and all its data from the database. Optionally, it can also delete the project directory and version files from disk. This is a destructive operation that cannot be undone.
 
 Operation flow:
 1. Resolves database path from server configuration (config.json)
@@ -21,7 +21,7 @@ Operation flow:
 4. Retrieves project information and statistics
 5. If dry_run=True:
    - Returns statistics about what would be deleted
-   - Shows what would be moved to trash (if delete_from_disk=True)
+   - Shows what would be deleted from disk (if delete_from_disk=True)
    - Does not perform actual deletion
 6. If dry_run=False:
    a. Deletes all project data from database first (while project dir still exists)
@@ -49,8 +49,9 @@ Deleted Data (Database):
 - Project record: The project itself
 
 Disk (if delete_from_disk=True):
-- Project root directory: Moved to trash (recycle bin). Use list_trashed_projects to list; permanently_delete_from_trash or clear_trash to permanently remove.
-- Version directory: Permanently removed ({version_dir}/{project_id}/). Trash directory is typically 'data/trash' (config: code_analysis.storage.trash_dir).
+- Project root directory: Moved to trash (recycle bin), not permanently deleted. Use list_trashed_projects / permanently_delete_from_trash / clear_trash to manage.
+- Version directory: Permanently removed ({version_dir}/{project_id}/)
+  Trash directory is typically 'data/trash' (config: code_analysis.storage.trash_dir)
 
 Use cases:
 - Remove projects that are no longer needed (database only)
@@ -76,7 +77,7 @@ Important notes:
 |-----------|------|----------|-------------|
 | `project_id` | string | **Yes** | Project ID (UUID v4). Required. The project identifier to delete. Can be obtained from list_projects command. |
 | `dry_run` | boolean | No | If True, only show what would be deleted without actually deleting. Default: False. Default: `false`. |
-| `delete_from_disk` | boolean | No | If True, move project root to trash (recycle bin) and delete version directory. If False, only delete from database. Default: False. Default: `false`. |
+| `delete_from_disk` | boolean | No | If True, move project root directory to trash (recycle bin) and delete version directory. If False, only delete from database. Default: False. Default: `false`. |
 
 **Schema:** `additionalProperties: false` — only the parameters above are accepted.
 

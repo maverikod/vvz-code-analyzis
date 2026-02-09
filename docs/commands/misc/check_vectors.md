@@ -20,8 +20,7 @@ The `check_vectors` command provides a comprehensive overview of the vectorizati
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `root_dir` | string | **Yes** | Root directory path of the project OR project UUID4 identifier. If a valid UUID4 string is provided, the project will be looked up in the database and its root_path will be used. If a file system path |
-| `project_id` | string | No | Optional project UUID to filter statistics by specific project. If not provided, returns statistics for all projects in the database. Format: UUID4 string (e.g., '550e8400-e29b-41d4-a716-446655440000' |
+| `project_id` | string | **Yes** | Project UUID (from create_project or list_projects). Required for commands that operate on a project. |
 
 **Schema:** `additionalProperties: false` — only the parameters above are accepted.
 

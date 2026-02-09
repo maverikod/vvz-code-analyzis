@@ -12,7 +12,7 @@ email: vasilyvz@gmail.com
 
 ## Purpose (Предназначение)
 
-The rebuild_faiss command rebuilds FAISS (Facebook AI Similarity Search) index from database embeddings. One index per project.
+The rebuild_faiss command rebuilds FAISS (Facebook AI Similarity Search) index from database embeddings. One index per project: {faiss_dir}/{project_id}.bin.
 
 Operation flow:
 1. Validates root_dir exists and is a directory
@@ -22,37 +22,14 @@ Operation flow:
 5. Loads config.json to get storage paths and vector dimension
 6. Initializes SVOClientManager for embeddings
 7. Gets project-scoped FAISS index path
-8. Initializes FaissIndexManager
-9. Normalizes vector_id to dense range (0..N-1)
-10. Rebuilds FAISS index from database embeddings
-11. Returns rebuild statistics
+8. Rebuilds FAISS index from database embeddings (all chunks in project)
+9. Returns rebuild statistics
 
-FAISS Index Rebuilding:
+FAISS Index:
+- One index per project: {faiss_dir}/{project_id}.bin
 - Reads embeddings from code_chunks.embedding_vector in database
-- Normalizes vector_id to dense range to avoid ID conflicts
-- Creates new FAISS index file from embeddings
-- Index is project-scoped (one index per project)
-- Index path: {faiss_dir}/{project_id}.bin
-
-Vector ID Normalization:
-- Reassigns vector_id to dense range 0..N-1
-- Uses single SQL statement to avoid per-row UPDATEs
-- Prevents ID conflicts and stabilizes sqlite_proxy worker
-- Only processes chunks with valid embeddings
-
-Use cases:
-- Rebuild index after database changes
-- Recover from corrupted index file
-- Rebuild index after embedding updates
-- Sync index with database state
-- Rebuild index after project changes
-
-Important notes:
+- Normalizes vector_id to dense range 0..N-1
 - Requires valid embeddings in database (use revectorize if missing)
-- Rebuilds index from existing embeddings (doesn't generate new ones)
-- Index file is recreated (old index is replaced)
-- Vector dimension must match config.json setting
-- Requires SVOClientManager for missing embeddings (if any)
 - project_id must match root_dir/projectid file
 
 ---
@@ -61,8 +38,7 @@ Important notes:
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `root_dir` | string | **Yes** | Root directory of the project (contains projectid file) |
-| `project_id` | string | **Yes** | Project UUID (must match root_dir/projectid) |
+| `project_id` | string | **Yes** | Project UUID (from create_project or list_projects). |
 
 **Schema:** `additionalProperties: false` — only the parameters above are accepted.
 
@@ -75,9 +51,8 @@ All MCP commands return either a **success** result (with `data`) or an **error*
 ### Success
 
 - **Shape:** `SuccessResult` with `data` object.
-- `project_id`: Project UUID that was processed
-- `total_vectors`: Total number of vectors in index
-- `index_path`: Path to FAISS index file
+- `project_id`: Project UUID
+- `index_path`: Path to FAISS index file ({faiss_dir}/{project_id}.bin)
 - `vectors_count`: Number of vectors in index
 
 ### Error
@@ -99,7 +74,7 @@ All MCP commands return either a **success** result (with `data`) or an **error*
 }
 ```
 
-Rebuilds FAISS index from database embeddings. Useful after project-wide changes.
+Rebuilds the single FAISS index for the project.
 
 ### Incorrect usage
 
@@ -121,10 +96,8 @@ Rebuilds FAISS index from database embeddings. Useful after project-wide changes
 
 - Run revectorize first if embeddings are missing
 - Rebuild index after bulk embedding updates
-- Rebuild index after project-wide changes
 - Verify vectors_count matches expected number of chunks
 - Check index_path to verify index file location
-- Monitor total_vectors to track index size
-- Rebuild index after database repairs or restores
+- Ensure vector_dim in config matches embedding dimension
 
 ---

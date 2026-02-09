@@ -35,12 +35,14 @@ async def _request_chunking_for_files(
     from ..docstring_chunker_pkg import DocstringChunker
 
     from .batch_processor import process_embedding_ready_chunks
+    from .timing_log import log_operation_timing
 
     chunker = DocstringChunker(
         database=database,
         svo_client_manager=self.svo_client_manager,
         faiss_manager=self.faiss_manager,
         min_chunk_length=self.min_chunk_length,
+        log_timing=getattr(self, "log_timing", False),
     )
 
     chunked_count = 0
@@ -89,7 +91,16 @@ async def _request_chunking_for_files(
 
             logger.debug(f"[FILE {file_id}] Reading file from disk...")
             try:
+                t0_read = time.time()
                 file_content = file_path_obj.read_text(encoding="utf-8")
+                log_operation_timing(
+                    getattr(self, "log_timing", False),
+                    logger,
+                    "file_read",
+                    time.time() - t0_read,
+                    file_id=file_id,
+                    bytes=len(file_content),
+                )
                 logger.debug(f"[FILE {file_id}] File read: {len(file_content)} bytes")
             except Exception as e:
                 logger.warning(f"[FILE {file_id}] Failed to read file {file_path}: {e}")
@@ -98,7 +109,15 @@ async def _request_chunking_for_files(
             # Parse AST
             logger.debug(f"[FILE {file_id}] Parsing AST...")
             try:
+                t0_ast = time.time()
                 tree = ast.parse(file_content, filename=file_path)
+                log_operation_timing(
+                    getattr(self, "log_timing", False),
+                    logger,
+                    "ast_parse",
+                    time.time() - t0_ast,
+                    file_id=file_id,
+                )
                 logger.debug(f"[FILE {file_id}] AST parsed successfully")
             except Exception as e:
                 logger.warning(
@@ -117,15 +136,30 @@ async def _request_chunking_for_files(
                 file_content=file_content,
             )
             chunking_duration = time.time() - chunking_start_time
+            log_operation_timing(
+                getattr(self, "log_timing", False),
+                logger,
+                "chunker_process_file",
+                chunking_duration,
+                file_id=file_id,
+            )
             logger.info(
                 f"[FILE {file_id}] Chunking completed in {chunking_duration:.3f}s"
             )
 
             # Clear needs_chunking so file is not re-selected until next change
             try:
+                t0_clear = time.time()
                 database.execute(
                     "UPDATE files SET needs_chunking = 0 WHERE id = ?",
                     (file_id,),
+                )
+                log_operation_timing(
+                    getattr(self, "log_timing", False),
+                    logger,
+                    "DB_UPDATE_needs_chunking",
+                    time.time() - t0_clear,
+                    file_id=file_id,
                 )
             except Exception as e:
                 logger.debug(f"[FILE {file_id}] Could not clear needs_chunking: {e}")
@@ -140,7 +174,16 @@ async def _request_chunking_for_files(
             logger.info(
                 f"[STEP] Step 5 after file: process_embedding_ready_chunks (project={project_id}, file_id={file_id})"
             )
+            t0_step5 = time.time()
             await process_embedding_ready_chunks(self, database)
+            log_operation_timing(
+                getattr(self, "log_timing", False),
+                logger,
+                "Step5_after_file",
+                time.time() - t0_step5,
+                file_id=file_id,
+                project_id=project_id,
+            )
 
         except Exception as e:
             logger.error(

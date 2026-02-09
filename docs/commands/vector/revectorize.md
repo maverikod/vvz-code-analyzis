@@ -50,8 +50,7 @@ Embedding Generation:
 FAISS Index Update:
 - After revectorization, FAISS index is rebuilt
 - Rebuild normalizes vector_id to dense range
-- Index includes all chunks with valid embeddings
-- Index is project-scoped (one per project)
+- Index includes all chunks with valid embeddings (one index per project)
 
 Use cases:
 - Generate embeddings for chunks without vectors
@@ -76,8 +75,7 @@ Important notes:
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `root_dir` | string | **Yes** | Root directory of the project (contains projectid file) |
-| `project_id` | string | **Yes** | Project UUID (must match root_dir/projectid) |
+| `project_id` | string | **Yes** | Project UUID (from create_project or list_projects). |
 | `force` | boolean | No | Force revectorization even if embeddings exist (default: false) Default: `false`. |
 
 **Schema:** `additionalProperties: false` — only the parameters above are accepted.
@@ -91,12 +89,10 @@ All MCP commands return either a **success** result (with `data`) or an **error*
 ### Success
 
 - **Shape:** `SuccessResult` with `data` object.
-- `project_id`: Project UUID that was processed
-- `total_chunks_revectorized`: Total number of chunks revectorized
-- `results`: List of revectorization results. Each contains:
-- chunks_revectorized: Number of chunks revectorized
-- vectors_in_index: Number of vectors in rebuilt FAISS index
-- index_path: Path to FAISS index file
+- `project_id`: Project UUID
+- `chunks_revectorized`: Number of chunks revectorized
+- `vectors_in_index`: Number of vectors in rebuilt FAISS index
+- `index_path`: Path to FAISS index file ({faiss_dir}/{project_id}.bin)
 
 ### Error
 
@@ -109,7 +105,7 @@ All MCP commands return either a **success** result (with `data`) or an **error*
 
 ### Correct usage
 
-**Revectorize missing embeddings**
+**Revectorize missing embeddings for project**
 ```json
 {
   "root_dir": "/home/user/projects/my_project",
@@ -129,7 +125,7 @@ Revectorizes only chunks without embeddings. FAISS index is automatically rebuil
 }
 ```
 
-Regenerates all embeddings for the project. Useful after embedding model changes.
+Regenerates all embeddings. Useful after embedding model changes.
 
 ### Incorrect usage
 
@@ -154,7 +150,7 @@ Regenerates all embeddings for the project. Useful after embedding model changes
 - Run revectorize before rebuild_faiss if embeddings are missing
 - Monitor chunks_revectorized to track progress
 - Check vectors_in_index to verify FAISS index was rebuilt
-- Revectorize after model updates
 - Ensure SVO service is configured and accessible
+- Run rebuild_faiss after revectorize to ensure index is updated
 
 ---

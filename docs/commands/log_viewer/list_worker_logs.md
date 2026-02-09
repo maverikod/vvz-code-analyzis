@@ -51,7 +51,7 @@ Important notes:
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `log_dirs` | array | No | List of directories to scan for log files (optional, defaults to ['logs']) |
-| `worker_type` | string | No | Filter by worker type (file_watcher, vectorization, analysis) or server logs (optional) |
+| `worker_type` | string | No | Filter by worker type (optional) |
 
 **Schema:** `additionalProperties: false` — only the parameters above are accepted.
 

@@ -26,6 +26,7 @@ from dataclasses import dataclass
 from typing import Any, Iterable, List, Optional, Tuple
 
 from ..exceptions import ChunkerResponseError
+from ..vectorization_worker_pkg.timing_log import log_operation_timing
 
 logger = logging.getLogger(__name__)
 
@@ -76,6 +77,7 @@ class DocstringChunker:
         faiss_manager: Optional[Any] = None,
         min_chunk_length: int = 30,
         embedding_model: Optional[str] = None,
+        log_timing: bool = False,
     ) -> None:
         """
         Initialize docstring chunker.
@@ -86,6 +88,7 @@ class DocstringChunker:
             faiss_manager: FAISS index manager (optional, reserved for future use).
             min_chunk_length: Minimum text length to store (default: 30).
             embedding_model: Embedding model identifier stored in DB.
+            log_timing: When True, log every operation with duration for bottleneck analysis.
         """
 
         self.database = database
@@ -93,6 +96,7 @@ class DocstringChunker:
         self.faiss_manager = faiss_manager
         self.min_chunk_length = int(min_chunk_length)
         self.embedding_model = embedding_model
+        self.log_timing = log_timing
 
     def _file_still_exists_and_not_deleted(self, file_id: int, project_id: str) -> bool:
         """
@@ -178,9 +182,38 @@ class DocstringChunker:
             try:
                 get_batch = getattr(self.svo_client_manager, "get_chunks_batch", None)
                 if callable(get_batch):
-                    try:
-                        texts = [item.text for item in items]
-                        batch_results = await get_batch(texts, type="DocBlock")
+                    texts = [item.text for item in items]
+                    batch_results = None
+                    batch_last_error = None
+                    for attempt in range(2):
+                        try:
+                            t0_batch = time.time()
+                            batch_results = await get_batch(texts, type="DocBlock")
+                            log_operation_timing(
+                                getattr(self, "log_timing", False),
+                                logger,
+                                "get_chunks_batch",
+                                time.time() - t0_batch,
+                                file_id=file_id,
+                                texts=len(texts),
+                                attempt=attempt + 1,
+                            )
+                            break
+                        except Exception as batch_e:
+                            batch_last_error = batch_e
+                            if attempt == 0:
+                                logger.warning(
+                                    f"[FILE {file_id}] get_chunks_batch attempt {attempt + 1}/2 failed: {batch_e}, retrying in 2s..."
+                                )
+                                await asyncio.sleep(2)
+                            else:
+                                logger.warning(
+                                    f"[FILE {file_id}] get_chunks_batch failed after 2 attempts: {batch_last_error}, "
+                                    "falling back to per-item get_chunks"
+                                )
+                                rows_to_persist = []
+                                get_batch = None
+                    if batch_results is not None:
                         for i, item in enumerate(items):
                             chunks = (
                                 batch_results[i]
@@ -225,18 +258,20 @@ class DocstringChunker:
                                         tc if tc else None,
                                     )
                                 )
-                    except Exception as batch_e:
-                        logger.warning(
-                            f"[FILE {file_id}] get_chunks_batch failed: {batch_e}, "
-                            "falling back to per-item get_chunks"
-                        )
-                        rows_to_persist = []
-                        get_batch = None
                 if not callable(get_batch):
                     for i, item in enumerate(items):
                         try:
+                            t0_one = time.time()
                             chunks = await self.svo_client_manager.get_chunks(
                                 text=item.text, type="DocBlock"
+                            )
+                            log_operation_timing(
+                                getattr(self, "log_timing", False),
+                                logger,
+                                "get_chunks_one",
+                                time.time() - t0_one,
+                                file_id=file_id,
+                                index=i,
                             )
                             if chunks and len(chunks) > 0:
                                 chunk_embedding_model = None
@@ -430,6 +465,15 @@ class DocstringChunker:
                 )
 
         persist_duration = time.time() - persist_start_time
+        log_operation_timing(
+            getattr(self, "log_timing", False),
+            logger,
+            "persist_chunks",
+            persist_duration,
+            file_id=file_id,
+            written=written,
+            total=len(rows_to_persist),
+        )
         logger.info(
             f"[FILE {file_id}] Persisted {written} docstring chunks to database in {persist_duration:.3f}s"
         )

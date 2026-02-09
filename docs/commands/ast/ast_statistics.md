@@ -45,9 +45,8 @@ Important notes:
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `root_dir` | string | **Yes** | Project root directory (contains data/code_analysis.db) |
-| `file_path` | string | No | Optional file path to compute stats for (absolute or relative) |
-| `project_id` | string | No | Optional project UUID; if omitted, inferred by root_dir |
+| `project_id` | string | **Yes** | Project UUID (from create_project or list_projects). Required for commands that operate on a project. |
+| `file_path` | string | No | Optional file path to compute stats for (relative to project root) |
 
 **Schema:** `additionalProperties: false` — only the parameters above are accepted.
 

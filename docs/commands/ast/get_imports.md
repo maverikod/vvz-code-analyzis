@@ -50,13 +50,12 @@ Important notes:
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `root_dir` | string | **Yes** | Project root directory (contains data/code_analysis.db) |
-| `file_path` | string | No | Optional file path to filter by (absolute or relative) |
+| `project_id` | string | **Yes** | Project UUID (from create_project or list_projects). Required for commands that operate on a project. |
+| `file_path` | string | No | Optional file path to filter by (relative to project root) |
 | `import_type` | string | No | Type of import: 'import' or 'import_from' |
 | `module_name` | string | No | Optional module name to filter by |
 | `limit` | integer | No | Optional limit on number of results |
 | `offset` | integer | No | Offset for pagination Default: `0`. |
-| `project_id` | string | No | Optional project UUID; if omitted, inferred by root_dir |
 
 **Schema:** `additionalProperties: false` — only the parameters above are accepted.
 

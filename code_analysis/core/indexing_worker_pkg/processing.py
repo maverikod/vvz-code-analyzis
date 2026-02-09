@@ -270,28 +270,6 @@ async def process_cycle(self: Any, poll_interval: int = 30) -> Dict[str, Any]:
                                             )
                                         except Exception:
                                             pass
-                                        config_path = getattr(self, "config_path", None)
-                                        if config_path:
-                                            file_id = row.get("id")
-                                            if file_id is not None:
-                                                try:
-                                                    from .vectorize_after_index import (
-                                                        vectorize_file_after_index,
-                                                    )
-
-                                                    vectorize_file_after_index(
-                                                        self.db_path,
-                                                        config_path,
-                                                        path,
-                                                        project_id,
-                                                        int(file_id),
-                                                    )
-                                                except Exception as vec_err:
-                                                    logger.warning(
-                                                        "Vectorize after index failed for %s: %s",
-                                                        path,
-                                                        vec_err,
-                                                    )
                                     else:
                                         total_errors += 1
                                         err_msg = result.get("error", "unknown")

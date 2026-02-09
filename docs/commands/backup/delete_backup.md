@@ -51,7 +51,7 @@ Important notes:
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `root_dir` | string | **Yes** | Project root directory |
+| `project_id` | string | **Yes** | Project UUID (from create_project or list_projects). Required for commands that operate on a project. |
 | `backup_uuid` | string | **Yes** | UUID of backup to delete |
 
 **Schema:** `additionalProperties: false` — only the parameters above are accepted.

@@ -73,8 +73,7 @@ Important notes:
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `project_id` | string | No | Project ID (UUID4). If provided, root_dir will be resolved from database. Either project_id or root_dir must be provided. |
-| `root_dir` | string | No | Project root directory. Required if project_id is not provided. |
+| `project_id` | string | **Yes** | Project UUID (from create_project or list_projects). Required for commands that operate on a project. |
 | `file_path` | string | **Yes** | Target python file path (relative to project root) |
 
 **Schema:** `additionalProperties: false` — only the parameters above are accepted.

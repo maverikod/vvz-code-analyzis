@@ -316,10 +316,12 @@ def run_vectorization_worker(
         )
         # Continue anyway - worker can still function, but indexes may need manual rebuild
 
-    # Get retry config, min_chunk_length, and batch_processor config from svo_config if available
+    # Get retry config, min_chunk_length, batch_processor, max_files_per_pass from svo_config if available
     min_chunk_length = 30  # default
     max_empty_iterations = 3  # default
     empty_delay = 5.0  # default
+    max_files_per_pass = 30  # default; max files per pass (from config)
+    log_timing = False  # default; set from worker_config when available
     if svo_config:
         try:
             server_config_obj = ServerConfig(**svo_config)
@@ -338,6 +340,8 @@ def run_vectorization_worker(
                         "max_empty_iterations", 3
                     )
                     empty_delay = batch_processor_config.get("empty_delay", 5.0)
+                    max_files_per_pass = worker_config.get("max_files_per_pass", 30)
+                    log_timing = worker_config.get("log_all_operations_timing", False)
                     # Get worker log path
                     if worker_log_path is None:
                         worker_log_path = worker_config.get("log_path")
@@ -351,9 +355,7 @@ def run_vectorization_worker(
 
     # Status file for monitoring (current_operation, current_file)
     status_file_path = (
-        Path(worker_log_path).with_suffix(".status.json")
-        if worker_log_path
-        else None
+        Path(worker_log_path).with_suffix(".status.json") if worker_log_path else None
     )
 
     # Create and run worker (universal mode - no project_id, no faiss_manager at init)
@@ -369,8 +371,10 @@ def run_vectorization_worker(
         min_chunk_length=min_chunk_length,
         max_empty_iterations=max_empty_iterations,
         empty_delay=empty_delay,
+        max_files_per_pass=max_files_per_pass,
         socket_path=socket_path,  # Pass socket_path for DatabaseClient
         status_file_path=status_file_path,
+        log_timing=log_timing,
     )
 
     async def _run_worker_with_svo() -> Dict[str, Any]:

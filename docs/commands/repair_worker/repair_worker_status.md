@@ -69,7 +69,7 @@ Important notes:
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `root_dir` | string | No | Root directory of the project (for log path, optional) |
+| `project_id` | string | **Yes** | Project UUID (from create_project or list_projects). Required for commands that operate on a project. |
 
 **Schema:** `additionalProperties: false` — only the parameters above are accepted.
 

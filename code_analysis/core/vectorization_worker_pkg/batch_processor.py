@@ -16,11 +16,82 @@ from __future__ import annotations
 import json
 import logging
 import time
+from pathlib import Path
 from typing import Any, List, Optional, Tuple
 
 import numpy as np
 
+from .timing_log import log_operation_timing
+
 logger = logging.getLogger(__name__)
+
+# Logger for blocks sent to chunker (separate file, blocks tied to files)
+_chunking_blocks_logger: Optional[logging.Logger] = None
+
+
+def _get_chunking_blocks_logger(log_dir: Optional[Path] = None) -> logging.Logger:
+    """Return logger that writes to logs/chunking_blocks_sent.log (one log per batch, blocks tied to files)."""
+    global _chunking_blocks_logger
+    if _chunking_blocks_logger is None:
+        _chunking_blocks_logger = logging.getLogger(
+            "code_analysis.chunking_blocks_sent"
+        )
+        _chunking_blocks_logger.setLevel(logging.INFO)
+        _chunking_blocks_logger.propagate = False
+        if not _chunking_blocks_logger.handlers:
+            if log_dir is None:
+                log_dir = (
+                    Path.cwd() / "logs"
+                    if (Path.cwd() / "config.json").exists()
+                    else Path("logs")
+                )
+            else:
+                log_dir = Path(log_dir)
+            log_dir.mkdir(parents=True, exist_ok=True)
+            handler = logging.FileHandler(
+                log_dir / "chunking_blocks_sent.log", encoding="utf-8"
+            )
+            handler.setLevel(logging.INFO)
+            handler.setFormatter(
+                logging.Formatter(
+                    "%(asctime)s | %(message)s", datefmt="%Y-%m-%d %H:%M:%S"
+                )
+            )
+            _chunking_blocks_logger.addHandler(handler)
+    return _chunking_blocks_logger
+
+
+def _log_blocks_sent_to_chunker(
+    rows: List[dict],
+    texts: List[str],
+    project_id: Optional[str] = None,
+    log_dir: Optional[Path] = None,
+    max_text_len: int = 5000,
+) -> None:
+    """Write to chunking_blocks_sent.log: for each block, file_id, file_path, chunk_id, length, and full text (for manual check)."""
+    if not rows or len(rows) != len(texts):
+        return
+    log = _get_chunking_blocks_logger(log_dir)
+    log.info("--- BATCH | count=%d | project=%s ---", len(rows), project_id or "?")
+    for i, row in enumerate(rows):
+        file_id = row.get("file_id")
+        file_path = row.get("file_path") or ""
+        chunk_id = row.get("id")
+        text = texts[i] if i < len(texts) else ""
+        log.info(
+            "  file_id=%s file_path=%s chunk_id=%s len=%d",
+            file_id,
+            file_path,
+            chunk_id,
+            len(text),
+        )
+        log.info("  --- text ---")
+        if len(text) <= max_text_len:
+            log.info("%s", text)
+        else:
+            log.info("%s", text[:max_text_len])
+            log.info("  ... (truncated, total %d chars)", len(text))
+    log.info("--- END BATCH ---")
 
 
 def _token_count_heuristic(text: str) -> int:
@@ -69,7 +140,7 @@ async def process_chunks_missing_embedding_params(
     )
     rows_result = database.execute(
         """
-        SELECT cc.id, cc.chunk_text
+        SELECT cc.id, cc.chunk_text, cc.file_id, f.path AS file_path
         FROM code_chunks cc
         INNER JOIN files f ON cc.file_id = f.id
         WHERE cc.project_id = ?
@@ -86,6 +157,13 @@ async def process_chunks_missing_embedding_params(
     logger.info(
         f"[TIMING] Retrieved {len(rows)} chunks missing params in {step_duration:.3f}s"
     )
+    log_operation_timing(
+        getattr(self, "log_timing", False),
+        logger,
+        "Step0_SELECT_missing_params",
+        step_duration,
+        rows=len(rows),
+    )
 
     logger.info(f"[STEP] Step 0: Retrieved {len(rows)} chunks missing params")
     if not rows:
@@ -93,9 +171,20 @@ async def process_chunks_missing_embedding_params(
 
     logger.info(f"[STEP] Step 0: Sending batch of {len(rows)} texts to chunker")
     texts = [r.get("chunk_text") or "" for r in rows]
+    _log_blocks_sent_to_chunker(
+        rows, texts, project_id=getattr(self, "project_id", None)
+    )
     try:
+        t0_batch = time.time()
         batch_results = await self.svo_client_manager.get_chunks_batch(
             texts, type="DocBlock"
+        )
+        log_operation_timing(
+            getattr(self, "log_timing", False),
+            logger,
+            "Step0_get_chunks_batch",
+            time.time() - t0_batch,
+            texts=len(texts),
         )
     except Exception as e:
         logger.warning(
@@ -145,7 +234,15 @@ async def process_chunks_missing_embedding_params(
 
     if update_ops:
         try:
+            t0_db = time.time()
             database.execute_batch(update_ops)
+            log_operation_timing(
+                getattr(self, "log_timing", False),
+                logger,
+                "Step0_execute_batch_UPDATE",
+                time.time() - t0_db,
+                ops=len(update_ops),
+            )
             logger.info(
                 f"[STEP] Step 0 done: updated {updated_count} rows with embedding_vector/model/token_count"
             )
@@ -211,6 +308,13 @@ async def process_embedding_ready_chunks(
     chunks = chunks_result.get("data", []) if isinstance(chunks_result, dict) else []
     step_duration = time.time() - step_start
     logger.info(f"[TIMING] Retrieved {len(chunks)} chunks in {step_duration:.3f}s")
+    log_operation_timing(
+        getattr(self, "log_timing", False),
+        logger,
+        "Step5_SELECT_embedding_ready",
+        step_duration,
+        chunks=len(chunks),
+    )
 
     if not chunks:
         logger.info(
@@ -359,6 +463,13 @@ async def process_embedding_ready_chunks(
         logger.debug(
             f"[TIMING] execute_batch: {len(update_ops)} UPDATEs in {total_db_update_s:.3f}s"
         )
+        log_operation_timing(
+            getattr(self, "log_timing", False),
+            logger,
+            "Step5_execute_batch_UPDATE_vector_id",
+            total_db_update_s,
+            ops=len(update_ops),
+        )
 
     # Save FAISS index after batch and log profile summary
     faiss_save_s = 0.0
@@ -372,6 +483,13 @@ async def process_embedding_ready_chunks(
             faiss_save_duration = time.time() - faiss_save_start
             faiss_save_s = faiss_save_duration
             logger.debug(f"[TIMING] FAISS index save took {faiss_save_duration:.3f}s")
+            log_operation_timing(
+                getattr(self, "log_timing", False),
+                logger,
+                "Step5_FAISS_save_index",
+                faiss_save_duration,
+                chunks_processed=batch_processed,
+            )
             batch_wall_s = time.time() - batch_start_wall
             chunks_per_sec = batch_processed / batch_wall_s if batch_wall_s > 0 else 0.0
             logger.info(

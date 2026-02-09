@@ -115,7 +115,7 @@
       "crl_file": null,
       "retry_attempts": 3,
       "retry_delay": 5.0,
-      "timeout": 60.0,
+      "timeout": 600.0,
       "check_hostname": false
     },
     "embedding": {
@@ -129,7 +129,7 @@
       "crl_file": null,
       "retry_attempts": 3,
       "retry_delay": 5.0,
-      "timeout": 60.0,
+      "timeout": 120.0,
       "check_hostname": false
     },
     "database": {
@@ -152,7 +152,9 @@
     "worker": {
       "enabled": true,
       "poll_interval": 30,
-      "batch_size": 10,
+      "batch_size": 5,
+      "max_files_per_pass": 30,
+      "log_all_operations_timing": true,
       "retry_attempts": 3,
       "retry_delay": 10.0,
       "watch_dirs": [

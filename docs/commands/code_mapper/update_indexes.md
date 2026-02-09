@@ -70,8 +70,7 @@ Important notes:
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `project_id` | string | **Yes** | Project UUID from create_project or list_projects. Root path is resolved from the shared database. |
-| `root_dir` | string | No | Ignored; root path is taken from database by project_id. |
+| `project_id` | string | **Yes** | Project UUID (from create_project or list_projects). |
 | `max_lines` | integer | No | Maximum lines per file threshold. Default: `400`. |
 
 **Schema:** `additionalProperties: false` — only the parameters above are accepted.
@@ -85,8 +84,8 @@ All MCP commands return either a **success** result (with `data`) or an **error*
 ### Success
 
 - **Shape:** `SuccessResult` with `data` object.
-- `root_dir`: Root directory that was analyzed
 - `project_id`: Project UUID
+- `root_path`: Project root path that was analyzed (from database)
 - `files_processed`: Number of files successfully processed
 - `files_total`: Total number of files analyzed
 - `files_discovered`: Total number of Python files discovered

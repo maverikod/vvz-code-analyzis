@@ -50,13 +50,12 @@ Important notes:
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `root_dir` | string | **Yes** | Project root directory (contains data/code_analysis.db) |
+| `project_id` | string | **Yes** | Project UUID (from create_project or list_projects). |
 | `entity_name` | string | **Yes** | Name of entity to find dependencies for |
 | `entity_type` | string | No | Type of entity: 'class', 'function', 'method', 'module', or null for all |
 | `target_class` | string | No | Optional class name for methods |
 | `limit` | integer | No | Optional limit on number of results |
 | `offset` | integer | No | Offset for pagination Default: `0`. |
-| `project_id` | string | No | Optional project UUID; if omitted, inferred by root_dir |
 
 **Schema:** `additionalProperties: false` — only the parameters above are accepted.
 

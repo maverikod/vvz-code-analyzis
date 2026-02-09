@@ -15,11 +15,10 @@ email: vasilyvz@gmail.com
 The get_database_corruption_status command checks the corruption status of a project's SQLite database. It reports both the persistent corruption marker status and the current physical integrity check result.
 
 Operation flow:
-1. Validates root_dir exists and is a directory
-2. Resolves database path: root_dir/data/code_analysis.db
-3. Reads persistent corruption marker (if present)
-4. Runs SQLite integrity check (PRAGMA quick_check)
-5. Returns combined status information
+1. Resolves database path from server config (one shared DB for all projects)
+2. Reads persistent corruption marker (if present)
+3. Runs SQLite integrity check (PRAGMA quick_check)
+4. Returns combined status information
 
 Corruption Marker:
 - Persistent marker file stored next to database
@@ -61,7 +60,6 @@ Important notes:
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `root_dir` | string | **Yes** | Project root directory (contains data/code_analysis.db). |
 
 **Schema:** `additionalProperties: false` — only the parameters above are accepted.
 
@@ -74,8 +72,7 @@ All MCP commands return either a **success** result (with `data`) or an **error*
 ### Success
 
 - **Shape:** `SuccessResult` with `data` object.
-- `root_dir`: Project root directory path
-- `db_path`: Path to database file
+- `db_path`: Path to shared database file (from server config)
 - `marker_path`: Path to corruption marker file
 - `marker_present`: True if corruption marker exists
 - `marker`: Marker data if present (None otherwise). Contains:
@@ -96,23 +93,7 @@ All MCP commands return either a **success** result (with `data`) or an **error*
 
 ### Correct usage
 
-**Check database corruption status**
-```json
-{
-  "root_dir": "/home/user/projects/my_project"
-}
-```
-
-Checks both corruption marker and integrity status for the project database.
-
-**Verify database health before operations**
-```json
-{
-  "root_dir": "."
-}
-```
-
-Checks database status in current directory before running DB operations.
+Use required parameters from the Arguments table above.
 
 ### Incorrect usage
 

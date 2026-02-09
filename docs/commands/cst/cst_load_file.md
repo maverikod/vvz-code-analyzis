@@ -64,7 +64,6 @@ Important notes:
 |-----------|------|----------|-------------|
 | `project_id` | string | **Yes** | Project ID (UUID4). Required. |
 | `file_path` | string | **Yes** | Target Python file path (relative to project root) |
-| `root_dir` | string | No | Server root directory (optional, for database access) |
 | `node_types` | array | No | Optional filter by node types (e.g., ['FunctionDef', 'ClassDef']) |
 | `max_depth` | integer | No | Optional maximum depth for node filtering |
 | `include_children` | boolean | No | Whether to include children information in metadata Default: `true`. |

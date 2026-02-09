@@ -57,8 +57,7 @@ Important notes:
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `root_dir` | string | **Yes** | Root directory of the project (contains data/code_analysis.db) |
-| `project_id` | string | No | Optional project UUID; if omitted, all projects |
+| `project_id` | string | No | Optional project UUID (from list_projects); if omitted, all projects |
 | `dry_run` | boolean | No | If True, only show what would be deleted Default: `false`. |
 | `older_than_days` | integer | No | Only delete files deleted more than N days ago |
 | `hard_delete` | boolean | No | If True, permanently delete (removes physical file and all DB data) Default: `false`. |

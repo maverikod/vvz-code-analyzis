@@ -387,21 +387,21 @@ class SQLiteDriver(BaseDatabaseDriver):
 
                 self._set_schema_version(code_version)
 
-                # Fix entity_cross_ref in the same transaction before commit. When we
-                # RENAME files->temp_files (or methods->temp_methods), SQLite updates FKs
-                # in entity_cross_ref to point at temp_*. After DROP temp_*, those FKs
-                # are broken. Fix here so we never commit a broken schema.
+                # Fix all tables with stale FKs in the same transaction before commit.
+                # When we RENAME files->temp_files (or methods->temp_methods), SQLite
+                # updates FKs in every table to point at temp_*. After DROP temp_*,
+                # those FKs are broken. Fix here so we never commit a broken schema.
                 changes = result.get("changes_applied") or []
                 if any(
                     "ALTER TABLE files RENAME TO temp_files" in s
                     or "ALTER TABLE methods RENAME TO temp_methods" in s
                     for s in changes
                 ):
-                    from ..db_integrity import fix_entity_cross_ref_stale_fks_in_connection
+                    from ..db_integrity import fix_all_stale_fks_in_connection
 
-                    if fix_entity_cross_ref_stale_fks_in_connection(self.conn):
+                    if fix_all_stale_fks_in_connection(self.conn):
                         logger.info(
-                            "Fixed entity_cross_ref stale FKs in migration transaction (files/methods recreated)"
+                            "Fixed all stale FKs (temp_files/temp_methods) in migration transaction"
                         )
 
                 self.execute("PRAGMA foreign_keys = ON")

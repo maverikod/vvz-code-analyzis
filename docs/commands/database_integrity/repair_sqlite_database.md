@@ -15,7 +15,7 @@ email: vasilyvz@gmail.com
 The repair_sqlite_database command repairs a corrupted SQLite database by backing it up and recreating it from scratch. This is a destructive operation that removes all data from the database.
 
 Operation flow:
-1. Validates root_dir exists and is a directory
+1. Resolves database path from server config (one shared DB for all projects)
 2. If force=False, checks if only marker clearing is needed
 3. If force=False and DB is healthy, clears marker only
 4. If force=False and DB is corrupted, requires force=True
@@ -66,9 +66,9 @@ Important notes:
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `root_dir` | string | **Yes** | Project root directory (contains data/code_analysis.db). |
+| `root_dir` | string | No | Optional; ignored. DB path from server config. |
 | `force` | boolean | No | Must be true to perform destructive repair. Default: `false`. |
-| `backup_dir` | string | No | Optional directory where backup files will be stored (default: root_dir/data). |
+| `backup_dir` | string | No | Optional directory for backups (default: backup_dir from server config). |
 
 **Schema:** `additionalProperties: false` — only the parameters above are accepted.
 
@@ -81,8 +81,7 @@ All MCP commands return either a **success** result (with `data`) or an **error*
 ### Success
 
 - **Shape:** `SuccessResult` with `data` object.
-- `root_dir`: Project root directory path
-- `db_path`: Path to database file
+- `db_path`: Path to shared database file (from server config)
 - `backup_dir`: Directory where backups were created
 - `workers_stopped`: Result of stopping workers
 - `repair`: (see example)
@@ -104,7 +103,6 @@ All MCP commands return either a **success** result (with `data`) or an **error*
 **Clear marker without data loss**
 ```json
 {
-  "root_dir": "/home/user/projects/my_project",
   "force": false
 }
 ```
@@ -114,19 +112,17 @@ Clears corruption marker if database is healthy. No data loss, safe operation.
 **Repair corrupted database**
 ```json
 {
-  "root_dir": "/home/user/projects/my_project",
   "force": true
 }
 ```
 
-Backs up and recreates database. All data is lost. Must run update_indexes after repair.
+Backs up and recreates shared database. All data is lost. Must run update_indexes after repair.
 
 **Repair with custom backup location**
 ```json
 {
-  "root_dir": "/home/user/projects/my_project",
   "force": true,
-  "backup_dir": "/backups/my_project"
+  "backup_dir": "/backups/code_analysis"
 }
 ```
 

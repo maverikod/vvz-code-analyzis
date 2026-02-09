@@ -21,10 +21,10 @@ Operation flow:
 4. Gets file size if database exists
 5. Opens database connection
 6. Queries project statistics
-7. Queries file statistics (total, deleted, with docstrings, needing chunking)
+7. Queries file statistics (total, deleted, indexed, needing indexing, needing chunking)
 8. Queries chunk statistics (total, vectorized, not vectorized)
 9. Queries recent activity (last 24 hours)
-10. Gets samples of files needing chunking
+10. Gets samples of files needing indexing and needing chunking
 11. Gets samples of chunks needing vectorization
 12. Returns comprehensive status report
 
@@ -33,6 +33,10 @@ File Statistics:
 - deleted: Number of deleted files
 - active: Number of active (non-deleted) files
 - with_docstring: Files that have docstrings
+- indexed: Files indexed by indexing worker (needs_chunking=0)
+- indexed_percent: Percentage of active files indexed
+- needing_indexing: Active files with needs_chunking=1 (pending indexer)
+- needing_indexing_sample: Sample of files needing indexing (up to 10)
 - needing_chunking: Active files without chunks
 - needing_chunking_sample: Sample of files needing chunking (up to 10)
 
@@ -74,7 +78,6 @@ Important notes:
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `root_dir` | string | **Yes** | Root directory of the project (contains data/code_analysis.db) |
 
 **Schema:** `additionalProperties: false` — only the parameters above are accepted.
 
@@ -140,11 +143,11 @@ Checks database status in current directory to monitor health and pending work.
 
 - Check exists field first to verify database exists
 - Monitor file_size_mb to track database growth
-- Check files.needing_chunking to identify pending work
+- Check files.indexed and files.indexed_percent to track indexing progress
+- Check files.needing_indexing and needing_indexing_sample for indexer backlog
+- Check files.needing_chunking to identify chunking backlog
 - Check chunks.not_vectorized to see vectorization backlog
-- Use vectorization_percent to track vectorization progress
-- Review needing_chunking_sample to see specific files needing processing
-- Review needing_vectorization_sample to see specific chunks needing vectorization
-- Monitor recent_activity to see database update frequency
+- Use indexed_percent and vectorization_percent to track progress
+- Review needing_indexing_sample and needing_vectorization_sample for specific items
 
 ---

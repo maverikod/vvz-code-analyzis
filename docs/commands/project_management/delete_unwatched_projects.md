@@ -12,38 +12,27 @@ email: vasilyvz@gmail.com
 
 ## Purpose (Предназначение)
 
-The delete_unwatched_projects command deletes **only orphaned** project records from the database: projects whose `root_path` does not exist on disk or is invalid. It does **not** delete projects that exist on disk but are outside the current watched directories (those are kept; reason `exists_on_disk_but_not_in_watch_dirs`). File-operating commands work only within watched directories; this command only cleans DB records for projects that no longer have a valid root on disk.
+The delete_unwatched_projects command deletes only ORPHANED project records from the database: projects whose root_path does not exist on disk or is invalid. It does NOT delete projects that exist on disk but are outside the current watched directories (those are kept; reason exists_on_disk_but_not_in_watch_dirs). File-operating commands work only within watched directories; this command only cleans DB records for projects that no longer have a valid root on disk.
 
 Operation flow:
 1. Gets watched directories from config or parameter
 2. Discovers all projects in watched directories using project discovery
 3. Gets all projects from database
-4. For each DB project:
-   - Invalid path or server root (protected): kept or special handling
-   - Root path does not exist on disk: **marked for deletion** (orphaned record)
-   - Root exists, project in discovered list: kept (`discovered_in_watch_dirs`)
-   - Root exists, project not in discovered list: **kept** (`exists_on_disk_but_not_in_watch_dirs`) — we do not delete or operate outside watched dirs
+4. For each DB project: invalid path or server root protected; root_path not exists -> marked for deletion (orphaned); root exists and in discovered list -> kept; root exists but not in discovered list -> KEPT (exists_on_disk_but_not_in_watch_dirs).
 5. If dry_run=True: reports what would be deleted/kept; no actual deletion
 6. If dry_run=False: deletes only marked (orphaned) project data via clear_project_data
 7. Returns deletion summary
 
 Protection:
 - Server root directory is always protected from deletion
-- Projects that exist on disk but are not in watch_dirs are **kept** (no file operations outside watched dirs)
+- Projects that exist on disk but are not in watch_dirs are KEPT (no file operations outside watched dirs)
 - Only orphaned DB records (root_path missing/invalid) are deleted
 
-Use cases:
-- Remove orphaned project records from database (root moved or deleted on disk)
-- Maintain database cleanliness
-- Maintain database cleanliness
-- Free up database space
+Use cases: Remove orphaned project records from database (root moved or deleted on disk); maintain database cleanliness.
 
 Important notes:
 - This operation is PERMANENT and cannot be undone
 - Always use dry_run=True first to preview what will be deleted
-- Watched directories are read from config.json if not provided
-- Server root directory is automatically protected
-- Discovery errors are reported but don't stop the process
 - Use with extreme caution
 
 ---
@@ -52,7 +41,6 @@ Important notes:
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `root_dir` | string | **Yes** | Server root directory (contains config.json and data/code_analysis.db). Must be an absolute path or relative to current working directory. |
 | `watched_dirs` | array | No | Optional list of watched directory paths. If not provided, will be read from config.json (code_analysis.worker.watch_dirs). |
 | `dry_run` | boolean | No | If True, only show what would be deleted without actually deleting. Default: False. Default: `false`. |
 
@@ -113,7 +101,7 @@ Shows which projects would be deleted and which would be kept. Safe to run to pr
 }
 ```
 
-Deletes projects not in watched directories from config.json. WARNING: This is permanent and cannot be undone.
+Deletes only orphaned project records (root_path missing on disk) using config. WARNING: This is permanent and cannot be undone.
 
 **Delete unwatched projects with explicit watched_dirs**
 ```json
@@ -126,7 +114,7 @@ Deletes projects not in watched directories from config.json. WARNING: This is p
 }
 ```
 
-Deletes projects not in the specified watched directories. Overrides config.json watched_dirs.
+Deletes only orphaned project records (root_path missing on disk); watched_dirs override config. Overrides config.json watched_dirs.
 
 ### Incorrect usage
 

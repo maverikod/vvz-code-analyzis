@@ -52,11 +52,10 @@ Important notes:
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `root_dir` | string | **Yes** | Project root directory (contains data/code_analysis.db) |
+| `project_id` | string | **Yes** | Project UUID (from create_project or list_projects). Required for commands that operate on a project. |
 | `node_type` | string | No | AST node type to search (e.g., ClassDef, FunctionDef) |
-| `file_path` | string | No | Optional file path to limit search (absolute or relative) |
+| `file_path` | string | No | Optional file path to limit search (relative to project root) |
 | `limit` | integer | No | Maximum results Default: `100`. |
-| `project_id` | string | No | Optional project UUID; if omitted, inferred by root_dir |
 
 **Schema:** `additionalProperties: false` — only the parameters above are accepted.
 

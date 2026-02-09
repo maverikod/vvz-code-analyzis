@@ -61,8 +61,7 @@ Important notes:
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `root_dir` | string | **Yes** | Root directory of the project (contains data/code_analysis.db) |
-| `project_id` | string | No | Optional project UUID; if omitted, inferred by root_dir |
+| `project_id` | string | **Yes** | Project UUID (from create_project or list_projects). |
 | `version_dir` | string | No | Version directory for deleted files (default: data/versions) Default: `"data/versions"`. |
 | `dry_run` | boolean | No | If True, only show what would be repaired Default: `false`. |
 

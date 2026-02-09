@@ -55,9 +55,8 @@ Important notes:
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `root_dir` | string | **Yes** | Project root directory (contains data/code_analysis.db) |
-| `project_id` | string | No | Optional project UUID; if omitted, inferred by root_dir |
-| `file_path` | string | No | Optional path to specific file to analyze (absolute or relative to root_dir) |
+| `project_id` | string | **Yes** | Project UUID (from create_project or list_projects). Required for commands that operate on a project. |
+| `file_path` | string | No | Optional path to specific file to analyze (relative to project root) |
 | `min_lines` | integer | No | Minimum lines for duplicate block Default: `5`. |
 | `min_similarity` | number | No | Minimum similarity threshold (0.0-1.0) Default: `0.8`. |
 | `use_semantic` | boolean | No | Use semantic vectors for finding logical duplicates Default: `true`. |

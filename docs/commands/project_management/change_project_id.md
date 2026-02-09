@@ -58,7 +58,7 @@ Important notes:
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `root_dir` | string | **Yes** | Project root directory (contains projectid file and optionally data/code_analysis.db). Must be an absolute path or relative to current working directory. |
+| `project_id` | string | **Yes** | Current project identifier (UUID4). Project root path is resolved from database. |
 | `new_project_id` | string | **Yes** | New project identifier. Must be a valid UUID v4 format (e.g., '8772a086-688d-4198-a0c4-f03817cc0e6c'). This will replace the current project_id in both the projectid file and database. |
 | `old_project_id` | string | No | Optional current project_id for safety validation. If provided, must match the current project_id in projectid file. This prevents accidental changes if the projectid file was modified externally. |
 | `description` | string | No | Optional new project description. If provided, updates the description in both projectid file and database. If not provided, existing description is preserved. Can be updated independently of project_ |

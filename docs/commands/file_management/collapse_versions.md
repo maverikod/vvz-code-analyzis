@@ -55,8 +55,7 @@ Important notes:
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `root_dir` | string | **Yes** | Root directory of the project (contains data/code_analysis.db) |
-| `project_id` | string | No | Optional project UUID; if omitted, inferred by root_dir |
+| `project_id` | string | **Yes** | Project UUID (from create_project or list_projects). |
 | `keep_latest` | boolean | No | If True, keep latest version (default: True) Default: `true`. |
 | `dry_run` | boolean | No | If True, only show what would be collapsed Default: `false`. |
 

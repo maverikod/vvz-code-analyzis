@@ -26,6 +26,7 @@ from .batch_processor import (
     process_chunks_missing_embedding_params,
     process_embedding_ready_chunks,
 )
+from .timing_log import log_operation_timing
 
 logger = logging.getLogger(__name__)
 
@@ -465,6 +466,7 @@ async def process_chunks(self, poll_interval: int = 30) -> Dict[str, Any]:
                                     else:
                                         try:
                                             # Use execute() for get_files_needing_chunking
+                                            t0_step1 = time.time()
                                             files_result = database.execute(
                                                 """
                                                 SELECT f.id, f.path, f.project_id
@@ -506,6 +508,14 @@ async def process_chunks(self, poll_interval: int = 30) -> Dict[str, Any]:
                                                 files_result.get("data", [])
                                                 if isinstance(files_result, dict)
                                                 else []
+                                            )
+                                            log_operation_timing(
+                                                getattr(self, "log_timing", False),
+                                                logger,
+                                                "Step1_SELECT_files_needing_chunking",
+                                                time.time() - t0_step1,
+                                                project_id=project_id,
+                                                files=len(files_to_chunk),
                                             )
 
                                             logger.info(

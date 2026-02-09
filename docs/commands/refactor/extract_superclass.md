@@ -52,11 +52,10 @@ Result:
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `root_dir` | string | **Yes** | Project root directory (contains data/code_analysis.db) |
-| `file_path` | string | **Yes** | Path to Python file (absolute or relative to project root) |
+| `project_id` | string | **Yes** | Project UUID (from create_project or list_projects). Required for commands that operate on a project. |
+| `file_path` | string | **Yes** | Path to Python file (relative to project root) |
 | `config` | object | **Yes** | Extraction configuration object. Structure: {   'base_class': str (required) - Name of new base class to create,   'child_classes': list[str] (required) - List of child class names to extract from,    |
 | `dry_run` | boolean | No | If true, preview changes without applying them Default: `false`. |
-| `project_id` | string | No | Optional project UUID; if omitted, inferred by root_dir |
 
 **Schema:** `additionalProperties: false` — only the parameters above are accepted.
 

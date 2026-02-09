@@ -15,7 +15,7 @@ email: vasilyvz@gmail.com
 The get_worker_status command monitors worker process status, resource usage, and recent activity. It supports two types of workers: file_watcher and vectorization. The command provides comprehensive information about worker processes including CPU/memory usage, uptime, lock file status, and log activity.
 
 Operation flow:
-1. Validates worker_type parameter (file_watcher or vectorization)
+1. Validates worker_type parameter (file_watcher, vectorization, or indexing)
 2. Attempts to get registered workers from WorkerManager
 3. If no registered workers, searches for processes by name pattern
 4. For file_watcher, checks lock file status if provided
@@ -27,6 +27,7 @@ Operation flow:
 Worker Types:
 - file_watcher: Monitors file system changes and updates database
 - vectorization: Processes code chunks and generates embeddings
+- indexing: Indexes files with needs_chunking=1 (AST, CST, fulltext)
 
 Process Discovery Methods:
 1. WorkerManager: Gets registered workers (most reliable)
@@ -75,7 +76,6 @@ Important notes:
 | `worker_type` | string | **Yes** | Type of worker to check |
 | `log_path` | string | No | Path to worker log file (optional, for activity check) |
 | `lock_file_path` | string | No | Path to lock file (optional, for file_watcher) |
-| `root_dir` | string | No | Root directory for database access (optional, for worker cycle stats) |
 
 **Schema:** `additionalProperties: false` — only the parameters above are accepted.
 

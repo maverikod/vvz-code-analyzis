@@ -389,6 +389,7 @@ def register_code_analysis_commands(reg: registry) -> None:
 
     # Log viewer commands (exist)
     from .commands.log_viewer_mcp_commands import (
+        AnalyzeTimingBottlenecksMCPCommand,
         ListWorkerLogsMCPCommand,
         RotateWorkerLogsMCPCommand,
         ViewWorkerLogsMCPCommand,
@@ -397,6 +398,7 @@ def register_code_analysis_commands(reg: registry) -> None:
     reg.register(ViewWorkerLogsMCPCommand, "custom")
     reg.register(ListWorkerLogsMCPCommand, "custom")
     reg.register(RotateWorkerLogsMCPCommand, "custom")
+    reg.register(AnalyzeTimingBottlenecksMCPCommand, "custom")
 
     # Worker status commands (exist)
     from .commands.worker_status_mcp_commands import (

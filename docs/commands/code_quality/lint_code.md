@@ -58,7 +58,8 @@ Important notes:
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `file_path` | string | **Yes** | Path to Python file to lint. |
+| `file_path` | string | **Yes** | Path to Python file to lint. If project_id is provided, relative to project root. |
+| `project_id` | string | No | Optional project UUID. If provided, file_path is relative to project root. |
 | `ignore` | array | No | List of flake8 error codes to ignore. |
 
 **Schema:** `additionalProperties: false` — only the parameters above are accepted.

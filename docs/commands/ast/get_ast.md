@@ -52,10 +52,9 @@ Important notes:
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `root_dir` | string | **Yes** | Project root directory (contains data/code_analysis.db) |
-| `file_path` | string | **Yes** | Path to Python file (absolute or relative to project root) |
+| `project_id` | string | **Yes** | Project UUID (from create_project or list_projects). |
+| `file_path` | string | **Yes** | Path to Python file (relative to project root) |
 | `include_json` | boolean | No | Include full AST JSON in response Default: `true`. |
-| `project_id` | string | No | Optional project UUID; if omitted, inferred by root_dir |
 
 **Schema:** `additionalProperties: false` — only the parameters above are accepted.
 

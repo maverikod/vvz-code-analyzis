@@ -49,10 +49,9 @@ Result:
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `root_dir` | string | **Yes** | Project root directory (contains data/code_analysis.db) |
-| `file_path` | string | **Yes** | Path to Python file (absolute or relative to project root) |
+| `project_id` | string | **Yes** | Project UUID (from create_project or list_projects). Required for commands that operate on a project. |
+| `file_path` | string | **Yes** | Path to Python file (relative to project root) |
 | `config` | object | **Yes** | File-to-package split configuration object. Structure: {   'modules': dict (required) - Dictionary mapping module names to their configs.     Each module config has:       'classes': list[str] - List  |
-| `project_id` | string | No | Optional project UUID; if omitted, inferred by root_dir |
 
 **Schema:** `additionalProperties: false` — only the parameters above are accepted.
 

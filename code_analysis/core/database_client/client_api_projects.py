@@ -115,7 +115,9 @@ class _ClientAPIProjectsMixin:
         return affected_rows > 0
 
     def list_projects(self) -> List[Project]:
-        """List all projects in database (excludes trashed: deleted=1).
+        """List all projects in database. Excludes trashed by checking the files table:
+        project is active if it has no files or has at least one file with
+        (deleted = 0 OR deleted IS NULL).
 
         Returns:
             List of Project objects
@@ -125,8 +127,11 @@ class _ClientAPIProjectsMixin:
             RPCResponseError: If response contains error
         """
         result = self.execute(
-            "SELECT * FROM projects WHERE (deleted = 0 OR deleted IS NULL) "
-            "ORDER BY created_at",
+            "SELECT p.* FROM projects p "
+            "WHERE NOT EXISTS (SELECT 1 FROM files f WHERE f.project_id = p.id) "
+            "   OR EXISTS (SELECT 1 FROM files f WHERE f.project_id = p.id "
+            "              AND (f.deleted = 0 OR f.deleted IS NULL)) "
+            "ORDER BY p.created_at",
             (),
         )
         rows = (

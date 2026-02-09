@@ -69,14 +69,17 @@ def get_project(self, project_id: str) -> Optional[Dict[str, Any]]:
 
 def get_all_projects(self) -> List[Dict[str, Any]]:
     """
-    Get all projects from database (excludes trashed: deleted=1).
-
-    Returns:
-        List of project records as dictionaries with id, root_path, name, comment, updated_at
+    Get all projects from database. Excludes trashed projects by checking the files table:
+    a project is considered active if it has no files or has at least one file with
+    (deleted = 0 OR deleted IS NULL). Workers use the same files.deleted to decide
+    whether to index/vectorize.
     """
     rows = self._fetchall(
-        "SELECT id, root_path, name, comment, updated_at FROM projects "
-        "WHERE (deleted = 0 OR deleted IS NULL) ORDER BY name, root_path"
+        "SELECT p.id, p.root_path, p.name, p.comment, p.updated_at FROM projects p "
+        "WHERE NOT EXISTS (SELECT 1 FROM files f WHERE f.project_id = p.id) "
+        "   OR EXISTS (SELECT 1 FROM files f WHERE f.project_id = p.id "
+        "              AND (f.deleted = 0 OR f.deleted IS NULL)) "
+        "ORDER BY p.name, p.root_path"
     )
     return rows if rows else []
 

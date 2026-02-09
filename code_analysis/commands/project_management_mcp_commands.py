@@ -1457,7 +1457,7 @@ class RestoreProjectFromTrashMCPCommand(BaseMCPCommand):
                 rows = database.select(
                     "projects",
                     where={"id": project_id},
-                    columns=["id", "root_path", "name", "deleted"],
+                    columns=["id", "root_path", "name"],
                 )
                 if not rows:
                     return self._handle_error(
@@ -1470,10 +1470,26 @@ class RestoreProjectFromTrashMCPCommand(BaseMCPCommand):
                         "restore_project_from_trash",
                     )
                 row = rows[0]
-                if row.get("deleted") != 1:
+                # Trashed state is determined by files table only: all files must be deleted
+                active_result = database.execute(
+                    "SELECT COUNT(*) as active FROM files WHERE project_id = ? "
+                    "AND (deleted = 0 OR deleted IS NULL)",
+                    (project_id,),
+                )
+                data = (
+                    active_result.get("data", [])
+                    if isinstance(active_result, dict)
+                    else []
+                )
+                active = (
+                    data[0].get("active", 0) or 0
+                    if isinstance(data, list) and data
+                    else 0
+                )
+                if active > 0:
                     return self._handle_error(
                         ValidationError(
-                            f"Project {project_id} is not marked as deleted (not in trash)",
+                            f"Project {project_id} has non-deleted files (not in trash)",
                             field="trash_folder_name",
                             details={"project_id": project_id},
                         ),

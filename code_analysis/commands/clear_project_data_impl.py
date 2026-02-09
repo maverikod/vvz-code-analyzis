@@ -21,18 +21,19 @@ logger = logging.getLogger(__name__)
 
 
 def _build_mark_deleted_batch(project_id: str) -> List[Tuple[str, Tuple[Any, ...]]]:
-    """Build list of (sql, params) to mark project and its files as deleted in one batch."""
+    """Build list of (sql, params) to mark all project files as deleted in one batch.
+
+    Deletion mark is stored only in the files table; other logic checks via this table.
+    """
     return [
         ("UPDATE files SET deleted = 1 WHERE project_id = ?", (project_id,)),
-        ("UPDATE projects SET deleted = 1 WHERE id = ?", (project_id,)),
     ]
 
 
 def _build_unmark_deleted_batch(project_id: str) -> List[Tuple[str, Tuple[Any, ...]]]:
-    """Build list of (sql, params) to unmark project and its files in one batch."""
+    """Build list of (sql, params) to unmark all project files in one batch."""
     return [
         ("UPDATE files SET deleted = 0 WHERE project_id = ?", (project_id,)),
-        ("UPDATE projects SET deleted = 0 WHERE id = ?", (project_id,)),
     ]
 
 
@@ -68,9 +69,9 @@ async def mark_project_deleted_impl(database: DatabaseClient, project_id: str) -
 async def unmark_project_deleted_impl(
     database: DatabaseClient, project_id: str
 ) -> None:
-    """Unmark project and all its files (restore from trash): one batch.
+    """Unmark all project files (restore from trash): one batch.
 
-    Used after moving folder back from trash.
+    Used after moving folder back from trash. Deletion mark is only in files table.
     """
     logger.info(f"[UNMARK_PROJECT_DELETED] Unmarking project {project_id}")
     transaction_id = None

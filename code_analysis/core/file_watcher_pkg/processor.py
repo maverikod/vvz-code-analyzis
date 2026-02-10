@@ -6,6 +6,14 @@ Implements Step 3 of refactor plan: scan → queue → process phases.
 - Queue phase: batch DB operations for all changes
 - Process phase: downstream workers consume queued items
 
+Deleted file handling (FILE_TRASH_SPEC step 10):
+- When a file disappears from disk, the watcher only sets deleted=1 in the DB.
+- No physical move to trash is performed (the file is already gone from disk).
+- Explicit "mark for deletion" (mark_file_deleted in files.py) moves the file
+  to trash_dir/project_id and then sets the flag; that path is the only way
+  a file can end up in file-level trash. Workers skip files with deleted=1
+  regardless of whether they were moved to trash or only DB-flagged.
+
 Author: Vasiliy Zdanovskiy
 email: vasilyvz@gmail.com
 """
@@ -94,7 +102,8 @@ class FileChangeProcessor:
         Args:
             database: CodeDatabase instance
             watch_dirs: List of watched directories for project discovery (REQUIRED)
-            version_dir: Version directory for deleted files (optional)
+            version_dir: If set, allows marking disappeared files as deleted=1
+                in DB (optional). No physical move to trash; see module docstring.
         """
         self.database = database
         self.watch_dirs = watch_dirs
@@ -453,7 +462,8 @@ class FileChangeProcessor:
                 )
                 stats["errors"] += 1
 
-        # Batch process deleted files
+        # Deleted files: file already gone from disk → only set deleted=1 in DB (no move).
+        # See FILE_TRASH_SPEC step 10 and module docstring "Deleted file handling".
         for file_path_str in delta.deleted_files:
             try:
                 logger.info(

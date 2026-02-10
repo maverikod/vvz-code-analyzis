@@ -682,7 +682,8 @@ class ListDeletedFilesMCPCommand(BaseMCPCommand):
         """
         List deleted files for the project.
 
-        Returns entries with path (in trash), original_path, and in_trash=True
+        Returns entries with path (trash path when moved, else original),
+        original_path, and in_trash=True only when file was moved to trash
         (FILE_TRASH_SPEC step 11).
 
         Args:
@@ -696,12 +697,13 @@ class ListDeletedFilesMCPCommand(BaseMCPCommand):
             database = self._open_database_from_config(auto_analyze=False)
             try:
                 rows = database.get_deleted_files(project_id)
+                # path = trash path when file was moved (version_dir set); else original path (watcher-only)
                 items = [
                     {
                         "id": r.get("id"),
                         "path": r.get("path"),
                         "original_path": r.get("original_path"),
-                        "in_trash": True,
+                        "in_trash": bool(r.get("version_dir")),
                         "updated_at": r.get("updated_at"),
                     }
                     for r in rows

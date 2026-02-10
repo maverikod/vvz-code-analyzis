@@ -2,6 +2,9 @@
 File operations API methods for database client.
 
 Provides object-oriented API methods for File operations.
+File trash (mark/unmark/hard_delete/get_deleted_files) is aligned with
+FILE_TRASH_SPEC step 12: mark uses trash_dir; unmark returns target-exists
+via out_error; batch restore is done by command layer calling unmark in a loop.
 
 Author: Vasiliy Zdanovskiy
 email: vasilyvz@gmail.com

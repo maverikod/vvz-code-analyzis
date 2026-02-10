@@ -1030,33 +1030,46 @@ def mark_file_deleted(
     self,
     file_path: str,
     project_id: str,
-    version_dir: str,
+    version_dir: Optional[str] = None,
     reason: Optional[str] = None,
+    trash_dir: Optional[str] = None,
 ) -> bool:
     """
-    Mark file as deleted (soft delete) and move to version directory.
+    Mark file as deleted (soft delete) and move to file trash.
 
     Process:
-    1. Move file from original path to version directory
+    1. Move file from original path to trash (trash_dir/project_id/... or version_dir/project_id/...)
     2. Store original path in original_path column
-    3. Store version directory in version_dir column
+    3. Store trash/version dir in version_dir column, path = path in trash
     4. Set deleted=1, update updated_at
     5. File will NOT be chunked or processed
 
-    Implements Step 5 of refactor plan: all file paths are absolute.
-    Path is normalized to absolute before querying.
+    If trash_dir is provided, file trash root is trash_dir/project_id (FILE_TRASH_SPEC).
+    Otherwise version_dir is used (backward compat). Replace-if-exists: if the same
+    project_id+original_path is already in trash, the old file is removed before move.
 
     Args:
         file_path: Original file path (will be normalized to absolute and moved)
         project_id: Project ID
-        version_dir: Directory where deleted files are stored
+        version_dir: Legacy directory for deleted files (used when trash_dir is None)
         reason: Optional reason for deletion
+        trash_dir: Preferred root for file trash; files go under trash_dir/project_id/...
 
     Returns:
         True if file was found and marked, False otherwise
     """
     import shutil
     from pathlib import Path
+
+    if trash_dir is not None:
+        from ..storage_paths import get_file_trash_dir
+
+        file_trash_root = get_file_trash_dir(Path(trash_dir), project_id)
+    elif version_dir is not None:
+        file_trash_root = Path(version_dir) / project_id
+    else:
+        logger.error("mark_file_deleted: either trash_dir or version_dir must be set")
+        return False
 
     # Try to get project root from database for validation
     project_root = None
@@ -1116,23 +1129,19 @@ def mark_file_deleted(
     # Check if file exists
     if not original_path.exists():
         logger.warning(f"File not found at {file_path}, marking as deleted in DB only")
-        # Still mark as deleted in DB, but don't move file
         self._execute(
             """
             UPDATE files 
             SET deleted = 1, original_path = ?, version_dir = ?, updated_at = julianday('now')
             WHERE id = ?
             """,
-            (str(original_path), version_dir, file_id),
+            (str(original_path), str(file_trash_root), file_id),
         )
         self._commit()
         return True
 
-    # Create version directory structure: {version_dir}/{project_id}/{relative_path}
-    version_dir_path = Path(version_dir) / project_id
-    # Get relative path from project root (if possible) or use full path
+    # Target under file trash root: {file_trash_root}/{relative_path}
     try:
-        # Try to get project root
         project_row = self._fetchone(
             "SELECT root_path FROM projects WHERE id = ?", (project_id,)
         )
@@ -1140,34 +1149,50 @@ def mark_file_deleted(
             project_root = Path(project_row["root_path"])
             try:
                 relative_path = original_path.relative_to(project_root)
-                target_path = version_dir_path / relative_path
+                target_path = file_trash_root / relative_path
             except ValueError:
-                # Path not relative to project root, use full path hash
                 import hashlib
 
                 path_hash = hashlib.md5(str(original_path).encode()).hexdigest()[:8]
-                target_path = version_dir_path / f"{path_hash}_{original_path.name}"
+                target_path = file_trash_root / f"{path_hash}_{original_path.name}"
         else:
-            # No project root, use path hash
             import hashlib
 
             path_hash = hashlib.md5(str(original_path).encode()).hexdigest()[:8]
-            target_path = version_dir_path / f"{path_hash}_{original_path.name}"
+            target_path = file_trash_root / f"{path_hash}_{original_path.name}"
     except Exception as e:
         logger.warning(f"Error calculating relative path: {e}, using hash")
         import hashlib
 
         path_hash = hashlib.md5(str(original_path).encode()).hexdigest()[:8]
-        target_path = version_dir_path / f"{path_hash}_{original_path.name}"
+        target_path = file_trash_root / f"{path_hash}_{original_path.name}"
 
-    # Create target directory
+    # Replace-if-exists: remove existing file at target or old trashed copy (FILE_TRASH_SPEC)
+    try:
+        if target_path.exists():
+            target_path.unlink()
+            logger.debug(f"Replaced existing file at {target_path}")
+        existing = self._fetchone(
+            """
+            SELECT id, path FROM files
+            WHERE project_id = ? AND original_path = ? AND deleted = 1 AND id != ?
+            """,
+            (project_id, str(original_path), file_id),
+        )
+        if existing:
+            old_path = Path(existing["path"])
+            if old_path.exists():
+                old_path.unlink()
+                logger.debug(f"Removed previous trashed copy at {old_path}")
+    except Exception as e:
+        logger.warning(f"Replace-if-exists cleanup: {e}")
+
     try:
         target_path.parent.mkdir(parents=True, exist_ok=True)
     except Exception as e:
-        logger.error(f"Failed to create version directory {target_path.parent}: {e}")
+        logger.error(f"Failed to create trash directory {target_path.parent}: {e}")
         return False
 
-    # Move file
     try:
         shutil.move(str(original_path), str(target_path))
         logger.info(f"Moved file from {original_path} to {target_path}")
@@ -1175,14 +1200,13 @@ def mark_file_deleted(
         logger.error(f"Failed to move file from {original_path} to {target_path}: {e}")
         return False
 
-    # Update database
     self._execute(
         """
         UPDATE files 
         SET deleted = 1, original_path = ?, version_dir = ?, path = ?, updated_at = julianday('now')
         WHERE id = ?
         """,
-        (str(original_path), str(version_dir_path), str(target_path), file_id),
+        (str(original_path), str(file_trash_root), str(target_path), file_id),
     )
     self._commit()
     logger.info(
@@ -1191,25 +1215,25 @@ def mark_file_deleted(
     return True
 
 
-def unmark_file_deleted(self, file_path: str, project_id: str) -> bool:
+def unmark_file_deleted(
+    self,
+    file_path: str,
+    project_id: str,
+    out_error: Optional[Dict[str, str]] = None,
+) -> bool:
     """
     Unmark file as deleted (recovery) and move back to original location.
 
     Process:
-    1. Find file record by path (current in version_dir) or original_path
-    2. Check if file exists in version_dir
-    3. Ensure original directory exists (create if needed)
-    4. Move file from version_dir back to original_path
-    5. Clear original_path and version_dir columns (set to NULL)
-    6. Set deleted=0, update updated_at
-    7. File will be processed again
-
-    Implements Step 5 of refactor plan: all file paths are absolute.
-    Path is normalized to absolute before querying.
+    1. Find file record by path (current in trash/version_dir) or original_path
+    2. Pre-check: if original_path already exists on disk, do not overwrite (return False, FILE_EXISTS_AT_TARGET)
+    3. Check if file exists in trash/version directory
+    4. Move file from trash back to original_path, clear deleted flag
 
     Args:
-        file_path: Current file path (in version_dir) or original_path to search (will be normalized to absolute)
+        file_path: Current file path (in trash) or original_path to search (normalized to absolute)
         project_id: Project ID
+        out_error: Optional dict to receive error_code and message when returning False (e.g. FILE_EXISTS_AT_TARGET)
 
     Returns:
         True if file was found and unmarked, False otherwise
@@ -1218,10 +1242,7 @@ def unmark_file_deleted(self, file_path: str, project_id: str) -> bool:
     from pathlib import Path
     from ..path_normalization import normalize_path_simple
 
-    # Normalize path to absolute (Step 5: absolute paths everywhere)
     abs_path = normalize_path_simple(file_path)
-
-    # Try to find by current path (in version_dir) or original_path
     row = self._fetchone(
         """
         SELECT id, path, original_path, version_dir 
@@ -1246,9 +1267,20 @@ def unmark_file_deleted(self, file_path: str, project_id: str) -> bool:
         return False
 
     original_path = Path(original_path_str)
+
+    # Pre-check: do not overwrite existing file at target (FILE_TRASH_SPEC Req. 2)
+    if original_path.exists():
+        if out_error is not None:
+            out_error["error_code"] = "FILE_EXISTS_AT_TARGET"
+            out_error["message"] = (
+                f"File already exists at {original_path}. "
+                "Delete or rename it before restoring."
+            )
+        logger.warning(f"Restore skipped: target already exists at {original_path}")
+        return False
+
     current_path_obj = Path(current_path)
 
-    # Check if file exists in version directory
     if not current_path_obj.exists():
         logger.error(f"File not found at {current_path_obj}, cannot restore")
         return False
@@ -1288,13 +1320,16 @@ def get_deleted_files(self, project_id: str) -> List[Dict[str, Any]]:
     """
     Get all deleted files for a project.
 
-    Returns files where deleted=1.
+    Returns files where deleted=1. For files moved to trash (mark_file_deleted),
+    path is the trash path (under trash_dir/project_id); original_path is the
+    project path. For watcher-only deleted files, path remains the former
+    project path and version_dir is null (FILE_TRASH_SPEC step 11).
 
     Args:
         project_id: Project ID
 
     Returns:
-        List of deleted file records
+        List of deleted file records (path, original_path, version_dir, etc.)
     """
     return self._fetchall(
         """
@@ -1310,15 +1345,14 @@ def hard_delete_file(self, file_id: int) -> None:
     """
     Permanently delete file and all related data (hard delete).
 
-    This is final deletion - removes:
-    - Physical file from version_dir (if exists)
-    - File record
-    - All chunks (and removes from FAISS)
-    - All classes, functions, methods
-    - All AST trees
-    - All vector indexes
+    Order: get path from DB -> delete physical file at path (and empty parents under trash)
+    -> clear_file_data(file_id) -> DELETE FROM files -> commit.
+    File trash and version storage are the same place: trash_dir/{project_id}/...
+    (path in files.path points there when deleted).
 
-    Use with caution - cannot be recovered.
+    Removes:
+    - Physical file at files.path (trash/version location)
+    - File record and all dependent data (chunks, FAISS, classes, methods, AST, etc.)
 
     Args:
         file_id: File ID to delete

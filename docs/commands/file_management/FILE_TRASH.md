@@ -30,8 +30,17 @@ This document describes how file-level trash works: where trashed files are stor
 
 ## Configuration
 
-- **trash_dir:** Config (e.g. `code_analysis.storage.trash_dir` or default `data/trash`). File-level trash uses this same directory with a subfolder per project: `trash_dir/{project_id}/...`.
-- **version_dir:** Legacy option (e.g. `file_watcher.version_dir`). When `trash_dir` is not passed to mark/repair, `version_dir` is used so that deleted files go under `version_dir/{project_id}/...`. For consistency with FILE_TRASH_SPEC, prefer passing `trash_dir` so file trash and project trash share the same root.
+- **trash_dir:** File-level trash uses the same root as project trash. In `config.json`: under `code_analysis.storage.trash_dir` (path relative to config file directory, or absolute). If not set, default is `data/trash`. Trashed files are stored under `trash_dir/{project_id}/...`.
+- **version_dir (file_watcher):** Optional `file_watcher.version_dir` (e.g. `data/versions`) is used only when `trash_dir` is **not** passed to `mark_file_deleted` or repair: then deleted files go under `version_dir/{project_id}/...`. For consistency with this spec, configure `code_analysis.storage.trash_dir` and use it for mark/repair so file trash and project trash share the same root; `version_dir` then acts as a legacy fallback.
+
+## Requirements summary (FILE_TRASH_SPEC)
+
+1. **Mark file for deletion:** Set flag ⇒ move file to trash (`trash_dir/{project_id}/...`); no `deleted=1` with file still in project.
+2. **Restore:** Clear flag ⇒ move file back to `original_path`; pre-check: if target exists, refuse with error (user must delete or rename existing file).
+3. **Permanent delete:** Remove from DB and dependencies; delete physical file from trash (and version storage).
+4. **Replace if already in trash:** When marking, if same project_id + original_path already in trash, replace (overwrite) the existing trashed file.
+5. **Project mark for deletion:** Project trash moves whole project root to `trash_dir/ProjectName_timestamp`; file trash uses `trash_dir/{project_id}/...` (same root).
+6. **Batch restore pre-check:** Before restoring multiple files, check that **none** of the target paths exist; if any exist, cancel the whole operation and return an error.
 
 ## Related commands
 

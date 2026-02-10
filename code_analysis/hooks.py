@@ -364,12 +364,16 @@ def register_code_analysis_commands(reg: registry) -> None:
         from .commands.file_management_mcp_commands import (
             CleanupDeletedFilesMCPCommand,
             CollapseVersionsMCPCommand,
+            ListDeletedFilesMCPCommand,
             RepairDatabaseMCPCommand,
+            RestoreDeletedFilesMCPCommand,
             UnmarkDeletedFileMCPCommand,
         )
 
         reg.register(CleanupDeletedFilesMCPCommand, "custom")
+        reg.register(ListDeletedFilesMCPCommand, "custom")
         reg.register(UnmarkDeletedFileMCPCommand, "custom")
+        reg.register(RestoreDeletedFilesMCPCommand, "custom")
         reg.register(CollapseVersionsMCPCommand, "custom")
         reg.register(RepairDatabaseMCPCommand, "custom")
         import logging

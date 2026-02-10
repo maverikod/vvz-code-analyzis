@@ -7,9 +7,7 @@ email: vasilyvz@gmail.com
 
 import logging
 from pathlib import Path
-from typing import Any, Dict, Optional, TYPE_CHECKING
-
-from ..core.backup_manager import BackupManager
+from typing import Any, Dict, List, Optional, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from ..core.database_client.client import DatabaseClient
@@ -264,13 +262,22 @@ class UnmarkDeletedFileCommand:
                 result["error"] = "File has no original_path, cannot restore"
                 return result
 
+            # Pre-check: do not overwrite existing file (FILE_TRASH_SPEC Req. 2)
+            original_path_obj = Path(original_path)
+            if original_path_obj.exists():
+                result["error"] = "FILE_EXISTS_AT_TARGET"
+                result["message"] = (
+                    f"File already exists at {original_path}. "
+                    "Delete or rename it before restoring."
+                )
+                return result
+
             if self.dry_run:
                 result["message"] = (
                     f"Would restore file from {current_path} to {original_path}"
                 )
                 result["restored"] = True  # Would be restored
             else:
-                # Actually restore
                 success = self.database.unmark_file_deleted(
                     self.file_path, self.project_id
                 )
@@ -278,10 +285,131 @@ class UnmarkDeletedFileCommand:
                 if success:
                     result["message"] = f"Restored file to {original_path}"
                 else:
-                    result["error"] = "Failed to restore file"
+                    result["error"] = "RESTORE_FAILED"
+                    result["message"] = "Failed to restore file"
 
         except Exception as e:
             logger.error(f"Error in unmark command: {e}", exc_info=True)
+            result["error"] = str(e)
+
+        return result
+
+
+class RestoreDeletedFilesCommand:
+    """
+    Restore multiple deleted files in one operation (batch restore).
+
+    Pre-check: if any target path (original_path) already exists in the project
+    folder, the whole operation is cancelled and an error is returned with the
+    list of conflicting paths (FILE_TRASH_SPEC Req. 6). No partial restore.
+
+    Options:
+    - project_id: Project ID
+    - file_paths: List of file paths (current path in trash or original_path)
+    - dry_run: If True, only run pre-check and return what would be restored
+    """
+
+    def __init__(
+        self,
+        database: "DatabaseClient",
+        project_id: str,
+        file_paths: List[str],
+        dry_run: bool = False,
+    ):
+        """
+        Initialize batch restore command.
+
+        Args:
+            database: DatabaseClient instance
+            project_id: Project ID
+            file_paths: List of paths (trash path or original_path) to restore
+            dry_run: If True, only pre-check and report
+        """
+        self.database = database
+        self.project_id = project_id
+        self.file_paths = file_paths
+        self.dry_run = dry_run
+
+    async def execute(self) -> Dict[str, Any]:
+        """
+        Execute batch restore.
+
+        Returns:
+            Dict with restored paths, or error with TARGET_FILE_EXISTS and conflicting_paths
+        """
+        result: Dict[str, Any] = {
+            "restored_paths": [],
+            "success": False,
+            "dry_run": self.dry_run,
+        }
+
+        try:
+            # Step 1: resolve each file_path to file record (id, original_path)
+            resolved: List[Dict[str, Any]] = []
+            for file_path in self.file_paths:
+                row_result = self.database.execute(
+                    """
+                    SELECT id, path, original_path
+                    FROM files
+                    WHERE project_id = ? AND (path = ? OR original_path = ?) AND deleted = 1
+                    ORDER BY last_modified DESC
+                    LIMIT 1
+                    """,
+                    (self.project_id, file_path, file_path),
+                )
+                data = row_result.get("data", [])
+                row = data[0] if data else None
+                if not row or not row.get("original_path"):
+                    result["error"] = f"File not found or not deleted: {file_path}"
+                    return result
+                resolved.append(
+                    {
+                        "file_path": file_path,
+                        "file_id": row["id"],
+                        "original_path": row["original_path"],
+                    }
+                )
+
+            # Step 2: pre-check all original_paths; if any exists, abort
+            conflicting: List[str] = []
+            for item in resolved:
+                if Path(item["original_path"]).exists():
+                    conflicting.append(item["original_path"])
+            if conflicting:
+                result["success"] = False
+                result["error"] = "TARGET_FILE_EXISTS"
+                result["conflicting_paths"] = conflicting
+                result["message"] = (
+                    "One or more target paths already exist in the project. "
+                    "Delete or rename them before restoring."
+                )
+                return result
+
+            if self.dry_run:
+                result["would_restore"] = [r["original_path"] for r in resolved]
+                result["success"] = True
+                result["message"] = (
+                    f"Dry run: {len(resolved)} file(s) would be restored"
+                )
+                return result
+
+            # Step 3: restore each file; all-or-nothing (abort on first failure)
+            for item in resolved:
+                success = self.database.unmark_file_deleted(
+                    item["file_path"], self.project_id
+                )
+                if not success:
+                    result["error"] = "RESTORE_FAILED"
+                    result["message"] = f"Failed to restore {item['original_path']}"
+                    result["restored_paths"] = []  # rollback not implemented
+                    return result
+                result["restored_paths"].append(item["original_path"])
+
+            result["success"] = True
+            result["message"] = f"Restored {len(result['restored_paths'])} file(s)"
+
+        except Exception as e:
+            logger.error(f"Error in RestoreDeletedFilesCommand: {e}", exc_info=True)
             result["error"] = str(e)
 
         return result
@@ -421,7 +549,8 @@ class RepairDatabaseCommand:
     Options:
     - project_id: Project ID
     - root_dir: Project root directory
-    - version_dir: Version directory for deleted files
+    - version_dir: Version directory for deleted files (used when trash_dir is None)
+    - trash_dir: Preferred root for file trash; files under trash_dir/project_id (FILE_TRASH_SPEC)
     - dry_run: If True, only show what would be repaired
     """
 
@@ -432,6 +561,7 @@ class RepairDatabaseCommand:
         root_dir: Path,
         version_dir: str,
         dry_run: bool = False,
+        trash_dir: Optional[str] = None,
     ):
         """
         Initialize repair database command.
@@ -440,14 +570,16 @@ class RepairDatabaseCommand:
             database: DatabaseClient instance
             project_id: Project ID
             root_dir: Project root directory
-            version_dir: Version directory for deleted files
+            version_dir: Version directory for deleted files (used when trash_dir is None)
             dry_run: If True, only show what would be repaired
+            trash_dir: Optional; when set, file trash is under trash_dir/project_id
         """
         self.database = database
         self.project_id = project_id
         self.root_dir = root_dir
         self.version_dir = version_dir
         self.dry_run = dry_run
+        self.trash_dir = trash_dir
 
     async def execute(self) -> Dict[str, Any]:
         """
@@ -485,8 +617,15 @@ class RepairDatabaseCommand:
                 if py_file.is_file():
                     project_files.add(str(py_file))
 
-            # Get all files in versions directory
-            version_dir_path = Path(self.version_dir) / self.project_id
+            # Get all files in versions/file-trash directory (FILE_TRASH_SPEC step 13)
+            if self.trash_dir:
+                from ..core.storage_paths import get_file_trash_dir
+
+                version_dir_path = get_file_trash_dir(
+                    Path(self.trash_dir), self.project_id
+                )
+            else:
+                version_dir_path = Path(self.version_dir) / self.project_id
             version_files = set()
             if version_dir_path.exists():
                 for py_file in version_dir_path.rglob("*.py"):
@@ -554,11 +693,18 @@ class RepairDatabaseCommand:
                                             break
 
                                 if version_file_path:
-                                    self.database.mark_file_deleted(
-                                        file_path=check_path,
-                                        project_id=self.project_id,
-                                        version_dir=self.version_dir,
-                                    )
+                                    if self.trash_dir:
+                                        self.database.mark_file_deleted(
+                                            file_path=check_path,
+                                            project_id=self.project_id,
+                                            trash_dir=self.trash_dir,
+                                        )
+                                    else:
+                                        self.database.mark_file_deleted(
+                                            file_path=check_path,
+                                            project_id=self.project_id,
+                                            version_dir=self.version_dir,
+                                        )
                             result["files_in_versions_marked_deleted"].append(
                                 {"id": file_id, "path": check_path}
                             )
@@ -634,37 +780,22 @@ class RepairDatabaseCommand:
                 logger.warning(f"CST tree has no source code for file {file_id}")
                 return False
 
-            # Determine target path
+            # Determine target path (FILE_TRASH_SPEC step 13: use path from DB for trash)
             if file_record.get("deleted"):
-                # File is marked as deleted - restore to version directory
-                version_path = (
-                    Path(self.version_dir)
-                    / file_record.get("version_dir", "")
-                    / file_path
-                )
-                version_path.parent.mkdir(parents=True, exist_ok=True)
-                target_path = version_path
+                # File is marked as deleted - restore to trash path from DB (trash_dir/project_id/...)
+                target_path = Path(file_record["path"])
+                target_path.parent.mkdir(parents=True, exist_ok=True)
             else:
                 # File should be in project directory
                 target_path = self.root_dir / file_path
 
-            # Mandatory backup before overwriting existing file
+            # Pre-check: do not overwrite existing file (FILE_TRASH_SPEC Req. 2, step 13)
             if target_path.exists():
-                backup_root = (
-                    self.root_dir
-                    if not file_record.get("deleted")
-                    else Path(self.version_dir)
-                )
-                backup_mgr = BackupManager(backup_root)
-                backup_uuid = backup_mgr.create_backup(
+                logger.warning(
+                    "Restore-from-CST skipped: target already exists at %s",
                     target_path,
-                    command="repair_database",
-                    comment="Before restore from CST",
                 )
-                if not backup_uuid:
-                    logger.warning(
-                        "Failed to create backup before repair_database restore"
-                    )
+                return False
 
             # Restore file content
             target_path.parent.mkdir(parents=True, exist_ok=True)

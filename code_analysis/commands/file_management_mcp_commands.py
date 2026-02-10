@@ -14,6 +14,7 @@ from .base_mcp_command import BaseMCPCommand
 from .file_management import (
     CleanupDeletedFilesCommand,
     UnmarkDeletedFileCommand,
+    RestoreDeletedFilesCommand,
     CollapseVersionsCommand,
     RepairDatabaseCommand,
 )
@@ -367,6 +368,14 @@ class UnmarkDeletedFileMCPCommand(BaseMCPCommand):
                     dry_run=dry_run,
                 )
                 result = await command.execute()
+                if result.get("error") == "FILE_EXISTS_AT_TARGET":
+                    return ErrorResult(
+                        code="FILE_EXISTS_AT_TARGET",
+                        message=result.get(
+                            "message",
+                            "File already exists at target. Delete or rename it before restoring.",
+                        ),
+                    )
                 return SuccessResult(data=result)
             finally:
                 database.disconnect()
@@ -505,6 +514,11 @@ class UnmarkDeletedFileMCPCommand(BaseMCPCommand):
                         "Use repair_database to fix database integrity."
                     ),
                 },
+                "FILE_EXISTS_AT_TARGET": {
+                    "description": "Target path already exists in project; restore would overwrite",
+                    "example": "original_path already has a file on disk",
+                    "solution": "Delete or rename the existing file at the target path before restoring.",
+                },
                 "UNMARK_ERROR": {
                     "description": "General error during file restoration",
                     "example": "File move error, permission denied, or database error",
@@ -548,6 +562,157 @@ class UnmarkDeletedFileMCPCommand(BaseMCPCommand):
                 "Use repair_database if original_path is missing",
             ],
         }
+
+
+class RestoreDeletedFilesMCPCommand(BaseMCPCommand):
+    """Batch restore deleted files with pre-check (no restore if any target exists)."""
+
+    name = "restore_deleted_files"
+    version = "1.0.0"
+    descr = (
+        "Restore multiple deleted files; cancelled if any target path already exists"
+    )
+    category = "file_management"
+    author = "Vasiliy Zdanovskiy"
+    email = "vasilyvz@gmail.com"
+    use_queue = False
+
+    @classmethod
+    def get_schema(cls) -> Dict[str, Any]:
+        """Get JSON schema for command parameters."""
+        return {
+            "type": "object",
+            "properties": {
+                "project_id": {
+                    "type": "string",
+                    "description": "Project UUID (from create_project or list_projects).",
+                },
+                "file_paths": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "List of file paths (current in trash or original_path) to restore",
+                },
+                "dry_run": {
+                    "type": "boolean",
+                    "description": "If True, only pre-check and return what would be restored",
+                    "default": False,
+                },
+            },
+            "required": ["project_id", "file_paths"],
+            "additionalProperties": False,
+        }
+
+    async def execute(
+        self,
+        project_id: str,
+        file_paths: list,
+        dry_run: bool = False,
+        **kwargs,
+    ) -> SuccessResult | ErrorResult:
+        """
+        Execute batch restore.
+
+        Args:
+            project_id: Project UUID.
+            file_paths: List of paths (trash path or original_path) to restore.
+            dry_run: If True, only pre-check and report.
+
+        Returns:
+            SuccessResult with restored_paths, or ErrorResult with TARGET_FILE_EXISTS and conflicting_paths.
+        """
+        try:
+            self._resolve_project_root(project_id)
+            database = self._open_database_from_config(auto_analyze=False)
+            try:
+                command = RestoreDeletedFilesCommand(
+                    database=database,
+                    project_id=project_id,
+                    file_paths=file_paths or [],
+                    dry_run=dry_run,
+                )
+                result = await command.execute()
+                if result.get("error") == "TARGET_FILE_EXISTS":
+                    return ErrorResult(
+                        code="TARGET_FILE_EXISTS",
+                        message=result.get("message", ""),
+                        data={"conflicting_paths": result.get("conflicting_paths", [])},
+                    )
+                return SuccessResult(data=result)
+            finally:
+                database.disconnect()
+        except Exception as e:
+            return self._handle_error(
+                e, "RESTORE_DELETED_FILES_ERROR", "restore_deleted_files"
+            )
+
+
+class ListDeletedFilesMCPCommand(BaseMCPCommand):
+    """List deleted files for a project (path in trash, original_path, in_trash)."""
+
+    name = "list_deleted_files"
+    version = "1.0.0"
+    descr = (
+        "List deleted files for a project; path is trash path, original_path in project"
+    )
+    category = "file_management"
+    author = "Vasiliy Zdanovskiy"
+    email = "vasilyvz@gmail.com"
+    use_queue = False
+
+    @classmethod
+    def get_schema(cls) -> Dict[str, Any]:
+        """Get JSON schema for command parameters."""
+        return {
+            "type": "object",
+            "properties": {
+                "project_id": {
+                    "type": "string",
+                    "description": "Project UUID (from create_project or list_projects).",
+                },
+            },
+            "required": ["project_id"],
+            "additionalProperties": False,
+        }
+
+    async def execute(
+        self,
+        project_id: str,
+        **kwargs: Any,
+    ) -> SuccessResult | ErrorResult:
+        """
+        List deleted files for the project.
+
+        Returns entries with path (in trash), original_path, and in_trash=True
+        (FILE_TRASH_SPEC step 11).
+
+        Args:
+            project_id: Project UUID.
+
+        Returns:
+            SuccessResult with list of deleted file entries.
+        """
+        try:
+            self._resolve_project_root(project_id)
+            database = self._open_database_from_config(auto_analyze=False)
+            try:
+                rows = database.get_deleted_files(project_id)
+                items = [
+                    {
+                        "id": r.get("id"),
+                        "path": r.get("path"),
+                        "original_path": r.get("original_path"),
+                        "in_trash": True,
+                        "updated_at": r.get("updated_at"),
+                    }
+                    for r in rows
+                ]
+                return SuccessResult(data={"deleted_files": items, "total": len(items)})
+            finally:
+                database.disconnect()
+        except Exception as e:
+            return self._handle_error(
+                e, "LIST_DELETED_FILES_ERROR", "list_deleted_files"
+            )
 
 
 class CollapseVersionsMCPCommand(BaseMCPCommand):
@@ -880,6 +1045,19 @@ class RepairDatabaseMCPCommand(BaseMCPCommand):
             if not Path(version_dir).is_absolute():
                 version_dir = str(root_path / version_dir)
 
+            trash_dir: Optional[str] = None
+            try:
+                from ..core.storage_paths import load_raw_config, resolve_storage_paths
+
+                config_path = self._resolve_config_path()
+                config_data = load_raw_config(config_path)
+                storage = resolve_storage_paths(
+                    config_data=config_data, config_path=config_path
+                )
+                trash_dir = str(storage.trash_dir)
+            except Exception:
+                pass
+
             try:
                 command = RepairDatabaseCommand(
                     database=database,
@@ -887,6 +1065,7 @@ class RepairDatabaseMCPCommand(BaseMCPCommand):
                     root_dir=root_path,
                     version_dir=version_dir,
                     dry_run=dry_run,
+                    trash_dir=trash_dir,
                 )
                 result = await command.execute()
                 return SuccessResult(data=result)

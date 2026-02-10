@@ -447,6 +447,10 @@ class RPCServer:
                     "modify_ast": self.handlers.handle_modify_ast,
                     "modify_cst": self.handlers.handle_modify_cst,
                     "index_file": self.handlers.handle_index_file,
+                    "mark_file_deleted": self.handlers.handle_mark_file_deleted,
+                    "unmark_file_deleted": self.handlers.handle_unmark_file_deleted,
+                    "hard_delete_file": self.handlers.handle_hard_delete_file,
+                    "get_deleted_files": self.handlers.handle_get_deleted_files,
                 }
 
                 handler = handler_map.get(method)

@@ -16,6 +16,7 @@ from .rpc_handlers_ast_cst_query import _RPCHandlersASTCSTQueryMixin
 from .rpc_handlers_ast_modify import _RPCHandlersASTModifyMixin
 from .rpc_handlers_base import _RPCHandlersBaseMixin
 from .rpc_handlers_cst_modify import _RPCHandlersCSTModifyMixin
+from .rpc_handlers_file_trash import _RPCHandlersFileTrashMixin
 from .rpc_handlers_index_file import _RPCHandlersIndexFileMixin
 from .rpc_handlers_schema import _RPCHandlersSchemaMixin
 
@@ -27,6 +28,7 @@ class RPCHandlers(
     _RPCHandlersASTModifyMixin,
     _RPCHandlersCSTModifyMixin,
     _RPCHandlersIndexFileMixin,
+    _RPCHandlersFileTrashMixin,
 ):
     """RPC method handlers for database operations.
 

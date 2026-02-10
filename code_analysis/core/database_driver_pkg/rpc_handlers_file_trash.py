@@ -1,0 +1,189 @@
+"""
+RPC handlers for file trash operations (mark/unmark/hard_delete/get_deleted_files).
+
+FILE_TRASH_SPEC step 12: Expose file trash operations via RPC so that
+DatabaseClient and MCP commands can call mark_file_deleted, unmark_file_deleted,
+hard_delete_file, get_deleted_files when using the driver process.
+
+Author: Vasiliy Zdanovskiy
+email: vasilyvz@gmail.com
+"""
+
+from __future__ import annotations
+
+import logging
+from typing import Any, Dict
+
+from code_analysis.core.database_client.protocol import (
+    DataResult,
+    ErrorResult,
+    SuccessResult,
+    ErrorCode,
+)
+
+logger = logging.getLogger(__name__)
+
+
+class _RPCHandlersFileTrashMixin:
+    """Mixin for file trash RPC: mark_file_deleted, unmark_file_deleted, hard_delete_file, get_deleted_files."""
+
+    def _get_code_db(self):
+        """Get CodeDatabase using existing driver connection (single connection in process)."""
+        if not hasattr(self.driver, "db_path") or not self.driver.db_path:
+            return None
+        from code_analysis.core.database import CodeDatabase
+
+        return CodeDatabase.from_existing_driver(self.driver)
+
+    def handle_mark_file_deleted(
+        self, params: Dict[str, Any]
+    ) -> SuccessResult | ErrorResult:
+        """Handle mark_file_deleted RPC. Params: file_path, project_id, version_dir?, reason?, trash_dir?."""
+        if not isinstance(params, dict):
+            return ErrorResult(
+                error_code=ErrorCode.VALIDATION_ERROR,
+                description="mark_file_deleted requires params dict",
+            )
+        file_path = params.get("file_path")
+        project_id = params.get("project_id")
+        if not file_path or not project_id:
+            return ErrorResult(
+                error_code=ErrorCode.VALIDATION_ERROR,
+                description="mark_file_deleted requires file_path and project_id",
+            )
+        db = self._get_code_db()
+        if db is None:
+            return ErrorResult(
+                error_code=ErrorCode.INTERNAL_ERROR,
+                description="Driver has no db_path (file trash only supported for SQLite driver)",
+            )
+        try:
+            version_dir = params.get("version_dir")
+            reason = params.get("reason")
+            trash_dir = params.get("trash_dir")
+            ok = db.mark_file_deleted(
+                file_path=file_path,
+                project_id=project_id,
+                version_dir=version_dir,
+                reason=reason,
+                trash_dir=trash_dir,
+            )
+            return SuccessResult(data={"success": ok})
+        except Exception as e:
+            logger.error("mark_file_deleted failed: %s", e, exc_info=True)
+            return ErrorResult(
+                error_code=ErrorCode.DATABASE_ERROR,
+                description=str(e),
+            )
+
+    def handle_unmark_file_deleted(
+        self, params: Dict[str, Any]
+    ) -> SuccessResult | ErrorResult:
+        """Handle unmark_file_deleted RPC. Params: file_path, project_id. Returns success and optional error_code."""
+        if not isinstance(params, dict):
+            return ErrorResult(
+                error_code=ErrorCode.VALIDATION_ERROR,
+                description="unmark_file_deleted requires params dict",
+            )
+        file_path = params.get("file_path")
+        project_id = params.get("project_id")
+        if not file_path or not project_id:
+            return ErrorResult(
+                error_code=ErrorCode.VALIDATION_ERROR,
+                description="unmark_file_deleted requires file_path and project_id",
+            )
+        db = self._get_code_db()
+        if db is None:
+            return ErrorResult(
+                error_code=ErrorCode.INTERNAL_ERROR,
+                description="Driver has no db_path (file trash only supported for SQLite driver)",
+            )
+        try:
+            out_error: Dict[str, str] = {}
+            ok = db.unmark_file_deleted(
+                file_path=file_path,
+                project_id=project_id,
+                out_error=out_error,
+            )
+            result: Dict[str, Any] = {"success": ok}
+            if out_error:
+                result["error_code"] = out_error.get("error_code")
+                result["message"] = out_error.get("message")
+            return SuccessResult(data=result)
+        except Exception as e:
+            logger.error("unmark_file_deleted failed: %s", e, exc_info=True)
+            return ErrorResult(
+                error_code=ErrorCode.DATABASE_ERROR,
+                description=str(e),
+            )
+
+    def handle_hard_delete_file(
+        self, params: Dict[str, Any]
+    ) -> SuccessResult | ErrorResult:
+        """Handle hard_delete_file RPC. Params: file_id."""
+        if not isinstance(params, dict):
+            return ErrorResult(
+                error_code=ErrorCode.VALIDATION_ERROR,
+                description="hard_delete_file requires params dict",
+            )
+        file_id = params.get("file_id")
+        if file_id is None:
+            return ErrorResult(
+                error_code=ErrorCode.VALIDATION_ERROR,
+                description="hard_delete_file requires file_id",
+            )
+        try:
+            file_id = int(file_id)
+        except (TypeError, ValueError):
+            return ErrorResult(
+                error_code=ErrorCode.VALIDATION_ERROR,
+                description="hard_delete_file file_id must be an integer",
+            )
+        db = self._get_code_db()
+        if db is None:
+            return ErrorResult(
+                error_code=ErrorCode.INTERNAL_ERROR,
+                description="Driver has no db_path (file trash only supported for SQLite driver)",
+            )
+        try:
+            db.hard_delete_file(file_id)
+            return SuccessResult(data={"success": True})
+        except Exception as e:
+            logger.error("hard_delete_file failed: %s", e, exc_info=True)
+            return ErrorResult(
+                error_code=ErrorCode.DATABASE_ERROR,
+                description=str(e),
+            )
+
+    def handle_get_deleted_files(
+        self, params: Dict[str, Any]
+    ) -> DataResult | ErrorResult:
+        """Handle get_deleted_files RPC. Params: project_id. Returns list of deleted file rows."""
+        if not isinstance(params, dict):
+            return ErrorResult(
+                error_code=ErrorCode.VALIDATION_ERROR,
+                description="get_deleted_files requires params dict",
+            )
+        project_id = params.get("project_id")
+        if not project_id:
+            return ErrorResult(
+                error_code=ErrorCode.VALIDATION_ERROR,
+                description="get_deleted_files requires project_id",
+            )
+        db = self._get_code_db()
+        if db is None:
+            return ErrorResult(
+                error_code=ErrorCode.INTERNAL_ERROR,
+                description="Driver has no db_path (file trash only supported for SQLite driver)",
+            )
+        try:
+            rows = db.get_deleted_files(project_id)
+            # Convert rows to list of dicts (sqlite3.Row or similar)
+            data = [dict(r) for r in rows] if rows else []
+            return DataResult(data=data)
+        except Exception as e:
+            logger.error("get_deleted_files failed: %s", e, exc_info=True)
+            return ErrorResult(
+                error_code=ErrorCode.DATABASE_ERROR,
+                description=str(e),
+            )

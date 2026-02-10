@@ -512,3 +512,98 @@ class _ClientAPIFilesMixin:
         if isinstance(result, dict) and "data" in result:
             return result["data"]
         return result if isinstance(result, dict) else {}
+
+    def mark_file_deleted(
+        self,
+        file_path: str,
+        project_id: str,
+        version_dir: Optional[str] = None,
+        reason: Optional[str] = None,
+        trash_dir: Optional[str] = None,
+    ) -> bool:
+        """Mark file as deleted (soft delete) and move to file trash. FILE_TRASH_SPEC step 12.
+
+        Args:
+            file_path: Original file path.
+            project_id: Project UUID.
+            version_dir: Legacy version directory (used when trash_dir is None).
+            reason: Optional reason for deletion.
+            trash_dir: Preferred file trash root; files go under trash_dir/project_id/...
+
+        Returns:
+            True if file was found and marked, False otherwise.
+
+        Raises:
+            RPCClientError: If RPC call fails.
+            RPCResponseError: If driver returns an error.
+        """
+        params: Dict[str, Any] = {"file_path": file_path, "project_id": project_id}
+        if version_dir is not None:
+            params["version_dir"] = version_dir
+        if reason is not None:
+            params["reason"] = reason
+        if trash_dir is not None:
+            params["trash_dir"] = trash_dir
+        response = self.rpc_client.call("mark_file_deleted", params)
+        result = self._extract_result_data(response)
+        if isinstance(result, dict) and "data" in result:
+            return result["data"].get("success", False)
+        return False
+
+    def unmark_file_deleted(
+        self,
+        file_path: str,
+        project_id: str,
+        out_error: Optional[Dict[str, str]] = None,
+    ) -> bool:
+        """Unmark file as deleted (restore from trash). FILE_TRASH_SPEC step 12.
+
+        Args:
+            file_path: Current path (in trash) or original_path to search.
+            project_id: Project UUID.
+            out_error: Optional dict to receive error_code and message when returning False.
+
+        Returns:
+            True if file was restored, False otherwise (e.g. FILE_EXISTS_AT_TARGET).
+        """
+        params = {"file_path": file_path, "project_id": project_id}
+        response = self.rpc_client.call("unmark_file_deleted", params)
+        result = self._extract_result_data(response)
+        if not isinstance(result, dict) or "data" not in result:
+            return False
+        data = result["data"]
+        success = data.get("success", False)
+        if not success and out_error is not None:
+            if "error_code" in data:
+                out_error["error_code"] = data["error_code"]
+            if "message" in data:
+                out_error["message"] = data["message"]
+        return success
+
+    def hard_delete_file(self, file_id: int) -> None:
+        """Permanently delete file and all related data (hard delete). FILE_TRASH_SPEC step 12.
+
+        Args:
+            file_id: File ID to delete.
+
+        Raises:
+            RPCClientError: If RPC call fails.
+            RPCResponseError: If driver returns an error.
+        """
+        response = self.rpc_client.call("hard_delete_file", {"file_id": file_id})
+        self._extract_result_data(response)
+
+    def get_deleted_files(self, project_id: str) -> List[Dict[str, Any]]:
+        """Get all deleted files for a project (path = trash path). FILE_TRASH_SPEC step 12.
+
+        Args:
+            project_id: Project UUID.
+
+        Returns:
+            List of deleted file records (path is path in trash).
+        """
+        response = self.rpc_client.call("get_deleted_files", {"project_id": project_id})
+        result = self._extract_result_data(response)
+        if isinstance(result, dict) and "data" in result:
+            return result["data"] if isinstance(result["data"], list) else []
+        return []

@@ -29,6 +29,75 @@ logger = logging.getLogger(__name__)
 # Separate logger for chunker requests
 _chunker_logger: Optional[logging.Logger] = None
 
+# Trace logger: what vectorizer sends/receives — text (preview), result (bool), error (str)
+_vectorization_trace_logger: Optional[logging.Logger] = None
+_TRACE_PREVIEW_LEN = 200
+
+
+def _get_vectorization_trace_logger(root_dir: Optional[Path] = None) -> logging.Logger:
+    """
+    Logger for vectorization request/response trace: text (preview), result (true/false), error.
+
+    Writes to logs/vectorization_chunker_trace.log. One line per item:
+    timestamp | text=<preview> | result=True|False | error=<description>
+    """
+    global _vectorization_trace_logger
+    if _vectorization_trace_logger is None:
+        _vectorization_trace_logger = logging.getLogger(
+            "code_analysis.vectorization_chunker_trace"
+        )
+        _vectorization_trace_logger.setLevel(logging.INFO)
+        _vectorization_trace_logger.propagate = False
+        if not _vectorization_trace_logger.handlers:
+            if root_dir:
+                log_dir = Path(root_dir) / "logs"
+            else:
+                current_path = Path.cwd()
+                log_dir = (
+                    current_path / "logs"
+                    if (current_path / "config.json").exists()
+                    else Path("logs")
+                )
+            log_dir.mkdir(parents=True, exist_ok=True)
+            log_file = log_dir / "vectorization_chunker_trace.log"
+            handler = logging.FileHandler(log_file, encoding="utf-8")
+            handler.setLevel(logging.INFO)
+            handler.setFormatter(
+                logging.Formatter(
+                    "%(asctime)s | %(message)s", datefmt="%Y-%m-%d %H:%M:%S"
+                )
+            )
+            _vectorization_trace_logger.addHandler(handler)
+    return _vectorization_trace_logger
+
+
+def log_vectorization_trace(
+    text_preview: str,
+    result: bool,
+    error: str = "",
+    root_dir: Optional[Path] = None,
+) -> None:
+    """
+    Write one line to vectorization_chunker_trace.log: text (preview), result (true/false), error.
+
+    Args:
+        text_preview: Short preview of sent text (e.g. first 200 chars).
+        result: True if chunker returned usable result (e.g. with embedding), False otherwise.
+        error: Error description when result is False; empty when result is True.
+        root_dir: Optional root for log directory.
+    """
+    trace_log = _get_vectorization_trace_logger(root_dir)
+    preview_escaped = (
+        (text_preview or "").replace("\n", " ").replace("\r", " ")[:_TRACE_PREVIEW_LEN]
+    )
+    err_escaped = (error or "").replace("\n", " ").replace("\r", " ")[:500]
+    trace_log.info(
+        "text=%s | result=%s | error=%s",
+        preview_escaped,
+        result,
+        err_escaped,
+    )
+
 
 def _get_chunker_logger(root_dir: Optional[Path] = None) -> logging.Logger:
     """
@@ -175,6 +244,9 @@ class SVOClientManager:
             self.vector_dim: int = int(ca_cfg.vector_dim or 384)
             self.chunker_enabled: bool = bool(chunker_cfg.get("enabled", False))
             self.embedding_enabled: bool = bool(emb_cfg.get("enabled", False))
+            self._log_chunker_trace: bool = bool(
+                getattr(ca_cfg, "log_vectorization_chunker_trace", False)
+            )
         else:
             # Dict format - extract as before
             chunker_cfg = ca_cfg.get("chunker") or {}
@@ -183,6 +255,9 @@ class SVOClientManager:
             self.vector_dim: int = int(ca_cfg.get("vector_dim", 384))
             self.chunker_enabled: bool = bool(chunker_cfg.get("enabled", False))
             self.embedding_enabled: bool = bool(emb_cfg.get("enabled", False))
+            self._log_chunker_trace = bool(
+                ca_cfg.get("log_vectorization_chunker_trace", False)
+            )
 
         self.failure_threshold: int = int(worker_cfg.get("failure_threshold", 5))
         self.recovery_timeout: float = float(worker_cfg.get("recovery_timeout", 60.0))
@@ -230,7 +305,12 @@ class SVOClientManager:
         self._chunker_key_file: Optional[str] = chunker_cfg_dict.get("key_file")
         self._chunker_ca_cert_file: Optional[str] = chunker_cfg_dict.get("ca_cert_file")
         self._chunker_crl_file: Optional[str] = chunker_cfg_dict.get("crl_file")
-        self._chunker_timeout: Optional[float] = chunker_cfg_dict.get("timeout")
+        # Default 120s for chunk_batch job polling (~1 chunk per 3s; 120 allows ~40 chunks)
+        self._chunker_timeout: float = float(
+            chunker_cfg_dict.get("timeout", 120.0)
+            if chunker_cfg_dict.get("timeout") is not None
+            else 120.0
+        )
         self._chunker_check_hostname: bool = bool(
             chunker_cfg_dict.get("check_hostname", False)
         )
@@ -299,9 +379,8 @@ class SVOClientManager:
                         "host": self._chunker_url,
                         "port": self._chunker_port,
                         "check_hostname": self._chunker_check_hostname,
+                        "timeout": self._chunker_timeout,
                     }
-                    if self._chunker_timeout:
-                        chunker_kwargs["timeout"] = self._chunker_timeout
 
                     # Map certificate files to ChunkerClient parameters
                     if self._chunker_protocol in ("mtls", "https"):
@@ -577,8 +656,9 @@ class SVOClientManager:
         )
 
         try:
-            # Call chunker service - it returns chunks with embeddings
-            chunks = await self._chunker_client.chunk_text(text=text, **kwargs)
+            # Call chunker service via unified chunk(texts=[...]) API (one list per text)
+            batch = await self._chunker_client.chunk(texts=[text], **kwargs)
+            chunks = batch[0] if batch else []
             request_duration = time.time() - request_start_time
 
             # Log success
@@ -599,6 +679,13 @@ class SVOClientManager:
                 f"SUCCESS | duration={request_duration:.3f}s | "
                 f"chunks_count={chunks_count} | has_embeddings={has_embeddings}"
             )
+            if self._log_chunker_trace:
+                log_vectorization_trace(
+                    text_preview,
+                    has_embeddings,
+                    error="",
+                    root_dir=self._root_dir,
+                )
 
             was_unavailable = not self._chunker_available
             self._record_success()
@@ -623,6 +710,13 @@ class SVOClientManager:
                 f"ERROR | duration={request_duration:.3f}s | "
                 f"error_type={error_type} | error={error_msg}"
             )
+            if self._log_chunker_trace:
+                log_vectorization_trace(
+                    text_preview,
+                    False,
+                    error=f"{error_type}: {error_msg}",
+                    root_dir=self._root_dir,
+                )
             self._record_failure()
             # Check if error indicates service unavailability
             error_str = str(e).lower()
@@ -660,11 +754,11 @@ class SVOClientManager:
         self, texts: List[str], **kwargs: Any
     ) -> List[List[Any]]:
         """
-        Get chunks with embeddings for multiple texts in one request (chunk_batch).
+        Get chunks with embeddings for multiple texts in one request.
 
-        Uses chunker command "chunk_batch" when the client supports it (svo_client
-        ChunkerClient.chunk_texts). One list of SemanticChunk per input text;
-        texts below min_chunk_length get an empty list at that index.
+        Uses chunker command "chunk" with texts list (svo_client ChunkerClient.chunk).
+        One list of SemanticChunk per input text; texts below min_chunk_length
+        get an empty list at that index.
 
         Args:
             texts: List of texts to chunk and vectorize.
@@ -682,11 +776,14 @@ class SVOClientManager:
         if not texts:
             return []
 
-        # Filter by min length: call chunk_texts only for valid texts; fill [] for short
+        # Filter by min length: call chunk() only for valid texts; fill [] for short
         valid_indices: List[int] = []
         valid_texts: List[str] = []
         for i, text in enumerate(texts):
-            if self._min_chunk_length is not None and len(text) < self._min_chunk_length:
+            if (
+                self._min_chunk_length is not None
+                and len(text) < self._min_chunk_length
+            ):
                 continue
             valid_indices.append(i)
             valid_texts.append(text)
@@ -698,17 +795,37 @@ class SVOClientManager:
         chunker_log = _get_chunker_logger(self._root_dir)
         request_start_time = time.time()
         chunker_log.info(
-            f"BATCH REQUEST | texts_count={len(valid_texts)} | "
-            f"kwargs={kwargs}"
+            f"BATCH REQUEST | texts_count={len(valid_texts)} | " f"kwargs={kwargs}"
         )
         try:
-            batch = await self._chunker_client.chunk_texts(
-                texts=valid_texts, **kwargs
-            )
+            batch = await self._chunker_client.chunk(texts=valid_texts, **kwargs)
             request_duration = time.time() - request_start_time
             for k, idx in enumerate(valid_indices):
                 if k < len(batch):
                     result[idx] = batch[k]
+            if self._log_chunker_trace:
+                for k, text in enumerate(valid_texts):
+                    chunks_k = batch[k] if k < len(batch) else []
+                    has_emb = False
+                    if chunks_k:
+                        ch = chunks_k[0]
+                        emb = getattr(ch, "embedding", None) or getattr(
+                            ch, "vector", None
+                        )
+                        has_emb = emb is not None and (
+                            (not isinstance(emb, list))
+                            or (isinstance(emb, list) and len(emb) > 0)
+                        )
+                    log_vectorization_trace(
+                        text[:_TRACE_PREVIEW_LEN] if text else "",
+                        has_emb,
+                        error=(
+                            ""
+                            if has_emb
+                            else "no embedding from chunker (empty or no model)"
+                        ),
+                        root_dir=self._root_dir,
+                    )
             chunker_log.info(
                 f"BATCH SUCCESS | duration={request_duration:.3f}s | "
                 f"texts_count={len(valid_texts)}"
@@ -725,6 +842,15 @@ class SVOClientManager:
                 f"BATCH ERROR | duration={request_duration:.3f}s | "
                 f"error_type={type(e).__name__} | error={str(e)}"
             )
+            if self._log_chunker_trace:
+                err_msg = f"{type(e).__name__}: {str(e)}"
+                for text in valid_texts:
+                    log_vectorization_trace(
+                        text[:_TRACE_PREVIEW_LEN] if text else "",
+                        False,
+                        error=err_msg,
+                        root_dir=self._root_dir,
+                    )
             self._record_failure()
             raise
 
@@ -921,12 +1047,21 @@ class SVOClientManager:
         Fetch chunk size limits from chunker service.
 
         Called during initialization and after service recovery.
+        Uses get_chunk_config() when the chunker client provides it (optional);
+        otherwise limits remain None and length checks are skipped.
         """
         if not self._chunker_client:
             return
 
+        get_chunk_config = getattr(self._chunker_client, "get_chunk_config", None)
+        if not callable(get_chunk_config):
+            logger.debug(
+                "Chunker client has no get_chunk_config; skipping chunk limits."
+            )
+            return
+
         try:
-            config_result = await self._chunker_client.get_chunk_config()
+            config_result = await get_chunk_config()
 
             if isinstance(config_result, dict):
                 # Try different response formats:

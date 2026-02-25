@@ -9,7 +9,7 @@ import logging
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
+from mcp_proxy_adapter.commands.result import SuccessResult
 
 from ..core.duplicate_detector import DuplicateDetector
 from ..core.svo_client_manager import SVOClientManager
@@ -267,6 +267,10 @@ class FindDuplicatesMCPCommand(BaseMCPCommand):
             "category": cls.category,
             "author": cls.author,
             "email": cls.email,
+            "parameters_summary": (
+                "Required: project_id. Optional: file_path, min_lines, min_similarity, "
+                "use_semantic, semantic_threshold. No limit parameter."
+            ),
             "detailed_description": (
                 "The find_duplicates command finds duplicate code blocks using AST normalization "
                 "and optional semantic vector analysis. It identifies code that can be refactored "

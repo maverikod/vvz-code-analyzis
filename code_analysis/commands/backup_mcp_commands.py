@@ -109,6 +109,9 @@ class ListBackupFilesMCPCommand(BaseMCPCommand):
             "category": cls.category,
             "author": cls.author,
             "email": cls.email,
+            "parameters_summary": (
+                "Required: project_id. No limit or other optional parameters."
+            ),
             "detailed_description": (
                 "The list_backup_files command retrieves all unique files that have been backed up "
                 "in the project's old_code directory. It returns a list of file paths along with "

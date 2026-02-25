@@ -8,7 +8,7 @@ email: vasilyvz@gmail.com
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
+from mcp_proxy_adapter.commands.result import SuccessResult
 
 from ..core.complexity_analyzer import analyze_file_complexity
 from .base_mcp_command import BaseMCPCommand
@@ -204,6 +204,9 @@ class AnalyzeComplexityMCPCommand(BaseMCPCommand):
             "category": cls.category,
             "author": cls.author,
             "email": cls.email,
+            "parameters_summary": (
+                "Required: project_id. Optional: file_path, min_complexity. No limit parameter."
+            ),
             "detailed_description": (
                 "The analyze_complexity command analyzes cyclomatic complexity for functions and methods "
                 "in a project. Cyclomatic complexity measures the number of linearly independent paths "

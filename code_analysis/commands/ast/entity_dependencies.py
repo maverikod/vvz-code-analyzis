@@ -270,7 +270,7 @@ class GetEntityDependenciesMCPCommand(BaseMCPCommand):
         **kwargs,
     ) -> SuccessResult:
         try:
-            root_path = self._resolve_project_root(project_id)
+            self._resolve_project_root(project_id)
             db = self._open_database()
             proj_id = project_id
             if entity_type not in CALLER_TYPES:
@@ -315,6 +315,10 @@ class GetEntityDependenciesMCPCommand(BaseMCPCommand):
             "category": cls.category,
             "author": cls.author,
             "email": cls.email,
+            "parameters_summary": (
+                "Required: project_id, entity_type. Optional: entity_id, entity_name, target_class. "
+                "No limit parameter; provide either entity_id or entity_name."
+            ),
             "detailed_description": (
                 "The get_entity_dependencies command returns the list of entities that a given "
                 "entity depends on (what it calls or uses), using the entity cross-reference table. "
@@ -565,7 +569,7 @@ class GetEntityDependentsMCPCommand(BaseMCPCommand):
         **kwargs,
     ) -> SuccessResult:
         try:
-            root_path = self._resolve_project_root(project_id)
+            self._resolve_project_root(project_id)
             db = self._open_database()
             proj_id = project_id
             if entity_type not in CALLEE_TYPES:
@@ -610,6 +614,10 @@ class GetEntityDependentsMCPCommand(BaseMCPCommand):
             "category": cls.category,
             "author": cls.author,
             "email": cls.email,
+            "parameters_summary": (
+                "Required: project_id, entity_type. Optional: entity_id, entity_name, target_class. "
+                "No limit parameter; provide either entity_id or entity_name."
+            ),
             "detailed_description": (
                 "The get_entity_dependents command returns the list of entities that depend on "
                 "a given entity (what calls or uses it), using the entity cross-reference table. "

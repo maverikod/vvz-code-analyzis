@@ -14,6 +14,7 @@ from mcp_proxy_adapter.commands.result import SuccessResult, ErrorResult
 from .base_mcp_command import BaseMCPCommand
 from .log_viewer import (
     ListLogFilesCommand,
+    ListLogsByIdCommand,
     LogViewerCommand,
     RotateLogsCommand,
     parse_log_timestamp,
@@ -50,9 +51,23 @@ class ViewWorkerLogsMCPCommand(BaseMCPCommand):
         return {
             "type": "object",
             "properties": {
+                "log_id": {
+                    "type": "string",
+                    "enum": [
+                        "mcp_server",
+                        "code_analysis",
+                        "vectorization",
+                        "file_watcher",
+                        "indexing_worker",
+                    ],
+                    "description": (
+                        "Log identifier (preferred over path). Resolves path from config; "
+                        "reading includes rotated files (.1, .2, .gz)."
+                    ),
+                },
                 "log_path": {
                     "type": "string",
-                    "description": "Path to log file",
+                    "description": "Path to log file (optional if log_id or worker_type set)",
                 },
                 "worker_type": {
                     "type": "string",
@@ -119,6 +134,7 @@ class ViewWorkerLogsMCPCommand(BaseMCPCommand):
 
     async def execute(
         self,
+        log_id: Optional[str] = None,
         log_path: Optional[str] = None,
         worker_type: str = "file_watcher",
         from_time: Optional[str] = None,
@@ -136,7 +152,8 @@ class ViewWorkerLogsMCPCommand(BaseMCPCommand):
         Execute view worker logs command.
 
         Args:
-            log_path: Path to log file (optional if worker_type given and config available)
+            log_id: Log identifier (mcp_server, code_analysis, vectorization, file_watcher, indexing_worker)
+            log_path: Path to log file (optional if log_id or worker_type and config available)
             worker_type: Type of worker (file_watcher, vectorization, indexing, database_driver, analysis)
             from_time: Start time filter
             to_time: End time filter
@@ -153,16 +170,20 @@ class ViewWorkerLogsMCPCommand(BaseMCPCommand):
         """
         try:
             resolved_path = log_path
-            if not resolved_path:
+            resolved_worker_type = worker_type
+            if log_id:
+                resolved_path = self._resolve_log_path_by_id(log_id)
+                resolved_worker_type = self._log_id_to_worker_type(log_id)
+            if not resolved_path and not log_id:
                 resolved_path = self._resolve_worker_log_path(worker_type)
             if not resolved_path:
                 return ErrorResult(
                     code="MISSING_LOG_PATH",
-                    message="Provide log_path or ensure worker_type is set and server config is available to resolve default log path",
+                    message="Provide log_id, log_path, or worker_type and server config to resolve log path",
                 )
             command = LogViewerCommand(
                 log_path=resolved_path,
-                worker_type=worker_type,
+                worker_type=resolved_worker_type,
                 from_time=from_time,
                 to_time=to_time,
                 event_types=event_types,
@@ -191,6 +212,38 @@ class ViewWorkerLogsMCPCommand(BaseMCPCommand):
             logger.debug("Could not resolve worker log path from config: %s", e)
             return None
 
+    def _resolve_log_path_by_id(self, log_id: str) -> Optional[str]:
+        """Resolve log path from config by log identifier (same labels as rotate_all_logs)."""
+        try:
+            from pathlib import Path
+
+            from ..core.log_rotation_all import collect_log_paths
+            from ..core.storage_paths import load_raw_config
+
+            config_path = BaseMCPCommand._resolve_config_path()
+            config_data = load_raw_config(config_path)
+            config_dir = Path(config_path).resolve().parent
+            for path, label in collect_log_paths(
+                config_data, config_dir, log_filter=None
+            ):
+                if label == log_id:
+                    return str(path)
+            return None
+        except Exception as e:
+            logger.debug("Could not resolve log path by id %s: %s", log_id, e)
+            return None
+
+    def _log_id_to_worker_type(self, log_id: str) -> str:
+        """Map log_id to worker_type for event patterns (file_watcher, vectorization, indexing, server)."""
+        m = {
+            "mcp_server": "server",
+            "code_analysis": "server",
+            "vectorization": "vectorization",
+            "file_watcher": "file_watcher",
+            "indexing_worker": "indexing",
+        }
+        return m.get(log_id, "server")
+
     @classmethod
     def metadata(cls: type["ViewWorkerLogsMCPCommand"]) -> Dict[str, Any]:
         """
@@ -213,15 +266,19 @@ class ViewWorkerLogsMCPCommand(BaseMCPCommand):
             "category": cls.category,
             "author": cls.author,
             "email": cls.email,
+            "parameters_summary": (
+                "Optional: log_id, log_path, worker_type, from_time, to_time, event_types, log_levels, "
+                "search_pattern, importance_min, importance_max, tail, limit. Use tail or limit (not 'lines')."
+            ),
             "detailed_description": (
                 "The view_worker_logs command views worker logs with advanced filtering capabilities. "
                 "It supports filtering by time range, event types, log levels, and text search patterns. "
                 "The command parses log files and returns structured log entries.\n\n"
                 "Operation flow:\n"
-                "1. Validates log_path exists and is readable\n"
-                "2. Parses time filters (from_time, to_time) if provided\n"
-                "3. Selects event patterns based on worker_type\n"
-                "4. Reads log file line by line\n"
+                "1. Resolves path: if log_id given, from config (same as rotate_all_logs); else log_path or worker_type\n"
+                "2. Reads current log and rotated files (.1, .2, ... and .gz) in chronological order\n"
+                "3. Parses time filters (from_time, to_time) if provided\n"
+                "4. Selects event patterns based on worker_type (or derived from log_id)\n"
                 "5. Parses each log line (unified or legacy format) to extract timestamp, level, importance (0-10), and message\n"
                 "6. Applies filters:\n"
                 "   - Time range filter (from_time to to_time; partial interval supported)\n"
@@ -271,9 +328,25 @@ class ViewWorkerLogsMCPCommand(BaseMCPCommand):
                 "importance becomes more useful (e.g. importance_min=6 for warnings and above)."
             ),
             "parameters": {
+                "log_id": {
+                    "description": (
+                        "Log identifier (preferred over path). Values: mcp_server, code_analysis, "
+                        "vectorization, file_watcher, indexing_worker. Path is resolved from config; "
+                        "reading includes rotated files (.1, .2, .gz). Use list_logs to get identifiers."
+                    ),
+                    "type": "string",
+                    "required": False,
+                    "enum": [
+                        "mcp_server",
+                        "code_analysis",
+                        "vectorization",
+                        "file_watcher",
+                        "indexing_worker",
+                    ],
+                },
                 "log_path": {
                     "description": (
-                        "Path to log file. Optional if worker_type is set and server config "
+                        "Path to log file. Optional if log_id or worker_type is set and server config "
                         "provides config_dir (then default is config_dir/logs/<worker>.log). "
                         "Can be absolute or relative. File must exist and be readable."
                     ),
@@ -504,7 +577,8 @@ class ViewWorkerLogsMCPCommand(BaseMCPCommand):
                 "Use search_pattern for regex search on message",
                 "Use importance_min/importance_max to filter by severity (0-10)",
                 "Set appropriate limit to prevent large responses",
-                "Use list_worker_logs first to find available log files",
+                "Use list_logs to get log identifiers (log_id), then view_worker_logs with log_id to avoid paths",
+                "Use list_worker_logs to find log files by path if needed",
             ],
         }
 
@@ -603,6 +677,9 @@ class ListWorkerLogsMCPCommand(BaseMCPCommand):
             "category": cls.category,
             "author": cls.author,
             "email": cls.email,
+            "parameters_summary": (
+                "Optional: worker_type, log_dirs. No limit parameter."
+            ),
             "detailed_description": (
                 "The list_worker_logs command lists available worker log files in specified directories. "
                 "It scans configured log directories and returns available log files for workers "
@@ -754,6 +831,90 @@ class ListWorkerLogsMCPCommand(BaseMCPCommand):
                 "Use returned log file paths with view_worker_logs command",
                 "Check file sizes to identify large log files that may need rotation",
             ],
+        }
+
+
+class ListLogsMCPCommand(BaseMCPCommand):
+    """List available logs by identifier (log_id). Path-independent; use log_id in view_worker_logs."""
+
+    name = "list_logs"
+    version = "1.0.0"
+    descr = "List available logs by identifier (log_id); path-independent"
+    category = "logging"
+    author = "Vasiliy Zdanovskiy"
+    email = "vasilyvz@gmail.com"
+    use_queue = False
+
+    @classmethod
+    def get_schema(cls) -> Dict[str, Any]:
+        """Get JSON schema for command parameters."""
+        return {
+            "type": "object",
+            "properties": {
+                "include_paths": {
+                    "type": "boolean",
+                    "description": "If true, include current path for each log (optional)",
+                    "default": False,
+                },
+            },
+            "required": [],
+            "additionalProperties": False,
+        }
+
+    async def execute(
+        self,
+        include_paths: bool = False,
+        **kwargs,
+    ) -> SuccessResult | ErrorResult:
+        """
+        Execute list logs by id command.
+
+        Returns:
+            SuccessResult with logs list (log_id, description; optionally path).
+        """
+        try:
+            from pathlib import Path
+
+            from ..core.storage_paths import load_raw_config
+
+            config_path = BaseMCPCommand._resolve_config_path()
+            config_data = load_raw_config(config_path)
+            config_dir = Path(config_path).resolve().parent
+            command = ListLogsByIdCommand(
+                config_data=config_data,
+                config_dir=config_dir,
+                include_paths=include_paths,
+            )
+            result = await command.execute()
+            return SuccessResult(data=result)
+        except Exception as e:
+            return self._handle_error(e, "LOG_LIST_ERROR", "list_logs")
+
+    @classmethod
+    def metadata(cls: type["ListLogsMCPCommand"]) -> Dict[str, Any]:
+        """Get detailed command metadata for AI models."""
+        return {
+            "name": cls.name,
+            "version": cls.version,
+            "description": cls.descr,
+            "category": cls.category,
+            "author": cls.author,
+            "email": cls.email,
+            "detailed_description": (
+                "The list_logs command returns available logs by identifier (log_id), not by path. "
+                "Use these log_id values with view_worker_logs (log_id parameter). "
+                "Identifiers are stable and do not change when logs are rotated. "
+                "Reading in view_worker_logs includes rotated files (.1, .2, .gz).\n\n"
+                "Log identifiers: mcp_server, code_analysis, vectorization, file_watcher, indexing_worker."
+            ),
+            "parameters": {
+                "include_paths": {
+                    "description": "If true, include current path for each log.",
+                    "type": "boolean",
+                    "required": False,
+                    "default": False,
+                },
+            },
         }
 
 
@@ -936,6 +1097,146 @@ class RotateWorkerLogsMCPCommand(BaseMCPCommand):
                         "rotated_paths": "List of paths after rotation (e.g. [log.1, log.2])",
                         "message": "Human-readable summary",
                     },
+                },
+            },
+        }
+
+
+class RotateAllLogsMCPCommand(BaseMCPCommand):
+    """Rotate all logs (main + workers) or a subset by filter; rotated files are packed (gzip)."""
+
+    name = "rotate_all_logs"
+    version = "1.0.0"
+    descr = (
+        "Rotate main and worker logs (optionally filtered). "
+        "If log_filter omitted, rotates all; otherwise only logs matching filter. Rotated files are gzipped."
+    )
+    category = "logging"
+    author = "Vasiliy Zdanovskiy"
+    email = "vasilyvz@gmail.com"
+    use_queue = False
+
+    @classmethod
+    def get_schema(cls) -> Dict[str, Any]:
+        """Get JSON schema for command parameters."""
+        return {
+            "type": "object",
+            "properties": {
+                "log_filter": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": (
+                        "Optional. List of log labels or path substrings to rotate. "
+                        "If omitted or empty, all logs are rotated. "
+                        "Labels: mcp_server, code_analysis, vectorization, file_watcher, indexing_worker. "
+                        "Path substring match is also supported (e.g. 'file_watcher.log')."
+                    ),
+                },
+                "backup_count": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 99,
+                    "description": "Number of backup files to keep per log (default 5)",
+                    "default": 5,
+                },
+                "pack_rotated": {
+                    "type": "boolean",
+                    "description": "If true, gzip rotated files (default true)",
+                    "default": True,
+                },
+            },
+            "required": [],
+            "additionalProperties": False,
+        }
+
+    async def execute(
+        self,
+        log_filter: Optional[List[str]] = None,
+        backup_count: int = 5,
+        pack_rotated: bool = True,
+        **kwargs: Any,
+    ) -> SuccessResult | ErrorResult:
+        """
+        Execute rotate all logs.
+
+        Args:
+            log_filter: Optional list of labels or path substrings; if None or empty, rotate all logs.
+            backup_count: Number of backup files per log (1-99).
+            pack_rotated: If True, gzip rotated files.
+
+        Returns:
+            SuccessResult with status, files, message or ErrorResult on failure.
+        """
+        try:
+            from pathlib import Path
+
+            from ..core.log_rotation_all import run_rotation_all_logs
+            from ..core.storage_paths import load_raw_config
+
+            config_path = self._resolve_config_path()
+            config_data = load_raw_config(config_path)
+            config_dir = Path(config_path).resolve().parent
+
+            result = run_rotation_all_logs(
+                config_data=config_data,
+                config_dir=config_dir,
+                backup_count=backup_count,
+                pack_rotated=pack_rotated,
+                log_filter=log_filter if log_filter else None,
+                timeout_seconds=30.0,
+            )
+            if result.get("status") == "lock_timeout":
+                return ErrorResult(
+                    code="ROTATION_LOCK_TIMEOUT",
+                    message=result.get(
+                        "message", "Rotation already in progress or lock timed out"
+                    ),
+                )
+            return SuccessResult(data=result)
+        except Exception as e:
+            return self._handle_error(e, "ROTATE_ALL_LOGS_ERROR", "rotate_all_logs")
+
+    @classmethod
+    def metadata(cls: type["RotateAllLogsMCPCommand"]) -> Dict[str, Any]:
+        """Get detailed command metadata for AI models."""
+        return {
+            "name": cls.name,
+            "version": cls.version,
+            "description": cls.descr,
+            "category": cls.category,
+            "author": cls.author,
+            "email": cls.email,
+            "detailed_description": (
+                "The rotate_all_logs command rotates main process and worker log files: "
+                "current log is renamed to .1, .1 to .2, etc., then rotated files are gzipped. "
+                "Uses a process-wide lock so only one rotation runs at a time.\n\n"
+                "Filter: if log_filter is omitted or empty, all known logs are rotated. "
+                "If log_filter is provided, only logs whose label is in the list (case-insensitive) "
+                "or whose path contains any filter string are rotated. "
+                "Labels: mcp_server, code_analysis, vectorization, file_watcher, indexing_worker.\n\n"
+                "Example: log_filter=['file_watcher', 'vectorization'] rotates only those two."
+            ),
+            "parameters": {
+                "log_filter": {
+                    "description": (
+                        "Optional. List of labels or path substrings. If omitted or empty, rotate all logs. "
+                        "Labels: mcp_server, code_analysis, vectorization, file_watcher, indexing_worker."
+                    ),
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "required": False,
+                },
+                "backup_count": {
+                    "description": "Number of backup files per log (1-99). Default 5.",
+                    "type": "integer",
+                    "required": False,
+                    "default": 5,
+                },
+                "pack_rotated": {
+                    "description": "If true, gzip rotated files. Default true.",
+                    "type": "boolean",
+                    "required": False,
+                    "default": True,
                 },
             },
         }
@@ -1185,6 +1486,10 @@ class AnalyzeTimingBottlenecksMCPCommand(BaseMCPCommand):
             "category": cls.category,
             "author": cls.author,
             "email": cls.email,
+            "parameters_summary": (
+                "Log-based params only: log_path, worker_type, from_time, to_time, tail, limit, top_n. "
+                "No project_id; command analyzes worker log files."
+            ),
             "detailed_description": (
                 "SCOPE — This command is about THIS SERVER's own internal operations (the code-analysis "
                 "server process: its workers, chunking, embedding, DB access, etc.). It does NOT analyze "

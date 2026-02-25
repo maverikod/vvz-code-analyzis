@@ -14,7 +14,11 @@ logger = logging.getLogger(__name__)
 
 
 def get_or_create_project(
-    self, root_path: str, name: Optional[str] = None, comment: Optional[str] = None
+    self,
+    root_path: str,
+    name: Optional[str] = None,
+    comment: Optional[str] = None,
+    project_id: Optional[str] = None,
 ) -> str:
     """
     Get or create project by root path.
@@ -23,6 +27,8 @@ def get_or_create_project(
         root_path: Root directory path of the project
         name: Optional project name
         comment: Optional human-readable comment/identifier
+        project_id: Optional project ID to use when creating (e.g. from projectid file).
+            If not provided, a new UUID is generated.
 
     Returns:
         Project ID (UUID4 string)
@@ -30,14 +36,14 @@ def get_or_create_project(
     row = self._fetchone("SELECT id FROM projects WHERE root_path = ?", (root_path,))
     if row:
         return row["id"]
-    project_id = str(uuid.uuid4())
+    new_id = project_id if project_id else str(uuid.uuid4())
     project_name = name or Path(root_path).name
     self._execute(
         "\n                INSERT INTO projects (id, root_path, name, comment, updated_at)\n                VALUES (?, ?, ?, ?, julianday('now'))\n            ",
-        (project_id, root_path, project_name, comment),
+        (new_id, root_path, project_name, comment),
     )
     self._commit()
-    return project_id
+    return new_id
 
 
 def get_project_id(self, root_path: str) -> Optional[str]:

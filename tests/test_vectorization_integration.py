@@ -9,12 +9,14 @@ import pytest
 import tempfile
 import time
 from pathlib import Path
-from unittest.mock import Mock, AsyncMock, MagicMock
+from unittest.mock import Mock, AsyncMock
 from code_analysis.core.database import CodeDatabase
 from code_analysis.core.database.base import create_driver_config_for_worker
 from code_analysis.core.project_resolution import load_project_info
 from code_analysis.core.vectorization_worker_pkg.base import VectorizationWorker
-from code_analysis.core.vectorization_worker_pkg.chunking import _request_chunking_for_files
+from code_analysis.core.vectorization_worker_pkg.chunking import (
+    _request_chunking_for_files,
+)
 
 
 # Get test data directory
@@ -25,12 +27,13 @@ BHLFF_DIR = TEST_DATA_DIR / "bhlff"
 
 @pytest.fixture
 def temp_db(tmp_path):
-    """Create temporary database for tests."""
+    """Create temporary database for tests with full schema (projects, files, code_chunks, etc.)."""
     db_path = tmp_path / "test.db"
     driver_config = create_driver_config_for_worker(
         db_path=db_path, driver_type="sqlite"
     )
     db = CodeDatabase(driver_config=driver_config)
+    db.sync_schema()
     yield db
     db.close()
 
@@ -81,10 +84,11 @@ class TestVectorizationIntegrationRealData:
         project_info = load_project_info(VAST_SRV_DIR)
         assert project_info.project_id
 
-        # Create project in database
+        # Create project in database (use project_id from projectid file so add_file finds it)
         temp_db.get_or_create_project(
             root_path=str(project_info.root_path),
             name="vast_srv_test",
+            project_id=project_info.project_id,
         )
 
         # Find Python files in vast_srv
@@ -105,13 +109,15 @@ class TestVectorizationIntegrationRealData:
             )
             file_ids.append(file_id)
 
-        # Create worker
+        # Create worker (universal API: no project_id; faiss_dir/vector_dim required)
+        db_path = temp_db.driver_config.get("config", {}).get("path")
         worker = VectorizationWorker(
-            db_path=temp_db._driver_config.db_path,
-            project_id=project_info.project_id,
+            db_path=Path(db_path) if db_path else Path(),
+            faiss_dir=tmp_path / "faiss",
+            vector_dim=384,
             svo_client_manager=mock_svo_client_manager,
-            faiss_manager=mock_faiss_manager,
         )
+        worker.faiss_manager = mock_faiss_manager  # for _request_chunking_for_files
 
         # Get files that need chunking
         files_needing_chunking = temp_db.get_files_needing_chunking(
@@ -128,7 +134,9 @@ class TestVectorizationIntegrationRealData:
             chunked_count = await _request_chunking_for_files(
                 worker, temp_db, files_needing_chunking
             )
-            assert chunked_count >= 0  # May be 0 if chunking fails, but should not error
+            assert (
+                chunked_count >= 0
+            )  # May be 0 if chunking fails, but should not error
 
     @pytest.mark.asyncio
     async def test_vectorization_bhlff_files_project_id_validation(
@@ -152,10 +160,11 @@ class TestVectorizationIntegrationRealData:
         project_info = load_project_info(BHLFF_DIR)
         assert project_info.project_id
 
-        # Create project in database
+        # Create project in database (use project_id from projectid file)
         temp_db.get_or_create_project(
             root_path=str(project_info.root_path),
             name="bhlff_test",
+            project_id=project_info.project_id,
         )
 
         # Find Python files in bhlff
@@ -198,10 +207,11 @@ class TestVectorizationIntegrationRealData:
                 json.dumps({"id": project_id, "description": "Test project"})
             )
 
-            # Create project in database
+            # Create project in database (use project_id from projectid file)
             temp_db.get_or_create_project(
                 root_path=str(project_root),
                 name="test_project",
+                project_id=project_id,
             )
 
             # Create files with different extensions
@@ -216,11 +226,12 @@ class TestVectorizationIntegrationRealData:
                     last_modified=test_file.stat().st_mtime,
                     has_docstring=False,
                     project_id=project_id,
-                    dataset_id=str(temp_db.get_or_create_dataset(project_id)),
                 )
                 assert file_id > 0
 
-    def test_vectorization_large_files(self, temp_db, mock_svo_client_manager, mock_faiss_manager):
+    def test_vectorization_large_files(
+        self, temp_db, mock_svo_client_manager, mock_faiss_manager
+    ):
         """Test processing large files."""
         # Create test project
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -237,10 +248,11 @@ class TestVectorizationIntegrationRealData:
                 json.dumps({"id": project_id, "description": "Test project"})
             )
 
-            # Create project in database
+            # Create project in database (use project_id from projectid file)
             temp_db.get_or_create_project(
                 root_path=str(project_root),
                 name="test_project",
+                project_id=project_id,
             )
 
             # Create large file (1000 lines)
@@ -277,17 +289,18 @@ class TestVectorizationIntegrationRealData:
                 json.dumps({"id": project_id, "description": "Test project"})
             )
 
-            # Create project in database
+            # Create project in database (use project_id from projectid file)
             temp_db.get_or_create_project(
                 root_path=str(project_root),
                 name="test_project",
+                project_id=project_id,
             )
 
             # Create file with syntax error
             error_file = project_root / "error_file.py"
             error_file.write_text("def invalid syntax here\n")
 
-            file_id = temp_db.add_file(
+            temp_db.add_file(
                 path=str(error_file),
                 lines=1,
                 last_modified=error_file.stat().st_mtime,
@@ -295,13 +308,15 @@ class TestVectorizationIntegrationRealData:
                 project_id=project_id,
             )
 
-            # Create worker
+            # Create worker (universal API; set faiss_manager for chunking)
+            db_path = temp_db.driver_config.get("config", {}).get("path")
             worker = VectorizationWorker(
-                db_path=temp_db._driver_config.db_path,
-                project_id=project_id,
+                db_path=Path(db_path) if db_path else Path(),
+                faiss_dir=Path(tmpdir) / "faiss",
+                vector_dim=384,
                 svo_client_manager=mock_svo_client_manager,
-                faiss_manager=mock_faiss_manager,
             )
+            worker.faiss_manager = mock_faiss_manager
 
             # Get files that need chunking
             files_needing_chunking = temp_db.get_files_needing_chunking(
@@ -316,7 +331,9 @@ class TestVectorizationIntegrationRealData:
                 # Should not crash, even if chunking fails
                 assert chunked_count >= 0
 
-    def test_vectorization_performance(self, temp_db, mock_svo_client_manager, mock_faiss_manager):
+    def test_vectorization_performance(
+        self, temp_db, mock_svo_client_manager, mock_faiss_manager
+    ):
         """Test vectorization performance on multiple files."""
         # Create test project
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -333,10 +350,11 @@ class TestVectorizationIntegrationRealData:
                 json.dumps({"id": project_id, "description": "Test project"})
             )
 
-            # Create project in database
+            # Create project in database (use project_id from projectid file)
             temp_db.get_or_create_project(
                 root_path=str(project_root),
                 name="test_project",
+                project_id=project_id,
             )
 
             # Create multiple files
@@ -351,7 +369,6 @@ class TestVectorizationIntegrationRealData:
                     last_modified=test_file.stat().st_mtime,
                     has_docstring=False,
                     project_id=project_id,
-                    dataset_id=str(temp_db.get_or_create_dataset(project_id)),
                 )
                 assert file_id > 0
 
@@ -378,10 +395,11 @@ class TestVectorizationIntegrationRealData:
                 json.dumps({"id": project_id, "description": "Test project"})
             )
 
-            # Create project in database
+            # Create project in database (use project_id from projectid file)
             temp_db.get_or_create_project(
                 root_path=str(project_root),
                 name="test_project",
+                project_id=project_id,
             )
 
             # Create test file
@@ -423,10 +441,11 @@ class TestVectorizationIntegrationRealData:
                 json.dumps({"id": project_id, "description": "Test project"})
             )
 
-            # Create project in database
+            # Create project in database (use project_id from projectid file)
             temp_db.get_or_create_project(
                 root_path=str(project_root),
                 name="test_project",
+                project_id=project_id,
             )
 
             # Verify FAISS manager is available
@@ -442,4 +461,3 @@ class TestVectorizationIntegrationRealData:
             # Test saving index
             mock_faiss_manager.save_index()
             assert mock_faiss_manager.save_index.called
-

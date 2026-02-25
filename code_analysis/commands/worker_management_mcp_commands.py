@@ -249,6 +249,9 @@ class StartWorkerMCPCommand(BaseMCPCommand):
                     (root_path / "logs" / "indexing_worker.log").resolve()
                 )
                 worker_logs_dir = str(Path(log_path).resolve().parent)
+                code_analysis_cfg = config_data.get("code_analysis", {}) or {}
+                worker_cfg = code_analysis_cfg.get("worker", {}) or {}
+                log_timing = bool(worker_cfg.get("log_all_operations_timing", False))
                 worker_manager = get_worker_manager()
                 res = worker_manager.start_indexing_worker(
                     db_path=str(db_path),
@@ -257,6 +260,7 @@ class StartWorkerMCPCommand(BaseMCPCommand):
                     worker_log_path=log_path,
                     worker_logs_dir=worker_logs_dir,
                     config_path=str(config_path) if config_path else None,
+                    log_timing=log_timing,
                 )
                 return SuccessResult(data=res.__dict__)
 

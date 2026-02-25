@@ -283,9 +283,11 @@ def start_vectorization_cycle(self, cycle_id: Optional[str] = None) -> str:
         (cycle_start_time,),
     )
 
-    # Get total chunks count at start (not vectorized)
+    # Get total chunks count at start (not vectorized; exclude skipped)
     result = self._fetchone(
-        "SELECT COUNT(*) as count FROM code_chunks WHERE vector_id IS NULL"
+        """SELECT COUNT(*) as count FROM code_chunks
+           WHERE vector_id IS NULL
+             AND (vectorization_skipped IS NULL OR vectorization_skipped = 0)"""
     )
     chunks_total_at_start = result["count"] if result else 0
 

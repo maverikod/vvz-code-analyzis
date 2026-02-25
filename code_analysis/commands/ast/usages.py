@@ -265,6 +265,10 @@ class FindUsagesMCPCommand(BaseMCPCommand):
             "category": cls.category,
             "author": cls.author,
             "email": cls.email,
+            "parameters_summary": (
+                "Required: project_id, target_name. Optional: target_type (method|property|class|function), "
+                "target_class, file_path, limit, offset. Use target_name and target_type, not entity_name/entity_type."
+            ),
             "detailed_description": (
                 "The find_usages command finds all places where a method, property, class, or function "
                 "is used in the project. It searches the usages table in the analysis database to "

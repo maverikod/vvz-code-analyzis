@@ -5,7 +5,7 @@ Author: Vasiliy Zdanovskiy
 email: vasilyvz@gmail.com
 """
 
-from typing import Any, Dict, Optional
+from typing import Any, Dict
 
 from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 
@@ -111,20 +111,31 @@ class GetASTMCPCommand(BaseMCPCommand):
                     code="FILE_NOT_FOUND",
                 )
 
-            # Get AST from database (synchronous method, no await needed)
-            ast_data = db.get_ast_tree(file_record["id"])
+            # Get AST from database. DatabaseClient.get_ast() returns parsed AST dict;
+            # direct DB get_ast_tree() returns row with "ast_json" string.
+            file_id = (
+                file_record["id"] if isinstance(file_record, dict) else file_record.id
+            )
+            ast_data = None
+            if hasattr(db, "get_ast"):
+                ast_data = db.get_ast(file_id)
+            elif hasattr(db, "get_ast_tree"):
+                ast_data = db.get_ast_tree(file_id)
             db.disconnect()
 
-            if ast_data:
+            if ast_data is not None:
                 result = {
                     "success": True,
                     "file_path": file_path,
-                    "file_id": file_record["id"],
+                    "file_id": file_id,
                 }
-                if include_json and ast_data.get("ast_json"):
-                    import json
+                if include_json:
+                    if isinstance(ast_data, dict) and "ast_json" in ast_data:
+                        import json
 
-                    result["ast"] = json.loads(ast_data["ast_json"])
+                        result["ast"] = json.loads(ast_data["ast_json"])
+                    else:
+                        result["ast"] = ast_data
                 return SuccessResult(data=result)
             return ErrorResult(
                 message="AST not found for file",

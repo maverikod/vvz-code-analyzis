@@ -90,6 +90,7 @@ def run_indexing_worker(
     log_max_bytes: int = 10485760,
     log_backup_count: int = 5,
     config_path: Optional[str] = None,
+    log_timing: bool = False,
 ) -> Dict[str, Any]:
     """Run indexing worker: logging, PID cleanup, create client and worker, loop until stop.
 
@@ -103,6 +104,7 @@ def run_indexing_worker(
         log_max_bytes: Max log file size before rotation (default 10 MB)
         log_backup_count: Number of rotated logs to keep (default 5)
         config_path: Optional path to config; when set, vectorize file after each successful index
+        log_timing: When True, log [TIMING] lines for analyze_timing_bottlenecks (from worker config).
 
     Returns:
         Stats dict when stopped: indexed, errors, cycles.
@@ -142,6 +144,7 @@ def run_indexing_worker(
         poll_interval=poll_interval,
         status_file_path=status_file_path,
         config_path=config_path,
+        log_timing=log_timing,
     )
 
     try:

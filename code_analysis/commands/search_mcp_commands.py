@@ -635,6 +635,10 @@ class FindClassesMCPCommand(BaseMCPCommand):
             "category": cls.category,
             "author": cls.author,
             "email": cls.email,
+            "parameters_summary": (
+                "Required: project_id. Optional: pattern (SQL LIKE name pattern; "
+                "e.g. '%Manager'. No 'limit' parameter.)"
+            ),
             "detailed_description": (
                 "The find_classes command searches for classes by name pattern. "
                 "It can search for classes matching a specific pattern or return all classes "

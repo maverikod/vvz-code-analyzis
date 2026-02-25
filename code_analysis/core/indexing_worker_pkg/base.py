@@ -31,6 +31,7 @@ class IndexingWorker:
         poll_interval: int = 30,
         status_file_path: Optional[Path] = None,
         config_path: Optional[str] = None,
+        log_timing: bool = False,
     ):
         """Initialize indexing worker.
 
@@ -41,6 +42,7 @@ class IndexingWorker:
             poll_interval: Seconds between cycles (default 30)
             status_file_path: Optional path to write current_operation/current_file for monitoring
             config_path: Optional path to config file; when set, vectorize file after each successful index
+            log_timing: When True, log [TIMING] lines for bottleneck analysis (log_all_operations_timing).
         """
         self.db_path = db_path
         self.socket_path = socket_path
@@ -48,6 +50,7 @@ class IndexingWorker:
         self.poll_interval = poll_interval
         self.status_file_path = Path(status_file_path) if status_file_path else None
         self.config_path = config_path
+        self.log_timing = log_timing
         self._stop_event = multiprocessing.Event()
 
     def stop(self) -> None:

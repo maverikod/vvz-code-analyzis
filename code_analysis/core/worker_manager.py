@@ -320,6 +320,7 @@ class WorkerManager:
         worker_log_path: Optional[str] = None,
         worker_logs_dir: Optional[str] = None,
         config_path: Optional[str] = None,
+        log_timing: bool = False,
     ) -> WorkerStartResult:
         """
         Start indexing worker in a separate process and register it.
@@ -331,6 +332,7 @@ class WorkerManager:
             worker_log_path: Log path for worker process.
             worker_logs_dir: Absolute directory for worker log and PID file (optional).
             config_path: Optional path to config; when set, vectorize file after each successful index.
+            log_timing: When True, worker logs [TIMING] lines for analyze_timing_bottlenecks.
 
         Returns:
             WorkerStartResult.
@@ -342,6 +344,7 @@ class WorkerManager:
             worker_log_path=worker_log_path,
             worker_logs_dir=worker_logs_dir,
             config_path=config_path,
+            log_timing=log_timing,
         )
 
     # Database driver methods

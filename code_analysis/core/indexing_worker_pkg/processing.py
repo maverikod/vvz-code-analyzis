@@ -23,6 +23,7 @@ from ..worker_status_file import (
     STATUS_OPERATION_POLLING,
     write_worker_status,
 )
+from ..vectorization_worker_pkg.timing_log import log_operation_timing
 
 logger = logging.getLogger(__name__)
 
@@ -141,6 +142,7 @@ async def process_cycle(self: Any, poll_interval: int = 30) -> Dict[str, Any]:
             cycle_id = str(uuid.uuid4())
             cycle_start_time = time.time()
             cycle_had_activity = False
+            log_timing = getattr(self, "log_timing", False)
 
             try:
                 # Start indexing_worker_stats cycle (same pattern as vectorization)
@@ -152,6 +154,7 @@ async def process_cycle(self: Any, poll_interval: int = 30) -> Dict[str, Any]:
                     """,
                     (cycle_start_time,),
                 )
+                discovery_start = time.time()
                 files_total_result = database.execute(
                     """
                     SELECT COUNT(*) as count FROM files
@@ -198,6 +201,15 @@ async def process_cycle(self: Any, poll_interval: int = 30) -> Dict[str, Any]:
                         for row in projects_data
                         if row.get("project_id")
                     ]
+                    discovery_duration = time.time() - discovery_start
+                    log_operation_timing(
+                        log_timing,
+                        logger,
+                        "discovery",
+                        discovery_duration,
+                        files_total=files_total_at_start,
+                        project_count=len(project_ids),
+                    )
                     logger.info(
                         "[CYCLE #%s] project_ids count=%s (batch_size=%s)",
                         cycle_count,
@@ -260,6 +272,14 @@ async def process_cycle(self: Any, poll_interval: int = 30) -> Dict[str, Any]:
                                 try:
                                     result = database.index_file(path, project_id)
                                     elapsed = time.time() - file_start
+                                    log_operation_timing(
+                                        log_timing,
+                                        logger,
+                                        "index_file",
+                                        elapsed,
+                                        path=path[:80] if path else "",
+                                        success=result.get("success", False),
+                                    )
                                     if result.get("success"):
                                         total_indexed += 1
                                         logger.debug("Indexed %s", path)
@@ -335,6 +355,15 @@ async def process_cycle(self: Any, poll_interval: int = 30) -> Dict[str, Any]:
                                     cycle_indexed += 1
                                     cycle_had_activity = True
                                     elapsed = time.time() - file_start
+                                    log_operation_timing(
+                                        log_timing,
+                                        logger,
+                                        "index_file",
+                                        elapsed,
+                                        path=path[:80] if path else "",
+                                        success=False,
+                                        error=str(e)[:60],
+                                    )
                                     try:
                                         logger.warning(
                                             "Index error for %s: %s", path, e
@@ -420,6 +449,15 @@ async def process_cycle(self: Any, poll_interval: int = 30) -> Dict[str, Any]:
                     continue
 
                 # End indexing_worker_stats cycle
+                cycle_duration = time.time() - cycle_start_time
+                log_operation_timing(
+                    log_timing,
+                    logger,
+                    "cycle_total",
+                    cycle_duration,
+                    cycle_id=cycle_count,
+                    had_activity=cycle_had_activity,
+                )
                 try:
                     database.execute(
                         """

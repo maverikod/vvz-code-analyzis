@@ -391,8 +391,12 @@ class ComprehensiveAnalysisMCPCommand(BaseMCPCommand):
                         f"No project_id specified, cannot look up file in database: {abs_path}"
                     )
 
-                # Check if analysis is up-to-date
-                if file_id and file_project_id:
+                # Check if analysis is up-to-date (direct driver only; DatabaseClient has no cache)
+                if (
+                    file_id
+                    and file_project_id
+                    and hasattr(db, "is_analysis_up_to_date")
+                ):
                     if db.is_analysis_up_to_date(file_id, file_mtime):
                         # Get cached results
                         cached = db.get_comprehensive_analysis_results(
@@ -638,8 +642,10 @@ class ComprehensiveAnalysisMCPCommand(BaseMCPCommand):
                         logger.warning(f"Failed to get mtime for {file_path_str}: {e}")
                         continue
 
-                    # Check if analysis is up-to-date
-                    if db.is_analysis_up_to_date(file_id, file_mtime):
+                    # Check if analysis is up-to-date (direct driver only)
+                    if hasattr(
+                        db, "is_analysis_up_to_date"
+                    ) and db.is_analysis_up_to_date(file_id, file_mtime):
                         files_skipped += 1
                         logger.debug(f"Skipping unchanged file: {file_path_str}")
                         analysis_logger.debug(

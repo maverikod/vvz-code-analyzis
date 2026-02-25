@@ -1,19 +1,33 @@
 """
 Internal commands for viewing worker logs with filtering.
 
+Supports log rotation: when reading a log, current file and rotated backups
+(.1, .2, ... and .1.gz, .2.gz) are read in chronological order (oldest first).
+
 Author: Vasiliy Zdanovskiy
 email: vasilyvz@gmail.com
 """
 
+import gzip
 import logging
 import re
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from code_analysis.core.log_rotation_all import collect_log_paths
 from code_analysis.logging import importance_from_level
 
 logger = logging.getLogger(__name__)
+
+# Human-readable descriptions for log identifiers (used by list_logs).
+LOG_ID_DESCRIPTIONS: Dict[str, str] = {
+    "mcp_server": "MCP server main log",
+    "code_analysis": "Code analysis service log",
+    "vectorization": "Vectorization worker log",
+    "file_watcher": "File watcher worker log",
+    "indexing_worker": "Indexing worker log",
+}
 
 # Event type patterns for File Watcher Worker
 FILE_WATCHER_EVENT_PATTERNS = {
@@ -57,6 +71,46 @@ DATABASE_DRIVER_EVENT_PATTERNS = {
     "info": r"INFO",
     "warning": r"WARNING",
 }
+
+
+def get_log_files_for_reading(
+    base_path: Path,
+    backup_count: int = 20,
+) -> List[Path]:
+    """
+    Collect log file paths for reading in chronological order (oldest first).
+
+    Includes the current log file and rotated backups (.1, .2, ... or .1.gz, .2.gz).
+    For each rotation index, uses .gz if present, otherwise plain .N.
+
+    Args:
+        base_path: Path to the current log file (e.g. logs/file_watcher.log).
+        backup_count: Max rotation index to consider (default 20).
+
+    Returns:
+        List of paths to read in order: oldest ... newest (current).
+    """
+    result: List[Path] = []
+    base_path = base_path.resolve()
+    for n in range(backup_count, 0, -1):
+        p_plain = Path(str(base_path) + "." + str(n))
+        p_gz = Path(str(p_plain) + ".gz")
+        if p_gz.exists():
+            result.append(p_gz)
+        elif p_plain.exists():
+            result.append(p_plain)
+    if base_path.exists():
+        result.append(base_path)
+    return result
+
+
+def _read_log_lines(path: Path) -> List[str]:
+    """Read lines from a log file, decompressing if path ends with .gz."""
+    if path.suffix == ".gz" and str(path).endswith(".gz"):
+        with gzip.open(path, "rt", encoding="utf-8") as f:
+            return f.readlines()
+    with open(path, "r", encoding="utf-8") as f:
+        return f.readlines()
 
 
 class LogViewerCommand:
@@ -354,16 +408,22 @@ class LogViewerCommand:
             },
         }
 
-        if not self.log_path.exists():
+        files_to_read = get_log_files_for_reading(self.log_path)
+        if not files_to_read:
             result["error"] = f"Log file not found: {self.log_path}"
             return result
 
         try:
-            # Read log file
-            with open(self.log_path, "r", encoding="utf-8") as f:
-                lines = f.readlines()
+            # Read all log files (current + rotated) in chronological order
+            lines: List[str] = []
+            for p in files_to_read:
+                try:
+                    lines.extend(_read_log_lines(p))
+                except (OSError, gzip.BadGzipFile) as e:
+                    logger.warning("Skip reading %s: %s", p, e)
 
             result["total_lines"] = len(lines)
+            result["files_read"] = len(files_to_read)
 
             # If tail mode, take last N lines
             if self.tail:
@@ -411,6 +471,88 @@ class LogViewerCommand:
             result["error"] = str(e)
 
         return result
+
+
+def get_logs_by_id(
+    config_data: Dict[str, Any],
+    config_dir: Path,
+    include_paths: bool = False,
+) -> List[Dict[str, Any]]:
+    """
+    Return list of logs by identifier (log_id), not by path.
+
+    Uses server config to resolve which logs exist; identifiers are stable
+    (mcp_server, code_analysis, vectorization, file_watcher, indexing_worker).
+
+    Args:
+        config_data: Full config dict (e.g. from config.json).
+        config_dir: Directory containing config file.
+        include_paths: If True, include current path for each log.
+
+    Returns:
+        List of dicts with log_id, description; optionally path.
+    """
+    paths_and_labels = collect_log_paths(config_data, config_dir, log_filter=None)
+    seen: set[str] = set()
+    out: List[Dict[str, Any]] = []
+    for path, label in paths_and_labels:
+        if label in seen:
+            continue
+        seen.add(label)
+        entry: Dict[str, Any] = {
+            "log_id": label,
+            "description": LOG_ID_DESCRIPTIONS.get(label, label),
+        }
+        if include_paths:
+            entry["path"] = str(path)
+        out.append(entry)
+    return out
+
+
+class ListLogsByIdCommand:
+    """
+    List available logs by identifier (log_id).
+
+    Returns log_id and description for each log known from config;
+    does not depend on file paths. Use these log_id values with
+    view_worker_logs (log_id parameter) to view logs.
+    """
+
+    def __init__(
+        self,
+        config_data: Dict[str, Any],
+        config_dir: Path,
+        include_paths: bool = False,
+    ):
+        """
+        Initialize list logs by id command.
+
+        Args:
+            config_data: Full config dict.
+            config_dir: Config file directory.
+            include_paths: Include current path in response.
+        """
+        self.config_data = config_data
+        self.config_dir = Path(config_dir)
+        self.include_paths = include_paths
+
+    async def execute(self) -> Dict[str, Any]:
+        """
+        Execute list logs by id command.
+
+        Returns:
+            Dictionary with logs list (log_id, description; optionally path).
+        """
+        logs = get_logs_by_id(
+            self.config_data,
+            self.config_dir,
+            include_paths=self.include_paths,
+        )
+        return {
+            "logs": logs,
+            "total": len(logs),
+            "message": f"Found {len(logs)} log(s) by identifier",
+        }
 
 
 class ListLogFilesCommand:

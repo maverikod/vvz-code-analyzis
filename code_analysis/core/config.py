@@ -214,6 +214,10 @@ class ServerConfig(BaseModel):
         default_factory=lambda: get_settings().get("retry_delay", DEFAULT_RETRY_DELAY),
         description="Delay in seconds between vectorization retry attempts",
     )
+    log_vectorization_chunker_trace: bool = Field(
+        default=False,
+        description="If true, log each chunker request/response (text preview, result, error) to logs/vectorization_chunker_trace.log",
+    )
     worker: Optional[Dict[str, Any]] = Field(
         default_factory=lambda: {
             "enabled": True,

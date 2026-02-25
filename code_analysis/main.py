@@ -784,6 +784,10 @@ def main() -> None:
             poll_interval = 30
             batch_size = 5
             worker_log_path = str(storage.config_dir / "logs" / "indexing_worker.log")
+            log_timing = False
+            worker_cfg = code_analysis_config.get("worker") or {}
+            if isinstance(worker_cfg, dict):
+                log_timing = worker_cfg.get("log_all_operations_timing", False)
             if isinstance(indexing_cfg, dict):
                 poll_interval = indexing_cfg.get("poll_interval", 30)
                 batch_size = indexing_cfg.get("batch_size", 5)
@@ -799,6 +803,7 @@ def main() -> None:
                 worker_log_path=worker_log_path,
                 worker_logs_dir=worker_logs_dir,
                 config_path=str(config_path) if config_path else None,
+                log_timing=log_timing,
             )
             if result.success:
                 logger.info(f"✅ Indexing worker started: {result.message}")
@@ -1136,13 +1141,13 @@ def main() -> None:
                         f"⚠️  Watch directory does not exist: {watch_dir_path}, skipping"
                     )
                     continue
-                # Use normalized absolute path
-                valid_watch_dirs.append(
-                    {
-                        "id": watch_dir_id,
-                        "path": str(watch_dir_path),
-                    }
-                )
+                # Use normalized absolute path; optional ignore_patterns per watch dir
+                entry: dict = {"id": watch_dir_id, "path": str(watch_dir_path)}
+                if "ignore_patterns" in watch_dir_config and isinstance(
+                    watch_dir_config["ignore_patterns"], list
+                ):
+                    entry["ignore_patterns"] = watch_dir_config["ignore_patterns"]
+                valid_watch_dirs.append(entry)
 
             if not valid_watch_dirs:
                 logger.warning(

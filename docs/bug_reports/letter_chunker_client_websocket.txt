@@ -1,0 +1,21 @@
+Subject: svo_client (ChunkerClient) — WebSocket / bidirectional channel for faster chunking
+
+Hi,
+
+We use svo_client (ChunkerClient) from the code_analysis project for docstring chunking and vectorization. Right now we call chunk() which uses execute_command_unified(..., expect_queue=False), i.e. a single request–response over HTTP. Throughput is limited by round-trips and polling delays.
+
+embed_client (same mcp_proxy_adapter stack) already has:
+
+- wait_for_job_via_websocket(job_id, timeout) — wait for job completion via /ws push instead of HTTP polling.
+- open_bidirectional_ws_channel(receive_timeout, heartbeat) — bidirectional WebSocket channel (send_json, receive_iter) for multiple requests over one connection.
+
+We’d like the chunker client to support a similar “fast” path:
+
+1. If the chunker server can return a job_id for chunk and push completion over /ws: could svo_client expose an option (e.g. use_websocket=True or expect_queue=True) so that after submitting chunk we wait via wait_for_job_via_websocket instead of a single blocking HTTP response? That would avoid polling and reduce latency.
+
+2. If the server supports it: could the client offer open_bidirectional_ws_channel (or equivalent) so we can send multiple chunk requests over one WebSocket and receive results as they complete? That would reduce connection overhead and improve throughput.
+
+We’re happy to integrate and test once the client API is defined. Please document required server behaviour (/ws schema, job_id, event types) so we can align with our vectorization worker.
+
+Thanks,
+[Your name / team]

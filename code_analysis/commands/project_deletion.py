@@ -44,6 +44,11 @@ class DeleteProjectCommand:
     root directory is moved to trash (recycle bin) instead of being permanently
     removed. Version directory for this project is permanently deleted.
 
+    When marking a project for deletion (delete_from_disk=True), all its files are
+    moved into a trash subfolder. Current implementation: project root is moved to
+    trash_dir/ProjectName_timestamp (FILE_TRASH_SPEC step 9). File-level trash
+    uses trash_dir/{project_id}/... for individual deleted files.
+
     Use with caution - database removal cannot be undone.
     """
 

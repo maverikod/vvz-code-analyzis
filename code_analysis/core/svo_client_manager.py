@@ -3,7 +3,8 @@ SVO client manager.
 
 This module provides a single integration point for "SVO" services used by this
 project:
-- chunker service (SVO) - chunks text and returns chunks with embeddings
+- chunker service (SVO) - chunks text and returns chunks with embeddings.
+  Chunking is only via WebSocket (queue + completion push on /ws).
 - embedding service (embed-client) - only vectorization (embeddings)
 
 The codebase relies on `SVOClientManager` during startup and in the vectorization
@@ -598,14 +599,16 @@ class SVOClientManager:
 
     async def get_chunks(self, text: str, **kwargs: Any) -> List[Any]:
         """
-        Get chunks with embeddings from chunker service (SVO).
+        Get chunks with embeddings from chunker service (SVO) via WebSocket.
 
-        Chunker service chunks text and returns chunks with embeddings.
-        Used for vectorizing docstrings.
+        Chunking is done only via WebSocket: submit job, wait for completion
+        push on /ws (svo_client ChunkerClient.chunk uses execute_command_unified
+        with auto_poll over WebSocket). Returns chunks with embeddings.
 
         Args:
             text: Text to chunk and vectorize.
             **kwargs: Additional chunking parameters (type, language, etc.).
+                     Timeout can be overridden; default is config chunker timeout.
 
         Returns:
             List of chunk objects with embeddings (SemanticChunk from svo_client).
@@ -630,15 +633,15 @@ class SVOClientManager:
             )
             raise RuntimeError(error_msg)
 
-        # Check text length against chunker limits
+        # Check text length: chunker rejects if too short (server min=15)
+        min_len = self._min_chunk_length if self._min_chunk_length is not None else 15
         text_length = len(text)
-        if self._min_chunk_length is not None and text_length < self._min_chunk_length:
-            # Short texts should be saved to database without chunker processing
+        if text_length < min_len:
             logger.debug(
                 f"Text length ({text_length}) is below chunker minimum "
-                f"({self._min_chunk_length} characters). Skipping chunker, will save to DB without embedding."
+                f"({min_len} characters). Skipping chunker, will save to DB without embedding."
             )
-            return []  # Return empty list - caller should save to DB without embedding
+            return []
 
         if self._max_chunk_length is not None and text_length > self._max_chunk_length:
             logger.debug(
@@ -656,8 +659,12 @@ class SVOClientManager:
         )
 
         try:
-            # Call chunker service via unified chunk(texts=[...]) API (one list per text)
-            batch = await self._chunker_client.chunk(texts=[text], **kwargs)
+            # Chunk via WebSocket only (queue + completion push); pass timeout from config
+            chunk_timeout = kwargs.get("timeout") or self._chunker_timeout or 0.0
+            chunk_kwargs = {k: v for k, v in kwargs.items() if k != "timeout"}
+            batch = await self._chunker_client.chunk(
+                texts=[text], timeout=float(chunk_timeout), **chunk_kwargs
+            )
             chunks = batch[0] if batch else []
             request_duration = time.time() - request_start_time
 
@@ -754,15 +761,16 @@ class SVOClientManager:
         self, texts: List[str], **kwargs: Any
     ) -> List[List[Any]]:
         """
-        Get chunks with embeddings for multiple texts in one request.
+        Get chunks with embeddings for multiple texts via WebSocket.
 
-        Uses chunker command "chunk" with texts list (svo_client ChunkerClient.chunk).
-        One list of SemanticChunk per input text; texts below min_chunk_length
-        get an empty list at that index.
+        Chunking is only via WebSocket (svo_client ChunkerClient.chunk:
+        execute_command_unified with auto_poll over /ws). One list of
+        SemanticChunk per input text; texts below min_chunk_length get [].
 
         Args:
             texts: List of texts to chunk and vectorize.
             **kwargs: Additional chunking parameters (type, language, etc.).
+                     Timeout can be overridden; default is config chunker timeout.
 
         Returns:
             List of lists of chunk objects (one list per input text, same order).
@@ -776,14 +784,12 @@ class SVOClientManager:
         if not texts:
             return []
 
-        # Filter by min length: call chunk() only for valid texts; fill [] for short
+        # Filter by min length: chunker rejects batch if any text too short (e.g. min=15)
+        min_len = self._min_chunk_length if self._min_chunk_length is not None else 15
         valid_indices: List[int] = []
         valid_texts: List[str] = []
         for i, text in enumerate(texts):
-            if (
-                self._min_chunk_length is not None
-                and len(text) < self._min_chunk_length
-            ):
+            if len(text) < min_len:
                 continue
             valid_indices.append(i)
             valid_texts.append(text)
@@ -798,7 +804,11 @@ class SVOClientManager:
             f"BATCH REQUEST | texts_count={len(valid_texts)} | " f"kwargs={kwargs}"
         )
         try:
-            batch = await self._chunker_client.chunk(texts=valid_texts, **kwargs)
+            chunk_timeout = kwargs.get("timeout") or self._chunker_timeout or 0.0
+            chunk_kwargs = {k: v for k, v in kwargs.items() if k != "timeout"}
+            batch = await self._chunker_client.chunk(
+                texts=valid_texts, timeout=float(chunk_timeout), **chunk_kwargs
+            )
             request_duration = time.time() - request_start_time
             for k, idx in enumerate(valid_indices):
                 if k < len(batch):

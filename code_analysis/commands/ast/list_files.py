@@ -7,7 +7,7 @@ email: vasilyvz@gmail.com
 
 from typing import Any, Dict, Optional
 
-from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
+from mcp_proxy_adapter.commands.result import SuccessResult
 
 from ..base_mcp_command import BaseMCPCommand
 
@@ -66,24 +66,46 @@ class ListProjectFilesMCPCommand(BaseMCPCommand):
 
             files = db.get_project_files(project_id, include_deleted=False)
 
-            # Apply file_pattern filter if provided
+            # Apply file_pattern filter if provided (items may be File objects or dicts)
             if file_pattern:
                 import fnmatch
 
-                files = [f for f in files if fnmatch.fnmatch(f["path"], file_pattern)]
+                def _path_for_match(f):
+                    return (
+                        getattr(f, "relative_path", None)
+                        or getattr(f, "path", None)
+                        or (f.get("relative_path") if isinstance(f, dict) else None)
+                        or (f.get("path") if isinstance(f, dict) else "")
+                    )
+
+                files = [
+                    f
+                    for f in files
+                    if fnmatch.fnmatch(_path_for_match(f) or "", file_pattern)
+                ]
 
             # Apply pagination
             total = len(files)
             if offset > 0 or limit:
                 files = files[offset : offset + (limit or len(files))]
 
+            # Serialize to list of dicts (DatabaseClient returns File objects)
+            def _file_to_dict(f):
+                if hasattr(f, "to_db_row"):
+                    d = f.to_db_row()
+                    d["deleted"] = bool(f.deleted)
+                    return d
+                return dict(f) if isinstance(f, dict) else f
+
+            files_data = [_file_to_dict(f) for f in files]
+
             db.disconnect()
 
             return SuccessResult(
                 data={
                     "success": True,
-                    "files": files,
-                    "count": len(files),
+                    "files": files_data,
+                    "count": len(files_data),
                     "total": total,
                     "offset": offset,
                 }

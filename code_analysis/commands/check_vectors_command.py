@@ -373,7 +373,9 @@ class CheckVectorsCommand(BaseMCPCommand):
                             vec_params,
                         ),
                         (
-                            "SELECT COUNT(*) as count FROM code_chunks WHERE vector_id IS NULL AND project_id = ?",
+                            """SELECT COUNT(*) as count FROM code_chunks
+                               WHERE vector_id IS NULL AND project_id = ?
+                                 AND (vectorization_skipped IS NULL OR vectorization_skipped = 0)""",
                             vec_params,
                         ),
                         (
@@ -398,7 +400,9 @@ class CheckVectorsCommand(BaseMCPCommand):
                             None,
                         ),
                         (
-                            "SELECT COUNT(*) as count FROM code_chunks WHERE vector_id IS NULL",
+                            """SELECT COUNT(*) as count FROM code_chunks
+                               WHERE vector_id IS NULL
+                                 AND (vectorization_skipped IS NULL OR vectorization_skipped = 0)""",
                             None,
                         ),
                         (

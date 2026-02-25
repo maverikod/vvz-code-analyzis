@@ -22,7 +22,10 @@ from typing import Any, Dict, Optional, Union
 logger = logging.getLogger(__name__)
 
 STATUS_OPERATION_IDLE = "idle"
-STATUS_OPERATION_POLLING = "polling"
+# Worker cycle start (query DB for work). Chunker is WS-only, no HTTP polling.
+STATUS_OPERATION_CYCLE_START = "cycle_start"
+# Backward compatibility alias (was "polling", misleading re chunker).
+STATUS_OPERATION_POLLING = STATUS_OPERATION_CYCLE_START
 STATUS_OPERATION_VECTORIZING = "vectorizing"
 STATUS_OPERATION_CHUNKING = "chunking"
 STATUS_OPERATION_INDEXING = "indexing"
@@ -42,7 +45,7 @@ def write_worker_status(
 
     Args:
         status_file_path: Path to .status.json file (e.g. logs/vectorization_worker.status.json).
-        current_operation: Operation name (e.g. "idle", "vectorizing", "indexing").
+        current_operation: Operation name (e.g. "idle", "cycle_start", "vectorizing", "indexing").
         current_file: Optional path to file being processed.
         progress_percent: Optional progress 0-100 (current cycle or batch).
         extra: Optional extra keys to store in status JSON.
@@ -58,7 +61,9 @@ def write_worker_status(
             "updated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         }
         if progress_percent is not None:
-            data["progress_percent"] = max(0, min(100, round(float(progress_percent), 1)))
+            data["progress_percent"] = max(
+                0, min(100, round(float(progress_percent), 1))
+            )
         if extra:
             data.update(extra)
         with open(path, "w", encoding="utf-8") as f:
@@ -66,7 +71,9 @@ def write_worker_status(
     except Exception as e:
         # Log must not raise (e.g. disk full); report error but do not propagate
         try:
-            logger.debug("Failed to write worker status file %s: %s", status_file_path, e)
+            logger.debug(
+                "Failed to write worker status file %s: %s", status_file_path, e
+            )
         except Exception:
             pass
 
@@ -100,7 +107,9 @@ def read_worker_status(status_file_path: Optional[Path]) -> Optional[Dict[str, A
     except Exception as e:
         # Log must not raise (e.g. disk full); report error but do not propagate
         try:
-            logger.debug("Failed to read worker status file %s: %s", status_file_path, e)
+            logger.debug(
+                "Failed to read worker status file %s: %s", status_file_path, e
+            )
         except Exception:
             pass
         return None

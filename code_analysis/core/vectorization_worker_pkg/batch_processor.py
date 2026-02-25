@@ -197,12 +197,20 @@ async def process_chunks_missing_embedding_params(
         )
         return updated_count, error_count
 
-    step_start = time.time()
-    scope_desc = f"project={getattr(self, 'project_id', '?')}"
-    batch_size = getattr(self, "batch_size", 10)
     project_id = getattr(self, "project_id", "")
+    scope_desc = f"project={project_id or '?'}"
+    logger.info(
+        "process_chunks_missing_embedding_params: start %s",
+        scope_desc,
+    )
+    step_start = time.time()
+    batch_size = getattr(self, "batch_size", 10)
 
     # Step 1: Build table (file_id, file_path, count of non-vectorized chunks)
+    logger.info(
+        "process_chunks_missing_embedding_params: querying file counts (%s)",
+        scope_desc,
+    )
     file_counts_result = database.execute(
         """
         SELECT f.id AS file_id, f.path AS file_path, COUNT(cc.id) AS cnt
@@ -224,6 +232,11 @@ async def process_chunks_missing_embedding_params(
         else []
     )
     step_duration = time.time() - step_start
+    logger.info(
+        "process_chunks_missing_embedding_params: file_counts=%d in %.3fs",
+        len(file_counts_data),
+        step_duration,
+    )
     log_operation_timing(
         getattr(self, "log_timing", False),
         logger,
@@ -259,9 +272,15 @@ async def process_chunks_missing_embedding_params(
         LIMIT ?
     """
 
-    for packet in packets:
+    for packet_idx, packet in enumerate(packets):
         if getattr(self, "_stop_event", None) and self._stop_event.is_set():
             break
+        logger.info(
+            "process_chunks_missing_embedding_params: packet %s/%d (%d files)",
+            packet_idx + 1,
+            len(packets),
+            len(packet),
+        )
         rows: List[dict] = []
         for file_id, _file_path, take_count in packet:
             part_result = database.execute(
@@ -275,6 +294,10 @@ async def process_chunks_missing_embedding_params(
         texts = [r.get("chunk_text") or "" for r in rows]
         _log_blocks_sent_to_chunker(
             rows, texts, project_id=getattr(self, "project_id", None)
+        )
+        logger.info(
+            "process_chunks_missing_embedding_params: calling get_chunks_batch(%d texts)",
+            len(texts),
         )
         try:
             t0_batch = time.time()

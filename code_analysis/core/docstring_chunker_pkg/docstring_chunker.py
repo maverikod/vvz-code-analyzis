@@ -30,6 +30,19 @@ from ..vectorization_worker_pkg.timing_log import log_operation_timing
 
 logger = logging.getLogger(__name__)
 
+# SQL for INSERT OR REPLACE code_chunks (same as DatabaseClient.add_code_chunk).
+_INSERT_CODE_CHUNK_SQL = """
+    INSERT OR REPLACE INTO code_chunks
+    (
+        file_id, project_id, chunk_uuid, chunk_type, chunk_text,
+        chunk_ordinal, vector_id, embedding_model, bm25_score,
+        embedding_vector, token_count, class_id, function_id, method_id,
+        line, ast_node_type, source_type, binding_level,
+        updated_at
+    )
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, julianday('now'))
+"""
+
 
 def _chunk_text_from_svo(chunk: Any) -> str:
     """Get text/body from svo_client chunk (SemanticChunk)."""
@@ -363,7 +376,7 @@ class DocstringChunker:
             f"({with_embedding} with embedding, {without_embedding} without) to database..."
         )
         persist_start_time = time.time()
-        written = 0
+        insert_ops: List[Tuple[str, Tuple[Any, ...]]] = []
         ordinal = 0
         for (
             it,
@@ -376,7 +389,7 @@ class DocstringChunker:
             if not self._file_still_exists_and_not_deleted(file_id, project_id):
                 logger.warning(
                     f"[FILE {file_id}] File or project deleted during persist, "
-                    f"stopping after {written} chunks for {file_path}"
+                    f"stopping after {len(insert_ops)} chunks for {file_path}"
                 )
                 break
             ordinal += 1
@@ -394,10 +407,12 @@ class DocstringChunker:
                     embedding_json = json.dumps(emb)
                     embedding_model = model
                 else:
-                    err = ChunkerResponseError(
+                    msg = (
                         "Chunker returned chunk with embedding but no model name. "
-                        "Chunker server must include 'model' or 'embedding_model' in each chunk; "
-                        "see docs/CHUNKER_MODEL_FIELD.md",
+                        "Chunker server must include 'model' or 'embedding_model' in each chunk."
+                    )
+                    err = ChunkerResponseError(
+                        msg + " See docs/CHUNKER_MODEL_FIELD.md",
                         file_path=file_path,
                         details={"file_id": file_id, "line": it.line},
                     )
@@ -409,60 +424,36 @@ class DocstringChunker:
                         it.line,
                     )
                     raise err
+            params = (
+                file_id,
+                project_id,
+                chunk_uuid,
+                it.chunk_type,
+                chunk_text,
+                ordinal,
+                None,
+                embedding_model,
+                None,
+                embedding_json,
+                token_count,
+                None,
+                None,
+                None,
+                int(it.line),
+                it.ast_node_type,
+                it.source_type,
+                int(it.binding_level),
+            )
+            insert_ops.append((_INSERT_CODE_CHUNK_SQL.strip(), params))
 
-            try:
-                # DatabaseClient.add_code_chunk is sync (runs in executor); direct DB may be async
-                if asyncio.iscoroutinefunction(
-                    getattr(self.database, "add_code_chunk", None)
-                ):
-                    await self.database.add_code_chunk(
-                        file_id=file_id,
-                        project_id=project_id,
-                        chunk_uuid=chunk_uuid,
-                        chunk_type=it.chunk_type,
-                        chunk_text=chunk_text,
-                        chunk_ordinal=ordinal,
-                        vector_id=None,
-                        embedding_model=embedding_model,
-                        bm25_score=None,
-                        embedding_vector=embedding_json,
-                        token_count=token_count,
-                        class_id=None,
-                        function_id=None,
-                        method_id=None,
-                        line=int(it.line),
-                        ast_node_type=it.ast_node_type,
-                        source_type=it.source_type,
-                        binding_level=int(it.binding_level),
-                    )
-                else:
-                    await asyncio.to_thread(
-                        self.database.add_code_chunk,
-                        file_id=file_id,
-                        project_id=project_id,
-                        chunk_uuid=chunk_uuid,
-                        chunk_type=it.chunk_type,
-                        chunk_text=chunk_text,
-                        chunk_ordinal=ordinal,
-                        vector_id=None,
-                        embedding_model=embedding_model,
-                        bm25_score=None,
-                        embedding_vector=embedding_json,
-                        token_count=token_count,
-                        class_id=None,
-                        function_id=None,
-                        method_id=None,
-                        line=int(it.line),
-                        ast_node_type=it.ast_node_type,
-                        source_type=it.source_type,
-                        binding_level=int(it.binding_level),
-                    )
-                written += 1
-            except Exception as e:
-                logger.warning(
-                    f"[FILE {file_id}] Failed to persist chunk for {file_path} (line={it.line}, idx={chunk_index}): {e}",
-                    exc_info=True,
-                )
+        written = 0
+        if insert_ops:
+            execute_batch = self.database.execute_batch
+            if asyncio.iscoroutinefunction(execute_batch):
+                await execute_batch(insert_ops)
+            else:
+                await asyncio.to_thread(execute_batch, insert_ops)
+            written = len(insert_ops)
 
         persist_duration = time.time() - persist_start_time
         log_operation_timing(

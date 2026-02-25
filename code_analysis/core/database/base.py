@@ -1142,6 +1142,7 @@ class CodeDatabase:
             "embedding_vector": "TEXT",
             "token_count": "INTEGER",
             "binding_level": "INTEGER DEFAULT 0",
+            "vectorization_skipped": "INTEGER DEFAULT 0",
         }
         for col_name, col_type in new_columns.items():
             if col_name not in chunks_columns:

@@ -28,7 +28,9 @@ class StoragePaths:
         locks_dir: Directory for lock files (no locks in watched directories).
         queue_dir: Optional directory for persisted queue state.
         backup_dir: Directory for database backups.
-        trash_dir: Directory for trashed (deleted) projects (recycle bin).
+        trash_dir: Directory for trashed items (recycle bin). Holds both:
+            (1) project folders: trash_dir/ProjectName_timestamp;
+            (2) file-level trash per project: trash_dir/{project_id}/...
     """
 
     config_dir: Path
@@ -97,6 +99,11 @@ def resolve_storage_paths(
 
     Returns:
         StoragePaths with absolute resolved Paths.
+
+    Note:
+        trash_dir holds both project-level trash (ProjectName_timestamp)
+        and file-level trash per project (trash_dir/{project_id}/...).
+        Use get_file_trash_dir(paths.trash_dir, project_id) for file trash.
     """
 
     config_dir = Path(config_path).resolve().parent
@@ -195,3 +202,20 @@ def get_faiss_index_path(faiss_dir: Path, project_id: str) -> Path:
         Absolute Path to the FAISS index file for this project.
     """
     return faiss_dir / f"{project_id}.bin"
+
+
+def get_file_trash_dir(trash_dir: Path, project_id: str) -> Path:
+    """
+    Get file-level trash directory for a project.
+
+    Trashed files of a project live under trash_dir/{project_id}/...
+    (FILE_TRASH_SPEC step 1).
+
+    Args:
+        trash_dir: Base trash directory (from StoragePaths.trash_dir).
+        project_id: Project identifier (UUID4 string).
+
+    Returns:
+        Path to trash subfolder for this project's deleted files.
+    """
+    return trash_dir / project_id

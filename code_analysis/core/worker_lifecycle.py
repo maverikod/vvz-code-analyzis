@@ -497,6 +497,7 @@ class WorkerLifecycleManager:
         worker_log_path: Optional[str] = None,
         worker_logs_dir: Optional[str] = None,
         config_path: Optional[str] = None,
+        log_timing: bool = False,
     ) -> WorkerStartResult:
         """
         Start indexing worker in a separate process and register it.
@@ -516,6 +517,7 @@ class WorkerLifecycleManager:
             worker_logs_dir: Absolute directory for worker log and PID file (optional).
                              If provided, PID file is {worker_logs_dir}/indexing_worker.pid.
             config_path: Optional path to config; when set, vectorize file after each successful index.
+            log_timing: When True, worker logs [TIMING] lines for analyze_timing_bottlenecks.
 
         Returns:
             WorkerStartResult.
@@ -541,6 +543,7 @@ class WorkerLifecycleManager:
             "batch_size": int(batch_size),
             "worker_log_path": worker_log_path,
             "pid_file_path": str(pid_file_path),
+            "log_timing": bool(log_timing),
         }
         if config_path is not None:
             kwargs["config_path"] = config_path

@@ -14,6 +14,7 @@ from typing import Dict, Any, Optional, List
 from mcp_proxy_adapter.commands.base import Command
 from mcp_proxy_adapter.commands.result import SuccessResult, ErrorResult
 
+from .base_mcp_command import BaseMCPCommand
 from ..core.backup_manager import BackupManager
 from ..core.code_quality import (
     format_code_with_black,
@@ -74,7 +75,10 @@ class FormatCodeCommand(Command):
             "additionalProperties": False,
             "examples": [
                 {"file_path": "/abs/path/to/file.py"},
-                {"file_path": "hello_cli.py", "project_id": "550e8400-e29b-41d4-a716-446655440000"},
+                {
+                    "file_path": "hello_cli.py",
+                    "project_id": "550e8400-e29b-41d4-a716-446655440000",
+                },
             ],
         }
 
@@ -97,7 +101,7 @@ class FormatCodeCommand(Command):
         """
         try:
             if project_id:
-                root_path = self._resolve_project_root(project_id)
+                root_path = BaseMCPCommand._resolve_project_root(project_id)
                 path = (root_path / file_path).resolve()
                 backup_root = root_path
             else:
@@ -135,10 +139,11 @@ class FormatCodeCommand(Command):
             database_updated = False
             if project_id:
                 try:
-                    from .base_mcp_command import BaseMCPCommand
                     import os
 
-                    database = BaseMCPCommand._open_database_from_config(auto_analyze=False)
+                    database = BaseMCPCommand._open_database_from_config(
+                        auto_analyze=False
+                    )
                     try:
                         file_stat = os.stat(path)
                         last_modified = file_stat.st_mtime
@@ -408,8 +413,15 @@ class LintCodeCommand(Command):
             "additionalProperties": False,
             "examples": [
                 {"file_path": "/abs/path/to/file.py"},
-                {"file_path": "hello_cli.py", "project_id": "550e8400-e29b-41d4-a716-446655440000"},
-                {"file_path": "hello_cli.py", "project_id": "550e8400-e29b-41d4-a716-446655440000", "ignore": ["E501"]},
+                {
+                    "file_path": "hello_cli.py",
+                    "project_id": "550e8400-e29b-41d4-a716-446655440000",
+                },
+                {
+                    "file_path": "hello_cli.py",
+                    "project_id": "550e8400-e29b-41d4-a716-446655440000",
+                    "ignore": ["E501"],
+                },
             ],
         }
 
@@ -434,7 +446,7 @@ class LintCodeCommand(Command):
         """
         try:
             if project_id:
-                root_path = self._resolve_project_root(project_id)
+                root_path = BaseMCPCommand._resolve_project_root(project_id)
                 path = (root_path / file_path).resolve()
             else:
                 path = Path(file_path).resolve()
@@ -736,8 +748,15 @@ class TypeCheckCodeCommand(Command):
             "additionalProperties": False,
             "examples": [
                 {"file_path": "/abs/path/to/file.py"},
-                {"file_path": "hello_cli.py", "project_id": "550e8400-e29b-41d4-a716-446655440000"},
-                {"file_path": "hello_cli.py", "project_id": "550e8400-e29b-41d4-a716-446655440000", "ignore_errors": False},
+                {
+                    "file_path": "hello_cli.py",
+                    "project_id": "550e8400-e29b-41d4-a716-446655440000",
+                },
+                {
+                    "file_path": "hello_cli.py",
+                    "project_id": "550e8400-e29b-41d4-a716-446655440000",
+                    "ignore_errors": False,
+                },
             ],
         }
 
@@ -764,7 +783,7 @@ class TypeCheckCodeCommand(Command):
         """
         try:
             if project_id:
-                root_path = self._resolve_project_root(project_id)
+                root_path = BaseMCPCommand._resolve_project_root(project_id)
                 path = (root_path / file_path).resolve()
             else:
                 path = Path(file_path).resolve()

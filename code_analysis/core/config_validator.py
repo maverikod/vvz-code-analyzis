@@ -23,7 +23,10 @@ from mcp_proxy_adapter.core.config.simple_config_validator import (
 # Config must contain only what is used in code.
 from code_analysis.core.config import ServerConfig
 
-ALLOWED_CODE_ANALYSIS_KEYS = frozenset(ServerConfig.model_fields) | {"database"}
+ALLOWED_CODE_ANALYSIS_KEYS = frozenset(ServerConfig.model_fields) | {
+    "database",
+    "all_logs_rotation",
+}
 
 
 class ValidationResult:
@@ -515,6 +518,43 @@ class CodeAnalysisConfigValidator:
                         )
                     )
 
+            # Validate watch_dirs: list of dicts with id, path; optional ignore_patterns per entry
+            watch_dirs = worker.get("watch_dirs") if worker else None
+            if isinstance(watch_dirs, list):
+                for i, wd in enumerate(watch_dirs):
+                    if not isinstance(wd, dict):
+                        self.validation_results.append(
+                            ValidationResult(
+                                level="error",
+                                message=f"code_analysis.worker.watch_dirs[{i}] must be a dict with 'id' and 'path'",
+                                section="code_analysis",
+                                key=f"worker.watch_dirs[{i}]",
+                                suggestion='Use format: {"id": "uuid4", "path": "/abs/path", "ignore_patterns": ["**/.venv/**"]}',
+                            )
+                        )
+                    else:
+                        if "id" not in wd or "path" not in wd:
+                            self.validation_results.append(
+                                ValidationResult(
+                                    level="error",
+                                    message=f"code_analysis.worker.watch_dirs[{i}] must have 'id' and 'path' keys",
+                                    section="code_analysis",
+                                    key=f"worker.watch_dirs[{i}]",
+                                    suggestion='Add "id" and "path" to the watch directory entry',
+                                )
+                            )
+                        ign = wd.get("ignore_patterns")
+                        if ign is not None and not isinstance(ign, list):
+                            self.validation_results.append(
+                                ValidationResult(
+                                    level="error",
+                                    message=f"code_analysis.worker.watch_dirs[{i}].ignore_patterns must be a list of glob patterns",
+                                    section="code_analysis",
+                                    key=f"worker.watch_dirs[{i}].ignore_patterns",
+                                    suggestion='Use a list of strings, e.g. ["**/.venv/**", "**/venv/**"]',
+                                )
+                            )
+
             # Validate indexing_worker section (optional)
             indexing_worker = code_analysis.get("indexing_worker")
             if indexing_worker and isinstance(indexing_worker, dict):
@@ -544,6 +584,65 @@ class CodeAnalysisConfigValidator:
                             suggestion="Set batch_size to 1 or higher",
                         )
                     )
+
+        # Validate all_logs_rotation section (periodic rotation of all logs)
+        all_logs = code_analysis.get("all_logs_rotation")
+        if all_logs is not None and isinstance(all_logs, dict):
+            interval = all_logs.get("interval_seconds")
+            if interval is not None:
+                if not isinstance(interval, (int, float)):
+                    self.validation_results.append(
+                        ValidationResult(
+                            level="error",
+                            message="code_analysis.all_logs_rotation.interval_seconds must be a number",
+                            section="code_analysis",
+                            key="all_logs_rotation.interval_seconds",
+                            suggestion="Set interval_seconds to a number (0 to disable periodic rotation)",
+                        )
+                    )
+                elif interval < 0:
+                    self.validation_results.append(
+                        ValidationResult(
+                            level="error",
+                            message="code_analysis.all_logs_rotation.interval_seconds must be >= 0",
+                            section="code_analysis",
+                            key="all_logs_rotation.interval_seconds",
+                            suggestion="Set interval_seconds to 0 or positive (e.g. 86400 for daily)",
+                        )
+                    )
+            backup = all_logs.get("backup_count")
+            if backup is not None:
+                if not isinstance(backup, int):
+                    self.validation_results.append(
+                        ValidationResult(
+                            level="error",
+                            message="code_analysis.all_logs_rotation.backup_count must be an integer",
+                            section="code_analysis",
+                            key="all_logs_rotation.backup_count",
+                            suggestion="Set backup_count to 1-99",
+                        )
+                    )
+                elif backup < 1 or backup > 99:
+                    self.validation_results.append(
+                        ValidationResult(
+                            level="error",
+                            message="code_analysis.all_logs_rotation.backup_count must be between 1 and 99",
+                            section="code_analysis",
+                            key="all_logs_rotation.backup_count",
+                            suggestion="Set backup_count to 1-99",
+                        )
+                    )
+            pack = all_logs.get("pack_rotated")
+            if pack is not None and not isinstance(pack, bool):
+                self.validation_results.append(
+                    ValidationResult(
+                        level="error",
+                        message="code_analysis.all_logs_rotation.pack_rotated must be a boolean",
+                        section="code_analysis",
+                        key="all_logs_rotation.pack_rotated",
+                        suggestion="Set pack_rotated to true or false",
+                    )
+                )
 
     def _validate_database_driver_section(self) -> None:
         """Validate code_analysis.database.driver section."""
@@ -1230,6 +1329,12 @@ class CodeAnalysisConfigValidator:
                 "vectorization_retry_delay",
                 code_analysis.get("vectorization_retry_delay"),
                 (int, float),
+            )
+            self._validate_field_type(
+                "code_analysis",
+                "log_vectorization_chunker_trace",
+                code_analysis.get("log_vectorization_chunker_trace"),
+                bool,
             )
 
             # Chunker section

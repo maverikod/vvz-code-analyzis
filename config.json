@@ -149,6 +149,7 @@
     "min_chunk_length": 30,
     "vectorization_retry_attempts": 3,
     "vectorization_retry_delay": 10.0,
+    "log_vectorization_chunker_trace": true,
     "worker": {
       "enabled": true,
       "poll_interval": 30,
@@ -160,7 +161,29 @@
       "watch_dirs": [
         {
           "id": "550e8400-e29b-41d4-a716-446655440001",
-          "path": "/home/vasilyvz/projects/tools/code_analysis/test_data"
+          "path": "/home/vasilyvz/projects/tools/code_analysis/test_data",
+          "ignore_patterns": [
+            "**/.venv/**",
+            "**/venv/**",
+            "**/ENV/**",
+            "**/env/**",
+            "**/__pycache__/**",
+            "**/.pytest_cache/**",
+            "**/.mypy_cache/**",
+            "**/.eggs/**",
+            "**/eggs/**",
+            "**/*.egg-info/**",
+            "**/*.egg",
+            "**/develop-eggs/**",
+            "**/dist/**",
+            "**/build/**",
+            "**/wheels/**",
+            "**/.tox/**",
+            "**/.cache/**",
+            "**/htmlcov/**",
+            "**/.coverage",
+            "**/node_modules/**"
+          ]
         }
       ],
       "dynamic_watch_file": "data/dynamic_watch_dirs.json",

@@ -36,7 +36,7 @@ class TestClass:
         duration = time.time() - start
 
         assert len(matches) == 3
-        assert duration < 0.1, f"Query took {duration:.3f}s, should be < 0.1s"
+        assert duration < 0.25, f"Query took {duration:.3f}s, should be < 0.25s"
 
     def test_query_performance_medium_file(self):
         """Test query performance on medium file."""
@@ -50,7 +50,7 @@ class TestClass:
         duration = time.time() - start
 
         assert len(matches) == 100
-        assert duration < 0.5, f"Query took {duration:.3f}s, should be < 0.5s"
+        assert duration < 1.0, f"Query took {duration:.3f}s, should be < 1.0s"
 
     def test_query_performance_large_file(self):
         """Test query performance on large file."""

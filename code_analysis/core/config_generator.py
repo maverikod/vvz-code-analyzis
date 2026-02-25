@@ -215,6 +215,8 @@ class CodeAnalysisConfigGenerator(SimpleConfigGenerator):
             ca["vectorization_retry_delay"] = code_analysis_retry_delay
         elif "vectorization_retry_delay" not in ca:
             ca["vectorization_retry_delay"] = 1.0
+        if "log_vectorization_chunker_trace" not in ca:
+            ca["log_vectorization_chunker_trace"] = False
 
         # Indexing worker (from args or default)
         if "indexing_worker" not in ca:

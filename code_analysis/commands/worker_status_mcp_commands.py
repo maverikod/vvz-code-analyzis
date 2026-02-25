@@ -595,7 +595,9 @@ class GetDatabaseStatusMCPCommand(BaseMCPCommand):
                         None,
                     ),
                     (
-                        "SELECT COUNT(*) as count FROM code_chunks WHERE vector_id IS NULL",
+                        """SELECT COUNT(*) as count FROM code_chunks
+                           WHERE vector_id IS NULL
+                             AND (vectorization_skipped IS NULL OR vectorization_skipped = 0)""",
                         None,
                     ),
                     (
@@ -638,6 +640,7 @@ class GetDatabaseStatusMCPCommand(BaseMCPCommand):
                     SELECT id, file_id, chunk_text, created_at
                     FROM code_chunks
                     WHERE vector_id IS NULL
+                      AND (vectorization_skipped IS NULL OR vectorization_skipped = 0)
                     ORDER BY id DESC
                     LIMIT 10
                     """,

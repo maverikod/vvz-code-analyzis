@@ -2468,7 +2468,9 @@ class CreateProjectMCPCommand(BaseMCPCommand):
             "type": "object",
             "description": (
                 "Create a new project atomically. "
-                "Creates project subdirectory in watch_dir, creates projectid file, and registers project in database."
+                "Default (old behaviour): creates project subdirectory in watch_dir, projectid file, and registers; "
+                "if directory already exists, fails with PROJECT_DIR_EXISTS. "
+                "Optional use_existing_dir=true: for existing directory, create only projectid file and register."
             ),
             "properties": {
                 "watch_dir_id": {
@@ -2497,6 +2499,14 @@ class CreateProjectMCPCommand(BaseMCPCommand):
                         "Optional project ID (UUID4). If not provided, will be generated automatically."
                     ),
                 },
+                "use_existing_dir": {
+                    "type": "boolean",
+                    "description": (
+                        "Optional. Default false (old behaviour: fail with PROJECT_DIR_EXISTS if directory exists). "
+                        "If true: when project directory already exists, create only projectid file and register."
+                    ),
+                    "default": False,
+                },
             },
             "required": ["watch_dir_id", "project_name", "description"],
             "additionalProperties": False,
@@ -2508,6 +2518,7 @@ class CreateProjectMCPCommand(BaseMCPCommand):
         project_name: str,
         description: str,
         project_id: Optional[str] = None,
+        use_existing_dir: bool = False,
         **kwargs: Any,
     ) -> SuccessResult | ErrorResult:
         """
@@ -2519,6 +2530,7 @@ class CreateProjectMCPCommand(BaseMCPCommand):
             project_name: Name of project subdirectory to create.
             description: Project description (required).
             project_id: Optional project ID (UUID4).
+            use_existing_dir: If True, create only projectid in existing directory and register.
             **kwargs: Extra args (unused).
 
         Returns:
@@ -2536,6 +2548,7 @@ class CreateProjectMCPCommand(BaseMCPCommand):
                     project_name=project_name,
                     description=description,
                     project_id=project_id,
+                    use_existing_dir=use_existing_dir,
                 )
                 result = await cmd.execute()
 
@@ -2629,7 +2642,13 @@ class CreateProjectMCPCommand(BaseMCPCommand):
                 "- Register a new project for code analysis\n"
                 "- Register an existing project that has projectid file but not in database\n"
                 "- Create a new project from scratch\n"
-                "- Re-register a project after database cleanup"
+                "- Re-register a project after database cleanup\n\n"
+                "Option use_existing_dir (default false = old behaviour):\n"
+                "- use_existing_dir=false (default): if the project directory already exists and is not "
+                "registered, the command fails with PROJECT_DIR_EXISTS (same as before this option existed).\n"
+                "- use_existing_dir=true: if the project directory already exists, the command creates "
+                "only the projectid file (id + description) in that directory and registers the project in "
+                "the database. Use this to register an existing folder without creating a new directory."
             ),
             "parameters": {
                 "root_dir": {
@@ -2671,8 +2690,30 @@ class CreateProjectMCPCommand(BaseMCPCommand):
                     "required": False,
                     "default": "",
                 },
+                "use_existing_dir": {
+                    "description": (
+                        "Default false (old behaviour). If true: when project directory already exists, "
+                        "create only projectid file and register; do not fail with PROJECT_DIR_EXISTS."
+                    ),
+                    "type": "boolean",
+                    "required": False,
+                    "default": False,
+                },
             },
             "usage_examples": [
+                {
+                    "description": "Register existing directory (use_existing_dir=true)",
+                    "command": {
+                        "watch_dir_id": "550e8400-e29b-41d4-a716-446655440001",
+                        "project_name": "vast_srv",
+                        "description": "AI Admin",
+                        "use_existing_dir": True,
+                    },
+                    "explanation": (
+                        "When the folder watch_dir/vast_srv already exists, creates projectid file with "
+                        "description and registers the project without failing with PROJECT_DIR_EXISTS."
+                    ),
+                },
                 {
                     "description": "Create new project",
                     "command": {
@@ -2739,6 +2780,14 @@ class CreateProjectMCPCommand(BaseMCPCommand):
                     "description": "Project path is not a directory",
                     "example": "project_dir='/path/to/file.txt'",
                     "solution": "Ensure project_dir points to a directory, not a file.",
+                },
+                "PROJECT_DIR_EXISTS": {
+                    "description": (
+                        "Project directory already exists and use_existing_dir was not set. "
+                        "Set use_existing_dir=true to create only projectid file and register."
+                    ),
+                    "example": "project_name='vast_srv' but test_data/vast_srv already exists",
+                    "solution": "Pass use_existing_dir=true to register the existing directory.",
                 },
                 "PROJECTID_WRITE_ERROR": {
                     "description": "Failed to write projectid file",

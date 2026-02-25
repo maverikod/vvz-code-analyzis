@@ -21,6 +21,7 @@ from typing import Any, List, Optional, Tuple
 
 import numpy as np
 
+from .file_batch_packing import pack_files_into_packets
 from .timing_log import log_operation_timing
 
 logger = logging.getLogger(__name__)
@@ -101,6 +102,72 @@ def _token_count_heuristic(text: str) -> int:
     return len(text.split())
 
 
+def _apply_chunker_results_to_db(
+    rows: List[dict],
+    texts: List[str],
+    batch_results: List[Any],
+    self: Any,
+) -> Tuple[
+    List[Tuple[str, Optional[tuple]]],
+    List[Tuple[str, Optional[tuple]]],
+    int,
+    int,
+]:
+    """
+    Build update_ops and skip_ops from chunker batch results; preserve response index = row index.
+
+    Returns:
+        (update_ops, skip_ops, updated_count, error_count).
+    """
+    update_ops: List[Tuple[str, Optional[tuple]]] = []
+    skip_ops: List[Tuple[str, Optional[tuple]]] = []
+    updated_count = 0
+    error_count = 0
+    for i, row in enumerate(rows):
+        if getattr(self, "_stop_event", None) and self._stop_event.is_set():
+            break
+        chunk_id = row["id"]
+        chunk_text = texts[i] if i < len(texts) else ""
+        chunks_i = (
+            batch_results[i] if i < len(batch_results) and batch_results[i] else []
+        )
+        embedding_json: Optional[str] = None
+        embedding_model: Optional[str] = None
+        token_count: Optional[int] = None
+        if chunks_i:
+            ch = chunks_i[0]
+            emb = getattr(ch, "embedding", None) or getattr(ch, "vector", None)
+            if emb is not None:
+                embedding_json = json.dumps(emb)
+            embedding_model = getattr(ch, "embedding_model", None) or getattr(
+                ch, "model", None
+            )
+            token_count = getattr(ch, "token_count", None)
+        if token_count is None and chunk_text:
+            token_count = _token_count_heuristic(chunk_text)
+        if embedding_json and embedding_model:
+            update_ops.append(
+                (
+                    "UPDATE code_chunks SET embedding_vector = ?, embedding_model = ?, token_count = ? WHERE id = ?",
+                    (embedding_json, embedding_model, token_count, chunk_id),
+                )
+            )
+            updated_count += 1
+        else:
+            logger.debug(
+                "Chunk %s: no embedding from chunker (empty or no model), marking as vectorization_skipped",
+                chunk_id,
+            )
+            skip_ops.append(
+                (
+                    "UPDATE code_chunks SET vectorization_skipped = 1 WHERE id = ?",
+                    (chunk_id,),
+                )
+            )
+            error_count += 1
+    return update_ops, skip_ops, updated_count, error_count
+
+
 async def process_chunks_missing_embedding_params(
     self: Any,
     database: Any,
@@ -108,11 +175,9 @@ async def process_chunks_missing_embedding_params(
     """
     Re-embed chunks that are missing at least one of embedding_model or embedding_vector.
 
-    Selects rows where (embedding_model IS NULL OR embedding_vector IS NULL) AND vector_id IS NULL.
-    Sends chunk_text batch to chunker/embedding service, then UPDATEs DB with
-    embedding_vector, embedding_model, token_count. Order is preserved (response index = row index)
-    so vectors are identified by position. Afterwards, process_embedding_ready_chunks will
-    add them to FAISS and set vector_id.
+    Uses file-based batching (see docs/VECTORIZATION_BATCHING_ALGORITHM.md): build file×count
+    table, sort by count descending, pack files into packets of at most batch_size texts,
+    one chunker request per packet; response index maps to (file_id, chunk_id) for write-back.
 
     Expects `self` to have: batch_size, project_id, svo_client_manager, _stop_event.
 
@@ -134,130 +199,145 @@ async def process_chunks_missing_embedding_params(
 
     step_start = time.time()
     scope_desc = f"project={getattr(self, 'project_id', '?')}"
-    logger.info(
-        f"[TIMING] Getting chunks missing embedding params ({scope_desc}), "
-        f"limit={getattr(self, 'batch_size', 10)}"
-    )
-    rows_result = database.execute(
+    batch_size = getattr(self, "batch_size", 10)
+    project_id = getattr(self, "project_id", "")
+
+    # Step 1: Build table (file_id, file_path, count of non-vectorized chunks)
+    file_counts_result = database.execute(
         """
-        SELECT cc.id, cc.chunk_text, cc.file_id, f.path AS file_path
-        FROM code_chunks cc
-        INNER JOIN files f ON cc.file_id = f.id
+        SELECT f.id AS file_id, f.path AS file_path, COUNT(cc.id) AS cnt
+        FROM files f
+        INNER JOIN code_chunks cc ON cc.file_id = f.id
         WHERE cc.project_id = ?
           AND (f.deleted = 0 OR f.deleted IS NULL)
           AND cc.vector_id IS NULL
           AND (cc.embedding_model IS NULL OR cc.embedding_vector IS NULL)
-        ORDER BY cc.id
-        LIMIT ?
+          AND (cc.vectorization_skipped IS NULL OR cc.vectorization_skipped = 0)
+        GROUP BY f.id, f.path
+        HAVING cnt > 0
         """,
-        (self.project_id, self.batch_size),
+        (project_id,),
     )
-    rows = rows_result.get("data", []) if isinstance(rows_result, dict) else []
+    file_counts_data = (
+        file_counts_result.get("data", [])
+        if isinstance(file_counts_result, dict)
+        else []
+    )
     step_duration = time.time() - step_start
-    logger.info(
-        f"[TIMING] Retrieved {len(rows)} chunks missing params in {step_duration:.3f}s"
-    )
     log_operation_timing(
         getattr(self, "log_timing", False),
         logger,
-        "Step0_SELECT_missing_params",
+        "Step0_SELECT_file_counts",
         step_duration,
-        rows=len(rows),
+        files=len(file_counts_data),
     )
-
-    logger.info(f"[STEP] Step 0: Retrieved {len(rows)} chunks missing params")
-    if not rows:
+    if not file_counts_data:
         return updated_count, error_count
 
-    logger.info(f"[STEP] Step 0: Sending batch of {len(rows)} texts to chunker")
-    texts = [r.get("chunk_text") or "" for r in rows]
-    _log_blocks_sent_to_chunker(
-        rows, texts, project_id=getattr(self, "project_id", None)
+    file_table: List[Tuple[int, str, int]] = [
+        (int(r["file_id"]), r.get("file_path") or "", int(r["cnt"]))
+        for r in file_counts_data
+    ]
+    packets = pack_files_into_packets(file_table, batch_size)
+    logger.info(
+        "[STEP] Step 0: file-based batching: %d files -> %d packet(s)",
+        len(file_table),
+        len(packets),
     )
-    try:
-        t0_batch = time.time()
-        batch_results = await self.svo_client_manager.get_chunks_batch(
-            texts, type="DocBlock"
-        )
-        log_operation_timing(
-            getattr(self, "log_timing", False),
-            logger,
-            "Step0_get_chunks_batch",
-            time.time() - t0_batch,
-            texts=len(texts),
-        )
-    except Exception as e:
-        logger.warning(
-            f"get_chunks_batch failed for {len(texts)} texts ({scope_desc}): {e}",
-            exc_info=True,
-        )
-        return updated_count, len(rows)
 
-    update_ops: List[Tuple[str, Optional[tuple]]] = []
-    for i, row in enumerate(rows):
-        if self._stop_event.is_set():
+    chunk_select_sql = """
+        SELECT cc.id, cc.chunk_text, cc.file_id, f.path AS file_path
+        FROM code_chunks cc
+        INNER JOIN files f ON cc.file_id = f.id
+        WHERE cc.project_id = ?
+          AND cc.file_id = ?
+          AND (f.deleted = 0 OR f.deleted IS NULL)
+          AND cc.vector_id IS NULL
+          AND (cc.embedding_model IS NULL OR cc.embedding_vector IS NULL)
+          AND (cc.vectorization_skipped IS NULL OR cc.vectorization_skipped = 0)
+        ORDER BY cc.id
+        LIMIT ?
+    """
+
+    for packet in packets:
+        if getattr(self, "_stop_event", None) and self._stop_event.is_set():
             break
-        chunk_id = row["id"]
-        chunk_text = texts[i]
-        chunks_i = (
-            batch_results[i] if i < len(batch_results) and batch_results[i] else []
+        rows: List[dict] = []
+        for file_id, _file_path, take_count in packet:
+            part_result = database.execute(
+                chunk_select_sql,
+                (project_id, file_id, take_count),
+            )
+            part = part_result.get("data", []) if isinstance(part_result, dict) else []
+            rows.extend(part)
+        if not rows:
+            continue
+        texts = [r.get("chunk_text") or "" for r in rows]
+        _log_blocks_sent_to_chunker(
+            rows, texts, project_id=getattr(self, "project_id", None)
         )
-        embedding_json: Optional[str] = None
-        embedding_model: Optional[str] = None
-        token_count: Optional[int] = None
-
-        if chunks_i:
-            ch = chunks_i[0]
-            emb = getattr(ch, "embedding", None) or getattr(ch, "vector", None)
-            if emb is not None:
-                embedding_json = json.dumps(emb)
-            embedding_model = getattr(ch, "embedding_model", None) or getattr(
-                ch, "model", None
-            )
-            token_count = getattr(ch, "token_count", None)
-        if token_count is None and chunk_text:
-            token_count = _token_count_heuristic(chunk_text)
-
-        if embedding_json and embedding_model:
-            update_ops.append(
-                (
-                    "UPDATE code_chunks SET embedding_vector = ?, embedding_model = ?, token_count = ? WHERE id = ?",
-                    (embedding_json, embedding_model, token_count, chunk_id),
-                )
-            )
-            updated_count += 1
-        else:
-            logger.debug(
-                f"Chunk {chunk_id}: no embedding from chunker (empty or no model), skipping"
-            )
-            error_count += 1
-
-    if update_ops:
         try:
-            t0_db = time.time()
-            database.execute_batch(update_ops)
+            t0_batch = time.time()
+            batch_results = await self.svo_client_manager.get_chunks_batch(
+                texts, type="DocBlock"
+            )
             log_operation_timing(
                 getattr(self, "log_timing", False),
                 logger,
-                "Step0_execute_batch_UPDATE",
-                time.time() - t0_db,
-                ops=len(update_ops),
-            )
-            logger.info(
-                f"[STEP] Step 0 done: updated {updated_count} rows with embedding_vector/model/token_count"
-            )
-            logger.info(
-                f"Updated {updated_count} chunks with embedding_vector/model/token_count "
-                f"({scope_desc})"
+                "Step0_get_chunks_batch",
+                time.time() - t0_batch,
+                texts=len(texts),
             )
         except Exception as e:
-            logger.error(
-                f"execute_batch failed for {len(update_ops)} chunk updates: {e}",
+            logger.warning(
+                "get_chunks_batch failed for %d texts (%s): %s",
+                len(texts),
+                scope_desc,
+                e,
                 exc_info=True,
             )
-            error_count += updated_count
-            updated_count = 0
+            error_count += len(rows)
+            continue
+        u_ops, s_ops, u_cnt, e_cnt = _apply_chunker_results_to_db(
+            rows, texts, batch_results, self
+        )
+        updated_count += u_cnt
+        error_count += e_cnt
+        if u_ops:
+            try:
+                t0_db = time.time()
+                database.execute_batch(u_ops)
+                log_operation_timing(
+                    getattr(self, "log_timing", False),
+                    logger,
+                    "Step0_execute_batch_UPDATE",
+                    time.time() - t0_db,
+                    ops=len(u_ops),
+                )
+            except Exception as e:
+                logger.error(
+                    "execute_batch failed for %d chunk updates: %s",
+                    len(u_ops),
+                    e,
+                    exc_info=True,
+                )
+                error_count += u_cnt
+                updated_count -= u_cnt
+        if s_ops:
+            try:
+                database.execute_batch(s_ops)
+            except Exception as e:
+                logger.warning(
+                    "execute_batch failed for vectorization_skipped updates: %s", e
+                )
 
+    if updated_count or error_count:
+        logger.info(
+            "Updated %d chunks with embedding_vector/model/token_count (%s); errors=%d",
+            updated_count,
+            scope_desc,
+            error_count,
+        )
     return updated_count, error_count
 
 

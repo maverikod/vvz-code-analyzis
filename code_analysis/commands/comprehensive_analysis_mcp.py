@@ -574,10 +574,29 @@ class ComprehensiveAnalysisMCPCommand(BaseMCPCommand):
                 if proj_id:
                     # Analyze all files in specific project
                     project_files = db.get_project_files(proj_id, include_deleted=False)
-                    files = [
-                        {"id": f["id"], "path": f["path"], "lines": f.get("lines", 0)}
-                        for f in project_files
-                    ]
+                    # Normalize: client API returns File objects, direct driver returns dicts
+                    files = []
+                    for f in project_files:
+                        if hasattr(f, "path"):
+                            files.append(
+                                {
+                                    "id": f.id,
+                                    "path": f.path
+                                    or getattr(f, "relative_path", "")
+                                    or "",
+                                    "lines": getattr(f, "lines", None) or 0,
+                                    "project_id": getattr(f, "project_id", None),
+                                }
+                            )
+                        else:
+                            files.append(
+                                {
+                                    "id": f["id"],
+                                    "path": f["path"],
+                                    "lines": f.get("lines", 0),
+                                    "project_id": f.get("project_id"),
+                                }
+                            )
                     analysis_logger.info(
                         f"Starting comprehensive analysis for project {proj_id}: {len(files)} files to analyze"
                     )

@@ -98,7 +98,8 @@ def _apply_syntax_error_fix(
     stripped = raw.strip()
     if stripped.startswith("#"):
         raise
-    todo_line = lead + "# " + _TODO_PREFIX + str(e).strip()
+    err_text = str(e).strip().replace("\n", " ")
+    todo_line = lead + "# " + _TODO_PREFIX + err_text
     comment_line = lead + "# " + stripped
     pass_indent = _indent_for_pass_after_error(lines, idx)
     fixed = (

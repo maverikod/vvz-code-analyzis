@@ -43,7 +43,9 @@ def load_file_to_tree(
     path = Path(file_path)
     if not path.exists():
         raise FileNotFoundError(f"File not found: {file_path}")
-    if path.suffix != ".py":
+    is_py = path.suffix == ".py"
+    is_py_tmp = path.suffix == ".tmp" and path.stem.endswith(".py")
+    if not is_py and not is_py_tmp:
         raise ValueError(f"File must be a Python file (.py): {file_path}")
 
     # Read and parse file
@@ -140,13 +142,14 @@ def _build_tree_index(
         if max_depth is not None and depth > max_depth:
             return
 
-        # Check node type filter
+        # Check node type filter (always index root so __root__ resolves)
         node_type = node.__class__.__name__
         if node_types_set and node_type.lower() not in node_types_set:
-            # Still visit children even if this node doesn't match
-            for child in node.children:
-                visit(child, depth + 1)
-            return
+            if depth > 0:
+                for child in node.children:
+                    visit(child, depth + 1)
+                return
+            # depth == 0: fall through to index root for ROOT_NODE_ID_SENTINEL
 
         # Get position
         pos = positions.get(node)
@@ -261,6 +264,8 @@ def _build_tree_index(
         )
 
         tree.metadata_map[node_id] = metadata
+        if depth == 0:
+            tree.root_node_id = node_id
 
         # Track class/function stacks
         entered_class = False

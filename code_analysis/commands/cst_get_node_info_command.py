@@ -15,7 +15,12 @@ from typing import Any, Dict, Optional
 from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 
 from .base_mcp_command import BaseMCPCommand
-from ..core.cst_tree.tree_metadata import get_node_children, get_node_metadata, get_node_parent
+from ..core.cst_tree.tree_metadata import (
+    get_node_children,
+    get_node_descendants,
+    get_node_metadata,
+    get_node_parent,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -25,7 +30,9 @@ class CSTGetNodeInfoCommand(BaseMCPCommand):
 
     name = "cst_get_node_info"
     version = "1.0.0"
-    descr = "Get detailed information about a node in CST tree (metadata, children, parent)"
+    descr = (
+        "Get detailed information about a node in CST tree (metadata, children, parent)"
+    )
     category = "cst"
     author = "Vasiliy Zdanovskiy"
     email = "vasilyvz@gmail.com"
@@ -36,7 +43,10 @@ class CSTGetNodeInfoCommand(BaseMCPCommand):
         return {
             "type": "object",
             "properties": {
-                "tree_id": {"type": "string", "description": "Tree ID from cst_load_file"},
+                "tree_id": {
+                    "type": "string",
+                    "description": "Tree ID from cst_load_file",
+                },
                 "node_id": {"type": "string", "description": "Node ID"},
                 "include_code": {
                     "type": "boolean",
@@ -57,6 +67,14 @@ class CSTGetNodeInfoCommand(BaseMCPCommand):
                     "type": "integer",
                     "description": "Maximum number of children to return (if include_children=True)",
                 },
+                "children_depth": {
+                    "type": "integer",
+                    "default": 1,
+                    "description": (
+                        "Depth of descendants: 1=direct children only, 2=children+grandchildren, "
+                        "0=full subtree. Used when include_children=True."
+                    ),
+                },
             },
             "required": ["tree_id", "node_id"],
             "additionalProperties": False,
@@ -70,6 +88,7 @@ class CSTGetNodeInfoCommand(BaseMCPCommand):
         include_children: bool = False,
         include_parent: bool = False,
         max_children: Optional[int] = None,
+        children_depth: int = 1,
         **kwargs,
     ) -> SuccessResult:
         try:
@@ -88,13 +107,29 @@ class CSTGetNodeInfoCommand(BaseMCPCommand):
                 "node": metadata.to_dict(),
             }
 
-            # Get children if requested
+            # Get children / descendants if requested
             if include_children:
-                children = get_node_children(tree_id, node_id, include_code=include_code)
-                if max_children is not None:
-                    children = children[:max_children]
-                result["children"] = [child.to_dict() for child in children]
-                result["children_count"] = len(children)
+                if children_depth == 1:
+                    children = get_node_children(
+                        tree_id, node_id, include_code=include_code
+                    )
+                    if max_children is not None:
+                        children = children[:max_children]
+                    result["children"] = [child.to_dict() for child in children]
+                    result["children_count"] = len(children)
+                else:
+                    max_depth = 0 if children_depth == 0 else children_depth
+                    descendants = get_node_descendants(
+                        tree_id, node_id, max_depth=max_depth, include_code=include_code
+                    )
+                    if max_children is not None:
+                        descendants = descendants[:max_children]
+                    result["children"] = [m.to_dict() for m, _ in descendants if _ == 1]
+                    result["children_count"] = sum(1 for _, d in descendants if d == 1)
+                    result["descendants"] = [
+                        {**m.to_dict(), "depth": d} for m, d in descendants
+                    ]
+                    result["descendants_count"] = len(descendants)
 
             # Get parent if requested
             if include_parent:
@@ -106,7 +141,9 @@ class CSTGetNodeInfoCommand(BaseMCPCommand):
 
         except Exception as e:
             logger.exception("cst_get_node_info failed: %s", e)
-            return ErrorResult(message=f"cst_get_node_info failed: {e}", code="CST_GET_NODE_ERROR")
+            return ErrorResult(
+                message=f"cst_get_node_info failed: {e}", code="CST_GET_NODE_ERROR"
+            )
 
     @classmethod
     def metadata(cls: type["CSTGetNodeInfoCommand"]) -> Dict[str, Any]:

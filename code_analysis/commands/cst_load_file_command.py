@@ -10,14 +10,103 @@ email: vasilyvz@gmail.com
 from __future__ import annotations
 
 import logging
-from typing import Any, Dict, List, Optional
+import shutil
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Tuple
 
+import libcst as cst
 from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 
 from .base_mcp_command import BaseMCPCommand
+from ..core.file_lock import file_lock
 from ..core.cst_tree.tree_builder import load_file_to_tree
+from ..core.cst_tree.tree_metadata import get_node_parent
+from ..core.cst_tree.tree_range_finder import find_node_by_range
 
 logger = logging.getLogger(__name__)
+
+# Prefix for the TODO comment above a commented-out error line
+_TODO_PREFIX = "TODO: The line following this one was commented out due to an error: "
+_MAX_SYNTAX_FIX_ITERATIONS = 100
+
+# Block starters that require a body (so we add pass with body indent)
+_BLOCK_STARTERS = (
+    "if ",
+    "elif ",
+    "else:",
+    "try:",
+    "except ",
+    "except:",
+    "finally:",
+    "def ",
+    "class ",
+    "for ",
+    "while ",
+    "with ",
+)
+
+
+def _is_block_starter_line(stripped: str) -> bool:
+    """True if stripped line starts a block (if/def/for/else/...)."""
+    if not stripped.endswith(":"):
+        return False
+    key = stripped.split("(")[0].strip() if "(" in stripped else stripped
+    return any(key.startswith(s.rstrip(":")) or key == s for s in _BLOCK_STARTERS)
+
+
+def _indent_for_pass_after_error(lines: List[str], error_line_idx: int) -> str:
+    """
+    Find indent for a placeholder 'pass' so the block stays valid.
+    Scans upward for a line that starts a block (if/def/else/...), returns its
+    indent plus one level (4 spaces).
+    """
+    for i in range(error_line_idx - 1, -1, -1):
+        stripped = lines[i].strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        if _is_block_starter_line(stripped):
+            lead = lines[i][: len(lines[i]) - len(lines[i].lstrip())]
+            return lead + "    "
+    return "    "
+
+
+def _apply_syntax_error_fix(
+    lines: List[str], e: cst.ParserSyntaxError
+) -> Tuple[List[str], int]:
+    """
+    Comment out the line reported by the parser and add TODO.
+    Returns (new_lines, 1-based line number of the '# original' line in result).
+    """
+    line_no = e.raw_line
+    err_msg = str(e).lower()
+    if line_no == 1 and "dedent" in err_msg:
+        candidate = None
+        for i, line in enumerate(lines):
+            s = line.strip()
+            if not s or s.startswith("#"):
+                continue
+            if line and not line[: len(line) - len(line.lstrip())]:
+                if _is_block_starter_line(s):
+                    candidate = i + 1
+        if candidate is not None:
+            line_no = candidate
+    idx = line_no - 1
+    if idx < 0 or idx >= len(lines) or not lines[idx].strip():
+        raise
+    raw = lines[idx]
+    lead = raw[: len(raw) - len(raw.lstrip())]
+    stripped = raw.strip()
+    if stripped.startswith("#"):
+        raise
+    todo_line = lead + "# " + _TODO_PREFIX + str(e).strip()
+    comment_line = lead + "# " + stripped
+    pass_indent = _indent_for_pass_after_error(lines, idx)
+    fixed = (
+        lines[:idx] + [todo_line, comment_line, pass_indent + "pass"] + lines[idx + 1 :]
+    )
+    # 1-based line of the "# original" line in fixed
+    comment_line_no = idx + 2
+    return fixed, comment_line_no
 
 
 class CSTLoadFileCommand(BaseMCPCommand):
@@ -89,26 +178,87 @@ class CSTLoadFileCommand(BaseMCPCommand):
             finally:
                 database.disconnect()
 
-            # Load file into tree
-            tree = load_file_to_tree(
-                str(target),
-                node_types=node_types,
-                max_depth=max_depth,
-                include_children=include_children,
-            )
+            # Remove stale .tmp so load starts from a clean state
+            path_tmp_clean = Path(str(target) + ".tmp")
+            if path_tmp_clean.exists():
+                path_tmp_clean.unlink()
 
-            # Convert metadata to dictionaries
-            nodes = [meta.to_dict() for meta in tree.metadata_map.values()]
+            # Load file into tree. On syntax error: copy to .tmp in same dir,
+            # fix recursively on .tmp only (no backup, no write to original).
+            tree = None
+            path_tmp: Optional[Path] = None
+            commented_lines_info: List[Dict[str, Any]] = []
 
-            data = {
-                "success": True,
-                "tree_id": tree.tree_id,
-                "file_path": str(target),
-                "nodes": nodes,
-                "total_nodes": len(nodes),
-            }
+            with file_lock(target):
+                try:
+                    tree = load_file_to_tree(
+                        str(target),
+                        node_types=node_types,
+                        max_depth=max_depth,
+                        include_children=include_children,
+                    )
+                except cst.ParserSyntaxError:
+                    # Copy original to same directory with suffix .tmp
+                    path_tmp = Path(str(target) + ".tmp")
+                    shutil.copy2(target, path_tmp)
+                    lines = path_tmp.read_text(encoding="utf-8").split("\n")
+                    for _ in range(_MAX_SYNTAX_FIX_ITERATIONS):
+                        try:
+                            cst.parse_module("\n".join(lines))
+                            break
+                        except cst.ParserSyntaxError as e:
+                            lines, comment_line_no = _apply_syntax_error_fix(lines, e)
+                            commented_lines_info.append(
+                                {
+                                    "line": comment_line_no,
+                                    "error": str(e).strip(),
+                                }
+                            )
+                    else:
+                        raise ValueError(
+                            f"Syntax fix did not converge after "
+                            f"{_MAX_SYNTAX_FIX_ITERATIONS} iterations"
+                        )
+                    # Single write of .tmp after loop so disk matches final lines
+                    path_tmp.write_text("\n".join(lines), encoding="utf-8")
+                    tree = load_file_to_tree(
+                        str(path_tmp),
+                        node_types=node_types,
+                        max_depth=max_depth,
+                        include_children=include_children,
+                    )
+                    # Resolve parent node for each commented line (in fixed tree)
+                    for info in commented_lines_info:
+                        line_no = info["line"]
+                        node = find_node_by_range(
+                            tree.tree_id,
+                            line_no,
+                            line_no,
+                            prefer_exact=False,
+                        )
+                        parent = None
+                        if node:
+                            parent_meta = get_node_parent(tree.tree_id, node.node_id)
+                            if parent_meta:
+                                parent = parent_meta.to_dict()
+                        info["parent_node"] = parent
 
-            return SuccessResult(data=data)
+                # Convert metadata to dictionaries
+                nodes = [meta.to_dict() for meta in tree.metadata_map.values()]
+
+                data: Dict[str, Any] = {
+                    "success": True,
+                    "tree_id": tree.tree_id,
+                    "file_path": str(target),
+                    "nodes": nodes,
+                    "total_nodes": len(nodes),
+                }
+                if commented_lines_info:
+                    data["syntax_errors_fixed"] = True
+                    data["commented_lines"] = commented_lines_info
+                    data["temp_file"] = str(path_tmp) if path_tmp else None
+
+                return SuccessResult(data=data)
 
         except FileNotFoundError as e:
             return ErrorResult(

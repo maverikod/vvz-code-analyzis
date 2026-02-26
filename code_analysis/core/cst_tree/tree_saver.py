@@ -9,13 +9,12 @@ from __future__ import annotations
 
 import logging
 import os
-import tempfile
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 from ..backup_manager import BackupManager
-from .models import CSTTree
+from ..file_lock import file_lock
 from .tree_builder import get_tree
 
 logger = logging.getLogger(__name__)
@@ -45,7 +44,6 @@ def _update_file_data_atomic_via_client(
         Dictionary with update result
     """
     import ast
-    from typing import List
 
     try:
         # Parse AST from source_code
@@ -69,8 +67,6 @@ def _update_file_data_atomic_via_client(
             }
 
         # Save AST tree
-        import json
-
         ast_dump = ast.dump(tree)  # Returns list/dict structure
         ast_data = ast_dump if isinstance(ast_dump, dict) else {"ast": ast_dump}
         try:
@@ -294,7 +290,7 @@ def save_tree_to_file(
     validate: bool = True,
     backup: bool = True,
     commit_message: Optional[str] = None,
-) -> Dict[str, any]:
+) -> Dict[str, Any]:
     """
     Save tree to file with atomic operations.
 
@@ -352,178 +348,178 @@ def save_tree_to_file(
     backup_manager: Optional[BackupManager] = None
     temp_file: Optional[Path] = None
 
-    try:
-        # Step 1: Validate original file if it exists
-        if validate and target_path.exists():
-            try:
-                original_source = target_path.read_text(encoding="utf-8")
-                compile(original_source, str(target_path), "exec")
-            except SyntaxError as e:
-                logger.warning(f"Original file has syntax errors: {e}")
-                # Continue anyway - we're replacing it
-
-        # Step 2: Create backup (mandatory before overwriting existing file)
-        if target_path.exists():
-            backup_manager = BackupManager(root_dir)
-            try:
-                rel_path = str(target_path.relative_to(root_dir))
-            except ValueError:
-                rel_path = str(target_path)
-            backup_uuid = backup_manager.create_backup(
-                target_path,
-                command="cst_save_tree",
-                comment=f"Before saving CST tree {tree_id}",
-            )
-            if not backup_uuid:
-                logger.warning("Failed to create backup, continuing anyway")
-
-        # Step 3: Generate source code from CST tree
-        source_code = tree.module.code
-
-        # Step 4: Write to temporary file
-        temp_fd, temp_path_str = tempfile.mkstemp(
-            suffix=".py", prefix="cst_save_", dir=target_path.parent
-        )
-        temp_file = Path(temp_path_str)
+    with file_lock(target_path):
         try:
-            with os.fdopen(temp_fd, "w", encoding="utf-8") as f:
-                f.write(source_code)
-        except Exception as e:
-            os.close(temp_fd)
-            raise RuntimeError(f"Failed to write temporary file: {e}") from e
+            # Step 1: Validate original file if it exists
+            if validate and target_path.exists():
+                try:
+                    original_source = target_path.read_text(encoding="utf-8")
+                    compile(original_source, str(target_path), "exec")
+                except SyntaxError as e:
+                    logger.warning(f"Original file has syntax errors: {e}")
+                    # Continue anyway - we're replacing it
 
-        # Step 5: Validate temporary file
-        if validate:
-            try:
-                compile(source_code, str(temp_file), "exec")
-            except SyntaxError as e:
-                raise ValueError(f"Generated code has syntax errors: {e}") from e
-
-        # Step 6: Begin database transaction
-        transaction_id = database.begin_transaction()
-
-        try:
-            # Step 7: Atomically replace file
-            os.replace(str(temp_file), str(target_path))
-            temp_file = None  # File was moved, don't delete it
-
-            # Step 8: Update database
-            # Calculate file metadata
-            lines = source_code.count("\n") + (1 if source_code else 0)
-            stripped = source_code.lstrip()
-            has_docstring = stripped.startswith('"""') or stripped.startswith("'''")
-            last_modified_timestamp = target_path.stat().st_mtime
-            last_modified = datetime.fromtimestamp(last_modified_timestamp)
-
-            # Check if file exists in database
-            from ..database_client.objects.file import File
-            from ..path_normalization import normalize_path_simple
-
-            normalized_path = normalize_path_simple(str(target_path))
-            existing_files = database.select(
-                "files", where={"path": normalized_path, "project_id": project_id}
-            )
-
-            if existing_files:
-                # Update existing file
-                file_record = existing_files[0]
-                file_obj = File(
-                    id=file_record["id"],
-                    project_id=project_id,
-                    path=normalized_path,
-                    lines=lines,
-                    last_modified=last_modified,
-                    has_docstring=has_docstring,
-                )
-                updated_file = database.update_file(file_obj)
-                file_id = updated_file.id
-            else:
-                # Create new file
-                file_obj = File(
-                    project_id=project_id,
-                    path=normalized_path,
-                    lines=lines,
-                    last_modified=last_modified,
-                    has_docstring=has_docstring,
-                )
-                created_file = database.create_file(file_obj)
-                file_id = created_file.id
-
-            # Update file data (AST, CST, entities) atomically using DatabaseClient methods
-            update_result = _update_file_data_atomic_via_client(
-                database=database,
-                file_id=file_id,
-                project_id=project_id,
-                source_code=source_code,
-                file_path=str(target_path),
-            )
-
-            if not update_result.get("success"):
-                raise RuntimeError(
-                    f"Failed to update file data: {update_result.get('error')}"
-                )
-
-            # Step 9: Commit transaction
-            database.commit_transaction(transaction_id)
-
-            # Step 10: Git commit (if requested)
-            if commit_message:
-                from ..git_integration import create_git_commit
-
-                git_success, git_error = create_git_commit(
-                    root_dir, target_path, commit_message
-                )
-                if not git_success:
-                    logger.warning(f"Failed to create git commit: {git_error}")
-                    # Not critical - file is already saved
-
-            return {
-                "success": True,
-                "file_path": str(target_path),
-                "file_id": file_id,
-                "backup_uuid": backup_uuid,
-                "update_result": update_result,
-            }
-
-        except Exception as e:
-            # Rollback transaction
-            try:
-                if transaction_id:
-                    database.rollback_transaction(transaction_id)
-            except Exception as rollback_error:
-                logger.error(f"Error during rollback: {rollback_error}")
-
-            # Restore file from backup if backup was created
-            if backup_uuid and backup_manager and target_path.exists():
+            # Step 2: Create backup (mandatory before overwriting existing file)
+            if target_path.exists():
+                backup_manager = BackupManager(root_dir)
                 try:
                     rel_path = str(target_path.relative_to(root_dir))
                 except ValueError:
                     rel_path = str(target_path)
-                restore_success, restore_message = backup_manager.restore_file(
-                    rel_path, backup_uuid
+                backup_uuid = backup_manager.create_backup(
+                    target_path,
+                    command="cst_save_tree",
+                    comment=f"Before saving CST tree {tree_id}",
                 )
-                if restore_success:
-                    logger.info(f"File restored from backup: {restore_message}")
+                if not backup_uuid:
+                    logger.warning("Failed to create backup, continuing anyway")
+
+            # Step 3: Generate source code from CST tree
+            source_code = tree.module.code
+
+            # Step 4: Write to target.tmp (same directory as target)
+            temp_file = Path(str(target_path) + ".tmp")
+            try:
+                temp_file.write_text(source_code, encoding="utf-8")
+            except Exception as e:
+                raise RuntimeError(f"Failed to write temporary file: {e}") from e
+
+            # Step 5: Validate temporary file
+            if validate:
+                try:
+                    compile(source_code, str(temp_file), "exec")
+                except SyntaxError as e:
+                    raise ValueError(f"Generated code has syntax errors: {e}") from e
+
+            # Step 6: Begin database transaction
+            transaction_id = database.begin_transaction()
+
+            try:
+                # Step 7: Atomically replace file
+                os.replace(str(temp_file), str(target_path))
+                temp_file = None  # File was moved, don't delete it
+
+                # Step 8: Update database
+                # Calculate file metadata
+                lines = source_code.count("\n") + (1 if source_code else 0)
+                stripped = source_code.lstrip()
+                has_docstring = stripped.startswith('"""') or stripped.startswith("'''")
+                last_modified_timestamp = target_path.stat().st_mtime
+                last_modified = datetime.fromtimestamp(last_modified_timestamp)
+
+                # Check if file exists in database
+                from ..database_client.objects.file import File
+                from ..path_normalization import normalize_path_simple
+
+                normalized_path = normalize_path_simple(str(target_path))
+                existing_files = database.select(
+                    "files",
+                    where={
+                        "path": normalized_path,
+                        "project_id": project_id,
+                    },
+                )
+
+                if existing_files:
+                    # Update existing file
+                    file_record = existing_files[0]
+                    file_obj = File(
+                        id=file_record["id"],
+                        project_id=project_id,
+                        path=normalized_path,
+                        lines=lines,
+                        last_modified=last_modified,
+                        has_docstring=has_docstring,
+                    )
+                    updated_file = database.update_file(file_obj)
+                    file_id = updated_file.id
                 else:
-                    logger.error(
-                        f"Failed to restore file from backup: {restore_message}"
+                    # Create new file
+                    file_obj = File(
+                        project_id=project_id,
+                        path=normalized_path,
+                        lines=lines,
+                        last_modified=last_modified,
+                        has_docstring=has_docstring,
+                    )
+                    created_file = database.create_file(file_obj)
+                    file_id = created_file.id
+
+                # Update file data (AST, CST, entities) atomically
+                update_result = _update_file_data_atomic_via_client(
+                    database=database,
+                    file_id=file_id,
+                    project_id=project_id,
+                    source_code=source_code,
+                    file_path=str(target_path),
+                )
+
+                if not update_result.get("success"):
+                    raise RuntimeError(
+                        "Failed to update file data: " f"{update_result.get('error')}"
                     )
 
-            raise
+                # Step 9: Commit transaction
+                database.commit_transaction(transaction_id)
 
-    except Exception as e:
-        logger.error(f"Error saving tree to file: {e}", exc_info=True)
-        return {
-            "success": False,
-            "file_path": str(target_path),
-            "backup_uuid": backup_uuid,
-            "error": str(e),
-        }
+                # Step 10: Git commit (if requested)
+                if commit_message:
+                    from ..git_integration import create_git_commit
 
-    finally:
-        # Clean up temporary file if it still exists
-        if temp_file and temp_file.exists():
-            try:
-                temp_file.unlink()
-            except Exception as e:
-                logger.warning(f"Failed to delete temporary file: {e}")
+                    git_success, git_error = create_git_commit(
+                        root_dir, target_path, commit_message
+                    )
+                    if not git_success:
+                        logger.warning(f"Failed to create git commit: {git_error}")
+                    # Not critical - file is already saved
+
+                return {
+                    "success": True,
+                    "file_path": str(target_path),
+                    "file_id": file_id,
+                    "backup_uuid": backup_uuid,
+                    "update_result": update_result,
+                }
+
+            except Exception:
+                # Rollback transaction
+                try:
+                    if transaction_id:
+                        database.rollback_transaction(transaction_id)
+                except Exception as rollback_error:
+                    logger.error(f"Error during rollback: {rollback_error}")
+
+                # Restore file from backup if backup was created
+                if backup_uuid and backup_manager and target_path.exists():
+                    try:
+                        rel_path = str(target_path.relative_to(root_dir))
+                    except ValueError:
+                        rel_path = str(target_path)
+                    restore_success, restore_message = backup_manager.restore_file(
+                        rel_path, backup_uuid
+                    )
+                    if restore_success:
+                        logger.info(f"File restored from backup: " f"{restore_message}")
+                    else:
+                        logger.error(
+                            "Failed to restore file from backup: " f"{restore_message}"
+                        )
+
+                raise
+
+        except Exception as e:
+            logger.error(f"Error saving tree to file: {e}", exc_info=True)
+            return {
+                "success": False,
+                "file_path": str(target_path),
+                "backup_uuid": backup_uuid,
+                "error": str(e),
+            }
+
+        finally:
+            # Clean up .tmp if we did not replace (e.g. on failure)
+            if temp_file is not None and temp_file.exists():
+                try:
+                    temp_file.unlink(missing_ok=True)
+                except Exception as e:
+                    logger.warning("Failed to delete temporary file: %s", e)

@@ -13,6 +13,9 @@ from __future__ import annotations
 from .client_api_ast_cst import _ClientAPIASTCSTMixin
 from .client_api_attributes import _ClientAPIAttributesMixin
 from .client_api_classes_functions import _ClientAPIClassesFunctionsMixin
+from .client_api_comprehensive_analysis import (
+    _ClientAPIComprehensiveAnalysisMixin,
+)
 from .client_api_duplicates_stats import _ClientAPIDuplicatesStatsMixin
 from .client_api_files import _ClientAPIFilesMixin
 from .client_api_issues_usages import _ClientAPIIssuesUsagesMixin
@@ -34,6 +37,7 @@ class DatabaseClient(
     _ClientAPIProjectsMixin,
     _ClientAPISearchMixin,
     _ClientAPIFilesMixin,
+    _ClientAPIComprehensiveAnalysisMixin,
     _ClientAPIAttributesMixin,
     _ClientAPIASTCSTMixin,
     _ClientAPIClassesFunctionsMixin,

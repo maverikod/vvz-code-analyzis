@@ -15,6 +15,7 @@ email: vasilyvz@gmail.com
 """
 
 import logging
+import time
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -126,6 +127,21 @@ class ComprehensiveAnalysisMCPCommand(BaseMCPCommand):
                     "type": "string",
                     "description": "Optional path to mypy config file",
                 },
+                "limit": {
+                    "type": "integer",
+                    "description": (
+                        "Max number of files to analyze per run (e.g. 10–15). "
+                        "None = all files. Use with offset for paging."
+                    ),
+                    "default": None,
+                },
+                "offset": {
+                    "type": "integer",
+                    "description": (
+                        "Number of files to skip (for paging with limit). Default 0."
+                    ),
+                    "default": 0,
+                },
             },
             "required": ["project_id"],
             "additionalProperties": False,
@@ -148,6 +164,8 @@ class ComprehensiveAnalysisMCPCommand(BaseMCPCommand):
         duplicate_min_lines: int = 5,
         duplicate_min_similarity: float = 0.8,
         mypy_config_file: Optional[str] = None,
+        limit: Optional[int] = None,
+        offset: int = 0,
         **kwargs,
     ) -> SuccessResult:
         """Execute comprehensive analysis.
@@ -168,12 +186,15 @@ class ComprehensiveAnalysisMCPCommand(BaseMCPCommand):
             duplicate_min_lines: Minimum lines for duplicates.
             duplicate_min_similarity: Minimum similarity for duplicates.
             mypy_config_file: Optional path to mypy config file.
+            limit: Max files per run (e.g. 10–15); None = all.
+            offset: Number of files to skip (for paging).
 
         Returns:
             SuccessResult with comprehensive analysis results.
         """
         from ..core.progress_tracker import get_progress_tracker_from_context
 
+        t_start = time.perf_counter()
         progress_tracker = get_progress_tracker_from_context(
             kwargs.get("context") or {}
         )
@@ -208,8 +229,16 @@ class ComprehensiveAnalysisMCPCommand(BaseMCPCommand):
         analysis_logger.addHandler(file_handler)
         analysis_logger.propagate = False  # Don't propagate to root logger
 
+        def log_timing(phase: str, t0: float) -> float:
+            elapsed = time.perf_counter() - t0
+            analysis_logger.info("[TIMING] phase=%s elapsed_sec=%.4f", phase, elapsed)
+            return time.perf_counter()
+
         try:
+            log_timing("init_resolve_root", t_start)
+            t_after = time.perf_counter()
             db = self._open_database()
+            t_after = log_timing("db_open", t_after)
             proj_id = project_id
 
             if progress_tracker:
@@ -247,6 +276,7 @@ class ComprehensiveAnalysisMCPCommand(BaseMCPCommand):
 
             if file_path:
                 # Analyze specific file
+                t_single_start = time.perf_counter()
                 file_path_obj = self._validate_file_path(file_path, root_path)
                 if not file_path_obj.exists():
                     db.disconnect()
@@ -391,6 +421,8 @@ class ComprehensiveAnalysisMCPCommand(BaseMCPCommand):
                         f"No project_id specified, cannot look up file in database: {abs_path}"
                     )
 
+                t_after = log_timing("single_file_db_lookup", t_single_start)
+
                 # Check if analysis is up-to-date (direct driver only; DatabaseClient has no cache)
                 if (
                     file_id
@@ -431,40 +463,51 @@ class ComprehensiveAnalysisMCPCommand(BaseMCPCommand):
 
                 logger.info(f"Analyzing single file: {rel_path}")
                 analysis_logger.info(f"Starting analysis of single file: {rel_path}")
+                t0 = time.perf_counter()
                 source_code = file_path_obj.read_text(encoding="utf-8")
+                t_after = log_timing("single_file_read", t0)
 
                 # Run all checks
                 if check_placeholders:
+                    t0 = time.perf_counter()
                     placeholders = analyzer.find_placeholders(
                         file_path_obj, source_code
                     )
                     for p in placeholders:
                         p["file_path"] = rel_path
                     results["placeholders"] = placeholders
+                    t_after = log_timing("single_placeholders", t0)
 
                 if check_stubs:
+                    t0 = time.perf_counter()
                     stubs = analyzer.find_stubs(file_path_obj, source_code)
                     for s in stubs:
                         s["file_path"] = rel_path
                     results["stubs"] = stubs
+                    t_after = log_timing("single_stubs", t0)
 
                 if check_empty_methods:
+                    t0 = time.perf_counter()
                     empty_methods = analyzer.find_empty_methods(
                         file_path_obj, source_code
                     )
                     for m in empty_methods:
                         m["file_path"] = rel_path
                     results["empty_methods"] = empty_methods
+                    t_after = log_timing("single_empty_methods", t0)
 
                 if check_imports:
+                    t0 = time.perf_counter()
                     imports_not_at_top = analyzer.find_imports_not_at_top(
                         file_path_obj, source_code
                     )
                     for imp in imports_not_at_top:
                         imp["file_path"] = rel_path
                     results["imports_not_at_top"] = imports_not_at_top
+                    t_after = log_timing("single_imports", t0)
 
                 if check_duplicates:
+                    t0 = time.perf_counter()
                     detector = DuplicateDetector(
                         min_lines=duplicate_min_lines,
                         min_similarity=duplicate_min_similarity,
@@ -475,26 +518,33 @@ class ComprehensiveAnalysisMCPCommand(BaseMCPCommand):
                         for occ in group["occurrences"]:
                             occ["file_path"] = rel_path
                     results["duplicates"] = duplicates
+                    t_after = log_timing("single_duplicates", t0)
 
                 if check_flake8:
+                    t0 = time.perf_counter()
                     flake8_result = analyzer.check_flake8(file_path_obj)
                     if not flake8_result["success"]:
                         flake8_result["file_path"] = rel_path
                         results["flake8_errors"].append(flake8_result)
+                    t_after = log_timing("single_flake8", t0)
 
                 if check_mypy:
+                    t0 = time.perf_counter()
                     mypy_result = analyzer.check_mypy(file_path_obj, mypy_config)
                     if not mypy_result["success"]:
                         mypy_result["file_path"] = rel_path
                         results["mypy_errors"].append(mypy_result)
+                    t_after = log_timing("single_mypy", t0)
 
                 if check_docstrings:
+                    t0 = time.perf_counter()
                     missing_docstrings = analyzer.find_missing_docstrings(
                         file_path_obj, source_code
                     )
                     for d in missing_docstrings:
                         d["file_path"] = rel_path
                     results["missing_docstrings"] = missing_docstrings
+                    t_after = log_timing("single_docstrings", t0)
 
                 # Save results to database if file_id is available
                 # Only save if file was found in the correct project (file_project_id == proj_id)
@@ -504,6 +554,7 @@ class ComprehensiveAnalysisMCPCommand(BaseMCPCommand):
                     and (proj_id is None or file_project_id == proj_id)
                 ):
                     try:
+                        t_save0 = time.perf_counter()
                         analysis_logger.info(
                             f"Saving results for file_id={file_id}, project_id={file_project_id}, mtime={file_mtime}"
                         )
@@ -543,6 +594,7 @@ class ComprehensiveAnalysisMCPCommand(BaseMCPCommand):
                             results=results,
                             summary=file_summary,
                         )
+                        log_timing("single_file_save", t_save0)
                         analysis_logger.info(f"Saved analysis results for {rel_path}")
                     except Exception as e:
                         logger.error(
@@ -570,62 +622,32 @@ class ComprehensiveAnalysisMCPCommand(BaseMCPCommand):
                         )
 
             else:
-                # Analyze multiple files
-                if proj_id:
-                    # Analyze all files in specific project
-                    project_files = db.get_project_files(proj_id, include_deleted=False)
-                    # Normalize: client API returns File objects, direct driver returns dicts
-                    files = []
-                    for f in project_files:
-                        if hasattr(f, "path"):
-                            files.append(
-                                {
-                                    "id": f.id,
-                                    "path": f.path
-                                    or getattr(f, "relative_path", "")
-                                    or "",
-                                    "lines": getattr(f, "lines", None) or 0,
-                                    "project_id": getattr(f, "project_id", None),
-                                }
-                            )
-                        else:
-                            files.append(
-                                {
-                                    "id": f["id"],
-                                    "path": f["path"],
-                                    "lines": f.get("lines", 0),
-                                    "project_id": f.get("project_id"),
-                                }
-                            )
-                    analysis_logger.info(
-                        f"Starting comprehensive analysis for project {proj_id}: {len(files)} files to analyze"
-                    )
-                else:
-                    # Analyze all files in ALL projects
-                    result = db.execute(
-                        "SELECT id, path, lines, project_id FROM files WHERE deleted = 0"
-                    )
-                    files = result.get("data", [])
-                    analysis_logger.info(
-                        f"Starting comprehensive analysis for all projects: {len(files)} files to analyze"
-                    )
-
-                files_total = len(files)
-                if progress_tracker:
+                # Analyze multiple files (always in batches; when limit not set, process all in chunks)
+                t_get_files = time.perf_counter()
+                _DEFAULT_BATCH_SIZE = 15
+                batch_size = limit if limit is not None else _DEFAULT_BATCH_SIZE
+                batch_offset = offset
+                # When limit not set: get total count for progress
+                if limit is None:
                     if proj_id:
-                        progress_tracker.set_description(
-                            f"Analyzing {files_total} files in project..."
+                        count_result = db.execute(
+                            "SELECT COUNT(*) as c FROM files WHERE project_id = ? AND deleted = 0",
+                            (proj_id,),
                         )
                     else:
-                        progress_tracker.set_description(
-                            f"Analyzing {files_total} files in all projects..."
+                        count_result = db.execute(
+                            "SELECT COUNT(*) as c FROM files WHERE deleted = 0"
                         )
-                    progress_tracker.set_progress(0)
-                if progress_tracker:
-                    progress_tracker.set_description(
-                        f"Analyzing {files_total} files..."
+                    files_total = (
+                        (count_result.get("data") or [{}])[0].get("c", 0)
+                        if isinstance(count_result.get("data"), list)
+                        else 0
                     )
-                    progress_tracker.set_progress(0)
+                    analysis_logger.info(
+                        f"Starting comprehensive analysis: {files_total} files in batches of {_DEFAULT_BATCH_SIZE}"
+                    )
+                else:
+                    files_total = 0  # set after first batch
 
                 all_placeholders: List[Dict[str, Any]] = []
                 all_stubs: List[Dict[str, Any]] = []
@@ -640,239 +662,418 @@ class ComprehensiveAnalysisMCPCommand(BaseMCPCommand):
                 last_percent = -1
                 files_analyzed = 0
                 files_skipped = 0
-                for idx, file_record in enumerate(files):
-                    file_path_str = file_record["path"]
-                    file_id = file_record["id"]
+                t_loop_start = time.perf_counter()
+                _BATCH_SAVE_SIZE = 100
+                save_batch: List[tuple] = []
+                timings_sec: Dict[str, float] = {
+                    "placeholders": 0.0,
+                    "stubs": 0.0,
+                    "empty_methods": 0.0,
+                    "imports": 0.0,
+                    "duplicates": 0.0,
+                    "flake8": 0.0,
+                    "mypy": 0.0,
+                    "docstrings": 0.0,
+                    "read_file": 0.0,
+                    "save": 0.0,
+                }
 
-                    # Resolve full path
-                    if Path(file_path_str).is_absolute():
-                        full_path = Path(file_path_str)
-                    else:
-                        full_path = root_path / file_path_str
+                # Run mypy once on the whole project (excludes .venv); then use per-file lookup
+                project_mypy_errors: Dict[str, List[str]] = {}
+                if check_mypy:
+                    t0 = time.perf_counter()
+                    from ..core.code_quality.type_checker import (
+                        type_check_project_with_mypy,
+                    )
 
-                    if not full_path.exists() or not full_path.is_file():
-                        logger.debug(f"Skipping non-existent file: {file_path_str}")
-                        continue
+                    _, project_mypy_errors = type_check_project_with_mypy(
+                        root_path, mypy_config
+                    )
+                    timings_sec["mypy"] += time.perf_counter() - t0
+                    analysis_logger.info(
+                        "[TIMING] phase=mypy_project_once elapsed_sec=%.4f",
+                        timings_sec["mypy"],
+                    )
 
-                    # Get file modification time from disk
-                    try:
-                        file_mtime = full_path.stat().st_mtime
-                    except Exception as e:
-                        logger.warning(f"Failed to get mtime for {file_path_str}: {e}")
-                        continue
-
-                    # Check if analysis is up-to-date (direct driver only)
-                    if hasattr(
-                        db, "is_analysis_up_to_date"
-                    ) and db.is_analysis_up_to_date(file_id, file_mtime):
-                        files_skipped += 1
-                        logger.debug(f"Skipping unchanged file: {file_path_str}")
-                        analysis_logger.debug(
-                            f"Skipping unchanged file: {file_path_str}"
+                while True:
+                    if proj_id:
+                        project_files = db.get_project_files(
+                            proj_id,
+                            include_deleted=False,
+                            limit=batch_size,
+                            offset=batch_offset,
                         )
-                        # Still add to file_records for long_files check
+                        files = []
+                        for f in project_files:
+                            if isinstance(f, dict):
+                                files.append(
+                                    {
+                                        "id": f["id"],
+                                        "path": f.get("path", ""),
+                                        "lines": f.get("lines", 0),
+                                        "project_id": f.get("project_id"),
+                                    }
+                                )
+                            else:
+                                files.append(
+                                    {
+                                        "id": getattr(f, "id", None),
+                                        "path": getattr(f, "path", None)
+                                        or getattr(f, "relative_path", "")
+                                        or "",
+                                        "lines": getattr(f, "lines", None) or 0,
+                                        "project_id": getattr(f, "project_id", None),
+                                    }
+                                )
+                    else:
+                        rows = db.select(
+                            "files",
+                            where={"deleted": 0},
+                            order_by=["path"],
+                            limit=batch_size,
+                            offset=batch_offset,
+                        )
+                        files = [
+                            {
+                                "id": r.get("id"),
+                                "path": r.get("path", ""),
+                                "lines": r.get("lines", 0),
+                                "project_id": r.get("project_id"),
+                            }
+                            for r in (rows or [])
+                        ]
+
+                    if not files:
+                        break
+                    if limit is not None and files_total == 0:
+                        files_total = len(files)
+
+                    t_after = log_timing("multi_get_files", t_get_files)
+                    if progress_tracker and files_total > 0:
+                        progress_tracker.set_description(
+                            f"Analyzing up to {files_total} files..."
+                        )
+                        progress_tracker.set_progress(0)
+
+                    for idx, file_record in enumerate(files):
+                        t_file_start = time.perf_counter()
+                        file_path_str = file_record["path"]
+                        file_id = file_record["id"]
+
+                        # Resolve full path
+                        if Path(file_path_str).is_absolute():
+                            full_path = Path(file_path_str)
+                        else:
+                            full_path = root_path / file_path_str
+
+                        if not full_path.exists() or not full_path.is_file():
+                            logger.debug(f"Skipping non-existent file: {file_path_str}")
+                            continue
+
+                        # Get file modification time from disk
+                        try:
+                            file_mtime = full_path.stat().st_mtime
+                        except Exception as e:
+                            logger.warning(
+                                f"Failed to get mtime for {file_path_str}: {e}"
+                            )
+                            continue
+
+                        # Check if analysis is up-to-date (direct driver only)
+                        if hasattr(
+                            db, "is_analysis_up_to_date"
+                        ) and db.is_analysis_up_to_date(file_id, file_mtime):
+                            files_skipped += 1
+                            logger.debug(f"Skipping unchanged file: {file_path_str}")
+                            analysis_logger.debug(
+                                f"Skipping unchanged file: {file_path_str}"
+                            )
+                            # Still add to file_records for long_files check
+                            file_records.append(
+                                {
+                                    "path": file_path_str,
+                                    "lines": file_record.get("lines", 0),
+                                }
+                            )
+                            continue
+
+                        t0 = time.perf_counter()
+                        try:
+                            source_code = full_path.read_text(encoding="utf-8")
+                        except Exception as e:
+                            logger.warning(f"Failed to read file {file_path_str}: {e}")
+                            continue
+                        timings_sec["read_file"] += time.perf_counter() - t0
+
                         file_records.append(
                             {
                                 "path": file_path_str,
                                 "lines": file_record.get("lines", 0),
                             }
                         )
-                        continue
 
-                    try:
-                        source_code = full_path.read_text(encoding="utf-8")
-                    except Exception as e:
-                        logger.warning(f"Failed to read file {file_path_str}: {e}")
-                        continue
+                        # Log each processed file (global index across batches)
+                        files_analyzed += 1
+                        global_idx = batch_offset + idx + 1
+                        logger.info(
+                            f"Analyzing file {global_idx}/{files_total}: {file_path_str}"
+                        )
+                        analysis_logger.info(
+                            f"Analyzing file {global_idx}/{files_total}: {file_path_str}"
+                        )
 
-                    file_records.append(
-                        {"path": file_path_str, "lines": file_record.get("lines", 0)}
-                    )
+                        # Initialize file-specific results
+                        file_results: Dict[str, Any] = {
+                            "placeholders": [],
+                            "stubs": [],
+                            "empty_methods": [],
+                            "imports_not_at_top": [],
+                            "duplicates": [],
+                            "flake8_errors": [],
+                            "mypy_errors": [],
+                            "missing_docstrings": [],
+                        }
 
-                    # Log each processed file
-                    files_analyzed += 1
-                    logger.info(
-                        f"Analyzing file {idx + 1}/{files_total}: {file_path_str}"
-                    )
+                        # Run checks
+                        if check_placeholders:
+                            t0 = time.perf_counter()
+                            placeholders = analyzer.find_placeholders(
+                                full_path, source_code
+                            )
+                            timings_sec["placeholders"] += time.perf_counter() - t0
+                            for p in placeholders:
+                                p["file_path"] = file_path_str
+                            file_results["placeholders"] = placeholders
+                            all_placeholders.extend(placeholders)
+
+                        if check_stubs:
+                            t0 = time.perf_counter()
+                            stubs = analyzer.find_stubs(full_path, source_code)
+                            timings_sec["stubs"] += time.perf_counter() - t0
+                            for s in stubs:
+                                s["file_path"] = file_path_str
+                            file_results["stubs"] = stubs
+                            all_stubs.extend(stubs)
+
+                        if check_empty_methods:
+                            t0 = time.perf_counter()
+                            empty_methods = analyzer.find_empty_methods(
+                                full_path, source_code
+                            )
+                            timings_sec["empty_methods"] += time.perf_counter() - t0
+                            for m in empty_methods:
+                                m["file_path"] = file_path_str
+                            file_results["empty_methods"] = empty_methods
+                            all_empty_methods.extend(empty_methods)
+
+                        if check_imports:
+                            t0 = time.perf_counter()
+                            imports_not_at_top = analyzer.find_imports_not_at_top(
+                                full_path, source_code
+                            )
+                            timings_sec["imports"] += time.perf_counter() - t0
+                            for imp in imports_not_at_top:
+                                imp["file_path"] = file_path_str
+                            file_results["imports_not_at_top"] = imports_not_at_top
+                            all_imports_not_at_top.extend(imports_not_at_top)
+
+                        if check_duplicates:
+                            t0 = time.perf_counter()
+                            detector = DuplicateDetector(
+                                min_lines=duplicate_min_lines,
+                                min_similarity=duplicate_min_similarity,
+                                use_semantic=False,
+                            )
+                            duplicates = detector.find_duplicates_in_file(
+                                str(full_path)
+                            )
+                            timings_sec["duplicates"] += time.perf_counter() - t0
+                            for group in duplicates:
+                                for occ in group["occurrences"]:
+                                    occ["file_path"] = file_path_str
+                            file_results["duplicates"] = duplicates
+                            all_duplicates.extend(duplicates)
+
+                        if check_flake8:
+                            t0 = time.perf_counter()
+                            flake8_result = analyzer.check_flake8(full_path)
+                            timings_sec["flake8"] += time.perf_counter() - t0
+                            if not flake8_result["success"]:
+                                flake8_result["file_path"] = file_path_str
+                                file_results["flake8_errors"] = [flake8_result]
+                                all_flake8_errors.append(flake8_result)
+
+                        if check_mypy:
+                            key = str(full_path.resolve())
+                            mypy_errors_list = project_mypy_errors.get(key, [])
+                            if mypy_errors_list:
+                                mypy_result = {
+                                    "success": False,
+                                    "error_message": (
+                                        f"Found {len(mypy_errors_list)} mypy errors"
+                                    ),
+                                    "errors": mypy_errors_list,
+                                    "error_count": len(mypy_errors_list),
+                                    "file_path": file_path_str,
+                                }
+                                file_results["mypy_errors"] = [mypy_result]
+                                all_mypy_errors.append(mypy_result)
+                            else:
+                                file_results["mypy_errors"] = []
+
+                        if check_docstrings:
+                            t0 = time.perf_counter()
+                            missing_docstrings = analyzer.find_missing_docstrings(
+                                full_path, source_code
+                            )
+                            timings_sec["docstrings"] += time.perf_counter() - t0
+                            for d in missing_docstrings:
+                                d["file_path"] = file_path_str
+                            file_results["missing_docstrings"] = missing_docstrings
+                            all_missing_docstrings.extend(missing_docstrings)
+
+                        # Create file-specific summary
+                        file_summary = {
+                            "total_placeholders": len(file_results["placeholders"]),
+                            "total_stubs": len(file_results["stubs"]),
+                            "total_empty_methods": len(file_results["empty_methods"]),
+                            "total_imports_not_at_top": len(
+                                file_results["imports_not_at_top"]
+                            ),
+                            "total_duplicate_groups": len(file_results["duplicates"]),
+                            "total_duplicate_occurrences": sum(
+                                len(g["occurrences"])
+                                for g in file_results["duplicates"]
+                            ),
+                            "total_flake8_errors": sum(
+                                e.get("error_count", 0)
+                                for e in file_results.get("flake8_errors", [])
+                            ),
+                            "files_with_flake8_errors": len(
+                                file_results.get("flake8_errors", [])
+                            ),
+                            "total_mypy_errors": sum(
+                                e.get("error_count", 0)
+                                for e in file_results.get("mypy_errors", [])
+                            ),
+                            "files_with_mypy_errors": len(
+                                file_results.get("mypy_errors", [])
+                            ),
+                            "total_missing_docstrings": len(
+                                file_results["missing_docstrings"]
+                            ),
+                        }
+
+                        # Accumulate for batch save (driver via execute_batch)
+                        file_project_id = proj_id or file_record.get("project_id")
+                        if file_project_id:
+                            save_batch.append(
+                                (
+                                    file_id,
+                                    file_project_id,
+                                    file_mtime,
+                                    file_results,
+                                    file_summary,
+                                )
+                            )
+                            if len(save_batch) >= _BATCH_SAVE_SIZE:
+                                try:
+                                    t_save0 = time.perf_counter()
+                                    db.save_comprehensive_analysis_results_batch(
+                                        save_batch
+                                    )
+                                    timings_sec["save"] += time.perf_counter() - t_save0
+                                    analysis_logger.info(
+                                        "Saved batch of %s analysis results",
+                                        len(save_batch),
+                                    )
+                                    save_batch.clear()
+                                except Exception as e:
+                                    logger.error(
+                                        "Failed to save analysis results batch: %s",
+                                        e,
+                                        exc_info=True,
+                                    )
+                                    analysis_logger.error(
+                                        "Failed to save analysis results batch: %s", e
+                                    )
+                        else:
+                            logger.warning(
+                                "Cannot save results for %s: project_id not available",
+                                file_path_str,
+                            )
+
+                        file_elapsed = time.perf_counter() - t_file_start
+                        analysis_logger.info(
+                            "[TIMING] phase=multi_file_one file=%s elapsed_sec=%.4f",
+                            file_path_str,
+                            file_elapsed,
+                        )
+
+                        # Update progress (global index across batches)
+                        if progress_tracker and files_total > 0:
+                            global_idx = batch_offset + idx + 1
+                            percent = int((global_idx / files_total) * 100)
+                            if percent != last_percent:
+                                progress_tracker.set_progress(percent)
+                                progress_tracker.set_description(
+                                    f"Analyzing: {global_idx}/{files_total} ({percent}%)"
+                                )
+                                last_percent = percent
+
+                    batch_offset += len(files)
+                    if limit is not None:
+                        break
+                    if len(files) < batch_size:
+                        break
+                    t_get_files = time.perf_counter()
+
+            if save_batch:
+                try:
+                    t_save0 = time.perf_counter()
+                    db.save_comprehensive_analysis_results_batch(save_batch)
+                    timings_sec["save"] += time.perf_counter() - t_save0
                     analysis_logger.info(
-                        f"Analyzing file {idx + 1}/{files_total}: {file_path_str}"
+                        "Saved final batch of %s analysis results",
+                        len(save_batch),
+                    )
+                except Exception as e:
+                    logger.error(
+                        "Failed to save final analysis results batch: %s",
+                        e,
+                        exc_info=True,
+                    )
+                    analysis_logger.error(
+                        "Failed to save final analysis results batch: %s", e
                     )
 
-                    # Initialize file-specific results
-                    file_results: Dict[str, Any] = {
-                        "placeholders": [],
-                        "stubs": [],
-                        "empty_methods": [],
-                        "imports_not_at_top": [],
-                        "duplicates": [],
-                        "flake8_errors": [],
-                        "mypy_errors": [],
-                        "missing_docstrings": [],
-                    }
+            loop_elapsed = time.perf_counter() - t_loop_start
+            analysis_logger.info(
+                "[TIMING] phase=multi_file_loop_total elapsed_sec=%.4f files_analyzed=%s",
+                loop_elapsed,
+                files_analyzed,
+            )
+            parts = " ".join(f"{k}_sec={v:.4f}" for k, v in sorted(timings_sec.items()))
+            analysis_logger.info("[TIMING] phase=multi_file_breakdown %s", parts)
 
-                    # Run checks
-                    if check_placeholders:
-                        placeholders = analyzer.find_placeholders(
-                            full_path, source_code
-                        )
-                        for p in placeholders:
-                            p["file_path"] = file_path_str
-                        file_results["placeholders"] = placeholders
-                        all_placeholders.extend(placeholders)
+            results["placeholders"] = all_placeholders
+            results["stubs"] = all_stubs
+            results["empty_methods"] = all_empty_methods
+            results["imports_not_at_top"] = all_imports_not_at_top
+            results["duplicates"] = all_duplicates
+            results["flake8_errors"] = all_flake8_errors
+            results["mypy_errors"] = all_mypy_errors
+            results["missing_docstrings"] = all_missing_docstrings
 
-                    if check_stubs:
-                        stubs = analyzer.find_stubs(full_path, source_code)
-                        for s in stubs:
-                            s["file_path"] = file_path_str
-                        file_results["stubs"] = stubs
-                        all_stubs.extend(stubs)
+            if check_long_files:
+                t0 = time.perf_counter()
+                results["long_files"] = analyzer.find_long_files(file_records)
+                log_timing("multi_long_files", t0)
 
-                    if check_empty_methods:
-                        empty_methods = analyzer.find_empty_methods(
-                            full_path, source_code
-                        )
-                        for m in empty_methods:
-                            m["file_path"] = file_path_str
-                        file_results["empty_methods"] = empty_methods
-                        all_empty_methods.extend(empty_methods)
-
-                    if check_imports:
-                        imports_not_at_top = analyzer.find_imports_not_at_top(
-                            full_path, source_code
-                        )
-                        for imp in imports_not_at_top:
-                            imp["file_path"] = file_path_str
-                        file_results["imports_not_at_top"] = imports_not_at_top
-                        all_imports_not_at_top.extend(imports_not_at_top)
-
-                    if check_duplicates:
-                        detector = DuplicateDetector(
-                            min_lines=duplicate_min_lines,
-                            min_similarity=duplicate_min_similarity,
-                            use_semantic=False,
-                        )
-                        duplicates = detector.find_duplicates_in_file(str(full_path))
-                        for group in duplicates:
-                            for occ in group["occurrences"]:
-                                occ["file_path"] = file_path_str
-                        file_results["duplicates"] = duplicates
-                        all_duplicates.extend(duplicates)
-
-                    if check_flake8:
-                        flake8_result = analyzer.check_flake8(full_path)
-                        if not flake8_result["success"]:
-                            flake8_result["file_path"] = file_path_str
-                            file_results["flake8_errors"] = [flake8_result]
-                            all_flake8_errors.append(flake8_result)
-
-                    if check_mypy:
-                        mypy_result = analyzer.check_mypy(full_path, mypy_config)
-                        if not mypy_result["success"]:
-                            mypy_result["file_path"] = file_path_str
-                            file_results["mypy_errors"] = [mypy_result]
-                            all_mypy_errors.append(mypy_result)
-
-                    if check_docstrings:
-                        missing_docstrings = analyzer.find_missing_docstrings(
-                            full_path, source_code
-                        )
-                        for d in missing_docstrings:
-                            d["file_path"] = file_path_str
-                        file_results["missing_docstrings"] = missing_docstrings
-                        all_missing_docstrings.extend(missing_docstrings)
-
-                    # Create file-specific summary
-                    file_summary = {
-                        "total_placeholders": len(file_results["placeholders"]),
-                        "total_stubs": len(file_results["stubs"]),
-                        "total_empty_methods": len(file_results["empty_methods"]),
-                        "total_imports_not_at_top": len(
-                            file_results["imports_not_at_top"]
-                        ),
-                        "total_duplicate_groups": len(file_results["duplicates"]),
-                        "total_duplicate_occurrences": sum(
-                            len(g["occurrences"]) for g in file_results["duplicates"]
-                        ),
-                        "total_flake8_errors": sum(
-                            e.get("error_count", 0)
-                            for e in file_results.get("flake8_errors", [])
-                        ),
-                        "files_with_flake8_errors": len(
-                            file_results.get("flake8_errors", [])
-                        ),
-                        "total_mypy_errors": sum(
-                            e.get("error_count", 0)
-                            for e in file_results.get("mypy_errors", [])
-                        ),
-                        "files_with_mypy_errors": len(
-                            file_results.get("mypy_errors", [])
-                        ),
-                        "total_missing_docstrings": len(
-                            file_results["missing_docstrings"]
-                        ),
-                    }
-
-                    # Save results to database
-                    # Get project_id: use proj_id if set, otherwise from file_record
-                    file_project_id = proj_id or file_record.get("project_id")
-                    if file_project_id:
-                        try:
-                            analysis_logger.info(
-                                f"Saving results for file_id={file_id}, project_id={file_project_id}, mtime={file_mtime}, file={file_path_str}"
-                            )
-                            db.save_comprehensive_analysis_results(
-                                file_id=file_id,
-                                project_id=file_project_id,
-                                file_mtime=file_mtime,
-                                results=file_results,
-                                summary=file_summary,
-                            )
-                            analysis_logger.info(
-                                f"Saved analysis results for {file_path_str}"
-                            )
-                        except Exception as e:
-                            logger.error(
-                                f"Failed to save analysis results for {file_path_str}: {e}",
-                                exc_info=True,
-                            )
-                            analysis_logger.error(
-                                f"Failed to save analysis results for {file_path_str}: {e}",
-                                exc_info=True,
-                            )
-                    else:
-                        logger.warning(
-                            f"Cannot save results for {file_path_str}: project_id not available (proj_id={proj_id}, file_record.project_id={file_record.get('project_id')})"
-                        )
-                        analysis_logger.warning(
-                            f"Cannot save results for {file_path_str}: project_id not available"
-                        )
-
-                    # Update progress
-                    if progress_tracker and files_total > 0:
-                        percent = int(((idx + 1) / files_total) * 100)
-                        if percent != last_percent:
-                            progress_tracker.set_progress(percent)
-                            progress_tracker.set_description(
-                                f"Analyzing: {idx + 1}/{files_total} ({percent}%)"
-                            )
-                            last_percent = percent
-
-                results["placeholders"] = all_placeholders
-                results["stubs"] = all_stubs
-                results["empty_methods"] = all_empty_methods
-                results["imports_not_at_top"] = all_imports_not_at_top
-                results["duplicates"] = all_duplicates
-                results["flake8_errors"] = all_flake8_errors
-                results["mypy_errors"] = all_mypy_errors
-                results["missing_docstrings"] = all_missing_docstrings
-
-                if check_long_files:
-                    results["long_files"] = analyzer.find_long_files(file_records)
-
-                # Log statistics
-                analysis_logger.info(
-                    f"Analysis complete: {files_analyzed} files analyzed, {files_skipped} files skipped (unchanged)"
-                )
+            # Log statistics
+            analysis_logger.info(
+                f"Analysis complete: {files_analyzed} files analyzed, {files_skipped} files skipped (unchanged)"
+            )
 
             # Create summary
             summary_data = {
@@ -923,6 +1124,7 @@ class ComprehensiveAnalysisMCPCommand(BaseMCPCommand):
 
             results["summary"] = summary_data
 
+            log_timing("total_elapsed", t_start)
             db.disconnect()
 
             if progress_tracker:
@@ -1163,6 +1365,20 @@ class ComprehensiveAnalysisMCPCommand(BaseMCPCommand):
                     "type": "string",
                     "required": False,
                 },
+                "limit": {
+                    "description": (
+                        "Max number of files to analyze per run (e.g. 10–15). "
+                        "Omit for all files. Use with offset for paging."
+                    ),
+                    "type": "integer",
+                    "required": False,
+                },
+                "offset": {
+                    "description": "Number of files to skip (for paging with limit). Default 0.",
+                    "type": "integer",
+                    "required": False,
+                    "default": 0,
+                },
             },
             "usage_examples": [
                 {
@@ -1195,6 +1411,18 @@ class ComprehensiveAnalysisMCPCommand(BaseMCPCommand):
                     },
                     "explanation": (
                         "Runs all checks on src/main.py file only. Faster than project-wide analysis."
+                    ),
+                },
+                {
+                    "description": "Analyze in batches of 15 files (paging)",
+                    "command": {
+                        "root_dir": "/home/user/projects/my_project",
+                        "project_id": "123e4567-e89b-12d3-a456-426614174000",
+                        "limit": 15,
+                        "offset": 0,
+                    },
+                    "explanation": (
+                        "Runs analysis on first 15 files. Next run use offset=15, then offset=30, etc."
                     ),
                 },
                 {

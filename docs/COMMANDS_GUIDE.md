@@ -121,7 +121,9 @@ Before any command modifies existing code, the file is placed in **versions** (b
 | Command | Doc | Purpose |
 |---------|-----|--------|
 | cleanup_deleted_files | [cleanup_deleted_files.md](commands/file_management/cleanup_deleted_files.md) | Clean up DB records for deleted files |
+| list_deleted_files | [list_deleted_files.md](commands/file_management/list_deleted_files.md) | List files marked as deleted |
 | unmark_deleted_file | [unmark_deleted_file.md](commands/file_management/unmark_deleted_file.md) | Unmark file as deleted |
+| restore_deleted_files | [restore_deleted_files.md](commands/file_management/restore_deleted_files.md) | Restore file from deleted state |
 | collapse_versions | [collapse_versions.md](commands/file_management/collapse_versions.md) | Collapse file versions in DB |
 | repair_database | [repair_database.md](commands/file_management/repair_database.md) | Repair file-related DB state |
 
@@ -131,6 +133,10 @@ Before any command modifies existing code, the file is placed in **versions** (b
 |---------|-----|--------|
 | view_worker_logs | [view_worker_logs.md](commands/log_viewer/view_worker_logs.md) | View worker log content |
 | list_worker_logs | [list_worker_logs.md](commands/log_viewer/list_worker_logs.md) | List available worker logs |
+| list_logs | [list_logs.md](commands/log_viewer/list_logs.md) | List log files (all configured) |
+| rotate_worker_logs | [rotate_worker_logs.md](commands/log_viewer/rotate_worker_logs.md) | Rotate a worker log file |
+| rotate_all_logs | [rotate_all_logs.md](commands/log_viewer/rotate_all_logs.md) | Rotate all configured logs |
+| analyze_timing_bottlenecks | [analyze_timing_bottlenecks.md](commands/log_viewer/analyze_timing_bottlenecks.md) | Analyze timing from worker logs |
 
 ### Project Management — `docs/commands/project_management/`
 
@@ -141,6 +147,11 @@ Before any command modifies existing code, the file is placed in **versions** (b
 | delete_project | [delete_project.md](commands/project_management/delete_project.md) | Delete project and optionally projectid file |
 | delete_unwatched_projects | [delete_unwatched_projects.md](commands/project_management/delete_unwatched_projects.md) | Delete projects not in watch dirs |
 | list_projects | [list_projects.md](commands/project_management/list_projects.md) | List projects (optionally by watch_dir_id) |
+| list_watch_dirs | [list_watch_dirs.md](commands/project_management/list_watch_dirs.md) | List watch directories |
+| list_trashed_projects | [list_trashed_projects.md](commands/project_management/list_trashed_projects.md) | List projects in trash |
+| permanently_delete_from_trash | [permanently_delete_from_trash.md](commands/project_management/permanently_delete_from_trash.md) | Permanently delete project from trash |
+| restore_project_from_trash | [restore_project_from_trash.md](commands/project_management/restore_project_from_trash.md) | Restore project from trash |
+| clear_trash | [clear_trash.md](commands/project_management/clear_trash.md) | Clear all trashed projects |
 
 ### Refactor — `docs/commands/refactor/`
 
@@ -186,6 +197,7 @@ Before any command modifies existing code, the file is placed in **versions** (b
 |---------|-----|--------|
 | get_worker_status | [get_worker_status.md](commands/worker_status/get_worker_status.md) | Worker process status and logs |
 | get_database_status | [get_database_status.md](commands/worker_status/get_database_status.md) | Database and indexing status |
+| list_indexing_errors | [list_indexing_errors.md](commands/worker_status/list_indexing_errors.md) | List indexing errors by project/file |
 
 ### Analysis — `docs/commands/analysis/`
 

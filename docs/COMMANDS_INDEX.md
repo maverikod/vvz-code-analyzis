@@ -115,7 +115,9 @@ email: vasilyvz@gmail.com
 | Command              | Class                        | Source File                            |
 |----------------------|-----------------------------|----------------------------------------|
 | cleanup_deleted_files| CleanupDeletedFilesMCPCommand| commands/file_management_mcp_commands.py |
+| list_deleted_files   | ListDeletedFilesMCPCommand  | (same)                                 |
 | unmark_deleted_file  | UnmarkDeletedFileMCPCommand | (same)                                 |
+| restore_deleted_files| RestoreDeletedFilesMCPCommand| (same)                                |
 | collapse_versions    | CollapseVersionsMCPCommand  | (same)                                 |
 | repair_database      | RepairDatabaseMCPCommand   | (same)                                 |
 
@@ -123,10 +125,14 @@ email: vasilyvz@gmail.com
 
 ## Log Viewer (`docs/commands/log_viewer/`)
 
-| Command          | Class                    | Source File                          |
-|------------------|--------------------------|--------------------------------------|
-| view_worker_logs | ViewWorkerLogsMCPCommand | commands/log_viewer_mcp_commands.py  |
-| list_worker_logs | ListWorkerLogsMCPCommand | (same)                               |
+| Command                   | Class                           | Source File                          |
+|---------------------------|----------------------------------|--------------------------------------|
+| view_worker_logs          | ViewWorkerLogsMCPCommand         | commands/log_viewer_mcp_commands.py  |
+| list_worker_logs          | ListWorkerLogsMCPCommand         | (same)                               |
+| list_logs                 | ListLogsMCPCommand               | (same)                               |
+| rotate_worker_logs        | RotateWorkerLogsMCPCommand       | (same)                               |
+| rotate_all_logs           | RotateAllLogsMCPCommand          | (same)                               |
+| analyze_timing_bottlenecks| AnalyzeTimingBottlenecksMCPCommand| (same)                              |
 
 ---
 
@@ -139,6 +145,11 @@ email: vasilyvz@gmail.com
 | delete_project          | DeleteProjectMCPCommand       | (same)                                    |
 | delete_unwatched_projects| DeleteUnwatchedProjectsMCPCommand| (same)                                 |
 | list_projects           | ListProjectsMCPCommand       | (same)                                    |
+| list_watch_dirs         | ListWatchDirsMCPCommand      | (same)                                    |
+| list_trashed_projects   | ListTrashedProjectsMCPCommand | (same)                                    |
+| permanently_delete_from_trash | PermanentlyDeleteFromTrashMCPCommand | (same)                         |
+| restore_project_from_trash    | RestoreProjectFromTrashMCPCommand    | (same)                         |
+| clear_trash             | ClearTrashMCPCommand         | (same)                                    |
 
 ---
 
@@ -192,10 +203,11 @@ email: vasilyvz@gmail.com
 
 ## Worker Status (`docs/commands/worker_status/`)
 
-| Command            | Class                      | Source File                            |
-|--------------------|----------------------------|----------------------------------------|
-| get_worker_status  | GetWorkerStatusMCPCommand  | commands/worker_status_mcp_commands.py  |
-| get_database_status| GetDatabaseStatusMCPCommand| (same)                                 |
+| Command             | Class                        | Source File                            |
+|---------------------|------------------------------|----------------------------------------|
+| get_worker_status   | GetWorkerStatusMCPCommand    | commands/worker_status_mcp_commands.py  |
+| get_database_status | GetDatabaseStatusMCPCommand | (same)                                 |
+| list_indexing_errors| ListIndexingErrorsMCPCommand| (same)                                 |
 
 ---
 

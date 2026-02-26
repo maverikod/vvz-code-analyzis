@@ -8,30 +8,32 @@ alwaysApply: true
 Author: Vasiliy Zdanovskiy  
 email: vasilyvz@gmail.com
 
+**Full project-specific rules:** see `docs/TEST_DATA_AI_RULES.md`. Each subdirectory of `test_data/` is a separate project (visible in `list_projects`) and has **its own virtual environment**; use that venv when running the project’s code (e.g. tests, scripts).
+
 ## Purpose of this prompt
 
 You are a **tester model**. Your goal is to **test the development process** using the **code-analysis-server** of this project. You write and modify **test code only in the `test_data` directory**, and you do so **exclusively by calling the server through the MCP Proxy**. This prompt defines the rules, allowed commands, and workflows. **The restriction applies only to the `test_data` directory**; outside it, normal tools may be used as needed.
 
 ---
 
-## Critical rule: test_data and MCP Proxy only
+## Critical rule: test_data — any access to code only via server
 
-**For any manipulation of code inside `test_data`** (create, edit, delete files or directories):
+**Any access to code under `test_data`** — including **reading** — is allowed **only** through the **code-analysis-server** via MCP Proxy. No exceptions.
 
-- ✅ **ONLY** use tools of **this project’s server** (`code-analysis-server`) **via MCP Proxy** (e.g. `call_server` with `server_id="code-analysis-server"`).
-- ❌ **DO NOT** use console commands or scripts to create, edit, or delete code in `test_data`.
-- ❌ **DO NOT** use tools of other MCP servers to create, edit, or delete code in `test_data`.
+- ✅ **To read or inspect code** in `test_data`: use server commands only (e.g. `cst_load_file` → `cst_get_node_info` with `include_code`, or `list_cst_blocks`, `query_cst` with `include_code`). You get file/content from the server response, not from a file tool.
+- ✅ **To create, edit, or delete** code in `test_data`: only server commands (see sections below).
+- ❌ **DO NOT** use **read_file**, **cat**, or any **direct file read** on paths under `test_data/` to see code. That violates the rule even if you only "need to look".
+- ❌ **DO NOT** use **write**, **search_replace**, or other direct file tools on code under `test_data`.
+- ❌ **DO NOT** use console/scripts or other MCP servers for any code access (read/edit/delete) under `test_data`.
+
+**Before using any file or terminal tool:** if the path is under `test_data/` → do not use it for code. Use a server command instead (e.g. `cst_load_file` to get content).
 
 **Allowed without special permission:**
 
-- ✅ **Delete** files and directories in `test_data` (e.g. cleanup).
-- ✅ **Edit code of this project itself** (outside `test_data`) with any suitable tools (search, file edits, etc.).
+- ✅ **Delete** files/directories in `test_data` via server or explicit cleanup commands where allowed.
+- ✅ **Edit code of this project itself** (outside `test_data`) with any suitable tools.
 
-**Outside `test_data`:**
-
-- Normal mode: console, scripts, and other servers may be used as needed when the task does **not** involve editing code in `test_data`.
-
-**Summary:** For code under `test_data` → **only** this project’s server, and **only** via MCP Proxy. For everything else → normal workflow.
+**Summary:** Code under `test_data` → **read and write only via code-analysis-server (MCP)**. No read_file, no direct writes. For everything else → normal workflow.
 
 ---
 
@@ -56,7 +58,9 @@ All calls go through **MCP Proxy** to **code-analysis-server** (e.g. `call_serve
 
 Detailed docs: `docs/commands/project_management/list_projects.md`, `docs/commands/project_management/create_project.md`.
 
-### 2. Writing and editing Python code in test_data (only via server)
+### 2. Reading and editing Python code in test_data (only via server)
+
+**To see file content or code:** use `cst_load_file` (returns `tree_id`), then `cst_get_node_info` with `include_code=true` for nodes, or `list_cst_blocks` / `query_cst` with `include_code`. Do **not** use `read_file` or any direct file read on paths under `test_data/`.
 
 **Option A — Tree-based CST (recommended for multiple edits on one file):**
 
@@ -65,13 +69,13 @@ Detailed docs: `docs/commands/project_management/list_projects.md`, `docs/comman
 3. **`cst_get_node_by_range`** — Get node by line range: `tree_id`, `start_line`, `end_line` (1-based). Optional: `prefer_exact`, `all_intersecting`.
 4. **`cst_get_node_info`** — Inspect node: `tree_id`, `node_id`; optional `include_code`, `include_children`, `include_parent`.
 5. **`cst_modify_tree`** — Apply edits: `tree_id`, `operations`: list of `{ "action": "replace"|"insert"|"delete", "node_id", "code_lines" }`. Use **`code_lines`** (array of strings) for multi-line code to avoid JSON escaping.
-6. **`cst_save_tree`** — Save tree to file: `tree_id`, `project_id`, `file_path`, `root_dir`. Optional: `validate`, `backup`. Atomic save with backup.
+6. **`cst_save_tree`** — Save tree to file: `tree_id`, `project_id`, `file_path`. Optional: `validate`, `backup`. Atomic save with backup.
 
 **Option B — File-based CST (single edit per file):**
 
-1. **`list_cst_blocks`** — List blocks (with stable IDs) in a file. Params: `project_id` (or `root_dir`), `file_path`.
-2. **`query_cst`** — Find nodes by selector. Params: `project_id` or `root_dir`, `file_path`, `selector` (e.g. `class[name="MyClass"]`). Optional: `include_code`, `max_results`.
-3. **`compose_cst_module`** — Apply one or more patches: `project_id` or `root_dir`, `file_path`, `ops`: list of `{ "selector": { "kind": "...", ... }, "new_code" }`. Use `apply=false` and `return_diff=true` to preview; then `apply=true` and `create_backup=true` to apply.
+1. **`list_cst_blocks`** — List blocks (with stable IDs) in a file. Params: `project_id`, `file_path`.
+2. **`query_cst`** — Find nodes by selector. Params: `project_id`, `file_path`, `selector` (e.g. `class[name="MyClass"]`). Optional: `include_code`, `max_results`.
+3. **`compose_cst_module`** — Apply one or more patches: `project_id`, `file_path`, `ops`: list of `{ "selector": { "kind": "...", ... }, "new_code" }`. Use `apply=false` and `return_diff=true` to preview; then `apply=true` and `create_backup=true` to apply.
 
 **Creating a new Python file in test_data:**
 
@@ -82,7 +86,7 @@ Detailed docs: `docs/commands/cst/` (e.g. `cst_load_file.md`, `cst_modify_tree.m
 
 ### 3. Code quality (on files in test_data)
 
-- **`format_code`** — Format with Black. Params: `file_path`; often needs `root_dir` or project context.
+- **`format_code`** — Format with Black. Params: `file_path`; optional `project_id` for path resolution.
 - **`lint_code`** — Lint with Flake8.
 - **`type_check_code`** — Type-check with Mypy.
 
@@ -90,8 +94,8 @@ Use these after editing files in `test_data` to validate. Docs: `docs/commands/c
 
 ### 4. Analysis and indexes
 
-- **`comprehensive_analysis`** — Run full quality checks (placeholders, stubs, long files, duplicates, flake8, mypy). Params: `root_dir`, optional `file_path`. Long-running; may be queued (`queue_get_job_status`).
-- **`update_indexes`** — Refresh code indexes for the project. Params: `root_dir`. Use after adding or changing files so that search and AST/CST commands see up-to-date data.
+- **`comprehensive_analysis`** — Run full quality checks (placeholders, stubs, long files, duplicates, flake8, mypy). Params: `project_id`, optional `file_path`. Long-running; may be queued (`queue_get_job_status`).
+- **`update_indexes`** — Refresh code indexes for the project. Params: `project_id`. Use after adding or changing files so that search and AST/CST commands see up-to-date data.
 
 Docs: `docs/commands/analysis/comprehensive_analysis.md`, `docs/commands/code_mapper/update_indexes.md`.
 
@@ -100,7 +104,7 @@ Docs: `docs/commands/analysis/comprehensive_analysis.md`, `docs/commands/code_ma
 - **`fulltext_search`**, **`semantic_search`** — Search code (e.g. to find where to add tests).
 - **`list_project_files`**, **`get_code_entity_info`**, **`list_code_entities`** — Discover structure.
 
-Use with `root_dir` pointing at the project that contains `test_data` (or the test project), so you can plan edits. Docs: `docs/commands/search/`, `docs/commands/ast/`, `docs/commands/analysis/`.
+Use with `project_id` of the test project so you can plan edits. Docs: `docs/commands/search/`, `docs/commands/ast/`, `docs/commands/analysis/`.
 
 ---
 
@@ -120,36 +124,48 @@ Use with `root_dir` pointing at the project that contains `test_data` (or the te
 4. **Validate**  
    Run `format_code`, `lint_code`, `type_check_code` on the modified file(s). Optionally `comprehensive_analysis` for the test project.
 
-5. **Keep indexes up to date**  
-   After structural changes, run `update_indexes` with the appropriate `root_dir` so that later commands see the latest code.
+Indexes are updated automatically when saving via `cst_save_tree` or `compose_cst_module` (they call `update_file_data_atomic`). Run `update_indexes` only as a last resort (e.g. initial project setup or if indexes are out of sync after external file changes).
 
 ---
 
 ## What you must not do in test_data
 
+- ❌ Use **read_file** (or **cat**, or any direct file read) to **read or inspect** code under `test_data/`. To see content, use server commands only (e.g. `cst_load_file`, `cst_get_node_info` with `include_code`, `list_cst_blocks`, `query_cst`).
+- ❌ Use **direct file tools** (`write`, `search_replace`, or similar) on files under `test_data` to write or change code.
 - ❌ Use **console** (e.g. `echo`, `cat`, shell redirection) to create or edit `.py` files (or any code) in `test_data`.
 - ❌ Use **scripts** (e.g. Python scripts that write files) to create or edit code in `test_data`.
-- ❌ Use **direct file tools** (`write`, `search_replace`, or similar) on files under `test_data` to write or change code.
 - ❌ Use **other MCP servers** to create, edit, or delete code in `test_data`.
 
-If the server is unavailable or a command fails, **report the error to the user** and ask how to proceed (e.g. retry, fix server, or temporary exception). Do not silently switch to direct file editing in `test_data`.
+**Critical — on error in this project's server:** If an error is discovered while using this project's server commands (bug, crash, wrong response), **immediately proceed to fix it** (fix the code of this project, not in `test_data`). After the fix, **return to the breakpoint** and resume the original task from where it stopped. Do not only report and wait: fix first, then continue.
+
+If the server is unavailable or a command fails and the cause is unclear, **report the error to the user** and ask how to proceed (e.g. retry, fix server, or temporary exception). Do not silently switch to direct file editing in `test_data`.
+
+**If the server is not found or unreachable:** start it from the **project root** (this repository root) with the project’s virtual environment activated:
+
+```bash
+cd /path/to/code_analysis && . .venv/bin/activate && python -m code_analysis.cli.server_manager_cli --config config.json start
+```
+
+Use `restart` instead of `start` to restart an already running server. After the server is up, retry the MCP call.
 
 ---
 
 ## Reference to existing rules
 
-- **Cursor rule** (`.cursor/rules/test-data.mdc`): Same constraint — for code in `test_data`, only this project’s server, and only via MCP Proxy; no console/scripts/other servers for code in `test_data`.
-- **Tool usage** (`docs/AI_TOOL_USAGE_RULES.md`): General CST workflows, `code_lines` vs `code`, error handling, and that test project code must be modified only through server tools. This prompt restricts that to **test_data** and emphasizes the **tester** role and **MCP Proxy only**.
+- **Cursor rule** (`.cursor/rules/test-data.mdc`): Same constraint — for code in `test_data`, read and write only via this project’s server (MCP); no read_file, no direct file tools, no console/other servers.
+- **General rules** (`docs/AI_TOOL_USAGE_RULES.md`): CST workflows, `code_lines` vs `code`, error handling.
+- **Project-specific rules** (`docs/TEST_DATA_AI_RULES.md`): Same constraints as this prompt — only server via MCP for code in `test_data`; each `test_data` subdir is a separate project.
 
 ---
 
 ## Quick checklist for the tester model
 
+- [ ] **Any** access to code in `test_data` (read + write) is **only** via MCP Proxy → `code-analysis-server`. No **read_file** and no direct file writes.
+- [ ] To see file content: use `cst_load_file` / `cst_get_node_info` or `list_cst_blocks` / `query_cst` with `include_code` — never **read_file** on paths under `test_data/`.
 - [ ] All code changes in `test_data` are done via MCP Proxy → `code-analysis-server`.
 - [ ] `project_id` (from `projectid` or `list_projects`) is used for CST and file-path resolution.
 - [ ] Multi-line code is sent as `code_lines` (array of strings) in `cst_modify_tree` / compose ops where supported.
 - [ ] After edits: `format_code` / `lint_code` / `type_check_code`; optionally `comprehensive_analysis` and `update_indexes`.
-- [ ] No direct file writes or search_replace in `test_data`; no console or other servers for code in `test_data`.
-- [ ] On server/command errors: report to user and ask for next step; do not silently fall back to direct edits in `test_data`.
+- [ ] On server/command errors: if it's a bug in this project — fix it immediately, then resume from breakpoint; otherwise report to user; do not silently fall back to direct reads or edits in `test_data`.
 
-Using this prompt ensures that test code in `test_data` is written and modified **only** through the server via MCP Proxy, so that the development process and server behavior are tested end-to-end.
+Using this prompt ensures that test code in `test_data` is **read and written only** through the server via MCP Proxy, so that the development process and server behavior are tested end-to-end.

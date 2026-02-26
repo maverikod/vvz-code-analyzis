@@ -16,6 +16,12 @@ This document defines rules for AI models on how to use the code analysis and re
 
 **Key Technology**: Use `code_lines` (array of strings) instead of `code` (single string) for multi-line code to avoid JSON escaping issues.
 
+**Command parameters (source of truth)**: Most project-scoped commands use **`project_id`** (UUID from `list_projects` or from the `projectid` file in the project root). Do not rely on `root_dir` unless the command schema explicitly accepts it. Authoritative parameter list: `get_schema()` in code and [COMMANDS_GUIDE.md](COMMANDS_GUIDE.md), [COMMANDS_INDEX.md](COMMANDS_INDEX.md).
+
+**Project-specific rules**: For this repository, rules that apply only to code under `test_data/` are in [TEST_DATA_AI_RULES.md](TEST_DATA_AI_RULES.md). The present document defines general (production) rules.
+
+**Note on examples**: In the examples below, use **project_id** for project-scoped commands when the schema requires it; some snippets may still show `root_dir` for brevity—always check [COMMANDS_GUIDE.md](COMMANDS_GUIDE.md) or command `get_schema` for current parameters.
+
 ## 0. AI Prompt Rules (MANDATORY)
 
 **⚠️ CRITICAL: These rules apply ONLY when server `code-analysis-server` is available via MCP Proxy. When server is unavailable, use fallback tools with user approval.**
@@ -54,22 +60,22 @@ This document defines rules for AI models on how to use the code analysis and re
 
 **Workflow for existing Python code (when server available):**
 
-**Traditional (single operation):**
-1. `list_cst_blocks` → discover structure
+**Traditional (single operation):** Use `project_id` (required by schema).
+1. `list_cst_blocks` (project_id, file_path) → discover structure
 2. `compose_cst_module` with `apply=false` → preview
 3. `compose_cst_module` with `apply=true` → apply
-4. `comprehensive_analysis` → validate quality
+4. `comprehensive_analysis` (project_id) → validate quality
 
-**Tree-based (multiple operations):**
-1. `cst_load_file` → load file into tree (get tree_id)
+**Tree-based (multiple operations):** Use `project_id` for load/save.
+1. `cst_load_file` (project_id, file_path) → load file into tree (get tree_id)
 2. `cst_find_node` → find nodes to modify (simple or XPath search)
    - OR `cst_get_node_by_range` → get node_id by line range (when you know line numbers)
 3. `cst_get_node_info` (optional) → inspect node details
 4. `cst_modify_tree` → apply multiple operations atomically
    - Use `code_lines` (array) for multi-line code (RECOMMENDED)
    - Use `code` (string) only for single-line code
-5. `cst_save_tree` → atomically save with backup and validation
-6. `comprehensive_analysis` → validate quality
+5. `cst_save_tree` (tree_id, project_id, file_path) → atomically save with backup and validation
+6. `comprehensive_analysis` (project_id) → validate quality
 
 **Remember**: Server tools = 9/10 reliability. Direct tools = 4/10 reliability. When server is available, using direct tools for Python code is a violation.
 
@@ -527,18 +533,18 @@ mcp_MCP-Proxy-2_call_server(
 
 **Commands**:
 ```python
-# Search for existing functionality
+# Search for existing functionality (project_id required)
 mcp_MCP-Proxy-2_call_server(
     server_id="code-analysis-server",
     command="fulltext_search",
-    params={"root_dir": "/path", "query": "functionality_name"}
+    params={"project_id": "<project-uuid>", "query": "functionality_name"}
 )
 
 # Get entity information
 mcp_MCP-Proxy-2_call_server(
     server_id="code-analysis-server",
     command="get_code_entity_info",
-    params={"root_dir": "/path", "entity_type": "class", "entity_name": "ClassName"}
+    params={"project_id": "<project-uuid>", "entity_type": "class", "entity_name": "ClassName"}
 )
 ```
 
@@ -549,18 +555,9 @@ mcp_MCP-Proxy-2_call_server(
 2. ✅ Run `flake8` (automatic via `lint_code`)
 3. ✅ Run `mypy` (automatic via `type_check_code`)
 4. ✅ **Run comprehensive analysis** (after each logically completed step)
-5. ✅ Update `code_mapper` indexes
-6. ✅ Restart server if code changed
+5. ✅ Restart server if code changed
 
-**Commands**:
-```python
-# Update indexes
-mcp_MCP-Proxy-2_call_server(
-    server_id="code-analysis-server",
-    command="update_indexes",
-    params={"root_dir": "/path"}
-)
-```
+**Indexes**: Saving via `cst_save_tree` or `compose_cst_module` updates the database (and indexes for that file) automatically via `update_file_data_atomic`. Run `update_indexes` only when needed (e.g. initial project setup or after external file changes left indexes out of sync).
 
 ### 5.3 Comprehensive Code Quality Check
 
@@ -580,13 +577,13 @@ mcp_MCP-Proxy-2_call_server(
 
 **Command**:
 ```python
-# Comprehensive analysis for specific file
+# Comprehensive analysis for specific file (use project_id from list_projects)
 mcp_MCP-Proxy-2_call_server(
     server_id="code-analysis-server",
     command="comprehensive_analysis",
     params={
-        "root_dir": "/home/vasilyvz/projects/tools/code_analysis",
-        "file_path": "code_analysis/core/new_module.py",  # Optional: specific file
+        "project_id": "<project-uuid>",
+        "file_path": "code_analysis/core/new_module.py",  # Optional: relative to project root
         "check_placeholders": True,      # Check for TODO, FIXME, etc.
         "check_stubs": True,             # Check for pass, ellipsis, NotImplementedError
         "check_empty_methods": True,     # Check for empty methods (excluding abstract)
@@ -602,12 +599,12 @@ mcp_MCP-Proxy-2_call_server(
     use_queue=True  # This is a long-running command
 )
 
-# Comprehensive analysis for entire project
+# Comprehensive analysis for entire project (use project_id from list_projects or projectid file)
 mcp_MCP-Proxy-2_call_server(
     server_id="code-analysis-server",
     command="comprehensive_analysis",
     params={
-        "root_dir": "/home/vasilyvz/projects/tools/code_analysis",
+        "project_id": "<project-uuid>",
         # file_path omitted = analyze all files in project
         "check_placeholders": True,
         "check_stubs": True,
@@ -726,7 +723,7 @@ result = mcp_MCP-Proxy-2_call_server(
 
 ### 6.7 Utility Commands
 
-- `update_indexes` - Update code_mapper indexes
+- `update_indexes` - Full project scan to (re)build indexes; use when needed (e.g. initial setup or out-of-sync). Saving via `cst_save_tree`/`compose_cst_module` updates indexes for the saved file automatically.
 - `get_imports` - Get imports
 - `find_dependencies` - Find dependencies
 - `get_class_hierarchy` - Get class hierarchy
@@ -877,13 +874,7 @@ mcp_MCP-Proxy-2_call_server(
     command="format_code",
     params={"file_path": "new_module.py"}
 )
-
-# 3. Update indexes
-mcp_MCP-Proxy-2_call_server(
-    server_id="code-analysis-server",
-    command="update_indexes",
-    params={"root_dir": "/path"}
-)
+# Indexes for the file are updated automatically when saving via CST. Run update_indexes only if needed (e.g. initial project setup).
 ```
 
 ### 9.2 Modifying Existing Code (CRITICAL: Use CST)
@@ -1227,12 +1218,7 @@ mcp_MCP-Proxy-2_call_server(
     }
 )
 
-# 4. Update indexes
-mcp_MCP-Proxy-2_call_server(
-    server_id="code-analysis-server",
-    command="update_indexes",
-    params={"root_dir": "/path"}
-)
+# Indexes are updated automatically when saving via CST. Run update_indexes only when needed (e.g. initial project setup or out-of-sync).
 ```
 
 **Why MCP splitting?**
@@ -1356,7 +1342,7 @@ mcp_MCP-Proxy-2_call_server(
 - ✅ Keep files under 400 lines
 - ✅ Add proper docstrings and type hints
 - ✅ Restart server after code changes
-- ✅ Update indexes after changes
+- ✅ Indexes update automatically when saving via `cst_save_tree`/`compose_cst_module`; run `update_indexes` only when needed (e.g. initial setup or out-of-sync)
 - ✅ Use direct write (`write` tool) ONLY for new files
 
 ### 11.2 Never Do
@@ -1415,8 +1401,7 @@ mcp_MCP-Proxy-2_call_server(
 2. Lint code
 3. Type check
 4. **Run comprehensive analysis** (after each logically completed step)
-5. Update indexes
-6. Restart server
+5. Restart server (if code in `code_analysis/` changed). Indexes are updated automatically on CST save; run `update_indexes` only when needed (e.g. initial project setup).
 
 ---
 

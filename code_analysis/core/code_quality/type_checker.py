@@ -1,15 +1,26 @@
 """
 Type checker using mypy as a library.
 
+When no config is provided, uses a minimal config that excludes .venv, venv,
+and .mypy_cache so mypy does not crawl the virtualenv (major speedup).
+
 Author: Vasiliy Zdanovskiy
 email: vasilyvz@gmail.com
 """
 
-from pathlib import Path
-from typing import List, Optional, Tuple
 import logging
+import os
+import subprocess
+import tempfile
+from pathlib import Path
+from typing import Dict, List, Optional, Tuple
 
 logger = logging.getLogger(__name__)
+
+# Minimal mypy config to exclude .venv/venv so single-file runs don't crawl them
+_MYPY_EXCLUDE_VENV_CONFIG = b"""[mypy]
+exclude = (\\.venv|venv|\\.mypy_cache)/
+"""
 
 
 def type_check_with_mypy(
@@ -69,6 +80,7 @@ def _type_check_with_subprocess(
     try:
         cmd: list[str]
         cwd: Optional[str] = None
+        tmp_config: Optional[Path] = None
 
         if config_file:
             project_root = config_file.parent.resolve()
@@ -88,7 +100,17 @@ def _type_check_with_subprocess(
                 # Fallback: file-only run.
                 cmd = ["mypy", str(file_path), "--config-file", str(config_file)]
         else:
-            cmd = ["mypy", str(file_path)]
+            # No config: use minimal config that excludes .venv/venv so mypy
+            # does not crawl the project's virtualenv (avoids ~minutes per file).
+            with tempfile.NamedTemporaryFile(
+                mode="wb",
+                suffix=".ini",
+                prefix="mypy_exclude_venv_",
+                delete=False,
+            ) as f:
+                f.write(_MYPY_EXCLUDE_VENV_CONFIG)
+                tmp_config = Path(f.name)
+            cmd = ["mypy", str(file_path), "--config-file", str(tmp_config)]
 
         env = os.environ.copy()
         env.pop("PYTHONPATH", None)
@@ -101,6 +123,12 @@ def _type_check_with_subprocess(
             env=env,
             cwd=cwd,
         )
+
+        if tmp_config is not None:
+            try:
+                tmp_config.unlink(missing_ok=True)
+            except OSError:
+                pass
 
         errors: List[str] = []
         if result.stdout:
@@ -128,3 +156,81 @@ def _type_check_with_subprocess(
     except Exception as e:
         logger.warning(f"Error during type checking: {e}")
         return (False, str(e), [])
+
+
+def type_check_project_with_mypy(
+    project_path: Path,
+    config_file: Optional[Path] = None,
+    timeout_sec: int = 120,
+) -> Tuple[bool, Dict[str, List[str]]]:
+    """
+    Run mypy once on the whole project directory (excluding .venv/venv).
+
+    Much faster than per-file runs. Returns per-file error lines keyed by
+    normalized absolute path.
+
+    Args:
+        project_path: Root directory to check.
+        config_file: Optional mypy config (if None, uses exclude-venv config).
+        timeout_sec: Subprocess timeout.
+
+    Returns:
+        (success, per_file_errors). per_file_errors maps path str -> list of
+        error/note lines for that file.
+    """
+    per_file: Dict[str, List[str]] = {}
+    project_path = project_path.resolve()
+    cwd = str(project_path)
+
+    if config_file:
+        config_path = str(config_file)
+    else:
+        with tempfile.NamedTemporaryFile(
+            mode="wb",
+            suffix=".ini",
+            prefix="mypy_exclude_venv_",
+            delete=False,
+        ) as f:
+            f.write(_MYPY_EXCLUDE_VENV_CONFIG)
+            config_path = f.name
+    try:
+        cmd = ["mypy", str(project_path), "--config-file", config_path]
+        env = os.environ.copy()
+        env.pop("PYTHONPATH", None)
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=timeout_sec,
+            env=env,
+            cwd=cwd,
+        )
+    finally:
+        if not config_file:
+            try:
+                os.unlink(config_path)
+            except OSError:
+                pass
+
+    out = (result.stdout or "") + "\n" + (result.stderr or "")
+    for line in out.split("\n"):
+        line = line.strip()
+        if not line or (": error:" not in line and ": note:" not in line):
+            continue
+        parts = line.split(":", 2)
+        if len(parts) < 3:
+            continue
+        file_part = parts[0].strip()
+        try:
+            p = (
+                (project_path / file_part).resolve()
+                if not Path(file_part).is_absolute()
+                else Path(file_part).resolve()
+            )
+            key = str(p)
+            if key not in per_file:
+                per_file[key] = []
+            per_file[key].append(line)
+        except Exception:
+            continue
+    return (result.returncode == 0, per_file)

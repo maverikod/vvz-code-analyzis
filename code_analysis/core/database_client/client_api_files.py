@@ -467,13 +467,19 @@ class _ClientAPIFilesMixin:
         return list(rows) if rows else []
 
     def get_project_files(
-        self, project_id: str, include_deleted: bool = False
+        self,
+        project_id: str,
+        include_deleted: bool = False,
+        limit: Optional[int] = None,
+        offset: Optional[int] = None,
     ) -> List[File]:
-        """Get all files for a project.
+        """Get files for a project, optionally paginated.
 
         Args:
             project_id: Project identifier
             include_deleted: Whether to include deleted files
+            limit: Maximum number of files to return (None = all)
+            offset: Number of files to skip (0 = from start)
 
         Returns:
             List of File objects
@@ -486,7 +492,13 @@ class _ClientAPIFilesMixin:
         if not include_deleted:
             where["deleted"] = 0
 
-        rows = self.select("files", where=where, order_by=["path"])
+        rows = self.select(
+            "files",
+            where=where,
+            order_by=["path"],
+            limit=limit,
+            offset=offset,
+        )
         return db_rows_to_objects(rows, File)
 
     def index_file(self, file_path: str, project_id: str) -> Dict[str, Any]:

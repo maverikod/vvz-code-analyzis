@@ -5,6 +5,7 @@ Author: Vasiliy Zdanovskiy
 email: vasilyvz@gmail.com
 """
 
+import asyncio
 import logging
 from pathlib import Path
 from typing import Dict, Any, Optional
@@ -166,7 +167,10 @@ class RefactorCommand:
             root_dir=self.root_dir or Path(root_dir),
         )
         try:
-            success, message = splitter.split_file_to_package(config)
+            # Run sync split in thread to avoid blocking event loop (long DB/IO)
+            success, message = await asyncio.to_thread(
+                splitter.split_file_to_package, config
+            )
             if success:
                 logger.info(f"File split to package successful: {message}")
             else:

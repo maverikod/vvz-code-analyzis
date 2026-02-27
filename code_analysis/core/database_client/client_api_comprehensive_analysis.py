@@ -22,6 +22,8 @@ logger = logging.getLogger(__name__)
 # Type for one batch item: (file_id, project_id, file_mtime, results, summary)
 _ComprehensiveAnalysisItem = Tuple[int, str, float, Dict[str, Any], Dict[str, Any]]
 
+from .client_base import _DatabaseClientBase
+
 _INSERT_SQL = """
 INSERT OR REPLACE INTO comprehensive_analysis_results
 (file_id, project_id, file_mtime, results_json, summary_json, updated_at)
@@ -29,7 +31,7 @@ VALUES (?, ?, ?, ?, ?, julianday('now'))
 """
 
 
-class _ClientAPIComprehensiveAnalysisMixin:
+class _ClientAPIComprehensiveAnalysisMixin(_DatabaseClientBase):
     """Mixin with comprehensive analysis methods for DatabaseClient."""
 
     def is_analysis_up_to_date(

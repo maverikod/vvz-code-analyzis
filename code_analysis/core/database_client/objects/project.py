@@ -7,7 +7,7 @@ email: vasilyvz@gmail.com
 
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Dict, Optional
+from typing import Any, Dict, Optional
 
 from .base import BaseObject
 
@@ -37,7 +37,7 @@ class Project(BaseObject):
     updated_at: Optional[datetime] = None
 
     @classmethod
-    def from_dict(cls, data: Dict[str, any]) -> "Project":
+    def from_dict(cls, data: Dict[str, Any]) -> "Project":
         """Create Project from dictionary.
 
         Args:
@@ -65,7 +65,7 @@ class Project(BaseObject):
         )
 
     @classmethod
-    def from_db_row(cls, row: Dict[str, any]) -> "Project":
+    def from_db_row(cls, row: Dict[str, Any]) -> "Project":
         """Create Project from database row.
 
         Args:
@@ -79,7 +79,7 @@ class Project(BaseObject):
         """
         return cls.from_dict(row)
 
-    def to_db_row(self) -> Dict[str, any]:
+    def to_db_row(self) -> Dict[str, Any]:
         """Convert Project to database row format.
 
         Returns:

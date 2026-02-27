@@ -8,8 +8,9 @@ email: vasilyvz@gmail.com
 from __future__ import annotations
 
 import logging
+import uuid
 from pathlib import Path
-from typing import List, Optional, Set
+from typing import Dict, List, Optional, Set
 
 import libcst as cst
 from libcst.metadata import MetadataWrapper, ParentNodeProvider, PositionProvider
@@ -136,6 +137,8 @@ def _build_tree_index(
 
     class_stack: List[str] = []
     func_stack: List[str] = []
+    # Map node object id -> node_id (UUID4) so parent/children resolve after visit
+    node_to_uuid: Dict[int, str] = {}
 
     def visit(node: cst.CSTNode, depth: int) -> None:
         # Check depth filter
@@ -178,76 +181,41 @@ def _build_tree_index(
         except (AttributeError, TypeError):
             return
 
-        # Get parent
         parent = parents.get(node)
 
-        # Generate node_id
-        node_id = _generate_node_id(
-            node, start_line, start_col, end_line, end_col, class_stack, func_stack
-        )
+        # Use UUID4 for node_id so IDs are stable within a batch (no rebuild between ops)
+        node_id = str(uuid.uuid4())
+        node_to_uuid[id(node)] = node_id
 
-        # Store node
         tree.node_map[node_id] = node
-        if parent:
-            parent_id = _get_node_id_for_node(
-                parent, positions, class_stack, func_stack
-            )
-            tree.parent_map[node_id] = parent_id
-        else:
-            tree.parent_map[node_id] = None
+        parent_id = node_to_uuid.get(id(parent)) if parent else None
+        tree.parent_map[node_id] = parent_id
 
-        # Get name and qualname
         name = _get_node_name(node)
         qualname = _get_node_qualname(node, class_stack, func_stack)
-
-        # Get kind
         kind = _get_node_kind(node, class_stack)
 
-        # Get children
-        children_ids: List[str] = []
-        if include_children:
-            for child in node.children:
-                child_pos = positions.get(child)
-                if child_pos:
-                    try:
-                        child_start_line = (
-                            child_pos.start.line
-                            if hasattr(child_pos, "start")
-                            and hasattr(child_pos.start, "line")
-                            else 1
-                        )
-                        child_start_col = (
-                            child_pos.start.column
-                            if hasattr(child_pos, "start")
-                            and hasattr(child_pos.start, "column")
-                            else 0
-                        )
-                        child_end_line = (
-                            child_pos.end.line
-                            if hasattr(child_pos, "end")
-                            and hasattr(child_pos.end, "line")
-                            else 1
-                        )
-                        child_end_col = (
-                            child_pos.end.column
-                            if hasattr(child_pos, "end")
-                            and hasattr(child_pos.end, "column")
-                            else 0
-                        )
-                        child_id = _generate_node_id(
-                            child,
-                            child_start_line,
-                            child_start_col,
-                            child_end_line,
-                            child_end_col,
-                            class_stack,
-                            func_stack,
-                        )
-                        children_ids.append(child_id)
-                    except (AttributeError, TypeError):
-                        pass
+        # Track class/function stacks before visiting children
+        entered_class = False
+        entered_func = False
+        if isinstance(node, cst.ClassDef):
+            class_stack.append(node.name.value)
+            entered_class = True
+        elif isinstance(node, cst.FunctionDef):
+            func_stack.append(node.name.value)
+            entered_func = True
 
-        # Create metadata
+        # Visit children first so they are registered in node_to_uuid
+        for child in node.children:
+            visit(child, depth + 1)
+
+        # Build children_ids from registered children (only when include_children)
+        children_ids = (
+            [node_to_uuid[id(c)] for c in node.children if id(c) in node_to_uuid]
+            if include_children
+            else []
+        )
+
         metadata = TreeNodeMetadata(
             node_id=node_id,
             type=node_type,
@@ -259,29 +227,13 @@ def _build_tree_index(
             end_line=end_line,
             end_col=end_col,
             children_count=len(children_ids),
-            children_ids=children_ids if include_children else [],
-            parent_id=tree.parent_map.get(node_id),
+            children_ids=children_ids,
+            parent_id=parent_id,
         )
-
         tree.metadata_map[node_id] = metadata
         if depth == 0:
             tree.root_node_id = node_id
 
-        # Track class/function stacks
-        entered_class = False
-        entered_func = False
-        if isinstance(node, cst.ClassDef):
-            class_stack.append(node.name.value)
-            entered_class = True
-        elif isinstance(node, cst.FunctionDef):
-            func_stack.append(node.name.value)
-            entered_func = True
-
-        # Visit children
-        for child in node.children:
-            visit(child, depth + 1)
-
-        # Pop stacks
         if entered_func:
             func_stack.pop()
         if entered_class:

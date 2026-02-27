@@ -11,10 +11,9 @@ email: vasilyvz@gmail.com
 from __future__ import annotations
 
 import logging
-from pathlib import Path
-from typing import Any, Dict, Optional
+import time
+from typing import Any, Dict
 
-from mcp_proxy_adapter.commands.base import Command
 from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 
 from .base_mcp_command import BaseMCPCommand
@@ -54,11 +53,12 @@ class ListCSTBlocksCommand(BaseMCPCommand):
         file_path: str,
         **kwargs,
     ) -> SuccessResult:
+        t_start = time.perf_counter()
         try:
+            t0 = time.perf_counter()
             root_path = self._resolve_project_root(project_id)
             target = root_path / file_path
             target = target.resolve()
-
             if target.suffix != ".py":
                 return ErrorResult(
                     message="Target file must be a .py file",
@@ -73,8 +73,19 @@ class ListCSTBlocksCommand(BaseMCPCommand):
                     details={"file_path": str(target)},
                 )
 
+            logger.info(
+                "[TIMING] command=list_cst_blocks step=resolve_path elapsed_sec=%.4f",
+                time.perf_counter() - t0,
+            )
+            t_list = time.perf_counter()
             source = target.read_text(encoding="utf-8")
             blocks = list_cst_blocks(source)
+            logger.info(
+                "[TIMING] command=list_cst_blocks step=list_cst_blocks blocks=%d elapsed_sec=%.4f total_elapsed_sec=%.4f",
+                len(blocks),
+                time.perf_counter() - t_list,
+                time.perf_counter() - t_start,
+            )
             data = {
                 "success": True,
                 "file_path": str(target),

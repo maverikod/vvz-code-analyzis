@@ -17,6 +17,7 @@ import logging
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from .client_base import _DatabaseClientBase
 from .objects.file import File
 from .objects.mappers import (
     db_row_to_object,
@@ -28,7 +29,7 @@ from .objects.mappers import (
 logger = logging.getLogger(__name__)
 
 
-class _ClientAPIFilesMixin:
+class _ClientAPIFilesMixin(_DatabaseClientBase):
     """Mixin class with File operation methods."""
 
     def create_file(self, file: File) -> File:

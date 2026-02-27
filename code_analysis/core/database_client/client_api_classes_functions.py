@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from typing import List, Optional
 
+from .client_base import _DatabaseClientBase
 from .objects.class_function import Class, Function
 from .objects.mappers import (
     db_row_to_object,
@@ -20,7 +21,7 @@ from .objects.mappers import (
 )
 
 
-class _ClientAPIClassesFunctionsMixin:
+class _ClientAPIClassesFunctionsMixin(_DatabaseClientBase):
     """Mixin class with Class and Function operation methods."""
 
     # ============================================================================

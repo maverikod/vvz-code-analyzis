@@ -66,7 +66,7 @@ class Issue(BaseObject):
         self.metadata = metadata if metadata else {}
 
     @classmethod
-    def from_dict(cls, data: Dict[str, any]) -> "Issue":
+    def from_dict(cls, data: Dict[str, Any]) -> "Issue":
         """Create Issue from dictionary.
 
         Args:
@@ -106,7 +106,7 @@ class Issue(BaseObject):
         )
 
     @classmethod
-    def from_db_row(cls, row: Dict[str, any]) -> "Issue":
+    def from_db_row(cls, row: Dict[str, Any]) -> "Issue":
         """Create Issue from database row.
 
         Args:
@@ -120,7 +120,7 @@ class Issue(BaseObject):
         """
         return cls.from_dict(row)
 
-    def to_db_row(self) -> Dict[str, any]:
+    def to_db_row(self) -> Dict[str, Any]:
         """Convert Issue to database row format.
 
         Returns:
@@ -202,7 +202,7 @@ class Usage(BaseObject):
         self.context = context if context else {}
 
     @classmethod
-    def from_dict(cls, data: Dict[str, any]) -> "Usage":
+    def from_dict(cls, data: Dict[str, Any]) -> "Usage":
         """Create Usage from dictionary.
 
         Args:
@@ -248,7 +248,7 @@ class Usage(BaseObject):
         )
 
     @classmethod
-    def from_db_row(cls, row: Dict[str, any]) -> "Usage":
+    def from_db_row(cls, row: Dict[str, Any]) -> "Usage":
         """Create Usage from database row.
 
         Args:
@@ -262,7 +262,7 @@ class Usage(BaseObject):
         """
         return cls.from_dict(row)
 
-    def to_db_row(self) -> Dict[str, any]:
+    def to_db_row(self) -> Dict[str, Any]:
         """Convert Usage to database row format.
 
         Returns:
@@ -307,7 +307,7 @@ class CodeDuplicate(BaseObject):
     created_at: Optional[datetime] = None
 
     @classmethod
-    def from_dict(cls, data: Dict[str, any]) -> "CodeDuplicate":
+    def from_dict(cls, data: Dict[str, Any]) -> "CodeDuplicate":
         """Create CodeDuplicate from dictionary.
 
         Args:
@@ -335,7 +335,7 @@ class CodeDuplicate(BaseObject):
         )
 
     @classmethod
-    def from_db_row(cls, row: Dict[str, any]) -> "CodeDuplicate":
+    def from_db_row(cls, row: Dict[str, Any]) -> "CodeDuplicate":
         """Create CodeDuplicate from database row.
 
         Args:
@@ -349,7 +349,7 @@ class CodeDuplicate(BaseObject):
         """
         return cls.from_dict(row)
 
-    def to_db_row(self) -> Dict[str, any]:
+    def to_db_row(self) -> Dict[str, Any]:
         """Convert CodeDuplicate to database row format.
 
         Returns:

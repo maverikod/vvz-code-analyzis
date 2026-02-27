@@ -79,7 +79,9 @@ class TestRootNodeIdSet:
         t = get_tree(sample_tree)
         assert t is not None
         assert t.root_node_id is not None
-        assert t.root_node_id.startswith("node::Module:") or "Module" in t.root_node_id
+        # node_id is UUID4; root metadata must be Module
+        meta = t.metadata_map.get(t.root_node_id)
+        assert meta is not None and meta.type == "Module"
 
     def test_load_file_to_tree_sets_root_node_id(self, tmp_path):
         path = tmp_path / "f.py"

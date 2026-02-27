@@ -11,8 +11,10 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional
 
+from .client_base import _DatabaseClientBase
 
-class _ClientAPISearchMixin:
+
+class _ClientAPISearchMixin(_DatabaseClientBase):
     """Mixin with full-text search over code content (FTS5)."""
 
     def full_text_search(

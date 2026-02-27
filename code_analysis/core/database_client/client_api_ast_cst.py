@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, List
 
+from .client_base import _DatabaseClientBase
 from .objects.ast_cst import ASTNode, CSTNode
 from .objects.tree_action import TreeAction
 from .objects.xpath_filter import XPathFilter
@@ -16,7 +17,7 @@ from .protocol import ErrorCode, RPCResponse
 from .result import Result
 
 
-class _ClientAPIASTCSTMixin:
+class _ClientAPIASTCSTMixin(_DatabaseClientBase):
     """Mixin for AST/CST tree operations."""
 
     def query_ast(self, file_id: int, filter: XPathFilter) -> Result[List[ASTNode]]:

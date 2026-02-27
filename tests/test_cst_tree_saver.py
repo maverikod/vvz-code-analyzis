@@ -19,7 +19,7 @@ from code_analysis.core.cst_tree.tree_saver import save_tree_to_file
 
 
 def _make_db_mock() -> MagicMock:
-    """Minimal database mock for save_tree_to_file (transactions, files, AST/CST)."""
+    """Minimal database mock for save_tree_to_file (transactions, files, execute_batch)."""
     db = MagicMock()
     db.begin_transaction = MagicMock(return_value="tid")
     db.commit_transaction = MagicMock()
@@ -31,12 +31,10 @@ def _make_db_mock() -> MagicMock:
     updated = MagicMock()
     updated.id = 1
     db.update_file = MagicMock(return_value=updated)
-    db.save_ast = MagicMock()
-    db.save_cst = MagicMock()
-    db.create_class = MagicMock(return_value=MagicMock(id=1))
-    db.create_method = MagicMock(return_value=MagicMock(id=1))
-    db.create_function = MagicMock(return_value=MagicMock(id=1))
-    db.create_import = MagicMock(return_value=MagicMock(id=1))
+    # Batch path: execute_batch returns one result per operation
+    db.execute_batch = MagicMock(
+        return_value=[{"affected_rows": 1, "lastrowid": i + 1, "data": None} for i in range(100)]
+    )
     return db
 
 

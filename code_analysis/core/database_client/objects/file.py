@@ -7,7 +7,7 @@ email: vasilyvz@gmail.com
 
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Dict, Optional
+from typing import Any, Dict, Optional
 
 from .base import BaseObject
 
@@ -49,7 +49,7 @@ class File(BaseObject):
     updated_at: Optional[datetime] = None
 
     @classmethod
-    def from_dict(cls, data: Dict[str, any]) -> "File":
+    def from_dict(cls, data: Dict[str, Any]) -> "File":
         """Create File from dictionary.
 
         Args:
@@ -83,7 +83,7 @@ class File(BaseObject):
         )
 
     @classmethod
-    def from_db_row(cls, row: Dict[str, any]) -> "File":
+    def from_db_row(cls, row: Dict[str, Any]) -> "File":
         """Create File from database row.
 
         Args:
@@ -103,7 +103,7 @@ class File(BaseObject):
 
         return cls.from_dict(row)
 
-    def to_db_row(self) -> Dict[str, any]:
+    def to_db_row(self) -> Dict[str, Any]:
         """Convert File to database row format.
 
         Returns:

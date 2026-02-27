@@ -137,11 +137,25 @@ def _build_index(
             return
         try:
             # Safely access position attributes
-            start_line = pos.start.line if hasattr(pos, 'start') and hasattr(pos.start, 'line') else 1
-            start_col = pos.start.column if hasattr(pos, 'start') and hasattr(pos.start, 'column') else 0
-            end_line = pos.end.line if hasattr(pos, 'end') and hasattr(pos.end, 'line') else 1
-            end_col = pos.end.column if hasattr(pos, 'end') and hasattr(pos.end, 'column') else 0
-            
+            start_line = (
+                pos.start.line
+                if hasattr(pos, "start") and hasattr(pos.start, "line")
+                else 1
+            )
+            start_col = (
+                pos.start.column
+                if hasattr(pos, "start") and hasattr(pos.start, "column")
+                else 0
+            )
+            end_line = (
+                pos.end.line if hasattr(pos, "end") and hasattr(pos.end, "line") else 1
+            )
+            end_col = (
+                pos.end.column
+                if hasattr(pos, "end") and hasattr(pos.end, "column")
+                else 0
+            )
+
             name = _node_name(node)
             kind = _node_kind(node, class_stack=class_stack)
             qual = _node_qualname(node, class_stack=class_stack, func_stack=func_stack)
@@ -291,6 +305,24 @@ def _matches_node_type(node: _NodeInfo, node_type: str) -> bool:
     if not node_type or node_type == "*":
         return True
     t = node_type.strip()
+    # XPath-style modifier: "Def:*" matches FunctionDef, ClassDef; "Function:*" matches FunctionDef
+    if t.endswith(":*"):
+        part = t[:-2].strip().lower()
+        if not part:
+            return True
+        if part in {
+            "module",
+            "class",
+            "function",
+            "method",
+            "stmt",
+            "smallstmt",
+            "import",
+            "node",
+        }:
+            return node.kind == part
+        nt = node.node_type.lower()
+        return nt.startswith(part) or nt.endswith(part)
     alias = t.lower()
     if alias in {
         "module",
@@ -303,7 +335,6 @@ def _matches_node_type(node: _NodeInfo, node_type: str) -> bool:
         "node",
     }:
         return node.kind == alias
-    # LibCST class name match
     return node.node_type.lower() == t.lower()
 
 

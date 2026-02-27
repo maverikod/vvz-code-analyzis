@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import logging
 import shutil
+import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -162,14 +163,14 @@ class CSTLoadFileCommand(BaseMCPCommand):
         include_children: bool = True,
         **kwargs,
     ) -> SuccessResult:
+        t_start = time.perf_counter()
         try:
+            t0 = time.perf_counter()
             database = self._open_database_from_config(auto_analyze=False)
             try:
-                # Resolve absolute path using project_id and watch_dir/project_name
                 target = self._resolve_file_path_from_project(
                     database, project_id, file_path
                 )
-
                 if target.suffix != ".py":
                     return ErrorResult(
                         message="Target file must be a .py file",
@@ -178,19 +179,26 @@ class CSTLoadFileCommand(BaseMCPCommand):
                     )
             finally:
                 database.disconnect()
+            logger.info(
+                "[TIMING] command=cst_load_file step=resolve_path elapsed_sec=%.4f",
+                time.perf_counter() - t0,
+            )
 
-            # Remove stale .tmp so load starts from a clean state
+            t0 = time.perf_counter()
             path_tmp_clean = Path(str(target) + ".tmp")
             if path_tmp_clean.exists():
                 path_tmp_clean.unlink()
+            logger.info(
+                "[TIMING] command=cst_load_file step=cleanup_tmp elapsed_sec=%.4f",
+                time.perf_counter() - t0,
+            )
 
-            # Load file into tree. On syntax error: copy to .tmp in same dir,
-            # fix recursively on .tmp only (no backup, no write to original).
             tree = None
             path_tmp: Optional[Path] = None
             commented_lines_info: List[Dict[str, Any]] = []
 
             with file_lock(target):
+                t0 = time.perf_counter()
                 try:
                     tree = load_file_to_tree(
                         str(target),
@@ -199,7 +207,11 @@ class CSTLoadFileCommand(BaseMCPCommand):
                         include_children=include_children,
                     )
                 except cst.ParserSyntaxError:
-                    # Copy original to same directory with suffix .tmp
+                    logger.info(
+                        "[TIMING] command=cst_load_file step=load_tree elapsed_sec=%.4f (syntax_error)",
+                        time.perf_counter() - t0,
+                    )
+                    t0 = time.perf_counter()
                     path_tmp = Path(str(target) + ".tmp")
                     shutil.copy2(target, path_tmp)
                     lines = path_tmp.read_text(encoding="utf-8").split("\n")
@@ -220,15 +232,23 @@ class CSTLoadFileCommand(BaseMCPCommand):
                             f"Syntax fix did not converge after "
                             f"{_MAX_SYNTAX_FIX_ITERATIONS} iterations"
                         )
-                    # Single write of .tmp after loop so disk matches final lines
                     path_tmp.write_text("\n".join(lines), encoding="utf-8")
+                    logger.info(
+                        "[TIMING] command=cst_load_file step=syntax_fix_loop elapsed_sec=%.4f",
+                        time.perf_counter() - t0,
+                    )
+                    t0 = time.perf_counter()
                     tree = load_file_to_tree(
                         str(path_tmp),
                         node_types=node_types,
                         max_depth=max_depth,
                         include_children=include_children,
                     )
-                    # Resolve parent node for each commented line (in fixed tree)
+                    logger.info(
+                        "[TIMING] command=cst_load_file step=load_tree_from_tmp elapsed_sec=%.4f",
+                        time.perf_counter() - t0,
+                    )
+                    t0 = time.perf_counter()
                     for info in commented_lines_info:
                         line_no = info["line"]
                         node = find_node_by_range(
@@ -243,9 +263,23 @@ class CSTLoadFileCommand(BaseMCPCommand):
                             if parent_meta:
                                 parent = parent_meta.to_dict()
                         info["parent_node"] = parent
+                    logger.info(
+                        "[TIMING] command=cst_load_file step=parent_nodes elapsed_sec=%.4f",
+                        time.perf_counter() - t0,
+                    )
+                else:
+                    logger.info(
+                        "[TIMING] command=cst_load_file step=load_tree elapsed_sec=%.4f",
+                        time.perf_counter() - t0,
+                    )
 
-                # Convert metadata to dictionaries
+                t0 = time.perf_counter()
                 nodes = [meta.to_dict() for meta in tree.metadata_map.values()]
+                logger.info(
+                    "[TIMING] command=cst_load_file step=to_dict elapsed_sec=%.4f nodes=%s",
+                    time.perf_counter() - t0,
+                    len(nodes),
+                )
 
                 data: Dict[str, Any] = {
                     "success": True,
@@ -259,6 +293,10 @@ class CSTLoadFileCommand(BaseMCPCommand):
                     data["commented_lines"] = commented_lines_info
                     data["temp_file"] = str(path_tmp) if path_tmp else None
 
+                logger.info(
+                    "[TIMING] command=cst_load_file total_elapsed_sec=%.4f",
+                    time.perf_counter() - t_start,
+                )
                 return SuccessResult(data=data)
 
         except FileNotFoundError as e:
@@ -335,7 +373,11 @@ class CSTLoadFileCommand(BaseMCPCommand):
                 "- Tree is stored in memory on the server\n"
                 "- Tree persists until explicitly removed or server restarts\n"
                 "- Use tree_id with other CST commands\n"
-                "- Filters reduce returned metadata, but full tree is still stored"
+                "- Filters reduce returned metadata, but full tree is still stored\n\n"
+                "When the file had syntax errors on load:\n"
+                "- The server comments out the error lines and adds a placeholder 'pass'\n"
+                "- The response includes syntax_errors_fixed: true, commented_lines: [{ line, error, parent_node }], and optionally temp_file\n"
+                "- Each commented_lines entry has parent_node (dict with node_id) for the block where the error was found; use it to locate the parent (e.g. function/class)"
             ),
             "parameters": {
                 "project_id": {
@@ -382,6 +424,9 @@ class CSTLoadFileCommand(BaseMCPCommand):
                         "file_path": "Path to loaded file",
                         "nodes": "List of node metadata dictionaries",
                         "total_nodes": "Total number of nodes returned",
+                        "syntax_errors_fixed": "Optional. True when file had syntax errors on load; error lines were commented out and a placeholder pass was added.",
+                        "commented_lines": "Optional. When syntax_errors_fixed is true: list of { line (1-based), error (message), parent_node (dict with node_id, or null) } for each commented-out error line. parent_node identifies the block (e.g. function/class) where the error was found.",
+                        "temp_file": "Optional. When syntax_errors_fixed is true: path to the .tmp file used for the fixed content (for debugging).",
                     },
                     "example": {
                         "success": True,

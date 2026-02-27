@@ -182,7 +182,7 @@ def analyze_file_complexity(
         complexity = calculate_complexity(node)
         is_method = class_name is not None
 
-        result = {
+        result: Dict[str, Union[str, int]] = {
             "name": node.name,
             "line": node.lineno,
             "complexity": complexity,
@@ -190,6 +190,7 @@ def analyze_file_complexity(
         }
 
         if is_method:
+            assert class_name is not None
             result["class_name"] = class_name
             methods.append(result)
         else:

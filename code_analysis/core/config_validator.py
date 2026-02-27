@@ -26,6 +26,7 @@ from code_analysis.core.config import ServerConfig
 ALLOWED_CODE_ANALYSIS_KEYS = frozenset(ServerConfig.model_fields) | {
     "database",
     "all_logs_rotation",
+    "git_commit_on_write",
 }
 
 

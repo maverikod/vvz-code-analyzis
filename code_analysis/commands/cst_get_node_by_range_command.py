@@ -10,6 +10,7 @@ email: vasilyvz@gmail.com
 from __future__ import annotations
 
 import logging
+import time
 from typing import Any, Dict
 
 from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
@@ -72,9 +73,10 @@ class CSTGetNodeByRangeCommand(BaseMCPCommand):
         all_intersecting: bool = False,
         **kwargs,
     ) -> SuccessResult:
+        t_start = time.perf_counter()
         try:
+            t0 = time.perf_counter()
             if all_intersecting:
-                # Return all nodes that intersect with the range
                 nodes = find_nodes_by_range(tree_id, start_line, end_line)
                 result: Dict[str, Any] = {
                     "success": True,
@@ -110,7 +112,11 @@ class CSTGetNodeByRangeCommand(BaseMCPCommand):
                         node.start_line == start_line and node.end_line == end_line
                     ),
                 }
-
+            logger.info(
+                "[TIMING] command=cst_get_node_by_range step=find elapsed_sec=%.4f total_elapsed_sec=%.4f",
+                time.perf_counter() - t0,
+                time.perf_counter() - t_start,
+            )
             return SuccessResult(data=result)
 
         except ValueError as e:

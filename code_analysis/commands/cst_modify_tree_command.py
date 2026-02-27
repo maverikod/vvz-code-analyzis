@@ -10,6 +10,7 @@ email: vasilyvz@gmail.com
 from __future__ import annotations
 
 import logging
+import time
 from typing import Any, Dict, List
 
 from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
@@ -111,8 +112,9 @@ class CSTModifyTreeCommand(BaseMCPCommand):
         preview: bool = False,
         **kwargs,
     ) -> SuccessResult:
+        t_start = time.perf_counter()
         try:
-            # Convert operations to TreeOperation objects
+            t0 = time.perf_counter()
             tree_operations: List[TreeOperation] = []
             for op_dict in operations:
                 action_str = op_dict.get("action")
@@ -157,10 +159,18 @@ class CSTModifyTreeCommand(BaseMCPCommand):
                 )
 
             original_code = original_tree.module.code
-
-            # Apply operations atomically
+            logger.info(
+                "[TIMING] command=cst_modify_tree step=convert_ops elapsed_sec=%.4f",
+                time.perf_counter() - t0,
+            )
+            t_mod = time.perf_counter()
             modified_tree = modify_tree(tree_id, tree_operations)
             modified_code = modified_tree.module.code
+            logger.info(
+                "[TIMING] command=cst_modify_tree step=modify_tree elapsed_sec=%.4f total_elapsed_sec=%.4f",
+                time.perf_counter() - t_mod,
+                time.perf_counter() - t_start,
+            )
 
             # If preview mode, return changes without applying
             if preview:

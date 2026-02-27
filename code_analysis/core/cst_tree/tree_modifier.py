@@ -8,7 +8,7 @@ email: vasilyvz@gmail.com
 from __future__ import annotations
 
 import logging
-from typing import List, Optional
+from typing import List, Optional, Union
 
 import libcst as cst
 
@@ -71,20 +71,19 @@ def modify_tree(tree_id: str, operations: List[TreeOperation]) -> CSTTree:
     modified_module = tree.module
 
     try:
-        # Apply all operations; after each one update tree and rebuild index
-        # so that node_map points at nodes in the current module (needed for
-        # identity checks in replace/delete when applying the next operation).
+        # Apply all operations. Do not rebuild index between ops so UUID node_ids
+        # for unmodified nodes stay valid (batch replace at multiple points).
         for op in operations:
             modified_module = _apply_operation(modified_module, tree, op)
             tree.module = modified_module
-            tree.node_map.clear()
-            tree.metadata_map.clear()
-            tree.parent_map.clear()
-            _build_tree_index(
-                tree, node_types=None, max_depth=None, include_children=True
-            )
+            _remove_operation_nodes_from_index(tree, op)
 
-        # Validate the modified module
+        # Single rebuild at the end so tree is consistent
+        tree.node_map.clear()
+        tree.metadata_map.clear()
+        tree.parent_map.clear()
+        _build_tree_index(tree, node_types=None, max_depth=None, include_children=True)
+
         _validate_module(modified_module)
 
         return tree
@@ -194,6 +193,75 @@ def _parse_code_snippet(
                 f"Failed to parse code snippet as statements: {e}. "
                 "Code must be valid Python statements."
             ) from e
+
+
+def _parse_code_snippet_or_comment(
+    code: Optional[str] = None, code_lines: Optional[List[str]] = None
+) -> List[Union[cst.BaseStatement, cst.EmptyLine]]:
+    """
+    Parse code as statements, or as comment-only line(s) for insert.
+
+    When the snippet is only comment(s) (e.g. "# mypy: ignore-errors"),
+    parse_module returns empty body. This helper then builds EmptyLine+Comment
+    node(s) so that insert can add comment lines to the module.
+
+    Returns:
+        List of statements or EmptyLine nodes (valid for Module.body).
+    """
+    statements = _parse_code_snippet(code=code, code_lines=code_lines)
+    if statements:
+        return statements
+    raw = ("\n".join(code_lines) if code_lines is not None else code) or ""
+    stripped = raw.strip()
+    if not stripped or not stripped.startswith("#"):
+        return []
+    # Comment-only: build EmptyLine(s) with Comment
+    result: List[Union[cst.BaseStatement, cst.EmptyLine]] = []
+    for line in stripped.splitlines():
+        line_stripped = line.strip()
+        if line_stripped.startswith("#"):
+            result.append(cst.EmptyLine(comment=cst.Comment(value=line_stripped)))
+    return result
+
+
+def _remove_operation_nodes_from_index(tree: CSTTree, operation: TreeOperation) -> None:
+    """
+    Remove from node_map/metadata_map/parent_map only the node(s) affected by
+    this operation, so other node_ids (UUIDs) stay valid for the next operation.
+    """
+    to_remove: List[str] = []
+    if operation.action == TreeOperationType.REPLACE and operation.node_id:
+        to_remove.append(operation.node_id)
+    elif operation.action == TreeOperationType.DELETE and operation.node_id:
+        to_remove.append(operation.node_id)
+    elif operation.action == TreeOperationType.REPLACE_RANGE:
+        if operation.start_node_id and operation.end_node_id:
+            start_meta = tree.metadata_map.get(operation.start_node_id)
+            end_meta = tree.metadata_map.get(operation.end_node_id)
+            parent_id = start_meta.parent_id if start_meta else None
+            if parent_id and end_meta and end_meta.parent_id == parent_id:
+                parent_meta = tree.metadata_map.get(parent_id)
+                if parent_meta and parent_meta.children_ids:
+                    try:
+                        i = parent_meta.children_ids.index(operation.start_node_id)
+                        j = parent_meta.children_ids.index(operation.end_node_id)
+                        if i <= j:
+                            to_remove.extend(parent_meta.children_ids[i : j + 1])
+                    except ValueError:
+                        to_remove.extend(
+                            [operation.start_node_id, operation.end_node_id]
+                        )
+            else:
+                to_remove.extend([operation.start_node_id, operation.end_node_id])
+        else:
+            if operation.start_node_id:
+                to_remove.append(operation.start_node_id)
+            if operation.end_node_id:
+                to_remove.append(operation.end_node_id)
+    for nid in to_remove:
+        tree.node_map.pop(nid, None)
+        tree.metadata_map.pop(nid, None)
+        tree.parent_map.pop(nid, None)
 
 
 def _find_parent_for_node(tree: CSTTree, node_id: str) -> Optional[str]:
@@ -653,8 +721,8 @@ def _insert_node(
     if not parent_node:
         raise ValueError(f"Parent node not found: {parent_node_id}")
 
-    # Parse new code (supports multi-line)
-    new_statements = _parse_code_snippet(new_code)
+    # Parse new code (supports multi-line); allow comment-only (EmptyLine with Comment)
+    new_statements = _parse_code_snippet_or_comment(code=new_code)
     if not new_statements:
         raise ValueError("Cannot insert empty code")
 
@@ -764,8 +832,8 @@ def _insert_node_relative(
             f"Target node's actual parent: {actual_parent_id}"
         )
 
-    # Parse new code (supports multi-line)
-    new_statements = _parse_code_snippet(new_code)
+    # Parse new code (supports multi-line); allow comment-only (EmptyLine with Comment)
+    new_statements = _parse_code_snippet_or_comment(code=new_code)
     if not new_statements:
         raise ValueError("Cannot insert empty code")
 

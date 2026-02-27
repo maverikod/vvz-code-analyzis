@@ -10,6 +10,7 @@ email: vasilyvz@gmail.com
 from __future__ import annotations
 
 import logging
+import time
 from typing import Any, Dict, List, Optional
 
 from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
@@ -64,8 +65,9 @@ class CSTReloadTreeCommand(BaseMCPCommand):
         include_children: bool = True,
         **kwargs,
     ) -> SuccessResult:
+        t_start = time.perf_counter()
         try:
-            # Check if tree exists
+            t0 = time.perf_counter()
             tree = get_tree(tree_id)
             if not tree:
                 return ErrorResult(
@@ -74,14 +76,17 @@ class CSTReloadTreeCommand(BaseMCPCommand):
                     details={"tree_id": tree_id},
                 )
 
-            # Reload tree from file
+            logger.info(
+                "[TIMING] command=cst_reload_tree step=get_tree elapsed_sec=%.4f",
+                time.perf_counter() - t0,
+            )
+            t_reload = time.perf_counter()
             updated_tree = reload_tree_from_file(
                 tree_id=tree_id,
                 node_types=node_types,
                 max_depth=max_depth,
                 include_children=include_children,
             )
-
             if not updated_tree:
                 return ErrorResult(
                     message=f"Failed to reload tree: {tree_id}",
@@ -89,9 +94,18 @@ class CSTReloadTreeCommand(BaseMCPCommand):
                     details={"tree_id": tree_id},
                 )
 
-            # Convert metadata to dictionaries
+            logger.info(
+                "[TIMING] command=cst_reload_tree step=reload_tree_from_file elapsed_sec=%.4f",
+                time.perf_counter() - t_reload,
+            )
+            t_dict = time.perf_counter()
             nodes = [meta.to_dict() for meta in updated_tree.metadata_map.values()]
-
+            logger.info(
+                "[TIMING] command=cst_reload_tree step=to_dict nodes=%d elapsed_sec=%.4f total_elapsed_sec=%.4f",
+                len(nodes),
+                time.perf_counter() - t_dict,
+                time.perf_counter() - t_start,
+            )
             data = {
                 "success": True,
                 "tree_id": updated_tree.tree_id,

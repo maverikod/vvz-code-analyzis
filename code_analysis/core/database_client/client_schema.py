@@ -11,8 +11,10 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional
 
+from .client_base import _DatabaseClientBase
 
-class _ClientSchemaMixin:
+
+class _ClientSchemaMixin(_DatabaseClientBase):
     """Mixin class with schema operation methods."""
 
     def create_table(self, schema: Dict[str, Any]) -> bool:

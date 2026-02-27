@@ -61,40 +61,47 @@ The driver implements the interface defined in `BaseDatabaseDriver` (`code_analy
 
 ---
 
-## 3. Result of `execute()`
+## 3. `execute()` — run one text, return last result only
 
-The return value must be a **dict** with at least:
+- **Multi-statement:** The `sql` argument may contain **several statements** separated by semicolons. The driver executes them **in order** and returns **only the result of the last statement**.
+- **Return value:** A **dict** with at least:
 
 | Key | Type | Meaning |
 |-----|------|---------|
 | `affected_rows` | int | Number of rows affected (INSERT/UPDATE/DELETE). |
 | `lastrowid` | int or None | Last inserted row ID (INSERT); None if not applicable. |
-| `data` | list of dicts | Present for SELECT; each dict is a row (column name → value). Omit for non-SELECT. |
+| `data` | list of dicts or None | For SELECT: list of rows. For CRUD (or if last statement is not SELECT): **None**. |
 
-- For SELECT, the driver must set `data` to the list of rows (e.g. `[dict(row) for row in cursor.fetchall()]`).
-- For INSERT/UPDATE/DELETE, `data` may be omitted. Client code must not assume `data` exists for non-SELECT.
+- If the last statement is not SELECT, the driver must set `data` to **None** (so the client receives “no data”).
 
 ---
 
-## 4. Batch execution: `execute_batch` (mandatory)
+## 4. `execute_batch()` — run batch, one result per statement
+
+- **Two calls:**  
+  - **execute:** one text (possibly several statements); execute all in order; **return only the last statement’s result**; if last is not SELECT → `data` is None.  
+  - **execute_batch:** one or more operations (each `sql` may contain several statements); execute all in order; **return a list with one result per statement**; for CRUD in the list, that element has `data=None`.
 
 - **Signature:**  
   `execute_batch(operations: List[Tuple[str, Optional[tuple]]], transaction_id: Optional[str] = None) -> List[Dict[str, Any]]`
 
 - **Input:**  
   - `operations`: list of `(sql, params)`.  
-  - `params`: tuple or list of bind values (positional `?`), or `None` for no parameters.  
+  - Each `sql` may contain several statements separated by `;` (params apply to the first statement only).  
   - `transaction_id`: if set, all statements run in the same transaction.
 
 - **Output:**  
-  One result dict per operation, in the same order as `operations`. Each dict has the same shape as `execute()` (§3): `affected_rows`, `lastrowid`, and optionally `data` for SELECT.
+  One result dict **per logical statement**, in execution order. Each dict: `affected_rows`, `lastrowid`, and `data`. For SELECT, `data` is the list of rows; for CRUD, **data is None** (so “in the middle” CRUD elements contain None for data).
 
 - **Requirement:**  
-  Every driver **must** support `execute_batch`. If the DB has no native batch API, the driver **emulates** it (e.g. loop over `execute(sql, params, transaction_id)` and return the list of results). This keeps application code simple and ensures one round-trip when the driver is used over RPC.
+  Every driver **must** support `execute_batch`. If the DB has no native batch API, the driver **emulates** it. Order of results must match the order of statements.
+
+- **Grouping to minimize write commands:**  
+  The driver **splits the chain of operations into groups** that can be executed with the DB’s **native batch** API (e.g. SQLite `executemany` for consecutive same-SQL with different params). **Order of execution must be preserved**: group₁, then group₂, then group₃, etc. Within each group the driver runs one native batch instead of N single executes, thus **minimizing the number of actual write/execute commands**. The number of result items must still be one per logical statement (order preserved).
 
 - **Default implementation (base class):**  
   `return [self.execute(sql, params, transaction_id) for sql, params in operations]`  
-  Concrete drivers may override for native batch/executemany if available.
+  Concrete drivers may override (e.g. split multi-statement, group for native batch).
 
 ---
 

@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from pathlib import Path
 from typing import Any, Dict, Optional
 
@@ -19,6 +20,7 @@ from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 from .base_mcp_command import BaseMCPCommand
 from ..core.cst_tree.tree_saver import save_tree_to_file
 from ..core.cst_tree.tree_builder import reload_tree_from_file
+from ..core.git_integration import commit_after_write
 
 logger = logging.getLogger(__name__)
 
@@ -86,15 +88,14 @@ class CSTSaveTreeCommand(BaseMCPCommand):
         auto_reload: bool = True,
         **kwargs,
     ) -> SuccessResult:
+        t_start = time.perf_counter()
         try:
+            t0 = time.perf_counter()
             database = self._open_database_from_config(auto_analyze=False)
             try:
-                # Resolve absolute file path using project_id and watch_dir/project_name
                 absolute_file_path = self._resolve_file_path_from_project(
                     database, project_id, file_path
                 )
-
-                # Get project root from project
                 project = database.get_project(project_id)
                 if not project:
                     return ErrorResult(
@@ -104,9 +105,11 @@ class CSTSaveTreeCommand(BaseMCPCommand):
                     )
 
                 project_root = Path(project.root_path)
-
-                # Save tree to file (run in thread pool to avoid blocking event loop;
-                # long DB/backup work would otherwise cause client timeouts on concurrent saves)
+                logger.info(
+                    "[TIMING] command=cst_save_tree step=resolve_path elapsed_sec=%.4f",
+                    time.perf_counter() - t0,
+                )
+                t0 = time.perf_counter()
                 result = await asyncio.to_thread(
                     save_tree_to_file,
                     tree_id=tree_id,
@@ -118,6 +121,17 @@ class CSTSaveTreeCommand(BaseMCPCommand):
                     backup=backup,
                     commit_message=commit_message,
                 )
+                logger.info(
+                    "[TIMING] command=cst_save_tree step=save_tree_to_file elapsed_sec=%.4f",
+                    time.perf_counter() - t0,
+                )
+                if result.get("timings"):
+                    for step_name, elapsed in sorted(result["timings"].items()):
+                        logger.info(
+                            "[TIMING] command=cst_save_tree step=save_%s elapsed_sec=%.4f",
+                            step_name,
+                            elapsed,
+                        )
 
                 if not result.get("success"):
                     return ErrorResult(
@@ -126,8 +140,8 @@ class CSTSaveTreeCommand(BaseMCPCommand):
                         details=result,
                     )
 
-                # Automatically reload tree from file to sync with saved file
                 if auto_reload:
+                    t0 = time.perf_counter()
                     try:
                         reload_tree_from_file(tree_id=tree_id)
                         result["tree_reloaded"] = True
@@ -137,9 +151,34 @@ class CSTSaveTreeCommand(BaseMCPCommand):
                         )
                         result["tree_reloaded"] = False
                         result["reload_error"] = str(reload_error)
+                    else:
+                        logger.info(
+                            "[TIMING] command=cst_save_tree step=reload_tree elapsed_sec=%.4f",
+                            time.perf_counter() - t0,
+                        )
                 else:
                     result["tree_reloaded"] = False
 
+                git_ok, git_err = commit_after_write(
+                    project_root,
+                    [Path(absolute_file_path)],
+                    "cst_save_tree",
+                    commit_message_override=commit_message,
+                    config_data=BaseMCPCommand._get_raw_config(),
+                )
+                if not git_ok and git_err:
+                    logger.warning("Git commit after cst_save_tree: %s", git_err)
+
+                logger.info(
+                    "[TIMING] command=cst_save_tree total_elapsed_sec=%.4f",
+                    time.perf_counter() - t_start,
+                )
+                p = Path(absolute_file_path)
+                if p.exists():
+                    result["file_size_bytes"] = p.stat().st_size
+                    result["file_lines"] = len(
+                        p.read_text(encoding="utf-8").splitlines()
+                    )
                 return SuccessResult(data=result)
             finally:
                 database.disconnect()

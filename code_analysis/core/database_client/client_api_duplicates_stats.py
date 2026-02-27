@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from typing import Dict, List, Optional
 
+from .client_base import _DatabaseClientBase
 from .objects.analysis import CodeDuplicate
 from .objects.mappers import (
     db_row_to_object,
@@ -20,7 +21,7 @@ from .objects.mappers import (
 )
 
 
-class _ClientAPIDuplicatesStatsMixin:
+class _ClientAPIDuplicatesStatsMixin(_DatabaseClientBase):
     """Mixin class with CodeDuplicate and Statistics operation methods."""
 
     # ============================================================================

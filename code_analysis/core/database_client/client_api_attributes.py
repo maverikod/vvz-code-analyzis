@@ -13,10 +13,11 @@ import hashlib
 import json
 from typing import Any, Dict, List, Optional
 
+from .client_base import _DatabaseClientBase
 from .objects.base import BaseObject
 
 
-class _ClientAPIAttributesMixin:
+class _ClientAPIAttributesMixin(_DatabaseClientBase):
     """Mixin class with attribute operation methods."""
 
     def save_ast(self, file_id: int, ast_data: Dict[str, Any]) -> bool:

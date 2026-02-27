@@ -52,7 +52,7 @@ Commands are grouped by **block**; each block is documented under `docs/commands
 | **file_management** | `file_management_mcp_commands.py` | cleanup_deleted_files, unmark_deleted_file, collapse_versions, repair_database |
 | **log_viewer** | `log_viewer_mcp_commands.py` | view_worker_logs, list_worker_logs |
 | **project_management** | `project_management_mcp_commands.py` | change_project_id, create_project, delete_project, delete_unwatched_projects, list_projects |
-| **refactor** | `refactor_mcp_commands.py` | extract_superclass, split_class, split_file_to_package |
+| **refactor** | `refactor_mcp_commands.py`, `file_structure_command.py` | file_structure, extract_superclass, split_class, split_file_to_package |
 | **repair_worker** | `repair_worker_mcp_commands.py` | start_repair_worker, stop_repair_worker, repair_worker_status |
 | **search** | `search_mcp_commands.py` | fulltext_search, list_class_methods, find_classes |
 | **vector** | `vector_commands/` | rebuild_faiss, revectorize |

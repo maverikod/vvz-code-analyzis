@@ -25,8 +25,9 @@ Operation flow:
 Supported Operations:
 - replace: Replace a node with new code
   - Requires: node_id, code
-- insert: Insert a new node
+- insert: Insert a new node (or a comment-only line)
   - Requires: (parent_node_id OR target_node_id), code, position ('before' or 'after')
+  - Comment-only code (e.g. `# mypy: ignore-errors`) is allowed: it is inserted as an EmptyLine with Comment (CST preserves comments; the parser does not return them as statements).
   - parent_node_id: Insert at beginning/end of parent's body
   - target_node_id: Insert before/after specific target node
 - delete: Delete a node
@@ -45,6 +46,7 @@ Use cases:
 - Multiple related changes in one operation
 
 Important notes:
+- **node_id** values are UUID4 (from cst_load_file / cst_find_node). They stay valid for unmodified nodes between operations in the same batch, so you can apply several replace/delete operations in one call.
 - Operations are applied in order
 - Use cst_save_tree to persist changes to file
 - Tree modifications are in-memory until saved
@@ -116,6 +118,18 @@ Replaces old_function with new_function. The code must be valid Python syntax. O
 ```
 
 Deletes a pass statement. Node must exist in tree. If node_id is invalid, operation fails and tree remains unchanged.
+
+**Insert a comment line (e.g. mypy directive)**  
+Insert accepts comment-only code. The parser normally returns no statement for a line like `# mypy: ignore-errors`; the command treats it as an `EmptyLine` with a `Comment` and inserts it.
+```json
+{
+  "action": "insert",
+  "parent_node_id": "<module_node_id>",
+  "target_node_id": "<first_statement_node_id>",
+  "code": "# mypy: ignore-errors",
+  "position": "before"
+}
+```
 
 **Insert statement before existing code**
 ```json

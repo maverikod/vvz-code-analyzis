@@ -10,6 +10,7 @@ email: vasilyvz@gmail.com
 from __future__ import annotations
 
 import logging
+import time
 from typing import Any, Dict, Optional
 
 from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
@@ -91,9 +92,14 @@ class CSTGetNodeInfoCommand(BaseMCPCommand):
         children_depth: int = 1,
         **kwargs,
     ) -> SuccessResult:
+        t_start = time.perf_counter()
         try:
-            # Get node metadata
+            t0 = time.perf_counter()
             metadata = get_node_metadata(tree_id, node_id, include_code=include_code)
+            logger.info(
+                "[TIMING] command=cst_get_node_info step=get_metadata elapsed_sec=%.4f",
+                time.perf_counter() - t0,
+            )
             if not metadata:
                 return ErrorResult(
                     message=f"Node not found: {node_id}",
@@ -107,8 +113,8 @@ class CSTGetNodeInfoCommand(BaseMCPCommand):
                 "node": metadata.to_dict(),
             }
 
-            # Get children / descendants if requested
             if include_children:
+                t0 = time.perf_counter()
                 if children_depth == 1:
                     children = get_node_children(
                         tree_id, node_id, include_code=include_code
@@ -130,13 +136,20 @@ class CSTGetNodeInfoCommand(BaseMCPCommand):
                         {**m.to_dict(), "depth": d} for m, d in descendants
                     ]
                     result["descendants_count"] = len(descendants)
+                logger.info(
+                    "[TIMING] command=cst_get_node_info step=children/descendants elapsed_sec=%.4f",
+                    time.perf_counter() - t0,
+                )
 
-            # Get parent if requested
             if include_parent:
                 parent = get_node_parent(tree_id, node_id)
                 if parent:
                     result["parent"] = parent.to_dict()
 
+            logger.info(
+                "[TIMING] command=cst_get_node_info total_elapsed_sec=%.4f",
+                time.perf_counter() - t_start,
+            )
             return SuccessResult(data=result)
 
         except Exception as e:

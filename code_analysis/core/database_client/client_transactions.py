@@ -11,10 +11,12 @@ from __future__ import annotations
 
 import logging
 
+from .client_base import _DatabaseClientBase
+
 logger = logging.getLogger(__name__)
 
 
-class _ClientTransactionsMixin:
+class _ClientTransactionsMixin(_DatabaseClientBase):
     """Mixin class with transaction methods."""
 
     def begin_transaction(self) -> str:

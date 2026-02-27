@@ -10,7 +10,8 @@ email: vasilyvz@gmail.com
 from __future__ import annotations
 
 import logging
-from typing import Any, Dict, List, Optional
+import time
+from typing import Any, Dict, Optional
 
 from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 
@@ -36,7 +37,10 @@ class CSTFindNodeCommand(BaseMCPCommand):
         return {
             "type": "object",
             "properties": {
-                "tree_id": {"type": "string", "description": "Tree ID from cst_load_file"},
+                "tree_id": {
+                    "type": "string",
+                    "description": "Tree ID from cst_load_file",
+                },
                 "search_type": {
                     "type": "string",
                     "enum": ["simple", "xpath"],
@@ -67,6 +71,13 @@ class CSTFindNodeCommand(BaseMCPCommand):
                     "type": "integer",
                     "description": "End line filter (for simple search)",
                 },
+                "require_one": {
+                    "type": "boolean",
+                    "default": False,
+                    "description": (
+                        "If true, require exactly one match; otherwise return NoMatch or NonUniqueMatch with candidates."
+                    ),
+                },
             },
             "required": ["tree_id"],
             "additionalProperties": False,
@@ -82,10 +93,12 @@ class CSTFindNodeCommand(BaseMCPCommand):
         qualname: Optional[str] = None,
         start_line: Optional[int] = None,
         end_line: Optional[int] = None,
+        require_one: bool = False,
         **kwargs,
     ) -> SuccessResult:
+        t_start = time.perf_counter()
         try:
-            # Find nodes
+            t0 = time.perf_counter()
             matches = find_nodes(
                 tree_id=tree_id,
                 query=query,
@@ -96,18 +109,62 @@ class CSTFindNodeCommand(BaseMCPCommand):
                 start_line=start_line,
                 end_line=end_line,
             )
+            logger.info(
+                "[TIMING] command=cst_find_node step=find_nodes elapsed_sec=%.4f matches=%s",
+                time.perf_counter() - t0,
+                len(matches),
+            )
+
+            if require_one:
+                if len(matches) == 0:
+                    return ErrorResult(
+                        message="Selector matched no nodes",
+                        code="NoMatch",
+                        details={
+                            "tree_id": tree_id,
+                            "query": query,
+                            "search_type": search_type,
+                        },
+                    )
+                if len(matches) > 1:
+                    candidates = [
+                        {
+                            "node_id": m.node_id,
+                            "start_line": m.start_line,
+                            "name": m.name,
+                            "type": m.type,
+                        }
+                        for m in matches[:10]
+                    ]
+                    return ErrorResult(
+                        message=f"Selector matched {len(matches)} nodes; exactly one required",
+                        code="NonUniqueMatch",
+                        details={
+                            "tree_id": tree_id,
+                            "query": query,
+                            "total_matches": len(matches),
+                            "candidates": candidates,
+                        },
+                    )
 
             # Convert to dictionaries
             nodes = [meta.to_dict() for meta in matches]
 
-            data = {
+            data: Dict[str, Any] = {
                 "success": True,
                 "tree_id": tree_id,
                 "search_type": search_type,
                 "matches": nodes,
                 "total_matches": len(nodes),
             }
+            if require_one and len(nodes) == 1:
+                data["node"] = nodes[0]
+                data["node_id"] = nodes[0].get("node_id")
 
+            logger.info(
+                "[TIMING] command=cst_find_node total_elapsed_sec=%.4f",
+                time.perf_counter() - t_start,
+            )
             return SuccessResult(data=data)
 
         except ValueError as e:
@@ -118,7 +175,9 @@ class CSTFindNodeCommand(BaseMCPCommand):
             )
         except Exception as e:
             logger.exception("cst_find_node failed: %s", e)
-            return ErrorResult(message=f"cst_find_node failed: {e}", code="CST_FIND_ERROR")
+            return ErrorResult(
+                message=f"cst_find_node failed: {e}", code="CST_FIND_ERROR"
+            )
 
     @classmethod
     def metadata(cls: type["CSTFindNodeCommand"]) -> Dict[str, Any]:
@@ -155,7 +214,7 @@ class CSTFindNodeCommand(BaseMCPCommand):
                 "2. XPath-like search (search_type='xpath'):\n"
                 "   - Uses CSTQuery selector syntax\n"
                 "   - Supports all CSTQuery features (combinators, predicates, pseudos)\n"
-                "   - Examples: class[name=\"MyClass\"], function[name=\"f\"] smallstmt[type=\"Return\"]:first\n"
+                '   - Examples: class[name="MyClass"], function[name="f"] smallstmt[type="Return"]:first\n'
                 "   - See query_cst command metadata for full CSTQuery syntax\n\n"
                 "Advantages:\n"
                 "- Search is performed on server (no need to transfer tree)\n"

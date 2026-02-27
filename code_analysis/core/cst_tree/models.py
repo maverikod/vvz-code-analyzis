@@ -82,7 +82,9 @@ class TreeOperation:
     """
 
     action: TreeOperationType
-    node_id: str = ""  # Node ID for replace/delete operations (empty for insert with target_node_id)
+    node_id: str = (
+        ""  # Node ID for replace/delete operations (empty for insert with target_node_id)
+    )
     code: Optional[str] = None  # New code for replace/insert (single string)
     code_lines: Optional[List[str]] = (
         None  # New code as list of lines (alternative to code)
@@ -94,6 +96,10 @@ class TreeOperation:
     )
     start_node_id: Optional[str] = None  # Start node for replace_range
     end_node_id: Optional[str] = None  # End node for replace_range
+
+
+# Reserved node_id: denotes the Module (root) node of the tree.
+ROOT_NODE_ID_SENTINEL = "__root__"
 
 
 @dataclass
@@ -111,6 +117,9 @@ class CSTTree:
     node_map: Dict[str, cst.CSTNode] = field(default_factory=dict)
     metadata_map: Dict[str, TreeNodeMetadata] = field(default_factory=dict)
     parent_map: Dict[str, Optional[str]] = field(default_factory=dict)
+    root_node_id: Optional[str] = (
+        None  # Set at index build; used to resolve ROOT_NODE_ID_SENTINEL
+    )
 
     @classmethod
     def create(cls, file_path: str, module: cst.Module) -> CSTTree:

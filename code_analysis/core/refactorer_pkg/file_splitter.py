@@ -7,7 +7,7 @@ email: vasilyvz@gmail.com
 
 import ast
 import logging
-from typing import Any, Dict, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from .base import BaseRefactorer
 
@@ -63,42 +63,49 @@ class FileToPackageSplitter(BaseRefactorer):
                 )
 
             # Split code into modules
-            source = self.original_content if hasattr(self, 'original_content') else self.file_path.read_text(encoding="utf-8")
+            source = (
+                self.original_content
+                if hasattr(self, "original_content")
+                else self.file_path.read_text(encoding="utf-8")
+            )
             source_lines = source.splitlines(keepends=True)
             created_modules = []
 
             for module_name, module_config in modules.items():
                 module_path = package_dir / f"{module_name}.py"
                 module_content = self._build_module_content(
-                    module_name, module_config, source_lines
+                    module_name, module_config, source_lines, all_modules=modules
                 )
                 module_path.write_text(module_content)
                 created_modules.append(module_name)
-                
+
                 # Update database for new file
                 if self.database and self.project_id and self.root_dir:
                     try:
                         # First, add file to database if it doesn't exist
                         import os
+
                         file_mtime = os.path.getmtime(module_path)
                         lines = len(module_content.splitlines())
-                        has_docstring = module_content.strip().startswith('"""') or module_content.strip().startswith("'''")
-                        
+                        has_docstring = module_content.strip().startswith(
+                            '"""'
+                        ) or module_content.strip().startswith("'''")
+
                         # Add file to database (or update if exists)
-                        module_file_id = self.database.add_file(
+                        self.database.add_file(
                             path=str(module_path),
                             lines=lines,
                             last_modified=file_mtime,
                             has_docstring=has_docstring,
                             project_id=self.project_id,
                         )
-                        
+
                         # Now update file data (this will parse AST/CST and extract entities)
                         try:
                             rel_path = str(module_path.relative_to(self.root_dir))
                         except ValueError:
                             rel_path = str(module_path)
-                        
+
                         update_result = self.database.update_file_data(
                             file_path=rel_path,
                             project_id=self.project_id,
@@ -131,7 +138,11 @@ class FileToPackageSplitter(BaseRefactorer):
             return False, error_msg
 
     def _build_module_content(
-        self, module_name: str, module_config: Dict[str, Any], source_lines: list
+        self,
+        module_name: str,
+        module_config: Dict[str, Any],
+        source_lines: list,
+        all_modules: Optional[Dict[str, Any]] = None,
     ) -> str:
         """
         Build content for a module.
@@ -140,6 +151,7 @@ class FileToPackageSplitter(BaseRefactorer):
             module_name: Name of the module
             module_config: Configuration for this module
             source_lines: Original source lines
+            all_modules: Full modules dict (module_name -> config) for intra-package imports.
 
         Returns:
             Module content as string
@@ -154,6 +166,11 @@ class FileToPackageSplitter(BaseRefactorer):
         # Build imports (simplified - would need proper import analysis)
         imports = self._extract_imports()
 
+        # Intra-package imports: symbols from other modules in this package
+        sibling_imports = []
+        if all_modules:
+            sibling_imports = self._sibling_imports_for_module(module_name, all_modules)
+
         # Build module content
         lines = []
         if file_docstring:
@@ -165,6 +182,9 @@ class FileToPackageSplitter(BaseRefactorer):
         # Add imports
         if imports:
             lines.extend(imports)
+        if sibling_imports:
+            lines.extend(sibling_imports)
+        if imports or sibling_imports:
             lines.append("\n")
 
         # Extract and add classes
@@ -204,12 +224,41 @@ class FileToPackageSplitter(BaseRefactorer):
                 end_line = (
                     node.end_lineno if hasattr(node, "end_lineno") else node.lineno
                 )
-                import_lines = self.source.splitlines(keepends=True)[
+                import_lines = self.original_content.splitlines(keepends=True)[
                     start_line:end_line
                 ]
                 imports.extend(import_lines)
 
         return imports
+
+    def _sibling_imports_for_module(
+        self, module_name: str, all_modules: Dict[str, Any]
+    ) -> List[str]:
+        """
+        Build import lines for symbols defined in other modules of the package.
+
+        So that a module can use classes/functions that were moved to sibling
+        modules (e.g. queue.py can use Task, TaskStatus from .task_model, .enums).
+
+        Args:
+            module_name: Current module name
+            all_modules: Full modules config (name -> {classes: [...], functions: [...]})
+
+        Returns:
+            List of lines (with trailing newline), e.g. ["from .enums import A, B\n"]
+        """
+        lines: List[str] = []
+        for sibling_name, sibling_config in all_modules.items():
+            if sibling_name == module_name:
+                continue
+            syms = list(sibling_config.get("classes", [])) + list(
+                sibling_config.get("functions", [])
+            )
+            if not syms:
+                continue
+            syms_str = ", ".join(sorted(syms))
+            lines.append(f"from .{sibling_name} import {syms_str}\n")
+        return lines
 
     def _extract_class_code(self, class_name: str, source_lines: list) -> list:
         """Extract class code from source lines."""

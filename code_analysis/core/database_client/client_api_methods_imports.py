@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional, Tuple
 
+from .client_base import _DatabaseClientBase
 from .objects.class_function import Class
 from .objects.method_import import Import, Method
 from .objects.mappers import (
@@ -21,7 +22,7 @@ from .objects.mappers import (
 )
 
 
-class _ClientAPIMethodsImportsMixin:
+class _ClientAPIMethodsImportsMixin(_DatabaseClientBase):
     """Mixin class with Method, Import operation and relationship navigation methods."""
 
     # ============================================================================

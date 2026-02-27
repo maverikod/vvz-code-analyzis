@@ -65,6 +65,7 @@ class SelectorStep:
     - "*" (match anything)
     - alias: module, class, function, method, stmt, smallstmt, import
     - LibCST node class name (e.g. If, For, Try, With, Return)
+    - "Type:*" for prefix/suffix match (e.g. Def:* → FunctionDef, ClassDef)
     """
 
     node_type: str

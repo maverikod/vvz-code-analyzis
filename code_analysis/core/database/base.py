@@ -7,7 +7,7 @@ email: vasilyvz@gmail.com
 
 import uuid
 from pathlib import Path
-from typing import Dict, List, Any, Optional, Callable
+from typing import Any, Callable, Dict, List, Optional, Tuple
 from contextlib import contextmanager
 import logging
 import threading
@@ -324,9 +324,12 @@ class CodeDatabase:
         else:
             self.driver.rollback()
 
-    def begin_transaction(self) -> None:
+    def begin_transaction(self) -> str:
         """
         Begin database transaction.
+
+        Returns:
+            Transaction ID (for use with execute_batch, commit_transaction, rollback_transaction).
 
         Raises:
             RuntimeError: If transaction is already active.
@@ -345,14 +348,19 @@ class CodeDatabase:
             )
         else:
             # For direct SQLite driver, use standard BEGIN TRANSACTION
+            transaction_id = "local"
             self._execute("BEGIN TRANSACTION")
 
         self._transaction_active = True
         logger.debug("Transaction started")
+        return transaction_id
 
-    def commit_transaction(self) -> None:
+    def commit_transaction(self, transaction_id: Optional[str] = None) -> None:
         """
         Commit database transaction.
+
+        Args:
+            transaction_id: Optional; ignored for direct SQLite, used by proxy driver.
 
         Raises:
             RuntimeError: If no active transaction.
@@ -373,9 +381,12 @@ class CodeDatabase:
         self._transaction_active = False
         logger.debug("Transaction committed")
 
-    def rollback_transaction(self) -> None:
+    def rollback_transaction(self, transaction_id: Optional[str] = None) -> None:
         """
         Rollback database transaction.
+
+        Args:
+            transaction_id: Optional; ignored for direct SQLite, used by proxy driver.
 
         Raises:
             RuntimeError: If no active transaction.
@@ -395,6 +406,37 @@ class CodeDatabase:
 
         self._transaction_active = False
         logger.debug("Transaction rolled back")
+
+    def execute_batch(
+        self,
+        operations: List[Tuple[str, Optional[tuple]]],
+        transaction_id: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        """
+        Execute multiple SQL statements in order (same transaction).
+
+        Used by update_file_data_atomic_batch. For direct SQLite driver,
+        runs each (sql, params) via _execute and returns one result per op.
+
+        Args:
+            operations: List of (sql, params) tuples.
+            transaction_id: Optional; ignored for direct SQLite (uses active transaction).
+
+        Returns:
+            List of dicts with keys affected_rows, lastrowid, data (one per operation).
+        """
+        results: List[Dict[str, Any]] = []
+        for sql, params in operations:
+            self._execute(sql, tuple(params) if params else None)
+            lastrowid = self._lastrowid()
+            results.append(
+                {
+                    "affected_rows": 0,
+                    "lastrowid": lastrowid,
+                    "data": None,
+                }
+            )
+        return results
 
     def _in_transaction(self) -> bool:
         """

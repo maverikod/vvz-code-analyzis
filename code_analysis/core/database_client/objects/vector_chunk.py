@@ -7,7 +7,7 @@ email: vasilyvz@gmail.com
 
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 from .base import BaseObject
 
@@ -39,7 +39,7 @@ class VectorIndex(BaseObject):
     created_at: Optional[datetime] = None
 
     @classmethod
-    def from_dict(cls, data: Dict[str, any]) -> "VectorIndex":
+    def from_dict(cls, data: Dict[str, Any]) -> "VectorIndex":
         """Create VectorIndex from dictionary.
 
         Args:
@@ -74,7 +74,7 @@ class VectorIndex(BaseObject):
         )
 
     @classmethod
-    def from_db_row(cls, row: Dict[str, any]) -> "VectorIndex":
+    def from_db_row(cls, row: Dict[str, Any]) -> "VectorIndex":
         """Create VectorIndex from database row.
 
         Args:
@@ -88,7 +88,7 @@ class VectorIndex(BaseObject):
         """
         return cls.from_dict(row)
 
-    def to_db_row(self) -> Dict[str, any]:
+    def to_db_row(self) -> Dict[str, Any]:
         """Convert VectorIndex to database row format.
 
         Returns:
@@ -181,7 +181,7 @@ class CodeChunk(BaseObject):
         self.embedding_vector = self._to_json_field(vector)
 
     @classmethod
-    def from_dict(cls, data: Dict[str, any]) -> "CodeChunk":
+    def from_dict(cls, data: Dict[str, Any]) -> "CodeChunk":
         """Create CodeChunk from dictionary.
 
         Args:
@@ -229,7 +229,7 @@ class CodeChunk(BaseObject):
         )
 
     @classmethod
-    def from_db_row(cls, row: Dict[str, any]) -> "CodeChunk":
+    def from_db_row(cls, row: Dict[str, Any]) -> "CodeChunk":
         """Create CodeChunk from database row.
 
         Args:
@@ -243,7 +243,7 @@ class CodeChunk(BaseObject):
         """
         return cls.from_dict(row)
 
-    def to_db_row(self) -> Dict[str, any]:
+    def to_db_row(self) -> Dict[str, Any]:
         """Convert CodeChunk to database row format.
 
         Returns:

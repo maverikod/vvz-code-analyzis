@@ -12,6 +12,7 @@ from __future__ import annotations
 import logging
 from typing import Any, Dict, List, Optional, Tuple, Union
 
+from .client_base import _DatabaseClientBase
 from .protocol import (
     DeleteRequest,
     InsertRequest,
@@ -22,7 +23,7 @@ from .protocol import (
 logger = logging.getLogger(__name__)
 
 
-class _ClientOperationsMixin:
+class _ClientOperationsMixin(_DatabaseClientBase):
     """Mixin class with database operation methods."""
 
     def insert(self, table_name: str, data: Dict[str, Any]) -> int:

@@ -10,12 +10,11 @@ email: vasilyvz@gmail.com
 from __future__ import annotations
 
 import ast
-import hashlib
 import json
 import logging
 import time
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict
 
 from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 
@@ -23,6 +22,7 @@ from .base_mcp_command import BaseMCPCommand
 from ..core.ast_utils import parse_with_comments
 from ..core.backup_manager import BackupManager
 from ..core.cst_tree.tree_builder import create_tree_from_code
+from ..core.git_integration import commit_after_write
 
 logger = logging.getLogger(__name__)
 
@@ -108,8 +108,8 @@ class CSTConvertAndSaveCommand(BaseMCPCommand):
         Returns:
             SuccessResult with tree_id, file_id, ast_tree_id, cst_tree_id, total_nodes; nodes list if include_nodes=True
         """
+        t_start = time.perf_counter()
         try:
-            # Validate source code is not empty
             if not source_code.strip():
                 return ErrorResult(
                     message="Source code must not be empty",
@@ -127,8 +127,6 @@ class CSTConvertAndSaveCommand(BaseMCPCommand):
                         code="PROJECT_NOT_FOUND",
                         details={"project_id": project_id},
                     )
-
-                project_root = Path(project.root_path)
 
                 # Resolve absolute path
                 if not project.watch_dir_id:
@@ -170,7 +168,10 @@ class CSTConvertAndSaveCommand(BaseMCPCommand):
 
                 abs_path = Path(watch_dir_path) / project.name / file_path
                 abs_path = abs_path.resolve()
-
+                logger.info(
+                    "[TIMING] command=cst_convert_and_save step=resolve_path elapsed_sec=%.4f",
+                    time.perf_counter() - t_start,
+                )
                 if abs_path.suffix != ".py":
                     return ErrorResult(
                         message="Target file must be a .py file",
@@ -195,8 +196,18 @@ class CSTConvertAndSaveCommand(BaseMCPCommand):
                             )
                     abs_path.write_text(source_code, encoding="utf-8")
                     logger.info(f"Saved code to file: {abs_path}")
-
-                # Parse AST from source code
+                    git_ok, git_err = commit_after_write(
+                        backup_root,
+                        [abs_path],
+                        "cst_convert_and_save",
+                        config_data=BaseMCPCommand._get_raw_config(),
+                    )
+                    if not git_ok and git_err:
+                        logger.warning(
+                            "Git commit after cst_convert_and_save: %s",
+                            git_err,
+                        )
+                t_parse = time.perf_counter()
                 try:
                     tree = parse_with_comments(source_code, filename=str(abs_path))
                 except SyntaxError as e:
@@ -215,18 +226,22 @@ class CSTConvertAndSaveCommand(BaseMCPCommand):
                         code="AST_PARSE_ERROR",
                         details={"error": str(e)},
                     )
-
-                # Create CST tree from source code
+                logger.info(
+                    "[TIMING] command=cst_convert_and_save step=parse_ast elapsed_sec=%.4f",
+                    time.perf_counter() - t_parse,
+                )
+                t_cst = time.perf_counter()
                 cst_file_path = str(abs_path) if abs_path else "<string>"
                 cst_tree = create_tree_from_code(
                     file_path=cst_file_path,
                     source_code=source_code,
                 )
-
-                # Calculate hashes
+                logger.info(
+                    "[TIMING] command=cst_convert_and_save step=create_tree elapsed_sec=%.4f",
+                    time.perf_counter() - t_cst,
+                )
+                t_db = time.perf_counter()
                 ast_json = json.dumps(ast.dump(tree))
-                ast_hash = hashlib.sha256(ast_json.encode()).hexdigest()
-                cst_hash = hashlib.sha256(source_code.encode()).hexdigest()
                 file_mtime = time.time()
 
                 # Get or create file_id
@@ -332,6 +347,8 @@ class CSTConvertAndSaveCommand(BaseMCPCommand):
                     "ast_tree_id": ast_tree_id,
                     "cst_tree_id": cst_tree_id,
                     "total_nodes": total_nodes,
+                    "file_size_bytes": len(source_code.encode("utf-8")),
+                    "file_lines": len(source_code.splitlines()),
                 }
                 if include_nodes:
                     data["nodes"] = [
@@ -339,7 +356,11 @@ class CSTConvertAndSaveCommand(BaseMCPCommand):
                     ]
                 else:
                     data["nodes"] = []
-
+                logger.info(
+                    "[TIMING] command=cst_convert_and_save step=db_save elapsed_sec=%.4f total_elapsed_sec=%.4f",
+                    time.perf_counter() - t_db,
+                    time.perf_counter() - t_start,
+                )
                 return SuccessResult(data=data)
 
             finally:

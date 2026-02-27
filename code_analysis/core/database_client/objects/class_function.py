@@ -7,7 +7,7 @@ email: vasilyvz@gmail.com
 
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 from .base import BaseObject
 
@@ -58,7 +58,7 @@ class Class(BaseObject):
         self.bases = bases if bases else []
 
     @classmethod
-    def from_dict(cls, data: Dict[str, any]) -> "Class":
+    def from_dict(cls, data: Dict[str, Any]) -> "Class":
         """Create Class from dictionary.
 
         Args:
@@ -98,7 +98,7 @@ class Class(BaseObject):
         )
 
     @classmethod
-    def from_db_row(cls, row: Dict[str, any]) -> "Class":
+    def from_db_row(cls, row: Dict[str, Any]) -> "Class":
         """Create Class from database row.
 
         Args:
@@ -112,7 +112,7 @@ class Class(BaseObject):
         """
         return cls.from_dict(row)
 
-    def to_db_row(self) -> Dict[str, any]:
+    def to_db_row(self) -> Dict[str, Any]:
         """Convert Class to database row format.
 
         Returns:
@@ -180,7 +180,7 @@ class Function(BaseObject):
         self.args = args if args else []
 
     @classmethod
-    def from_dict(cls, data: Dict[str, any]) -> "Function":
+    def from_dict(cls, data: Dict[str, Any]) -> "Function":
         """Create Function from dictionary.
 
         Args:
@@ -220,7 +220,7 @@ class Function(BaseObject):
         )
 
     @classmethod
-    def from_db_row(cls, row: Dict[str, any]) -> "Function":
+    def from_db_row(cls, row: Dict[str, Any]) -> "Function":
         """Create Function from database row.
 
         Args:
@@ -234,7 +234,7 @@ class Function(BaseObject):
         """
         return cls.from_dict(row)
 
-    def to_db_row(self) -> Dict[str, any]:
+    def to_db_row(self) -> Dict[str, Any]:
         """Convert Function to database row format.
 
         Returns:

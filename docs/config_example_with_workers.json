@@ -66,6 +66,7 @@
     "default_max_wait_time": null
   },
   "code_analysis": {
+    "git_commit_on_write": false,
     "db_path": "data/code_analysis.db",
     "database": {
       "driver": {

@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from typing import List, Optional
 
+from .client_base import _DatabaseClientBase
 from .objects.mappers import (
     db_row_to_object,
     db_rows_to_objects,
@@ -20,7 +21,7 @@ from .objects.mappers import (
 from .objects.project import Project
 
 
-class _ClientAPIProjectsMixin:
+class _ClientAPIProjectsMixin(_DatabaseClientBase):
     """Mixin class with Project operation methods."""
 
     def create_project(self, project: Project) -> Project:

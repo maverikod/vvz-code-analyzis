@@ -29,7 +29,7 @@ Operation flow:
 
 Node Metadata:
 Each node includes:
-- node_id: Stable identifier for operations
+- node_id: UUID4 identifier; stable for the lifetime of the tree so multiple operations in one batch can target different nodes without IDs changing
 - type: LibCST node type (FunctionDef, ClassDef, etc.)
 - kind: Node kind (function, class, method, stmt, smallstmt, etc.)
 - name: Node name (if applicable)
@@ -55,6 +55,7 @@ Important notes:
 - Tree persists until explicitly removed or server restarts
 - Use tree_id with other CST commands
 - Filters reduce returned metadata, but full tree is still stored
+- **When the file had syntax errors**: the server comments out the error lines and adds a placeholder `pass`; the response includes `syntax_errors_fixed`, `commented_lines` (with `parent_node` and `node_id` for each error location), and optionally `temp_file`
 
 ---
 
@@ -84,6 +85,10 @@ All MCP commands return either a **success** result (with `data`) or an **error*
 - `file_path`: Path to loaded file
 - `nodes`: List of node metadata dictionaries
 - `total_nodes`: Total number of nodes returned
+- **When the file had syntax errors on load** (optional fields):
+  - `syntax_errors_fixed`: `true` — error lines were commented out and a placeholder `pass` was added
+  - `commented_lines`: list of `{ line, error, parent_node }` — for each commented-out error line: 1-based `line`, parser `error` message, and `parent_node` (dict with `node_id` and other metadata, or `null`) identifying the block (e.g. function/class) where the error was found
+  - `temp_file`: path to the `.tmp` file used for the fixed content (for debugging)
 
 ### Error
 

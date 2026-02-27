@@ -11,11 +11,12 @@ from __future__ import annotations
 
 from typing import Any
 
-from .protocol import RPCResponse
+from .client_base import _DatabaseClientBase
 from .exceptions import RPCResponseError
+from .protocol import RPCResponse
 
 
-class _ClientHelpersMixin:
+class _ClientHelpersMixin(_DatabaseClientBase):
     """Mixin class with helper methods for processing RPC responses."""
 
     def _extract_success(self, response: RPCResponse) -> bool:

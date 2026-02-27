@@ -157,6 +157,7 @@ email: vasilyvz@gmail.com
 
 | Command             | Class                      | Source File                        |
 |---------------------|----------------------------|------------------------------------|
+| file_structure      | FileStructureCommand       | commands/file_structure_command.py |
 | extract_superclass  | ExtractSuperclassMCPCommand| commands/refactor_mcp_commands.py  |
 | split_class         | SplitClassMCPCommand      | (same)                             |
 | split_file_to_package| SplitFileToPackageMCPCommand| (same)                            |

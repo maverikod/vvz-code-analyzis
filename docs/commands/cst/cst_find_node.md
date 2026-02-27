@@ -66,6 +66,7 @@ Important notes:
 | `qualname` | string | No | Qualified name filter (for simple search) |
 | `start_line` | integer | No | Start line filter (for simple search) |
 | `end_line` | integer | No | End line filter (for simple search) |
+| `require_one` | boolean | No | If true, require exactly one match; return NoMatch or NonUniqueMatch with candidates otherwise. Default: `false`. |
 
 **Schema:** `additionalProperties: false` — only the parameters above are accepted.
 
@@ -83,11 +84,13 @@ All MCP commands return either a **success** result (with `data`) or an **error*
 - `search_type`: Search type that was used
 - `matches`: List of node metadata dictionaries for matching nodes
 - `total_matches`: Total number of matches found
+- `node`: When require_one=true and exactly one match, the single node metadata (convenience)
+- `node_id`: When require_one=true and exactly one match, the node_id (convenience)
 
 ### Error
 
 - **Shape:** `ErrorResult` with `code` and `message`.
-- **Possible codes:** INVALID_SEARCH, CST_FIND_ERROR (and others).
+- **Possible codes:** INVALID_SEARCH, CST_FIND_ERROR, NoMatch (require_one and 0 matches), NonUniqueMatch (require_one and >1 matches; details include `candidates`).
 
 ---
 

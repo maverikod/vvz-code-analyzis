@@ -28,6 +28,14 @@ class TestParserBasic:
         assert query.first.node_type == "*"
         assert len(query.rest) == 0
 
+    def test_parse_type_wildcard_modifier(self):
+        """Test parsing type modifier Def:* (prefix/suffix match on node type)."""
+        query = parse_selector("Def:*")
+        assert query is not None
+        assert query.first.node_type == "Def:*"
+        query2 = parse_selector("FunctionDef:*")
+        assert query2.first.node_type == "FunctionDef:*"
+
     def test_parse_with_predicate(self):
         """Test parsing selector with predicate."""
         query = parse_selector("function[name='test']")

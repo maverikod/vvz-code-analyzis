@@ -14,6 +14,7 @@ email: vasilyvz@gmail.com
 from __future__ import annotations
 
 import logging
+import time
 from typing import Any, Dict, List, Optional
 
 from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
@@ -110,11 +111,12 @@ class QueryCSTCommand(BaseMCPCommand):
         replace_all: bool = False,
         **kwargs,
     ) -> SuccessResult:
+        t_start = time.perf_counter()
         try:
+            t0 = time.perf_counter()
             root_path = self._resolve_project_root(project_id)
             target = root_path / file_path
             target = target.resolve()
-
             if target.suffix != ".py":
                 return ErrorResult(
                     message="Target file must be a .py file",
@@ -128,9 +130,18 @@ class QueryCSTCommand(BaseMCPCommand):
                     details={"file_path": str(target)},
                 )
 
+            logger.info(
+                "[TIMING] command=query_cst step=resolve_path elapsed_sec=%.4f",
+                time.perf_counter() - t0,
+            )
+            t_query = time.perf_counter()
             source = target.read_text(encoding="utf-8")
             matches = query_source(source, selector, include_code=include_code)
-
+            logger.info(
+                "[TIMING] command=query_cst step=query_source matches=%d elapsed_sec=%.4f",
+                len(matches),
+                time.perf_counter() - t_query,
+            )
             # Replace mode: find + replace in one call
             if replace_with is not None or code_lines is not None:
                 if not matches:
@@ -213,15 +224,20 @@ class QueryCSTCommand(BaseMCPCommand):
                         )
                 finally:
                     database.disconnect()
-                return SuccessResult(
-                    data={
-                        "success": True,
-                        "replaced": stats.get("replaced", 0),
-                        "removed": stats.get("removed", 0),
-                        "file_path": str(target),
-                        "backup_uuid": backup_uuid or None,
-                    }
+                logger.info(
+                    "[TIMING] command=query_cst total_elapsed_sec=%.4f",
+                    time.perf_counter() - t_start,
                 )
+                replace_data = {
+                    "success": True,
+                    "replaced": stats.get("replaced", 0),
+                    "removed": stats.get("removed", 0),
+                    "file_path": str(target),
+                    "backup_uuid": backup_uuid or None,
+                    "file_size_bytes": len(new_source.encode("utf-8")),
+                    "file_lines": len(new_source.splitlines()),
+                }
+                return SuccessResult(data=replace_data)
 
             # Query-only mode
             truncated = False
@@ -250,6 +266,10 @@ class QueryCSTCommand(BaseMCPCommand):
                     for m in matches
                 ],
             }
+            logger.info(
+                "[TIMING] command=query_cst total_elapsed_sec=%.4f",
+                time.perf_counter() - t_start,
+            )
             return SuccessResult(data=data)
         except QueryParseError as e:
             return ErrorResult(

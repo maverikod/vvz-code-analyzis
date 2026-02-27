@@ -99,6 +99,7 @@
     "shutdown_grace_seconds": 10.0
   },
   "code_analysis": {
+    "git_commit_on_write": true,
     "host": "172.28.0.1",
     "port": 15000,
     "log": "logs/code_analysis.log",

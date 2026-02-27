@@ -684,6 +684,7 @@ result = mcp_MCP-Proxy-2_call_server(
 
 ### 6.4 Refactoring Commands
 
+- `file_structure` - List classes and first-level methods with line counts (use before split/extract to see sizes)
 - `split_class` - Split class into multiple classes
 - `extract_superclass` - Extract base class
 - `split_file_to_package` - Split file into package
@@ -697,7 +698,7 @@ result = mcp_MCP-Proxy-2_call_server(
 - `compose_cst_module` - Apply CST patches to files directly
 
 **CST Tree Commands (In-Memory Tree-based)** - **NEW**:
-- `cst_load_file` - Load Python file into in-memory CST tree (returns tree_id)
+- `cst_load_file` - Load Python file into in-memory CST tree (returns tree_id). When the file had syntax errors on load, the response includes `syntax_errors_fixed: true`, `commented_lines` (each with `line`, `error`, `parent_node` including `node_id`), and optionally `temp_file`.
 - `cst_find_node` - Find nodes in loaded tree (simple or XPath search)
 - `cst_get_node_by_range` - Get node_id for a specific line range (useful when you know line numbers)
 - `cst_get_node_info` - Get detailed information about a node (with code, children, parent)

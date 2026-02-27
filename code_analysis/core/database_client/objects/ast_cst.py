@@ -55,7 +55,7 @@ class ASTNode(BaseObject):
         self.ast_json = self._to_json_field(ast_data) or ""
 
     @classmethod
-    def from_dict(cls, data: Dict[str, any]) -> "ASTNode":
+    def from_dict(cls, data: Dict[str, Any]) -> "ASTNode":
         """Create ASTNode from dictionary.
 
         Args:
@@ -88,7 +88,7 @@ class ASTNode(BaseObject):
         )
 
     @classmethod
-    def from_db_row(cls, row: Dict[str, any]) -> "ASTNode":
+    def from_db_row(cls, row: Dict[str, Any]) -> "ASTNode":
         """Create ASTNode from database row.
 
         Args:
@@ -102,7 +102,7 @@ class ASTNode(BaseObject):
         """
         return cls.from_dict(row)
 
-    def to_db_row(self) -> Dict[str, any]:
+    def to_db_row(self) -> Dict[str, Any]:
         """Convert ASTNode to database row format.
 
         Returns:
@@ -152,7 +152,7 @@ class CSTNode(BaseObject):
     updated_at: Optional[datetime] = None
 
     @classmethod
-    def from_dict(cls, data: Dict[str, any]) -> "CSTNode":
+    def from_dict(cls, data: Dict[str, Any]) -> "CSTNode":
         """Create CSTNode from dictionary.
 
         Args:
@@ -185,7 +185,7 @@ class CSTNode(BaseObject):
         )
 
     @classmethod
-    def from_db_row(cls, row: Dict[str, any]) -> "CSTNode":
+    def from_db_row(cls, row: Dict[str, Any]) -> "CSTNode":
         """Create CSTNode from database row.
 
         Args:
@@ -199,7 +199,7 @@ class CSTNode(BaseObject):
         """
         return cls.from_dict(row)
 
-    def to_db_row(self) -> Dict[str, any]:
+    def to_db_row(self) -> Dict[str, Any]:
         """Convert CSTNode to database row format.
 
         Returns:

@@ -20,6 +20,7 @@ from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 
 from .base_mcp_command import BaseMCPCommand
 from ..core.backup_manager import BackupManager
+from ..core.git_integration import commit_after_write
 from ..core.git_integration import create_git_commit
 from ..core.cst_tree.tree_builder import get_tree
 
@@ -696,268 +697,6 @@ class ComposeCSTModuleCommand(BaseMCPCommand):
             else:
                 logger.error(f"Failed to restore file from backup: {restore_message}")
 
-    def _update_file_data_atomic(
-        self,
-        database,
-        file_id: int,
-        project_id: str,
-        source_code: str,
-        file_path: str,
-    ) -> Dict[str, Any]:
-        """
-        Atomically update all file data (AST, CST, entities) using DatabaseClient.
-
-        Args:
-            database: DatabaseClient instance
-            file_id: File ID
-            project_id: Project ID
-            source_code: Source code to parse
-            file_path: File path
-
-        Returns:
-            Dictionary with update result
-        """
-        import ast
-
-        try:
-            # Parse AST from source_code
-            try:
-                tree = ast.parse(source_code, filename=file_path)
-            except SyntaxError as e:
-                logger.warning(f"Syntax error in {file_path}: {e}")
-                return {
-                    "success": False,
-                    "error": f"Syntax error: {e}",
-                    "file_path": file_path,
-                    "file_id": file_id,
-                }
-            except Exception as e:
-                logger.error(f"Error parsing AST for {file_path}: {e}", exc_info=True)
-                return {
-                    "success": False,
-                    "error": f"Failed to parse AST: {e}",
-                    "file_path": file_path,
-                    "file_id": file_id,
-                }
-
-            # Save AST tree
-            ast_dump = ast.dump(tree)  # Returns list/dict structure
-            ast_data = ast_dump if isinstance(ast_dump, dict) else {"ast": ast_dump}
-            try:
-                database.save_ast(file_id, ast_data)
-                ast_updated = True
-            except Exception as e:
-                logger.error(f"Error saving AST for {file_path}: {e}", exc_info=True)
-                return {
-                    "success": False,
-                    "error": f"Failed to save AST: {e}",
-                    "file_path": file_path,
-                    "file_id": file_id,
-                }
-
-            # Save CST tree (source code)
-            try:
-                database.save_cst(file_id, source_code)
-                cst_updated = True
-            except Exception as e:
-                logger.error(f"Error saving CST for {file_path}: {e}", exc_info=True)
-                return {
-                    "success": False,
-                    "error": f"Failed to save CST: {e}",
-                    "file_path": file_path,
-                    "file_id": file_id,
-                }
-
-            # Extract and save entities
-            from ..core.database_client.objects.class_function import Class, Function
-            from ..core.database_client.objects.method_import import Method, Import
-
-            classes_added = 0
-            functions_added = 0
-            methods_added = 0
-            imports_added = 0
-
-            class_nodes: Dict[ast.ClassDef, int] = {}
-
-            # Extract classes and methods
-            for node in ast.walk(tree):
-                if isinstance(node, ast.ClassDef):
-                    docstring = ast.get_docstring(node)
-                    bases: List[str] = []
-                    for base in node.bases:
-                        if isinstance(base, ast.Name):
-                            bases.append(base.id)
-                        else:
-                            try:
-                                bases.append(ast.unparse(base))
-                            except AttributeError:
-                                bases.append(str(base))
-
-                    # Create Class object
-                    class_obj = Class(
-                        file_id=file_id,
-                        name=node.name,
-                        line=node.lineno,
-                        docstring=docstring,
-                        bases=bases,
-                    )
-                    try:
-                        created_class = database.create_class(class_obj)
-                        classes_added += 1
-                        class_nodes[node] = created_class.id
-
-                        # Extract methods from class
-                        for item in node.body:
-                            if isinstance(
-                                item, (ast.FunctionDef, ast.AsyncFunctionDef)
-                            ):
-                                method_docstring = ast.get_docstring(item)
-                                method_args = []
-                                if item.args:
-                                    for arg in item.args.args:
-                                        arg_name = arg.arg
-                                        if arg.annotation:
-                                            try:
-                                                arg_name += (
-                                                    f": {ast.unparse(arg.annotation)}"
-                                                )
-                                            except AttributeError:
-                                                arg_name += f": {str(arg.annotation)}"
-                                        method_args.append(arg_name)
-
-                                # Create Method object
-                                method_obj = Method(
-                                    class_id=created_class.id,
-                                    name=item.name,
-                                    line=item.lineno,
-                                    docstring=method_docstring,
-                                    args=method_args,
-                                )
-                                try:
-                                    database.create_method(method_obj)
-                                    methods_added += 1
-                                except Exception as e:
-                                    logger.warning(
-                                        f"Failed to create method {item.name}: {e}",
-                                        exc_info=True,
-                                    )
-                    except Exception as e:
-                        logger.warning(
-                            f"Failed to create class {node.name}: {e}", exc_info=True
-                        )
-
-            # Extract top-level functions
-            for node in ast.walk(tree):
-                if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                    # Check if it's a method (inside a class)
-                    is_method = False
-                    for parent in ast.walk(tree):
-                        if isinstance(parent, ast.ClassDef):
-                            if any(
-                                node == item
-                                for item in parent.body
-                                if isinstance(
-                                    item, (ast.FunctionDef, ast.AsyncFunctionDef)
-                                )
-                            ):
-                                is_method = True
-                                break
-
-                    if not is_method:
-                        docstring = ast.get_docstring(node)
-                        args = []
-                        if node.args:
-                            for arg in node.args.args:
-                                arg_name = arg.arg
-                                if arg.annotation:
-                                    try:
-                                        arg_name += f": {ast.unparse(arg.annotation)}"
-                                    except AttributeError:
-                                        arg_name += f": {str(arg.annotation)}"
-                                args.append(arg_name)
-
-                        # Create Function object
-                        function_obj = Function(
-                            file_id=file_id,
-                            name=node.name,
-                            line=node.lineno,
-                            docstring=docstring,
-                            args=args,
-                        )
-                        try:
-                            database.create_function(function_obj)
-                            functions_added += 1
-                        except Exception as e:
-                            logger.warning(
-                                f"Failed to create function {node.name}: {e}",
-                                exc_info=True,
-                            )
-
-            # Extract imports
-            for node in ast.walk(tree):
-                if isinstance(node, ast.Import):
-                    for alias in node.names:
-                        import_obj = Import(
-                            file_id=file_id,
-                            module="",
-                            name=alias.name,
-                            import_type="import",
-                            line=node.lineno,
-                        )
-                        try:
-                            database.create_import(import_obj)
-                            imports_added += 1
-                        except Exception as e:
-                            logger.warning(
-                                f"Failed to create import {alias.name}: {e}",
-                                exc_info=True,
-                            )
-                elif isinstance(node, ast.ImportFrom):
-                    module = node.module or ""
-                    for alias in node.names:
-                        import_obj = Import(
-                            file_id=file_id,
-                            module=module,
-                            name=alias.name,
-                            import_type="from",
-                            line=node.lineno,
-                        )
-                        try:
-                            database.create_import(import_obj)
-                            imports_added += 1
-                        except Exception as e:
-                            logger.warning(
-                                f"Failed to create import {alias.name}: {e}",
-                                exc_info=True,
-                            )
-
-            entities_count = classes_added + functions_added + methods_added
-
-            return {
-                "success": True,
-                "file_id": file_id,
-                "file_path": file_path,
-                "ast_updated": ast_updated,
-                "cst_updated": cst_updated,
-                "entities_updated": entities_count,
-                "classes": classes_added,
-                "functions": functions_added,
-                "methods": methods_added,
-                "imports": imports_added,
-            }
-
-        except Exception as e:
-            logger.error(
-                f"Unexpected error in _update_file_data_atomic for {file_path}: {e}",
-                exc_info=True,
-            )
-            return {
-                "success": False,
-                "error": str(e),
-                "file_path": file_path,
-                "file_id": file_id,
-            }
-
     def _apply_changes(
         self,
         database,
@@ -1023,13 +762,28 @@ class ComposeCSTModuleCommand(BaseMCPCommand):
             )
             t_prev = _t
 
-            # Add new data (AST, CST, entities)
-            update_result = self._update_file_data_atomic(
+            # Add new data (AST, CST, entities) via batch
+            from datetime import datetime
+
+            from ..core.database_client.file_data_batch import (
+                update_file_data_atomic_batch,
+            )
+            from ..core.database_client.objects.base import BaseObject
+
+            file_mtime = (
+                BaseObject._to_timestamp(
+                    datetime.fromtimestamp(temp_file.stat().st_mtime)
+                )
+                or 0.0
+            )
+            update_result = update_file_data_atomic_batch(
                 database=database,
                 file_id=file_id,
                 project_id=project_id,
                 source_code=source_code,
                 file_path=str(target_path),
+                file_mtime=file_mtime,
+                transaction_id=transaction_id,
             )
             _t = time.perf_counter()
             logger.info(
@@ -1078,19 +832,23 @@ class ComposeCSTModuleCommand(BaseMCPCommand):
                 _t - t_apply,
             )
 
-            return SuccessResult(
-                data={
-                    "success": True,
-                    "file_path": str(target_path),
-                    "file_id": file_id,
-                    "backup_uuid": backup_uuid,
-                    "update_result": update_result,
-                    "git_commit": {
-                        "success": git_success,
-                        "error": git_error,
-                    },
-                }
-            )
+            data = {
+                "success": True,
+                "file_path": str(target_path),
+                "file_id": file_id,
+                "backup_uuid": backup_uuid,
+                "update_result": update_result,
+                "git_commit": {
+                    "success": git_success,
+                    "error": git_error,
+                },
+            }
+            if target_path.exists():
+                data["file_size_bytes"] = target_path.stat().st_size
+                data["file_lines"] = len(
+                    target_path.read_text(encoding="utf-8").splitlines()
+                )
+            return SuccessResult(data=data)
 
         except Exception as error:
             # Rollback transaction
@@ -1413,8 +1171,27 @@ class ComposeCSTModuleCommand(BaseMCPCommand):
                                 for validation_type, val_result in validation_results.items()
                             }
 
+                    # Commit after write when config code_analysis.git_commit_on_write is true
+                    if isinstance(result, SuccessResult):
+                        git_ok, git_err = commit_after_write(
+                            root_path,
+                            [target_path],
+                            "compose_cst_module",
+                            commit_message_override=commit_message,
+                            config_data=BaseMCPCommand._get_raw_config(),
+                        )
+                        if not git_ok and git_err:
+                            logger.warning(
+                                "Git commit after compose_cst_module: %s",
+                                git_err,
+                            )
+
                     logger.info(
                         "[PROFILE] compose_cst_module total elapsed=%.3fs",
+                        time.perf_counter() - t_start,
+                    )
+                    logger.info(
+                        "[TIMING] command=compose_cst_module total_elapsed_sec=%.4f",
                         time.perf_counter() - t_start,
                     )
                     return result

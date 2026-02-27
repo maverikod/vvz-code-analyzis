@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import logging
 import os
+import time
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -330,11 +331,15 @@ def save_tree_to_file(
         ValueError: If tree not found or validation fails
         RuntimeError: If file operations fail
     """
+    timings: Dict[str, float] = {}
+    t0 = time.perf_counter()
     tree = get_tree(tree_id)
     if not tree:
         raise ValueError(f"Tree not found: {tree_id}")
+    timings["get_tree"] = time.perf_counter() - t0
 
     # Resolve file path
+    t0 = time.perf_counter()
     target_path = Path(file_path)
     if not target_path.is_absolute():
         target_path = (root_dir / target_path).resolve()
@@ -343,6 +348,7 @@ def save_tree_to_file(
 
     # Ensure directory exists
     target_path.parent.mkdir(parents=True, exist_ok=True)
+    timings["resolve_path"] = time.perf_counter() - t0
 
     backup_uuid: Optional[str] = None
     backup_manager: Optional[BackupManager] = None
@@ -351,6 +357,7 @@ def save_tree_to_file(
     with file_lock(target_path):
         try:
             # Step 1: Validate original file if it exists
+            t0 = time.perf_counter()
             if validate and target_path.exists():
                 try:
                     original_source = target_path.read_text(encoding="utf-8")
@@ -358,8 +365,10 @@ def save_tree_to_file(
                 except SyntaxError as e:
                     logger.warning(f"Original file has syntax errors: {e}")
                     # Continue anyway - we're replacing it
+            timings["validate_original"] = time.perf_counter() - t0
 
             # Step 2: Create backup (mandatory before overwriting existing file)
+            t0 = time.perf_counter()
             if target_path.exists():
                 backup_manager = BackupManager(root_dir)
                 try:
@@ -373,33 +382,45 @@ def save_tree_to_file(
                 )
                 if not backup_uuid:
                     logger.warning("Failed to create backup, continuing anyway")
+            timings["backup"] = time.perf_counter() - t0
 
             # Step 3: Generate source code from CST tree
+            t0 = time.perf_counter()
             source_code = tree.module.code
+            timings["code_gen"] = time.perf_counter() - t0
 
             # Step 4: Write to target.tmp (same directory as target)
+            t0 = time.perf_counter()
             temp_file = Path(str(target_path) + ".tmp")
             try:
                 temp_file.write_text(source_code, encoding="utf-8")
             except Exception as e:
                 raise RuntimeError(f"Failed to write temporary file: {e}") from e
+            timings["write_temp"] = time.perf_counter() - t0
 
             # Step 5: Validate temporary file
+            t0 = time.perf_counter()
             if validate:
                 try:
                     compile(source_code, str(temp_file), "exec")
                 except SyntaxError as e:
                     raise ValueError(f"Generated code has syntax errors: {e}") from e
+            timings["validate_temp"] = time.perf_counter() - t0
 
             # Step 6: Begin database transaction
+            t0 = time.perf_counter()
             transaction_id = database.begin_transaction()
+            timings["begin_transaction"] = time.perf_counter() - t0
 
             try:
                 # Step 7: Atomically replace file
+                t0 = time.perf_counter()
                 os.replace(str(temp_file), str(target_path))
                 temp_file = None  # File was moved, don't delete it
+                timings["replace"] = time.perf_counter() - t0
 
                 # Step 8: Update database
+                t0 = time.perf_counter()
                 # Calculate file metadata
                 lines = source_code.count("\n") + (1 if source_code else 0)
                 stripped = source_code.lstrip()
@@ -444,15 +465,26 @@ def save_tree_to_file(
                     )
                     created_file = database.create_file(file_obj)
                     file_id = created_file.id
+                timings["db_file_record"] = time.perf_counter() - t0
 
-                # Update file data (AST, CST, entities) atomically
-                update_result = _update_file_data_atomic_via_client(
+                # Update file data (AST, CST, entities) via batch
+                t0 = time.perf_counter()
+                from ..database_client.file_data_batch import (
+                    update_file_data_atomic_batch,
+                )
+                from ..database_client.objects.base import BaseObject
+
+                file_mtime = BaseObject._to_timestamp(last_modified) or 0.0
+                update_result = update_file_data_atomic_batch(
                     database=database,
                     file_id=file_id,
                     project_id=project_id,
                     source_code=source_code,
                     file_path=str(target_path),
+                    file_mtime=file_mtime,
+                    transaction_id=transaction_id,
                 )
+                timings["update_file_data_atomic"] = time.perf_counter() - t0
 
                 if not update_result.get("success"):
                     raise RuntimeError(
@@ -460,7 +492,9 @@ def save_tree_to_file(
                     )
 
                 # Step 9: Commit transaction
+                t0 = time.perf_counter()
                 database.commit_transaction(transaction_id)
+                timings["commit_transaction"] = time.perf_counter() - t0
 
                 # Step 10: Git commit (if requested)
                 if commit_message:
@@ -479,6 +513,7 @@ def save_tree_to_file(
                     "file_id": file_id,
                     "backup_uuid": backup_uuid,
                     "update_result": update_result,
+                    "timings": timings,
                 }
 
             except Exception:

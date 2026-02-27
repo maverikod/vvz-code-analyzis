@@ -10,6 +10,7 @@ email: vasilyvz@gmail.com
 from __future__ import annotations
 
 import logging
+import time
 from pathlib import Path
 from typing import Any, Dict
 
@@ -18,6 +19,7 @@ from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 from .base_mcp_command import BaseMCPCommand
 from ..core.cst_tree.tree_builder import create_tree_from_code
 from ..core.cst_tree.tree_saver import save_tree_to_file
+from ..core.git_integration import commit_after_write
 
 logger = logging.getLogger(__name__)
 
@@ -85,10 +87,11 @@ class CSTCreateFileCommand(BaseMCPCommand):
         Returns:
             SuccessResult with tree_id and file_path
         """
+        t_start = time.perf_counter()
         try:
             database = self._open_database_from_config(auto_analyze=False)
             try:
-                # Get project to resolve path
+                t0 = time.perf_counter()
                 project = database.get_project(project_id)
                 if not project:
                     return ErrorResult(
@@ -153,14 +156,16 @@ class CSTCreateFileCommand(BaseMCPCommand):
                         details={"file_path": str(target)},
                     )
 
-                # Check file doesn't exist
                 if target.exists():
                     return ErrorResult(
                         message=f"File already exists: {target}",
                         code="FILE_EXISTS",
                         details={"file_path": str(target)},
                     )
-
+                logger.info(
+                    "[TIMING] command=cst_create_file step=resolve_path elapsed_sec=%.4f",
+                    time.perf_counter() - t0,
+                )
                 project_root = Path(project.root_path)
 
                 # Format docstring as triple-quoted string
@@ -171,16 +176,17 @@ class CSTCreateFileCommand(BaseMCPCommand):
                 ):
                     docstring_value = f'"""{docstring_value}"""'
 
-                # Create source code with docstring
                 source_code = docstring_value
-
-                # Create CST tree from code
+                t_create = time.perf_counter()
                 tree = create_tree_from_code(
                     file_path=str(target),
                     source_code=source_code,
                 )
-
-                # Save tree to file (creates file on disk and in database)
+                logger.info(
+                    "[TIMING] command=cst_create_file step=create_tree elapsed_sec=%.4f",
+                    time.perf_counter() - t_create,
+                )
+                t_save = time.perf_counter()
                 result = save_tree_to_file(
                     tree_id=tree.tree_id,
                     file_path=str(target),
@@ -198,6 +204,19 @@ class CSTCreateFileCommand(BaseMCPCommand):
                         code="CST_SAVE_ERROR",
                         details=result,
                     )
+                logger.info(
+                    "[TIMING] command=cst_create_file step=save_tree elapsed_sec=%.4f total_elapsed_sec=%.4f",
+                    time.perf_counter() - t_save,
+                    time.perf_counter() - t_start,
+                )
+                git_ok, git_err = commit_after_write(
+                    project_root,
+                    [target],
+                    "cst_create_file",
+                    config_data=BaseMCPCommand._get_raw_config(),
+                )
+                if not git_ok and git_err:
+                    logger.warning("Git commit after cst_create_file: %s", git_err)
 
                 # Convert metadata to dictionaries
                 nodes = [meta.to_dict() for meta in tree.metadata_map.values()]
@@ -209,7 +228,11 @@ class CSTCreateFileCommand(BaseMCPCommand):
                     "nodes": nodes,
                     "total_nodes": len(nodes),
                 }
-
+                if target.exists():
+                    data["file_size_bytes"] = target.stat().st_size
+                    data["file_lines"] = len(
+                        target.read_text(encoding="utf-8").splitlines()
+                    )
                 return SuccessResult(data=data)
 
             finally:

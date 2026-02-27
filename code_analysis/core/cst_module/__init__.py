@@ -10,7 +10,7 @@ email: vasilyvz@gmail.com
 
 from ..exceptions import CSTModulePatchError, DocstringValidationError
 from .models import BlockInfo, ReplaceOp, InsertOp, CreateOp, Selector
-from .blocks import list_cst_blocks
+from .blocks import list_cst_blocks, list_file_structure
 from .patcher import apply_replace_ops
 from .patcher_insert import apply_insert_ops
 from .patcher_create import apply_create_ops
@@ -31,6 +31,7 @@ __all__ = [
     "CreateOp",
     "BlockInfo",
     "list_cst_blocks",
+    "list_file_structure",
     "apply_replace_ops",
     "apply_insert_ops",
     "apply_create_ops",

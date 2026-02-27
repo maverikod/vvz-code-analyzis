@@ -17,6 +17,7 @@ from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 from .base_mcp_command import BaseMCPCommand
 from .refactor import RefactorCommand as InternalRefactorCommand
 from ..core.backup_manager import BackupManager
+from ..core.git_integration import commit_after_write
 
 logger = logging.getLogger(__name__)
 
@@ -417,6 +418,17 @@ class SplitClassMCPCommand(BaseMCPCommand):
                 if backup_uuid:
                     logger.info(f"Backup created before split: {backup_uuid}")
 
+                config_data = BaseMCPCommand._get_raw_config()
+                git_ok, git_err = commit_after_write(
+                    root_path,
+                    [file_path_obj],
+                    "split_class",
+                    commit_message_override=f"Before split_class: {file_path}",
+                    config_data=config_data,
+                )
+                if not git_ok and git_err:
+                    logger.warning("Git commit before split_class: %s", git_err)
+
                 cmd = InternalRefactorCommand(proj_id, database=db, root_dir=root_path)
                 result = await cmd.split_class(str(root_path), file_path, config)
 
@@ -457,6 +469,15 @@ class SplitClassMCPCommand(BaseMCPCommand):
                 db.disconnect()
 
                 if result.get("success"):
+                    git_ok, git_err = commit_after_write(
+                        root_path,
+                        [file_path_obj],
+                        "split_class",
+                        commit_message_override=f"split_class: {file_path}",
+                        config_data=config_data,
+                    )
+                    if not git_ok and git_err:
+                        logger.warning("Git commit after split_class: %s", git_err)
                     result_data = result.copy()
                     if backup_uuid:
                         result_data["backup_uuid"] = backup_uuid
@@ -861,6 +882,17 @@ class ExtractSuperclassMCPCommand(BaseMCPCommand):
                 if backup_uuid:
                     logger.info(f"Backup created before extraction: {backup_uuid}")
 
+                config_data = BaseMCPCommand._get_raw_config()
+                git_ok, git_err = commit_after_write(
+                    root_path,
+                    [file_path_obj],
+                    "extract_superclass",
+                    commit_message_override=f"Before extract_superclass: {file_path}",
+                    config_data=config_data,
+                )
+                if not git_ok and git_err:
+                    logger.warning("Git commit before extract_superclass: %s", git_err)
+
                 cmd = InternalRefactorCommand(proj_id, database=db, root_dir=root_path)
                 result = await cmd.extract_superclass(str(root_path), file_path, config)
 
@@ -902,6 +934,22 @@ class ExtractSuperclassMCPCommand(BaseMCPCommand):
                 db.disconnect()
 
                 if result.get("success"):
+                    path_for_commit = (
+                        file_path_obj
+                        if file_path_obj.is_absolute()
+                        else root_path / file_path
+                    )
+                    git_ok, git_err = commit_after_write(
+                        root_path,
+                        [path_for_commit],
+                        "extract_superclass",
+                        commit_message_override=f"extract_superclass: {file_path}",
+                        config_data=config_data,
+                    )
+                    if not git_ok and git_err:
+                        logger.warning(
+                            "Git commit after extract_superclass: %s", git_err
+                        )
                     result_data = result.copy()
                     if backup_uuid:
                         result_data["backup_uuid"] = backup_uuid
@@ -1260,6 +1308,17 @@ class SplitFileToPackageMCPCommand(BaseMCPCommand):
                     f"Backup created before split_file_to_package: {backup_uuid}"
                 )
 
+            config_data = BaseMCPCommand._get_raw_config()
+            git_ok, git_err = commit_after_write(
+                root_path,
+                [file_path_obj],
+                "split_file_to_package",
+                commit_message_override=f"Before split_file_to_package: {file_path}",
+                config_data=config_data,
+            )
+            if not git_ok and git_err:
+                logger.warning("Git commit before split_file_to_package: %s", git_err)
+
             cmd = InternalRefactorCommand(proj_id, database=db, root_dir=root_path)
             result = await cmd.split_file_to_package(str(root_path), file_path, config)
 
@@ -1324,9 +1383,48 @@ class SplitFileToPackageMCPCommand(BaseMCPCommand):
             db.disconnect()
 
             if result.get("success"):
+                file_dir = file_path_obj.resolve().parent
+                file_stem = file_path_obj.resolve().stem
+                package_dir = file_dir / file_stem
+                git_ok, git_err = commit_after_write(
+                    root_path,
+                    [package_dir],
+                    "split_file_to_package",
+                    commit_message_override=f"split_file_to_package: {file_path}",
+                    config_data=config_data,
+                )
+                if not git_ok and git_err:
+                    logger.warning(
+                        "Git commit after split_file_to_package: %s", git_err
+                    )
                 result_data = result.copy()
                 if backup_uuid:
                     result_data["backup_uuid"] = backup_uuid
+                # Report size in bytes and lines for each written file
+                files_with_size = []
+                init_file = package_dir / "__init__.py"
+                if init_file.exists():
+                    text = init_file.read_text(encoding="utf-8")
+                    files_with_size.append(
+                        {
+                            "path": str(init_file.relative_to(root_path)),
+                            "file_size_bytes": len(text.encode("utf-8")),
+                            "file_lines": len(text.splitlines()),
+                        }
+                    )
+                if isinstance(config, dict):
+                    for module_name in config.get("modules", {}):
+                        module_path = package_dir / f"{module_name}.py"
+                        if module_path.exists():
+                            text = module_path.read_text(encoding="utf-8")
+                            files_with_size.append(
+                                {
+                                    "path": str(module_path.relative_to(root_path)),
+                                    "file_size_bytes": len(text.encode("utf-8")),
+                                    "file_lines": len(text.splitlines()),
+                                }
+                            )
+                result_data["files"] = files_with_size
                 return SuccessResult(data=result_data)
             return ErrorResult(
                 message=result.get("message", "split_file_to_package failed"),

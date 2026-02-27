@@ -5,6 +5,8 @@ email: vasilyvz@gmail.com
 
 Commands for working with Concrete Syntax Tree: load, save, reload, find node, get node info, get node by range, modify tree, compose module, create file, convert and save; plus list_cst_blocks and query_cst.
 
+**Concept and pipeline:** [CST_CONCEPT_AND_PIPELINE.md](../../cst_concept/CST_CONCEPT_AND_PIPELINE.md) — full concept, load-by-levels, node expand (direct/recursive), write node (parent + file), syntax-error handling, and comparison with direct text editing. Subdir `docs/cst_concept/` is used for CST concept and refactoring planning.
+
 ## Commands → File Mapping
 
 | MCP Command Name   | Class                     | Source File                              |

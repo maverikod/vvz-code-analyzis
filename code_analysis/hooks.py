@@ -70,6 +70,13 @@ def register_code_analysis_commands(reg: registry) -> None:
         pass
 
     try:
+        from .commands.file_structure_command import FileStructureCommand
+
+        reg.register(FileStructureCommand, "custom")
+    except ImportError:
+        pass
+
+    try:
         from .commands.query_cst_command import QueryCSTCommand
 
         reg.register(QueryCSTCommand, "custom")

@@ -13,11 +13,12 @@ from __future__ import annotations
 import logging
 import sqlite3
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from ..exceptions import DriverConnectionError, DriverOperationError
 from ..sqlite_query_journal import SQLiteQueryJournal
 from .base import BaseDatabaseDriver
+from .sqlite_batch import expand_operations, group_for_executemany
 from .sqlite_operations import SQLiteOperations
 from .sqlite_schema import SQLiteSchemaManager
 from .sqlite_transactions import SQLiteTransactionManager
@@ -50,10 +51,9 @@ class SQLiteDriver(BaseDatabaseDriver):
     Works with tables directly (insert, update, delete, select).
     All operations are table-level, not object-level.
 
-    Batching: execute_batch is inherited from BaseDatabaseDriver; the default
-    implementation runs each (sql, params) via execute() using the same
-    connection/transaction when transaction_id is set. No SQLite-specific
-    override unless native batch optimization (e.g. executemany) is added later.
+    Batching: execute_batch recognizes multiple statements in one sql (split by ';'),
+    expands to a flat list, groups consecutive same-SQL operations for executemany,
+    and returns one result per statement in order.
     """
 
     def __init__(self) -> None:
@@ -490,39 +490,29 @@ class SQLiteDriver(BaseDatabaseDriver):
             table_name, where, columns, limit, offset, order_by
         )
 
-    def execute(
+    def execute_batch(
         self,
-        sql: str,
-        params: Optional[tuple] = None,
+        operations: List[Tuple[str, Optional[tuple]]],
         transaction_id: Optional[str] = None,
-    ) -> Dict[str, Any]:
-        """Execute raw SQL statement.
+    ) -> List[Dict[str, Any]]:
+        """Execute multiple SQL statements with batch recognition and executemany.
 
-        Args:
-            sql: SQL statement
-            params: Optional tuple of parameters for parameterized query
-            transaction_id: Optional transaction ID. If provided, uses transaction connection.
-
-        Returns:
-            Dictionary with operation result (affected_rows, lastrowid, data, etc.)
-
-        Raises:
-            DriverOperationError: If operation fails
+        Each operation's sql may contain several statements separated by ';'
+        (params apply to the first statement only). Consecutive same-SQL
+        operations are run via cursor.executemany(); order of results is
+        preserved (one result per logical statement).
         """
-        # Use transaction connection if transaction_id is provided
-        sql_preview = (sql.strip()[:60] + "…") if len(sql.strip()) > 60 else sql.strip()
-        logger.info(
-            "[CHAIN] sqlite driver execute sql_preview=%s tid=%s",
-            sql_preview,
-            (transaction_id[:8] + "…") if transaction_id else None,
-        )
+        if not operations:
+            return []
+        expanded = expand_operations(operations)
+        if not expanded:
+            return []
+        runs = group_for_executemany(expanded)
+
         if transaction_id:
             if not self._transaction_manager:
                 raise DriverOperationError("Transaction manager not initialized")
             if transaction_id not in self._transaction_manager._transactions:
-                logger.warning(
-                    "[CHAIN] sqlite driver execute transaction_id not in _transactions"
-                )
                 raise DriverOperationError(f"Transaction {transaction_id} not found")
             conn = self._transaction_manager._transactions[transaction_id]
         else:
@@ -530,79 +520,185 @@ class SQLiteDriver(BaseDatabaseDriver):
                 raise DriverOperationError("Database connection not established")
             conn = self.conn
 
-        # Normalize params: sqlite3 expects tuple/list (for ?) or dict (for :name).
-        # RPC may send list (JSON); avoid passing str or other invalid types.
-        bind_params: Optional[tuple | dict] = None
-        if params is not None:
-            if isinstance(params, dict):
-                bind_params = params
-            elif isinstance(params, (list, tuple)):
-                bind_params = tuple(params) if params else ()
-            else:
-                raise DriverOperationError(
-                    f"execute params must be tuple, list, or dict; got {type(params).__name__}"
-                )
-
+        results: List[Dict[str, Any]] = []
         try:
-            cursor = conn.cursor()
-            try:
-                if bind_params is not None and bind_params != ():
-                    cursor.execute(sql, bind_params)
-                else:
-                    cursor.execute(sql)
-
-                result: Dict[str, Any] = {
-                    "affected_rows": cursor.rowcount,
-                    "lastrowid": cursor.lastrowid,
-                }
-
-                # If it's a SELECT statement, fetch data
-                if sql.strip().upper().startswith("SELECT"):
-                    rows = cursor.fetchall()
-                    result["data"] = [dict(row) for row in rows]
-
-                # Only commit if not in transaction (writes are persisted)
-                if not transaction_id:
-                    try:
-                        conn.commit()
-                    except Exception as commit_err:
-                        msg = str(commit_err).lower()
-                        # SQLite can raise when no transaction is active (e.g. autocommit or implicit commit)
-                        if "no transaction" in msg or "cannot commit" in msg:
-                            logger.debug(
-                                "Commit skipped (no active transaction): %s",
-                                commit_err,
-                            )
-                        else:
-                            raise DriverOperationError(
-                                f"Failed to commit: {commit_err}"
-                            ) from commit_err
-                if self._query_journal:
-                    self._query_journal.write(
-                        sql,
-                        params=bind_params,
-                        transaction_id=transaction_id,
-                        success=True,
+            for run_idx, (kind, payload) in enumerate(runs):
+                if kind == "single":
+                    sql, params = payload
+                    bind_params: Optional[tuple] = (
+                        tuple(params) if params is not None else None
                     )
-                return result
-            finally:
-                cursor.close()
+                    if bind_params is not None and bind_params == ():
+                        bind_params = None
+                    cursor = conn.cursor()
+                    try:
+                        if bind_params:
+                            cursor.execute(sql, bind_params)
+                        else:
+                            cursor.execute(sql)
+                        res: Dict[str, Any] = {
+                            "affected_rows": cursor.rowcount,
+                            "lastrowid": cursor.lastrowid,
+                        }
+                        if sql.strip().upper().startswith("SELECT"):
+                            res["data"] = [dict(row) for row in cursor.fetchall()]
+                        else:
+                            res["data"] = None
+                        results.append(res)
+                        if self._query_journal:
+                            self._query_journal.write(
+                                sql,
+                                params=bind_params,
+                                transaction_id=transaction_id,
+                                success=True,
+                            )
+                    finally:
+                        cursor.close()
+                else:
+                    sql, params_list = payload
+                    cursor = conn.cursor()
+                    try:
+                        cursor.executemany(sql, params_list)
+                        n = len(params_list)
+                        lastrowid = cursor.lastrowid
+                        for i in range(n):
+                            results.append(
+                                {
+                                    "affected_rows": 1,
+                                    "lastrowid": lastrowid if i == n - 1 else None,
+                                    "data": None,
+                                }
+                            )
+                        if self._query_journal:
+                            for p in params_list:
+                                self._query_journal.write(
+                                    sql,
+                                    params=tuple(p),
+                                    transaction_id=transaction_id,
+                                    success=True,
+                                )
+                    finally:
+                        cursor.close()
+            if not transaction_id:
+                try:
+                    conn.commit()
+                except Exception as commit_err:
+                    msg = str(commit_err).lower()
+                    if "no transaction" in msg or "cannot commit" in msg:
+                        logger.debug(
+                            "Commit skipped (no active transaction): %s", commit_err
+                        )
+                    else:
+                        raise DriverOperationError(
+                            f"Failed to commit: {commit_err}"
+                        ) from commit_err
+            return results
         except Exception as e:
-            err_msg = str(e)
-            if self._query_journal:
-                self._query_journal.write(
-                    sql,
-                    params=bind_params,
-                    transaction_id=transaction_id,
-                    success=False,
-                    error=err_msg,
-                )
-            # Only rollback if not in transaction (transaction rollback is handled separately)
             if not transaction_id:
                 try:
                     conn.rollback()
                 except Exception:
-                    pass  # Ignore rollback errors (e.g. no transaction)
+                    pass
+            raise DriverOperationError(f"execute_batch failed: {e}") from e
+
+    def execute(
+        self,
+        sql: str,
+        params: Optional[tuple] = None,
+        transaction_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Execute SQL: one or more statements in one text; return only last result.
+
+        If sql contains several statements (separated by ';'), all are executed
+        in order. Only the result of the **last** statement is returned. If the
+        last statement is not SELECT, result has data=None.
+        """
+        from .sqlite_batch import split_batch_sql
+
+        statements = split_batch_sql(sql)
+        if not statements:
+            return {"affected_rows": 0, "lastrowid": None, "data": None}
+
+        sql_preview = (sql.strip()[:60] + "…") if len(sql.strip()) > 60 else sql.strip()
+        logger.info(
+            "[CHAIN] sqlite driver execute sql_preview=%s tid=%s n_stmts=%s",
+            sql_preview,
+            (transaction_id[:8] + "…") if transaction_id else None,
+            len(statements),
+        )
+        if transaction_id:
+            if not self._transaction_manager:
+                raise DriverOperationError("Transaction manager not initialized")
+            if transaction_id not in self._transaction_manager._transactions:
+                raise DriverOperationError(f"Transaction {transaction_id} not found")
+            conn = self._transaction_manager._transactions[transaction_id]
+        else:
+            if not self.conn:
+                raise DriverOperationError("Database connection not established")
+            conn = self.conn
+
+        bind_params: Optional[tuple] = None
+        if params is not None:
+            if isinstance(params, (list, tuple)):
+                bind_params = tuple(params) if params else ()
+            else:
+                raise DriverOperationError(
+                    f"execute params must be tuple or list; got {type(params).__name__}"
+                )
+
+        last_result: Dict[str, Any] = {
+            "affected_rows": 0,
+            "lastrowid": None,
+            "data": None,
+        }
+        try:
+            for i, stmt in enumerate(statements):
+                use_params = bind_params if i == 0 else None
+                if use_params is not None and use_params == ():
+                    use_params = None
+                cursor = conn.cursor()
+                try:
+                    if use_params:
+                        cursor.execute(stmt, use_params)
+                    else:
+                        cursor.execute(stmt)
+                    last_result = {
+                        "affected_rows": cursor.rowcount,
+                        "lastrowid": cursor.lastrowid,
+                    }
+                    if stmt.strip().upper().startswith("SELECT"):
+                        last_result["data"] = [dict(row) for row in cursor.fetchall()]
+                    else:
+                        last_result["data"] = None
+                    if self._query_journal:
+                        self._query_journal.write(
+                            stmt,
+                            params=use_params,
+                            transaction_id=transaction_id,
+                            success=True,
+                        )
+                finally:
+                    cursor.close()
+            if not transaction_id:
+                try:
+                    conn.commit()
+                except Exception as commit_err:
+                    msg = str(commit_err).lower()
+                    if "no transaction" in msg or "cannot commit" in msg:
+                        logger.debug(
+                            "Commit skipped (no active transaction): %s", commit_err
+                        )
+                    else:
+                        raise DriverOperationError(
+                            f"Failed to commit: {commit_err}"
+                        ) from commit_err
+            return last_result
+        except Exception as e:
+            if not transaction_id:
+                try:
+                    conn.rollback()
+                except Exception:
+                    pass
             raise DriverOperationError(f"Failed to execute SQL: {e}") from e
 
     def begin_transaction(self) -> str:

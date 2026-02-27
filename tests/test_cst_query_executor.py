@@ -49,6 +49,18 @@ class TestClass:
         assert matches[0].name == "TestClass"
         assert matches[0].kind == "class"
 
+    def test_query_type_wildcard_def_star(self):
+        """Test Def:* matches FunctionDef and ClassDef (suffix match)."""
+        source = """
+def f(): pass
+class C: pass
+"""
+        matches = query_source(source, "Def:*")
+        types = {m.node_type for m in matches}
+        names = {m.name for m in matches}
+        assert types == {"FunctionDef", "ClassDef"}
+        assert names == {"f", "C"}
+
     def test_query_wildcard(self):
         """Test querying with wildcard."""
         source = """

@@ -1,0 +1,168 @@
+"""
+Performance tests for cst_save_tree batch DB path (update_file_data_atomic_batch).
+
+Measures timings returned by save_tree_to_file; asserts update_file_data_atomic
+stays within a reasonable bound (batch path = few execute_batch calls, not N round-trips).
+
+Author: Vasiliy Zdanovskiy
+email: vasilyvz@gmail.com
+"""
+
+from __future__ import annotations
+
+import uuid
+from pathlib import Path
+from unittest.mock import MagicMock
+
+import pytest
+
+from code_analysis.core.cst_tree.tree_builder import create_tree_from_code
+from code_analysis.core.cst_tree.tree_saver import save_tree_to_file
+
+
+def _make_db_mock() -> MagicMock:
+    """Database mock with execute_batch (batch path)."""
+    db = MagicMock()
+    db.begin_transaction = MagicMock(return_value="tid")
+    db.commit_transaction = MagicMock()
+    db.rollback_transaction = MagicMock()
+    db.select = MagicMock(return_value=[])
+    created = MagicMock()
+    created.id = 1
+    db.create_file = MagicMock(return_value=created)
+    updated = MagicMock()
+    updated.id = 1
+    db.update_file = MagicMock(return_value=updated)
+    db.execute_batch = MagicMock(
+        return_value=[
+            {"affected_rows": 1, "lastrowid": i + 1, "data": None} for i in range(100)
+        ]
+    )
+    return db
+
+
+@pytest.fixture
+def db_mock():
+    """Database mock for save_tree_to_file (batch path)."""
+    return _make_db_mock()
+
+
+@pytest.fixture
+def tree_small(tmp_path: Path):
+    """Small file: docstring only."""
+    code = '"""Doc."""\n\nx = 1\n'
+    path = tmp_path / "small.py"
+    tree = create_tree_from_code(str(path), code)
+    return tree.tree_id, tmp_path, "small.py"
+
+
+@pytest.fixture
+def tree_with_entities(tmp_path: Path):
+    """File with classes/methods/functions/imports to exercise full batch path."""
+    code = '''
+"""Module with entities."""
+
+import os
+import sys
+
+def foo():
+    pass
+
+class Bar:
+    def meth(self):
+        pass
+'''
+    path = tmp_path / "with_entities.py"
+    tree = create_tree_from_code(str(path), code.strip())
+    return tree.tree_id, tmp_path, "with_entities.py"
+
+
+class TestCstSaveBatchPerformance:
+    """Performance tests for cst_save_tree batch DB updates."""
+
+    def test_save_returns_timings(self, tree_small, db_mock) -> None:
+        """save_tree_to_file returns timings including update_file_data_atomic."""
+        tree_id, root_dir, file_path = tree_small
+        result = save_tree_to_file(
+            tree_id=tree_id,
+            file_path=file_path,
+            root_dir=root_dir,
+            project_id=str(uuid.uuid4()),
+            database=db_mock,
+            validate=True,
+            backup=False,
+        )
+        assert result.get("success") is True
+        timings = result.get("timings")
+        assert timings is not None
+        assert "update_file_data_atomic" in timings
+        assert "db_file_record" in timings
+
+    def test_update_file_data_atomic_under_threshold(self, tree_small, db_mock) -> None:
+        """Batch path: update_file_data_atomic should be under 5s (no N round-trips)."""
+        tree_id, root_dir, file_path = tree_small
+        result = save_tree_to_file(
+            tree_id=tree_id,
+            file_path=file_path,
+            root_dir=root_dir,
+            project_id=str(uuid.uuid4()),
+            database=db_mock,
+            validate=True,
+            backup=False,
+        )
+        assert result.get("success") is True
+        t = result["timings"].get("update_file_data_atomic")
+        assert t is not None
+        assert t < 5.0, (
+            f"update_file_data_atomic={t:.3f}s; batch path should be fast "
+            "(few execute_batch calls). If this fails, check for per-row DB calls in loop."
+        )
+
+    def test_save_multiple_runs_timings_stable(self, tree_small, db_mock) -> None:
+        """Run save 3 times and report min/mean/max of update_file_data_atomic."""
+        tree_id, root_dir, file_path = tree_small
+        project_id = str(uuid.uuid4())
+        times: list[float] = []
+        for _ in range(3):
+            result = save_tree_to_file(
+                tree_id=tree_id,
+                file_path=file_path,
+                root_dir=root_dir,
+                project_id=project_id,
+                database=db_mock,
+                validate=True,
+                backup=False,
+            )
+            assert result.get("success") is True
+            t = result["timings"].get("update_file_data_atomic")
+            if t is not None:
+                times.append(t)
+        if times:
+            mn, mx = min(times), max(times)
+            mean = sum(times) / len(times)
+            assert mx < 5.0, f"max update_file_data_atomic={mx:.3f}s"
+            # Log for human: pytest -s shows this
+            print(
+                f"  update_file_data_atomic: min={mn:.4f}s mean={mean:.4f}s max={mx:.4f}s"
+            )
+
+    def test_save_with_entities_returns_timings(
+        self, tree_with_entities, db_mock
+    ) -> None:
+        """Full batch path with classes/methods/functions/imports."""
+        tree_id, root_dir, file_path = tree_with_entities
+        result = save_tree_to_file(
+            tree_id=tree_id,
+            file_path=file_path,
+            root_dir=root_dir,
+            project_id=str(uuid.uuid4()),
+            database=db_mock,
+            validate=True,
+            backup=False,
+        )
+        assert result.get("success") is True
+        assert result.get("timings") is not None
+        assert "update_file_data_atomic" in result["timings"]
+        # Batch path: still few round-trips
+        t = result["timings"]["update_file_data_atomic"]
+        assert t < 5.0, f"update_file_data_atomic={t:.3f}s with entities"

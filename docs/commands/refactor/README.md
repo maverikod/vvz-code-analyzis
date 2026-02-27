@@ -3,12 +3,13 @@
 Author: Vasiliy Zdanovskiy  
 email: vasilyvz@gmail.com
 
-Commands for refactoring: extract superclass, split class, split file to package.
+Commands for refactoring: file structure (classes/methods with line counts), extract superclass, split class, split file to package.
 
 ## Commands → File Mapping
 
 | MCP Command Name    | Class                      | Source File                        |
 |---------------------|----------------------------|------------------------------------|
+| file_structure      | FileStructureCommand       | `commands/file_structure_command.py` |
 | extract_superclass  | ExtractSuperclassMCPCommand | `commands/refactor_mcp_commands.py`|
 | split_class         | SplitClassMCPCommand       | (same)                             |
 | split_file_to_package| SplitFileToPackageMCPCommand| (same)                            |

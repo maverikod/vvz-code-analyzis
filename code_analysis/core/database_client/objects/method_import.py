@@ -7,7 +7,7 @@ email: vasilyvz@gmail.com
 
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 from .base import BaseObject
 
@@ -64,7 +64,7 @@ class Method(BaseObject):
         self.args = args if args else []
 
     @classmethod
-    def from_dict(cls, data: Dict[str, any]) -> "Method":
+    def from_dict(cls, data: Dict[str, Any]) -> "Method":
         """Create Method from dictionary.
 
         Args:
@@ -107,7 +107,7 @@ class Method(BaseObject):
         )
 
     @classmethod
-    def from_db_row(cls, row: Dict[str, any]) -> "Method":
+    def from_db_row(cls, row: Dict[str, Any]) -> "Method":
         """Create Method from database row.
 
         Args:
@@ -129,7 +129,7 @@ class Method(BaseObject):
 
         return cls.from_dict(row)
 
-    def to_db_row(self) -> Dict[str, any]:
+    def to_db_row(self) -> Dict[str, Any]:
         """Convert Method to database row format.
 
         Returns:
@@ -179,7 +179,7 @@ class Import(BaseObject):
     created_at: Optional[datetime] = None
 
     @classmethod
-    def from_dict(cls, data: Dict[str, any]) -> "Import":
+    def from_dict(cls, data: Dict[str, Any]) -> "Import":
         """Create Import from dictionary.
 
         Args:
@@ -211,7 +211,7 @@ class Import(BaseObject):
         )
 
     @classmethod
-    def from_db_row(cls, row: Dict[str, any]) -> "Import":
+    def from_db_row(cls, row: Dict[str, Any]) -> "Import":
         """Create Import from database row.
 
         Args:
@@ -225,7 +225,7 @@ class Import(BaseObject):
         """
         return cls.from_dict(row)
 
-    def to_db_row(self) -> Dict[str, any]:
+    def to_db_row(self) -> Dict[str, Any]:
         """Convert Import to database row format.
 
         Returns:

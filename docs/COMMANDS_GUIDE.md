@@ -157,6 +157,7 @@ Before any command modifies existing code, the file is placed in **versions** (b
 
 | Command | Doc | Purpose |
 |---------|-----|--------|
+| file_structure | [file_structure.md](commands/refactor/file_structure.md) | List classes and first-level methods with line counts |
 | extract_superclass | [extract_superclass.md](commands/refactor/extract_superclass.md) | Extract superclass from class |
 | split_class | [split_class.md](commands/refactor/split_class.md) | Split class into multiple classes |
 | split_file_to_package | [split_file_to_package.md](commands/refactor/split_file_to_package.md) | Split file into package |

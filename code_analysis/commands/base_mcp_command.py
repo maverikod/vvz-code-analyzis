@@ -446,6 +446,17 @@ class BaseMCPCommand(Command):
         return (Path.cwd() / "config.json").resolve()
 
     @staticmethod
+    def _get_raw_config() -> Dict[str, Any]:
+        """
+        Load raw config dict from active server config path.
+
+        Returns:
+            Full config dict (e.g. for code_analysis.git_commit_on_write).
+        """
+        config_path = BaseMCPCommand._resolve_config_path()
+        return load_raw_config(config_path)
+
+    @staticmethod
     def _get_shared_storage() -> StoragePaths:
         """
         Resolve shared storage paths from application config (one DB for all projects).

@@ -2,10 +2,12 @@
 CSTQuery selector parser (Lark).
 
 Supported features (intentionally minimal but practical):
-- Steps: `TYPE` or `*`
+- Steps: `TYPE`, `TYPE:*` (prefix/suffix match on node type), or `*`
 - Combinators: descendant (space) and direct child (`>`)
 - Predicates: [attr=value], [attr!=value], [attr~=value], [attr^=value], [attr$=value]
 - Pseudos: :first, :last, :nth(N)
+
+Type modifier `:*` matches by prefix or suffix: e.g. `Def:*` → FunctionDef, ClassDef.
 
 Notes:
 - Values can be quoted with single or double quotes; unquoted barewords are allowed.
@@ -43,7 +45,8 @@ CHILD: ">"
 step: node_type predicate* pseudo*
     | predicate+ pseudo*
     | pseudo+
-node_type: STAR | NAME
+node_type: STAR | NAME type_wildcard?
+type_wildcard: ":*"
 STAR: "*"
 
 predicate: "[" NAME OP value "]"
@@ -84,7 +87,7 @@ class _ToAst(Transformer):
 
     def BAREWORD(self, t: Token) -> str:  # noqa: N802
         """Parse bareword value, handling quoted strings that were parsed as barewords.
-        
+
         Sometimes quoted strings (especially single quotes inside double-quoted
         Python strings) are parsed as BAREWORD instead of STRING.
         We need to detect and handle these cases.
@@ -102,7 +105,7 @@ class _ToAst(Transformer):
 
     def STRING(self, t: Token) -> str:  # noqa: N802
         """Parse string value, removing quotes and handling escape sequences.
-        
+
         Lark provides the string token with quotes included.
         We need to remove the outer quotes and decode escape sequences.
         """
@@ -140,7 +143,10 @@ class _ToAst(Transformer):
         return _ParsedPseudo(name=name, index=idx)
 
     def node_type(self, items: list[Any]) -> str:
-        return str(items[0])
+        name = str(items[0])
+        if len(items) > 1:
+            return name + ":*"
+        return name
 
     def step(self, items: list[Any]) -> SelectorStep:
         node_type: str = "*"

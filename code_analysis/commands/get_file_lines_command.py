@@ -12,12 +12,20 @@ from __future__ import annotations
 import logging
 from typing import Any, Dict
 
+import libcst as cst
 from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 
 from .base_mcp_command import BaseMCPCommand
 from ..core.exceptions import ValidationError
 
 logger = logging.getLogger(__name__)
+
+# Error message when file is healthy and line commands are disallowed
+_LINE_CMD_DISALLOWED_MSG = (
+    "This file parses successfully. Use CST commands instead: "
+    "cst_load_file (load tree), cst_modify_tree (edit by node), compose_cst_module (patch by selector). "
+    "Set code_analysis.allow_line_commands_on_healthy_files=true to allow get_file_lines/replace_file_lines on healthy files."
+)
 
 
 class GetFileLinesCommand(BaseMCPCommand):
@@ -106,6 +114,28 @@ class GetFileLinesCommand(BaseMCPCommand):
                 )
 
             text = absolute_path.read_text(encoding="utf-8", errors="replace")
+            config_data = self._get_raw_config()
+            allow_on_healthy = config_data.get("code_analysis", {}).get(
+                "allow_line_commands_on_healthy_files", False
+            )
+            if not allow_on_healthy:
+                try:
+                    cst.parse_module(text)
+                except cst.ParserSyntaxError:
+                    pass
+                else:
+                    return ErrorResult(
+                        message=_LINE_CMD_DISALLOWED_MSG,
+                        code="USE_CST_COMMANDS",
+                        details={
+                            "file_path": file_path,
+                            "cst_commands": [
+                                "cst_load_file",
+                                "cst_modify_tree",
+                                "compose_cst_module",
+                            ],
+                        },
+                    )
             all_lines = text.splitlines(keepends=False)
             total_lines = len(all_lines)
 

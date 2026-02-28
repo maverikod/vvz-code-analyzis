@@ -70,6 +70,7 @@ class CodeAnalysisConfigGenerator(SimpleConfigGenerator):
         file_watcher_scan_interval: Optional[int] = None,
         file_watcher_log_path: Optional[str] = None,
         file_watcher_version_dir: Optional[str] = None,
+        allow_line_commands_on_healthy_files: Optional[bool] = None,
     ) -> str:
         """
         Generate configuration file for code-analysis-server.
@@ -217,6 +218,11 @@ class CodeAnalysisConfigGenerator(SimpleConfigGenerator):
             ca["vectorization_retry_delay"] = 1.0
         if "log_vectorization_chunker_trace" not in ca:
             ca["log_vectorization_chunker_trace"] = False
+        ca["allow_line_commands_on_healthy_files"] = (
+            allow_line_commands_on_healthy_files
+            if allow_line_commands_on_healthy_files is not None
+            else ca.get("allow_line_commands_on_healthy_files", False)
+        )
 
         # Indexing worker (from args or default)
         if "indexing_worker" not in ca:

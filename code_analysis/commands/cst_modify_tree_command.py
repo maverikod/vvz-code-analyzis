@@ -269,7 +269,7 @@ class CSTModifyTreeCommand(BaseMCPCommand):
                 try:
                     compile(modified_code, "<string>", "exec")
                 except SyntaxError as e:
-                    validation_result: dict[str, Any] = {
+                    validation_result = {
                         "syntax_valid": False,
                         "compiles": False,
                         "error": str(e),
@@ -298,7 +298,7 @@ class CSTModifyTreeCommand(BaseMCPCommand):
                 return SuccessResult(data=data)
 
             # Normal mode: apply changes
-            data: Dict[str, Any] = {
+            data = {
                 "success": True,
                 "preview": False,
                 "tree_id": modified_tree.tree_id,

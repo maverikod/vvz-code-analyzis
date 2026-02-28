@@ -60,7 +60,7 @@ These rules apply whenever the AI **accesses** (reads, creates, edits, or delete
 
 Same workflows as in [AI_TOOL_USAGE_RULES.md](AI_TOOL_USAGE_RULES.md), but **always** with the appropriate **`project_id`** for the target `test_data` project:
 
-- **CST (tree-based)**: `cst_load_file` → `cst_find_node` / `cst_get_node_by_range` → `cst_modify_tree` (use **`code_lines`** for multi-line code) → `cst_save_tree`.
+- **CST (tree-based)**: `cst_load_file` → `cst_find_node` / `cst_get_node_by_range` → `cst_modify_tree` (use **`code_lines`** for multi-line code) → `cst_save_tree`. For **insert** in `cst_modify_tree`: `parent_node_id` must be a **container** (Module, FunctionDef, or ClassDef), not IndentedBlock; use **`__root__`** for module-level; for a function body use the **function's node_id** (FunctionDef), not its body node. See [cst_modify_tree.md](commands/cst/cst_modify_tree.md).
 - **CST (file-based)**: `list_cst_blocks`, `query_cst`, then `compose_cst_module` with `apply=true` and `create_backup=true` as needed.
 - **New file**: `cst_create_file` (or `compose_cst_module` for new path) with `project_id` and path relative to project root.
 - **Quality**: `format_code`, `lint_code`, `type_check_code` (with `project_id` where required).
@@ -95,4 +95,5 @@ Use `restart` instead of `start` to restart an already running server. After the
 - [ ] Resolve **project_id** from `projectid` or `list_projects` (or create project with `create_project`).
 - [ ] Use **project_id** and paths **relative to project root** in all server commands.
 - [ ] Prefer **`code_lines`** for multi-line code in `cst_modify_tree` / compose ops.
+- [ ] For **insert** in `cst_modify_tree`: `parent_node_id` must be Module, FunctionDef, or ClassDef (not IndentedBlock); use **`__root__`** for module-level; use the function's node_id for function body. See [cst_modify_tree.md](commands/cst/cst_modify_tree.md).
 - [ ] On server error in this project: fix the bug immediately, then resume from breakpoint; otherwise report to user; do not silently switch to direct reads or edits under `test_data/`.

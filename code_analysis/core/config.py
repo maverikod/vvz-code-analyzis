@@ -218,6 +218,10 @@ class ServerConfig(BaseModel):
         default=False,
         description="If true, log each chunker request/response (text preview, result, error) to logs/vectorization_chunker_trace.log",
     )
+    allow_line_commands_on_healthy_files: bool = Field(
+        default=False,
+        description="If true, get_file_lines and replace_file_lines are allowed on files that parse successfully. If false (default), those commands return an error for healthy files and the client should use cst_load_file / cst_modify_tree / compose_cst_module instead.",
+    )
     worker: Optional[Dict[str, Any]] = Field(
         default_factory=lambda: {
             "enabled": True,

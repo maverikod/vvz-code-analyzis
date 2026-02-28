@@ -57,6 +57,23 @@ Important notes:
 - Tree modifications are in-memory until saved
 - All operations must be valid for any to be applied
 
+### Instructions for the model — insert operation
+
+When using **insert**:
+
+1. **Parent must be a container node, not the body node.**  
+   For `parent_node_id` you must pass the node ID of:
+   - **Module** (file root), or
+   - **FunctionDef** (the function itself), or
+   - **ClassDef** (the class itself).  
+   Do **not** pass the node ID of an **IndentedBlock** (the body of a function/class). The command expects the container (Module/FunctionDef/ClassDef) and resolves the body internally. If you pass the IndentedBlock node, the server returns an error: *"Parent node has no insertable body"*.
+
+2. **Module-level insert:** use the reserved sentinel **`__root__`** as `parent_node_id` for inserting at file (module) level. Alternatively you can use the Module node ID from the tree.
+
+3. **Insert into a function body:** use the **function's node_id** (the FunctionDef node from `cst_find_node` or `cst_get_node_info`), not the node_id of its child IndentedBlock. Same for classes: use the ClassDef node_id.
+
+4. **Position:** use `first`, `last`, or `{"after": N}` (0-based index of the sibling to insert after). For position `"after"` with a parent, you must supply the index, e.g. `"position": {"after": 6}`.
+
 ---
 
 ## Arguments (Аргументы)

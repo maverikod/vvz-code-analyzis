@@ -10,6 +10,7 @@ email: vasilyvz@gmail.com
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -19,6 +20,39 @@ from ..core.cst_tree.models import CSTTree
 from ..core.cst_tree.skeleton import skeleton_from_tree
 from ..core.cst_tree.tree_finder import find_nodes
 from ..core.cst_tree.tree_metadata import get_node_metadata
+
+logger = logging.getLogger(__name__)
+
+# Default context size: lines before and after the error line to include in error responses
+ERROR_CONTEXT_BEFORE = 100
+ERROR_CONTEXT_AFTER = 100
+
+
+def build_error_source_context(
+    file_path: Path,
+    error_line_1based: Optional[int] = None,
+    context_before: int = ERROR_CONTEXT_BEFORE,
+    context_after: int = ERROR_CONTEXT_AFTER,
+) -> Tuple[List[str], int]:
+    """
+    Build source context for error response: lines around the error line.
+
+    Returns (list of lines, 1-based start line). If file cannot be read,
+    returns ([], 1). Used so the model sees the error and surrounding code.
+    """
+    try:
+        lines = file_path.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return ([], 1)
+    if not lines:
+        return ([], 1)
+    if error_line_1based is None or error_line_1based < 1:
+        error_line_1based = 1
+    idx = min(error_line_1based - 1, len(lines) - 1)
+    start = max(0, idx - context_before)
+    end = min(len(lines), idx + context_after + 1)
+    return (lines[start:end], start + 1)
+
 
 # Prefix for the TODO comment above a commented-out error line
 TODO_PREFIX = "TODO: The line following this one was commented out due to an error: "
@@ -49,6 +83,9 @@ def classify_syntax_error(message: str) -> str:
     """
     msg = message.lower()
     if "indent" in msg or "dedent" in msg:
+        logger.debug(
+            "classify_syntax_error message_preview=%s -> indentation", msg[:80]
+        )
         return "indentation"
     if "expected" in msg and (
         "except" in msg
@@ -57,9 +94,16 @@ def classify_syntax_error(message: str) -> str:
         or "else" in msg
         or ":" in msg
     ):
+        logger.debug(
+            "classify_syntax_error message_preview=%s -> indentation", msg[:80]
+        )
         return "indentation"
     if "unexpected indent" in msg or "expected an indented block" in msg:
+        logger.debug(
+            "classify_syntax_error message_preview=%s -> indentation", msg[:80]
+        )
         return "indentation"
+    logger.debug("classify_syntax_error message_preview=%s -> syntax", msg[:80])
     return "syntax"
 
 
@@ -94,22 +138,45 @@ def try_apply_indent_fix(lines: List[str], line_no_1based: int) -> List[str]:
     else set to same as previous. All work on copy; does not modify original.
     """
     if line_no_1based < 1 or line_no_1based > len(lines):
+        logger.debug(
+            "try_apply_indent_fix line_no=%s out of range (1..%s) -> no change",
+            line_no_1based,
+            len(lines),
+        )
         return list(lines)
     idx = line_no_1based - 1
     line = lines[idx]
     if not line.strip():
+        logger.debug(
+            "try_apply_indent_fix line_no=%s line is empty -> no change", line_no_1based
+        )
         return list(lines)
     prev_idx = _get_prev_non_empty_line(lines, idx)
     if prev_idx is None:
         new_indent = ""
+        logger.debug(
+            "try_apply_indent_fix line_no=%s no prev line -> indent ''", line_no_1based
+        )
     else:
         prev_line = lines[prev_idx]
         prev_indent_len = get_line_indent(prev_line)
         prev_stripped = prev_line.strip()
         if is_block_starter_line(prev_stripped):
             new_indent = " " * (prev_indent_len + 4)
+            logger.debug(
+                "try_apply_indent_fix line_no=%s prev_line_no=%s block_starter -> indent len=%s",
+                line_no_1based,
+                prev_idx + 1,
+                prev_indent_len + 4,
+            )
         else:
             new_indent = " " * prev_indent_len
+            logger.debug(
+                "try_apply_indent_fix line_no=%s prev_line_no=%s same indent len=%s",
+                line_no_1based,
+                prev_idx + 1,
+                prev_indent_len,
+            )
     new_line = new_indent + line.strip()
     result = list(lines)
     result[idx] = new_line
@@ -162,6 +229,10 @@ def apply_syntax_error_fix(
                 if is_block_starter_line(s):
                     candidate = i + 1
         if candidate is not None:
+            logger.debug(
+                "apply_syntax_error_fix dedent at line 1 -> using candidate line_no=%s",
+                candidate,
+            )
             line_no = candidate
     idx = max(0, min(line_no - 1, len(lines) - 1))
     if not lines[idx].strip():

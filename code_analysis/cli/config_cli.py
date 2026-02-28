@@ -41,7 +41,9 @@ def _file_watcher_enabled(args: argparse.Namespace) -> Optional[bool]:
 def _get_db_path_from_config(config: Dict[str, Any]) -> Path:
     """Get database path from code_analysis config."""
     ca = config.get("code_analysis", {})
-    path = ca.get("db_path") or (ca.get("database", {}) or {}).get("driver", {}).get("config", {}).get("path")
+    path = ca.get("db_path") or (ca.get("database", {}) or {}).get("driver", {}).get(
+        "config", {}
+    ).get("path")
     if not path:
         raise ValueError(
             "Config must contain code_analysis.db_path or code_analysis.database.driver.config.path"
@@ -60,7 +62,7 @@ def _db_open_by_other_processes(db_path: Path) -> bool:
         )
         if out.returncode != 0:
             return False
-        lines = [l for l in (out.stdout or "").strip().splitlines() if l]
+        lines = [line for line in (out.stdout or "").strip().splitlines() if line]
         return len(lines) > 0
     except (FileNotFoundError, subprocess.TimeoutExpired):
         return False
@@ -270,6 +272,11 @@ def cmd_generate(args: argparse.Namespace) -> int:
             file_watcher_version_dir=(
                 args.file_watcher_version_dir
                 if hasattr(args, "file_watcher_version_dir")
+                else None
+            ),
+            allow_line_commands_on_healthy_files=(
+                True
+                if getattr(args, "allow_line_commands_on_healthy_files", False)
                 else None
             ),
         )
@@ -569,6 +576,11 @@ def main(argv: Optional[list[str]] = None) -> int:
         "--code-analysis-retry-delay",
         type=float,
         help="Vectorization retry delay in seconds (default: 1.0)",
+    )
+    gen_parser.add_argument(
+        "--allow-line-commands-on-healthy-files",
+        action="store_true",
+        help="Allow get_file_lines/replace_file_lines on parseable .py files (default: False)",
     )
     gen_parser.add_argument(
         "--indexing-worker-enabled",

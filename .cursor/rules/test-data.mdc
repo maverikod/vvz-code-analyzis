@@ -68,7 +68,7 @@ Detailed docs: `docs/commands/project_management/list_projects.md`, `docs/comman
 2. **`cst_find_node`** — Find nodes in the tree: `tree_id`, `search_type` ("simple" or "xpath"), `query` (e.g. `function[name='foo']`). Returns `node_id`s.
 3. **`cst_get_node_by_range`** — Get node by line range: `tree_id`, `start_line`, `end_line` (1-based). Optional: `prefer_exact`, `all_intersecting`.
 4. **`cst_get_node_info`** — Inspect node: `tree_id`, `node_id`; optional `include_code`, `include_children`, `include_parent`.
-5. **`cst_modify_tree`** — Apply edits: `tree_id`, `operations`: list of `{ "action": "replace"|"insert"|"delete", "node_id", "code_lines" }`. Use **`code_lines`** (array of strings) for multi-line code to avoid JSON escaping.
+5. **`cst_modify_tree`** — Apply edits: `tree_id`, `operations`: list of `{ "action": "replace"|"insert"|"delete", "node_id", "code_lines" }`. Use **`code_lines`** (array of strings) for multi-line code to avoid JSON escaping. **For insert:** use **`parent_node_id`** = container node (**Module**, **FunctionDef**, or **ClassDef**), not the body node (IndentedBlock); use **`__root__`** for module-level insert; to insert into a function body, use the **function's node_id** (FunctionDef from `cst_find_node`), not its IndentedBlock child. See `docs/commands/cst/cst_modify_tree.md`.
 6. **`cst_save_tree`** — Save tree to file: `tree_id`, `project_id`, `file_path`. Optional: `validate`, `backup`. Atomic save with backup.
 
 **Option B — File-based CST (single edit per file):**
@@ -165,6 +165,7 @@ Use `restart` instead of `start` to restart an already running server. After the
 - [ ] All code changes in `test_data` are done via MCP Proxy → `code-analysis-server`.
 - [ ] `project_id` (from `projectid` or `list_projects`) is used for CST and file-path resolution.
 - [ ] Multi-line code is sent as `code_lines` (array of strings) in `cst_modify_tree` / compose ops where supported.
+- [ ] For `cst_modify_tree` insert: `parent_node_id` = Module/FunctionDef/ClassDef (not IndentedBlock); use `__root__` for module level; use function's node_id for function body.
 - [ ] After edits: `format_code` / `lint_code` / `type_check_code`; optionally `comprehensive_analysis` and `update_indexes`.
 - [ ] On server/command errors: if it's a bug in this project — fix it immediately, then resume from breakpoint; otherwise report to user; do not silently fall back to direct reads or edits in `test_data`.
 

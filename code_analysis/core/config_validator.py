@@ -1337,6 +1337,12 @@ class CodeAnalysisConfigValidator:
                 code_analysis.get("log_vectorization_chunker_trace"),
                 bool,
             )
+            self._validate_field_type(
+                "code_analysis",
+                "allow_line_commands_on_healthy_files",
+                code_analysis.get("allow_line_commands_on_healthy_files"),
+                bool,
+            )
 
             # Chunker section
             chunker = code_analysis.get("chunker", {})

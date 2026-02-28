@@ -14,18 +14,26 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List
 
+import libcst as cst
 from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 
 from .base_mcp_command import BaseMCPCommand
 from ..core.backup_manager import BackupManager
 from ..core.file_lock import file_lock
 from ..core.exceptions import ValidationError
-from ..database_client.file_data_batch import update_file_data_atomic_batch
-from ..database_client.objects.base import BaseObject
-from ..database_client.objects.file import File
-from ..path_normalization import normalize_path_simple
+from ..core.database_client.file_data_batch import update_file_data_atomic_batch
+from ..core.database_client.objects.base import BaseObject
+from ..core.database_client.objects.file import File
+from ..core.path_normalization import normalize_path_simple
 
 logger = logging.getLogger(__name__)
+
+# Error message when file is healthy and line commands are disallowed
+_LINE_CMD_DISALLOWED_MSG = (
+    "This file parses successfully. Use CST commands instead: "
+    "cst_load_file (load tree), cst_modify_tree (edit by node), compose_cst_module (patch by selector). "
+    "Set code_analysis.allow_line_commands_on_healthy_files=true to allow get_file_lines/replace_file_lines on healthy files."
+)
 
 
 class ReplaceFileLinesCommand(BaseMCPCommand):
@@ -132,6 +140,28 @@ class ReplaceFileLinesCommand(BaseMCPCommand):
                 )
 
             text = absolute_path.read_text(encoding="utf-8", errors="replace")
+            config_data = self._get_raw_config()
+            allow_on_healthy = config_data.get("code_analysis", {}).get(
+                "allow_line_commands_on_healthy_files", False
+            )
+            if not allow_on_healthy:
+                try:
+                    cst.parse_module(text)
+                except cst.ParserSyntaxError:
+                    pass
+                else:
+                    return ErrorResult(
+                        message=_LINE_CMD_DISALLOWED_MSG,
+                        code="USE_CST_COMMANDS",
+                        details={
+                            "file_path": file_path,
+                            "cst_commands": [
+                                "cst_load_file",
+                                "cst_modify_tree",
+                                "compose_cst_module",
+                            ],
+                        },
+                    )
             all_lines = text.splitlines(keepends=False)
             total = len(all_lines)
             if total == 0:

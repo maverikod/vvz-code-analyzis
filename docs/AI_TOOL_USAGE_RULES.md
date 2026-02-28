@@ -1162,9 +1162,9 @@ mcp_MCP-Proxy-2_call_server(
   - Requires: `node_id`, `code` OR `code_lines`
   - `code_lines` (array of strings) is RECOMMENDED for multi-line code to avoid JSON escaping issues
 - `"insert"` - Insert new code
-  - Requires: (`parent_node_id` OR `target_node_id`), `position` ("before" or "after"), `code` OR `code_lines`
+  - Requires: (`parent_node_id` OR `target_node_id`), `position` ("before" or "after", or `first`/`last`/`{"after": N}`), `code` OR `code_lines`
   - `target_node_id`: Insert before/after specific node (automatically finds parent)
-  - `parent_node_id`: Insert at beginning/end of parent's body
+  - `parent_node_id`: Must be a **container** node: **Module**, **FunctionDef**, or **ClassDef** — not the body node (IndentedBlock). Use **`__root__`** for module-level insert. To insert into a function body, use the **function's node_id** (FunctionDef), not its IndentedBlock child. See `docs/commands/cst/cst_modify_tree.md` for details.
   - `code_lines` (array of strings) is RECOMMENDED for multi-line code
 - `"delete"` - Delete node
   - Requires: `node_id` only (code not needed)

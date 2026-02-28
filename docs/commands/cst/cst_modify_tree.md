@@ -24,14 +24,19 @@ Operation flow:
 
 Supported Operations:
 - replace: Replace a node with new code
-  - Requires: node_id, code
+  - Requires: node_id, code (or code_lines)
 - insert: Insert a new node (or a comment-only line)
-  - Requires: (parent_node_id OR target_node_id), code, position ('before' or 'after')
-  - Comment-only code (e.g. `# mypy: ignore-errors`) is allowed: it is inserted as an EmptyLine with Comment (CST preserves comments; the parser does not return them as statements).
-  - parent_node_id: Insert at beginning/end of parent's body
+  - Requires: (parent_node_id OR target_node_id), code or code_lines, position: `first`, `last`, `after` (with `{"after": N}` for 0-based sibling index), or legacy `before`/`after`/`end`
+  - parent_node_id: Use `__root__` for module-level placement. Position: first, last, or after N.
   - target_node_id: Insert before/after specific target node
+  - Comment-only code is allowed (inserted as EmptyLine with Comment).
+- move: Move an existing node to a new parent and/or position
+  - Requires: node_id, parent_node_id (or `__root__`), position: `first`, `last`, or `after` with `{"after": N}`
 - delete: Delete a node
   - Requires: node_id
+
+Optional apply + save in one request:
+- When both `project_id` and `file_path` are set, after applying operations the tree is saved to the file (same semantics as cst_save_tree). On save failure: file and database unchanged, in-memory tree is rolled back; response includes `save_error` and `save_error_cause`.
 
 Atomicity:
 - All operations are validated before any are applied
@@ -59,8 +64,15 @@ Important notes:
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `tree_id` | string | **Yes** | Tree ID from cst_load_file |
-| `preview` | boolean | No | Preview mode: show changes without applying (default: false) |
 | `operations` | array | **Yes** | List of operations to apply atomically |
+| `preview` | boolean | No | Preview mode: show changes without applying (default: false) |
+| `project_id` | string | No | When set with file_path: apply operations then save tree to file |
+| `file_path` | string | No | Target file path (relative to project root); used with project_id for apply+save |
+| `validate` | boolean | No | Validate before saving when project_id+file_path set (default: true) |
+| `backup` | boolean | No | Create backup when saving (default: true) |
+| `commit_message` | string | No | Optional git commit message when saving |
+
+Operation object: `action` (replace | replace_range | insert | delete | move), `node_id`, `code` or `code_lines`, `parent_node_id` (use `__root__` for module level), `position` (`first` | `last` | `after` or `{"after": N}`), `target_node_id`, `start_node_id`/`end_node_id` (for replace_range).
 
 **Schema:** `additionalProperties: false` — only the parameters above are accepted.
 

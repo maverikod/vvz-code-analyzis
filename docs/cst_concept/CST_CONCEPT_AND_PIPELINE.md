@@ -233,9 +233,9 @@ This refines the write path described in §6.3 by expressing it as a single batc
 ### 6.7 Possible extensions (from gap analysis)
 
 - **get_file_lines**(project_id, file_path, start_line, end_line) — **Implemented.** Return raw lines without parsing; for “show lines around error” when the file does not parse at all.
-- **Skeleton as default** — **cst_load_file** with a default or flag so the first response is structure-only (skeleton), not the full node list.
+- **Skeleton as default** — **Implemented.** **cst_load_file** has **return_format**: `"full"` (default) | `"skeleton"`; with `"skeleton"` the response is structure-only (signatures, docstrings, body = comment + pass for callables).
 - **Node + parent in one call** — **Implemented:** **cst_get_node_at_line**(tree_id, line) returns the node spanning that line and its parent in one response, reducing round-trips.
-- **Selector in load request** — **cst_load_file** accepts an optional **selector** (e.g. a list of node identifiers); the response includes structure and the content of the nodes matching the selector in one call. So "load file + expand these nodes" is a single request when a selector (e.g. list of identifiers) is passed. Alternatively, a separate command (e.g. batch **cst_get_node_info** with list of `node_id`s) can return multiple nodes in one response.
+- **Selector in load request** — **Implemented.** **cst_load_file** accepts an optional **selector** (XPath-like string or list of node_ids); the response includes structure (full or skeleton) and **selected_nodes** with content for the matching nodes in one call.
 
 ---
 

@@ -52,7 +52,7 @@ Important notes:
 | `include_children` | boolean | No | Whether to include full children information Default: `false`. |
 | `include_parent` | boolean | No | Whether to include parent node information Default: `false`. |
 | `max_children` | integer | No | Maximum number of children to return (if include_children=True) |
-| `children_depth` | integer | No | Depth of descendants: 1=direct children only, 2=children+grandchildren, 0=full subtree. Default: `1`. Used when include_children=True. |
+| `children_depth` | integer or string | No | Depth of descendants. Integer: 1=direct only, 2=two levels, 0=full subtree. String: `"direct"` (same as 1), `"recursive"` (same as 0). Default: `1`. Used when include_children=True. |
 
 **Schema:** `additionalProperties: false` — only the parameters above are accepted.
 

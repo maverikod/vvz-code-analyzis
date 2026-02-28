@@ -50,3 +50,10 @@ Steps 1–4 can be done in parallel or any order. Step 5 before step 6 (step 6 b
 - Update [docs/commands/cst/README.md](../commands/cst/README.md) and command index for new commands (get_file_lines, cst_get_node_at_line).
 - Update [CST_CONCEPT_AND_PIPELINE.md](CST_CONCEPT_AND_PIPELINE.md) §6.7 “Possible extensions” to mark implemented items (get_file_lines, skeleton default, node+parent in one call).
 - Add or update per-command docs under `docs/commands/` for new/updated parameters and behaviour.
+
+### Status of document updates (all steps implemented)
+
+- [x] [docs/commands/cst/README.md](../commands/cst/README.md) — command table includes get_file_lines, cst_get_node_at_line.
+- [x] [docs/commands/cst/COMMANDS.md](../commands/cst/COMMANDS.md) — index includes get_file_lines, cst_get_node_at_line.
+- [x] [CST_CONCEPT_AND_PIPELINE.md](CST_CONCEPT_AND_PIPELINE.md) §6.7 — get_file_lines, skeleton (return_format), node+parent (cst_get_node_at_line), selector in load request marked as **Implemented**.
+- [x] Per-command docs: [cst_get_node_info.md](../commands/cst/cst_get_node_info.md) (children_depth int or "direct"|"recursive"), [cst_modify_tree.md](../commands/cst/cst_modify_tree.md) (move, position, __root__, project_id/file_path apply+save).

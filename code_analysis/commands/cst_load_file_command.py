@@ -23,6 +23,8 @@ from .cst_load_file_helpers import (
     MAX_SYNTAX_FIX_ITERATIONS,
     apply_syntax_error_fix,
     build_load_response,
+    classify_syntax_error,
+    try_apply_indent_fix,
 )
 from .cst_load_file_metadata import get_cst_load_file_metadata
 from ..core.file_lock import file_lock
@@ -149,7 +151,10 @@ class CSTLoadFileCommand(BaseMCPCommand):
                         max_depth=max_depth,
                         include_children=include_children,
                     )
-                except cst.ParserSyntaxError:
+                except cst.ParserSyntaxError as first_error:
+                    # All fixes on copy; if we never succeed, return original error and do not apply
+                    original_error_message = str(first_error).strip()
+                    original_error_line = getattr(first_error, "raw_line", None)
                     logger.info(
                         "[TIMING] command=cst_load_file step=load_tree elapsed_sec=%.4f (syntax_error)",
                         time.perf_counter() - t0,
@@ -158,22 +163,50 @@ class CSTLoadFileCommand(BaseMCPCommand):
                     path_tmp = Path(str(target) + ".tmp")
                     shutil.copy2(target, path_tmp)
                     lines = path_tmp.read_text(encoding="utf-8").split("\n")
+                    last_error: Optional[cst.ParserSyntaxError] = first_error
                     for _ in range(MAX_SYNTAX_FIX_ITERATIONS):
                         try:
                             cst.parse_module("\n".join(lines))
+                            last_error = None
                             break
                         except cst.ParserSyntaxError as e:
-                            lines, comment_line_no = apply_syntax_error_fix(lines, e)
-                            commented_lines_info.append(
-                                {
-                                    "line": comment_line_no,
-                                    "error": str(e).strip(),
-                                }
-                            )
+                            last_error = e
+                            msg = getattr(e, "message", str(e)).lower()
+                            kind = classify_syntax_error(msg)
+                            line_no = getattr(e, "raw_line", 1) or 1
+                            if kind == "indentation":
+                                lines_before = list(lines)
+                                lines = try_apply_indent_fix(lines, line_no)
+                                try:
+                                    cst.parse_module("\n".join(lines))
+                                    last_error = None
+                                    break
+                                except cst.ParserSyntaxError:
+                                    lines = lines_before
+                            if last_error is not None:
+                                lines, comment_line_no = apply_syntax_error_fix(
+                                    lines, e
+                                )
+                                commented_lines_info.append(
+                                    {
+                                        "line": comment_line_no,
+                                        "error": str(e).strip(),
+                                    }
+                                )
                     else:
-                        raise ValueError(
-                            f"Syntax fix did not converge after "
-                            f"{MAX_SYNTAX_FIX_ITERATIONS} iterations"
+                        # Did not converge: no changes applied; return original error
+                        return ErrorResult(
+                            message=(
+                                f"Syntax recovery failed. No changes were applied to the file. "
+                                f"Original error: {original_error_message}"
+                            ),
+                            code="CST_LOAD_ERROR",
+                            details={
+                                "file_path": str(target),
+                                "original_error": original_error_message,
+                                "original_line": original_error_line,
+                                "changes_applied": False,
+                            },
                         )
                     path_tmp.write_text("\n".join(lines), encoding="utf-8")
                     logger.info(

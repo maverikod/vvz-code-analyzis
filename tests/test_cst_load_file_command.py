@@ -10,19 +10,21 @@ from __future__ import annotations
 
 import uuid
 from pathlib import Path
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import libcst as cst
 import pytest
 
-from mcp_proxy_adapter.commands.result import SuccessResult
+from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 
-from code_analysis.commands.cst_load_file_command import (
-    _apply_syntax_error_fix,
-    _indent_for_pass_after_error,
-    _is_block_starter_line,
-    _MAX_SYNTAX_FIX_ITERATIONS,
-    CSTLoadFileCommand,
+from code_analysis.commands.cst_load_file_command import CSTLoadFileCommand
+from code_analysis.commands.cst_load_file_helpers import (
+    MAX_SYNTAX_FIX_ITERATIONS,
+    apply_syntax_error_fix,
+    classify_syntax_error,
+    indent_for_pass_after_error,
+    is_block_starter_line,
+    try_apply_indent_fix,
 )
 from code_analysis.core.cst_tree.tree_builder import (
     create_tree_from_code,
@@ -61,48 +63,48 @@ from code_analysis.core.cst_tree.tree_range_finder import find_node_by_range
 )
 def test_is_block_starter_line(stripped: str, expected: bool) -> None:
     """Block starters (if/def/class/for/...) are detected correctly."""
-    assert _is_block_starter_line(stripped) is expected
+    assert is_block_starter_line(stripped) is expected
 
 
-# --- _indent_for_pass_after_error ---
+# --- indent_for_pass_after_error ---
 
 
 def test_indent_for_pass_after_error_finds_def() -> None:
     """Indent for pass is block starter indent + 4 spaces (def has no indent -> 4)."""
     lines = ["def foo():", "    x = 1", "    bad syntax here"]
-    result = _indent_for_pass_after_error(lines, 2)
+    result = indent_for_pass_after_error(lines, 2)
     assert result == "    "  # def has no leading indent, so one level
 
 
 def test_indent_for_pass_after_error_finds_class() -> None:
     """Indent for pass under def (inside class) is def indent + 4."""
     lines = ["class Foo:", "    def bar(self):", "        x = 1", "        err"]
-    result = _indent_for_pass_after_error(lines, 3)
+    result = indent_for_pass_after_error(lines, 3)
     assert result == "        "  # def bar has 4 spaces, +4 for pass
 
 
 def test_indent_for_pass_after_error_skips_comments() -> None:
     """Comments and empty lines are skipped when scanning for block starter."""
     lines = ["def foo():", "    # comment", "", "    bad line"]
-    result = _indent_for_pass_after_error(lines, 3)
+    result = indent_for_pass_after_error(lines, 3)
     assert result == "    "  # def has no indent
 
 
 def test_indent_for_pass_after_error_no_starter_returns_four_spaces() -> None:
     """If no block starter found, return 4 spaces."""
     lines = ["x = 1", "y = 2"]
-    result = _indent_for_pass_after_error(lines, 1)
+    result = indent_for_pass_after_error(lines, 1)
     assert result == "    "
 
 
 def test_indent_for_pass_after_error_top_level() -> None:
     """Error on first real line uses 4 spaces."""
     lines = ["bad at top level"]
-    result = _indent_for_pass_after_error(lines, 0)
+    result = indent_for_pass_after_error(lines, 0)
     assert result == "    "
 
 
-# --- _apply_syntax_error_fix ---
+# --- apply_syntax_error_fix ---
 
 
 def test_apply_syntax_error_fix_single_line() -> None:
@@ -112,7 +114,7 @@ def test_apply_syntax_error_fix_single_line() -> None:
         cst.parse_module("\n".join(lines))
         pytest.fail("Expected parse to fail")
     except cst.ParserSyntaxError as e:
-        fixed, comment_line_no = _apply_syntax_error_fix(lines, e)
+        fixed, comment_line_no = apply_syntax_error_fix(lines, e)
     assert len(fixed) == len(lines) + 2  # TODO line + comment + pass
     assert "TODO:" in fixed[1]
     assert "# " in fixed[2] and "x =" in fixed[2]
@@ -127,7 +129,7 @@ def test_apply_syntax_error_fix_preserves_indent() -> None:
         cst.parse_module("\n".join(lines))
         pytest.fail("Expected parse to fail")
     except cst.ParserSyntaxError as e:
-        fixed, _ = _apply_syntax_error_fix(lines, e)
+        fixed, _ = apply_syntax_error_fix(lines, e)
     # Comment and pass must be indented under "def" (4 spaces for def, +4 for body)
     commented = [f for f in fixed if f.strip().startswith("#") and "original" not in f][
         0
@@ -144,7 +146,7 @@ def test_apply_syntax_error_fix_parseable_after_fix() -> None:
         cst.parse_module("\n".join(lines))
         pytest.fail("Expected parse to fail")
     except cst.ParserSyntaxError as e:
-        fixed, _ = _apply_syntax_error_fix(lines, e)
+        fixed, _ = apply_syntax_error_fix(lines, e)
     parsed = cst.parse_module("\n".join(fixed))
     assert parsed is not None
 
@@ -157,13 +159,13 @@ def test_apply_syntax_error_fix_dedent_on_line_one() -> None:
         cst.parse_module("\n".join(lines))
     except cst.ParserSyntaxError as e:
         if "dedent" in str(e).lower() and e.raw_line == 1:
-            fixed, _ = _apply_syntax_error_fix(lines, e)
+            fixed, _ = apply_syntax_error_fix(lines, e)
             assert len(fixed) > len(lines)
         else:
             # Other errors: just check we don't crash
-            fixed, _ = _apply_syntax_error_fix(lines, e)
+            fixed, _ = apply_syntax_error_fix(lines, e)
             assert isinstance(fixed, list)
-            assert isinstance(_apply_syntax_error_fix(lines, e)[1], int)
+            assert isinstance(apply_syntax_error_fix(lines, e)[1], int)
 
 
 # --- Full syntax-fix loop then load and parent resolution ---
@@ -176,12 +178,12 @@ def test_commented_lines_include_line_and_error(tmp_path: Path) -> None:
     py_file.write_text(source, encoding="utf-8")
     commented_lines_info: list[dict] = []
     lines = source.split("\n")
-    for _ in range(_MAX_SYNTAX_FIX_ITERATIONS):
+    for _ in range(MAX_SYNTAX_FIX_ITERATIONS):
         try:
             cst.parse_module("\n".join(lines))
             break
         except cst.ParserSyntaxError as e:
-            lines, comment_line_no = _apply_syntax_error_fix(lines, e)
+            lines, comment_line_no = apply_syntax_error_fix(lines, e)
             commented_lines_info.append(
                 {"line": comment_line_no, "error": str(e).strip()}
             )
@@ -202,12 +204,12 @@ def test_commented_lines_parent_node_resolution(tmp_path: Path) -> None:
     py_file.write_text(source, encoding="utf-8")
     lines = source.split("\n")
     commented_lines_info: list[dict] = []
-    for _ in range(_MAX_SYNTAX_FIX_ITERATIONS):
+    for _ in range(MAX_SYNTAX_FIX_ITERATIONS):
         try:
             cst.parse_module("\n".join(lines))
             break
         except cst.ParserSyntaxError as e:
-            lines, comment_line_no = _apply_syntax_error_fix(lines, e)
+            lines, comment_line_no = apply_syntax_error_fix(lines, e)
             commented_lines_info.append(
                 {"line": comment_line_no, "error": str(e).strip()}
             )
@@ -321,3 +323,83 @@ def test_response_no_syntax_errors_no_commented_lines(tmp_path: Path) -> None:
     data = result.data
     assert data.get("syntax_errors_fixed", False) is False
     assert "commented_lines" not in data or data.get("commented_lines") == []
+
+
+# --- classify_syntax_error ---
+
+
+@pytest.mark.parametrize(
+    "message,expected_kind",
+    [
+        ("expected something", "syntax"),
+        ("indent something wrong", "indentation"),
+        ("dedent mismatch", "indentation"),
+        ("expected 'except' or 'finally'", "indentation"),
+        ("expected 'else' after loop", "indentation"),
+        ("expected ':' ", "indentation"),
+        ("unexpected indent", "indentation"),
+        ("expected an indented block", "indentation"),
+        ("invalid syntax", "syntax"),
+        ("unclosed parenthesis", "syntax"),
+    ],
+)
+def test_classify_syntax_error(message: str, expected_kind: str) -> None:
+    """Classify returns indentation vs syntax from parser message."""
+    assert classify_syntax_error(message) == expected_kind
+
+
+# --- try_apply_indent_fix ---
+
+
+def test_try_apply_indent_fix_body_under_def() -> None:
+    """Body line with too few spaces gets prev+4 when prev is block starter."""
+    lines = ["def foo():", "x = 1"]  # x = 1 should be 4 spaces
+    fixed = try_apply_indent_fix(lines, 2)
+    assert fixed[0] == "def foo():"
+    assert fixed[1].startswith("    ")
+    assert fixed[1].strip() == "x = 1"
+
+
+def test_try_apply_indent_fix_same_as_prev_when_not_starter() -> None:
+    """Line after non-starter gets same indent as previous line."""
+    lines = ["def foo():", "    x = 1", "    y = 2", "z = 3"]  # z wrong
+    fixed = try_apply_indent_fix(lines, 4)
+    assert fixed[3].startswith("    ")
+    assert fixed[3].strip() == "z = 3"
+
+
+def test_try_apply_indent_fix_out_of_range_returns_copy() -> None:
+    """Line number out of range returns copy of lines."""
+    lines = ["a = 1", "b = 2"]
+    assert try_apply_indent_fix(lines, 0) == lines
+    assert try_apply_indent_fix(lines, 99) == lines
+
+
+# --- Non-convergence: original error returned, no file change ---
+
+
+def test_cst_load_file_recovery_failed_returns_error_result(tmp_path: Path) -> None:
+    """When syntax fix loop does not converge, return ErrorResult with original error and no changes."""
+    broken = tmp_path / "h.py"
+    broken.write_text("def f():\n    x = \n", encoding="utf-8")
+    path_tmp_clean = Path(str(broken) + ".tmp")
+    if path_tmp_clean.exists():
+        path_tmp_clean.unlink()
+    cmd = CSTLoadFileCommand()
+    cmd._open_database_from_config = MagicMock(return_value=MagicMock())
+    cmd._resolve_file_path_from_project = MagicMock(return_value=broken)
+    with patch(
+        "code_analysis.commands.cst_load_file_command.MAX_SYNTAX_FIX_ITERATIONS",
+        0,
+    ):
+        import asyncio
+
+        result = asyncio.run(
+            cmd.execute(project_id=str(uuid.uuid4()), file_path="h.py")
+        )
+    assert isinstance(result, ErrorResult), getattr(result, "message", result)
+    assert getattr(result, "code", None) == "CST_LOAD_ERROR"
+    details = getattr(result, "details", None) or {}
+    assert details.get("changes_applied") is False
+    assert "original_error" in details
+    assert broken.read_text() == "def f():\n    x = \n"

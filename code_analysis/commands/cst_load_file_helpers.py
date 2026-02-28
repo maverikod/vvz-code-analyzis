@@ -1,6 +1,9 @@
 """
 Helpers for cst_load_file: syntax-error fix and response building.
 
+All fixes are applied on a temporary copy (or in-memory lines); if recovery
+fails, the original file is never modified and the initial error is returned.
+
 Author: Vasiliy Zdanovskiy
 email: vasilyvz@gmail.com
 """
@@ -38,6 +41,81 @@ BLOCK_STARTERS = (
 )
 
 
+def classify_syntax_error(message: str) -> str:
+    """
+    Classify parser error from message text.
+    Returns "indentation" if error suggests indent/dedent/expected block end,
+    else "syntax" (comment-out fallback).
+    """
+    msg = message.lower()
+    if "indent" in msg or "dedent" in msg:
+        return "indentation"
+    if "expected" in msg and (
+        "except" in msg
+        or "finally" in msg
+        or "elif" in msg
+        or "else" in msg
+        or ":" in msg
+    ):
+        return "indentation"
+    if "unexpected indent" in msg or "expected an indented block" in msg:
+        return "indentation"
+    return "syntax"
+
+
+def get_line_indent(line: str) -> int:
+    """Return number of leading spaces (tabs treated as 4 for consistency)."""
+    if not line.startswith(" ") and not line.startswith("\t"):
+        return 0
+    spaces = 0
+    for c in line:
+        if c == " ":
+            spaces += 1
+        elif c == "\t":
+            spaces += 4
+        else:
+            break
+    return spaces
+
+
+def _get_prev_non_empty_line(lines: List[str], from_idx: int) -> Optional[int]:
+    """Return 0-based index of last non-empty, non-comment line before from_idx."""
+    for i in range(from_idx - 1, -1, -1):
+        s = lines[i].strip()
+        if s and not s.startswith("#"):
+            return i
+    return None
+
+
+def try_apply_indent_fix(lines: List[str], line_no_1based: int) -> List[str]:
+    """
+    Fix indent of the given line (1-based) using previous non-empty line.
+    If previous line is a block starter, set indent to prev + 4 spaces;
+    else set to same as previous. All work on copy; does not modify original.
+    """
+    if line_no_1based < 1 or line_no_1based > len(lines):
+        return list(lines)
+    idx = line_no_1based - 1
+    line = lines[idx]
+    if not line.strip():
+        return list(lines)
+    prev_idx = _get_prev_non_empty_line(lines, idx)
+    if prev_idx is None:
+        new_indent = ""
+    else:
+        prev_line = lines[prev_idx]
+        prev_indent_len = get_line_indent(prev_line)
+        prev_stripped = prev_line.strip()
+        if is_block_starter_line(prev_stripped):
+            new_indent = " " * (prev_indent_len + 4)
+        else:
+            new_indent = " " * prev_indent_len
+    new_line = new_indent + line.strip()
+    result = list(lines)
+    result[idx] = new_line
+    return result
+
+
 def is_block_starter_line(stripped: str) -> bool:
     """True if stripped line starts a block (if/def/for/else/...)."""
     if not stripped.endswith(":"):
@@ -67,9 +145,12 @@ def apply_syntax_error_fix(
 ) -> Tuple[List[str], int]:
     """
     Comment out the line reported by the parser and add TODO.
+    Used when error is not indentation or indent fix did not help.
     Returns (new_lines, 1-based line number of the '# original' line in result).
     """
-    line_no = e.raw_line
+    line_no = getattr(e, "raw_line", None)
+    if line_no is None or line_no < 1:
+        line_no = 1
     err_msg = str(e).lower()
     if line_no == 1 and "dedent" in err_msg:
         candidate = None
@@ -82,14 +163,32 @@ def apply_syntax_error_fix(
                     candidate = i + 1
         if candidate is not None:
             line_no = candidate
-    idx = line_no - 1
-    if idx < 0 or idx >= len(lines) or not lines[idx].strip():
-        raise
+    idx = max(0, min(line_no - 1, len(lines) - 1))
+    if not lines[idx].strip():
+        # Empty line: find next non-empty
+        for i in range(idx + 1, len(lines)):
+            if lines[i].strip():
+                idx = i
+                break
+        else:
+            idx = 0
     raw = lines[idx]
     lead = raw[: len(raw) - len(raw.lstrip())]
     stripped = raw.strip()
     if stripped.startswith("#"):
-        raise
+        # Already comment: comment the next non-empty line
+        for i in range(idx + 1, len(lines)):
+            if lines[i].strip() and not lines[i].strip().startswith("#"):
+                idx = i
+                raw = lines[idx]
+                lead = raw[: len(raw) - len(raw.lstrip())]
+                stripped = raw.strip()
+                break
+        else:
+            idx = 0
+            raw = lines[0]
+            lead = raw[: len(raw) - len(raw.lstrip())]
+            stripped = raw.strip() or "# (no content)"
     err_text = str(e).strip().replace("\n", " ")
     todo_line = lead + "# " + TODO_PREFIX + err_text
     comment_line = lead + "# " + stripped

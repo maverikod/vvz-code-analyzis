@@ -83,6 +83,13 @@ def register_code_analysis_commands(reg: registry) -> None:
     except ImportError:
         pass
 
+    try:
+        from .commands.get_file_lines_command import GetFileLinesCommand
+
+        reg.register(GetFileLinesCommand, "custom")
+    except ImportError:
+        pass
+
     # New CST tree commands
     try:
         from .commands.cst_load_file_command import CSTLoadFileCommand
@@ -92,6 +99,7 @@ def register_code_analysis_commands(reg: registry) -> None:
         from .commands.cst_find_node_command import CSTFindNodeCommand
         from .commands.cst_get_node_info_command import CSTGetNodeInfoCommand
         from .commands.cst_get_node_by_range_command import CSTGetNodeByRangeCommand
+        from .commands.cst_get_node_at_line_command import CSTGetNodeAtLineCommand
         from .commands.cst_create_file_command import CSTCreateFileCommand
         from .commands.cst_convert_and_save_command import CSTConvertAndSaveCommand
 
@@ -102,6 +110,7 @@ def register_code_analysis_commands(reg: registry) -> None:
         reg.register(CSTFindNodeCommand, "custom")
         reg.register(CSTGetNodeInfoCommand, "custom")
         reg.register(CSTGetNodeByRangeCommand, "custom")
+        reg.register(CSTGetNodeAtLineCommand, "custom")
         reg.register(CSTCreateFileCommand, "custom")
         reg.register(CSTConvertAndSaveCommand, "custom")
         import logging
@@ -110,7 +119,7 @@ def register_code_analysis_commands(reg: registry) -> None:
         logger.info(
             "✅ Registered CST tree commands: "
             "cst_load_file, cst_modify_tree, cst_save_tree, cst_reload_tree, "
-            "cst_find_node, cst_get_node_info, cst_get_node_by_range, "
+            "cst_find_node, cst_get_node_info, cst_get_node_by_range, cst_get_node_at_line, "
             "cst_create_file, cst_convert_and_save"
         )
     except ImportError as e:

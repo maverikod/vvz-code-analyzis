@@ -228,13 +228,13 @@ This refines the write path described in §6.3 by expressing it as a single batc
 | By name / type (e.g. “function named `run`”, “all classes”) | **cst_find_node**(tree_id, search_type, query) or **query_cst**(project_id, file_path, selector) if you have no tree yet. |
 | By line range (e.g. “node covering lines 45–50”) | **cst_get_node_by_range**(tree_id, start_line, end_line). |
 | By selector in a file without loading full tree | **query_cst**(project_id, file_path, selector); then for deeper work load the file and use node_id from matches. |
-| Node + parent in one call (convenience) | Currently: get_node_by_range then get_node_info(include_parent=true). A future **cst_get_node_at_line** could return both in one response. |
+| Node + parent in one call (convenience) | **cst_get_node_at_line**(tree_id, line) returns node and parent in one response. |
 
 ### 6.7 Possible extensions (from gap analysis)
 
-- **get_file_lines**(project_id, file_path, start_line, end_line) — return raw lines without parsing; for “show lines around error” when the file does not parse at all.
+- **get_file_lines**(project_id, file_path, start_line, end_line) — **Implemented.** Return raw lines without parsing; for “show lines around error” when the file does not parse at all.
 - **Skeleton as default** — **cst_load_file** with a default or flag so the first response is structure-only (skeleton), not the full node list.
-- **Node + parent in one call** — e.g. **cst_get_node_at_line**(tree_id, line) returning the node spanning that line and its parent, to reduce round-trips.
+- **Node + parent in one call** — **Implemented:** **cst_get_node_at_line**(tree_id, line) returns the node spanning that line and its parent in one response, reducing round-trips.
 - **Selector in load request** — **cst_load_file** accepts an optional **selector** (e.g. a list of node identifiers); the response includes structure and the content of the nodes matching the selector in one call. So "load file + expand these nodes" is a single request when a selector (e.g. list of identifiers) is passed. Alternatively, a separate command (e.g. batch **cst_get_node_info** with list of `node_id`s) can return multiple nodes in one response.
 
 ---

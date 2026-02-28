@@ -17,6 +17,7 @@ from .tree_modifier import modify_tree
 from .tree_saver import save_tree_to_file
 from .tree_finder import find_nodes
 from .tree_metadata import get_node_metadata, get_node_children, get_node_parent
+from .skeleton import skeleton_from_tree
 
 __all__ = [
     "CSTTree",
@@ -32,4 +33,5 @@ __all__ = [
     "get_node_metadata",
     "get_node_children",
     "get_node_parent",
+    "skeleton_from_tree",
 ]

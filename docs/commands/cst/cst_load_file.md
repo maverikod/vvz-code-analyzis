@@ -39,6 +39,10 @@ Each node includes:
 - children_ids: List of child node IDs (if include_children=True)
 - parent_id: Parent node ID (if applicable)
 
+Return format:
+- **return_format**: `"full"` (default) — tree_id and full node list; `"skeleton"` — tree_id and collapsed view (full signatures, docstrings, body = comment + pass for callables; module-level content full). Skeleton is built from the same tree (including after syntax-error fix).
+- **selector**: Optional. When set (XPath-like string or list of node_ids), response includes `selected_nodes` with content (code) for matching nodes in one call.
+
 Filters:
 - node_types: Filter by node types (e.g., ['FunctionDef', 'ClassDef'])
 - max_depth: Limit depth of nodes returned
@@ -67,7 +71,9 @@ Important notes:
 | `file_path` | string | **Yes** | Target Python file path (relative to project root) |
 | `node_types` | array | No | Optional filter by node types (e.g., ['FunctionDef', 'ClassDef']) |
 | `max_depth` | integer | No | Optional maximum depth for node filtering |
-| `include_children` | boolean | No | Whether to include children information in metadata Default: `true`. |
+| `include_children` | boolean | No | Whether to include children information in metadata. Default: `true`. |
+| `return_format` | string | No | `"full"` or `"skeleton"`. Default: `"full"`. Skeleton = collapsed view (signatures, docstrings, body placeholder). |
+| `selector` | string or array | No | Optional. XPath selector or list of node_ids; response includes `selected_nodes` with code. |
 
 **Schema:** `additionalProperties: false` — only the parameters above are accepted.
 

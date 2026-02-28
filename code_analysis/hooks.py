@@ -90,6 +90,13 @@ def register_code_analysis_commands(reg: registry) -> None:
     except ImportError:
         pass
 
+    try:
+        from .commands.replace_file_lines_command import ReplaceFileLinesCommand
+
+        reg.register(ReplaceFileLinesCommand, "custom")
+    except ImportError:
+        pass
+
     # New CST tree commands
     try:
         from .commands.cst_load_file_command import CSTLoadFileCommand

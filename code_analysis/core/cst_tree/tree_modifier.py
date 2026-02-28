@@ -12,8 +12,9 @@ from typing import List, Optional, Union
 
 import libcst as cst
 
-from .models import CSTTree, TreeOperation, TreeOperationType
+from .models import CSTTree, ROOT_NODE_ID_SENTINEL, TreeOperation, TreeOperationType
 from .tree_builder import _build_tree_index, get_tree
+from .tree_metadata import _resolve_node_id as resolve_parent_id
 
 logger = logging.getLogger(__name__)
 
@@ -232,6 +233,8 @@ def _remove_operation_nodes_from_index(tree: CSTTree, operation: TreeOperation) 
     to_remove: List[str] = []
     if operation.action == TreeOperationType.REPLACE and operation.node_id:
         to_remove.append(operation.node_id)
+    elif operation.action == TreeOperationType.MOVE and operation.node_id:
+        to_remove.append(operation.node_id)
     elif operation.action == TreeOperationType.DELETE and operation.node_id:
         to_remove.append(operation.node_id)
     elif operation.action == TreeOperationType.REPLACE_RANGE:
@@ -336,12 +339,14 @@ def _validate_operation(tree: CSTTree, operation: TreeOperation) -> None:
             raise ValueError(
                 "parent_node_id or target_node_id required for insert operation"
             )
-        if operation.parent_node_id and operation.parent_node_id not in tree.node_map:
-            available = list(tree.node_map.keys())[:5]
-            raise ValueError(
-                f"Parent node not found: {operation.parent_node_id}. "
-                f"Available nodes (first 5): {available}"
-            )
+        if operation.parent_node_id:
+            resolved_parent = resolve_parent_id(tree, operation.parent_node_id.strip())
+            if resolved_parent and resolved_parent not in tree.node_map:
+                available = list(tree.node_map.keys())[:5]
+                raise ValueError(
+                    f"Parent node not found: {operation.parent_node_id}. "
+                    f"Available nodes (first 5): {available}"
+                )
         if operation.target_node_id and operation.target_node_id not in tree.node_map:
             available = list(tree.node_map.keys())[:5]
             raise ValueError(
@@ -358,16 +363,58 @@ def _validate_operation(tree: CSTTree, operation: TreeOperation) -> None:
                     "position must be 'before' or 'after' for insert relative to target node"
                 )
         elif operation.parent_node_id:
-            # Inserting in parent's body
-            if operation.position not in ("before", "after", "end"):
+            # Inserting in parent's body: first, last, end, or after (with position_after_index)
+            pos = (operation.position or "last").strip().lower()
+            if pos not in ("before", "after", "end", "first", "last"):
                 raise ValueError(
-                    "position must be 'before', 'after', or 'end' for insert in parent node"
+                    "position must be 'first', 'last', 'before', 'after', or 'end' "
+                    "for insert in parent node"
+                )
+            if pos == "after" and operation.position_after_index is None:
+                raise ValueError(
+                    'position_after_index (or position {"after": N}) required when '
+                    "position is 'after' for insert in parent"
                 )
         # Validate code syntax (supports multi-line)
         try:
             _parse_code_snippet(code=operation.code, code_lines=operation.code_lines)
         except Exception as e:
             raise ValueError(f"Invalid code syntax for insert: {e}") from e
+    elif operation.action == TreeOperationType.MOVE:
+        if not operation.node_id or operation.node_id not in tree.node_map:
+            available = list(tree.node_map.keys())[:5]
+            raise ValueError(
+                f"Node not found for move: {operation.node_id}. "
+                f"Available nodes (first 5): {available}"
+            )
+        parent_id = (operation.parent_node_id or ROOT_NODE_ID_SENTINEL).strip()
+        if parent_id == ROOT_NODE_ID_SENTINEL:
+            parent_id = resolve_parent_id(tree, ROOT_NODE_ID_SENTINEL)
+        if parent_id and parent_id not in tree.node_map:
+            raise ValueError(
+                f"Parent node not found for move: {parent_id}. "
+                "Use __root__ for module-level placement."
+            )
+        pos = (operation.position or "last").strip().lower()
+        if pos not in ("first", "last", "after"):
+            raise ValueError(
+                f"position for move must be 'first', 'last', or 'after', got {pos!r}"
+            )
+        if pos == "after" and operation.position_after_index is None:
+            raise ValueError(
+                "position_after_index required when position is 'after' for move"
+            )
+        # Cannot move node into its own descendant (would create invalid tree)
+        if parent_id:
+            ancestor = parent_id
+            while ancestor:
+                if ancestor == operation.node_id:
+                    raise ValueError(
+                        f"Cannot move node into its own descendant: "
+                        f"parent {parent_id} is under node {operation.node_id}"
+                    )
+                meta = tree.metadata_map.get(ancestor)
+                ancestor = meta.parent_id if meta else None
 
 
 def _apply_operation(
@@ -419,13 +466,46 @@ def _apply_operation(
                 position,
             )
         else:
-            # Use parent_node_id (existing logic)
+            # Use parent_node_id (with optional first/last/after N)
             if not operation.parent_node_id:
                 raise ValueError(
                     "parent_node_id or target_node_id required for insert operation"
                 )
-            position = operation.position or "end"
-            return _insert_node(module, tree, operation.parent_node_id, code, position)
+            position = (operation.position or "end").strip().lower()
+            parent_id = operation.parent_node_id or ROOT_NODE_ID_SENTINEL
+            parent_id = resolve_parent_id(tree, parent_id)
+            # Map legacy "before"/"after"/"end" to first/last when no target
+            if position == "before":
+                position = "first"
+            elif position in ("after", "end"):
+                position = "last"
+            return _insert_node_at_position(
+                module,
+                tree,
+                parent_id,
+                code,
+                position=position,
+                position_after_index=operation.position_after_index,
+            )
+    elif operation.action == TreeOperationType.MOVE:
+        node_id = operation.node_id
+        node = tree.node_map.get(node_id)
+        if not node:
+            raise ValueError(f"Node not found for move: {node_id}")
+        code = tree.module.code_for_node(node)
+        parent_id = (operation.parent_node_id or ROOT_NODE_ID_SENTINEL).strip()
+        parent_id = resolve_parent_id(tree, parent_id)
+        position = (operation.position or "last").strip().lower()
+        after_index = operation.position_after_index
+        module_after_delete = _delete_node(module, tree, node_id)
+        return _insert_node_at_position(
+            module_after_delete,
+            tree,
+            parent_id,
+            code,
+            position=position,
+            position_after_index=after_index,
+        )
     else:
         raise ValueError(f"Unknown operation type: {operation.action}")
 
@@ -713,10 +793,100 @@ def _replace_range(
     return result
 
 
+def _insert_node_at_position(
+    module: cst.Module,
+    tree: CSTTree,
+    parent_node_id: str,
+    new_code: str,
+    position: str = "last",
+    position_after_index: Optional[int] = None,
+) -> cst.Module:
+    """
+    Insert one or more nodes at a precise index in parent's body.
+
+    position: "first" (index 0), "last" (append), or "after" (after sibling at position_after_index).
+    If position is "after" and position_after_index is out of range, treat as last.
+    """
+    parent_node = tree.node_map.get(parent_node_id)
+    if not parent_node:
+        raise ValueError(f"Parent node not found: {parent_node_id}")
+
+    new_statements = _parse_code_snippet_or_comment(code=new_code)
+    if not new_statements:
+        raise ValueError("Cannot insert empty code")
+
+    if isinstance(parent_node, cst.Module):
+        body = list(parent_node.body)
+    elif isinstance(parent_node, (cst.FunctionDef, cst.ClassDef)) and isinstance(
+        parent_node.body, cst.IndentedBlock
+    ):
+        body = list(parent_node.body.body)
+    else:
+        raise ValueError(
+            f"Parent node {parent_node_id} has no insertable body (Module or IndentedBlock)"
+        )
+
+    pos = position.strip().lower()
+    if pos == "first":
+        insert_index = 0
+    elif pos == "after" and position_after_index is not None:
+        insert_index = min(position_after_index + 1, len(body))
+    else:
+        insert_index = len(body)
+
+    new_body = body[:insert_index] + list(new_statements) + body[insert_index:]
+
+    class PositionInserter(cst.CSTTransformer):
+        def __init__(
+            self,
+            target_parent: cst.CSTNode,
+            replacement_body: list[cst.BaseStatement],
+        ):
+            self.target_parent = target_parent
+            self.replacement_body = replacement_body
+            self.done = False
+
+        def leave_Module(
+            self, original_node: cst.Module, updated_node: cst.Module
+        ) -> cst.Module:
+            if original_node is self.target_parent:
+                self.done = True
+                return updated_node.with_changes(body=self.replacement_body)
+            return updated_node
+
+        def leave_FunctionDef(
+            self,
+            original_node: cst.FunctionDef,
+            updated_node: cst.FunctionDef,
+        ) -> cst.FunctionDef:
+            if original_node is self.target_parent:
+                self.done = True
+                return updated_node.with_changes(
+                    body=cst.IndentedBlock(body=self.replacement_body)
+                )
+            return updated_node
+
+        def leave_ClassDef(
+            self, original_node: cst.ClassDef, updated_node: cst.ClassDef
+        ) -> cst.ClassDef:
+            if original_node is self.target_parent:
+                self.done = True
+                return updated_node.with_changes(
+                    body=cst.IndentedBlock(body=self.replacement_body)
+                )
+            return updated_node
+
+    inserter = PositionInserter(parent_node, new_body)
+    result = module.visit(inserter)
+    if not inserter.done:
+        raise ValueError(f"Nodes were not inserted into parent {parent_node_id}")
+    return result
+
+
 def _insert_node(
     module: cst.Module, tree: CSTTree, parent_node_id: str, new_code: str, position: str
 ) -> cst.Module:
-    """Insert one or more nodes into module."""
+    """Insert one or more nodes into module (used when target_node_id is set)."""
     parent_node = tree.node_map.get(parent_node_id)
     if not parent_node:
         raise ValueError(f"Parent node not found: {parent_node_id}")

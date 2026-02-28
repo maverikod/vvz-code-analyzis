@@ -22,6 +22,7 @@ class TreeOperationType(str, Enum):
     REPLACE_RANGE = "replace_range"
     INSERT = "insert"
     DELETE = "delete"
+    MOVE = "move"
 
 
 @dataclass(frozen=True)
@@ -89,8 +90,15 @@ class TreeOperation:
     code_lines: Optional[List[str]] = (
         None  # New code as list of lines (alternative to code)
     )
-    position: Optional[str] = None  # "before" or "after" for insert
-    parent_node_id: Optional[str] = None  # Parent node for insert
+    position: Optional[str] = (
+        None  # "before"|"after"|"first"|"last"|"end" for insert; "first"|"last"|"after" for move
+    )
+    position_after_index: Optional[int] = (
+        None  # 0-based sibling index for position "after" (insert/move after this child)
+    )
+    parent_node_id: Optional[str] = (
+        None  # Parent node for insert/move (use __root__ for module level)
+    )
     target_node_id: Optional[str] = (
         None  # Target node for insert (alternative to parent_node_id)
     )

@@ -9,15 +9,19 @@ email: vasilyvz@gmail.com
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
-from typing import Any, Dict, List
+from pathlib import Path
+from typing import Any, Dict, List, Optional
 
 from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 
 from .base_mcp_command import BaseMCPCommand
 from ..core.cst_tree.models import TreeOperation, TreeOperationType
+from ..core.cst_tree.tree_builder import rollback_tree_to_code
 from ..core.cst_tree.tree_modifier import modify_tree
+from ..core.cst_tree.tree_saver import save_tree_to_file
 
 logger = logging.getLogger(__name__)
 
@@ -58,6 +62,7 @@ class CSTModifyTreeCommand(BaseMCPCommand):
                                     "replace_range",
                                     "insert",
                                     "delete",
+                                    "move",
                                 ],
                                 "description": "Operation type",
                             },
@@ -75,13 +80,33 @@ class CSTModifyTreeCommand(BaseMCPCommand):
                                 "description": "New code as list of lines (alternative to code, recommended for multi-line code to avoid JSON escaping issues)",
                             },
                             "position": {
-                                "type": "string",
-                                "enum": ["before", "after"],
-                                "description": "Position for insert operation",
+                                "description": (
+                                    "Position for insert/move: 'first', 'last', 'before', 'after', 'end'; "
+                                    'or object {"after": N} for after 0-based sibling index N.'
+                                ),
+                                "oneOf": [
+                                    {
+                                        "type": "string",
+                                        "enum": [
+                                            "first",
+                                            "last",
+                                            "before",
+                                            "after",
+                                            "end",
+                                        ],
+                                    },
+                                    {
+                                        "type": "object",
+                                        "properties": {"after": {"type": "integer"}},
+                                        "required": ["after"],
+                                    },
+                                ],
                             },
                             "parent_node_id": {
                                 "type": "string",
-                                "description": "Parent node ID for insert operation (alternative to target_node_id)",
+                                "description": (
+                                    "Parent node ID for insert/move. Use __root__ for module-level placement."
+                                ),
                             },
                             "target_node_id": {
                                 "type": "string",
@@ -101,6 +126,34 @@ class CSTModifyTreeCommand(BaseMCPCommand):
                     "description": "List of operations to apply atomically",
                 },
             },
+            "project_id": {
+                "type": "string",
+                "description": (
+                    "Optional. When set with file_path, apply operations then save tree to file. "
+                    "On save failure, in-memory tree is rolled back and save_error is returned."
+                ),
+            },
+            "file_path": {
+                "type": "string",
+                "description": (
+                    "Optional. Target file path (relative to project root). "
+                    "Used with project_id for apply+save in one request."
+                ),
+            },
+            "validate": {
+                "type": "boolean",
+                "default": True,
+                "description": "Validate before saving (when project_id+file_path are set)",
+            },
+            "backup": {
+                "type": "boolean",
+                "default": True,
+                "description": "Create backup when saving (when project_id+file_path are set)",
+            },
+            "commit_message": {
+                "type": "string",
+                "description": "Optional git commit message when saving",
+            },
             "required": ["tree_id", "operations"],
             "additionalProperties": False,
         }
@@ -110,6 +163,11 @@ class CSTModifyTreeCommand(BaseMCPCommand):
         tree_id: str,
         operations: List[Dict[str, Any]],
         preview: bool = False,
+        project_id: Optional[str] = None,
+        file_path: Optional[str] = None,
+        validate: bool = True,
+        backup: bool = True,
+        commit_message: Optional[str] = None,
         **kwargs,
     ) -> SuccessResult:
         t_start = time.perf_counter()
@@ -126,6 +184,8 @@ class CSTModifyTreeCommand(BaseMCPCommand):
                     action = TreeOperationType.INSERT
                 elif action_str == "delete":
                     action = TreeOperationType.DELETE
+                elif action_str == "move":
+                    action = TreeOperationType.MOVE
                 else:
                     return ErrorResult(
                         message=f"Invalid action: {action_str}",
@@ -133,13 +193,26 @@ class CSTModifyTreeCommand(BaseMCPCommand):
                         details={"action": action_str},
                     )
 
+                pos_val = op_dict.get("position")
+                position_str: Optional[str] = None
+                position_after_index: Optional[int] = None
+                if isinstance(pos_val, dict) and "after" in pos_val:
+                    position_str = "after"
+                    try:
+                        position_after_index = int(pos_val["after"])
+                    except (TypeError, ValueError):
+                        position_after_index = None
+                elif isinstance(pos_val, str):
+                    position_str = pos_val
+
                 tree_operations.append(
                     TreeOperation(
                         action=action,
                         node_id=op_dict.get("node_id", ""),
                         code=op_dict.get("code"),
                         code_lines=op_dict.get("code_lines"),
-                        position=op_dict.get("position"),
+                        position=position_str,
+                        position_after_index=position_after_index,
                         parent_node_id=op_dict.get("parent_node_id"),
                         target_node_id=op_dict.get("target_node_id"),
                         start_node_id=op_dict.get("start_node_id"),
@@ -225,12 +298,64 @@ class CSTModifyTreeCommand(BaseMCPCommand):
                 return SuccessResult(data=data)
 
             # Normal mode: apply changes
-            data = {
+            data: Dict[str, Any] = {
                 "success": True,
                 "preview": False,
                 "tree_id": modified_tree.tree_id,
                 "operations_applied": len(operations),
             }
+
+            # Optional: save to file in the same request
+            if project_id and file_path:
+                database = self._open_database_from_config(auto_analyze=False)
+                try:
+                    absolute_file_path = self._resolve_file_path_from_project(
+                        database, project_id, file_path
+                    )
+                    project = database.get_project(project_id)
+                    if not project:
+                        rollback_tree_to_code(tree_id, original_code)
+                        return ErrorResult(
+                            message=f"Project {project_id} not found",
+                            code="PROJECT_NOT_FOUND",
+                            details={"project_id": project_id},
+                        )
+                    project_root = Path(project.root_path)
+                    try:
+                        save_result = await asyncio.to_thread(
+                            save_tree_to_file,
+                            tree_id=tree_id,
+                            file_path=str(absolute_file_path),
+                            root_dir=project_root,
+                            project_id=project_id,
+                            database=database,
+                            validate=validate,
+                            backup=backup,
+                            commit_message=commit_message,
+                        )
+                    except Exception as save_exc:
+                        rollback_tree_to_code(tree_id, original_code)
+                        data["modify_applied"] = False
+                        data["save_applied"] = False
+                        data["save_error"] = str(save_exc)
+                        data["save_error_cause"] = str(save_exc)
+                        return SuccessResult(data=data)
+                    if not save_result.get("success"):
+                        rollback_tree_to_code(tree_id, original_code)
+                        save_err = save_result.get("error", "Save failed")
+                        data["modify_applied"] = False
+                        data["save_applied"] = False
+                        data["save_error"] = save_err
+                        data["save_error_cause"] = save_result.get(
+                            "error_details", save_err
+                        )
+                        return SuccessResult(data=data)
+                    data["save_applied"] = True
+                    data["file_path"] = str(absolute_file_path)
+                    if save_result.get("backup_uuid"):
+                        data["backup_uuid"] = save_result["backup_uuid"]
+                finally:
+                    database.disconnect()
 
             return SuccessResult(data=data)
 

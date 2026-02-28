@@ -26,6 +26,23 @@ from ..core.cst_tree.tree_metadata import (
 logger = logging.getLogger(__name__)
 
 
+def _normalize_children_depth(value: Any) -> int:
+    """Map children_depth (int or 'direct'|'recursive') to integer depth."""
+    if isinstance(value, str):
+        if value == "direct":
+            return 1
+        if value == "recursive":
+            return 0
+        raise ValueError(
+            f"children_depth must be int or 'direct'|'recursive', got {value!r}"
+        )
+    if isinstance(value, int) and value >= 0:
+        return value
+    raise ValueError(
+        f"children_depth must be non-negative int or 'direct'|'recursive', got {value!r}"
+    )
+
+
 class CSTGetNodeInfoCommand(BaseMCPCommand):
     """Get detailed information about a node."""
 
@@ -69,12 +86,15 @@ class CSTGetNodeInfoCommand(BaseMCPCommand):
                     "description": "Maximum number of children to return (if include_children=True)",
                 },
                 "children_depth": {
-                    "type": "integer",
-                    "default": 1,
                     "description": (
-                        "Depth of descendants: 1=direct children only, 2=children+grandchildren, "
-                        "0=full subtree. Used when include_children=True."
+                        "Depth of descendants when include_children=True: integer 0=full subtree, "
+                        "1=direct only, 2+=N levels; or string 'direct' (same as 1), 'recursive' (same as 0)."
                     ),
+                    "oneOf": [
+                        {"type": "integer"},
+                        {"type": "string", "enum": ["direct", "recursive"]},
+                    ],
+                    "default": 1,
                 },
             },
             "required": ["tree_id", "node_id"],
@@ -89,11 +109,19 @@ class CSTGetNodeInfoCommand(BaseMCPCommand):
         include_children: bool = False,
         include_parent: bool = False,
         max_children: Optional[int] = None,
-        children_depth: int = 1,
+        children_depth: Any = 1,
         **kwargs,
     ) -> SuccessResult:
         t_start = time.perf_counter()
         try:
+            try:
+                depth = _normalize_children_depth(children_depth)
+            except ValueError as e:
+                return ErrorResult(
+                    message=str(e),
+                    code="INVALID_PARAMETER",
+                    details={"parameter": "children_depth", "value": children_depth},
+                )
             t0 = time.perf_counter()
             metadata = get_node_metadata(tree_id, node_id, include_code=include_code)
             logger.info(
@@ -115,7 +143,7 @@ class CSTGetNodeInfoCommand(BaseMCPCommand):
 
             if include_children:
                 t0 = time.perf_counter()
-                if children_depth == 1:
+                if depth == 1:
                     children = get_node_children(
                         tree_id, node_id, include_code=include_code
                     )
@@ -124,7 +152,7 @@ class CSTGetNodeInfoCommand(BaseMCPCommand):
                     result["children"] = [child.to_dict() for child in children]
                     result["children_count"] = len(children)
                 else:
-                    max_depth = 0 if children_depth == 0 else children_depth
+                    max_depth = 0 if depth == 0 else depth
                     descendants = get_node_descendants(
                         tree_id, node_id, max_depth=max_depth, include_code=include_code
                     )
@@ -239,6 +267,14 @@ class CSTGetNodeInfoCommand(BaseMCPCommand):
                     "type": "integer",
                     "required": False,
                     "examples": [10, 50, 100],
+                },
+                "children_depth": {
+                    "description": (
+                        "Depth when include_children=True: integer 0=full subtree, 1=direct only, "
+                        "2+=N levels; or string 'direct' (same as 1), 'recursive' (same as 0)."
+                    ),
+                    "required": False,
+                    "default": 1,
                 },
             },
             "return_value": {

@@ -404,3 +404,42 @@ def reload_tree_from_file(
     )
 
     return tree
+
+
+def rollback_tree_to_code(
+    tree_id: str,
+    code: str,
+    node_types: Optional[List[str]] = None,
+    max_depth: Optional[int] = None,
+    include_children: bool = True,
+) -> bool:
+    """
+    Restore in-memory tree to the given source code (rollback after failed save).
+
+    Replaces tree.module with parsed code and rebuilds index. Use when save
+    fails after modify so the tree is reverted to pre-modify state.
+
+    Args:
+        tree_id: Tree ID to roll back
+        code: Full module source code to restore
+        node_types: Optional filter for index (same as load)
+        max_depth: Optional max depth for index
+        include_children: Whether to index children
+
+    Returns:
+        True if tree was found and rolled back, False if tree not found
+    """
+    tree = get_tree(tree_id)
+    if not tree:
+        return False
+    tree.module = cst.parse_module(code)
+    tree.node_map.clear()
+    tree.metadata_map.clear()
+    tree.parent_map.clear()
+    _build_tree_index(
+        tree,
+        node_types=node_types,
+        max_depth=max_depth,
+        include_children=include_children,
+    )
+    return True

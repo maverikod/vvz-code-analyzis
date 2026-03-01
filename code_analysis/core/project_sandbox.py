@@ -49,6 +49,9 @@ def run_in_project_sandbox(
     The script must be inside root_path. Execution uses:
     - cwd = root_path
     - PYTHONPATH = root_path only (imports limited to project + stdlib)
+    - If root_path/.venv or root_path/venv exists: uses that venv's Python
+      (interpreter, VIRTUAL_ENV, PATH) so project dependencies are available.
+      Falls back to sys.executable if no project venv is found.
 
     Args:
         root_path: Absolute path to the project root (must exist).
@@ -80,12 +83,44 @@ def run_in_project_sandbox(
     if not script_path.is_file():
         raise ValueError(f"Path is not a file: {script_path}")
 
-    cmd = [sys.executable, str(script_path)]
+    # Prefer project's .venv/bin/python so project dependencies are used
+    venv_python: Optional[Path] = None
+    for cand in [
+        root_resolved / ".venv" / "bin" / "python",
+        root_resolved / "venv" / "bin" / "python",
+    ]:
+        if cand.exists():
+            venv_python = cand
+            break
+
+    if venv_python is not None:
+        interpreter = str(venv_python)
+        venv_dir = venv_python.parent.parent
+        logger.debug(
+            "Using project venv: %s (interpreter=%s)",
+            venv_dir,
+            interpreter,
+        )
+    else:
+        interpreter = sys.executable
+        venv_dir = None
+        logger.debug(
+            "No project .venv/venv found, using sys.executable=%s",
+            interpreter,
+        )
+
+    cmd = [interpreter, str(script_path)]
     if args:
         cmd.extend(args)
 
     env = os.environ.copy()
     env["PYTHONPATH"] = str(root_resolved)
+    if venv_dir is not None:
+        env["VIRTUAL_ENV"] = str(venv_dir)
+        venv_bin = venv_dir / "bin"
+        if venv_bin.exists():
+            path_prepend = str(venv_bin)
+            env["PATH"] = path_prepend + os.pathsep + env.get("PATH", "")
 
     logger.debug(
         "Running in project sandbox: cwd=%s PYTHONPATH=%s cmd=%s",

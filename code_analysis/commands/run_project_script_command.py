@@ -407,7 +407,6 @@ class RunProjectScriptCommand(BaseMCPCommand):
                     "script": rel,
                     "project_id": project_id,
                 },
-                description="Script execution finished",
             )
         except Exception as e:
             from ..core.exceptions import ValidationError

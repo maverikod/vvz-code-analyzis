@@ -8,9 +8,10 @@ email: vasilyvz@gmail.com
 from __future__ import annotations
 
 import logging
-from typing import List, Optional, Union
+from typing import List, Optional, Tuple, Union
 
 import libcst as cst
+from libcst.metadata import MetadataWrapper, PositionProvider
 
 from .models import CSTTree, ROOT_NODE_ID_SENTINEL, TreeOperation, TreeOperationType
 from .tree_builder import _build_tree_index, get_tree
@@ -67,6 +68,12 @@ def modify_tree(tree_id: str, operations: List[TreeOperation]) -> CSTTree:
     for op in operations:
         _validate_operation(tree, op)
 
+    # Sort DELETE operations by position descending (bottom-to-top) so that
+    # deleting one node does not shift positions of nodes we have not yet deleted.
+    # This avoids "Node was not removed" when node from stale node_map is not in
+    # the updated module.
+    sorted_ops = _sort_operations_for_batch(operations, tree)
+
     # Create a copy of the module for modification
     # We'll apply all operations to this copy
     modified_module = tree.module
@@ -74,7 +81,7 @@ def modify_tree(tree_id: str, operations: List[TreeOperation]) -> CSTTree:
     try:
         # Apply all operations. Do not rebuild index between ops so UUID node_ids
         # for unmodified nodes stay valid (batch replace at multiple points).
-        for op in operations:
+        for op in sorted_ops:
             modified_module = _apply_operation(modified_module, tree, op)
             tree.module = modified_module
             _remove_operation_nodes_from_index(tree, op)
@@ -223,6 +230,27 @@ def _parse_code_snippet_or_comment(
         if line_stripped.startswith("#"):
             result.append(cst.EmptyLine(comment=cst.Comment(value=line_stripped)))
     return result
+
+
+def _sort_operations_for_batch(
+    operations: List[TreeOperation], tree: CSTTree
+) -> List[TreeOperation]:
+    """
+    Sort operations so DELETE ops run bottom-to-top (by position).
+    This prevents position shift from invalidating node references in batch.
+    """
+    deletes: List[Tuple[int, int, TreeOperation]] = []
+    others: List[TreeOperation] = []
+    for op in operations:
+        if op.action == TreeOperationType.DELETE and op.node_id:
+            meta = tree.metadata_map.get(op.node_id)
+            line = meta.start_line if meta else 0
+            col = meta.start_col if meta else 0
+            deletes.append((-line, -col, op))  # negate for descending
+        else:
+            others.append(op)
+    deletes.sort(key=lambda x: (x[0], x[1]))
+    return [op for (_, _, op) in deletes] + others
 
 
 def _remove_operation_nodes_from_index(tree: CSTTree, operation: TreeOperation) -> None:
@@ -512,7 +540,18 @@ def _apply_operation(
 
 def _delete_node(module: cst.Module, tree: CSTTree, node_id: str) -> cst.Module:
     """Delete a node from module."""
-    node = tree.node_map.get(node_id)
+    metadata = tree.metadata_map.get(node_id)
+    node = None
+    if metadata and hasattr(metadata, "start_line"):
+        node = _find_node_in_module_by_position(
+            module,
+            metadata.start_line,
+            metadata.start_col,
+            metadata.end_line,
+            metadata.end_col,
+        )
+    if node is None:
+        node = tree.node_map.get(node_id)
     if not node:
         raise ValueError(f"Node not found: {node_id}")
 
@@ -542,14 +581,64 @@ def _delete_node(module: cst.Module, tree: CSTTree, node_id: str) -> cst.Module:
     return result
 
 
+def _find_node_in_module_by_position(
+    module: cst.Module,
+    start_line: int,
+    start_col: int,
+    end_line: int,
+    end_col: int,
+) -> Optional[cst.CSTNode]:
+    """
+    Find a node in the given module with exact position (for use after previous
+    ops have updated the module so tree.node_map may point at stale nodes).
+    Prefers BaseStatement so replace/delete targets the statement, not an inner node.
+    """
+    wrapper = MetadataWrapper(module, unsafe_skip_copy=True)
+    positions = wrapper.resolve(PositionProvider)
+    result: List[Optional[cst.CSTNode]] = [None]
+
+    class Finder(cst.CSTVisitor):
+        def visit(self, node: cst.CSTNode) -> bool:
+            pos = positions.get(node)
+            if pos is not None and hasattr(pos, "start") and hasattr(pos, "end"):
+                if (
+                    pos.start.line == start_line
+                    and pos.start.column == start_col
+                    and pos.end.line == end_line
+                    and pos.end.column == end_col
+                ):
+                    # Prefer statement-level node so replace matches body items
+                    if isinstance(node, cst.BaseStatement):
+                        result[0] = node
+                        return False
+                    if result[0] is None:
+                        result[0] = node
+                    return True
+            return True
+
+    module.visit(Finder())
+    return result[0]
+
+
 def _replace_node(
     module: cst.Module, tree: CSTTree, node_id: str, new_code: str
 ) -> cst.Module:
     """Replace a node in module with one or more statements."""
-    node = tree.node_map.get(node_id)
+    metadata = tree.metadata_map.get(node_id)
+    # Resolve target node: use node from current module by position when
+    # available (after prior ops tree.node_map may point at stale module nodes).
+    node: Optional[cst.CSTNode] = None
+    if metadata and hasattr(metadata, "start_line"):
+        node = _find_node_in_module_by_position(
+            module,
+            metadata.start_line,
+            metadata.start_col,
+            metadata.end_line,
+            metadata.end_col,
+        )
+    if node is None:
+        node = tree.node_map.get(node_id)
     if not node:
-        # Get node metadata for better error message
-        metadata = tree.metadata_map.get(node_id)
         node_info = (
             f"Node type: {metadata.type if metadata else 'unknown'}, "
             if metadata
@@ -567,8 +656,6 @@ def _replace_node(
         # Empty code means delete
         return _delete_node(module, tree, node_id)
 
-    # Get node metadata for better error context
-    metadata = tree.metadata_map.get(node_id)
     node_type = metadata.type if metadata else "unknown"
     parent_id = metadata.parent_id if metadata else None
     parent_metadata = tree.metadata_map.get(parent_id) if parent_id else None

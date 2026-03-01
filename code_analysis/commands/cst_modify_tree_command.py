@@ -19,11 +19,58 @@ from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 
 from .base_mcp_command import BaseMCPCommand
 from ..core.cst_tree.models import TreeOperation, TreeOperationType
-from ..core.cst_tree.tree_builder import rollback_tree_to_code
+from ..core.cst_tree.tree_builder import get_tree, rollback_tree_to_code
 from ..core.cst_tree.tree_modifier import modify_tree
 from ..core.cst_tree.tree_saver import save_tree_to_file
+from ..cst_query import query_source
 
 logger = logging.getLogger(__name__)
+
+
+def _find_tree_node_id_by_position(
+    tree: Any, start_line: int, start_col: int, end_line: int, end_col: int
+) -> Optional[str]:
+    """Find tree's node_id for metadata matching given position."""
+    for nid, meta in tree.metadata_map.items():
+        if (
+            meta.start_line == start_line
+            and meta.start_col == start_col
+            and meta.end_line == end_line
+            and meta.end_col == end_col
+        ):
+            return nid
+    return None
+
+
+def _resolve_selector_to_tree_node_ids(
+    tree: Any, selector: str, match_index: Optional[int], replace_all: bool
+) -> List[str]:
+    """
+    Resolve selector to tree's node_ids (UUIDs in node_map).
+    Uses query_source for matches, then finds tree metadata by position.
+    """
+    source = tree.module.code
+    matches = query_source(source, selector, include_code=False)
+    if not matches:
+        return []
+    node_ids: List[str] = []
+    if replace_all:
+        for m in matches:
+            nid = _find_tree_node_id_by_position(
+                tree, m.start_line, m.start_col, m.end_line, m.end_col
+            )
+            if nid:
+                node_ids.append(nid)
+    else:
+        idx = match_index if match_index is not None else 0
+        if 0 <= idx < len(matches):
+            m = matches[idx]
+            nid = _find_tree_node_id_by_position(
+                tree, m.start_line, m.start_col, m.end_line, m.end_col
+            )
+            if nid:
+                node_ids.append(nid)
+    return node_ids
 
 
 class CSTModifyTreeCommand(BaseMCPCommand):
@@ -68,7 +115,22 @@ class CSTModifyTreeCommand(BaseMCPCommand):
                             },
                             "node_id": {
                                 "type": "string",
-                                "description": "Node ID for replace/delete operations",
+                                "description": "Node ID for replace/delete operations (from cst_find_node)",
+                            },
+                            "selector": {
+                                "type": "string",
+                                "description": (
+                                    "XPath-like CSTQuery selector (alternative to node_id). "
+                                    "Use with match_index or replace_all for multi-node ops."
+                                ),
+                            },
+                            "match_index": {
+                                "type": "integer",
+                                "description": "When using selector: which match (0-based). Default 0.",
+                            },
+                            "replace_all": {
+                                "type": "boolean",
+                                "description": "When using selector: apply to all matches. Default false.",
                             },
                             "code": {
                                 "type": "string",
@@ -173,6 +235,14 @@ class CSTModifyTreeCommand(BaseMCPCommand):
         t_start = time.perf_counter()
         try:
             t0 = time.perf_counter()
+            original_tree = get_tree(tree_id)
+            if not original_tree:
+                return ErrorResult(
+                    message=f"Tree not found: {tree_id}",
+                    code="TREE_NOT_FOUND",
+                    details={"tree_id": tree_id},
+                )
+
             tree_operations: List[TreeOperation] = []
             for op_dict in operations:
                 action_str = op_dict.get("action")
@@ -205,31 +275,46 @@ class CSTModifyTreeCommand(BaseMCPCommand):
                 elif isinstance(pos_val, str):
                     position_str = pos_val
 
-                tree_operations.append(
-                    TreeOperation(
-                        action=action,
-                        node_id=op_dict.get("node_id", ""),
-                        code=op_dict.get("code"),
-                        code_lines=op_dict.get("code_lines"),
-                        position=position_str,
-                        position_after_index=position_after_index,
-                        parent_node_id=op_dict.get("parent_node_id"),
-                        target_node_id=op_dict.get("target_node_id"),
-                        start_node_id=op_dict.get("start_node_id"),
-                        end_node_id=op_dict.get("end_node_id"),
+                # Resolve selector to node_ids when selector provided (no node_id)
+                node_ids_to_use: List[str] = []
+                op_node_id = op_dict.get("node_id")
+                selector = op_dict.get("selector")
+                if op_node_id:
+                    node_ids_to_use = [op_node_id]
+                elif selector and action in (
+                    TreeOperationType.REPLACE,
+                    TreeOperationType.DELETE,
+                ):
+                    node_ids_to_use = _resolve_selector_to_tree_node_ids(
+                        original_tree,
+                        selector,
+                        op_dict.get("match_index"),
+                        op_dict.get("replace_all", False),
                     )
-                )
+                    if not node_ids_to_use:
+                        return ErrorResult(
+                            message=f"Selector matched no nodes: {selector}",
+                            code="SELECTOR_NO_MATCH",
+                            details={"selector": selector},
+                        )
+                else:
+                    node_ids_to_use = [op_dict.get("node_id", "")]
 
-            # Get original tree for preview
-            from ..core.cst_tree.tree_builder import get_tree
-
-            original_tree = get_tree(tree_id)
-            if not original_tree:
-                return ErrorResult(
-                    message=f"Tree not found: {tree_id}",
-                    code="TREE_NOT_FOUND",
-                    details={"tree_id": tree_id},
-                )
+                for nid in node_ids_to_use:
+                    tree_operations.append(
+                        TreeOperation(
+                            action=action,
+                            node_id=nid,
+                            code=op_dict.get("code"),
+                            code_lines=op_dict.get("code_lines"),
+                            position=position_str,
+                            position_after_index=position_after_index,
+                            parent_node_id=op_dict.get("parent_node_id"),
+                            target_node_id=op_dict.get("target_node_id"),
+                            start_node_id=op_dict.get("start_node_id"),
+                            end_node_id=op_dict.get("end_node_id"),
+                        )
+                    )
 
             original_code = original_tree.module.code
             logger.info(
@@ -297,12 +382,35 @@ class CSTModifyTreeCommand(BaseMCPCommand):
 
                 return SuccessResult(data=data)
 
+            # Build modified_nodes for verification (when multiple nodes affected)
+            modified_nodes: List[Dict[str, Any]] = []
+            for op in tree_operations:
+                entry: Dict[str, Any] = {
+                    "node_id": op.node_id,
+                    "action": (
+                        op.action.value
+                        if hasattr(op.action, "value")
+                        else str(op.action)
+                    ),
+                }
+                if op.action == TreeOperationType.REPLACE and (
+                    op.code or op.code_lines
+                ):
+                    entry["code"] = (
+                        "\n".join(op.code_lines) if op.code_lines else (op.code or "")
+                    )
+                elif op.action == TreeOperationType.DELETE:
+                    entry["code"] = ""
+                    entry["removed"] = True
+                modified_nodes.append(entry)
+
             # Normal mode: apply changes
             data = {
                 "success": True,
                 "preview": False,
                 "tree_id": modified_tree.tree_id,
-                "operations_applied": len(operations),
+                "operations_applied": len(tree_operations),
+                "modified_nodes": modified_nodes,
             }
 
             # Optional: save to file in the same request
@@ -433,10 +541,20 @@ class CSTModifyTreeCommand(BaseMCPCommand):
                 "- Code transformations\n"
                 "- Multiple related changes in one operation\n\n"
                 "Important notes:\n"
-                "- Operations are applied in order\n"
-                "- Use cst_save_tree to persist changes to file\n"
-                "- Tree modifications are in-memory until saved\n"
-                "- All operations must be valid for any to be applied"
+                "- Operations are applied in order.\n"
+                "- Use cst_save_tree to persist changes to file.\n"
+                "- Tree modifications are in-memory until saved.\n"
+                "- All operations must be valid for any to be applied.\n\n"
+                "Batch behaviour:\n"
+                "When you send multiple replace or delete operations in one request, each node "
+                "is resolved in the current module by its position (from metadata). So the second "
+                "and later operations see the tree after previous ops are applied; you can replace "
+                "or delete several nodes in one call. Use one batch for related changes.\n\n"
+                "Insert — parent_node_id:\n"
+                "Must be a container node: Module, FunctionDef, or ClassDef (not the body node "
+                "IndentedBlock). Use __root__ for module-level insert. To insert into a function "
+                "body, use the function's node_id (FunctionDef from cst_find_node), not its "
+                "IndentedBlock child."
             ),
             "parameters": {
                 "tree_id": {

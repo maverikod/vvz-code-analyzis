@@ -390,6 +390,12 @@ def apply_replace_ops(source: str, ops: list[ReplaceOp]) -> tuple[str, dict[str,
                 stmt_replacements_by_span[span_key] = new_stmts
                 replaced += 1 if new_stmts else 0
                 removed += 0 if new_stmts else 1
+            elif m.kind == "import":
+                # Import/ImportFrom live in SimpleStatementLine; use line range for match
+                new_stmts = _parse_snippet_as_module_body(op.new_code)
+                stmt_replacements_by_lines[(m.start_line, m.end_line)] = new_stmts
+                replaced += 1 if new_stmts else 0
+                removed += 0 if new_stmts else 1
             elif m.kind == "smallstmt":
                 new_small = _parse_small_stmt_snippet(op.new_code)
                 small_replacements_by_span[span_key] = new_small
@@ -397,7 +403,7 @@ def apply_replace_ops(source: str, ops: list[ReplaceOp]) -> tuple[str, dict[str,
                 removed += 0 if new_small else 1
             else:
                 raise CSTModulePatchError(
-                    f"cst_query replacement supports only stmt/smallstmt/function/class/method matches, got {m.kind}"
+                    f"cst_query replacement supports only stmt/smallstmt/function/class/method/import matches, got {m.kind}"
                 )
             continue
 

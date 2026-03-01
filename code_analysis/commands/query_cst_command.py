@@ -228,6 +228,30 @@ class QueryCSTCommand(BaseMCPCommand):
                     "[TIMING] command=query_cst total_elapsed_sec=%.4f",
                     time.perf_counter() - t_start,
                 )
+                # Build modified_nodes for verification (when multiple nodes affected)
+                modified_nodes: List[Dict[str, Any]] = []
+                if replace_all:
+                    for m in matches:
+                        modified_nodes.append(
+                            {
+                                "node_id": m.node_id,
+                                "kind": m.kind,
+                                "start_line": m.start_line,
+                                "end_line": m.end_line,
+                                "code": new_code,
+                            }
+                        )
+                else:
+                    m = matches[match_index]
+                    modified_nodes.append(
+                        {
+                            "node_id": m.node_id,
+                            "kind": m.kind,
+                            "start_line": m.start_line,
+                            "end_line": m.end_line,
+                            "code": new_code,
+                        }
+                    )
                 replace_data = {
                     "success": True,
                     "replaced": stats.get("replaced", 0),
@@ -236,6 +260,7 @@ class QueryCSTCommand(BaseMCPCommand):
                     "backup_uuid": backup_uuid or None,
                     "file_size_bytes": len(new_source.encode("utf-8")),
                     "file_lines": len(new_source.splitlines()),
+                    "modified_nodes": modified_nodes,
                 }
                 return SuccessResult(data=replace_data)
 

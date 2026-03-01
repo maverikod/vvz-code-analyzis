@@ -564,6 +564,7 @@ def register_code_analysis_commands(reg: registry) -> None:
             PermanentlyDeleteFromTrashMCPCommand,
             RestoreProjectFromTrashMCPCommand,
         )
+        from .commands.run_project_script_command import RunProjectScriptCommand
 
         reg.register(ChangeProjectIdMCPCommand, "custom")
         reg.register(CreateProjectMCPCommand, "custom")
@@ -575,6 +576,7 @@ def register_code_analysis_commands(reg: registry) -> None:
         reg.register(PermanentlyDeleteFromTrashMCPCommand, "custom")
         reg.register(RestoreProjectFromTrashMCPCommand, "custom")
         reg.register(ClearTrashMCPCommand, "custom")
+        reg.register(RunProjectScriptCommand, "custom")
         import logging
 
         logger = logging.getLogger(__name__)
@@ -582,7 +584,7 @@ def register_code_analysis_commands(reg: registry) -> None:
             "✅ Registered project management commands: "
             "change_project_id, create_project, delete_project, delete_unwatched_projects, "
             "list_projects, list_watch_dirs, list_trashed_projects, permanently_delete_from_trash, "
-            "restore_project_from_trash, clear_trash"
+            "restore_project_from_trash, clear_trash, run_project_script"
         )
     except ImportError as e:
         import logging
@@ -639,3 +641,4 @@ register_auto_import_module("code_analysis.commands.worker_management_mcp_comman
 register_auto_import_module("code_analysis.commands.database_integrity_mcp_commands")
 register_auto_import_module("code_analysis.commands.database_restore_mcp_commands")
 register_auto_import_module("code_analysis.commands.project_management_mcp_commands")
+register_auto_import_module("code_analysis.commands.run_project_script_command")

@@ -52,6 +52,7 @@ Use cases:
 
 Important notes:
 - **node_id** values are UUID4 (from cst_load_file / cst_find_node). They stay valid for unmodified nodes between operations in the same batch, so you can apply several replace/delete operations in one call.
+- **Batch replace/delete:** each operation resolves the node in the current module by position (from metadata), so the second and later operations see the tree after previous ones are applied; you can replace or delete several nodes in one request.
 - Operations are applied in order
 - Use cst_save_tree to persist changes to file
 - Tree modifications are in-memory until saved

@@ -12,12 +12,15 @@ email: vasilyvz@gmail.com
 import logging
 import os
 import subprocess
-import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import List, Optional
 
 logger = logging.getLogger(__name__)
+
+
+class VenvNotFoundError(Exception):
+    """Raised when project .venv or venv is not found."""
 
 
 @dataclass
@@ -51,7 +54,7 @@ def run_in_project_sandbox(
     - PYTHONPATH = root_path only (imports limited to project + stdlib)
     - If root_path/.venv or root_path/venv exists: uses that venv's Python
       (interpreter, VIRTUAL_ENV, PATH) so project dependencies are available.
-      Falls back to sys.executable if no project venv is found.
+      Raises VenvNotFoundError if neither .venv nor venv is found.
 
     Args:
         root_path: Absolute path to the project root (must exist).
@@ -66,6 +69,7 @@ def run_in_project_sandbox(
     Raises:
         ValueError: If root_path does not exist, or script path is outside project.
         FileNotFoundError: If the script file does not exist.
+        VenvNotFoundError: If neither .venv nor venv exists under root_path.
     """
     root_resolved = root_path.resolve()
     if not root_resolved.is_dir():
@@ -93,21 +97,20 @@ def run_in_project_sandbox(
             venv_python = cand
             break
 
-    if venv_python is not None:
-        interpreter = str(venv_python)
-        venv_dir = venv_python.parent.parent
-        logger.debug(
-            "Using project venv: %s (interpreter=%s)",
-            venv_dir,
-            interpreter,
+    if venv_python is None:
+        raise VenvNotFoundError(
+            f"Project virtual environment not found under {root_resolved}. "
+            "Expected .venv/bin/python or venv/bin/python. "
+            "Create a venv in the project root (e.g. python -m venv .venv)."
         )
-    else:
-        interpreter = sys.executable
-        venv_dir = None
-        logger.debug(
-            "No project .venv/venv found, using sys.executable=%s",
-            interpreter,
-        )
+
+    interpreter = str(venv_python)
+    venv_dir = venv_python.parent.parent
+    logger.debug(
+        "Using project venv: %s (interpreter=%s)",
+        venv_dir,
+        interpreter,
+    )
 
     cmd = [interpreter, str(script_path)]
     if args:

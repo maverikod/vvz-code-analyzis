@@ -813,6 +813,53 @@ class CodeAnalysisConfigValidator:
                                 )
                             )
 
+        # Validate database.rpc section (shm for large payloads)
+        rpc = database.get("rpc")
+        if rpc is not None and isinstance(rpc, dict):
+            shm_threshold = rpc.get("shm_threshold_bytes")
+            if shm_threshold is not None:
+                if not isinstance(shm_threshold, int):
+                    self.validation_results.append(
+                        ValidationResult(
+                            level="error",
+                            message="code_analysis.database.rpc.shm_threshold_bytes must be integer",
+                            section="code_analysis",
+                            key="database.rpc.shm_threshold_bytes",
+                            suggestion="Set shm_threshold_bytes to an integer (bytes)",
+                        )
+                    )
+                elif shm_threshold < 0:
+                    self.validation_results.append(
+                        ValidationResult(
+                            level="error",
+                            message="code_analysis.database.rpc.shm_threshold_bytes must be >= 0",
+                            section="code_analysis",
+                            key="database.rpc.shm_threshold_bytes",
+                            suggestion="Set shm_threshold_bytes to 0 or positive value",
+                        )
+                    )
+                elif shm_threshold > 104857600:  # 100 MB
+                    self.validation_results.append(
+                        ValidationResult(
+                            level="warning",
+                            message="code_analysis.database.rpc.shm_threshold_bytes > 100 MB may be excessive",
+                            section="code_analysis",
+                            key="database.rpc.shm_threshold_bytes",
+                            suggestion="Consider lower threshold (e.g. 65536)",
+                        )
+                    )
+            shm_enabled = rpc.get("shm_enabled")
+            if shm_enabled is not None and not isinstance(shm_enabled, bool):
+                self.validation_results.append(
+                    ValidationResult(
+                        level="error",
+                        message="code_analysis.database.rpc.shm_enabled must be boolean",
+                        section="code_analysis",
+                        key="database.rpc.shm_enabled",
+                        suggestion="Set shm_enabled to true or false",
+                    )
+                )
+
     def _validate_file_existence(self) -> None:
         """Validate that referenced files exist."""
         if not self.config_path:

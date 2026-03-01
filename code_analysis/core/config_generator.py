@@ -182,6 +182,13 @@ class CodeAnalysisConfigGenerator(SimpleConfigGenerator):
                 "poll_interval": 0.01,
             }
 
+        # Add database.rpc section (shm threshold for large payloads)
+        if "rpc" not in config["code_analysis"]["database"]:
+            config["code_analysis"]["database"]["rpc"] = {
+                "shm_threshold_bytes": 65536,
+                "shm_enabled": True,
+            }
+
         # Apply code_analysis settings from args or defaults (only what is used in code)
         ca = config["code_analysis"]
         ca["host"] = (

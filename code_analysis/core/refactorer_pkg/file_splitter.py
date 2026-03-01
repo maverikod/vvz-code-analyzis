@@ -166,10 +166,24 @@ class FileToPackageSplitter(BaseRefactorer):
         # Build imports (simplified - would need proper import analysis)
         imports = self._extract_imports()
 
-        # Intra-package imports: symbols from other modules in this package
-        sibling_imports = []
+        # Extract module content first to detect which sibling symbols are used
+        module_code_parts: List[str] = []
+        for class_name in classes:
+            class_code = self._extract_class_code(class_name, source_lines)
+            if class_code:
+                module_code_parts.append("".join(class_code))
+        for func_name in functions:
+            func_code = self._extract_function_code(func_name, source_lines)
+            if func_code:
+                module_code_parts.append("".join(func_code))
+        module_code = "\n".join(module_code_parts)
+
+        # Intra-package imports: only symbols that are actually used in this module
+        sibling_imports: List[str] = []
         if all_modules:
-            sibling_imports = self._sibling_imports_for_module(module_name, all_modules)
+            sibling_imports = self._sibling_imports_for_module(
+                module_name, all_modules, module_code
+            )
 
         # Build module content
         lines = []
@@ -187,14 +201,14 @@ class FileToPackageSplitter(BaseRefactorer):
         if imports or sibling_imports:
             lines.append("\n")
 
-        # Extract and add classes
+        # Add classes
         for class_name in classes:
             class_code = self._extract_class_code(class_name, source_lines)
             if class_code:
                 lines.extend(class_code)
                 lines.append("\n")
 
-        # Extract and add functions
+        # Add functions
         for func_name in functions:
             func_code = self._extract_function_code(func_name, source_lines)
             if func_code:
@@ -232,17 +246,21 @@ class FileToPackageSplitter(BaseRefactorer):
         return imports
 
     def _sibling_imports_for_module(
-        self, module_name: str, all_modules: Dict[str, Any]
+        self,
+        module_name: str,
+        all_modules: Dict[str, Any],
+        module_code: str = "",
     ) -> List[str]:
         """
         Build import lines for symbols defined in other modules of the package.
 
-        So that a module can use classes/functions that were moved to sibling
-        modules (e.g. queue.py can use Task, TaskStatus from .task_model, .enums).
+        Only adds imports for symbols that are actually used in module_code,
+        to avoid F401 (unused import) from flake8.
 
         Args:
             module_name: Current module name
             all_modules: Full modules config (name -> {classes: [...], functions: [...]})
+            module_code: Extracted code of this module (to check symbol usage)
 
         Returns:
             List of lines (with trailing newline), e.g. ["from .enums import A, B\n"]
@@ -256,7 +274,11 @@ class FileToPackageSplitter(BaseRefactorer):
             )
             if not syms:
                 continue
-            syms_str = ", ".join(sorted(syms))
+            # Only import symbols that are used in this module's code
+            used_syms = [s for s in syms if s in module_code]
+            if not used_syms:
+                continue
+            syms_str = ", ".join(sorted(used_syms))
             lines.append(f"from .{sibling_name} import {syms_str}\n")
         return lines
 
@@ -274,11 +296,16 @@ class FileToPackageSplitter(BaseRefactorer):
         )
 
         # Find the actual end by looking for next top-level definition
+        # Include decorators (@dataclass, etc.) as start of next definition
         for i in range(end_line, len(source_lines)):
             line = source_lines[i].strip()
             if line and not line.startswith("#") and not line.startswith('"""'):
-                # Check if this is a new top-level definition
-                if line.startswith("class ") or line.startswith("def "):
+                # Check if this is a new top-level definition or its decorator
+                if (
+                    line.startswith("class ")
+                    or line.startswith("def ")
+                    or line.startswith("@")
+                ):
                     end_line = i
                     break
 
@@ -295,11 +322,15 @@ class FileToPackageSplitter(BaseRefactorer):
             func_node.end_lineno if hasattr(func_node, "end_lineno") else start_line + 1
         )
 
-        # Find the actual end
+        # Find the actual end (include decorators as start of next definition)
         for i in range(end_line, len(source_lines)):
             line = source_lines[i].strip()
             if line and not line.startswith("#") and not line.startswith('"""'):
-                if line.startswith("class ") or line.startswith("def "):
+                if (
+                    line.startswith("class ")
+                    or line.startswith("def ")
+                    or line.startswith("@")
+                ):
                     end_line = i
                     break
 

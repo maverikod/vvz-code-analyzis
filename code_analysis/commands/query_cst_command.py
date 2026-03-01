@@ -206,16 +206,12 @@ class QueryCSTCommand(BaseMCPCommand):
                     comment="",
                 )
                 target.write_text(new_source, encoding="utf-8")
-                try:
-                    rel_path = str(target.relative_to(root_path))
-                except ValueError:
-                    rel_path = file_path
+                abs_path = str(target.resolve())
                 database = self._open_database_from_config(auto_analyze=False)
                 try:
-                    update_result = database.update_file_data(
-                        file_path=rel_path,
+                    update_result = database.index_file(
+                        file_path=abs_path,
                         project_id=project_id,
-                        root_dir=root_path,
                     )
                     if not update_result.get("success"):
                         logger.warning(

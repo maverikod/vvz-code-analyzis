@@ -187,7 +187,7 @@ class TestASTCSTChunksVerification:
         """Test that file is marked for chunking after update_file_data."""
         file_id, file_path, project_id, root_dir = test_file_with_content
 
-        # mark_file_needs_chunking is called in _analyze_file (line 499)
+        # mark_file_needs_chunking is called in update_indexes analyze_file
         # It deletes existing chunks so worker can re-chunk the file
         # We verify that chunks are deleted (file is ready for re-chunking)
 

@@ -270,7 +270,7 @@ class TestUpdateFileDataReal:
             root_dir=root_dir,
         )
         
-        # Should succeed (even if _analyze_file has issues, clear_file_data should work)
+        # Should succeed (even if analyze_file has issues, clear_file_data should work)
         # At minimum, verify that clear_file_data was called
         assert "error" in result or result.get("success") is not None, "Result should contain status"
         
@@ -347,11 +347,10 @@ class TestUpdateFileDataReal:
             project_id=test_project,
         )
         
-        # Use _analyze_file to properly extract all entities
-        from code_analysis.commands.code_mapper_mcp_command import UpdateIndexesMCPCommand
-        
-        update_cmd = UpdateIndexesMCPCommand()
-        result = update_cmd._analyze_file(
+        # Use analyze_file to properly extract all entities
+        from code_analysis.commands.update_indexes_analyzer import analyze_file
+
+        result = analyze_file(
             database=test_db,
             file_path=real_test_file_with_class,
             project_id=test_project,
@@ -388,7 +387,7 @@ class TestUpdateFileDataReal:
             root_dir=test_data_root,
         )
         
-        # Verify update was attempted (may fail due to _analyze_file issues, but clear should work)
+        # Verify update was attempted (may fail due to analyze_file issues, but clear should work)
         assert "file_id" in update_result, "Result should contain file_id"
         assert update_result.get("file_id") == file_id, "File ID should match"
         

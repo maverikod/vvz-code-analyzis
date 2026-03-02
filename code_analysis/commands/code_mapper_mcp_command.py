@@ -6,16 +6,13 @@ email: vasilyvz@gmail.com
 """
 
 import asyncio
-import ast
-import json
 import logging
 import os
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Callable, Dict, Optional
 
 from mcp_proxy_adapter.commands.result import SuccessResult, ErrorResult
 
-from ..core.complexity_analyzer import calculate_complexity
 from ..core.constants import (
     DATA_DIR_NAME,
     DEFAULT_IGNORE_PATTERNS,
@@ -23,6 +20,7 @@ from ..core.constants import (
     LOGS_DIR_NAME,
 )
 from .base_mcp_command import BaseMCPCommand
+from .update_indexes_analyzer import analyze_file
 
 logger = logging.getLogger(__name__)
 
@@ -90,492 +88,6 @@ class UpdateIndexesMCPCommand(BaseMCPCommand):
                 {"project_id": "550e8400-e29b-41d4-a716-446655440000"},
             ],
         }
-
-    def _extract_docstring(
-        self: "UpdateIndexesMCPCommand", node: ast.AST
-    ) -> Optional[str]:
-        """Extract docstring from an AST node.
-
-        Args:
-            self: Command instance.
-            node: AST node to inspect.
-
-        Returns:
-            Docstring text if present; otherwise None.
-        """
-        if isinstance(
-            node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Module)
-        ):
-            if (
-                node.body
-                and isinstance(node.body[0], ast.Expr)
-                and isinstance(node.body[0].value, ast.Constant)
-                and isinstance(node.body[0].value.value, str)
-            ):
-                return node.body[0].value.value
-        return None
-
-    def _extract_args(
-        self: "UpdateIndexesMCPCommand", node: ast.FunctionDef | ast.AsyncFunctionDef
-    ) -> list[str]:
-        """Extract argument names from function node.
-
-        Args:
-            self: Command instance.
-            node: Function node.
-
-        Returns:
-            List of argument names excluding 'self'.
-        """
-        args: list[str] = []
-        for arg in node.args.args:
-            if arg.arg != "self":
-                args.append(arg.arg)
-        return args
-
-    def _analyze_file(
-        self: "UpdateIndexesMCPCommand",
-        database: Any,
-        file_path: Path,
-        project_id: str,
-        root_path: Path,
-        force: bool = False,
-    ) -> Dict[str, Any]:
-        """Analyze a single Python file and add/update entries in the database.
-
-        Args:
-            self: Command instance.
-            database: DatabaseClient instance.
-            file_path: File to analyze.
-            project_id: Project identifier.
-            root_path: Root path to compute relative file paths.
-
-        Returns:
-            Per-file result dictionary with status and extracted counts.
-        """
-        try:
-            file_path = file_path.resolve()
-            root_path = root_path.resolve()
-
-            try:
-                rel_path = str(file_path.relative_to(root_path))
-            except ValueError:
-                logger.warning(
-                    f"File {file_path} is outside root {root_path}, using absolute path"
-                )
-                rel_path = str(file_path)
-
-            if not file_path.exists():
-                return {
-                    "file": rel_path,
-                    "status": "error",
-                    "error": "File does not exist",
-                    "error_type": "FileNotFoundError",
-                }
-
-            try:
-                file_stat = file_path.stat()
-                file_mtime = file_stat.st_mtime
-            except OSError as e:
-                return {
-                    "file": rel_path,
-                    "status": "error",
-                    "error": f"Cannot stat file: {e}",
-                    "error_type": type(e).__name__,
-                }
-
-            try:
-                file_content = file_path.read_text(encoding="utf-8")
-            except UnicodeDecodeError as e:
-                return {
-                    "file": rel_path,
-                    "status": "error",
-                    "error": f"Unicode decode error: {e}",
-                    "error_type": "UnicodeDecodeError",
-                }
-            except Exception as e:
-                return {
-                    "file": rel_path,
-                    "status": "error",
-                    "error": f"Cannot read file: {e}",
-                    "error_type": type(e).__name__,
-                }
-
-            lines = len(file_content.splitlines())
-
-            # Use absolute path for add_file to avoid path resolution issues
-            # add_file normalizes paths internally, but we need to pass absolute path
-            # to ensure it matches existing records
-            abs_file_path = str(file_path.resolve())
-
-            file_record = database.get_file_by_path(abs_file_path, project_id)
-            if file_record:
-                file_id = file_record["id"]
-                # Update file record if last_modified differs or if force=True
-                # This ensures file metadata is up to date
-                last_modified = file_record.get("last_modified", 0)
-                # Use epsilon comparison for float values
-                epsilon = 0.01  # 10ms tolerance
-                if force or abs(last_modified - file_mtime) > epsilon:
-                    try:
-                        has_docstring = bool(
-                            self._extract_docstring(ast.parse(file_content))
-                        )
-                    except SyntaxError:
-                        has_docstring = False
-                    # Use absolute path to ensure correct file matching
-                    updated_file_id = database.add_file(
-                        abs_file_path,
-                        lines,
-                        file_mtime,
-                        has_docstring,
-                        project_id,
-                    )
-                    # add_file returns the file_id (may be same or different)
-                    file_id = updated_file_id
-                # Note: Even if last_modified matches and force=False, we still save AST/CST below
-                # This is necessary for normal updates
-            else:
-                try:
-                    has_docstring = bool(
-                        self._extract_docstring(ast.parse(file_content))
-                    )
-                except SyntaxError:
-                    has_docstring = False
-                # Use absolute path to ensure correct file creation
-                # add_file returns file_id directly, use it
-                file_id = database.add_file(
-                    abs_file_path,
-                    lines,
-                    file_mtime,
-                    has_docstring,
-                    project_id,
-                )
-                # Verify file_id is valid
-                if not file_id:
-                    return {
-                        "file": rel_path,
-                        "status": "error",
-                        "error": "Failed to create file record",
-                        "error_type": "DatabaseError",
-                    }
-
-            try:
-                # Use parse_with_comments to preserve comments in AST
-                from ..core.ast_utils import parse_with_comments
-
-                tree = parse_with_comments(file_content, filename=str(file_path))
-            except SyntaxError as e:
-                logger.warning(f"Syntax error in {rel_path}: {e}")
-                return {"file": rel_path, "status": "syntax_error", "error": str(e)}
-
-            import hashlib
-
-            ast_json = json.dumps(ast.dump(tree))
-            ast_hash = hashlib.sha256(ast_json.encode()).hexdigest()
-
-            try:
-                # NOTE: save_ast_tree is intentionally synchronous. We must not create
-                # nested event loops inside queue workers / async contexts.
-                logger.debug(
-                    f"Saving AST for {rel_path}, file_id={file_id}, project_id={project_id}"
-                )
-                ast_tree_id = database.save_ast_tree(
-                    file_id,
-                    project_id,
-                    ast_json,
-                    ast_hash,
-                    file_mtime,
-                    overwrite=True,
-                )
-                logger.debug(f"AST saved with id={ast_tree_id} for file_id={file_id}")
-            except Exception as e:
-                logger.error(f"Error saving AST for {rel_path}: {e}", exc_info=True)
-                return {
-                    "file": rel_path,
-                    "status": "error",
-                    "error": f"Failed to save AST: {e}",
-                    "error_type": type(e).__name__,
-                }
-
-            cst_hash = hashlib.sha256(file_content.encode()).hexdigest()
-            try:
-                # NOTE: save_cst_tree is intentionally synchronous. We must not create
-                # nested event loops inside queue workers / async contexts.
-                logger.debug(
-                    f"Saving CST for {rel_path}, file_id={file_id}, project_id={project_id}"
-                )
-                cst_tree_id = database.save_cst_tree(
-                    file_id,
-                    project_id,
-                    file_content,
-                    cst_hash,
-                    file_mtime,
-                    overwrite=True,
-                )
-                logger.debug(f"CST saved with id={cst_tree_id} for file_id={file_id}")
-            except Exception as e:
-                logger.error(f"Error saving CST for {rel_path}: {e}", exc_info=True)
-                return {
-                    "file": rel_path,
-                    "status": "error",
-                    "error": f"Failed to save CST: {e}",
-                    "error_type": type(e).__name__,
-                }
-
-            classes_added = 0
-            functions_added = 0
-            methods_added = 0
-            imports_added = 0
-            usages_added = 0
-
-            class_nodes: dict[ast.ClassDef, int] = {}
-
-            # Add module-level content to full-text search (entire file content).
-            # This provides a guaranteed baseline for `fulltext_search` even if
-            # per-entity extraction is partial.
-            try:
-                module_docstring = ast.get_docstring(tree)
-            except Exception:
-                module_docstring = None
-            try:
-                database.add_code_content(
-                    file_id=file_id,
-                    entity_type="file",
-                    entity_name=str(rel_path),
-                    content=file_content,
-                    docstring=module_docstring,
-                    entity_id=file_id,
-                )
-            except Exception as e:
-                logger.warning(
-                    "Failed to add file content to FTS for %s: %s",
-                    rel_path,
-                    e,
-                    exc_info=True,
-                )
-
-            for node in ast.walk(tree):
-                if isinstance(node, ast.ClassDef):
-                    docstring = self._extract_docstring(node)
-                    bases: list[str] = []
-                    for base in node.bases:
-                        if isinstance(base, ast.Name):
-                            bases.append(base.id)
-                        else:
-                            try:
-                                bases.append(ast.unparse(base))
-                            except AttributeError:
-                                bases.append(str(base))
-                    class_id = database.add_class(
-                        file_id, node.name, node.lineno, docstring, bases
-                    )
-                    classes_added += 1
-                    class_nodes[node] = class_id
-
-                    # Store class content for full-text search.
-                    try:
-                        class_src = ast.get_source_segment(file_content, node)
-                        database.add_code_content(
-                            file_id=file_id,
-                            entity_type="class",
-                            entity_name=node.name,
-                            content=class_src or "",
-                            docstring=docstring,
-                            entity_id=class_id,
-                        )
-                    except Exception as e:
-                        logger.debug(
-                            "Failed to add class content to FTS (%s.%s): %s",
-                            rel_path,
-                            node.name,
-                            e,
-                            exc_info=True,
-                        )
-
-                    for item in node.body:
-                        if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                            method_docstring = self._extract_docstring(item)
-                            method_args = self._extract_args(item)
-                            # Calculate cyclomatic complexity
-                            try:
-                                method_complexity = calculate_complexity(item)
-                            except Exception as e:
-                                logger.debug(
-                                    "Failed to calculate complexity for method %s.%s: %s",
-                                    node.name,
-                                    item.name,
-                                    e,
-                                )
-                                method_complexity = None
-                            method_id = database.add_method(
-                                class_id,
-                                item.name,
-                                item.lineno,
-                                method_args,
-                                method_docstring,
-                                complexity=method_complexity,
-                            )
-                            methods_added += 1
-
-                            # Store method content for full-text search.
-                            try:
-                                method_src = ast.get_source_segment(file_content, item)
-                                database.add_code_content(
-                                    file_id=file_id,
-                                    entity_type="method",
-                                    entity_name=f"{node.name}.{item.name}",
-                                    content=method_src or "",
-                                    docstring=method_docstring,
-                                    entity_id=method_id,
-                                )
-                            except Exception as e:
-                                logger.debug(
-                                    "Failed to add method content to FTS (%s.%s.%s): %s",
-                                    rel_path,
-                                    node.name,
-                                    item.name,
-                                    e,
-                                    exc_info=True,
-                                )
-
-            for node in ast.walk(tree):
-                if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                    is_method = False
-                    for parent in ast.walk(tree):
-                        if isinstance(parent, ast.ClassDef):
-                            if any(
-                                node == item
-                                for item in parent.body
-                                if isinstance(
-                                    item, (ast.FunctionDef, ast.AsyncFunctionDef)
-                                )
-                            ):
-                                is_method = True
-                                break
-
-                    if not is_method:
-                        docstring = self._extract_docstring(node)
-                        args = self._extract_args(node)
-                        # Calculate cyclomatic complexity
-                        try:
-                            function_complexity = calculate_complexity(node)
-                        except Exception as e:
-                            logger.debug(
-                                "Failed to calculate complexity for function %s: %s",
-                                node.name,
-                                e,
-                            )
-                            function_complexity = None
-                        function_id = database.add_function(
-                            file_id,
-                            node.name,
-                            node.lineno,
-                            args,
-                            docstring,
-                            complexity=function_complexity,
-                        )
-                        functions_added += 1
-
-                        # Store function content for full-text search.
-                        try:
-                            func_src = ast.get_source_segment(file_content, node)
-                            database.add_code_content(
-                                file_id=file_id,
-                                entity_type="function",
-                                entity_name=node.name,
-                                content=func_src or "",
-                                docstring=docstring,
-                                entity_id=function_id,
-                            )
-                        except Exception as e:
-                            logger.debug(
-                                "Failed to add function content to FTS (%s.%s): %s",
-                                rel_path,
-                                node.name,
-                                e,
-                                exc_info=True,
-                            )
-
-            for node in ast.walk(tree):
-                if isinstance(node, ast.Import):
-                    for alias in node.names:
-                        database.add_import(
-                            file_id, alias.name, None, "import", node.lineno
-                        )
-                        imports_added += 1
-                elif isinstance(node, ast.ImportFrom):
-                    module = node.module or ""
-                    for alias in node.names:
-                        database.add_import(
-                            file_id, alias.name, module, "import_from", node.lineno
-                        )
-                        imports_added += 1
-
-            # Track usages (function calls, method calls, class instantiations)
-            try:
-                from ..core.usage_tracker import UsageTracker
-
-                def add_usage_callback(usage_record: Dict[str, Any]) -> None:
-                    """Callback to add usage record to database."""
-                    nonlocal usages_added
-                    try:
-                        database.add_usage(
-                            file_id=file_id,
-                            line=usage_record["line"],
-                            usage_type=usage_record["usage_type"],
-                            target_type=usage_record["target_type"],
-                            target_name=usage_record["target_name"],
-                            target_class=usage_record.get("target_class"),
-                            context=usage_record.get("context"),
-                        )
-                        usages_added += 1
-                    except Exception as e:
-                        logger.debug(
-                            f"Failed to add usage for {usage_record.get('target_name')} "
-                            f"at line {usage_record.get('line')}: {e}",
-                            exc_info=True,
-                        )
-
-                usage_tracker = UsageTracker(add_usage_callback)
-                usage_tracker.visit(tree)
-                logger.debug(
-                    f"Tracked {usages_added} usages in {rel_path}",
-                )
-            except Exception as e:
-                logger.warning(
-                    f"Failed to track usages for {rel_path}: {e}",
-                    exc_info=True,
-                )
-                # Continue even if usage tracking fails
-
-            database.mark_file_needs_chunking(rel_path, project_id)
-
-            return {
-                "file": rel_path,
-                "status": "success",
-                "classes": classes_added,
-                "functions": functions_added,
-                "methods": methods_added,
-                "imports": imports_added,
-                "usages": usages_added,
-            }
-
-        except Exception as e:
-            error_msg = f"Error analyzing {file_path}: {e}"
-            logger.error(error_msg, exc_info=True)
-            import sys
-            import traceback
-
-            print(f"ERROR: {error_msg}", file=sys.stderr, flush=True)
-            print(f"ERROR_TYPE: {type(e).__name__}", file=sys.stderr, flush=True)
-            traceback.print_exc(file=sys.stderr)
-            return {
-                "file": str(file_path),
-                "status": "error",
-                "error": str(e),
-                "error_type": type(e).__name__,
-            }
 
     async def execute(
         self: "UpdateIndexesMCPCommand",
@@ -706,8 +218,26 @@ class UpdateIndexesMCPCommand(BaseMCPCommand):
                     last_percent = -1
 
                     for idx, file_path in enumerate(python_files):
-                        result = self._analyze_file(
-                            database, file_path, project_id, root_path
+
+                        def make_heartbeat_cb(
+                            i: int, total: int
+                        ) -> Callable[[str], None]:
+                            def cb(phase: str) -> None:
+                                if progress_tracker:
+                                    pct = int((i + 1) / total * 100)
+                                    progress_tracker.set_description(
+                                        f"Indexing: {i + 1}/{total} ({pct}%) — {phase}"
+                                    )
+
+                            return cb
+
+                        progress_cb = make_heartbeat_cb(idx, files_total)
+                        result = analyze_file(
+                            database,
+                            file_path,
+                            project_id,
+                            root_path,
+                            progress_callback=progress_cb,
                         )
                         results.append(result)
 

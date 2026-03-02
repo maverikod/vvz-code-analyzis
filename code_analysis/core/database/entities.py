@@ -43,7 +43,8 @@ def add_class(
         """,
         (file_id, name, line, end_line, docstring, bases_json),
     )
-    self._commit()
+    if not self._in_transaction():
+        self._commit()
     result = self._lastrowid()
     assert result is not None
     return result
@@ -82,7 +83,8 @@ def add_method(
         """,
         (class_id, name, line, end_line, args_json, docstring),
     )
-    self._commit()
+    if not self._in_transaction():
+        self._commit()
     result = self._lastrowid()
     assert result is not None
     return result
@@ -121,7 +123,8 @@ def add_function(
         """,
         (file_id, name, line, end_line, args_json, docstring),
     )
-    self._commit()
+    if not self._in_transaction():
+        self._commit()
     result = self._lastrowid()
     assert result is not None
     return result
@@ -155,7 +158,8 @@ def add_import(
         """,
         (file_id, name, module, import_type, line),
     )
-    self._commit()
+    if not self._in_transaction():
+        self._commit()
     result = self._lastrowid()
     assert result is not None
     return result
@@ -192,10 +196,11 @@ def add_code_content(
         """,
         (file_id, entity_type, entity_id, entity_name, content, docstring),
     )
-    self._commit()
+    if not self._in_transaction():
+        self._commit()
     result = self._lastrowid()
     assert result is not None
-    
+
     # Insert into FTS index
     try:
         self._execute(
@@ -205,11 +210,12 @@ def add_code_content(
             """,
             (result, entity_type, entity_name, content, docstring or ""),
         )
-        self._commit()
+        if not self._in_transaction():
+            self._commit()
     except Exception as e:
         logger.warning(f"Failed to add content to FTS index: {e}", exc_info=True)
         # Continue anyway - FTS is optional
-    
+
     return result
 
 
@@ -243,19 +249,19 @@ def search_classes(
         WHERE 1=1
     """
     params = []
-    
+
     if project_id:
         query += " AND f.project_id = ?"
         params.append(project_id)
-    
+
     if name_pattern:
         query += " AND c.name LIKE ?"
         params.append(name_pattern)
-    
+
     query += " ORDER BY c.name"
-    
+
     rows = self._fetchall(query, tuple(params))
-    
+
     # Convert to list of dicts and parse JSON fields
     results = []
     for row in rows:
@@ -265,17 +271,19 @@ def search_classes(
                 bases = json.loads(row["bases"])
             except (json.JSONDecodeError, TypeError):
                 bases = []
-        
-        results.append({
-            "id": row["id"],
-            "name": row["name"],
-            "line": row["line"],
-            "docstring": row["docstring"],
-            "bases": bases,
-            "file_path": row["file_path"],
-            "project_id": row["project_id"],
-        })
-    
+
+        results.append(
+            {
+                "id": row["id"],
+                "name": row["name"],
+                "line": row["line"],
+                "docstring": row["docstring"],
+                "bases": bases,
+                "file_path": row["file_path"],
+                "project_id": row["project_id"],
+            }
+        )
+
     return results
 
 
@@ -314,23 +322,23 @@ def search_methods(
         WHERE 1=1
     """
     params = []
-    
+
     if project_id:
         query += " AND f.project_id = ?"
         params.append(project_id)
-    
+
     if class_name:
         query += " AND c.name = ?"
         params.append(class_name)
-    
+
     if name_pattern:
         query += " AND m.name LIKE ?"
         params.append(name_pattern)
-    
+
     query += " ORDER BY c.name, m.line"
-    
+
     rows = self._fetchall(query, tuple(params))
-    
+
     # Convert to list of dicts and parse JSON fields
     results = []
     for row in rows:
@@ -340,19 +348,21 @@ def search_methods(
                 args = json.loads(row["args"])
             except (json.JSONDecodeError, TypeError):
                 args = []
-        
-        results.append({
-            "id": row["id"],
-            "name": row["name"],
-            "line": row["line"],
-            "args": args,
-            "docstring": row["docstring"],
-            "class_name": row["class_name"],
-            "class_id": row["class_id"],
-            "file_path": row["file_path"],
-            "project_id": row["project_id"],
-        })
-    
+
+        results.append(
+            {
+                "id": row["id"],
+                "name": row["name"],
+                "line": row["line"],
+                "args": args,
+                "docstring": row["docstring"],
+                "class_name": row["class_name"],
+                "class_id": row["class_id"],
+                "file_path": row["file_path"],
+                "project_id": row["project_id"],
+            }
+        )
+
     return results
 
 
@@ -388,8 +398,8 @@ def add_usage(
         """,
         (file_id, line, usage_type, target_type, target_name, target_class, context),
     )
-    self._commit()
+    if not self._in_transaction():
+        self._commit()
     result = self._lastrowid()
     assert result is not None
     return result
-

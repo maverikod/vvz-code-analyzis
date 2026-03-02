@@ -591,7 +591,9 @@ def _find_node_in_module_by_position(
     """
     Find a node in the given module with exact position (for use after previous
     ops have updated the module so tree.node_map may point at stale nodes).
-    Prefers BaseStatement so replace/delete targets the statement, not an inner node.
+    Returns the statement-level node that appears in Module.body when the
+    matched node is inside one (e.g. ImportFrom inside SimpleStatementLine),
+    so that leave_Module finds it in original_node.body.
     """
     wrapper = MetadataWrapper(module, unsafe_skip_copy=True)
     positions = wrapper.resolve(PositionProvider)
@@ -617,7 +619,25 @@ def _find_node_in_module_by_position(
             return True
 
     module.visit(Finder())
-    return result[0]
+    found = result[0]
+    if found is None:
+        return None
+    # When the matched node is inside a SimpleStatementLine (e.g. ImportFrom),
+    # return the statement-level node so leave_Module finds it in module.body.
+    if any(stmt is found for stmt in module.body):
+        return found
+    # Find the statement in module.body whose span contains this position.
+    target_start = (start_line, start_col)
+    target_end = (end_line, end_col)
+    for stmt in module.body:
+        pos = positions.get(stmt)
+        if pos is None or not hasattr(pos, "start") or not hasattr(pos, "end"):
+            continue
+        stmt_start = (pos.start.line, pos.start.column)
+        stmt_end = (pos.end.line, pos.end.column)
+        if stmt_start <= target_start and target_end <= stmt_end:
+            return stmt
+    return found
 
 
 def _replace_node(

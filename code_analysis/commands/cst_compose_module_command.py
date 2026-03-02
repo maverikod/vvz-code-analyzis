@@ -9,10 +9,7 @@ email: vasilyvz@gmail.com
 
 from __future__ import annotations
 
-import difflib
 import logging
-import os
-import tempfile
 import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -21,27 +18,24 @@ from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 
 from .base_mcp_command import BaseMCPCommand
 from ..core.backup_manager import BackupManager
-from ..core.cst_module import ReplaceOp, Selector, apply_replace_ops
-from ..core.exceptions import CSTModulePatchError
-from ..core.git_integration import commit_after_write
-from ..core.git_integration import create_git_commit
-from ..core.cst_tree.tree_builder import get_tree
+from .compose_cst_db import backup_file_data
+from .compose_cst_ops_flow import run_ops_mode
+from .compose_cst_tree_flow import run_tree_id_flow
+from .compose_cst_validation import (
+    SUPPORTED_SELECTOR_KINDS,
+    ops_from_params,
+    selector_from_dict,
+)
+from .compose_cst_writer import (
+    apply_changes as writer_apply_changes,
+    handle_rollback as writer_handle_rollback,
+    update_file_record as writer_update_file_record,
+    validate_and_write_temp as writer_validate_and_write_temp,
+)
 
 logger = logging.getLogger(__name__)
 
-# Selector kinds supported by apply_replace_ops (for validation and docs).
-SUPPORTED_SELECTOR_KINDS = frozenset(
-    {
-        "module",
-        "function",
-        "class",
-        "method",
-        "range",
-        "block_id",
-        "node_id",
-        "cst_query",
-    }
-)
+__all__ = ["ComposeCSTModuleCommand", "SUPPORTED_SELECTOR_KINDS"]
 
 
 class ComposeCSTModuleCommand(BaseMCPCommand):
@@ -147,645 +141,40 @@ class ComposeCSTModuleCommand(BaseMCPCommand):
         }
 
     @staticmethod
-    def _selector_from_dict(d: Dict[str, Any]) -> Selector:
-        """
-        Build Selector from request dict and validate required fields per kind.
-
-        Raises:
-            ErrorResult (via caller) for unknown kind or missing required fields.
-        """
-        if not isinstance(d, dict):
-            raise ValueError("selector must be an object")
-        kind = d.get("kind")
-        if not kind or not isinstance(kind, str):
-            raise ValueError("selector.kind is required and must be a string")
-        if kind not in SUPPORTED_SELECTOR_KINDS:
-            raise ValueError(
-                f"Unsupported selector kind: {kind}. "
-                f"Supported: {sorted(SUPPORTED_SELECTOR_KINDS)}"
-            )
-        name = d.get("name")
-        start_line = d.get("start_line")
-        start_col = d.get("start_col")
-        end_line = d.get("end_line")
-        end_col = d.get("end_col")
-        block_id = d.get("block_id")
-        node_id = d.get("node_id")
-        query = d.get("query")
-        match_index = d.get("match_index")
-
-        if kind == "range":
-            if start_line is None or end_line is None:
-                raise ValueError(
-                    "selector kind 'range' requires start_line and end_line"
-                )
-        elif kind == "block_id":
-            if not block_id:
-                raise ValueError("selector kind 'block_id' requires block_id")
-        elif kind == "node_id":
-            if not node_id:
-                raise ValueError("selector kind 'node_id' requires node_id")
-        elif kind == "cst_query":
-            if not query:
-                raise ValueError("selector kind 'cst_query' requires query")
-            if match_index is not None and (
-                not isinstance(match_index, int) or match_index < 0
-            ):
-                raise ValueError("selector match_index must be a non-negative integer")
-        elif kind in ("function", "class", "method"):
-            if not name:
-                raise ValueError(f"selector kind '{kind}' requires name")
-
-        return Selector(
-            kind=kind,
-            name=name if name else None,
-            start_line=int(start_line) if start_line is not None else None,
-            start_col=int(start_col) if start_col is not None else None,
-            end_line=int(end_line) if end_line is not None else None,
-            end_col=int(end_col) if end_col is not None else None,
-            block_id=str(block_id) if block_id else None,
-            node_id=str(node_id) if node_id else None,
-            query=str(query) if query else None,
-            match_index=int(match_index) if match_index is not None else None,
-        )
+    def _selector_from_dict(d: Dict[str, Any]):
+        """Build Selector from request dict. Delegates to compose_cst_validation."""
+        return selector_from_dict(d)
 
     @classmethod
-    def _ops_from_params(cls, ops_list: Any) -> List[ReplaceOp]:
-        """
-        Build list of ReplaceOp from request ops array.
+    def _ops_from_params(cls, ops_list: Any) -> List:
+        """Build list of ReplaceOp from request ops array. Delegates to compose_cst_validation."""
+        return ops_from_params(ops_list)
 
-        Each item: { "selector": { kind, ... }, "new_code": str, optional "file_docstring" }.
-        """
-        if not isinstance(ops_list, list) or len(ops_list) == 0:
-            raise ValueError("ops must be a non-empty array")
-        result: List[ReplaceOp] = []
-        for i, item in enumerate(ops_list):
-            if not isinstance(item, dict):
-                raise ValueError(f"ops[{i}] must be an object")
-            sel_dict = item.get("selector")
-            new_code = item.get("new_code")
-            if sel_dict is None:
-                raise ValueError(f"ops[{i}].selector is required")
-            if new_code is None:
-                raise ValueError(f"ops[{i}].new_code is required")
-            new_code = str(new_code)
-            file_docstring = item.get("file_docstring")
-            if file_docstring is not None:
-                file_docstring = str(file_docstring)
-            sel = cls._selector_from_dict(sel_dict)
-            result.append(
-                ReplaceOp(
-                    selector=sel,
-                    new_code=new_code,
-                    file_docstring=file_docstring,
-                )
-            )
-        return result
+    def _backup_file_data(self, database: Any, file_id: int):
+        """Backup all file data from database. Delegates to compose_cst_db."""
+        return backup_file_data(database, file_id)
 
-    def _backup_file_data(self, database, file_id: int) -> Optional[Dict[str, Any]]:
-        """
-        Backup all file data from database using batch RPC.
-
-        Args:
-            database: Database instance
-            file_id: File ID
-
-        Returns:
-            Dictionary with backed up data or None if file not found
-        """
-        t0 = time.perf_counter()
-
-        def _extract_rows(result: Dict[str, Any]) -> List[Dict[str, Any]]:
-            """Extract row list from execute/execute_batch result."""
-            if isinstance(result, dict):
-                data = result.get("data", [])
-                return data if isinstance(data, list) else []
-            return []
-
-        backup_ops = [
-            ("SELECT * FROM files WHERE id = ?", (file_id,)),
-            ("SELECT * FROM classes WHERE file_id = ?", (file_id,)),
-            ("SELECT * FROM functions WHERE file_id = ?", (file_id,)),
-            ("SELECT * FROM imports WHERE file_id = ?", (file_id,)),
-            ("SELECT * FROM usages WHERE file_id = ?", (file_id,)),
-            ("SELECT * FROM issues WHERE file_id = ?", (file_id,)),
-            ("SELECT * FROM code_content WHERE file_id = ?", (file_id,)),
-            ("SELECT * FROM ast_trees WHERE file_id = ?", (file_id,)),
-            ("SELECT * FROM cst_trees WHERE file_id = ?", (file_id,)),
-        ]
-        results = database.execute_batch(backup_ops)
-        if len(results) < 9:
-            return None
-        file_rows = _extract_rows(results[0])
-        if not file_rows:
-            return None
-        file_record = file_rows[0]
-
-        backup_data = {
-            "file_record": file_record,
-            "classes": _extract_rows(results[1]),
-            "functions": _extract_rows(results[2]),
-            "imports": _extract_rows(results[3]),
-            "usages": _extract_rows(results[4]),
-            "issues": _extract_rows(results[5]),
-            "code_content": _extract_rows(results[6]),
-            "ast_trees": _extract_rows(results[7]),
-            "cst_trees": _extract_rows(results[8]),
-        }
-
-        class_ids = [row["id"] for row in backup_data["classes"]]
-        if class_ids:
-            placeholders = ",".join("?" * len(class_ids))
-            methods_results = database.execute_batch(
-                [
-                    (
-                        f"SELECT * FROM methods WHERE class_id IN ({placeholders})",
-                        tuple(class_ids),
-                    )
-                ]
-            )
-            backup_data["methods"] = (
-                _extract_rows(methods_results[0]) if methods_results else []
-            )
-        else:
-            backup_data["methods"] = []
-
-        logger.info(
-            "[PROFILE] _backup_file_data file_id=%s elapsed=%.3fs",
-            file_id,
-            time.perf_counter() - t0,
-        )
-        return backup_data
-
-    def _delete_file_data(
-        self,
-        database,
-        file_id: int,
-        transaction_id: Optional[str] = None,
-    ) -> None:
-        """
-        Delete all file data within transaction using batch RPC.
-
-        Args:
-            database: Database instance
-            file_id: File ID
-            transaction_id: Optional transaction ID (must be set when inside a transaction)
-        """
-        t0 = time.perf_counter()
-
-        select_ops = [
-            ("SELECT id FROM classes WHERE file_id = ?", (file_id,)),
-            ("SELECT id FROM code_content WHERE file_id = ?", (file_id,)),
-        ]
-        select_results = database.execute_batch(select_ops, transaction_id)
-        if len(select_results) < 2:
-            logger.warning("_delete_file_data: execute_batch returned < 2 results")
-            return
-        class_data = (
-            select_results[0].get("data", [])
-            if isinstance(select_results[0], dict)
-            else []
-        )
-        content_data = (
-            select_results[1].get("data", [])
-            if isinstance(select_results[1], dict)
-            else []
-        )
-        class_ids = [row["id"] for row in class_data]
-        content_ids = [row["id"] for row in content_data]
-
-        delete_ops: List[tuple] = []
-        if content_ids:
-            placeholders = ",".join("?" * len(content_ids))
-            delete_ops.append(
-                (
-                    f"DELETE FROM code_content_fts WHERE rowid IN ({placeholders})",
-                    tuple(content_ids),
-                )
-            )
-        if class_ids:
-            placeholders = ",".join("?" * len(class_ids))
-            delete_ops.append(
-                (
-                    f"DELETE FROM methods WHERE class_id IN ({placeholders})",
-                    tuple(class_ids),
-                )
-            )
-        delete_ops.extend(
-            [
-                ("DELETE FROM classes WHERE file_id = ?", (file_id,)),
-                ("DELETE FROM functions WHERE file_id = ?", (file_id,)),
-                ("DELETE FROM imports WHERE file_id = ?", (file_id,)),
-                ("DELETE FROM issues WHERE file_id = ?", (file_id,)),
-                ("DELETE FROM usages WHERE file_id = ?", (file_id,)),
-                ("DELETE FROM code_content WHERE file_id = ?", (file_id,)),
-                ("DELETE FROM ast_trees WHERE file_id = ?", (file_id,)),
-                ("DELETE FROM cst_trees WHERE file_id = ?", (file_id,)),
-                ("DELETE FROM code_chunks WHERE file_id = ?", (file_id,)),
-                (
-                    "DELETE FROM vector_index WHERE entity_type = 'file' AND entity_id = ?",
-                    (file_id,),
-                ),
-            ]
-        )
-        if class_ids:
-            placeholders = ",".join("?" * len(class_ids))
-            delete_ops.append(
-                (
-                    f"""
-                    DELETE FROM vector_index
-                    WHERE entity_type IN ('class', 'function', 'method')
-                    AND entity_id IN ({placeholders})
-                    """,
-                    tuple(class_ids),
-                )
-            )
-        database.execute_batch(delete_ops, transaction_id)
-        logger.info(
-            "[PROFILE] _delete_file_data file_id=%s elapsed=%.3fs",
-            file_id,
-            time.perf_counter() - t0,
-        )
-
-    def _restore_entities(self, database, backup_data: Dict[str, Any]) -> None:
-        """
-        Restore entities (classes, methods, functions) from backup.
-
-        Args:
-            database: Database instance
-            backup_data: Backed up data
-        """
-        # Restore classes (schema: id, file_id, name, line, end_line, docstring, bases)
-        # Use INSERT OR REPLACE so restore is idempotent when main transaction rolled back (rows still exist).
-        for row in backup_data["classes"]:
-            line_val = row.get("start_line", row.get("line", 0))
-            database.execute(
-                """
-                INSERT OR REPLACE INTO classes (id, file_id, name, line, end_line, docstring, bases)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    row["id"],
-                    row["file_id"],
-                    row["name"],
-                    line_val,
-                    row.get("end_line"),
-                    row.get("docstring"),
-                    row.get("bases"),
-                ),
-            )
-
-        # Restore methods (schema: id, class_id, name, line, end_line, args, docstring, ...)
-        for row in backup_data["methods"]:
-            line_val = row.get("start_line", row.get("line", 0))
-            args_val = row.get("parameters", row.get("args"))
-            database.execute(
-                """
-                INSERT OR REPLACE INTO methods (id, class_id, name, line, end_line, args, docstring,
-                    is_abstract, has_pass, has_not_implemented, complexity)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    row["id"],
-                    row["class_id"],
-                    row["name"],
-                    line_val,
-                    row.get("end_line"),
-                    args_val,
-                    row.get("docstring"),
-                    row.get("is_abstract", 0),
-                    row.get("has_pass", 0),
-                    row.get("has_not_implemented", 0),
-                    row.get("complexity"),
-                ),
-            )
-
-        # Restore functions (schema: id, file_id, name, line, end_line, args, docstring, complexity)
-        for row in backup_data["functions"]:
-            line_val = row.get("start_line", row.get("line", 0))
-            args_val = row.get("parameters", row.get("args"))
-            database.execute(
-                """
-                INSERT OR REPLACE INTO functions (id, file_id, name, line, end_line, args, docstring, complexity)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    row["id"],
-                    row["file_id"],
-                    row["name"],
-                    line_val,
-                    row.get("end_line"),
-                    args_val,
-                    row.get("docstring"),
-                    row.get("complexity"),
-                ),
-            )
-
-    def _restore_metadata(self, database, backup_data: Dict[str, Any]) -> None:
-        """
-        Restore metadata (imports, usages, issues, content) from backup.
-
-        Args:
-            database: Database instance
-            backup_data: Backed up data
-        """
-        # Restore imports
-        for row in backup_data["imports"]:
-            database.execute(
-                """
-                INSERT OR REPLACE INTO imports (id, file_id, module, name, alias, import_type, line)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    row["id"],
-                    row["file_id"],
-                    row["module"],
-                    row["name"],
-                    row.get("alias"),
-                    row["import_type"],
-                    row["line"],
-                ),
-            )
-
-        # Restore usages
-        for row in backup_data["usages"]:
-            database.execute(
-                """
-                INSERT OR REPLACE INTO usages (id, file_id, entity_type, entity_name, line, column)
-                VALUES (?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    row["id"],
-                    row["file_id"],
-                    row["entity_type"],
-                    row["entity_name"],
-                    row["line"],
-                    row.get("column"),
-                ),
-            )
-
-        # Restore issues
-        for row in backup_data["issues"]:
-            database.execute(
-                """
-                INSERT OR REPLACE INTO issues (id, file_id, issue_type, message, line, column)
-                VALUES (?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    row["id"],
-                    row["file_id"],
-                    row["issue_type"],
-                    row["message"],
-                    row["line"],
-                    row.get("column"),
-                ),
-            )
-
-        # Restore code_content
-        for row in backup_data["code_content"]:
-            database.execute(
-                """
-                INSERT OR REPLACE INTO code_content (id, file_id, content, start_line, end_line)
-                VALUES (?, ?, ?, ?, ?)
-                """,
-                (
-                    row["id"],
-                    row["file_id"],
-                    row["content"],
-                    row["start_line"],
-                    row["end_line"],
-                ),
-            )
-
-    def _restore_trees(self, database, backup_data: Dict[str, Any]) -> None:
-        """
-        Restore AST and CST trees from backup.
-
-        Args:
-            database: Database instance
-            backup_data: Backed up data
-        """
-        # Restore AST trees
-        for row in backup_data["ast_trees"]:
-            database.execute(
-                """
-                INSERT OR REPLACE INTO ast_trees (id, file_id, project_id, ast_json, ast_hash, file_mtime)
-                VALUES (?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    row["id"],
-                    row["file_id"],
-                    row["project_id"],
-                    row["ast_json"],
-                    row["ast_hash"],
-                    row["file_mtime"],
-                ),
-            )
-
-        # Restore CST trees
-        for row in backup_data["cst_trees"]:
-            database.execute(
-                """
-                INSERT OR REPLACE INTO cst_trees (id, file_id, project_id, cst_code, cst_hash, file_mtime)
-                VALUES (?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    row["id"],
-                    row["file_id"],
-                    row["project_id"],
-                    row["cst_code"],
-                    row["cst_hash"],
-                    row["file_mtime"],
-                ),
-            )
-
-    def _restore_file_data(
-        self, database, file_id: int, backup_data: Dict[str, Any]
-    ) -> None:
-        """
-        Restore file data from backup.
-
-        Args:
-            database: Database instance
-            file_id: File ID
-            backup_data: Backed up data
-        """
-        # Restore file record
-        file_record = backup_data["file_record"]
-        database.execute(
-            """
-            UPDATE files SET
-                path = ?, lines = ?, last_modified = ?, has_docstring = ?,
-                project_id = ?, updated_at = julianday('now')
-            WHERE id = ?
-            """,
-            (
-                file_record["path"],
-                file_record["lines"],
-                file_record["last_modified"],
-                file_record["has_docstring"],
-                file_record["project_id"],
-                file_id,
-            ),
-        )
-
-        # Restore entities
-        self._restore_entities(database, backup_data)
-
-        # Restore metadata
-        self._restore_metadata(database, backup_data)
-
-        # Restore trees
-        self._restore_trees(database, backup_data)
-
-    def _validate_and_write_temp(
-        self, source_code: str, target_path: Path
-    ) -> tuple[Path, ErrorResult | None, Dict[str, Any] | None]:
-        """
-        Write source code to temporary file and validate it with flake8 and mypy.
-
-        Args:
-            source_code: Source code to write
-            target_path: Target file path
-
-        Returns:
-            Tuple of (temp_file_path, error_result or None, validation_results or None)
-        """
-        temp_fd, temp_path_str = tempfile.mkstemp(
-            suffix=".py", prefix="cst_compose_", dir=target_path.parent
-        )
-        temp_file = Path(temp_path_str)
-
-        try:
-            with os.fdopen(temp_fd, "w", encoding="utf-8") as f:
-                f.write(source_code)
-        except Exception as e:
-            os.close(temp_fd)
-            return (
-                temp_file,
-                ErrorResult(
-                    message=f"Failed to write temporary file: {e}",
-                    code="TEMP_FILE_ERROR",
-                    details={"error": str(e)},
-                ),
-                None,
-            )
-
-        # Validate with flake8 and mypy
-        from ..core.cst_module.validation import validate_file_in_temp
-
-        validation_success, validation_error, validation_results = (
-            validate_file_in_temp(
-                source_code=source_code,
-                temp_file_path=temp_file,
-                validate_linter=True,  # Enable flake8
-                validate_type_checker=True,  # Enable mypy
-            )
-        )
-
-        if not validation_success:
-            # Build detailed error message
-            error_parts = []
-            for validation_type, result in validation_results.items():
-                if not result.success:
-                    if result.error_message:
-                        error_parts.append(f"{validation_type}: {result.error_message}")
-                    elif result.errors:
-                        error_parts.append(
-                            f"{validation_type}: {len(result.errors)} error(s)"
-                        )
-            error_message = (
-                "; ".join(error_parts) if error_parts else "Validation failed"
-            )
-
-            # Format validation results for details
-            validation_details = {
-                validation_type: {
-                    "success": result.success,
-                    "error_message": result.error_message,
-                    "errors": result.errors[:10],  # Limit to first 10 errors
-                }
-                for validation_type, result in validation_results.items()
-            }
-
-            temp_file.unlink()
-            return (
-                temp_file,
-                ErrorResult(
-                    message=f"Validation failed: {error_message}",
-                    code="VALIDATION_ERROR",
-                    details={
-                        "error": error_message,
-                        "validation_results": validation_details,
-                    },
-                ),
-                validation_results,
-            )
-
-        return (temp_file, None, validation_results)
+    def _validate_and_write_temp(self, source_code: str, target_path: Path):
+        """Write to temp file and validate. Delegates to compose_cst_writer."""
+        return writer_validate_and_write_temp(source_code, target_path)
 
     def _update_file_record(
         self,
-        database,
+        database: Any,
         project_id: str,
         root_path: Path,
         target_path: Path,
         source_code: str,
         file_id: Optional[int],
     ) -> int:
-        """
-        Add or update file record in database.
-
-        Args:
-            database: Database instance
-            project_id: Project ID
-            root_path: Project root path
-            target_path: Target file path
-            source_code: Source code
-            file_id: Existing file ID or None
-
-        Returns:
-            File ID
-        """
-        lines = source_code.count("\n") + (1 if source_code else 0)
-        stripped = source_code.lstrip()
-        has_docstring = stripped.startswith('"""') or stripped.startswith("'''")
-
-        if not file_id:
-            import time
-            from ..core.database_client.objects.file import File
-            from ..core.path_normalization import normalize_path_simple
-
-            # Normalize path to absolute
-            normalized_path = normalize_path_simple(str(target_path))
-
-            # Create File object
-            file_obj = File(
-                project_id=project_id,
-                path=normalized_path,
-                lines=lines,
-                last_modified=time.time(),
-                has_docstring=has_docstring,
-            )
-
-            # Create file in database
-            created_file = database.create_file(file_obj)
-            file_id = created_file.id
-        else:
-            database.execute(
-                """
-                UPDATE files SET
-                    lines = ?, has_docstring = ?, updated_at = julianday('now')
-                WHERE id = ?
-                """,
-                (lines, has_docstring, file_id),
-            )
-
-        return file_id
+        """Add or update file record. Delegates to compose_cst_writer."""
+        return writer_update_file_record(
+            database, project_id, root_path, target_path, source_code, file_id
+        )
 
     def _handle_rollback(
         self,
-        database,
+        database: Any,
         file_id: Optional[int],
         file_data_backup: Optional[Dict[str, Any]],
         backup_uuid: Optional[str],
@@ -793,237 +182,20 @@ class ComposeCSTModuleCommand(BaseMCPCommand):
         root_path: Path,
         target_path: Path,
     ) -> None:
-        """
-        Handle rollback: restore file data and file from backup.
-
-        Args:
-            database: Database instance
-            file_id: File ID
-            file_data_backup: Backup of file data or None
-            backup_uuid: Backup UUID or None
-            backup_manager: BackupManager instance or None
-            root_path: Project root path
-            target_path: Target file path
-        """
-        # Restore file data from backup if backup exists
-        if file_data_backup and file_id:
-            transaction_id = None
-            try:
-                transaction_id = database.begin_transaction()
-                self._restore_file_data(database, file_id, file_data_backup)
-                database.commit_transaction(transaction_id)
-                logger.info(f"File data restored from backup for file_id={file_id}")
-            except Exception as restore_error:
-                logger.error(
-                    f"Failed to restore file data: {restore_error}",
-                    exc_info=True,
-                )
-                if transaction_id:
-                    try:
-                        database.rollback_transaction(transaction_id)
-                    except Exception:
-                        pass
-
-        # Restore file from backup if backup was created
-        if backup_uuid and backup_manager and target_path.exists():
-            try:
-                rel_path = str(target_path.relative_to(root_path))
-            except ValueError:
-                rel_path = str(target_path)
-            restore_success, restore_message = backup_manager.restore_file(
-                rel_path, backup_uuid
-            )
-            if restore_success:
-                logger.info(f"File restored from backup: {restore_message}")
-            else:
-                logger.error(f"Failed to restore file from backup: {restore_message}")
-
-    async def _execute_ops_mode(
-        self,
-        project_id: str,
-        file_path: str,
-        root_path: Path,
-        ops: List[Dict[str, Any]],
-        apply: bool,
-        create_backup: bool,
-        return_diff: bool,
-        commit_message: Optional[str],
-        t_start: float,
-        t_prev: float,
-    ) -> SuccessResult | ErrorResult:
-        """
-        Execute ops-based compose: build ReplaceOp list, apply_replace_ops, optionally write.
-
-        When apply=false, only return diff/stats. When apply=true, backup + validate + write.
-        """
-        target_path = (root_path / file_path).resolve()
-        if target_path.suffix != ".py":
-            return ErrorResult(
-                message="Target file must be a .py file",
-                code="INVALID_FILE",
-                details={"file_path": str(target_path)},
-            )
-
-        # Build ReplaceOp list and validate selectors
-        try:
-            replace_ops = self._ops_from_params(ops)
-        except ValueError as e:
-            return ErrorResult(
-                message=str(e),
-                code="INVALID_OPS",
-                details={"ops": ops},
-            )
-
-        # Read current source (empty for new file)
-        if target_path.exists():
-            try:
-                source = target_path.read_text(encoding="utf-8")
-            except Exception as e:
-                return ErrorResult(
-                    message=f"Failed to read file: {e}",
-                    code="FILE_READ_ERROR",
-                    details={"file_path": str(target_path)},
-                )
-        else:
-            source = ""
-
-        # Apply patches
-        try:
-            new_source, stats = apply_replace_ops(source, replace_ops)
-        except CSTModulePatchError as e:
-            return ErrorResult(
-                message=str(e),
-                code="CST_REPLACE_ERROR",
-                details=getattr(e, "details", {}),
-            )
-
-        # Normalize final newline
-        new_source = new_source.rstrip("\n\r") + "\n"
-
-        # Build response data (diff and stats)
-        data: Dict[str, Any] = {
-            "success": True,
-            "file_path": str(target_path),
-            "stats": stats,
-        }
-        if return_diff:
-            diff_lines = difflib.unified_diff(
-                source.splitlines(keepends=True),
-                new_source.splitlines(keepends=True),
-                fromfile=file_path,
-                tofile=file_path,
-            )
-            data["diff"] = "".join(diff_lines)
-
-        if not apply:
-            data["applied"] = False
-            data["message"] = "Preview only; no file written"
-            return SuccessResult(data=data)
-
-        # Apply path: validate, backup, write, update indexes (same as tree_id path)
-        file_exists = target_path.exists()
-        temp_file, validation_error, validation_results = self._validate_and_write_temp(
-            new_source, target_path
+        """Handle rollback. Delegates to compose_cst_writer."""
+        writer_handle_rollback(
+            database,
+            file_id,
+            file_data_backup,
+            backup_uuid,
+            backup_manager,
+            root_path,
+            target_path,
         )
-        if validation_error:
-            return validation_error
-
-        database = self._open_database_from_config(auto_analyze=False)
-        backup_manager = None
-        backup_uuid = None
-        file_data_backup = None
-        file_id = None
-
-        try:
-            if file_exists:
-                from ..core.path_normalization import normalize_path_simple
-
-                normalized_path = normalize_path_simple(str(target_path))
-                file_rows = database.select(
-                    "files",
-                    where={"path": normalized_path, "project_id": project_id},
-                    limit=1,
-                )
-                if file_rows:
-                    file_record = file_rows[0]
-                    file_id = file_record["id"]
-                    file_data_backup = self._backup_file_data(database, file_id)
-
-            if create_backup and file_exists:
-                backup_manager = BackupManager(root_path)
-                backup_uuid = backup_manager.create_backup(
-                    target_path,
-                    command="compose_cst_module",
-                    comment=commit_message or "",
-                )
-
-            transaction_id = database.begin_transaction()
-            if not transaction_id:
-                if temp_file and temp_file.exists():
-                    try:
-                        temp_file.unlink()
-                    except Exception:
-                        pass
-                return ErrorResult(
-                    message="Database transaction could not be started",
-                    code="TRANSACTION_ERROR",
-                    details={"hint": "Database driver may be busy or unavailable"},
-                )
-
-            try:
-                result = self._apply_changes(
-                    database=database,
-                    transaction_id=transaction_id,
-                    project_id=project_id,
-                    root_path=root_path,
-                    target_path=target_path,
-                    source_code=new_source,
-                    file_id=file_id,
-                    file_data_backup=file_data_backup,
-                    backup_uuid=backup_uuid,
-                    backup_manager=backup_manager,
-                    temp_file=temp_file,
-                    commit_message=commit_message,
-                )
-                if isinstance(result, SuccessResult) and result.data:
-                    result.data["stats"] = stats
-                    if return_diff and "diff" not in result.data:
-                        result.data["diff"] = data.get("diff")
-                    if validation_results:
-                        result.data["validation_results"] = {
-                            vt: {
-                                "success": vr.success,
-                                "error_message": vr.error_message,
-                                "errors_count": len(vr.errors),
-                            }
-                            for vt, vr in validation_results.items()
-                        }
-                if isinstance(result, SuccessResult):
-                    commit_after_write(
-                        root_path,
-                        [target_path],
-                        "compose_cst_module",
-                        commit_message_override=commit_message,
-                        config_data=BaseMCPCommand._get_raw_config(),
-                    )
-                logger.info(
-                    "[PROFILE] compose_cst_module (ops) total elapsed=%.3fs",
-                    time.perf_counter() - t_start,
-                )
-                return result
-            except Exception as err:
-                if temp_file and temp_file.exists():
-                    try:
-                        temp_file.unlink()
-                    except Exception:
-                        pass
-                raise err
-        finally:
-            database.disconnect()
 
     def _apply_changes(
         self,
-        database,
+        database: Any,
         transaction_id: str,
         project_id: str,
         root_path: Path,
@@ -1036,170 +208,21 @@ class ComposeCSTModuleCommand(BaseMCPCommand):
         temp_file: Path,
         commit_message: Optional[str],
     ) -> SuccessResult | ErrorResult:
-        """
-        Apply changes to file and database within transaction.
-
-        Args:
-            database: Database instance
-            transaction_id: Transaction ID from begin_transaction()
-            project_id: Project ID
-            root_path: Project root path
-            target_path: Target file path
-            source_code: Source code to write
-            file_id: Existing file ID or None
-            file_data_backup: Backup of file data or None
-            backup_uuid: Backup UUID or None
-            backup_manager: BackupManager instance or None
-            temp_file: Temporary file path
-            commit_message: Optional git commit message
-
-        Returns:
-            SuccessResult or ErrorResult
-        """
-        t_apply = time.perf_counter()
-        t_prev = t_apply
-        logger.info(
-            "[CHAIN] compose_cst_module _apply_changes entry transaction_id=%s",
-            (
-                (transaction_id[:8] + "...")
-                if transaction_id and len(transaction_id) > 8
-                else transaction_id
-            ),
+        """Apply changes within transaction. Delegates to compose_cst_writer."""
+        return writer_apply_changes(
+            database,
+            transaction_id,
+            project_id,
+            root_path,
+            target_path,
+            source_code,
+            file_id,
+            file_data_backup,
+            backup_uuid,
+            backup_manager,
+            temp_file,
+            commit_message,
         )
-        try:
-            # Delete old data if file exists (within same transaction)
-            if file_id:
-                self._delete_file_data(database, file_id, transaction_id)
-            _t = time.perf_counter()
-            logger.info(
-                "[PROFILE] _apply_changes delete_file_data elapsed=%.3fs", _t - t_prev
-            )
-            t_prev = _t
-
-            # Update file record
-            file_id = self._update_file_record(
-                database, project_id, root_path, target_path, source_code, file_id
-            )
-            _t = time.perf_counter()
-            logger.info(
-                "[PROFILE] _apply_changes update_file_record elapsed=%.3fs", _t - t_prev
-            )
-            t_prev = _t
-
-            # Add new data (AST, CST, entities) via batch
-            from datetime import datetime
-
-            from ..core.database_client.file_data_batch import (
-                update_file_data_atomic_batch,
-            )
-            from ..core.database_client.objects.base import BaseObject
-
-            file_mtime = (
-                BaseObject._to_timestamp(
-                    datetime.fromtimestamp(temp_file.stat().st_mtime)
-                )
-                or 0.0
-            )
-            update_result = update_file_data_atomic_batch(
-                database=database,
-                file_id=file_id,
-                project_id=project_id,
-                source_code=source_code,
-                file_path=str(target_path),
-                file_mtime=file_mtime,
-                transaction_id=transaction_id,
-            )
-            _t = time.perf_counter()
-            logger.info(
-                "[PROFILE] _apply_changes update_file_data_atomic elapsed=%.3fs",
-                _t - t_prev,
-            )
-            t_prev = _t
-
-            if not update_result.get("success"):
-                raise RuntimeError(
-                    f"Failed to update file data: {update_result.get('error')}"
-                )
-
-            # Atomically replace file
-            os.replace(str(temp_file), str(target_path))
-            _t = time.perf_counter()
-            logger.info(
-                "[PROFILE] _apply_changes os_replace elapsed=%.3fs", _t - t_prev
-            )
-            t_prev = _t
-
-            # Commit transaction
-            logger.info(
-                "[CHAIN] compose_cst_module calling database.commit_transaction"
-            )
-            database.commit_transaction(transaction_id)
-            _t = time.perf_counter()
-            logger.info(
-                "[PROFILE] _apply_changes commit_transaction elapsed=%.3fs", _t - t_prev
-            )
-            t_prev = _t
-
-            # Git commit (if requested)
-            git_success = False
-            git_error = None
-            if commit_message:
-                git_success, git_error = create_git_commit(
-                    root_path, target_path, commit_message
-                )
-                if not git_success:
-                    logger.warning(f"Failed to create git commit: {git_error}")
-            _t = time.perf_counter()
-            logger.info(
-                "[PROFILE] _apply_changes git_commit elapsed=%.3fs (total_apply=%.3fs)",
-                _t - t_prev,
-                _t - t_apply,
-            )
-
-            data = {
-                "success": True,
-                "file_path": str(target_path),
-                "file_id": file_id,
-                "backup_uuid": backup_uuid,
-                "update_result": update_result,
-                "git_commit": {
-                    "success": git_success,
-                    "error": git_error,
-                },
-            }
-            if target_path.exists():
-                data["file_size_bytes"] = target_path.stat().st_size
-                data["file_lines"] = len(
-                    target_path.read_text(encoding="utf-8").splitlines()
-                )
-            return SuccessResult(data=data)
-
-        except Exception as error:
-            # Rollback transaction
-            logger.warning(
-                "[CHAIN] compose_cst_module _apply_changes failed: %s; attempting rollback",
-                type(error).__name__,
-            )
-            try:
-                database.rollback_transaction(transaction_id)
-            except Exception as rollback_error:
-                logger.error(
-                    "[CHAIN] compose_cst_module rollback_transaction failed: %s",
-                    rollback_error,
-                )
-
-            # Handle rollback
-            self._handle_rollback(
-                database,
-                file_id,
-                file_data_backup,
-                backup_uuid,
-                backup_manager,
-                root_path,
-                target_path,
-            )
-
-            raise error
 
     async def execute(
         self,
@@ -1218,25 +241,10 @@ class ComposeCSTModuleCommand(BaseMCPCommand):
         Execute compose_cst_module command.
 
         Either tree_id (branch attach) or ops (selector-based patches) must be provided.
-
-        Args:
-            project_id: Project ID
-            file_path: File path relative to project root
-            tree_id: CST tree ID (branch to attach). Use with node_id for insert.
-            node_id: Node ID to attach branch to (tree_id mode only)
-            ops: List of { selector, new_code [, file_docstring ] } (ops mode)
-            apply: If true, write to file (ops mode). Default True.
-            create_backup: If true, create backup before write (ops mode). Default True.
-            return_diff: If true, include unified diff in response (ops mode). Default False.
-            commit_message: Optional git commit message
-
-        Returns:
-            SuccessResult or ErrorResult
         """
         t_start = time.perf_counter()
         t_prev = t_start
 
-        # Validate mode: either tree_id or ops, not both, not neither
         has_tree = tree_id is not None and str(tree_id).strip() != ""
         has_ops = ops is not None and len(ops) > 0
         if has_tree and has_ops:
@@ -1264,7 +272,6 @@ class ComposeCSTModuleCommand(BaseMCPCommand):
             has_ops,
         )
         try:
-            # Step 1: Check project exists
             root_path = self._resolve_project_root(project_id)
             database = self._open_database_from_config(auto_analyze=False)
             try:
@@ -1284,9 +291,9 @@ class ComposeCSTModuleCommand(BaseMCPCommand):
             )
             t_prev = _t
 
-            # Ops mode: apply_replace_ops path (no tree_id)
             if has_ops:
-                return await self._execute_ops_mode(
+                return await run_ops_mode(
+                    self,
                     project_id=project_id,
                     file_path=file_path,
                     root_path=root_path,
@@ -1299,290 +306,16 @@ class ComposeCSTModuleCommand(BaseMCPCommand):
                     t_prev=_t,
                 )
 
-            # Step 2: Get CST tree (branch) and check it's not empty (tree_id mode)
-            # If file is new and tree_id points to a different file,
-            # we need to create a new tree from the branch code
-            assert tree_id is not None  # guaranteed by has_tree branch
-            tree = get_tree(tree_id)
-            if not tree:
-                return ErrorResult(
-                    message=f"Tree not found: {tree_id}",
-                    code="TREE_NOT_FOUND",
-                    details={"tree_id": tree_id},
-                )
-
-            # Check branch is not empty
-            branch_code = tree.module.code.strip()
-            if not branch_code:
-                return ErrorResult(
-                    message="Branch (tree_id) must not be empty",
-                    code="EMPTY_BRANCH",
-                    details={"tree_id": tree_id},
-                )
-            _t = time.perf_counter()
-            logger.info(
-                "[PROFILE] compose_cst_module step=2 get_tree elapsed=%.3fs",
-                _t - t_prev,
+            return run_tree_id_flow(
+                self,
+                project_id=project_id,
+                file_path=file_path,
+                tree_id=tree_id or "",
+                node_id=node_id,
+                commit_message=commit_message,
+                t_start=t_start,
+                t_prev=_t,
             )
-            t_prev = _t
-
-            # If file is new, update tree's file_path to target file
-            # This ensures the tree is associated with the correct file
-            target_path = (root_path / file_path).resolve()
-            if not target_path.exists():
-                # Update tree file_path for new file
-                tree.file_path = str(target_path.resolve())
-
-            # Resolve target file path (already resolved above if file is new)
-            if "target_path" not in locals():
-                target_path = (root_path / file_path).resolve()
-
-            if target_path.suffix != ".py":
-                return ErrorResult(
-                    message="Target file must be a .py file",
-                    code="INVALID_FILE",
-                    details={"file_path": str(target_path)},
-                )
-
-            # Step 3: Determine operation mode
-            file_exists = target_path.exists()
-
-            # Step 4: Generate source code
-            if node_id:
-                # Mode: Attach branch to node
-                if not file_exists:
-                    return ErrorResult(
-                        message="File does not exist. Cannot attach branch to node in non-existent file.",
-                        code="FILE_NOT_FOUND",
-                        details={
-                            "file_path": str(target_path),
-                            "node_id": node_id,
-                        },
-                    )
-
-                # Load file into tree
-                from ..core.cst_tree.tree_builder import load_file_to_tree
-
-                file_tree = load_file_to_tree(str(target_path))
-                file_tree_id = file_tree.tree_id
-
-                # Check node exists
-                from ..core.cst_tree.tree_metadata import get_node_metadata
-
-                node_metadata = get_node_metadata(file_tree_id, node_id)
-                if not node_metadata:
-                    return ErrorResult(
-                        message=f"Node not found: {node_id}",
-                        code="NODE_NOT_FOUND",
-                        details={"node_id": node_id, "file_path": str(target_path)},
-                    )
-
-                # Insert branch code into node
-                from ..core.cst_tree.tree_modifier import modify_tree
-                from ..core.cst_tree.models import TreeOperation, TreeOperationType
-
-                # Insert branch code after the target node
-                operations = [
-                    TreeOperation(
-                        action=TreeOperationType.INSERT,
-                        target_node_id=node_id,
-                        code=branch_code,
-                        position="after",
-                    )
-                ]
-
-                # Apply modification
-                modified_tree = modify_tree(file_tree_id, operations)
-                source_code = modified_tree.module.code
-            else:
-                # Mode: Overwrite file with branch (or create new file)
-                # If file is new, use branch code directly (tree is already loaded)
-                # The branch tree_id contains the code we want to write
-                source_code = branch_code
-
-            # Ensure source ends with exactly one newline (PEP 8 / flake8 W391)
-            source_code = source_code.rstrip("\n\r") + "\n"
-            _t = time.perf_counter()
-            logger.info(
-                "[PROFILE] compose_cst_module step=3_4 generate_source elapsed=%.3fs",
-                _t - t_prev,
-            )
-            t_prev = _t
-
-            # Step 5: Write to temporary file and validate with flake8 and mypy
-            temp_file, validation_error, validation_results = (
-                self._validate_and_write_temp(source_code, target_path)
-            )
-            _t = time.perf_counter()
-            logger.info(
-                "[PROFILE] compose_cst_module step=5 validate_and_write_temp elapsed=%.3fs",
-                _t - t_prev,
-            )
-            t_prev = _t
-            if validation_error:
-                return validation_error
-
-            # Step 6: Get database connection
-            logger.info(
-                "[CHAIN] compose_cst_module opening database root_path=%s", root_path
-            )
-            database = self._open_database_from_config(auto_analyze=False)
-            backup_manager = None
-            backup_uuid = None
-            file_data_backup = None
-
-            try:
-                # Step 7: Check if file exists in database and backup data
-                file_record = None
-                file_id = None
-
-                if file_exists:
-                    # Normalize path to absolute for database lookup
-                    from ..core.path_normalization import normalize_path_simple
-
-                    normalized_path = normalize_path_simple(str(target_path))
-
-                    # Get file record using select
-                    file_rows = database.select(
-                        "files",
-                        where={"path": normalized_path, "project_id": project_id},
-                        limit=1,
-                    )
-                    if file_rows:
-                        file_record = file_rows[0]
-                        file_id = file_record["id"]
-                        # Backup file data
-                        file_data_backup = self._backup_file_data(database, file_id)
-                _t = time.perf_counter()
-                logger.info(
-                    "[PROFILE] compose_cst_module step=6_7 open_db_and_backup_data elapsed=%.3fs",
-                    _t - t_prev,
-                )
-                t_prev = _t
-
-                # Step 8: Create file backup
-                if file_exists:
-                    backup_manager = BackupManager(root_path)
-                    backup_uuid = backup_manager.create_backup(
-                        target_path,
-                        command="compose_cst_module",
-                        comment=commit_message or "",
-                    )
-                _t = time.perf_counter()
-                logger.info(
-                    "[PROFILE] compose_cst_module step=8 create_file_backup elapsed=%.3fs",
-                    _t - t_prev,
-                )
-                t_prev = _t
-
-                # Step 9: Begin database transaction
-                logger.info(
-                    "[CHAIN] compose_cst_module calling database.begin_transaction"
-                )
-                _t_begin = time.perf_counter()
-                transaction_id = database.begin_transaction()
-                _t = time.perf_counter()
-                logger.info(
-                    "[PROFILE] compose_cst_module step=9 begin_transaction elapsed=%.3fs",
-                    _t - _t_begin,
-                )
-                t_prev = _t
-                logger.info(
-                    "[CHAIN] compose_cst_module begin_transaction returned transaction_id=%s",
-                    (
-                        transaction_id[:8] + "..."
-                        if transaction_id and len(transaction_id) > 8
-                        else transaction_id
-                    ),
-                )
-                if not transaction_id:
-                    if temp_file and temp_file.exists():
-                        try:
-                            temp_file.unlink()
-                        except Exception:
-                            pass
-                    return ErrorResult(
-                        message="Database transaction could not be started",
-                        code="TRANSACTION_ERROR",
-                        details={"hint": "Database driver may be busy or unavailable"},
-                    )
-
-                try:
-                    # Step 10-15: Apply changes
-                    result = self._apply_changes(
-                        database=database,
-                        transaction_id=transaction_id,
-                        project_id=project_id,
-                        root_path=root_path,
-                        target_path=target_path,
-                        source_code=source_code,
-                        file_id=file_id,
-                        file_data_backup=file_data_backup,
-                        backup_uuid=backup_uuid,
-                        backup_manager=backup_manager,
-                        temp_file=temp_file,
-                        commit_message=commit_message,
-                    )
-                    _t = time.perf_counter()
-                    logger.info(
-                        "[PROFILE] compose_cst_module step=9_15 apply_changes elapsed=%.3fs",
-                        _t - t_prev,
-                    )
-                    t_prev = _t
-                    temp_file = None  # File was moved, don't delete it
-
-                    # Add validation results to response
-                    if validation_results and isinstance(result, SuccessResult):
-                        if result.data:
-                            result.data["validation_results"] = {
-                                validation_type: {
-                                    "success": val_result.success,
-                                    "error_message": val_result.error_message,
-                                    "errors_count": len(val_result.errors),
-                                }
-                                for validation_type, val_result in validation_results.items()
-                            }
-
-                    # Commit after write when config code_analysis.git_commit_on_write is true
-                    if isinstance(result, SuccessResult):
-                        git_ok, git_err = commit_after_write(
-                            root_path,
-                            [target_path],
-                            "compose_cst_module",
-                            commit_message_override=commit_message,
-                            config_data=BaseMCPCommand._get_raw_config(),
-                        )
-                        if not git_ok and git_err:
-                            logger.warning(
-                                "Git commit after compose_cst_module: %s",
-                                git_err,
-                            )
-
-                    logger.info(
-                        "[PROFILE] compose_cst_module total elapsed=%.3fs",
-                        time.perf_counter() - t_start,
-                    )
-                    logger.info(
-                        "[TIMING] command=compose_cst_module total_elapsed_sec=%.4f",
-                        time.perf_counter() - t_start,
-                    )
-                    return result
-
-                except Exception as error:
-                    # Rollback handled in _apply_changes
-                    raise error
-
-            finally:
-                database.disconnect()
-
-                # Clean up temporary file if it still exists
-                if temp_file and temp_file.exists():
-                    try:
-                        temp_file.unlink()
-                    except Exception as cleanup_error:
-                        logger.warning(
-                            f"Failed to delete temporary file: {cleanup_error}"
-                        )
 
         except Exception as e:
             logger.error(

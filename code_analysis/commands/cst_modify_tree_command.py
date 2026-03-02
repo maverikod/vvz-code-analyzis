@@ -42,6 +42,75 @@ def _find_tree_node_id_by_position(
     return None
 
 
+def _resolve_to_replaceable_node_id(tree: Any, node_id: str) -> str:
+    """
+    Resolve node_id to the replaceable ancestor (direct child of Module or
+    IndentedBlock). tree_modifier replace only works on body statements.
+    """
+    meta = tree.metadata_map.get(node_id)
+    if not meta or not getattr(meta, "parent_id", None):
+        return node_id
+    current_id = node_id
+    while True:
+        meta = tree.metadata_map.get(current_id)
+        if not meta:
+            return node_id
+        parent_id = getattr(meta, "parent_id", None)
+        if not parent_id:
+            return current_id
+        parent_meta = tree.metadata_map.get(parent_id)
+        if not parent_meta:
+            return current_id
+        parent_type = getattr(parent_meta, "type", "") or ""
+        if parent_type in ("Module", "IndentedBlock"):
+            return current_id
+        current_id = parent_id
+
+
+def _expand_replace_many_operations(
+    operations: List[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    """
+    Expand replace_many ops into multiple replace ops.
+    Validates replacements (selector + code/code_lines) and returns
+    a flat list of replace ops. Does not validate tree or selector matches.
+    """
+    expanded: List[Dict[str, Any]] = []
+    for op in operations:
+        if op.get("action") == "replace_many":
+            replacements = op.get("replacements")
+            if not isinstance(replacements, list) or len(replacements) == 0:
+                raise ValueError("replace_many requires non-empty list 'replacements'")
+            for i, r in enumerate(replacements):
+                if not isinstance(r, dict):
+                    raise ValueError(
+                        f"replace_many.replacements[{i}] must be an object"
+                    )
+                sel = r.get("selector")
+                if not sel:
+                    raise ValueError(
+                        f"replace_many.replacements[{i}] must have 'selector'"
+                    )
+                code = r.get("code")
+                code_lines = r.get("code_lines")
+                if not code and not code_lines:
+                    raise ValueError(
+                        f"replace_many.replacements[{i}] must have 'code' or 'code_lines'"
+                    )
+                expanded.append(
+                    {
+                        "action": "replace",
+                        "selector": sel,
+                        "match_index": r.get("match_index"),
+                        "code": code,
+                        "code_lines": code_lines,
+                    }
+                )
+        else:
+            expanded.append(op)
+    return expanded
+
+
 def _resolve_selector_to_tree_node_ids(
     tree: Any, selector: str, match_index: Optional[int], replace_all: bool
 ) -> List[str]:
@@ -106,12 +175,35 @@ class CSTModifyTreeCommand(BaseMCPCommand):
                                 "type": "string",
                                 "enum": [
                                     "replace",
+                                    "replace_many",
                                     "replace_range",
                                     "insert",
                                     "delete",
                                     "move",
                                 ],
                                 "description": "Operation type",
+                            },
+                            "replacements": {
+                                "type": "array",
+                                "items": {
+                                    "type": "object",
+                                    "properties": {
+                                        "selector": {"type": "string"},
+                                        "match_index": {"type": "integer"},
+                                        "code": {"type": "string"},
+                                        "code_lines": {
+                                            "type": "array",
+                                            "items": {"type": "string"},
+                                        },
+                                    },
+                                    "description": (
+                                        "For replace_many: selector and code/code_lines per replacement."
+                                    ),
+                                },
+                                "description": (
+                                    "Shorthand: only for action replace_many. "
+                                    "Expanded into multiple replace ops internally."
+                                ),
                             },
                             "node_id": {
                                 "type": "string",
@@ -250,6 +342,18 @@ class CSTModifyTreeCommand(BaseMCPCommand):
                     details={"tree_id": tree_id},
                 )
 
+            # Expand replace_many into multiple replace ops (all validated before apply)
+            try:
+                operations = _expand_replace_many_operations(operations)
+            except ValueError as e:
+                return ErrorResult(
+                    message=str(e),
+                    code="INVALID_OPERATION",
+                    details={
+                        "hint": "replace_many requires replacements with selector and code/code_lines"
+                    },
+                )
+
             tree_operations: List[TreeOperation] = []
             for op_dict in operations:
                 action_str = op_dict.get("action")
@@ -340,6 +444,10 @@ class CSTModifyTreeCommand(BaseMCPCommand):
                     node_ids_to_use = [op_dict.get("node_id", "")]
 
                 for nid in node_ids_to_use:
+                    # Replace/delete target must be a body statement; resolve inner
+                    # nodes (e.g. ImportFrom) to their replaceable ancestor.
+                    if action in (TreeOperationType.REPLACE, TreeOperationType.DELETE):
+                        nid = _resolve_to_replaceable_node_id(original_tree, nid)
                     tree_operations.append(
                         TreeOperation(
                             action=action,
@@ -354,6 +462,24 @@ class CSTModifyTreeCommand(BaseMCPCommand):
                             end_node_id=op_dict.get("end_node_id"),
                         )
                     )
+
+            # Apply replace/delete from bottom to top so position lookup in modifier
+            # uses unmodified spans (no prior op has changed lines above).
+            def _replace_delete_sort_key(op: TreeOperation) -> tuple:
+                if (
+                    op.action
+                    in (
+                        TreeOperationType.REPLACE,
+                        TreeOperationType.DELETE,
+                    )
+                    and op.node_id
+                ):
+                    meta = original_tree.metadata_map.get(op.node_id)
+                    line = getattr(meta, "start_line", None) or 0
+                    return (0, -line)
+                return (1, 0)
+
+            tree_operations.sort(key=_replace_delete_sort_key)
 
             original_code = original_tree.module.code
             logger.info(

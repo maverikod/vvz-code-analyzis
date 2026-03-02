@@ -620,7 +620,17 @@ def _find_node_in_module_by_position(
 
     module.visit(Finder())
     found = result[0]
+    # When no exact position match (e.g. after prior replace in batch), find by
+    # start position so batch replace still resolves the correct statement.
+    target_start = (start_line, start_col)
     if found is None:
+        for stmt in module.body:
+            pos = positions.get(stmt)
+            if pos is None or not hasattr(pos, "start"):
+                continue
+            stmt_start = (pos.start.line, pos.start.column)
+            if stmt_start == target_start:
+                return stmt
         return None
     # When the matched node is inside a SimpleStatementLine (e.g. ImportFrom),
     # return the statement-level node so leave_Module finds it in module.body.
@@ -636,6 +646,15 @@ def _find_node_in_module_by_position(
         stmt_start = (pos.start.line, pos.start.column)
         stmt_end = (pos.end.line, pos.end.column)
         if stmt_start <= target_start and target_end <= stmt_end:
+            return stmt
+    # Fallback: match by start position only (batch replace can leave end_col
+    # differing between original metadata and current module).
+    for stmt in module.body:
+        pos = positions.get(stmt)
+        if pos is None or not hasattr(pos, "start"):
+            continue
+        stmt_start = (pos.start.line, pos.start.column)
+        if stmt_start == target_start:
             return stmt
     return found
 

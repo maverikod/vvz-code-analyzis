@@ -40,6 +40,18 @@ def foo():
     return 1
 '''
 
+# Multiple nodes for batch replace tests (two imports, two functions)
+SOURCE_MULTI = '''"""Doc."""
+from .a import A
+from .b import B
+
+def first():
+    return 1
+
+def second():
+    return 2
+'''
+
 
 @pytest.fixture
 def tree_with_import(tmp_path):
@@ -56,6 +68,16 @@ def tree_with_class(tmp_path):
     """Tree with class and function."""
     path = str(tmp_path / "sample.py")
     tree = create_tree_from_code(path, SOURCE_WITH_CLASS.strip())
+    tree_id = tree.tree_id
+    yield tree_id
+    remove_tree(tree_id)
+
+
+@pytest.fixture
+def tree_multi(tmp_path):
+    """Tree with two imports and two functions for batch replace tests."""
+    path = str(tmp_path / "sample.py")
+    tree = create_tree_from_code(path, SOURCE_MULTI.strip())
     tree_id = tree.tree_id
     yield tree_id
     remove_tree(tree_id)
@@ -86,8 +108,7 @@ class TestReplaceBySelector:
             operations=[
                 {
                     "action": "replace",
-                    "selector": "ImportFrom",
-                    "match_index": 0,
+                    "selector": "ImportFrom[module='task_status']",
                     "code_lines": ["from ..task_status import TaskStatus"],
                 }
             ],
@@ -251,7 +272,10 @@ class TestValidationReplaceDelete:
         result = await cmd.execute(
             tree_id=tree_with_import,
             operations=[
-                {"action": "delete", "selector": "ImportFrom", "match_index": 0}
+                {
+                    "action": "delete",
+                    "selector": "ImportFrom[module='task_status']",
+                }
             ],
         )
         assert isinstance(result, SuccessResult)
@@ -329,3 +353,311 @@ class TestMatchIndex:
         )
         assert isinstance(result, ErrorResult)
         assert result.code == "SELECTOR_NO_MATCH"
+
+
+# --- Step 04: batch replace (multi-op, replace_many shorthand, atomicity) ---
+
+
+class TestBatchReplaceMultiOp:
+    """Multiple replace operations in one cst_modify_tree call."""
+
+    @pytest.mark.asyncio
+    async def test_multi_replace_in_one_call_applies_all(self, tree_multi):
+        """Multiple replace ops with different code; all applied, single persist."""
+        cmd = CSTModifyTreeCommand()
+        result = await cmd.execute(
+            tree_id=tree_multi,
+            operations=[
+                {
+                    "action": "replace",
+                    "selector": "ImportFrom[module='a']",
+                    "code_lines": ["from ..a import A"],
+                },
+                {
+                    "action": "replace",
+                    "selector": "ImportFrom[module='b']",
+                    "code_lines": ["from ..b import B"],
+                },
+                {
+                    "action": "replace",
+                    "selector": "function[name='first']",
+                    "code_lines": ["def first():", "    return 10"],
+                },
+                {
+                    "action": "replace",
+                    "selector": "function[name='second']",
+                    "code_lines": ["def second():", "    return 20"],
+                },
+            ],
+        )
+        assert isinstance(result, SuccessResult)
+        assert result.data["success"] is True
+        assert result.data["operations_applied"] == 4
+        tree = get_tree(result.data["tree_id"])
+        assert tree is not None
+        code = tree.module.code
+        assert "from ..a import A" in code
+        assert "from ..b import B" in code
+        assert "return 10" in code
+        assert "return 20" in code
+        assert "from .a import A" not in code
+        lines = code.splitlines()
+        assert not any(ln.strip() == "return 1" for ln in lines)
+        assert not any(ln.strip() == "return 2" for ln in lines)
+
+    @pytest.mark.asyncio
+    async def test_order_safety_deterministic(self, tree_multi):
+        """Replace nodes where line shifts are possible; output is deterministic."""
+        cmd = CSTModifyTreeCommand()
+        result = await cmd.execute(
+            tree_id=tree_multi,
+            operations=[
+                {
+                    "action": "replace",
+                    "selector": "ImportFrom",
+                    "match_index": 0,
+                    "code_lines": ["from .a import A"],
+                },
+                {
+                    "action": "replace",
+                    "selector": "ImportFrom",
+                    "match_index": 1,
+                    "code_lines": ["from .b import B"],
+                },
+            ],
+        )
+        assert isinstance(result, SuccessResult)
+        assert result.data["operations_applied"] == 2
+        tree = get_tree(result.data["tree_id"])
+        assert tree is not None
+        lines = tree.module.code.splitlines()
+        import_lines = [ln for ln in lines if ln.strip().startswith("from ")]
+        assert len(import_lines) >= 2
+        assert "from .a import A" in tree.module.code
+        assert "from .b import B" in tree.module.code
+
+
+class TestBatchReplaceSelectorMix:
+    """Mix selector types in one batch."""
+
+    @pytest.mark.asyncio
+    async def test_selector_mix_in_one_batch(self, tree_with_class):
+        """Broad type, attribute, nested: each op applies to expected node only."""
+        cmd = CSTModifyTreeCommand()
+        result = await cmd.execute(
+            tree_id=tree_with_class,
+            operations=[
+                {
+                    "action": "replace",
+                    "selector": "ImportFrom",
+                    "match_index": 0,
+                    "code_lines": ["from ..task_status import TaskStatus"],
+                },
+                {
+                    "action": "replace",
+                    "selector": "function[name='foo']",
+                    "code_lines": ["def foo():", "    return 42"],
+                },
+                {
+                    "action": "replace",
+                    "selector": "ClassDef[name='X']",
+                    "code_lines": ["class X:", "    pass"],
+                },
+            ],
+        )
+        assert isinstance(result, SuccessResult)
+        assert result.data["operations_applied"] == 3
+        tree = get_tree(result.data["tree_id"])
+        assert tree is not None
+        assert "from ..task_status import TaskStatus" in tree.module.code
+        assert "return 42" in tree.module.code
+        assert "class X:" in tree.module.code
+        assert "    pass" in tree.module.code
+        assert "def method" not in tree.module.code
+
+
+class TestBatchReplaceAtomicFailure:
+    """One invalid operation in batch -> no partial apply."""
+
+    @pytest.mark.asyncio
+    async def test_one_invalid_op_batch_rejected(self, tree_multi):
+        """One op with invalid selector syntax -> full batch fails, tree unchanged."""
+        cmd = CSTModifyTreeCommand()
+        result = await cmd.execute(
+            tree_id=tree_multi,
+            operations=[
+                {
+                    "action": "replace",
+                    "selector": "[unclosed",
+                    "code_lines": ["x = 1"],
+                },
+                {
+                    "action": "replace",
+                    "selector": "ImportFrom[module='a']",
+                    "code_lines": ["from ..a import A"],
+                },
+            ],
+        )
+        assert isinstance(result, ErrorResult)
+        assert result.code == "SELECTOR_PARSE_ERROR"
+        tree = get_tree(tree_multi)
+        assert tree is not None
+        assert "from .a import A" in tree.module.code
+
+    @pytest.mark.asyncio
+    async def test_one_op_no_matches_batch_rejected(self, tree_multi):
+        """One op with no matches -> full batch fails, tree unchanged."""
+        cmd = CSTModifyTreeCommand()
+        result = await cmd.execute(
+            tree_id=tree_multi,
+            operations=[
+                {
+                    "action": "replace",
+                    "selector": "ImportFrom[module='a']",
+                    "code_lines": ["from ..a import A"],
+                },
+                {
+                    "action": "replace",
+                    "selector": "ClassDef[name='NonExistent']",
+                    "code_lines": ["class X: pass"],
+                },
+            ],
+        )
+        assert isinstance(result, ErrorResult)
+        assert result.code == "SELECTOR_NO_MATCH"
+        tree = get_tree(tree_multi)
+        assert tree is not None
+        assert "from .a import A" in tree.module.code
+
+    @pytest.mark.asyncio
+    async def test_one_op_out_of_range_match_index_batch_rejected(self, tree_multi):
+        """One op with out-of-range match_index -> full batch fails."""
+        cmd = CSTModifyTreeCommand()
+        result = await cmd.execute(
+            tree_id=tree_multi,
+            operations=[
+                {
+                    "action": "replace",
+                    "selector": "ImportFrom[module='a']",
+                    "code_lines": ["from ..a import A"],
+                },
+                {
+                    "action": "replace",
+                    "selector": "ImportFrom",
+                    "match_index": 99,
+                    "code_lines": ["from other import Other"],
+                },
+            ],
+        )
+        assert isinstance(result, ErrorResult)
+        assert result.code == "SELECTOR_NO_MATCH"
+        tree = get_tree(tree_multi)
+        assert tree is not None
+        assert "from .a import A" in tree.module.code
+
+
+class TestReplaceManyShorthand:
+    """replace_many action expanded into multiple replace ops."""
+
+    @pytest.mark.asyncio
+    async def test_replace_many_expands_and_applies(self, tree_multi):
+        """replace_many with replacements list -> all applied in one call."""
+        cmd = CSTModifyTreeCommand()
+        result = await cmd.execute(
+            tree_id=tree_multi,
+            operations=[
+                {
+                    "action": "replace_many",
+                    "replacements": [
+                        {
+                            "selector": "ImportFrom[module='a']",
+                            "code_lines": ["from ..a import A"],
+                        },
+                        {
+                            "selector": "function[name='first']",
+                            "code_lines": ["def first():", "    return 10"],
+                        },
+                    ],
+                },
+            ],
+        )
+        assert isinstance(result, SuccessResult)
+        assert result.data["success"] is True
+        assert result.data["operations_applied"] == 2
+        tree = get_tree(result.data["tree_id"])
+        assert tree is not None
+        assert "from ..a import A" in tree.module.code
+        assert "return 10" in tree.module.code
+
+    @pytest.mark.asyncio
+    async def test_replace_many_empty_replacements_rejected(self, tree_multi):
+        """replace_many with empty replacements -> INVALID_OPERATION."""
+        cmd = CSTModifyTreeCommand()
+        result = await cmd.execute(
+            tree_id=tree_multi,
+            operations=[{"action": "replace_many", "replacements": []}],
+        )
+        assert isinstance(result, ErrorResult)
+        assert result.code == "INVALID_OPERATION"
+        assert "replacements" in result.message or "non-empty" in result.message
+
+    @pytest.mark.asyncio
+    async def test_replace_many_missing_selector_rejected(self, tree_multi):
+        """replace_many item without selector -> INVALID_OPERATION."""
+        cmd = CSTModifyTreeCommand()
+        result = await cmd.execute(
+            tree_id=tree_multi,
+            operations=[
+                {
+                    "action": "replace_many",
+                    "replacements": [{"code_lines": ["x = 1"]}],
+                },
+            ],
+        )
+        assert isinstance(result, ErrorResult)
+        assert result.code == "INVALID_OPERATION"
+
+
+class TestBatchRegressionSingleReplace:
+    """Regression: single replace (node_id and selector) still works."""
+
+    @pytest.mark.asyncio
+    async def test_single_replace_by_selector_unchanged(self, tree_with_import):
+        """Single replace with selector (no batch) still works."""
+        cmd = CSTModifyTreeCommand()
+        result = await cmd.execute(
+            tree_id=tree_with_import,
+            operations=[
+                {
+                    "action": "replace",
+                    "selector": "ImportFrom[module='task_status']",
+                    "code_lines": ["from ..task_status import TaskStatus"],
+                }
+            ],
+        )
+        assert isinstance(result, SuccessResult)
+        assert result.data["operations_applied"] == 1
+        tree = get_tree(result.data["tree_id"])
+        assert tree is not None
+        assert "from ..task_status import TaskStatus" in tree.module.code
+
+    @pytest.mark.asyncio
+    async def test_single_replace_by_node_id_unchanged(self, tree_with_import):
+        """Single replace with node_id (no batch) still works."""
+        node_id = _find_import_node_id(tree_with_import)
+        cmd = CSTModifyTreeCommand()
+        result = await cmd.execute(
+            tree_id=tree_with_import,
+            operations=[
+                {
+                    "action": "replace",
+                    "node_id": node_id,
+                    "code_lines": ["from ..task_status import TaskStatus"],
+                }
+            ],
+        )
+        assert isinstance(result, SuccessResult)
+        assert result.data["operations_applied"] == 1
+        tree = get_tree(result.data["tree_id"])
+        assert tree is not None
+        assert "from ..task_status import TaskStatus" in tree.module.code

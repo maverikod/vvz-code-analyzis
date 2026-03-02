@@ -52,6 +52,15 @@ def second():
     return 2
 '''
 
+# Three consecutive imports: batch replace (bottom-to-top) forces second lookup
+# in modified module; fallback by (start_line, start_col) must pick the correct
+# statement, not the neighboring one.
+SOURCE_COLLISION_RISK = '''"""Doc."""
+from .a import A
+from .b import B
+from .c import C
+'''
+
 
 @pytest.fixture
 def tree_with_import(tmp_path):
@@ -78,6 +87,16 @@ def tree_multi(tmp_path):
     """Tree with two imports and two functions for batch replace tests."""
     path = str(tmp_path / "sample.py")
     tree = create_tree_from_code(path, SOURCE_MULTI.strip())
+    tree_id = tree.tree_id
+    yield tree_id
+    remove_tree(tree_id)
+
+
+@pytest.fixture
+def tree_collision_risk(tmp_path):
+    """Tree with three consecutive imports for fallback collision-safety test."""
+    path = str(tmp_path / "sample.py")
+    tree = create_tree_from_code(path, SOURCE_COLLISION_RISK.strip())
     tree_id = tree.tree_id
     yield tree_id
     remove_tree(tree_id)
@@ -661,3 +680,71 @@ class TestBatchRegressionSingleReplace:
         tree = get_tree(result.data["tree_id"])
         assert tree is not None
         assert "from ..task_status import TaskStatus" in tree.module.code
+
+
+class TestFallbackCollisionSafety:
+    """
+    Collision-safety for start-position fallback in tree_modifier.
+
+    When exact (start_line, start_col, end_line, end_col) does not match after
+    a prior replace, the modifier falls back to the statement at (start_line,
+    start_col). This test ensures the correct statement is chosen, not a
+    neighboring one (e.g. the already-replaced statement).
+    """
+
+    @pytest.mark.asyncio
+    async def test_batch_replace_fallback_selects_correct_statement(
+        self, tree_collision_risk
+    ):
+        """
+        Batch replace of two of three consecutive imports: second op resolves
+        in modified module (fallback by start position). Verify only the
+        intended statements are replaced and order is preserved.
+        """
+        cmd = CSTModifyTreeCommand()
+        result = await cmd.execute(
+            tree_id=tree_collision_risk,
+            operations=[
+                {
+                    "action": "replace",
+                    "selector": "ImportFrom[module='a']",
+                    "code_lines": ["from ..a import A"],
+                },
+                {
+                    "action": "replace",
+                    "selector": "ImportFrom[module='b']",
+                    "code_lines": ["from ..b import B"],
+                },
+            ],
+        )
+        assert isinstance(result, SuccessResult)
+        assert result.data["success"] is True
+        assert result.data["operations_applied"] == 2
+
+        tree = get_tree(result.data["tree_id"])
+        assert tree is not None
+        code = tree.module.code
+
+        # Collect import lines (order preserved) without relying on line numbers
+        import_lines = [
+            ln.strip() for ln in code.splitlines() if ln.strip().startswith("from ")
+        ]
+        assert len(import_lines) == 3, (
+            "Expected exactly three import lines; wrong count suggests "
+            "fallback replaced wrong node or duplicated."
+        )
+
+        # Each replacement must land on the correct statement
+        assert (
+            import_lines[0] == "from ..a import A"
+        ), "First line must be replaced .a -> ..a; wrong statement chosen by fallback?"
+        assert (
+            import_lines[1] == "from ..b import B"
+        ), "Second line must be replaced .b -> ..b; wrong statement chosen?"
+        assert (
+            import_lines[2] == "from .c import C"
+        ), "Third line must remain unchanged; fallback must not replace it."
+
+        # No stray old content
+        assert "from .a import A" not in code
+        assert "from .b import B" not in code

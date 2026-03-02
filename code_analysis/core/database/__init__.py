@@ -24,6 +24,7 @@ except ImportError:
 from . import chunks
 from . import comprehensive_analysis
 from . import entity_cross_ref
+from . import entities_search
 from . import watch_dirs
 from . import worker_stats
 
@@ -44,6 +45,7 @@ _MODULES = [
     ast,
     watch_dirs,
     entities,
+    entities_search,
     entity_cross_ref,
     chunks,
     comprehensive_analysis,
@@ -54,4 +56,3 @@ for _m in _MODULES:
     _add_functions_as_methods(CodeDatabase, _m)
 
 __all__ = ["CodeDatabase", "create_driver_config_for_worker"]
-

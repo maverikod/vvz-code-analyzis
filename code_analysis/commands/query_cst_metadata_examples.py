@@ -16,7 +16,7 @@ def get_usage_examples() -> List[Dict[str, Any]]:
         {
             "description": "Find class by exact name",
             "command": {
-                "root_dir": "/home/user/projects/my_project",
+                "project_id": "550e8400-e29b-41d4-a716-446655440000",
                 "file_path": "src/main.py",
                 "selector": 'class[name="MyClass"]',
             },
@@ -28,7 +28,7 @@ def get_usage_examples() -> List[Dict[str, Any]]:
         {
             "description": "Find class by name prefix",
             "command": {
-                "root_dir": "/home/user/projects/my_project",
+                "project_id": "550e8400-e29b-41d4-a716-446655440000",
                 "file_path": "src/models.py",
                 "selector": 'class[name^="Base"]',
             },
@@ -40,7 +40,7 @@ def get_usage_examples() -> List[Dict[str, Any]]:
         {
             "description": "Find class by name suffix",
             "command": {
-                "root_dir": "/home/user/projects/my_project",
+                "project_id": "550e8400-e29b-41d4-a716-446655440000",
                 "file_path": "src/handlers.py",
                 "selector": 'class[name$="Handler"]',
             },
@@ -52,7 +52,7 @@ def get_usage_examples() -> List[Dict[str, Any]]:
         {
             "description": "Find class by name substring",
             "command": {
-                "root_dir": "/home/user/projects/my_project",
+                "project_id": "550e8400-e29b-41d4-a716-446655440000",
                 "file_path": "src/services.py",
                 "selector": 'class[name~="Service"]',
             },
@@ -64,7 +64,7 @@ def get_usage_examples() -> List[Dict[str, Any]]:
         {
             "description": "Find all return statements",
             "command": {
-                "root_dir": "/home/user/projects/my_project",
+                "project_id": "550e8400-e29b-41d4-a716-446655440000",
                 "file_path": "src/utils.py",
                 "selector": 'smallstmt[type="Return"]',
             },
@@ -101,9 +101,39 @@ def get_usage_examples() -> List[Dict[str, Any]]:
             ),
         },
         {
+            "description": "Replace multiple matches with different code (replacements array)",
+            "command": {
+                "project_id": "550e8400-e29b-41d4-a716-446655440000",
+                "file_path": "src/main.py",
+                "selector": 'smallstmt[type="Return"]',
+                "replacements": [
+                    {"match_index": 0, "replace_with": "return None"},
+                    {"match_index": 1, "code_lines": ["return 0"]},
+                ],
+            },
+            "explanation": (
+                "Replaces first return with 'return None', second with 'return 0'. "
+                "Each entry in replacements has match_index (0-based) and replace_with or code_lines."
+            ),
+        },
+        {
+            "description": "Range-based replace (start_line and end_line)",
+            "command": {
+                "project_id": "550e8400-e29b-41d4-a716-446655440000",
+                "file_path": "src/main.py",
+                "start_line": 10,
+                "end_line": 15,
+                "replace_with": "# replaced block",
+            },
+            "explanation": (
+                "Replaces the statement(s) covering lines 10-15 (1-based) with new code. "
+                "Selector is optional when both start_line and end_line are set."
+            ),
+        },
+        {
             "description": "Find all return statements with code",
             "command": {
-                "root_dir": "/home/user/projects/my_project",
+                "project_id": "550e8400-e29b-41d4-a716-446655440000",
                 "file_path": "src/utils.py",
                 "selector": 'smallstmt[type="Return"]',
                 "include_code": True,
@@ -116,7 +146,7 @@ def get_usage_examples() -> List[Dict[str, Any]]:
         {
             "description": "Find first return in specific function",
             "command": {
-                "root_dir": "/home/user/projects/my_project",
+                "project_id": "550e8400-e29b-41d4-a716-446655440000",
                 "file_path": "src/main.py",
                 "selector": 'function[name="process_data"] smallstmt[type="Return"]:first',
                 "include_code": True,
@@ -130,7 +160,7 @@ def get_usage_examples() -> List[Dict[str, Any]]:
         {
             "description": "Find last return in function",
             "command": {
-                "root_dir": "/home/user/projects/my_project",
+                "project_id": "550e8400-e29b-41d4-a716-446655440000",
                 "file_path": "src/main.py",
                 "selector": 'function[name="process_data"] smallstmt[type="Return"]:last',
             },
@@ -142,7 +172,7 @@ def get_usage_examples() -> List[Dict[str, Any]]:
         {
             "description": "Find nth return statement (0-based)",
             "command": {
-                "root_dir": "/home/user/projects/my_project",
+                "project_id": "550e8400-e29b-41d4-a716-446655440000",
                 "file_path": "src/main.py",
                 "selector": 'function[name="process_data"] smallstmt[type="Return"]:nth(1)',
             },
@@ -154,7 +184,7 @@ def get_usage_examples() -> List[Dict[str, Any]]:
         {
             "description": "Find method by qualified name",
             "command": {
-                "root_dir": ".",
+                "project_id": "550e8400-e29b-41d4-a716-446655440000",
                 "file_path": "code_analysis/core/backup_manager.py",
                 "selector": 'method[qualname="BackupManager.restore_file"]',
                 "include_code": True,
@@ -168,7 +198,7 @@ def get_usage_examples() -> List[Dict[str, Any]]:
         {
             "description": "Find all methods in a class",
             "command": {
-                "root_dir": "/home/user/projects/my_project",
+                "project_id": "550e8400-e29b-41d4-a716-446655440000",
                 "file_path": "src/models.py",
                 "selector": 'class[name="UserModel"] method',
             },
@@ -180,7 +210,7 @@ def get_usage_examples() -> List[Dict[str, Any]]:
         {
             "description": "Find direct child methods only",
             "command": {
-                "root_dir": "/home/user/projects/my_project",
+                "project_id": "550e8400-e29b-41d4-a716-446655440000",
                 "file_path": "src/models.py",
                 "selector": 'class[name="UserModel"] > method',
             },
@@ -192,7 +222,7 @@ def get_usage_examples() -> List[Dict[str, Any]]:
         {
             "description": "Find all functions",
             "command": {
-                "root_dir": "/home/user/projects/my_project",
+                "project_id": "550e8400-e29b-41d4-a716-446655440000",
                 "file_path": "src/utils.py",
                 "selector": "function",
             },
@@ -204,7 +234,7 @@ def get_usage_examples() -> List[Dict[str, Any]]:
         {
             "description": "Find functions by name prefix",
             "command": {
-                "root_dir": "/home/user/projects/my_project",
+                "project_id": "550e8400-e29b-41d4-a716-446655440000",
                 "file_path": "src/utils.py",
                 "selector": 'function[name^="get_"]',
             },
@@ -216,7 +246,7 @@ def get_usage_examples() -> List[Dict[str, Any]]:
         {
             "description": "Find functions by name pattern",
             "command": {
-                "root_dir": "/home/user/projects/my_project",
+                "project_id": "550e8400-e29b-41d4-a716-446655440000",
                 "file_path": "src/utils.py",
                 "selector": 'function[name~="test"]',
             },
@@ -228,7 +258,7 @@ def get_usage_examples() -> List[Dict[str, Any]]:
         {
             "description": "Find all if statements",
             "command": {
-                "root_dir": "/home/user/projects/my_project",
+                "project_id": "550e8400-e29b-41d4-a716-446655440000",
                 "file_path": "src/main.py",
                 "selector": 'stmt[type="If"]',
             },
@@ -240,7 +270,7 @@ def get_usage_examples() -> List[Dict[str, Any]]:
         {
             "description": "Find all for loops",
             "command": {
-                "root_dir": "/home/user/projects/my_project",
+                "project_id": "550e8400-e29b-41d4-a716-446655440000",
                 "file_path": "src/main.py",
                 "selector": 'stmt[type="For"]',
             },
@@ -252,7 +282,7 @@ def get_usage_examples() -> List[Dict[str, Any]]:
         {
             "description": "Find all try statements",
             "command": {
-                "root_dir": "/home/user/projects/my_project",
+                "project_id": "550e8400-e29b-41d4-a716-446655440000",
                 "file_path": "src/main.py",
                 "selector": 'stmt[type="Try"]',
             },
@@ -264,7 +294,7 @@ def get_usage_examples() -> List[Dict[str, Any]]:
         {
             "description": "Find all with statements",
             "command": {
-                "root_dir": "/home/user/projects/my_project",
+                "project_id": "550e8400-e29b-41d4-a716-446655440000",
                 "file_path": "src/main.py",
                 "selector": 'stmt[type="With"]',
             },
@@ -276,7 +306,7 @@ def get_usage_examples() -> List[Dict[str, Any]]:
         {
             "description": "Find all import statements",
             "command": {
-                "root_dir": "/home/user/projects/my_project",
+                "project_id": "550e8400-e29b-41d4-a716-446655440000",
                 "file_path": "src/main.py",
                 "selector": "import",
             },
@@ -288,7 +318,7 @@ def get_usage_examples() -> List[Dict[str, Any]]:
         {
             "description": "Find all assignments",
             "command": {
-                "root_dir": "/home/user/projects/my_project",
+                "project_id": "550e8400-e29b-41d4-a716-446655440000",
                 "file_path": "src/main.py",
                 "selector": 'smallstmt[type="Assign"]',
             },
@@ -300,7 +330,7 @@ def get_usage_examples() -> List[Dict[str, Any]]:
         {
             "description": "Find all function calls",
             "command": {
-                "root_dir": "/home/user/projects/my_project",
+                "project_id": "550e8400-e29b-41d4-a716-446655440000",
                 "file_path": "src/main.py",
                 "selector": 'node[type="Call"]',
             },
@@ -312,7 +342,7 @@ def get_usage_examples() -> List[Dict[str, Any]]:
         {
             "description": "Find nodes by line range",
             "command": {
-                "root_dir": "/home/user/projects/my_project",
+                "project_id": "550e8400-e29b-41d4-a716-446655440000",
                 "file_path": "src/main.py",
                 "selector": "node[start_line>=10][end_line<=20]",
             },
@@ -325,7 +355,7 @@ def get_usage_examples() -> List[Dict[str, Any]]:
         {
             "description": "Find all statements (any type)",
             "command": {
-                "root_dir": "/home/user/projects/my_project",
+                "project_id": "550e8400-e29b-41d4-a716-446655440000",
                 "file_path": "src/main.py",
                 "selector": "stmt",
             },
@@ -337,7 +367,7 @@ def get_usage_examples() -> List[Dict[str, Any]]:
         {
             "description": "Find all small statements",
             "command": {
-                "root_dir": "/home/user/projects/my_project",
+                "project_id": "550e8400-e29b-41d4-a716-446655440000",
                 "file_path": "src/main.py",
                 "selector": "smallstmt",
             },
@@ -349,7 +379,7 @@ def get_usage_examples() -> List[Dict[str, Any]]:
         {
             "description": "Find any node type (wildcard)",
             "command": {
-                "root_dir": "/home/user/projects/my_project",
+                "project_id": "550e8400-e29b-41d4-a716-446655440000",
                 "file_path": "src/main.py",
                 "selector": "*",
             },
@@ -362,7 +392,7 @@ def get_usage_examples() -> List[Dict[str, Any]]:
         {
             "description": "Complex query: return in if inside function",
             "command": {
-                "root_dir": "/home/user/projects/my_project",
+                "project_id": "550e8400-e29b-41d4-a716-446655440000",
                 "file_path": "src/main.py",
                 "selector": 'function[name="process"] stmt[type="If"] smallstmt[type="Return"]',
             },
@@ -374,7 +404,7 @@ def get_usage_examples() -> List[Dict[str, Any]]:
         {
             "description": "Complex query: method calls in specific class",
             "command": {
-                "root_dir": "/home/user/projects/my_project",
+                "project_id": "550e8400-e29b-41d4-a716-446655440000",
                 "file_path": "src/main.py",
                 "selector": 'class[name="DataProcessor"] node[type="Call"]',
             },
@@ -386,7 +416,7 @@ def get_usage_examples() -> List[Dict[str, Any]]:
         {
             "description": "Find nodes excluding specific type",
             "command": {
-                "root_dir": "/home/user/projects/my_project",
+                "project_id": "550e8400-e29b-41d4-a716-446655440000",
                 "file_path": "src/main.py",
                 "selector": 'stmt[type!="Pass"]',
             },

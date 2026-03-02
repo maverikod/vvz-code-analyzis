@@ -226,6 +226,7 @@ def run_tree_id_flow(
                 details={"hint": "Database driver may be busy or unavailable"},
             )
 
+        assert temp_file is not None  # ensured by early return on validation_error
         try:
             result = apply_changes(
                 database=database,

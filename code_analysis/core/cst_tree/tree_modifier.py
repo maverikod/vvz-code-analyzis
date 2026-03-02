@@ -757,18 +757,34 @@ def _replace_node(
     replacer = NodeReplacer(node, new_statements)
     result = module.visit(replacer)
     if not replacer.replaced:
-        # Provide detailed error message with context
+        # Provide detailed error message with context (node type, parent, line range, hint)
+        start_line = getattr(metadata, "start_line", None)
+        end_line = getattr(metadata, "end_line", None)
+        line_range = (
+            f"start_line={start_line}, end_line={end_line}"
+            if start_line is not None and end_line is not None
+            else "line range unknown"
+        )
         suggestion = ""
         if node_type == "SimpleStatementLine" and len(new_statements) > 1:
             suggestion = (
-                f" Hint: Replacing SimpleStatementLine with multiple statements requires "
-                f"the node to be in a Module or IndentedBlock body. "
-                f"Parent type: {parent_type}. "
-                f"Try using replace_range operation or replace the parent block instead."
+                " Hint: Replacing SimpleStatementLine with multiple statements requires "
+                "the node to be in a Module or IndentedBlock body. "
+                "Try using replace_range operation or replace the parent block instead."
+            )
+        elif node_type in ("Import", "ImportFrom"):
+            suggestion = (
+                " Hint: Try query_cst with replace_with for import statements, "
+                "or replace the containing SimpleStatementLine."
+            )
+        else:
+            suggestion = (
+                " Hint: Replace only works for direct body statements (e.g. in Module or "
+                "IndentedBlock). For inner nodes use replace_range or replace the parent."
             )
         raise ValueError(
             f"Node {node_id} was not replaced. "
-            f"Node type: {node_type}, Parent type: {parent_type}.{suggestion}"
+            f"Node type: {node_type}, Parent type: {parent_type}, {line_range}.{suggestion}"
         )
     return result
 
@@ -880,7 +896,7 @@ def _replace_range(
     replacer = RangeReplacer(start_node, end_node, new_statements)
     result = module.visit(replacer)
     if not replacer.replaced:
-        # Provide detailed error message
+        # Provide detailed error message (types, line range, hint)
         start_type = start_metadata.type if start_metadata else "unknown"
         end_type = end_metadata.type if end_metadata else "unknown"
         parent_meta = (
@@ -891,11 +907,24 @@ def _replace_range(
             if parent_meta and hasattr(parent_meta, "type")
             else "unknown"
         )
+        start_line = getattr(start_metadata, "start_line", None)
+        start_end = getattr(start_metadata, "end_line", None)
+        end_start = getattr(end_metadata, "start_line", None)
+        end_line = getattr(end_metadata, "end_line", None)
+        line_range = "line range unknown"
+        if all(x is not None for x in (start_line, start_end, end_start, end_line)):
+            line_range = (
+                f"start node lines {start_line}-{start_end}, "
+                f"end node lines {end_start}-{end_line}"
+            )
+        hint = (
+            " Hint: Both nodes must be consecutive statements in the same parent "
+            "block (Module or IndentedBlock body). Use replace for single nodes."
+        )
         raise ValueError(
             f"Range from {start_node_id} to {end_node_id} was not replaced. "
             f"Start node type: {start_type}, End node type: {end_type}, "
-            f"Parent type: {parent_type}. "
-            f"Both nodes must be consecutive statements in the same parent block."
+            f"Parent type: {parent_type}, {line_range}.{hint}"
         )
     return result
 

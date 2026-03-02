@@ -162,3 +162,94 @@ class TestReplaceNegative:
             modify_tree(tree_with_import, ops)
         msg = str(exc_info.value)
         assert "syntax" in msg.lower() or "parse" in msg.lower() or "Invalid" in msg
+
+
+def _find_import_from_node_id(tree_id: str) -> str:
+    """Return node_id of ImportFrom (child of SimpleStatementLine) to trigger 'was not replaced' when replacing with multiple statements."""
+    t = get_tree(tree_id)
+    assert t is not None
+    for nid, meta in t.metadata_map.items():
+        if meta.type == "ImportFrom" and meta.start_line == 2:
+            return nid
+    pytest.fail("No ImportFrom node found in tree")
+
+
+def _find_first_two_module_body_node_ids(tree_id: str) -> tuple[str, str]:
+    """Return (second_stmt_id, first_stmt_id) so replace_range gets start_idx > end_idx and fails."""
+    t = get_tree(tree_id)
+    assert t is not None
+    root_id = t.root_node_id
+    if not root_id:
+        pytest.fail("No root node")
+    children: list[tuple[int, str]] = []
+    for nid, meta in t.metadata_map.items():
+        if getattr(meta, "parent_id", None) == root_id:
+            start = getattr(meta, "start_line", 0)
+            children.append((start, nid))
+    children.sort(key=lambda x: x[0])
+    if len(children) >= 2:
+        return children[1][1], children[0][1]
+    pytest.fail("Need at least two module body nodes for replace_range test")
+
+
+class TestReplaceFailureDiagnostics:
+    """Replace failure must include node type, parent type, line range, and fallback hint."""
+
+    def test_replace_failure_includes_diagnostics(self, tree_with_import):
+        """When replace fails (e.g. ImportFrom with multiple stmts), message includes type, parent, lines, hint."""
+        # Replacing ImportFrom (not in Module.body; SimpleStatementLine is) with multiple statements triggers "was not replaced"
+        node_id = _find_import_from_node_id(tree_with_import)
+        ops = [
+            TreeOperation(
+                action=TreeOperationType.REPLACE,
+                node_id=node_id,
+                code_lines=["import a", "import b", "import c"],
+            )
+        ]
+        with pytest.raises(ValueError) as exc_info:
+            modify_tree(tree_with_import, ops)
+        msg = str(exc_info.value)
+        assert "was not replaced" in msg
+        assert "Node type:" in msg or "node type" in msg.lower()
+        assert "Parent type:" in msg or "parent type" in msg.lower()
+        assert "start_line" in msg and "end_line" in msg
+        assert "Hint:" in msg or "replace" in msg.lower()
+
+    def test_replace_success_unchanged(self, tree_with_import):
+        """Successful replace still returns same success shape (regression)."""
+        node_id = _find_import_node_id(tree_with_import)
+        ops = [
+            TreeOperation(
+                action=TreeOperationType.REPLACE,
+                node_id=node_id,
+                code_lines=["from ..task_status import TaskStatus"],
+            )
+        ]
+        modified = modify_tree(tree_with_import, ops)
+        assert modified.module is not None
+        assert "from ..task_status import TaskStatus" in modified.module.code
+
+
+class TestReplaceRangeFailureDiagnostics:
+    """Replace_range failure must include types, line range, and hint."""
+
+    def test_replace_range_failure_includes_diagnostics(self, tree_with_import):
+        """When replace_range fails (start after end in body), message includes types, lines, hint."""
+        # Use start_node after end_node in body so range is not replaced (start_idx > end_idx)
+        start_id, end_id = _find_first_two_module_body_node_ids(tree_with_import)
+        ops = [
+            TreeOperation(
+                action=TreeOperationType.REPLACE_RANGE,
+                start_node_id=start_id,
+                end_node_id=end_id,
+                code_lines=["x = 1"],
+            )
+        ]
+        with pytest.raises(ValueError) as exc_info:
+            modify_tree(tree_with_import, ops)
+        msg = str(exc_info.value)
+        assert "was not replaced" in msg
+        assert "Start node type:" in msg or "node type" in msg.lower()
+        assert "Parent type:" in msg or "parent type" in msg.lower()
+        assert "line" in msg.lower()
+        assert "Hint:" in msg or "consecutive" in msg.lower()

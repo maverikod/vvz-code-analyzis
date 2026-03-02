@@ -165,11 +165,26 @@ class TestReplaceNegative:
 
 
 def _find_import_from_node_id(tree_id: str) -> str:
-    """Return node_id of ImportFrom (child of SimpleStatementLine) to trigger 'was not replaced' when replacing with multiple statements."""
+    """Return node_id of ImportFrom matching fixture intent (e.g. .task_status) to trigger 'was not replaced' when replacing with multiple statements.
+    Uses semantic context (type + import content), not line numbers."""
     t = get_tree(tree_id)
     assert t is not None
     for nid, meta in t.metadata_map.items():
-        if meta.type == "ImportFrom" and meta.start_line == 2:
+        if meta.type != "ImportFrom":
+            continue
+        node = t.node_map.get(nid)
+        if node is None:
+            continue
+        code = getattr(meta, "code", None)
+        if code is None:
+            try:
+                code = t.module.code_for_node(node)
+            except Exception:
+                code = ""
+        if code and "task_status" in code:
+            return nid
+    for nid, meta in t.metadata_map.items():
+        if meta.type == "ImportFrom":
             return nid
     pytest.fail("No ImportFrom node found in tree")
 

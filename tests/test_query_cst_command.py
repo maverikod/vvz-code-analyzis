@@ -571,3 +571,314 @@ class TestQueryCSTCommandReplacements:
         assert isinstance(result, SuccessResult)
         assert mock_bm.create_backup.call_count == 1
         assert mock_db.index_file.call_count == 1
+
+
+class TestQueryCSTCommandLineRangeReplace:
+    """Replace by start_line/end_line only (no selector)."""
+
+    @pytest.mark.asyncio
+    async def test_replace_by_line_range_only(self, project_root, mock_db):
+        py_file = project_root / "m.py"
+        _write_py_file(
+            py_file,
+            "a = 1\nb = 2\nc = 3\n",
+        )
+        with patch.object(
+            BaseMCPCommand,
+            "_resolve_project_root",
+            return_value=project_root,
+        ), patch.object(
+            BaseMCPCommand,
+            "_open_database_from_config",
+            return_value=mock_db,
+        ):
+            cmd = QueryCSTCommand()
+            result = await cmd.execute(
+                project_id="test-proj",
+                file_path="m.py",
+                start_line=2,
+                end_line=2,
+                replace_with="b = 20",
+            )
+        assert isinstance(result, SuccessResult)
+        assert result.data.get("replaced") == 1
+        content = py_file.read_text(encoding="utf-8")
+        lines = content.strip().splitlines()
+        assert lines[1] == "b = 20"
+        assert "a = 1" in content
+        assert "c = 3" in content
+
+    @pytest.mark.asyncio
+    async def test_replace_by_line_range_multiline(self, project_root, mock_db):
+        py_file = project_root / "m.py"
+        _write_py_file(
+            py_file,
+            "def foo():\n    return 1\n\nx = 0\n",
+        )
+        with patch.object(
+            BaseMCPCommand,
+            "_resolve_project_root",
+            return_value=project_root,
+        ), patch.object(
+            BaseMCPCommand,
+            "_open_database_from_config",
+            return_value=mock_db,
+        ):
+            cmd = QueryCSTCommand()
+            result = await cmd.execute(
+                project_id="test-proj",
+                file_path="m.py",
+                start_line=1,
+                end_line=2,
+                code_lines=["def foo():", "    return 42"],
+            )
+        assert isinstance(result, SuccessResult)
+        assert result.data.get("replaced") == 1
+        content = py_file.read_text(encoding="utf-8")
+        assert "return 42" in content
+        assert "return 1" not in content
+
+
+class TestQueryCSTCommandPreview:
+    """preview=true / dry_run: return diff and modified_source, do not write."""
+
+    @pytest.mark.asyncio
+    async def test_preview_returns_diff_and_modified_source(
+        self, project_root, mock_db
+    ):
+        py_file = project_root / "m.py"
+        original = "x = 1\ny = 2\n"
+        _write_py_file(py_file, original)
+        with patch.object(
+            BaseMCPCommand,
+            "_resolve_project_root",
+            return_value=project_root,
+        ), patch.object(
+            BaseMCPCommand,
+            "_open_database_from_config",
+            return_value=mock_db,
+        ):
+            cmd = QueryCSTCommand()
+            result = await cmd.execute(
+                project_id="test-proj",
+                file_path="m.py",
+                selector='smallstmt[type="Assign"]:first',
+                replace_with="x = 10",
+                preview=True,
+            )
+        assert isinstance(result, SuccessResult)
+        assert result.data.get("preview") is True
+        assert "diff" in result.data
+        assert "modified_source" in result.data
+        assert result.data["modified_source"] != original
+        assert "x = 10" in result.data["modified_source"]
+        assert py_file.read_text(encoding="utf-8") == original
+
+    @pytest.mark.asyncio
+    async def test_dry_run_same_as_preview(self, project_root, mock_db):
+        py_file = project_root / "m.py"
+        original = "a = 1\n"
+        _write_py_file(py_file, original)
+        with patch.object(
+            BaseMCPCommand,
+            "_resolve_project_root",
+            return_value=project_root,
+        ), patch.object(
+            BaseMCPCommand,
+            "_open_database_from_config",
+            return_value=mock_db,
+        ):
+            cmd = QueryCSTCommand()
+            result = await cmd.execute(
+                project_id="test-proj",
+                file_path="m.py",
+                start_line=1,
+                end_line=1,
+                replace_with="a = 2",
+                dry_run=True,
+            )
+        assert isinstance(result, SuccessResult)
+        assert result.data.get("preview") is True
+        assert "modified_source" in result.data
+        assert py_file.read_text(encoding="utf-8") == original
+
+
+class TestQueryCSTCommandSelectorRangeInteraction:
+    """Selector-only, range-only, both (range takes precedence)."""
+
+    @pytest.mark.asyncio
+    async def test_selector_only_replace_unchanged(self, project_root, mock_db):
+        py_file = project_root / "m.py"
+        _write_py_file(py_file, "def f():\n    return 1\n")
+        with patch.object(
+            BaseMCPCommand,
+            "_resolve_project_root",
+            return_value=project_root,
+        ), patch.object(
+            BaseMCPCommand,
+            "_open_database_from_config",
+            return_value=mock_db,
+        ):
+            cmd = QueryCSTCommand()
+            result = await cmd.execute(
+                project_id="test-proj",
+                file_path="m.py",
+                selector='smallstmt[type="Return"]:first',
+                replace_with="return 2",
+            )
+        assert isinstance(result, SuccessResult)
+        assert "return 2" in py_file.read_text(encoding="utf-8")
+
+    @pytest.mark.asyncio
+    async def test_both_selector_and_range_range_used(self, project_root, mock_db):
+        py_file = project_root / "m.py"
+        _write_py_file(py_file, "a = 1\nb = 2\nc = 3\n")
+        with patch.object(
+            BaseMCPCommand,
+            "_resolve_project_root",
+            return_value=project_root,
+        ), patch.object(
+            BaseMCPCommand,
+            "_open_database_from_config",
+            return_value=mock_db,
+        ):
+            cmd = QueryCSTCommand()
+            result = await cmd.execute(
+                project_id="test-proj",
+                file_path="m.py",
+                selector="smallstmt",
+                start_line=2,
+                end_line=2,
+                replace_with="b = 20",
+            )
+        assert isinstance(result, SuccessResult)
+        content = py_file.read_text(encoding="utf-8")
+        lines = content.strip().splitlines()
+        assert lines[1] == "b = 20"
+
+
+class TestQueryCSTCommandInvalidRange:
+    """Invalid range: start_line > end_line, out-of-file."""
+
+    @pytest.mark.asyncio
+    async def test_start_line_gt_end_line_returns_error(self, project_root, mock_db):
+        py_file = project_root / "m.py"
+        _write_py_file(py_file, "x = 1\n")
+        with patch.object(
+            BaseMCPCommand,
+            "_resolve_project_root",
+            return_value=project_root,
+        ), patch.object(
+            BaseMCPCommand,
+            "_open_database_from_config",
+            return_value=mock_db,
+        ):
+            cmd = QueryCSTCommand()
+            result = await cmd.execute(
+                project_id="test-proj",
+                file_path="m.py",
+                start_line=3,
+                end_line=1,
+                replace_with="pass",
+            )
+        assert isinstance(result, ErrorResult)
+        assert result.code == "CST_QUERY_INVALID_RANGE"
+
+    @pytest.mark.asyncio
+    async def test_range_out_of_file_returns_error(self, project_root, mock_db):
+        py_file = project_root / "m.py"
+        _write_py_file(py_file, "a = 1\nb = 2\n")
+        with patch.object(
+            BaseMCPCommand,
+            "_resolve_project_root",
+            return_value=project_root,
+        ), patch.object(
+            BaseMCPCommand,
+            "_open_database_from_config",
+            return_value=mock_db,
+        ):
+            cmd = QueryCSTCommand()
+            result = await cmd.execute(
+                project_id="test-proj",
+                file_path="m.py",
+                start_line=1,
+                end_line=10,
+                replace_with="pass",
+            )
+        assert isinstance(result, ErrorResult)
+        assert result.code == "CST_QUERY_INVALID_RANGE"
+
+
+class TestQueryCSTCommandMissingSelectorOrRange:
+    """Query without selector or replace without selector/range."""
+
+    @pytest.mark.asyncio
+    async def test_query_without_selector_returns_error(self, project_root, mock_db):
+        py_file = project_root / "m.py"
+        _write_py_file(py_file, "x = 1\n")
+        with patch.object(
+            BaseMCPCommand,
+            "_resolve_project_root",
+            return_value=project_root,
+        ), patch.object(
+            BaseMCPCommand,
+            "_open_database_from_config",
+            return_value=mock_db,
+        ):
+            cmd = QueryCSTCommand()
+            result = await cmd.execute(
+                project_id="test-proj",
+                file_path="m.py",
+            )
+        assert isinstance(result, ErrorResult)
+        assert result.code == "CST_QUERY_MISSING_SELECTOR"
+
+    @pytest.mark.asyncio
+    async def test_replace_without_selector_or_range_returns_error(
+        self, project_root, mock_db
+    ):
+        py_file = project_root / "m.py"
+        _write_py_file(py_file, "x = 1\n")
+        with patch.object(
+            BaseMCPCommand,
+            "_resolve_project_root",
+            return_value=project_root,
+        ), patch.object(
+            BaseMCPCommand,
+            "_open_database_from_config",
+            return_value=mock_db,
+        ):
+            cmd = QueryCSTCommand()
+            result = await cmd.execute(
+                project_id="test-proj",
+                file_path="m.py",
+                replace_with="y = 1",
+            )
+        assert isinstance(result, ErrorResult)
+        assert result.code == "CST_QUERY_MISSING_SELECTOR_OR_RANGE"
+
+    @pytest.mark.asyncio
+    async def test_range_only_with_replacements_list_returns_error(
+        self, project_root, mock_db
+    ):
+        py_file = project_root / "m.py"
+        _write_py_file(py_file, "a = 1\nb = 2\n")
+        with patch.object(
+            BaseMCPCommand,
+            "_resolve_project_root",
+            return_value=project_root,
+        ), patch.object(
+            BaseMCPCommand,
+            "_open_database_from_config",
+            return_value=mock_db,
+        ):
+            cmd = QueryCSTCommand()
+            result = await cmd.execute(
+                project_id="test-proj",
+                file_path="m.py",
+                start_line=1,
+                end_line=1,
+                replacements=[{"match_index": 0, "replace_with": "a = 0"}],
+            )
+        assert isinstance(result, ErrorResult)
+        assert result.code == "CST_QUERY_RANGE_REPLACEMENTS_NOT_SUPPORTED"

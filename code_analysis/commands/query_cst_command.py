@@ -21,7 +21,7 @@ from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 
 from .base_mcp_command import BaseMCPCommand
 from ..core.backup_manager import BackupManager
-from ..core.cst_module import ReplaceOp, Selector, apply_replace_ops
+from ..core.cst_module import ReplaceOp, Selector, apply_replace_ops, unified_diff
 from ..core.exceptions import CSTModulePatchError, QueryParseError
 from ..cst_query import query_source
 
@@ -113,8 +113,36 @@ class QueryCSTCommand(BaseMCPCommand):
                         "Ignored if replace_with/code_lines (single-code path) is used."
                     ),
                 },
+                "start_line": {
+                    "type": "integer",
+                    "description": (
+                        "1-based start line for range-based replace. "
+                        "When used with end_line (and replace_with/code_lines), replace the statement(s) covering this range. "
+                        "Optional; if both start_line and end_line are set, range replace is used (selector optional)."
+                    ),
+                },
+                "end_line": {
+                    "type": "integer",
+                    "description": (
+                        "1-based end line for range-based replace. "
+                        "Must be >= start_line. When both start_line and end_line are set, replace that line range."
+                    ),
+                },
+                "preview": {
+                    "type": "boolean",
+                    "default": False,
+                    "description": (
+                        "If true, run replace in memory and return diff/modified_source without writing to file. "
+                        "No backup, no file change."
+                    ),
+                },
+                "dry_run": {
+                    "type": "boolean",
+                    "default": False,
+                    "description": "Alias for preview: if true, same as preview=true.",
+                },
             },
-            "required": ["project_id", "file_path", "selector"],
+            "required": ["project_id", "file_path"],
             "additionalProperties": False,
         }
 
@@ -122,7 +150,7 @@ class QueryCSTCommand(BaseMCPCommand):
         self,
         project_id: str,
         file_path: str,
-        selector: str,
+        selector: Optional[str] = None,
         include_code: bool = False,
         max_results: int = 200,
         replace_with: Optional[str] = None,
@@ -130,9 +158,14 @@ class QueryCSTCommand(BaseMCPCommand):
         match_index: int = 0,
         replace_all: bool = False,
         replacements: Optional[List[Dict[str, Any]]] = None,
+        start_line: Optional[int] = None,
+        end_line: Optional[int] = None,
+        preview: bool = False,
+        dry_run: bool = False,
         **kwargs,
     ) -> SuccessResult:
         t_start = time.perf_counter()
+        preview_mode = preview or dry_run
         try:
             t0 = time.perf_counter()
             root_path = self._resolve_project_root(project_id)
@@ -155,19 +188,99 @@ class QueryCSTCommand(BaseMCPCommand):
                 "[TIMING] command=query_cst step=resolve_path elapsed_sec=%.4f",
                 time.perf_counter() - t0,
             )
-            t_query = time.perf_counter()
             source = target.read_text(encoding="utf-8")
-            matches = query_source(source, selector, include_code=include_code)
-            logger.info(
-                "[TIMING] command=query_cst step=query_source matches=%d elapsed_sec=%.4f",
-                len(matches),
-                time.perf_counter() - t_query,
-            )
-            # Replace mode: find + replace in one call
+            file_lines = len(source.splitlines()) or 1
+
             use_replacements_list = replacements is not None and len(replacements) > 0
+            is_replace_mode = (
+                use_replacements_list
+                or replace_with is not None
+                or code_lines is not None
+            )
+            range_only = start_line is not None and end_line is not None
+
+            if not is_replace_mode:
+                if not selector:
+                    return ErrorResult(
+                        message="selector is required for query-only mode",
+                        code="CST_QUERY_MISSING_SELECTOR",
+                        details={},
+                    )
+            else:
+                if not range_only and not selector:
+                    return ErrorResult(
+                        message=(
+                            "For replace mode either selector or both start_line and end_line are required"
+                        ),
+                        code="CST_QUERY_MISSING_SELECTOR_OR_RANGE",
+                        details={},
+                    )
+                if range_only:
+                    assert start_line is not None and end_line is not None
+                    if start_line > end_line:
+                        return ErrorResult(
+                            message="start_line must be <= end_line",
+                            code="CST_QUERY_INVALID_RANGE",
+                            details={
+                                "start_line": start_line,
+                                "end_line": end_line,
+                            },
+                        )
+                    if start_line < 1 or end_line > file_lines:
+                        return ErrorResult(
+                            message=(
+                                f"Line range [{start_line}, {end_line}] is out of file bounds (1..{file_lines})"
+                            ),
+                            code="CST_QUERY_INVALID_RANGE",
+                            details={
+                                "start_line": start_line,
+                                "end_line": end_line,
+                                "file_lines": file_lines,
+                            },
+                        )
+                    if use_replacements_list:
+                        return ErrorResult(
+                            message="replacements list is not supported with range-only replace; use replace_with or code_lines",
+                            code="CST_QUERY_RANGE_REPLACEMENTS_NOT_SUPPORTED",
+                            details={},
+                        )
+
+            if range_only:
+                selector_for_query = selector or ""
+                matches = []
+            else:
+                selector_for_query = selector or ""
+                t_query = time.perf_counter()
+                matches = query_source(
+                    source, selector_for_query, include_code=include_code
+                )
+            if not range_only:
+                logger.info(
+                    "[TIMING] command=query_cst step=query_source matches=%d elapsed_sec=%.4f",
+                    len(matches),
+                    time.perf_counter() - t_query,
+                )
             single_new_code: Optional[str] = None
             new_code_by_index: Optional[Dict[int, str]] = None
-            if (
+            ops: List[ReplaceOp] = []
+            if range_only and is_replace_mode:
+                assert start_line is not None and end_line is not None
+                single_new_code = (
+                    "\n".join(code_lines)
+                    if code_lines is not None
+                    else (replace_with or "")
+                )
+                ops = [
+                    ReplaceOp(
+                        Selector(
+                            kind="range",
+                            start_line=start_line,
+                            end_line=end_line,
+                        ),
+                        single_new_code,
+                    )
+                ]
+            elif (
                 use_replacements_list
                 or replace_with is not None
                 or code_lines is not None
@@ -176,18 +289,18 @@ class QueryCSTCommand(BaseMCPCommand):
                     return ErrorResult(
                         message="No matches found for selector; nothing to replace",
                         code="CST_QUERY_NO_MATCH",
-                        details={"selector": selector},
+                        details={"selector": selector_for_query},
                     )
                 if use_replacements_list:
                     # Replacements list: different code per match_index
                     assert replacements is not None  # ensured by use_replacements_list
                     err = self._validate_replacements(
-                        replacements, len(matches), selector
+                        replacements, len(matches), selector_for_query
                     )
                     if err is not None:
                         return err
                     ops, new_code_by_index = self._build_ops_from_replacements(
-                        selector, replacements
+                        selector_for_query, replacements
                     )
                 else:
                     # Legacy single-code path
@@ -201,7 +314,7 @@ class QueryCSTCommand(BaseMCPCommand):
                             ReplaceOp(
                                 Selector(
                                     kind="cst_query",
-                                    query=selector,
+                                    query=selector_for_query,
                                     match_index=i,
                                 ),
                                 single_new_code,
@@ -217,7 +330,7 @@ class QueryCSTCommand(BaseMCPCommand):
                                 ),
                                 code="CST_QUERY_MATCH_INDEX",
                                 details={
-                                    "selector": selector,
+                                    "selector": selector_for_query,
                                     "match_index": match_index,
                                     "match_count": len(matches),
                                 },
@@ -226,21 +339,43 @@ class QueryCSTCommand(BaseMCPCommand):
                             ReplaceOp(
                                 Selector(
                                     kind="cst_query",
-                                    query=selector,
+                                    query=selector_for_query,
                                     match_index=match_index,
                                 ),
                                 single_new_code,
                             )
                         ]
                     new_code_by_index = None
+
+            if ops:
                 try:
                     new_source, stats = apply_replace_ops(source, ops)
                 except CSTModulePatchError as e:
                     return ErrorResult(
                         message=str(e),
                         code="CST_REPLACE_ERROR",
-                        details={"selector": selector},
+                        details={"selector": selector_for_query},
                     )
+
+                if preview_mode:
+                    diff = unified_diff(source, new_source, file_path)
+                    replace_data = {
+                        "success": True,
+                        "preview": True,
+                        "replaced": stats.get("replaced", 0),
+                        "removed": stats.get("removed", 0),
+                        "file_path": str(target),
+                        "diff": diff,
+                        "modified_source": new_source,
+                        "file_size_bytes": len(new_source.encode("utf-8")),
+                        "file_lines": len(new_source.splitlines()),
+                    }
+                    logger.info(
+                        "[TIMING] command=query_cst total_elapsed_sec=%.4f (preview)",
+                        time.perf_counter() - t_start,
+                    )
+                    return SuccessResult(data=replace_data)
+
                 backup_manager = BackupManager(root_path)
                 backup_uuid = backup_manager.create_backup(
                     target,
@@ -266,14 +401,16 @@ class QueryCSTCommand(BaseMCPCommand):
                     "[TIMING] command=query_cst total_elapsed_sec=%.4f",
                     time.perf_counter() - t_start,
                 )
-                # Build modified_nodes for verification
-                modified_nodes = self._build_modified_nodes(
-                    matches,
-                    replace_all=replace_all and not use_replacements_list,
-                    match_index=match_index,
-                    single_new_code=single_new_code,
-                    new_code_by_index=new_code_by_index,
-                )
+                if range_only or not matches:
+                    modified_nodes = []
+                else:
+                    modified_nodes = self._build_modified_nodes(
+                        matches,
+                        replace_all=replace_all and not use_replacements_list,
+                        match_index=match_index,
+                        single_new_code=single_new_code,
+                        new_code_by_index=new_code_by_index,
+                    )
                 replace_data = {
                     "success": True,
                     "replaced": stats.get("replaced", 0),
@@ -295,7 +432,7 @@ class QueryCSTCommand(BaseMCPCommand):
             data = {
                 "success": True,
                 "file_path": str(target),
-                "selector": selector,
+                "selector": selector_for_query,
                 "truncated": truncated,
                 "matches": [
                     {
@@ -322,7 +459,7 @@ class QueryCSTCommand(BaseMCPCommand):
             return ErrorResult(
                 message=f"Invalid selector: {e}",
                 code="CST_QUERY_PARSE_ERROR",
-                details={"selector": selector},
+                details={"selector": selector or ""},
             )
         except Exception as e:
             logger.exception("query_cst failed: %s", e)
@@ -590,6 +727,8 @@ class QueryCSTCommand(BaseMCPCommand):
                 "selector": {
                     "description": (
                         "CSTQuery selector string. Uses jQuery/XPath-like syntax to find nodes. "
+                        "Required for query-only mode. For replace mode, either selector or both "
+                        "start_line and end_line are required. "
                         "Examples:\n"
                         '- class[name="MyClass"] - Find class by name\n'
                         '- method[qualname="MyClass.my_method"] - Find method by qualified name\n'
@@ -598,7 +737,7 @@ class QueryCSTCommand(BaseMCPCommand):
                         "See docs/CST_QUERY.md for full syntax documentation."
                     ),
                     "type": "string",
-                    "required": True,
+                    "required": False,
                     "examples": [
                         'class[name="MyClass"]',
                         'method[qualname="DataProcessor.process"]',
@@ -667,7 +806,8 @@ class QueryCSTCommand(BaseMCPCommand):
                     "description": (
                         "When set: replace multiple matches with different code per match. "
                         "List of {match_index, replace_with} or {match_index, code_lines}. "
-                        "Ignored if replace_with/code_lines (single-code path) is used."
+                        "Ignored if replace_with/code_lines (single-code path) is used. "
+                        "Not supported with range-only replace (start_line/end_line)."
                     ),
                     "type": "array",
                     "items": {
@@ -683,6 +823,38 @@ class QueryCSTCommand(BaseMCPCommand):
                         "required": ["match_index"],
                     },
                     "required": False,
+                },
+                "start_line": {
+                    "description": (
+                        "1-based start line for range-based replace. "
+                        "Use with end_line and replace_with/code_lines to replace the statement(s) covering that range. "
+                        "When both start_line and end_line are set, selector is optional."
+                    ),
+                    "type": "integer",
+                    "required": False,
+                },
+                "end_line": {
+                    "description": (
+                        "1-based end line for range-based replace. Must be >= start_line. "
+                        "When both start_line and end_line are set, replace that line range."
+                    ),
+                    "type": "integer",
+                    "required": False,
+                },
+                "preview": {
+                    "description": (
+                        "If true, run replace in memory and return diff and modified_source without writing. "
+                        "No backup, no file change."
+                    ),
+                    "type": "boolean",
+                    "required": False,
+                    "default": False,
+                },
+                "dry_run": {
+                    "description": "Alias for preview. If true, same as preview=true.",
+                    "type": "boolean",
+                    "required": False,
+                    "default": False,
                 },
             },
             "usage_examples": [

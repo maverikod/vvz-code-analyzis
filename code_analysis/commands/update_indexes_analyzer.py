@@ -159,101 +159,113 @@ def analyze_file(
         ast_json = json.dumps(ast.dump(tree))
         ast_hash = hashlib.sha256(ast_json.encode()).hexdigest()
 
-        _heartbeat(PHASE_AST)
+        # Per-file transaction: batch AST/CST/entity/usage writes (no commit per row).
+        tid = database.begin_transaction()
         try:
-            logger.debug(
-                "Saving AST for %s, file_id=%s, project_id=%s",
-                rel_path,
-                file_id,
-                project_id,
-            )
-            database.save_ast_tree(
-                file_id,
-                project_id,
-                ast_json,
-                ast_hash,
-                file_mtime,
-                overwrite=True,
-            )
-        except Exception as e:
-            logger.error("Error saving AST for %s: %s", rel_path, e, exc_info=True)
-            return {
-                "file": rel_path,
-                "status": "error",
-                "error": f"Failed to save AST: {e}",
-                "error_type": type(e).__name__,
-            }
+            _heartbeat(PHASE_AST)
+            try:
+                logger.debug(
+                    "Saving AST for %s, file_id=%s, project_id=%s",
+                    rel_path,
+                    file_id,
+                    project_id,
+                )
+                database.save_ast_tree(
+                    file_id,
+                    project_id,
+                    ast_json,
+                    ast_hash,
+                    file_mtime,
+                    overwrite=True,
+                )
+            except Exception as e:
+                database.rollback_transaction(tid)
+                logger.error("Error saving AST for %s: %s", rel_path, e, exc_info=True)
+                return {
+                    "file": rel_path,
+                    "status": "error",
+                    "error": f"Failed to save AST: {e}",
+                    "error_type": type(e).__name__,
+                }
 
-        cst_hash = hashlib.sha256(file_content.encode()).hexdigest()
-        _heartbeat(PHASE_CST)
-        try:
-            logger.debug(
-                "Saving CST for %s, file_id=%s, project_id=%s",
-                rel_path,
-                file_id,
-                project_id,
-            )
-            database.save_cst_tree(
-                file_id,
-                project_id,
-                file_content,
-                cst_hash,
-                file_mtime,
-                overwrite=True,
-            )
-        except Exception as e:
-            logger.error("Error saving CST for %s: %s", rel_path, e, exc_info=True)
-            return {
-                "file": rel_path,
-                "status": "error",
-                "error": f"Failed to save CST: {e}",
-                "error_type": type(e).__name__,
-            }
+            cst_hash = hashlib.sha256(file_content.encode()).hexdigest()
+            _heartbeat(PHASE_CST)
+            try:
+                logger.debug(
+                    "Saving CST for %s, file_id=%s, project_id=%s",
+                    rel_path,
+                    file_id,
+                    project_id,
+                )
+                database.save_cst_tree(
+                    file_id,
+                    project_id,
+                    file_content,
+                    cst_hash,
+                    file_mtime,
+                    overwrite=True,
+                )
+            except Exception as e:
+                database.rollback_transaction(tid)
+                logger.error("Error saving CST for %s: %s", rel_path, e, exc_info=True)
+                return {
+                    "file": rel_path,
+                    "status": "error",
+                    "error": f"Failed to save CST: {e}",
+                    "error_type": type(e).__name__,
+                }
 
-        _heartbeat(PHASE_ENTITIES)
-        classes_added, functions_added, methods_added, imports_added = index_entities(
-            database, file_id, tree, file_content, rel_path
-        )
-
-        usages_added = 0
-        _heartbeat(PHASE_USAGE)
-        try:
-            from ..core.usage_tracker import UsageTracker
-
-            def add_usage_callback(usage_record: Dict[str, Any]) -> None:
-                nonlocal usages_added
-                try:
-                    database.add_usage(
-                        file_id=file_id,
-                        line=usage_record["line"],
-                        usage_type=usage_record["usage_type"],
-                        target_type=usage_record["target_type"],
-                        target_name=usage_record["target_name"],
-                        target_class=usage_record.get("target_class"),
-                        context=usage_record.get("context"),
-                    )
-                    usages_added += 1
-                except Exception as e:
-                    logger.debug(
-                        "Failed to add usage for %s at line %s: %s",
-                        usage_record.get("target_name"),
-                        usage_record.get("line"),
-                        e,
-                        exc_info=True,
-                    )
-
-            usage_tracker = UsageTracker(add_usage_callback)
-            usage_tracker.visit(tree)
-            logger.debug("Tracked %s usages in %s", usages_added, rel_path)
-        except Exception as e:
-            logger.warning(
-                "Failed to track usages for %s: %s",
-                rel_path,
-                e,
-                exc_info=True,
+            _heartbeat(PHASE_ENTITIES)
+            classes_added, functions_added, methods_added, imports_added = (
+                index_entities(database, file_id, tree, file_content, rel_path)
             )
 
-        database.mark_file_needs_chunking(rel_path, project_id)
+            usages_added = 0
+            _heartbeat(PHASE_USAGE)
+            try:
+                from ..core.usage_tracker import UsageTracker
+
+                def add_usage_callback(usage_record: Dict[str, Any]) -> None:
+                    nonlocal usages_added
+                    try:
+                        database.add_usage(
+                            file_id=file_id,
+                            line=usage_record["line"],
+                            usage_type=usage_record["usage_type"],
+                            target_type=usage_record["target_type"],
+                            target_name=usage_record["target_name"],
+                            target_class=usage_record.get("target_class"),
+                            context=usage_record.get("context"),
+                        )
+                        usages_added += 1
+                    except Exception as e:
+                        logger.debug(
+                            "Failed to add usage for %s at line %s: %s",
+                            usage_record.get("target_name"),
+                            usage_record.get("line"),
+                            e,
+                            exc_info=True,
+                        )
+
+                usage_tracker = UsageTracker(add_usage_callback)
+                usage_tracker.visit(tree)
+                logger.debug("Tracked %s usages in %s", usages_added, rel_path)
+            except Exception as e:
+                logger.warning(
+                    "Failed to track usages for %s: %s",
+                    rel_path,
+                    e,
+                    exc_info=True,
+                )
+
+            database.mark_file_needs_chunking(rel_path, project_id)
+            database.commit_transaction(tid)
+        except Exception:
+            try:
+                database.rollback_transaction(tid)
+            except Exception:
+                pass
+            raise
 
         return {
             "file": rel_path,

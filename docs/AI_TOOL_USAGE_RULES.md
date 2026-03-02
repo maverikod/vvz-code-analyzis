@@ -22,6 +22,8 @@ This document defines rules for AI models on how to use the code analysis and re
 
 **Note on examples**: In the examples below, use **project_id** for project-scoped commands when the schema requires it; some snippets may still show `root_dir` for brevity—always check [COMMANDS_GUIDE.md](COMMANDS_GUIDE.md) or command `get_schema` for current parameters.
 
+**Workflow and fallbacks**: For which command to use per task and what to try when a command fails, see [CST_WORKFLOW_GUIDE.md](CST_WORKFLOW_GUIDE.md) and the [CST Error Fallback Table](#73-cst-error-fallback-table) below.
+
 ## 0. AI Prompt Rules (MANDATORY)
 
 **⚠️ CRITICAL: These rules apply ONLY when server `code-analysis-server` is available via MCP Proxy. When server is unavailable, use fallback tools with user approval.**
@@ -697,6 +699,18 @@ result = mcp_MCP-Proxy-2_call_server(
 - `query_cst` - Query using CSTQuery selectors
 - `compose_cst_module` - Apply CST patches to files directly
 
+**`query_cst` behavior contract (IMPORTANT):**
+- Query-only mode requires `selector`.
+- Replace mode requires either:
+  - `selector`, or
+  - both `start_line` and `end_line` (range-based replace).
+- If both selector and range are provided in replace mode, **range takes precedence** for replacement.
+- `preview=true` or `dry_run=true` performs replace in memory and returns `diff` / `modified_source`:
+  - no file write,
+  - no backup creation,
+  - no index/database update write path.
+- `start_line` / `end_line` are 1-based and must be within file bounds with `start_line <= end_line`.
+
 **CST Tree Commands (In-Memory Tree-based)** - **NEW**:
 - `cst_load_file` - Load Python file into in-memory CST tree (returns tree_id). When the file had syntax errors on load, the response includes `syntax_errors_fixed: true`, `commented_lines` (each with `line`, `error`, `parent_node` including `node_id`), and optionally `temp_file`.
 - `cst_find_node` - Find nodes in loaded tree (simple or XPath search)
@@ -778,6 +792,18 @@ result = mcp_MCP-Proxy-2_call_server(
 - Type errors
 
 **Solution**: Fix syntax/imports, run type checker.
+
+### 7.3 CST Error Fallback Table
+
+When a CST command fails, use this table to choose an alternative. Full task→command→fallback guidance: [CST_WORKFLOW_GUIDE.md](CST_WORKFLOW_GUIDE.md).
+
+| Error | Try instead | Example |
+|-------|-------------|---------|
+| `cst_modify_tree` "was not replaced" (e.g. SimpleStatementLine in Module.body) | `query_cst` with `replace_with` or `code_lines` | `query_cst(project_id, file_path, selector="ImportFrom", match_index=0, replace_with="from foo import bar")` |
+| `query_cst` returns no matches | Check selector syntax; try a simpler selector (e.g. `ImportFrom`, `function[name='x']`) | Use query-only first: `query_cst(..., include_code=true)` to verify matches |
+| `cst_load_file` fails (syntax error in file) | `replace_file_lines` to fix the broken range | `replace_file_lines(project_id, file_path, start_line, end_line, new_lines)` then retry `cst_load_file` |
+| `compose_cst_module` validation/docstring errors | Fix code to satisfy validation, or use `cst_load_file` → `cst_modify_tree` → `cst_save_tree` | Ensure docstrings and type hints in `new_code`; tree path may give different validation behavior |
+| Need multiple edits in one file | Prefer `cst_load_file` → `cst_modify_tree` (multiple ops) → `cst_save_tree` | Single atomic save; avoid multiple `compose_cst_module` calls for the same file |
 
 ## 8. Code Writing Standards
 

@@ -22,7 +22,7 @@ from ..core.cst_tree.models import TreeOperation, TreeOperationType
 from ..core.cst_tree.tree_builder import get_tree, rollback_tree_to_code
 from ..core.cst_tree.tree_modifier import modify_tree
 from ..core.cst_tree.tree_saver import save_tree_to_file
-from ..cst_query import query_source
+from ..cst_query import QueryParseError, query_source
 
 logger = logging.getLogger(__name__)
 
@@ -115,18 +115,25 @@ class CSTModifyTreeCommand(BaseMCPCommand):
                             },
                             "node_id": {
                                 "type": "string",
-                                "description": "Node ID for replace/delete operations (from cst_find_node)",
+                                "description": (
+                                    "Node ID for replace/delete/insert/move (from cst_find_node). "
+                                    "For replace and delete: provide exactly one of node_id or selector."
+                                ),
                             },
                             "selector": {
                                 "type": "string",
                                 "description": (
-                                    "XPath-like CSTQuery selector (alternative to node_id). "
-                                    "Use with match_index or replace_all for multi-node ops."
+                                    "XPath-like CSTQuery selector (alternative to node_id for replace/delete). "
+                                    "Requires tree_id. Use with match_index or replace_all for multi-node ops. "
+                                    "For replace and delete: provide exactly one of node_id or selector."
                                 ),
                             },
                             "match_index": {
                                 "type": "integer",
-                                "description": "When using selector: which match (0-based). Default 0.",
+                                "description": (
+                                    "When using selector: which match (0-based). Default 0. "
+                                    "Omit or 0 for first match."
+                                ),
                             },
                             "replace_all": {
                                 "type": "boolean",
@@ -275,22 +282,54 @@ class CSTModifyTreeCommand(BaseMCPCommand):
                 elif isinstance(pos_val, str):
                     position_str = pos_val
 
-                # Resolve selector to node_ids when selector provided (no node_id)
+                # Resolve node_id or selector to node_ids. For replace/delete: exactly one of node_id or selector.
                 node_ids_to_use: List[str] = []
                 op_node_id = op_dict.get("node_id")
                 selector = op_dict.get("selector")
+                if action in (TreeOperationType.REPLACE, TreeOperationType.DELETE):
+                    has_node_id = bool(op_node_id)
+                    has_selector = bool(selector)
+                    if has_node_id and has_selector:
+                        return ErrorResult(
+                            message=(
+                                "For replace/delete provide exactly one of node_id or selector, not both."
+                            ),
+                            code="INVALID_OPERATION",
+                            details={
+                                "action": action_str,
+                                "hint": "Use either node_id or selector, not both.",
+                            },
+                        )
+                    if not has_node_id and not has_selector:
+                        return ErrorResult(
+                            message=(
+                                "For replace/delete provide either node_id or selector."
+                            ),
+                            code="INVALID_OPERATION",
+                            details={
+                                "action": action_str,
+                                "hint": "Use node_id (from cst_find_node) or selector (CSTQuery).",
+                            },
+                        )
                 if op_node_id:
                     node_ids_to_use = [op_node_id]
                 elif selector and action in (
                     TreeOperationType.REPLACE,
                     TreeOperationType.DELETE,
                 ):
-                    node_ids_to_use = _resolve_selector_to_tree_node_ids(
-                        original_tree,
-                        selector,
-                        op_dict.get("match_index"),
-                        op_dict.get("replace_all", False),
-                    )
+                    try:
+                        node_ids_to_use = _resolve_selector_to_tree_node_ids(
+                            original_tree,
+                            selector,
+                            op_dict.get("match_index"),
+                            op_dict.get("replace_all", False),
+                        )
+                    except QueryParseError as e:
+                        return ErrorResult(
+                            message=f"Invalid selector: {e}",
+                            code="SELECTOR_PARSE_ERROR",
+                            details={"selector": selector, "error": str(e)},
+                        )
                     if not node_ids_to_use:
                         return ErrorResult(
                             message=f"Selector matched no nodes: {selector}",
@@ -362,7 +401,7 @@ class CSTModifyTreeCommand(BaseMCPCommand):
                         "offset": e.offset if e.offset is not None else None,
                     }
 
-                data = {
+                data: Dict[str, Any] = {
                     "success": True,
                     "preview": True,
                     "tree_id": tree_id,  # Return original tree_id in preview
@@ -523,13 +562,15 @@ class CSTModifyTreeCommand(BaseMCPCommand):
                 "6. Returns success with operations_applied count\n\n"
                 "Supported Operations:\n"
                 "- replace: Replace a node with new code\n"
-                "  - Requires: node_id, code\n"
+                "  - Requires: exactly one of (node_id or selector), and (code or code_lines). "
+                "If selector: tree_id required; optional match_index (default 0), replace_all.\n"
                 "- insert: Insert a new node\n"
                 "  - Requires: (parent_node_id OR target_node_id), code, position ('before' or 'after')\n"
                 "  - parent_node_id: Insert at beginning/end of parent's body\n"
                 "  - target_node_id: Insert before/after specific target node\n"
                 "- delete: Delete a node\n"
-                "  - Requires: node_id\n\n"
+                "  - Requires: exactly one of (node_id or selector). "
+                "If selector: tree_id required; optional match_index, replace_all.\n\n"
                 "Atomicity:\n"
                 "- All operations are validated before any are applied\n"
                 "- If any operation fails validation, none are applied\n"
@@ -574,8 +615,16 @@ class CSTModifyTreeCommand(BaseMCPCommand):
                                 "enum": ["replace", "insert", "delete"],
                             },
                             "node_id": {
-                                "description": "Node ID for replace/delete operations",
+                                "description": "Node ID for replace/delete (use exactly one of node_id or selector)",
                                 "type": "string",
+                            },
+                            "selector": {
+                                "description": "CSTQuery selector for replace/delete (alternative to node_id)",
+                                "type": "string",
+                            },
+                            "match_index": {
+                                "description": "When using selector: 0-based match index (default 0)",
+                                "type": "integer",
                             },
                             "code": {
                                 "description": "New code for replace/insert operations (single string, must be valid Python). For multi-line code, prefer code_lines to avoid JSON escaping issues.",
@@ -627,7 +676,7 @@ class CSTModifyTreeCommand(BaseMCPCommand):
             },
             "usage_examples": [
                 {
-                    "description": "Replace a function",
+                    "description": "Replace a function (by node_id)",
                     "command": {
                         "tree_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
                         "operations": [
@@ -642,6 +691,23 @@ class CSTModifyTreeCommand(BaseMCPCommand):
                         "Replaces old_function with new_function. "
                         "The code must be valid Python syntax. "
                         "Operation is atomic - if code is invalid, tree remains unchanged."
+                    ),
+                },
+                {
+                    "description": "Replace by selector (no prior cst_find_node)",
+                    "command": {
+                        "tree_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+                        "operations": [
+                            {
+                                "action": "replace",
+                                "selector": "ImportFrom[module='.task_status']",
+                                "code_lines": ["from ..task_status import TaskStatus"],
+                            }
+                        ],
+                    },
+                    "explanation": (
+                        "Replaces the first ImportFrom matching the selector. "
+                        "Use match_index for Nth match; replace_all to replace all matches."
                     ),
                 },
                 {
@@ -751,8 +817,8 @@ class CSTModifyTreeCommand(BaseMCPCommand):
                     "message": "Invalid operation: {error details}",
                     "solution": (
                         "Check operation parameters:\n"
-                        "- For replace: node_id must exist, code must be valid Python\n"
-                        "- For delete: node_id must exist\n"
+                        "- For replace: exactly one of node_id or selector; code or code_lines required\n"
+                        "- For delete: exactly one of node_id or selector\n"
                         "- For insert: (parent_node_id OR target_node_id) must be provided, code must be valid Python, position must be 'before' or 'after'\n"
                         "All operations in a batch are validated before any are applied."
                     ),
@@ -786,6 +852,16 @@ class CSTModifyTreeCommand(BaseMCPCommand):
                             ),
                         },
                     ],
+                },
+                "SELECTOR_NO_MATCH": {
+                    "description": "Selector matched no nodes",
+                    "message": "Selector matched no nodes: {selector}",
+                    "solution": "Check selector and tree content; use query_cst to test selector.",
+                },
+                "SELECTOR_PARSE_ERROR": {
+                    "description": "Invalid selector syntax",
+                    "message": "Invalid selector: {error}",
+                    "solution": "Fix selector string; see CSTQuery selector syntax.",
                 },
             },
             "best_practices": [

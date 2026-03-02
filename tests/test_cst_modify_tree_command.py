@@ -1,0 +1,331 @@
+"""
+Tests for cst_modify_tree MCP command: replace/delete by selector, validation.
+
+Covers: selector-based replace (no prior cst_find_node), node_id backward
+compatibility, validation (exactly one of node_id/selector), selector parse error,
+selector no match, match_index, replace_all.
+
+Author: Vasiliy Zdanovskiy
+email: vasilyvz@gmail.com
+"""
+
+from __future__ import annotations
+
+import pytest
+
+from code_analysis.commands.cst_modify_tree_command import CSTModifyTreeCommand
+from code_analysis.core.cst_tree.tree_builder import (
+    create_tree_from_code,
+    get_tree,
+    remove_tree,
+)
+from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
+
+
+IMPORT_SOURCE = '''"""Doc."""
+from .task_status import TaskStatus
+
+def foo():
+    return 1
+'''
+
+SOURCE_WITH_CLASS = '''"""Doc."""
+from .task_status import TaskStatus
+
+class X:
+    def method(self):
+        return 0
+
+def foo():
+    return 1
+'''
+
+
+@pytest.fixture
+def tree_with_import(tmp_path):
+    """Tree with module-level import (ImportFrom)."""
+    path = str(tmp_path / "sample.py")
+    tree = create_tree_from_code(path, IMPORT_SOURCE.strip())
+    tree_id = tree.tree_id
+    yield tree_id
+    remove_tree(tree_id)
+
+
+@pytest.fixture
+def tree_with_class(tmp_path):
+    """Tree with class and function."""
+    path = str(tmp_path / "sample.py")
+    tree = create_tree_from_code(path, SOURCE_WITH_CLASS.strip())
+    tree_id = tree.tree_id
+    yield tree_id
+    remove_tree(tree_id)
+
+
+def _find_import_node_id(tree_id: str):
+    """Return node_id of the ImportFrom on line 2."""
+    t = get_tree(tree_id)
+    assert t is not None
+    for nid, meta in t.metadata_map.items():
+        if meta.type == "ImportFrom" and meta.start_line == 2:
+            return nid
+    for nid, meta in t.metadata_map.items():
+        if meta.type == "SimpleStatementLine" and meta.start_line == 2:
+            return nid
+    pytest.fail("No import node found in tree")
+
+
+class TestReplaceBySelector:
+    """Replace using selector only (no node_id)."""
+
+    @pytest.mark.asyncio
+    async def test_replace_by_selector_import_from_succeeds(self, tree_with_import):
+        """Replace ImportFrom using selector only; no prior cst_find_node."""
+        cmd = CSTModifyTreeCommand()
+        result = await cmd.execute(
+            tree_id=tree_with_import,
+            operations=[
+                {
+                    "action": "replace",
+                    "selector": "ImportFrom",
+                    "match_index": 0,
+                    "code_lines": ["from ..task_status import TaskStatus"],
+                }
+            ],
+        )
+        assert isinstance(result, SuccessResult)
+        assert result.data["success"] is True
+        assert result.data["operations_applied"] == 1
+        tree = get_tree(result.data["tree_id"])
+        assert tree is not None
+        assert "from ..task_status import TaskStatus" in tree.module.code
+        assert "from .task_status import TaskStatus" not in tree.module.code
+
+    @pytest.mark.asyncio
+    async def test_replace_by_selector_import_from_broad_match_index(
+        self, tree_with_import
+    ):
+        """Replace using broad selector ImportFrom with match_index=0."""
+        cmd = CSTModifyTreeCommand()
+        result = await cmd.execute(
+            tree_id=tree_with_import,
+            operations=[
+                {
+                    "action": "replace",
+                    "selector": "ImportFrom",
+                    "match_index": 0,
+                    "code_lines": ["from ..task_status import TaskStatus"],
+                }
+            ],
+        )
+        assert isinstance(result, SuccessResult)
+        assert result.data["operations_applied"] == 1
+        tree = get_tree(result.data["tree_id"])
+        assert tree is not None
+        assert "from ..task_status import TaskStatus" in tree.module.code
+
+    @pytest.mark.asyncio
+    async def test_replace_by_selector_function_name_foo(self, tree_with_import):
+        """Replace function named foo via selector function[name='foo']."""
+        cmd = CSTModifyTreeCommand()
+        result = await cmd.execute(
+            tree_id=tree_with_import,
+            operations=[
+                {
+                    "action": "replace",
+                    "selector": "function[name='foo']",
+                    "code_lines": ["def foo():", "    return 2"],
+                }
+            ],
+        )
+        assert isinstance(result, SuccessResult)
+        assert result.data["operations_applied"] == 1
+        tree = get_tree(result.data["tree_id"])
+        assert tree is not None
+        assert "return 2" in tree.module.code
+        assert "return 1" not in tree.module.code
+
+    @pytest.mark.asyncio
+    async def test_replace_by_selector_class_def(self, tree_with_class):
+        """Replace ClassDef named X via selector ClassDef[name='X']."""
+        cmd = CSTModifyTreeCommand()
+        result = await cmd.execute(
+            tree_id=tree_with_class,
+            operations=[
+                {
+                    "action": "replace",
+                    "selector": "ClassDef[name='X']",
+                    "code_lines": ["class X:", "    pass"],
+                }
+            ],
+        )
+        assert isinstance(result, SuccessResult)
+        assert result.data["operations_applied"] == 1
+        tree = get_tree(result.data["tree_id"])
+        assert tree is not None
+        assert "class X:" in tree.module.code
+        assert "def method" not in tree.module.code
+
+
+class TestReplaceByNodeIdBackwardCompat:
+    """Existing replace by node_id still works."""
+
+    @pytest.mark.asyncio
+    async def test_replace_by_node_id_succeeds(self, tree_with_import):
+        """Replace using node_id only (backward compatibility)."""
+        node_id = _find_import_node_id(tree_with_import)
+        cmd = CSTModifyTreeCommand()
+        result = await cmd.execute(
+            tree_id=tree_with_import,
+            operations=[
+                {
+                    "action": "replace",
+                    "node_id": node_id,
+                    "code_lines": ["from ..task_status import TaskStatus"],
+                }
+            ],
+        )
+        assert isinstance(result, SuccessResult)
+        assert result.data["operations_applied"] == 1
+        tree = get_tree(result.data["tree_id"])
+        assert tree is not None
+        assert "from ..task_status import TaskStatus" in tree.module.code
+
+
+class TestValidationReplaceDelete:
+    """Validation: exactly one of node_id or selector for replace/delete."""
+
+    @pytest.mark.asyncio
+    async def test_replace_both_node_id_and_selector_rejected(self, tree_with_import):
+        """Both node_id and selector provided -> reject."""
+        node_id = _find_import_node_id(tree_with_import)
+        cmd = CSTModifyTreeCommand()
+        result = await cmd.execute(
+            tree_id=tree_with_import,
+            operations=[
+                {
+                    "action": "replace",
+                    "node_id": node_id,
+                    "selector": "ImportFrom",
+                    "code_lines": ["from x import y"],
+                }
+            ],
+        )
+        assert isinstance(result, ErrorResult)
+        assert result.code == "INVALID_OPERATION"
+        assert "exactly one" in result.message or "not both" in result.message
+
+    @pytest.mark.asyncio
+    async def test_replace_neither_node_id_nor_selector_rejected(
+        self, tree_with_import
+    ):
+        """Neither node_id nor selector for replace -> reject."""
+        cmd = CSTModifyTreeCommand()
+        result = await cmd.execute(
+            tree_id=tree_with_import,
+            operations=[
+                {
+                    "action": "replace",
+                    "code_lines": ["from x import y"],
+                }
+            ],
+        )
+        assert isinstance(result, ErrorResult)
+        assert result.code == "INVALID_OPERATION"
+        assert "node_id or selector" in result.message
+
+    @pytest.mark.asyncio
+    async def test_delete_neither_node_id_nor_selector_rejected(self, tree_with_import):
+        """Neither node_id nor selector for delete -> reject."""
+        cmd = CSTModifyTreeCommand()
+        result = await cmd.execute(
+            tree_id=tree_with_import,
+            operations=[{"action": "delete"}],
+        )
+        assert isinstance(result, ErrorResult)
+        assert result.code == "INVALID_OPERATION"
+
+    @pytest.mark.asyncio
+    async def test_delete_by_selector_succeeds(self, tree_with_import):
+        """Delete using selector only."""
+        cmd = CSTModifyTreeCommand()
+        result = await cmd.execute(
+            tree_id=tree_with_import,
+            operations=[
+                {"action": "delete", "selector": "ImportFrom", "match_index": 0}
+            ],
+        )
+        assert isinstance(result, SuccessResult)
+        assert result.data["operations_applied"] == 1
+        tree = get_tree(result.data["tree_id"])
+        assert tree is not None
+        assert "from .task_status import TaskStatus" not in tree.module.code
+        assert "def foo()" in tree.module.code
+
+
+class TestSelectorNoMatch:
+    """Selector matches no nodes -> explicit error, no tree mutation."""
+
+    @pytest.mark.asyncio
+    async def test_selector_no_match_returns_error(self, tree_with_import):
+        """Selector that matches nothing -> SELECTOR_NO_MATCH, tree unchanged."""
+        cmd = CSTModifyTreeCommand()
+        result = await cmd.execute(
+            tree_id=tree_with_import,
+            operations=[
+                {
+                    "action": "replace",
+                    "selector": "ClassDef[name='NonExistent']",
+                    "code_lines": ["class X: pass"],
+                }
+            ],
+        )
+        assert isinstance(result, ErrorResult)
+        assert result.code == "SELECTOR_NO_MATCH"
+        assert "matched no nodes" in result.message or "no nodes" in result.message
+        tree = get_tree(tree_with_import)
+        assert tree is not None
+        assert "from .task_status import TaskStatus" in tree.module.code
+
+
+class TestSelectorParseError:
+    """Invalid selector string -> clear parser/validation error."""
+
+    @pytest.mark.asyncio
+    async def test_invalid_selector_returns_parse_error(self, tree_with_import):
+        """Invalid selector syntax -> SELECTOR_PARSE_ERROR."""
+        cmd = CSTModifyTreeCommand()
+        result = await cmd.execute(
+            tree_id=tree_with_import,
+            operations=[
+                {
+                    "action": "replace",
+                    "selector": "[unclosed",
+                    "code_lines": ["x = 1"],
+                }
+            ],
+        )
+        assert isinstance(result, ErrorResult)
+        assert result.code == "SELECTOR_PARSE_ERROR"
+        assert "selector" in result.message.lower() or "Invalid" in result.message
+
+
+class TestMatchIndex:
+    """match_index selects Nth match deterministically."""
+
+    @pytest.mark.asyncio
+    async def test_match_index_one_beyond_raises_no_match(self, tree_with_import):
+        """match_index=1 when only one ImportFrom -> SELECTOR_NO_MATCH or single match."""
+        cmd = CSTModifyTreeCommand()
+        result = await cmd.execute(
+            tree_id=tree_with_import,
+            operations=[
+                {
+                    "action": "replace",
+                    "selector": "ImportFrom",
+                    "match_index": 1,
+                    "code_lines": ["from other import Other"],
+                }
+            ],
+        )
+        assert isinstance(result, ErrorResult)
+        assert result.code == "SELECTOR_NO_MATCH"

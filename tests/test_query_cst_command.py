@@ -553,7 +553,7 @@ class TestQueryCSTCommandReplacements:
             "_open_database_from_config",
             return_value=mock_db,
         ), patch(
-            "code_analysis.commands.query_cst_command.BackupManager",
+            "code_analysis.commands.query_cst_handler.BackupManager",
         ) as mock_bm_class:
             mock_bm = MagicMock()
             mock_bm.create_backup.return_value = "backup-uuid-1"

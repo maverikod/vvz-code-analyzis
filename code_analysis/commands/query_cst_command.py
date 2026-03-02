@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import logging
 import time
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 
@@ -93,6 +93,26 @@ class QueryCSTCommand(BaseMCPCommand):
                         "match_index is ignored."
                     ),
                 },
+                "replacements": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "match_index": {"type": "integer"},
+                            "replace_with": {"type": "string"},
+                            "code_lines": {
+                                "type": "array",
+                                "items": {"type": "string"},
+                            },
+                        },
+                        "required": ["match_index"],
+                    },
+                    "description": (
+                        "When set: replace multiple matches with different code per match. "
+                        "Each entry: match_index (0-based) and either replace_with or code_lines. "
+                        "Ignored if replace_with/code_lines (single-code path) is used."
+                    ),
+                },
             },
             "required": ["project_id", "file_path", "selector"],
             "additionalProperties": False,
@@ -109,6 +129,7 @@ class QueryCSTCommand(BaseMCPCommand):
         code_lines: Optional[List[str]] = None,
         match_index: int = 0,
         replace_all: bool = False,
+        replacements: Optional[List[Dict[str, Any]]] = None,
         **kwargs,
     ) -> SuccessResult:
         t_start = time.perf_counter()
@@ -143,54 +164,75 @@ class QueryCSTCommand(BaseMCPCommand):
                 time.perf_counter() - t_query,
             )
             # Replace mode: find + replace in one call
-            if replace_with is not None or code_lines is not None:
+            use_replacements_list = replacements is not None and len(replacements) > 0
+            single_new_code: Optional[str] = None
+            new_code_by_index: Optional[Dict[int, str]] = None
+            if (
+                use_replacements_list
+                or replace_with is not None
+                or code_lines is not None
+            ):
                 if not matches:
                     return ErrorResult(
                         message="No matches found for selector; nothing to replace",
                         code="CST_QUERY_NO_MATCH",
                         details={"selector": selector},
                     )
-                new_code = (
-                    "\n".join(code_lines)
-                    if code_lines is not None
-                    else (replace_with or "")
-                )
-                if replace_all:
-                    ops = [
-                        ReplaceOp(
-                            Selector(
-                                kind="cst_query",
-                                query=selector,
-                                match_index=i,
-                            ),
-                            new_code,
-                        )
-                        for i in range(len(matches))
-                    ]
+                if use_replacements_list:
+                    # Replacements list: different code per match_index
+                    assert replacements is not None  # ensured by use_replacements_list
+                    err = self._validate_replacements(
+                        replacements, len(matches), selector
+                    )
+                    if err is not None:
+                        return err
+                    ops, new_code_by_index = self._build_ops_from_replacements(
+                        selector, replacements
+                    )
                 else:
-                    if match_index < 0 or match_index >= len(matches):
-                        return ErrorResult(
-                            message=(
-                                f"match_index {match_index} out of range "
-                                f"(selector matched {len(matches)} node(s))"
-                            ),
-                            code="CST_QUERY_MATCH_INDEX",
-                            details={
-                                "selector": selector,
-                                "match_index": match_index,
-                                "match_count": len(matches),
-                            },
-                        )
-                    ops = [
-                        ReplaceOp(
-                            Selector(
-                                kind="cst_query",
-                                query=selector,
-                                match_index=match_index,
-                            ),
-                            new_code,
-                        )
-                    ]
+                    # Legacy single-code path
+                    single_new_code = (
+                        "\n".join(code_lines)
+                        if code_lines is not None
+                        else (replace_with or "")
+                    )
+                    if replace_all:
+                        ops = [
+                            ReplaceOp(
+                                Selector(
+                                    kind="cst_query",
+                                    query=selector,
+                                    match_index=i,
+                                ),
+                                single_new_code,
+                            )
+                            for i in range(len(matches))
+                        ]
+                    else:
+                        if match_index < 0 or match_index >= len(matches):
+                            return ErrorResult(
+                                message=(
+                                    f"match_index {match_index} out of range "
+                                    f"(selector matched {len(matches)} node(s))"
+                                ),
+                                code="CST_QUERY_MATCH_INDEX",
+                                details={
+                                    "selector": selector,
+                                    "match_index": match_index,
+                                    "match_count": len(matches),
+                                },
+                            )
+                        ops = [
+                            ReplaceOp(
+                                Selector(
+                                    kind="cst_query",
+                                    query=selector,
+                                    match_index=match_index,
+                                ),
+                                single_new_code,
+                            )
+                        ]
+                    new_code_by_index = None
                 try:
                     new_source, stats = apply_replace_ops(source, ops)
                 except CSTModulePatchError as e:
@@ -224,30 +266,14 @@ class QueryCSTCommand(BaseMCPCommand):
                     "[TIMING] command=query_cst total_elapsed_sec=%.4f",
                     time.perf_counter() - t_start,
                 )
-                # Build modified_nodes for verification (when multiple nodes affected)
-                modified_nodes: List[Dict[str, Any]] = []
-                if replace_all:
-                    for m in matches:
-                        modified_nodes.append(
-                            {
-                                "node_id": m.node_id,
-                                "kind": m.kind,
-                                "start_line": m.start_line,
-                                "end_line": m.end_line,
-                                "code": new_code,
-                            }
-                        )
-                else:
-                    m = matches[match_index]
-                    modified_nodes.append(
-                        {
-                            "node_id": m.node_id,
-                            "kind": m.kind,
-                            "start_line": m.start_line,
-                            "end_line": m.end_line,
-                            "code": new_code,
-                        }
-                    )
+                # Build modified_nodes for verification
+                modified_nodes = self._build_modified_nodes(
+                    matches,
+                    replace_all=replace_all and not use_replacements_list,
+                    match_index=match_index,
+                    single_new_code=single_new_code,
+                    new_code_by_index=new_code_by_index,
+                )
                 replace_data = {
                     "success": True,
                     "replaced": stats.get("replaced", 0),
@@ -301,6 +327,136 @@ class QueryCSTCommand(BaseMCPCommand):
         except Exception as e:
             logger.exception("query_cst failed: %s", e)
             return ErrorResult(message=f"query_cst failed: {e}", code="CST_QUERY_ERROR")
+
+    def _validate_replacements(
+        self,
+        replacements: List[Dict[str, Any]],
+        match_count: int,
+        selector: str,
+    ) -> Optional[ErrorResult]:
+        """Validate replacements list; return ErrorResult if invalid."""
+        seen: set[int] = set()
+        for i, entry in enumerate(replacements):
+            idx = entry.get("match_index")
+            if not isinstance(idx, int):
+                return ErrorResult(
+                    message="replacements[].match_index must be an integer",
+                    code="CST_QUERY_REPLACEMENTS_INVALID",
+                    details={"entry_index": i},
+                )
+            if idx < 0 or idx >= match_count:
+                return ErrorResult(
+                    message=(
+                        f"match_index {idx} out of range "
+                        f"(selector matched {match_count} node(s))"
+                    ),
+                    code="CST_QUERY_MATCH_INDEX",
+                    details={
+                        "selector": selector,
+                        "match_index": idx,
+                        "match_count": match_count,
+                    },
+                )
+            if idx in seen:
+                return ErrorResult(
+                    message=f"Duplicate match_index {idx} in replacements",
+                    code="CST_QUERY_REPLACEMENTS_DUPLICATE_INDEX",
+                    details={"match_index": idx},
+                )
+            seen.add(idx)
+            has_replace_with = (
+                "replace_with" in entry and entry["replace_with"] is not None
+            )
+            has_code_lines = "code_lines" in entry and entry["code_lines"] is not None
+            if has_replace_with and has_code_lines:
+                return ErrorResult(
+                    message=(
+                        "replacements entry must have either replace_with or "
+                        "code_lines, not both"
+                    ),
+                    code="CST_QUERY_REPLACEMENTS_BOTH_CODE",
+                    details={"entry_index": i, "match_index": idx},
+                )
+            if not has_replace_with and not has_code_lines:
+                return ErrorResult(
+                    message=("replacements entry must have replace_with or code_lines"),
+                    code="CST_QUERY_REPLACEMENTS_MISSING_CODE",
+                    details={"entry_index": i, "match_index": idx},
+                )
+        return None
+
+    def _build_ops_from_replacements(
+        self,
+        selector: str,
+        replacements: List[Dict[str, Any]],
+    ) -> Tuple[List[ReplaceOp], Dict[int, str]]:
+        """Build ReplaceOp list and map match_index -> new_code for response."""
+        ops: List[ReplaceOp] = []
+        new_code_by_index: Dict[int, str] = {}
+        for entry in replacements:
+            idx = entry["match_index"]
+            if "code_lines" in entry and entry["code_lines"] is not None:
+                new_code = "\n".join(entry["code_lines"])
+            else:
+                new_code = entry.get("replace_with") or ""
+            new_code_by_index[idx] = new_code
+            ops.append(
+                ReplaceOp(
+                    Selector(
+                        kind="cst_query",
+                        query=selector,
+                        match_index=idx,
+                    ),
+                    new_code,
+                )
+            )
+        return ops, new_code_by_index
+
+    def _build_modified_nodes(
+        self,
+        matches: List[Any],
+        replace_all: bool,
+        match_index: int,
+        single_new_code: Optional[str],
+        new_code_by_index: Optional[Dict[int, str]],
+    ) -> List[Dict[str, Any]]:
+        """Build modified_nodes list for replace response."""
+        modified_nodes = []
+        if new_code_by_index is not None:
+            for idx, code in new_code_by_index.items():
+                m = matches[idx]
+                modified_nodes.append(
+                    {
+                        "node_id": m.node_id,
+                        "kind": m.kind,
+                        "start_line": m.start_line,
+                        "end_line": m.end_line,
+                        "code": code,
+                    }
+                )
+        elif replace_all and single_new_code is not None:
+            for m in matches:
+                modified_nodes.append(
+                    {
+                        "node_id": m.node_id,
+                        "kind": m.kind,
+                        "start_line": m.start_line,
+                        "end_line": m.end_line,
+                        "code": single_new_code,
+                    }
+                )
+        elif single_new_code is not None:
+            m = matches[match_index]
+            modified_nodes.append(
+                {
+                    "node_id": m.node_id,
+                    "kind": m.kind,
+                    "start_line": m.start_line,
+                    "end_line": m.end_line,
+                    "code": single_new_code,
+                }
+            )
+        return modified_nodes
 
     @classmethod
     def metadata(cls: type["QueryCSTCommand"]) -> Dict[str, Any]:
@@ -506,6 +662,27 @@ class QueryCSTCommand(BaseMCPCommand):
                     "required": False,
                     "default": False,
                     "examples": [False, True],
+                },
+                "replacements": {
+                    "description": (
+                        "When set: replace multiple matches with different code per match. "
+                        "List of {match_index, replace_with} or {match_index, code_lines}. "
+                        "Ignored if replace_with/code_lines (single-code path) is used."
+                    ),
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "match_index": {"type": "integer"},
+                            "replace_with": {"type": "string"},
+                            "code_lines": {
+                                "type": "array",
+                                "items": {"type": "string"},
+                            },
+                        },
+                        "required": ["match_index"],
+                    },
+                    "required": False,
                 },
             },
             "usage_examples": [
@@ -962,6 +1139,21 @@ class QueryCSTCommand(BaseMCPCommand):
                     "description": "Replace failed (e.g. unsupported node kind or parse error)",
                     "message": "From CSTModulePatchError",
                     "solution": "Ensure new code is valid Python; replace supports stmt/smallstmt/function/class/method",
+                },
+                "CST_QUERY_REPLACEMENTS_DUPLICATE_INDEX": {
+                    "description": "Duplicate match_index in replacements list",
+                    "message": "Duplicate match_index {n} in replacements",
+                    "solution": "Use each match_index at most once in replacements",
+                },
+                "CST_QUERY_REPLACEMENTS_MISSING_CODE": {
+                    "description": "Replacements entry has neither replace_with nor code_lines",
+                    "message": "replacements entry must have replace_with or code_lines",
+                    "solution": "Provide replace_with (string) or code_lines (array of strings)",
+                },
+                "CST_QUERY_REPLACEMENTS_BOTH_CODE": {
+                    "description": "Replacements entry has both replace_with and code_lines",
+                    "message": "replacements entry must have either replace_with or code_lines, not both",
+                    "solution": "Use only one of replace_with or code_lines per entry",
                 },
             },
             "return_value": {

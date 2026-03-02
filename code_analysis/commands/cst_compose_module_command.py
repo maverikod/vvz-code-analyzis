@@ -9,6 +9,7 @@ email: vasilyvz@gmail.com
 
 from __future__ import annotations
 
+import difflib
 import logging
 import os
 import tempfile
@@ -20,11 +21,27 @@ from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 
 from .base_mcp_command import BaseMCPCommand
 from ..core.backup_manager import BackupManager
+from ..core.cst_module import ReplaceOp, Selector, apply_replace_ops
+from ..core.exceptions import CSTModulePatchError
 from ..core.git_integration import commit_after_write
 from ..core.git_integration import create_git_commit
 from ..core.cst_tree.tree_builder import get_tree
 
 logger = logging.getLogger(__name__)
+
+# Selector kinds supported by apply_replace_ops (for validation and docs).
+SUPPORTED_SELECTOR_KINDS = frozenset(
+    {
+        "module",
+        "function",
+        "class",
+        "method",
+        "range",
+        "block_id",
+        "node_id",
+        "cst_query",
+    }
+)
 
 
 class ComposeCSTModuleCommand(BaseMCPCommand):
@@ -86,20 +103,144 @@ class ComposeCSTModuleCommand(BaseMCPCommand):
                 },
                 "tree_id": {
                     "type": "string",
-                    "description": "CST tree ID from cst_load_file command (branch to attach)",
+                    "description": "CST tree ID from cst_load_file (branch to attach). Use either tree_id or ops, not both.",
                 },
                 "node_id": {
                     "type": "string",
-                    "description": "Node ID to attach branch to (optional). If empty - file will be overwritten with branch. If specified - branch will be inserted after the node.",
+                    "description": "Node ID to attach branch to (tree_id mode only). If empty - overwrite file with branch.",
+                },
+                "ops": {
+                    "type": "array",
+                    "description": "List of replace operations (ops mode). Each item: { selector: { kind, ... }, new_code [, file_docstring ] }. Selector kinds: module, function, class, method, range, block_id, node_id, cst_query.",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "selector": {"type": "object"},
+                            "new_code": {"type": "string"},
+                            "file_docstring": {"type": "string"},
+                        },
+                        "required": ["selector", "new_code"],
+                    },
+                },
+                "apply": {
+                    "type": "boolean",
+                    "description": "If true (default), write result to file. If false, only compute and return diff/stats (ops mode).",
+                    "default": True,
+                },
+                "create_backup": {
+                    "type": "boolean",
+                    "description": "If true (default), create file backup before writing (ops mode, when apply=true).",
+                    "default": True,
+                },
+                "return_diff": {
+                    "type": "boolean",
+                    "description": "If true, include unified diff in response (ops mode). When apply=false, returns diff without writing.",
+                    "default": False,
                 },
                 "commit_message": {
                     "type": "string",
                     "description": "Optional git commit message",
                 },
             },
-            "required": ["project_id", "file_path", "tree_id"],
+            "required": ["project_id", "file_path"],
             "additionalProperties": False,
         }
+
+    @staticmethod
+    def _selector_from_dict(d: Dict[str, Any]) -> Selector:
+        """
+        Build Selector from request dict and validate required fields per kind.
+
+        Raises:
+            ErrorResult (via caller) for unknown kind or missing required fields.
+        """
+        if not isinstance(d, dict):
+            raise ValueError("selector must be an object")
+        kind = d.get("kind")
+        if not kind or not isinstance(kind, str):
+            raise ValueError("selector.kind is required and must be a string")
+        if kind not in SUPPORTED_SELECTOR_KINDS:
+            raise ValueError(
+                f"Unsupported selector kind: {kind}. "
+                f"Supported: {sorted(SUPPORTED_SELECTOR_KINDS)}"
+            )
+        name = d.get("name")
+        start_line = d.get("start_line")
+        start_col = d.get("start_col")
+        end_line = d.get("end_line")
+        end_col = d.get("end_col")
+        block_id = d.get("block_id")
+        node_id = d.get("node_id")
+        query = d.get("query")
+        match_index = d.get("match_index")
+
+        if kind == "range":
+            if start_line is None or end_line is None:
+                raise ValueError(
+                    "selector kind 'range' requires start_line and end_line"
+                )
+        elif kind == "block_id":
+            if not block_id:
+                raise ValueError("selector kind 'block_id' requires block_id")
+        elif kind == "node_id":
+            if not node_id:
+                raise ValueError("selector kind 'node_id' requires node_id")
+        elif kind == "cst_query":
+            if not query:
+                raise ValueError("selector kind 'cst_query' requires query")
+            if match_index is not None and (
+                not isinstance(match_index, int) or match_index < 0
+            ):
+                raise ValueError("selector match_index must be a non-negative integer")
+        elif kind in ("function", "class", "method"):
+            if not name:
+                raise ValueError(f"selector kind '{kind}' requires name")
+
+        return Selector(
+            kind=kind,
+            name=name if name else None,
+            start_line=int(start_line) if start_line is not None else None,
+            start_col=int(start_col) if start_col is not None else None,
+            end_line=int(end_line) if end_line is not None else None,
+            end_col=int(end_col) if end_col is not None else None,
+            block_id=str(block_id) if block_id else None,
+            node_id=str(node_id) if node_id else None,
+            query=str(query) if query else None,
+            match_index=int(match_index) if match_index is not None else None,
+        )
+
+    @classmethod
+    def _ops_from_params(cls, ops_list: Any) -> List[ReplaceOp]:
+        """
+        Build list of ReplaceOp from request ops array.
+
+        Each item: { "selector": { kind, ... }, "new_code": str, optional "file_docstring" }.
+        """
+        if not isinstance(ops_list, list) or len(ops_list) == 0:
+            raise ValueError("ops must be a non-empty array")
+        result: List[ReplaceOp] = []
+        for i, item in enumerate(ops_list):
+            if not isinstance(item, dict):
+                raise ValueError(f"ops[{i}] must be an object")
+            sel_dict = item.get("selector")
+            new_code = item.get("new_code")
+            if sel_dict is None:
+                raise ValueError(f"ops[{i}].selector is required")
+            if new_code is None:
+                raise ValueError(f"ops[{i}].new_code is required")
+            new_code = str(new_code)
+            file_docstring = item.get("file_docstring")
+            if file_docstring is not None:
+                file_docstring = str(file_docstring)
+            sel = cls._selector_from_dict(sel_dict)
+            result.append(
+                ReplaceOp(
+                    selector=sel,
+                    new_code=new_code,
+                    file_docstring=file_docstring,
+                )
+            )
+        return result
 
     def _backup_file_data(self, database, file_id: int) -> Optional[Dict[str, Any]]:
         """
@@ -697,6 +838,189 @@ class ComposeCSTModuleCommand(BaseMCPCommand):
             else:
                 logger.error(f"Failed to restore file from backup: {restore_message}")
 
+    async def _execute_ops_mode(
+        self,
+        project_id: str,
+        file_path: str,
+        root_path: Path,
+        ops: List[Dict[str, Any]],
+        apply: bool,
+        create_backup: bool,
+        return_diff: bool,
+        commit_message: Optional[str],
+        t_start: float,
+        t_prev: float,
+    ) -> SuccessResult | ErrorResult:
+        """
+        Execute ops-based compose: build ReplaceOp list, apply_replace_ops, optionally write.
+
+        When apply=false, only return diff/stats. When apply=true, backup + validate + write.
+        """
+        target_path = (root_path / file_path).resolve()
+        if target_path.suffix != ".py":
+            return ErrorResult(
+                message="Target file must be a .py file",
+                code="INVALID_FILE",
+                details={"file_path": str(target_path)},
+            )
+
+        # Build ReplaceOp list and validate selectors
+        try:
+            replace_ops = self._ops_from_params(ops)
+        except ValueError as e:
+            return ErrorResult(
+                message=str(e),
+                code="INVALID_OPS",
+                details={"ops": ops},
+            )
+
+        # Read current source (empty for new file)
+        if target_path.exists():
+            try:
+                source = target_path.read_text(encoding="utf-8")
+            except Exception as e:
+                return ErrorResult(
+                    message=f"Failed to read file: {e}",
+                    code="FILE_READ_ERROR",
+                    details={"file_path": str(target_path)},
+                )
+        else:
+            source = ""
+
+        # Apply patches
+        try:
+            new_source, stats = apply_replace_ops(source, replace_ops)
+        except CSTModulePatchError as e:
+            return ErrorResult(
+                message=str(e),
+                code="CST_REPLACE_ERROR",
+                details=getattr(e, "details", {}),
+            )
+
+        # Normalize final newline
+        new_source = new_source.rstrip("\n\r") + "\n"
+
+        # Build response data (diff and stats)
+        data: Dict[str, Any] = {
+            "success": True,
+            "file_path": str(target_path),
+            "stats": stats,
+        }
+        if return_diff:
+            diff_lines = difflib.unified_diff(
+                source.splitlines(keepends=True),
+                new_source.splitlines(keepends=True),
+                fromfile=file_path,
+                tofile=file_path,
+            )
+            data["diff"] = "".join(diff_lines)
+
+        if not apply:
+            data["applied"] = False
+            data["message"] = "Preview only; no file written"
+            return SuccessResult(data=data)
+
+        # Apply path: validate, backup, write, update indexes (same as tree_id path)
+        file_exists = target_path.exists()
+        temp_file, validation_error, validation_results = self._validate_and_write_temp(
+            new_source, target_path
+        )
+        if validation_error:
+            return validation_error
+
+        database = self._open_database_from_config(auto_analyze=False)
+        backup_manager = None
+        backup_uuid = None
+        file_data_backup = None
+        file_id = None
+
+        try:
+            if file_exists:
+                from ..core.path_normalization import normalize_path_simple
+
+                normalized_path = normalize_path_simple(str(target_path))
+                file_rows = database.select(
+                    "files",
+                    where={"path": normalized_path, "project_id": project_id},
+                    limit=1,
+                )
+                if file_rows:
+                    file_record = file_rows[0]
+                    file_id = file_record["id"]
+                    file_data_backup = self._backup_file_data(database, file_id)
+
+            if create_backup and file_exists:
+                backup_manager = BackupManager(root_path)
+                backup_uuid = backup_manager.create_backup(
+                    target_path,
+                    command="compose_cst_module",
+                    comment=commit_message or "",
+                )
+
+            transaction_id = database.begin_transaction()
+            if not transaction_id:
+                if temp_file and temp_file.exists():
+                    try:
+                        temp_file.unlink()
+                    except Exception:
+                        pass
+                return ErrorResult(
+                    message="Database transaction could not be started",
+                    code="TRANSACTION_ERROR",
+                    details={"hint": "Database driver may be busy or unavailable"},
+                )
+
+            try:
+                result = self._apply_changes(
+                    database=database,
+                    transaction_id=transaction_id,
+                    project_id=project_id,
+                    root_path=root_path,
+                    target_path=target_path,
+                    source_code=new_source,
+                    file_id=file_id,
+                    file_data_backup=file_data_backup,
+                    backup_uuid=backup_uuid,
+                    backup_manager=backup_manager,
+                    temp_file=temp_file,
+                    commit_message=commit_message,
+                )
+                if isinstance(result, SuccessResult) and result.data:
+                    result.data["stats"] = stats
+                    if return_diff and "diff" not in result.data:
+                        result.data["diff"] = data.get("diff")
+                    if validation_results:
+                        result.data["validation_results"] = {
+                            vt: {
+                                "success": vr.success,
+                                "error_message": vr.error_message,
+                                "errors_count": len(vr.errors),
+                            }
+                            for vt, vr in validation_results.items()
+                        }
+                if isinstance(result, SuccessResult):
+                    commit_after_write(
+                        root_path,
+                        [target_path],
+                        "compose_cst_module",
+                        commit_message_override=commit_message,
+                        config_data=BaseMCPCommand._get_raw_config(),
+                    )
+                logger.info(
+                    "[PROFILE] compose_cst_module (ops) total elapsed=%.3fs",
+                    time.perf_counter() - t_start,
+                )
+                return result
+            except Exception as err:
+                if temp_file and temp_file.exists():
+                    try:
+                        temp_file.unlink()
+                    except Exception:
+                        pass
+                raise err
+        finally:
+            database.disconnect()
+
     def _apply_changes(
         self,
         database,
@@ -881,19 +1205,29 @@ class ComposeCSTModuleCommand(BaseMCPCommand):
         self,
         project_id: str,
         file_path: str,
-        tree_id: str,
+        tree_id: Optional[str] = None,
         node_id: Optional[str] = None,
+        ops: Optional[List[Dict[str, Any]]] = None,
+        apply: bool = True,
+        create_backup: bool = True,
+        return_diff: bool = False,
         commit_message: Optional[str] = None,
-        **kwargs,
+        **kwargs: Any,
     ) -> SuccessResult | ErrorResult:
         """
         Execute compose_cst_module command.
 
+        Either tree_id (branch attach) or ops (selector-based patches) must be provided.
+
         Args:
             project_id: Project ID
             file_path: File path relative to project root
-            tree_id: CST tree ID (branch to attach)
-            node_id: Node ID to attach branch to (optional)
+            tree_id: CST tree ID (branch to attach). Use with node_id for insert.
+            node_id: Node ID to attach branch to (tree_id mode only)
+            ops: List of { selector, new_code [, file_docstring ] } (ops mode)
+            apply: If true, write to file (ops mode). Default True.
+            create_backup: If true, create backup before write (ops mode). Default True.
+            return_diff: If true, include unified diff in response (ops mode). Default False.
             commit_message: Optional git commit message
 
         Returns:
@@ -901,11 +1235,33 @@ class ComposeCSTModuleCommand(BaseMCPCommand):
         """
         t_start = time.perf_counter()
         t_prev = t_start
+
+        # Validate mode: either tree_id or ops, not both, not neither
+        has_tree = tree_id is not None and str(tree_id).strip() != ""
+        has_ops = ops is not None and len(ops) > 0
+        if has_tree and has_ops:
+            return ErrorResult(
+                message="Provide either tree_id or ops, not both",
+                code="INVALID_PARAMS",
+                details={
+                    "hint": "Use tree_id for branch attach or ops for selector-based patches"
+                },
+            )
+        if not has_tree and not has_ops:
+            return ErrorResult(
+                message="Either tree_id or ops is required",
+                code="INVALID_PARAMS",
+                details={
+                    "hint": "Use tree_id (from cst_load_file) or ops (list of selector + new_code)"
+                },
+            )
+
         logger.info(
-            "[CHAIN] compose_cst_module execute entry project_id=%s file_path=%s tree_id=%s",
+            "[CHAIN] compose_cst_module execute entry project_id=%s file_path=%s tree_id=%s ops_mode=%s",
             project_id,
             file_path,
-            tree_id,
+            tree_id if has_tree else "N/A",
+            has_ops,
         )
         try:
             # Step 1: Check project exists
@@ -928,9 +1284,25 @@ class ComposeCSTModuleCommand(BaseMCPCommand):
             )
             t_prev = _t
 
-            # Step 2: Get CST tree (branch) and check it's not empty
+            # Ops mode: apply_replace_ops path (no tree_id)
+            if has_ops:
+                return await self._execute_ops_mode(
+                    project_id=project_id,
+                    file_path=file_path,
+                    root_path=root_path,
+                    ops=ops or [],
+                    apply=apply,
+                    create_backup=create_backup,
+                    return_diff=return_diff,
+                    commit_message=commit_message,
+                    t_start=t_start,
+                    t_prev=_t,
+                )
+
+            # Step 2: Get CST tree (branch) and check it's not empty (tree_id mode)
             # If file is new and tree_id points to a different file,
             # we need to create a new tree from the branch code
+            assert tree_id is not None  # guaranteed by has_tree branch
             tree = get_tree(tree_id)
             if not tree:
                 return ErrorResult(

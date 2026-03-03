@@ -37,6 +37,10 @@ class RPCClient:
 
     Handles connection to driver process via Unix socket, sends requests,
     receives responses, and manages connection pooling and retry logic.
+
+    Process-control methods (get_job_status, stop_job) use bounded timeout and
+    non-blocking pool wait so queue integration does not hang; on manager
+    unavailability a deterministic ConnectionError is raised.
     """
 
     def __init__(
@@ -46,6 +50,9 @@ class RPCClient:
         max_retries: int = 3,
         retry_delay: float = 0.1,
         pool_size: int = 5,
+        startup_connect_timeout: float = 5.0,
+        process_control_timeout: float = 2.0,
+        process_control_max_retries: int = 1,
     ):
         """Initialize RPC client.
 
@@ -55,12 +62,20 @@ class RPCClient:
             max_retries: Maximum number of retry attempts (default: 3)
             retry_delay: Delay between retries in seconds (default: 0.1)
             pool_size: Connection pool size (default: 5)
+            startup_connect_timeout: Max seconds to wait for driver socket to
+                become connectable during initial connect() after restarts.
+            process_control_timeout: Timeout for process-control methods
+                (get_job_status/stop_job) to avoid blocking calls.
+            process_control_max_retries: Retry count for process-control methods.
         """
         self.socket_path = socket_path
         self.timeout = timeout
         self.max_retries = max_retries
         self.retry_delay = retry_delay
         self.pool_size = pool_size
+        self.startup_connect_timeout = startup_connect_timeout
+        self.process_control_timeout = process_control_timeout
+        self.process_control_max_retries = process_control_max_retries
         self._connection_pool: Queue[socket.socket] = Queue(maxsize=pool_size)
         self._lock = threading.Lock()
         self._closed = False
@@ -77,17 +92,27 @@ class RPCClient:
         if self._closed:
             raise ConnectionError("RPC client is closed")
 
-        # Pre-create connections in pool
+        # Pre-create connections in pool.
+        # During server restart there is a short window when socket file may exist
+        # but driver still returns ECONNREFUSED; keep retrying for a bounded timeout.
+        deadline = time.time() + max(0.0, float(self.startup_connect_timeout))
+        last_error: Optional[Exception] = None
         created = 0
-        for _ in range(self.pool_size):
-            try:
-                sock = self._create_connection()
-                self._connection_pool.put(sock)
-                created += 1
-            except Exception as e:
-                logger.warning(f"Failed to pre-create connection: {e}")
+        while time.time() <= deadline and created == 0:
+            for _ in range(self.pool_size):
+                try:
+                    sock = self._create_connection()
+                    self._connection_pool.put(sock)
+                    created += 1
+                except Exception as e:
+                    last_error = e
+            if created == 0:
+                time.sleep(min(0.2, max(self.retry_delay, 0.05)))
         if created == 0:
-            raise ConnectionError(f"Cannot connect to RPC server at {self.socket_path}")
+            error_suffix = f": {last_error}" if last_error else ""
+            raise ConnectionError(
+                f"Cannot connect to RPC server at {self.socket_path}{error_suffix}"
+            )
         self._connected = True
 
     def disconnect(self) -> None:
@@ -154,21 +179,44 @@ class RPCClient:
             request_id[:8] + "…" if request_id and len(request_id) > 8 else request_id,
         )
 
+        is_process_control = method in {"get_job_status", "stop_job"}
+        # Bounded waits and non-blocking pool for status/stop: avoid hanging queue commands.
+        effective_timeout = (
+            min(self.timeout, self.process_control_timeout)
+            if is_process_control
+            else self.timeout
+        )
+        effective_retries = (
+            max(1, self.process_control_max_retries)
+            if is_process_control
+            else self.max_retries
+        )
+        # Do not wait on pool for process-control; get connection immediately or create new.
+        pool_wait = 0.0 if is_process_control else 1.0
+
         # Retry logic
         last_error: Optional[Exception] = None
-        for attempt in range(self.max_retries):
+        for attempt in range(effective_retries):
             try:
-                out = self._send_request(request)
+                out = self._send_request(
+                    request=request,
+                    request_timeout=effective_timeout,
+                    pool_wait_timeout=pool_wait,
+                )
                 logger.info("[CHAIN] rpc_client call method=%s success", method)
                 return out
             except (ConnectionError, TimeoutError) as e:
                 last_error = e
-                if attempt < self.max_retries - 1:
+                if attempt < effective_retries - 1:
                     time.sleep(self.retry_delay * (attempt + 1))
                     logger.debug(
-                        f"Retrying RPC call (attempt {attempt + 1}/{self.max_retries}): {e}"
+                        f"Retrying RPC call (attempt {attempt + 1}/{effective_retries}): {e}"
                     )
                 else:
+                    if is_process_control:
+                        raise ConnectionError(
+                            "Process manager is unavailable for process-control request"
+                        ) from e
                     raise
             except Exception as e:
                 # Non-retryable errors
@@ -180,7 +228,12 @@ class RPCClient:
             raise last_error
         raise RPCClientError("RPC call failed for unknown reason")
 
-    def _send_request(self, request: RPCRequest) -> RPCResponse:
+    def _send_request(
+        self,
+        request: RPCRequest,
+        request_timeout: Optional[float] = None,
+        pool_wait_timeout: float = 1.0,
+    ) -> RPCResponse:
         """Send RPC request and receive response.
 
         Args:
@@ -198,12 +251,15 @@ class RPCClient:
         try:
             # Get connection from pool or create new one
             try:
-                sock = self._connection_pool.get(timeout=1.0)
+                sock = self._connection_pool.get(timeout=pool_wait_timeout)
             except Empty:
                 sock = self._create_connection()
 
             # Set timeout
-            sock.settimeout(self.timeout)
+            timeout_value = (
+                request_timeout if request_timeout is not None else self.timeout
+            )
+            sock.settimeout(timeout_value)
 
             # Send request
             request_dict = request.to_dict()
@@ -235,7 +291,10 @@ class RPCClient:
             return response
 
         except socket.timeout:
-            raise TimeoutError(f"Request timed out after {self.timeout} seconds")
+            timeout_value = (
+                request_timeout if request_timeout is not None else self.timeout
+            )
+            raise TimeoutError(f"Request timed out after {timeout_value} seconds")
         except socket.error as e:
             raise ConnectionError(f"Socket error: {e}") from e
         except json.JSONDecodeError as e:

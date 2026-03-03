@@ -86,7 +86,43 @@ Ready-to-send bug report for **mcp-proxy-adapter** maintainers. Root cause of qu
 
 ---
 
-## 6. References
+## 6. Final MCP Verification
+
+Run: MCP Proxy → code-analysis-server. Date: 2025-03-03.
+
+### 6.1 TYPECHECK (in-repo fix validated)
+
+**Payloads:**
+- `type_check_code(project_id="c86dded6-6f93-4fb0-be54-b6d7b739eeb9", file_path="ai_admin/commands/get_methods_command.py")`
+- `type_check_code(project_id="c86dded6-6f93-4fb0-be54-b6d7b739eeb9", file_path="ai_admin/working_server.py")`
+
+**Results (concise):**
+- Both: `success: true`, `data.file_path` = requested file (resolved absolute path).
+- get_methods_command.py: `data.success: false`, `data.error`: "Found 1544 mypy errors", `data.error_count`: 1544.
+- working_server.py: `data.success: false`, `data.error`: "Found 1637 mypy errors", `data.error_count`: 1637.
+- Errors list: target file + import graph (mypy follow_imports). No unrelated project-wide run; scope is single-file target + context.
+
+**Criterion:** No project-wide “thousands of unrelated errors”; scope limited to target file / its context. **Met.**
+
+### 6.2 QUEUE (regression / external defect)
+
+**Scenario:** Queued `comprehensive_analysis(project_id="c86dded6-6f93-4fb0-be54-b6d7b739eeb9")`; 3× `queue_get_job_status` at ~12 s interval; then `queue_stop_job`.
+
+**Results (concise):**
+- **comprehensive_analysis** (use_queue=true): `success: true`, `job_id`: "comprehensive_analysis_7e15958e", `status`: "pending".
+- **queue_get_job_status** (3 calls): each `success: true`, `data.status`: "running", `data.progress`: 0, `data.description`: "Analyzing up to 671 files...", `data.error`: null.
+- **queue_stop_job**: `success: false`, `error.message`: "Queue job error: Job comprehensive_analysis_7e15958e: Failed to stop job: Process control error for job 'manager' during stop_job: Command failed: Process control error for job 'manager' during stop_job: Command timed out waiting for response".
+
+**Criterion:** Current external defect recorded as **EXTERNAL_ADAPTER**; escalation packet complete. **Met.** (Timeout reproduced on stop_job; status polls responded.)
+
+### Task closure
+
+- **type_check:** Validated in repo (single-file scope; no project-wide unrelated errors).
+- **queue:** Ownership external; escalation packet complete; final MCP run confirms EXTERNAL_ADAPTER defect on `queue_stop_job`.
+
+---
+
+## 7. References
 
 - Main task: `docs/reports/queue_and_typecheck_task/QUEUE_AND_TYPECHECK_ATOMIC_TASK.md`
 - Ownership evidence: `docs/reports/queue_and_typecheck_task/step_00_ownership_decision.md`

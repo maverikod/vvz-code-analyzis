@@ -62,14 +62,44 @@ Timestamps: observed during MCP-based testing when status/stop were invoked 20�
 | `queue_stop_job` | Stops the job or returns a deterministic error (e.g. job not found, already stopped) within a bounded time. | Times out with process-control error for job `manager`; stop outcome unknown. |
 | Manager process control | Status/stop requests to the manager complete or fail quickly with a defined error. | Waits until timeout; no success, no bounded failure. |
 
+### 1.5 Regression: manager timeout now at add_job stage (Step 05)
+
+Independent MCP validation confirms a **stricter** regression: the manager process-control channel degrades already at **enqueue** time, not only at status/stop.
+
+**Observed when regression occurs:**
+
+1. **Enqueue:** `comprehensive_analysis(project_id="<id>", use_queue=true)`  
+   - Response may include `job_id`, but the result contains failure:  
+   - `Process control error for job 'manager' during add_job ... timed out waiting for response`
+2. **Follow-up:** `queue_get_job_status(job_id)` fails with the same manager timeout.
+3. **Follow-up:** `queue_stop_job(job_id)` fails with the same manager timeout.
+
+**Key response fields (concise):**
+
+| Operation        | Success | Key error message (excerpt) |
+|------------------|--------|-----------------------------|
+| add_job (enqueue)| false  | Process control error for job 'manager' during add_job ... timed out waiting for response |
+| get_job_status   | false  | Process control error for job 'manager' during get_job_status ... timed out waiting for response |
+| stop_job         | false  | Process control error for job 'manager' during stop_job ... timed out waiting for response |
+
+**Payloads to reproduce:**
+
+- Enqueue: `call_server(server_id="code-analysis-server", command="comprehensive_analysis", params={"project_id": "<project_id>"}, use_queue=True)`
+- Status: `queue_get_job_status` with `params={"job_id": "<job_id from enqueue>"}`
+- Stop: `queue_stop_job` with `params={"job_id": "<job_id from enqueue>"}`
+
+This indicates the issue is **operation-agnostic** and points to a shared manager control bottleneck or deadlock in the adapter, not to a specific command handler.
+
 ---
 
 ## 2. Local impact analysis (code_analysis repository)
 
 ### 2.1 What is blocked operationally
 
+- **Command queue unusable for long-running tasks** when manager timeout occurs at `add_job`: enqueue itself fails or returns with a failure, so no reliable `job_id` for tracking.
 - Reliable monitoring of long-running queued jobs (`queue_get_job_status`) when the manager is under load.
 - Reliable cancellation of queued jobs (`queue_stop_job`) in the same conditions.
+- **Orchestration cannot reliably track or stop queued jobs** when any of add_job / get_job_status / stop_job hit the manager timeout.
 - Downstream workflows that depend on status/stop (e.g. UI progress, cancellation) become unreliable when timeouts occur.
 
 ### 2.2 Local resilience in this repository
@@ -87,18 +117,18 @@ Timestamps: observed during MCP-based testing when status/stop were invoked 20�
 
 - **Component:** Queue manager process-control path.
 - **Likely locations:** Handlers or wrappers that perform process-control communication with the job `manager` for:
+  - `add_job` (enqueue request to manager),
   - `get_job_status` (status request to manager),
   - `stop_job` (stop request to manager).
-- **Suspected causes:** Unbounded or long blocking wait on manager response, lock contention in the manager worker, or deadlock in the manager command channel when under load (e.g. during heavy `comprehensive_analysis` work).
+- **Suspected causes:** Unbounded or long blocking wait on manager response, lock contention in the manager worker, or deadlock in the manager command channel when under load (e.g. during heavy `comprehensive_analysis` work). The regression from "stop_job-only" to "add_job + status + stop" suggests a shared control bottleneck.
 - **Evidence:** Error text explicitly references job `'manager'` and “timed out waiting for response”, indicating the timeout occurs in the process-control layer talking to the manager, not in the application job itself.
 
 ### 3.2 Suggested adapter-side acceptance test
 
-1. Start a long-running queued job (e.g. a job that runs 60+ seconds).
-2. After 20–40 seconds, in a loop (e.g. 3–5 times), call `queue_get_job_status` with that job’s ID.
-3. Call `queue_stop_job` with the same job ID.
-4. **Pass criteria:** Every `queue_get_job_status` and `queue_stop_job` returns within a bounded time (e.g. &lt; 10 s) with either success or a deterministic error (e.g. job not found, already stopped), and never with “Process control error for job 'manager' … timed out waiting for response”.
-5. **Optional:** Run the same test with multiple concurrent long-running jobs to stress the manager process-control path.
+1. **Full control-path scenario (required):** Enqueue via a call that triggers `add_job` (e.g. `comprehensive_analysis(..., use_queue=true)`); then call `queue_get_job_status(job_id)`; then call `queue_stop_job(job_id)`. **Pass criteria:** No manager timeout on any of the three operations; each returns within a bounded time (e.g. &lt; 10 s) with either success or a deterministic error (e.g. job not found, already stopped). Never "Process control error for job 'manager' … timed out waiting for response".
+2. **Stress variant:** Start a long-running queued job (60+ seconds); after 20–40 s, poll `queue_get_job_status` 3–5 times, then `queue_stop_job`. Same pass criteria.
+3. **Optional:** Multiple concurrent long-running jobs to stress the manager process-control path.
+
 
 ---
 
@@ -110,3 +140,16 @@ Timestamps: observed during MCP-based testing when status/stop were invoked 20�
 - [x] Queue track can be marked completed under the EXTERNAL_ADAPTER branch without editing foreign (adapter) package code.
 
 This escalation packet is sufficient for external developers to reproduce the issue without extra clarifications.
+
+---
+
+## 5. Local temporary guardrail recommendation (Step 05)
+
+**Failure signature:** Response (from enqueue, `queue_get_job_status`, or `queue_stop_job`) contains substring `Process control error for job 'manager'` and `timed out waiting for response`.
+
+**Recommendation:** In this repository, when invoking adapter queue commands or handling their responses, detect this failure signature and **fail fast** with a deterministic, operator-friendly message:
+
+- **Error code / identifier:** `EXTERNAL_ADAPTER_QUEUE_MANAGER_TIMEOUT`
+- **Message (example):** `Queue manager timeout (adapter): process control for job 'manager' timed out. See escalation packet STEP_04_EXTERNAL_ESCALATION_PACKET.md.`
+
+This gives operators a clear, searchable signal and avoids confusion with other timeout or queue errors. Implementation can live in the MCP command layer or in a thin wrapper that parses adapter responses before returning to the client.

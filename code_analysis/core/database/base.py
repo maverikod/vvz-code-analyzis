@@ -429,11 +429,25 @@ class CodeDatabase:
         for sql, params in operations:
             self._execute(sql, tuple(params) if params else None)
             lastrowid = self._lastrowid()
+            data = None
+            if sql.strip().upper().startswith("SELECT"):
+                res = getattr(self, "_last_execute_result", None)
+                if isinstance(res, dict) and "data" in res:
+                    data = res.get("data")
+                elif hasattr(self.driver, "fetchall") and data is None:
+                    bind = tuple(params) if params else None
+                    if self._lock:
+                        with self._lock:
+                            data = self.driver.fetchall(
+                                sql, bind  # type: ignore[arg-type]
+                            )
+                    else:
+                        data = self.driver.fetchall(sql, bind)  # type: ignore[arg-type]
             results.append(
                 {
                     "affected_rows": 0,
                     "lastrowid": lastrowid,
-                    "data": None,
+                    "data": data,
                 }
             )
         return results

@@ -46,8 +46,10 @@ def update_file_data_atomic_batch(
     """
     Update all file data (AST, CST, classes, methods, functions, imports) via batch.
 
-    Runs 3 execute_batch calls: (1) clear + ast + cst, (2) insert classes,
-    (3) insert methods + functions + imports. Order preserved; minimizes write commands.
+    Runs clear+ast+cst, insert classes, resolve class ids (SELECT), then insert
+    methods + functions + imports. Class ids are resolved by query after insert
+    so method.class_id is correct regardless of execute_batch/executemany
+    lastrowid behavior. Order preserved; minimizes write commands.
     """
     try:
         tree = ast.parse(source_code, filename=file_path)
@@ -227,14 +229,36 @@ def update_file_data_atomic_batch(
                 import_rows.append(row)
 
     # Batch 2: insert classes
-    if not class_rows:
-        class_lastrowids: List[int] = []
-    else:
+    # Do not rely on execute_batch lastrowid: with executemany only the last row
+    # gets lastrowid, so method class_id would get wrong/zero and trigger FK failure.
+    # After insert, resolve class ids by querying in deterministic order.
+    class_lastrowids: List[int] = []
+    if class_rows:
         ops2 = [_row_to_insert_sql("classes", r) for r in class_rows]
-        results2 = database.execute_batch(ops2, transaction_id)
-        class_lastrowids = [(r.get("lastrowid") or 0) for r in results2]
+        database.execute_batch(ops2, transaction_id)
+        # Resolve real class ids: same transaction, so only our inserts exist for
+        # this file_id. ORDER BY id matches insert order (SQLite AUTOINCREMENT).
+        select_ops: List[Tuple[str, Optional[tuple]]] = [
+            (
+                "SELECT id FROM classes WHERE file_id = ? ORDER BY id",
+                (file_id,),
+            )
+        ]
+        select_results = database.execute_batch(select_ops, transaction_id)
+        if select_results and select_results[0].get("data"):
+            class_lastrowids = [int(row["id"]) for row in select_results[0]["data"]]
+        if len(class_lastrowids) != len(class_rows):
+            return {
+                "success": False,
+                "error": (
+                    f"class insert count mismatch: inserted {len(class_rows)}, "
+                    f"resolved {len(class_lastrowids)}"
+                ),
+                "file_path": file_path,
+                "file_id": file_id,
+            }
 
-    # Batch 3: insert methods (with class_id from batch2) + functions + imports
+    # Batch 3: insert methods (with class_id from resolved ids) + functions + imports
     ops3: List[Tuple[str, tuple]] = []
     for class_idx, row in method_specs:
         row = dict(row)

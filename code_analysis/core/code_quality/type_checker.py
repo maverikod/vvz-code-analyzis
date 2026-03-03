@@ -10,6 +10,7 @@ email: vasilyvz@gmail.com
 
 import logging
 import os
+import re
 import subprocess
 import tempfile
 from pathlib import Path
@@ -17,10 +18,111 @@ from typing import Dict, List, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
+# Mypy line format: path:line:column: severity: message or path:line: severity: message
+_MYPY_LINE_RE = re.compile(r"^(.+):(\d+):(\d+):\s*(error|note):")
+_MYPY_LINE_RE_NOCOL = re.compile(r"^(.+):(\d+):\s*(error|note):")
+
 # Minimal mypy config to exclude .venv/venv so single-file runs don't crawl them
 _MYPY_EXCLUDE_VENV_CONFIG = b"""[mypy]
 exclude = (\\.venv|venv|\\.mypy_cache)/
 """
+
+
+def _build_single_file_config(config_file: Path) -> Optional[Path]:
+    """
+    Create a temporary mypy config that keeps original options but removes
+    top-level scope expanders (`files`/`modules`) in primary mypy section.
+
+    This keeps single-file invocation bounded to the explicit target argument.
+    """
+    try:
+        text = config_file.read_text(encoding="utf-8")
+    except OSError as exc:
+        logger.warning("Failed to read mypy config %s: %s", config_file, exc)
+        return None
+
+    section_header = (
+        "[tool.mypy]" if config_file.suffix.lower() == ".toml" else "[mypy]"
+    )
+    in_target_section = False
+    skipping_multiline_value = False
+    removed_scope_keys = False
+    sanitized_lines: list[str] = []
+
+    for line in text.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("[") and stripped.endswith("]"):
+            in_target_section = stripped == section_header
+            skipping_multiline_value = False
+            sanitized_lines.append(line)
+            continue
+
+        if in_target_section:
+            if skipping_multiline_value:
+                if "]" in stripped:
+                    skipping_multiline_value = False
+                continue
+            if re.match(r"^(files|modules)\s*=", stripped):
+                removed_scope_keys = True
+                if "[" in stripped and "]" not in stripped:
+                    skipping_multiline_value = True
+                continue
+        sanitized_lines.append(line)
+
+    if not removed_scope_keys:
+        return None
+
+    with tempfile.NamedTemporaryFile(
+        mode="w",
+        suffix=config_file.suffix or ".ini",
+        prefix="mypy_single_file_",
+        delete=False,
+        encoding="utf-8",
+    ) as temp_file:
+        temp_file.write("\n".join(sanitized_lines) + "\n")
+        return Path(temp_file.name)
+
+
+def _filter_mypy_errors_to_target(
+    target_path: Path, raw_lines: List[str], cwd: Optional[str]
+) -> List[str]:
+    """
+    Keep only mypy error/note lines that refer to the target file.
+
+    Mypy follows imports and reports errors from many files; this restricts
+    the returned list to the single file the caller asked for (deterministic
+    single-file scope).
+
+    Args:
+        target_path: Resolved path of the file that was type-checked.
+        raw_lines: All lines from mypy stdout/stderr.
+        cwd: Working directory mypy used (for resolving relative paths).
+
+    Returns:
+        Lines that match file:line:col: severity and whose path equals target_path.
+    """
+    target_resolved = target_path.resolve()
+    result: List[str] = []
+    base = Path(cwd).resolve() if cwd else Path.cwd()
+    for line in raw_lines:
+        line = line.strip()
+        if not line:
+            continue
+        match = _MYPY_LINE_RE.match(line) or _MYPY_LINE_RE_NOCOL.match(line)
+        if not match:
+            continue
+        path_str = match.group(1).strip()
+        try:
+            p = (
+                (base / path_str).resolve()
+                if not Path(path_str).is_absolute()
+                else Path(path_str).resolve()
+            )
+            if p == target_resolved:
+                result.append(line)
+        except (OSError, RuntimeError):
+            continue
+    return result
 
 
 def type_check_with_mypy(
@@ -58,13 +160,9 @@ def _type_check_with_subprocess(
     Run mypy in a subprocess with sanitized environment.
 
     Notes:
-        When a mypy config is provided and points to this repository (i.e. the
-        config lives next to the `code_analysis/` package), we run mypy against
-        the whole package (`-p code_analysis`) instead of a single file.
-
-        This avoids common mypy pitfalls for single-file checks:
-        - duplicated module discovery (same file as top-level and package module);
-        - relative-import resolution failures.
+        Single-file mode: exactly one file target is passed to mypy (resolved
+        absolute path). Config may be stripped of files/modules to avoid
+        package-wide scope. Output is filtered to the requested file only.
 
     Args:
         file_path: Path to Python file to type check.
@@ -74,31 +172,21 @@ def _type_check_with_subprocess(
     Returns:
         Tuple of (success, error_message, list_of_errors).
     """
-    import os
-    import subprocess
-
     try:
+        # Single-file target: one positional argument only (no package path).
+        target_file = file_path.resolve()
         cmd: list[str]
         cwd: Optional[str] = None
         tmp_config: Optional[Path] = None
 
         if config_file:
-            project_root = config_file.parent.resolve()
-            package_root = project_root / "code_analysis"
-
-            if package_root.exists() and package_root.is_dir():
-                # Package-aware run for this repo.
-                cmd = [
-                    "mypy",
-                    "--config-file",
-                    str(config_file),
-                    "-p",
-                    "code_analysis",
-                ]
-                cwd = str(project_root)
-            else:
-                # Fallback: file-only run.
-                cmd = ["mypy", str(file_path), "--config-file", str(config_file)]
+            # Preserve config support, but always keep single-file target scope.
+            config_for_single_file = _build_single_file_config(config_file)
+            effective_config = config_for_single_file or config_file
+            if config_for_single_file is not None:
+                tmp_config = config_for_single_file
+            cmd = ["mypy", str(target_file), "--config-file", str(effective_config)]
+            cwd = str(config_file.parent.resolve())
         else:
             # No config: use minimal config that excludes .venv/venv so mypy
             # does not crawl the project's virtualenv (avoids ~minutes per file).
@@ -110,7 +198,7 @@ def _type_check_with_subprocess(
             ) as f:
                 f.write(_MYPY_EXCLUDE_VENV_CONFIG)
                 tmp_config = Path(f.name)
-            cmd = ["mypy", str(file_path), "--config-file", str(tmp_config)]
+            cmd = ["mypy", str(target_file), "--config-file", str(tmp_config)]
 
         env = os.environ.copy()
         env.pop("PYTHONPATH", None)
@@ -130,21 +218,29 @@ def _type_check_with_subprocess(
             except OSError:
                 pass
 
-        errors: List[str] = []
+        raw_lines: List[str] = []
         if result.stdout:
-            errors.extend([line for line in result.stdout.split("\n") if line.strip()])
+            raw_lines.extend(
+                [line for line in result.stdout.split("\n") if line.strip()]
+            )
         if result.stderr:
-            errors.extend([line for line in result.stderr.split("\n") if line.strip()])
+            raw_lines.extend(
+                [line for line in result.stderr.split("\n") if line.strip()]
+            )
+
+        # Scope output to the single requested file (mypy follows imports and
+        # reports errors from many modules; we return only errors for target_file).
+        errors = _filter_mypy_errors_to_target(target_file, raw_lines, cwd)
 
         if result.returncode != 0:
             error_msg = f"Found {len(errors)} mypy errors"
             if ignore_errors:
-                logger.info(f"{error_msg} in {file_path} (ignored)")
+                logger.info(f"{error_msg} in {target_file} (ignored)")
                 return (True, None, errors)
-            logger.warning(f"{error_msg} in {file_path}")
+            logger.warning(f"{error_msg} in {target_file}")
             return (False, error_msg, errors)
 
-        logger.debug(f"No mypy errors found in {file_path}")
+        logger.debug(f"No mypy errors found in {target_file}")
         return (True, None, [])
 
     except subprocess.TimeoutExpired:

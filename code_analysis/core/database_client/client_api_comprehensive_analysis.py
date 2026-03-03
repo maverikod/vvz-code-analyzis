@@ -17,12 +17,12 @@ import json
 import logging
 from typing import Any, Dict, List, Optional, Tuple, Union
 
+from .client_base import _DatabaseClientBase
+
 logger = logging.getLogger(__name__)
 
 # Type for one batch item: (file_id, project_id, file_mtime, results, summary)
 _ComprehensiveAnalysisItem = Tuple[int, str, float, Dict[str, Any], Dict[str, Any]]
-
-from .client_base import _DatabaseClientBase
 
 _INSERT_SQL = """
 INSERT OR REPLACE INTO comprehensive_analysis_results
@@ -34,21 +34,30 @@ VALUES (?, ?, ?, ?, ?, julianday('now'))
 class _ClientAPIComprehensiveAnalysisMixin(_DatabaseClientBase):
     """Mixin with comprehensive analysis methods for DatabaseClient."""
 
-    def is_analysis_up_to_date(
+    def should_analyze_file(
         self,
         file_id: int,
         file_mtime: float,
         tolerance: float = 0.1,
-    ) -> bool:
-        """Check if comprehensive analysis results are up-to-date for a file.
+    ) -> Dict[str, Any]:
+        """Determine whether to run comprehensive analysis for a file (mtime gate).
+
+        Rule: analyze only if file on disk is newer than latest DB analysis
+        (or no prior record). Older-than-DB files are skipped.
+
+        - No previous record -> analyze.
+        - disk_mtime > db_mtime + tolerance -> analyze.
+        - abs(disk_mtime - db_mtime) <= tolerance -> skip.
+        - disk_mtime + tolerance < db_mtime (disk older) -> skip.
 
         Args:
             file_id: File ID.
-            file_mtime: Current file modification time.
+            file_mtime: Current file modification time (disk).
             tolerance: Time tolerance in seconds (default: 0.1).
 
         Returns:
-            True if analysis is up-to-date, False otherwise.
+            Dict with: should_analyze (bool), reason (str), db_mtime (float or None),
+            disk_mtime (float). Used for logging and decision.
         """
         result = self.execute(
             """
@@ -62,12 +71,63 @@ class _ClientAPIComprehensiveAnalysisMixin(_DatabaseClientBase):
         )
         data = result.get("data", []) if isinstance(result, dict) else []
         if not data:
-            return False
+            return {
+                "should_analyze": True,
+                "reason": "no_record",
+                "db_mtime": None,
+                "disk_mtime": float(file_mtime),
+            }
         row = data[0] if isinstance(data, list) else None
         if not row or "file_mtime" not in row:
-            return False
-        db_mtime = row["file_mtime"]
-        return abs(float(file_mtime) - float(db_mtime)) <= tolerance
+            return {
+                "should_analyze": True,
+                "reason": "no_record",
+                "db_mtime": None,
+                "disk_mtime": float(file_mtime),
+            }
+        db_mtime = float(row["file_mtime"])
+        disk_mtime = float(file_mtime)
+        if disk_mtime > db_mtime + tolerance:
+            return {
+                "should_analyze": True,
+                "reason": "disk_newer",
+                "db_mtime": db_mtime,
+                "disk_mtime": disk_mtime,
+            }
+        if abs(disk_mtime - db_mtime) <= tolerance:
+            return {
+                "should_analyze": False,
+                "reason": "equal_within_tolerance",
+                "db_mtime": db_mtime,
+                "disk_mtime": disk_mtime,
+            }
+        return {
+            "should_analyze": False,
+            "reason": "disk_older",
+            "db_mtime": db_mtime,
+            "disk_mtime": disk_mtime,
+        }
+
+    def is_analysis_up_to_date(
+        self,
+        file_id: int,
+        file_mtime: float,
+        tolerance: float = 0.1,
+    ) -> bool:
+        """Check if comprehensive analysis results are up-to-date for a file.
+
+        Uses same semantics as should_analyze_file: True = skip, False = analyze.
+
+        Args:
+            file_id: File ID.
+            file_mtime: Current file modification time.
+            tolerance: Time tolerance in seconds (default: 0.1).
+
+        Returns:
+            True if analysis is up-to-date (skip), False otherwise (analyze).
+        """
+        gate = self.should_analyze_file(file_id, file_mtime, tolerance)
+        return not gate["should_analyze"]
 
     def get_comprehensive_analysis_results(
         self,

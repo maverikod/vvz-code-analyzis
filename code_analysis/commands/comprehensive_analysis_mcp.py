@@ -10,6 +10,10 @@ Comprehensive code analysis combining multiple analysis types:
 - Code duplicates
 - Missing docstrings (files, classes, methods, functions)
 
+Incremental scanning: analyzes only files whose disk mtime is newer than
+or equal to the latest analysis timestamp in DB (with tolerance).
+Older-than-DB files are skipped.
+
 Author: Vasiliy Zdanovskiy
 email: vasilyvz@gmail.com
 """
@@ -55,7 +59,9 @@ class ComprehensiveAnalysisMCPCommand(BaseMCPCommand):
                 "Comprehensive code analysis combining multiple analysis types: "
                 "placeholders, stubs, empty methods, imports not at top, long files, "
                 "duplicates, missing docstrings, flake8 linting, mypy type checking. "
-                "This is a long-running command and is executed via queue."
+                "This is a long-running command and is executed via queue. "
+                "Incremental: analyzes only files whose disk mtime is newer than or equal to "
+                "the latest analysis timestamp in DB (with tolerance); older-than-DB files are skipped."
             ),
             "properties": {
                 **base_props,
@@ -423,17 +429,16 @@ class ComprehensiveAnalysisMCPCommand(BaseMCPCommand):
 
                 t_after = log_timing("single_file_db_lookup", t_single_start)
 
-                # Check if analysis is up-to-date (direct driver only; DatabaseClient has no cache)
-                if (
-                    file_id
-                    and file_project_id
-                    and hasattr(db, "is_analysis_up_to_date")
-                ):
-                    if db.is_analysis_up_to_date(file_id, file_mtime):
-                        # Get cached results
+                # Mtime gate: analyze only if disk is newer than latest DB (or no record)
+                if file_id and file_project_id and hasattr(db, "should_analyze_file"):
+                    gate = db.should_analyze_file(file_id, file_mtime)
+                    if not gate["should_analyze"]:
+                        # Skip: equal within tolerance or disk older than DB
                         cached = db.get_comprehensive_analysis_results(
                             file_id, file_mtime
                         )
+                        if cached is None:
+                            cached = db.get_comprehensive_analysis_results(file_id)
                         if cached:
                             db.disconnect()
                             if progress_tracker:
@@ -442,10 +447,14 @@ class ComprehensiveAnalysisMCPCommand(BaseMCPCommand):
                                     "Analysis completed (cached)"
                                 )
                                 progress_tracker.set_progress(100)
+                            reason = gate.get("reason", "unknown")
                             analysis_logger.info(
-                                f"Using cached analysis results for {rel_path}"
+                                "Skipping %s: %s (db_mtime=%s, disk_mtime=%s)",
+                                rel_path,
+                                reason,
+                                gate.get("db_mtime"),
+                                gate.get("disk_mtime"),
                             )
-                            # Return cached results with summary including statistics
                             cached_summary = cached["summary"].copy()
                             cached_summary["files_analyzed"] = 0
                             cached_summary["files_skipped"] = 1
@@ -779,23 +788,31 @@ class ComprehensiveAnalysisMCPCommand(BaseMCPCommand):
                             )
                             continue
 
-                        # Check if analysis is up-to-date (direct driver only)
-                        if hasattr(
-                            db, "is_analysis_up_to_date"
-                        ) and db.is_analysis_up_to_date(file_id, file_mtime):
-                            files_skipped += 1
-                            logger.debug(f"Skipping unchanged file: {file_path_str}")
-                            analysis_logger.debug(
-                                f"Skipping unchanged file: {file_path_str}"
-                            )
-                            # Still add to file_records for long_files check
-                            file_records.append(
-                                {
-                                    "path": file_path_str,
-                                    "lines": file_record.get("lines", 0),
-                                }
-                            )
-                            continue
+                        # Mtime gate: analyze only if disk is newer than latest DB (or no record)
+                        if hasattr(db, "should_analyze_file"):
+                            gate = db.should_analyze_file(file_id, file_mtime)
+                            if not gate["should_analyze"]:
+                                files_skipped += 1
+                                reason = gate.get("reason", "unknown")
+                                logger.debug(
+                                    "Skipping %s: %s (disk_mtime older or equal)",
+                                    file_path_str,
+                                    reason,
+                                )
+                                analysis_logger.debug(
+                                    "Skipping %s: %s (db_mtime=%s, disk_mtime=%s)",
+                                    file_path_str,
+                                    reason,
+                                    gate.get("db_mtime"),
+                                    gate.get("disk_mtime"),
+                                )
+                                file_records.append(
+                                    {
+                                        "path": file_path_str,
+                                        "lines": file_record.get("lines", 0),
+                                    }
+                                )
+                                continue
 
                         t0 = time.perf_counter()
                         try:
@@ -1201,12 +1218,11 @@ class ComprehensiveAnalysisMCPCommand(BaseMCPCommand):
                 "8. Aggregates results and creates summary statistics\n"
                 "9. Saves results to database (comprehensive_analysis_results table)\n"
                 "10. Returns comprehensive analysis results\n\n"
-                "Incremental Analysis:\n"
-                "- Before analyzing each file, checks file modification time (mtime)\n"
-                "- Compares mtime with stored analysis results in database\n"
-                "- Skips files where mtime matches (analysis is up-to-date)\n"
-                "- Only analyzes changed files (mtime differs)\n"
-                "- For single file mode: returns cached results if file unchanged\n\n"
+                "Incremental Analysis (mtime gate):\n"
+                "- Analyzes only if file on disk is newer than latest DB analysis (or no prior record).\n"
+                "- Skips when disk mtime is equal to DB mtime within tolerance (0.1s).\n"
+                "- Skips when disk mtime is older than DB mtime (no re-analysis of older files).\n"
+                "- Single file mode: returns cached results when file is skipped.\n\n"
                 "Analysis Types:\n"
                 "- Placeholders: Finds TODO, FIXME, XXX, HACK, NOTE comments\n"
                 "- Stubs: Finds functions/methods with pass, ellipsis, NotImplementedError\n"
@@ -1232,9 +1248,9 @@ class ComprehensiveAnalysisMCPCommand(BaseMCPCommand):
                 "- Each check can be enabled/disabled via boolean parameters\n"
                 "- Results include summary statistics for all analysis types\n"
                 "- Results are saved to database (comprehensive_analysis_results table)\n"
-                "- Incremental analysis: only analyzes files that have changed since last analysis\n"
-                "- Files with unchanged mtime are skipped (analysis is up-to-date)\n"
-                "- Single file mode: returns cached results if file unchanged"
+                "- Incremental analysis: only analyzes files whose disk mtime is newer than latest DB (with tolerance)\n"
+                "- Older-than-DB files are skipped; equal-within-tolerance files are skipped\n"
+                "- Single file mode: returns cached results when file is skipped"
             ),
             "parameters": {
                 "root_dir": {
@@ -1559,12 +1575,12 @@ class ComprehensiveAnalysisMCPCommand(BaseMCPCommand):
                     "Results are stored in comprehensive_analysis_results table with UNIQUE(file_id, file_mtime) constraint."
                 ),
                 "incremental_analysis": (
-                    "Before analyzing a file, the command:\n"
-                    "1. Gets file modification time (mtime) from disk\n"
-                    "2. Checks if analysis results exist in database for this file_id and mtime\n"
-                    "3. If mtime matches (within 0.1s tolerance): skips analysis, uses cached results\n"
-                    "4. If mtime differs: performs analysis and saves new results\n"
-                    "This ensures only changed files are analyzed, improving performance."
+                    "Mtime gate: analyze only if file is newer than latest DB analysis (or no record).\n"
+                    "1. Gets file mtime from disk; fetches latest analysis mtime from DB for file_id.\n"
+                    "2. No DB record -> analyze.\n"
+                    "3. disk_mtime > db_mtime + tolerance (0.1s) -> analyze.\n"
+                    "4. abs(disk_mtime - db_mtime) <= tolerance -> skip (use cached).\n"
+                    "5. disk_mtime older than db_mtime (beyond tolerance) -> skip (older-than-DB files not re-analyzed)."
                 ),
                 "what_is_returned": (
                     "Complete analysis results including:\n"

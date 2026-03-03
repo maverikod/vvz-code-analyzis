@@ -7,7 +7,7 @@ email: vasilyvz@gmail.com
 
 import json
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -111,13 +111,46 @@ def is_analysis_up_to_date(
     """
     Check if comprehensive analysis results are up-to-date for a file.
 
+    Uses same semantics as should_analyze_file: returns True when file
+    should be skipped (no re-analysis needed), False when analysis needed.
+
     Args:
         file_id: File ID
         file_mtime: Current file modification time
         tolerance: Time tolerance in seconds (default: 0.1)
 
     Returns:
-        True if analysis is up-to-date, False otherwise
+        True if analysis is up-to-date (skip), False otherwise (analyze).
+    """
+    gate = should_analyze_file(self, file_id, file_mtime, tolerance)
+    return not gate["should_analyze"]
+
+
+def should_analyze_file(
+    self,
+    file_id: int,
+    file_mtime: float,
+    tolerance: float = 0.1,
+) -> Dict[str, Any]:
+    """
+    Determine whether to run comprehensive analysis for a file (mtime gate).
+
+    Rule: analyze only if file on disk is newer than latest DB analysis
+    (or no prior record). Older-than-DB files are skipped.
+
+    - No previous record -> analyze.
+    - disk_mtime > db_mtime + tolerance -> analyze.
+    - abs(disk_mtime - db_mtime) <= tolerance -> skip (equal within tolerance).
+    - disk_mtime + tolerance < db_mtime (disk older) -> skip.
+
+    Args:
+        file_id: File ID.
+        file_mtime: Current file modification time (disk).
+        tolerance: Time tolerance in seconds (default: 0.1).
+
+    Returns:
+        Dict with: should_analyze (bool), reason (str), db_mtime (float or None),
+        disk_mtime (float). Used for logging and decision.
     """
     row = self._fetchone(
         """
@@ -131,11 +164,37 @@ def is_analysis_up_to_date(
     )
 
     if not row:
-        return False
+        return {
+            "should_analyze": True,
+            "reason": "no_record",
+            "db_mtime": None,
+            "disk_mtime": file_mtime,
+        }
 
-    db_mtime = row["file_mtime"]
-    # Check if mtime matches (within tolerance)
-    return abs(file_mtime - db_mtime) <= tolerance
+    db_mtime = float(row["file_mtime"])
+    disk_mtime = float(file_mtime)
+
+    if disk_mtime > db_mtime + tolerance:
+        return {
+            "should_analyze": True,
+            "reason": "disk_newer",
+            "db_mtime": db_mtime,
+            "disk_mtime": disk_mtime,
+        }
+    if abs(disk_mtime - db_mtime) <= tolerance:
+        return {
+            "should_analyze": False,
+            "reason": "equal_within_tolerance",
+            "db_mtime": db_mtime,
+            "disk_mtime": disk_mtime,
+        }
+    # disk_mtime + tolerance < db_mtime => disk older
+    return {
+        "should_analyze": False,
+        "reason": "disk_older",
+        "db_mtime": db_mtime,
+        "disk_mtime": disk_mtime,
+    }
 
 
 def delete_comprehensive_analysis_results(self, file_id: int) -> None:
@@ -155,9 +214,7 @@ def delete_comprehensive_analysis_results(self, file_id: int) -> None:
     self._commit()
 
 
-def get_project_analysis_summary(
-    self, project_id: str
-) -> Dict[str, Any]:
+def get_project_analysis_summary(self, project_id: str) -> Dict[str, Any]:
     """
     Get summary of comprehensive analysis for all files in a project.
 
@@ -229,4 +286,3 @@ def get_project_analysis_summary(
         "total_mypy_errors": total_mypy_errors,
         "total_missing_docstrings": total_missing_docstrings,
     }
-

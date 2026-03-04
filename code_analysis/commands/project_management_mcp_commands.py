@@ -14,7 +14,7 @@ from typing import Any, Dict, List, Optional
 
 from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 
-from .base_mcp_command import BaseMCPCommand
+from .base_mcp_command import BaseMCPCommand, _get_socket_path_from_db_path
 from ..core.exceptions import ValidationError
 from ..core.project_resolution import (
     ProjectIdError,
@@ -1308,9 +1308,7 @@ class PermanentlyDeleteFromTrashMCPCommand(BaseMCPCommand):
                 trash_dir_path, trash_folder_name
             )
             if project_id:
-                socket_path = BaseMCPCommand._get_socket_path_from_db_path(
-                    Path(storage.db_path)
-                )
+                socket_path = _get_socket_path_from_db_path(Path(storage.db_path))
                 from ..core.database_client.client import DatabaseClient
 
                 database = DatabaseClient(socket_path=socket_path)
@@ -1446,9 +1444,7 @@ class RestoreProjectFromTrashMCPCommand(BaseMCPCommand):
                     "restore_project_from_trash",
                 )
 
-            socket_path = BaseMCPCommand._get_socket_path_from_db_path(
-                Path(storage.db_path)
-            )
+            socket_path = _get_socket_path_from_db_path(Path(storage.db_path))
             from ..core.database_client.client import DatabaseClient
 
             database = DatabaseClient(socket_path=socket_path)
@@ -1614,9 +1610,7 @@ class ClearTrashMCPCommand(BaseMCPCommand):
                         if pid:
                             project_ids.append(pid)
                 if project_ids:
-                    socket_path = BaseMCPCommand._get_socket_path_from_db_path(
-                        Path(storage.db_path)
-                    )
+                    socket_path = _get_socket_path_from_db_path(Path(storage.db_path))
                     from ..core.database_client.client import DatabaseClient
 
                     database = DatabaseClient(socket_path=socket_path)

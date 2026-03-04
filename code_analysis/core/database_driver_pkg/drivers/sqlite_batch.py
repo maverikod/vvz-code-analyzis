@@ -124,5 +124,6 @@ def run_batch_result_counts(runs: List[_BatchRun]) -> List[int]:
         if kind == "single":
             counts.append(1)
         else:
-            counts.append(len(payload[1]))
+            params_list = payload[1]
+            counts.append(len(params_list) if params_list is not None else 0)
     return counts

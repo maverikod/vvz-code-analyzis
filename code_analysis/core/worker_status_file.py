@@ -55,7 +55,7 @@ def write_worker_status(
     try:
         path = Path(status_file_path)
         path.parent.mkdir(parents=True, exist_ok=True)
-        data = {
+        data: Dict[str, Any] = {
             "current_operation": current_operation,
             "current_file": current_file,
             "updated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),

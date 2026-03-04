@@ -11,7 +11,7 @@ import shutil
 import uuid
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 logger = None
 
@@ -221,7 +221,7 @@ class BackupManager:
                 files[file_path] = {"file_path": file_path}
         return list(files.values())
 
-    def list_versions(self, file_path: str) -> List[Dict[str, any]]:
+    def list_versions(self, file_path: str) -> List[Dict[str, Any]]:
         """
         List all versions of a file.
 
@@ -273,8 +273,11 @@ class BackupManager:
                     }
                     versions.append(version_info)
 
-        # Sort by timestamp (newest first)
-        versions.sort(key=lambda x: x["timestamp"], reverse=True)
+        # Sort by timestamp (newest first); key must be comparable (str)
+        versions.sort(
+            key=lambda x: str(x.get("timestamp", "")),
+            reverse=True,
+        )
         return versions
 
     def restore_file(

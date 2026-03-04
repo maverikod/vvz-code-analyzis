@@ -231,7 +231,7 @@ class SchemaComparator:
         missing_columns = []
         extra_columns = []
         type_changes = []
-        constraint_changes = []
+        constraint_changes: List[str] = []
 
         # Check for missing columns
         for col_name, col_def in expected_cols.items():
@@ -494,7 +494,17 @@ class SchemaComparator:
                 }
             )
 
-        return sorted(expected_normalized) == sorted(current_normalized)
+        def _fk_key(d: Dict[str, Any]) -> tuple:
+            return (
+                d["columns"],
+                d["references_table"],
+                d["references_columns"],
+                d.get("on_delete", ""),
+            )
+
+        return sorted(expected_normalized, key=_fk_key) == sorted(
+            current_normalized, key=_fk_key
+        )
 
     def _unique_constraints_match(
         self, expected: List[Dict[str, List[str]]], current: List[Dict[str, List[str]]]

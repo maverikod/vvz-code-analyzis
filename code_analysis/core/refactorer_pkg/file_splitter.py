@@ -222,12 +222,13 @@ class FileToPackageSplitter(BaseRefactorer):
         if not self.tree or not isinstance(self.tree.body[0], ast.Expr):
             return ""
         if isinstance(self.tree.body[0].value, ast.Constant):
-            return self.tree.body[0].value.value
+            val = self.tree.body[0].value.value
+            return val if isinstance(val, str) else ""
         return ""
 
-    def _extract_imports(self) -> list:
+    def _extract_imports(self) -> list[str]:
         """Extract import statements from AST."""
-        imports = []
+        imports: list[str] = []
         if not self.tree:
             return imports
 

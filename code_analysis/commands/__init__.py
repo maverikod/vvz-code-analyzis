@@ -10,5 +10,3 @@ from .project_management_mcp_commands import (  # noqa: F401
     ChangeProjectIdMCPCommand,
     ListProjectsMCPCommand,
 )
-
-

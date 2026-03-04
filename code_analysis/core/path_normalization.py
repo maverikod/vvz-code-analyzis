@@ -43,7 +43,7 @@ class NormalizedPath:
 def _normalize_path_simple_internal(path: str | Path) -> str:
     """
     Internal function for simple path normalization.
-    
+
     Normalizes a path to absolute resolved string without project information.
     This is used internally and should not be called directly from outside this module.
     Use normalize_path_simple() for public API.
@@ -141,29 +141,29 @@ def normalize_file_path(
         )
 
     # Find project root for this file
-    project_info = find_project_root_for_path(absolute_path, watch_dirs)
-    if project_info is None:
+    resolved_info = find_project_root_for_path(absolute_path, watch_dirs)
+    if resolved_info is None:
         raise ProjectNotFoundError(
             message=f"Project not found for file {absolute_path}",
         )
 
     # Calculate relative path from project root
     try:
-        relative_path = absolute_path_obj.relative_to(project_info.root_path)
+        relative_path = absolute_path_obj.relative_to(resolved_info.root_path)
     except ValueError:
         # This should not happen if find_project_root_for_path worked correctly
         logger.error(
-            f"File {absolute_path} is not within project root {project_info.root_path}"
+            f"File {absolute_path} is not within project root {resolved_info.root_path}"
         )
         raise ProjectNotFoundError(
-            message=f"File {absolute_path} is not within project root {project_info.root_path}",
-            project_id=project_info.project_id,
+            message=f"File {absolute_path} is not within project root {resolved_info.root_path}",
+            project_id=resolved_info.project_id,
         )
 
     return NormalizedPath(
         absolute_path=absolute_path,
-        project_root=project_info.root_path,
-        project_id=project_info.project_id,
+        project_root=resolved_info.root_path,
+        project_id=resolved_info.project_id,
         relative_path=str(relative_path),
     )
 
@@ -183,4 +183,3 @@ def normalize_path_simple(path: str | Path) -> str:
         Normalized absolute path as string
     """
     return _normalize_path_simple_internal(path)
-

@@ -8,5 +8,3 @@ behavior, which can break relative imports during type checking.
 Author: Vasiliy Zdanovskiy
 email: vasilyvz@gmail.com
 """
-
-

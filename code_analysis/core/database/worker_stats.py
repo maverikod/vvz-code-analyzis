@@ -11,7 +11,7 @@ email: vasilyvz@gmail.com
 import logging
 import time
 import uuid
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional, Union
 
 logger = logging.getLogger(__name__)
 
@@ -116,7 +116,7 @@ def update_file_watcher_stats(
             total_processing_time_seconds = total_processing_time_seconds + ?,
             last_updated = julianday('now')
     """
-    update_params = [
+    update_params: List[Union[int, float, str, None]] = [
         files_added,
         files_processed,
         files_skipped,

@@ -32,7 +32,7 @@ def list_files_cmd(args: argparse.Namespace) -> int:
                 latest = versions[0]
                 backup_uuid = latest["uuid"]
                 backup_info = index.get(backup_uuid, {})
-                file_info_with_details = file_info.copy()
+                file_info_with_details: dict = file_info.copy()
                 file_info_with_details["command"] = backup_info.get("command", "")
                 file_info_with_details["related_files"] = (
                     backup_info.get("related_files", "").split(",")
@@ -92,7 +92,8 @@ def list_versions_cmd(args: argparse.Namespace) -> int:
                 print(f"  UUID: {version['uuid']}")
                 print(f"    Timestamp: {version['timestamp']}")
                 print(
-                    f"    Size: {version['size_bytes']} bytes, {version['size_lines']} lines"
+                    f"    Size: {version['size_bytes']} bytes, "
+                    f"{version['size_lines']} lines"
                 )
                 if version.get("command"):
                     print(f"    Command: {version['command']}")

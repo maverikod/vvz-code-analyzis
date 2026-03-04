@@ -7,7 +7,7 @@ email: vasilyvz@gmail.com
 
 from typing import Any, Dict, Optional
 
-from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
+from mcp_proxy_adapter.commands.result import SuccessResult
 
 from ..base_mcp_command import BaseMCPCommand
 

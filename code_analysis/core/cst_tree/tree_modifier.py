@@ -143,9 +143,11 @@ def _sort_operations_for_batch(
 ) -> List[TreeOperation]:
     """
     Sort operations so DELETE ops run bottom-to-top (by position).
+    INSERT ops run bottom-to-top by parent position so node_map stays valid.
     This prevents position shift from invalidating node references in batch.
     """
     deletes: List[Tuple[int, int, TreeOperation]] = []
+    inserts: List[Tuple[int, int, TreeOperation]] = []
     others: List[TreeOperation] = []
     for op in operations:
         if op.action == TreeOperationType.DELETE and op.node_id:
@@ -153,10 +155,16 @@ def _sort_operations_for_batch(
             line = meta.start_line if meta else 0
             col = meta.start_col if meta else 0
             deletes.append((-line, -col, op))  # negate for descending
+        elif op.action == TreeOperationType.INSERT and op.parent_node_id:
+            meta = tree.metadata_map.get(op.parent_node_id)
+            line = meta.start_line if meta else 0
+            col = meta.start_col if meta else 0
+            inserts.append((-line, -col, op))  # bottom-to-top
         else:
             others.append(op)
     deletes.sort(key=lambda x: (x[0], x[1]))
-    return [op for (_, _, op) in deletes] + others
+    inserts.sort(key=lambda x: (x[0], x[1]))
+    return [op for (_, _, op) in deletes] + [op for (_, _, op) in inserts] + others
 
 
 def _remove_operation_nodes_from_index(tree: CSTTree, operation: TreeOperation) -> None:

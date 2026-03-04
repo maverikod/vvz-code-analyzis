@@ -10,7 +10,7 @@ email: vasilyvz@gmail.com
 from __future__ import annotations
 
 import logging
-from typing import List, Optional, Union, cast
+from typing import List, Optional, Tuple, Union, cast
 
 import libcst as cst
 from libcst.metadata import MetadataWrapper, PositionProvider
@@ -269,6 +269,54 @@ def find_node_in_module_by_position(
         if stmt_start == target_start:
             return stmt
     return found
+
+
+def find_parent_in_module_by_position(
+    module: cst.Module, start_line: int, start_col: int
+) -> Optional[Union[cst.Module, cst.FunctionDef, cst.ClassDef]]:
+    """
+    Find a container node (Module, FunctionDef, or ClassDef) in module
+    with exact start position, or whose span contains the position (fallback
+    after prior inserts may shift positions). Used for insert so we get the
+    node from the current module after prior ops (node_map may be stale).
+    """
+    wrapper = MetadataWrapper(module, unsafe_skip_copy=True)
+    positions = wrapper.resolve(PositionProvider)
+    result: List[Optional[cst.CSTNode]] = [None]
+    # Fallback: candidates that contain (start_line, start_col), pick smallest
+    candidates: List[Tuple[cst.CSTNode, int]] = []
+
+    class ParentFinder(cst.CSTVisitor):
+        def visit(self, node: cst.CSTNode) -> bool:
+            if not isinstance(node, (cst.Module, cst.FunctionDef, cst.ClassDef)):
+                return True
+            pos = positions.get(node)
+            if pos is None or not hasattr(pos, "start") or not hasattr(pos, "end"):
+                return True
+            sl, sc = pos.start.line, pos.start.column
+            el, ec = pos.end.line, pos.end.column
+            if sl == start_line and sc == start_col:
+                result[0] = node
+                return False
+            # Span contains position (e.g. after prior insert line numbers shift)
+            if (sl, sc) <= (start_line, start_col) <= (el, ec):
+                span_size = (el - sl) * 10000 + (ec - sc)
+                candidates.append((node, span_size))
+            return True
+
+    module.visit(ParentFinder())
+    if result[0] is not None:
+        return cast(
+            Optional[Union[cst.Module, cst.FunctionDef, cst.ClassDef]],
+            result[0],
+        )
+    if candidates:
+        candidates.sort(key=lambda x: x[1])
+        return cast(
+            Optional[Union[cst.Module, cst.FunctionDef, cst.ClassDef]],
+            candidates[0][0],
+        )
+    return None
 
 
 def replace_node(
@@ -573,8 +621,16 @@ def insert_node_at_position(
 
     position: "first" (index 0), "last" (append), or "after" (after sibling at position_after_index).
     If position is "after" and position_after_index is out of range, treat as last.
+    Resolves parent from current module by position when possible (batch insert).
     """
-    parent_node = tree.node_map.get(parent_node_id)
+    parent_node: Optional[cst.CSTNode] = None
+    meta = tree.metadata_map.get(parent_node_id)
+    if meta and hasattr(meta, "start_line") and hasattr(meta, "start_col"):
+        parent_node = find_parent_in_module_by_position(
+            module, meta.start_line, meta.start_col
+        )
+    if parent_node is None:
+        parent_node = tree.node_map.get(parent_node_id)
     if not parent_node:
         raise ValueError(f"Parent node not found: {parent_node_id}")
 

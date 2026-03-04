@@ -298,7 +298,8 @@ class FileToPackageSplitter(BaseRefactorer):
 
         # Find the actual end by looking for next top-level definition
         # Include decorators (@dataclass, etc.) as start of next definition
-        for i in range(end_line, len(source_lines)):
+        end_slice = end_line if end_line is not None else start_line + 1
+        for i in range(end_slice, len(source_lines)):
             line = source_lines[i].strip()
             if line and not line.startswith("#") and not line.startswith('"""'):
                 # Check if this is a new top-level definition or its decorator
@@ -307,10 +308,10 @@ class FileToPackageSplitter(BaseRefactorer):
                     or line.startswith("def ")
                     or line.startswith("@")
                 ):
-                    end_line = i
+                    end_slice = i
                     break
 
-        return source_lines[start_line:end_line]
+        return source_lines[start_line:end_slice]
 
     def _extract_function_code(self, func_name: str, source_lines: list) -> list:
         """Extract function code from source lines."""
@@ -324,7 +325,8 @@ class FileToPackageSplitter(BaseRefactorer):
         )
 
         # Find the actual end (include decorators as start of next definition)
-        for i in range(end_line, len(source_lines)):
+        end_slice = end_line if end_line is not None else start_line + 1
+        for i in range(end_slice, len(source_lines)):
             line = source_lines[i].strip()
             if line and not line.startswith("#") and not line.startswith('"""'):
                 if (
@@ -332,12 +334,12 @@ class FileToPackageSplitter(BaseRefactorer):
                     or line.startswith("def ")
                     or line.startswith("@")
                 ):
-                    end_line = i
+                    end_slice = i
                     break
 
-        return source_lines[start_line:end_line]
+        return source_lines[start_line:end_slice]
 
-    def _find_class_in_ast(self, class_name: str) -> ast.ClassDef:
+    def _find_class_in_ast(self, class_name: str) -> Optional[ast.ClassDef]:
         """Find class definition in AST."""
         if not self.tree:
             return None
@@ -346,7 +348,7 @@ class FileToPackageSplitter(BaseRefactorer):
                 return node
         return None
 
-    def _find_function_in_ast(self, func_name: str) -> ast.FunctionDef:
+    def _find_function_in_ast(self, func_name: str) -> Optional[ast.FunctionDef]:
         """Find function definition in AST."""
         if not self.tree:
             return None

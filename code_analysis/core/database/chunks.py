@@ -61,7 +61,9 @@ async def add_code_chunk(
     Returns:
         Chunk ID
     """
-    if embedding_vector is not None and not (embedding_model and str(embedding_model).strip()):
+    if embedding_vector is not None and not (
+        embedding_model and str(embedding_model).strip()
+    ):
         raise ValueError(
             "embedding_model is required when embedding_vector is set; "
             "a vector without model cannot be used for search"

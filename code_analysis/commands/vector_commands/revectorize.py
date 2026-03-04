@@ -109,6 +109,7 @@ class RevectorizeCommand(BaseMCPCommand):
                 with open(config_path, "r", encoding="utf-8") as f:
                     config_dict = json.load(f)
 
+                root_path = project.root_path
                 self._ensure_project_root_under_watch_dir(root_path, config_dict)
 
                 storage_paths = resolve_storage_paths(

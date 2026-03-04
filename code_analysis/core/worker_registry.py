@@ -204,14 +204,14 @@ class WorkerRegistry:
             Dictionary with worker status information
         """
         with self._lock:
-            status = {
+            status: Dict[str, Any] = {
                 "total_workers": 0,
                 "by_type": {},
                 "workers": [],
             }
 
             for worker_type, workers in self._workers.items():
-                type_status = {
+                type_status: Dict[str, Any] = {
                     "count": len(workers),
                     "pids": [],
                     "names": [],

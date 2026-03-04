@@ -13,11 +13,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import List, Optional
 
-from .exceptions import MultipleProjectIdError, ProjectNotFoundError
-from .project_resolution import (
-    ProjectInfo,
-    find_project_root_for_path,
-)
+from .exceptions import ProjectNotFoundError
+from .project_resolution import find_project_root_for_path
 
 logger = logging.getLogger(__name__)
 

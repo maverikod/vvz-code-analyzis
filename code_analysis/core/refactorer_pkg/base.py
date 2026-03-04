@@ -11,7 +11,7 @@ import subprocess
 import tempfile
 import sys
 from pathlib import Path
-from typing import Dict, List, Any, Optional, Tuple
+from typing import Any, List, Optional
 import logging
 
 logger = logging.getLogger(__name__)
@@ -29,7 +29,7 @@ class BaseRefactorer:
     ) -> None:
         """
         Initialize refactorer.
-        
+
         Args:
             file_path: Path to file to refactor
             database: Optional database instance for updating file data

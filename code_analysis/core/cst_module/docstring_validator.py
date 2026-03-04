@@ -11,9 +11,7 @@ from __future__ import annotations
 
 import ast
 import re
-from typing import List, Tuple, Optional
-
-from ..exceptions import CSTModulePatchError, DocstringValidationError
+from typing import List, Optional, Tuple
 
 
 def validate_module_docstrings(source: str) -> Tuple[bool, Optional[str], List[str]]:

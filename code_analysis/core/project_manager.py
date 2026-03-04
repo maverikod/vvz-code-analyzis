@@ -55,7 +55,9 @@ class ProjectManager:
         self.database = database
         self.settings = get_settings()
 
-    def get_project_list(self, watch_dirs: Optional[List[Path]] = None) -> List[ProjectInfo]:
+    def get_project_list(
+        self, watch_dirs: Optional[List[Path]] = None
+    ) -> List[ProjectInfo]:
         """
         Get list of all projects.
 
@@ -102,10 +104,14 @@ class ProjectManager:
                     for project_root in discovered:
                         project_info = load_project_info(project_root.root_path)
                         # Avoid duplicates
-                        if not any(p.project_id == project_info.project_id for p in projects):
+                        if not any(
+                            p.project_id == project_info.project_id for p in projects
+                        ):
                             projects.append(project_info)
                 except Exception as e:
-                    logger.warning(f"Failed to discover projects in {watch_dir_path}: {e}")
+                    logger.warning(
+                        f"Failed to discover projects in {watch_dir_path}: {e}"
+                    )
 
         return projects
 
@@ -179,7 +185,9 @@ class ProjectManager:
                 return existing_info
             except (ProjectIdError, InvalidProjectIdFormatError):
                 # File exists but is invalid, we'll overwrite it
-                logger.warning(f"Invalid projectid file at {projectid_path}, will recreate")
+                logger.warning(
+                    f"Invalid projectid file at {projectid_path}, will recreate"
+                )
 
         # Generate new project ID
         project_id = str(uuid.uuid4())
@@ -261,7 +269,9 @@ class ProjectManager:
             # Create .gitignore file
             gitignore_path = root_path / GITIGNORE_FILENAME
             if not gitignore_path.exists():
-                ignore_patterns = set(DEFAULT_IGNORE_PATTERNS) | set(GIT_IGNORE_PATTERNS)
+                ignore_patterns = set(DEFAULT_IGNORE_PATTERNS) | set(
+                    GIT_IGNORE_PATTERNS
+                )
                 gitignore_content = "\n".join(sorted(ignore_patterns)) + "\n"
                 gitignore_path.write_text(gitignore_content, encoding="utf-8")
                 logger.info(f"Created .gitignore file at {gitignore_path}")
@@ -327,4 +337,3 @@ class ProjectManager:
         except (ProjectIdError, InvalidProjectIdFormatError) as e:
             logger.warning(f"Failed to validate project_id: {e}")
             return False
-

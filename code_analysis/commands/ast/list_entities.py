@@ -7,7 +7,7 @@ email: vasilyvz@gmail.com
 
 from typing import Any, Dict, Optional
 
-from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
+from mcp_proxy_adapter.commands.result import SuccessResult
 
 from ..base_mcp_command import BaseMCPCommand
 
@@ -63,7 +63,7 @@ class ListCodeEntitiesMCPCommand(BaseMCPCommand):
         **kwargs,
     ) -> SuccessResult:
         try:
-            root_path = self._resolve_project_root(project_id)
+            _ = self._resolve_project_root(project_id)
             db = self._open_database()
             proj_id = project_id
 

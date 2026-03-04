@@ -11,4 +11,3 @@ from .rebuild_faiss import RebuildFaissCommand
 from .revectorize import RevectorizeCommand
 
 __all__ = ["RebuildFaissCommand", "RevectorizeCommand"]
-

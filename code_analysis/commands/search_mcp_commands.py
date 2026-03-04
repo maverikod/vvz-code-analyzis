@@ -69,8 +69,17 @@ class FulltextSearchMCPCommand(BaseMCPCommand):
             "required": ["project_id", "query"],
             "additionalProperties": False,
             "examples": [
-                {"project_id": "550e8400-e29b-41d4-a716-446655440000", "query": "structure analysis", "limit": 5},
-                {"project_id": "550e8400-e29b-41d4-a716-446655440000", "query": "MyClass", "entity_type": "class", "limit": 20},
+                {
+                    "project_id": "550e8400-e29b-41d4-a716-446655440000",
+                    "query": "structure analysis",
+                    "limit": 5,
+                },
+                {
+                    "project_id": "550e8400-e29b-41d4-a716-446655440000",
+                    "query": "MyClass",
+                    "entity_type": "class",
+                    "limit": 20,
+                },
             ],
         }
 

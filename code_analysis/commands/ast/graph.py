@@ -99,7 +99,7 @@ class ExportGraphMCPCommand(BaseMCPCommand):
             SuccessResult with graph data or ErrorResult on failure.
         """
         try:
-            root_path = self._resolve_project_root(project_id)
+            _ = self._resolve_project_root(project_id)
             db = self._open_database()
             try:
                 proj_id = project_id

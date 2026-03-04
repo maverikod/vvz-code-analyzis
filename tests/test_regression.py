@@ -10,7 +10,10 @@ import tempfile
 import json
 import uuid
 from pathlib import Path
-from code_analysis.core.path_normalization import normalize_file_path
+from code_analysis.core.path_normalization import (
+    normalize_file_path,
+    normalize_path_simple,
+)
 from code_analysis.core.project_resolution import (
     find_project_root_for_path,
     normalize_abs_path,
@@ -364,4 +367,3 @@ class TestRegressionExistingWorkflows:
 
         finally:
             db.close()
-

@@ -33,9 +33,7 @@ def format_code_with_black(file_path: Path) -> Tuple[bool, Optional[str]]:
         try:
             # Use black's format_str for more stable API
             # format_str returns just the formatted string
-            formatted_content = black.format_str(
-                content, mode=black.FileMode()
-            )
+            formatted_content = black.format_str(content, mode=black.FileMode())
             # Check if content changed
             if formatted_content == content:
                 # File already formatted

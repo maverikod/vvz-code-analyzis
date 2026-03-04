@@ -161,3 +161,108 @@ def run_in_project_sandbox(
             returncode=None,
             timed_out=True,
         )
+
+
+def run_module_in_project_sandbox(
+    root_path: Path,
+    module: str,
+    args: Optional[List[str]] = None,
+    timeout_seconds: Optional[int] = None,
+) -> SandboxRunResult:
+    """
+    Run a Python module under the project sandbox as `python -m <module> [args]`.
+
+    Uses the same sandbox as run_in_project_sandbox: cwd and PYTHONPATH set to
+    project root, project's .venv/venv used if present.
+
+    Args:
+        root_path: Absolute path to the project root (must exist).
+        module: Module name to run (e.g. "ai_admin" for `python -m ai_admin`).
+        args: Optional list of arguments (e.g. ["--help"]).
+        timeout_seconds: Optional timeout in seconds.
+
+    Returns:
+        SandboxRunResult with stdout, stderr, returncode, and timed_out flag.
+
+    Raises:
+        ValueError: If root_path does not exist or module is empty.
+        VenvNotFoundError: If neither .venv nor venv exists under root_path.
+    """
+    root_resolved = root_path.resolve()
+    if not root_resolved.is_dir():
+        raise ValueError(f"Project root is not a directory: {root_path}")
+    if not (module or module.strip()):
+        raise ValueError("module must be a non-empty string")
+
+    module = module.strip()
+    venv_python: Optional[Path] = None
+    for cand in [
+        root_resolved / ".venv" / "bin" / "python",
+        root_resolved / "venv" / "bin" / "python",
+    ]:
+        if cand.exists():
+            venv_python = cand
+            break
+
+    if venv_python is None:
+        raise VenvNotFoundError(
+            f"Project virtual environment not found under {root_resolved}. "
+            "Expected .venv/bin/python or venv/bin/python."
+        )
+
+    interpreter = str(venv_python)
+    venv_dir = venv_python.parent.parent
+    logger.debug(
+        "Using project venv for module run: %s module=%s",
+        venv_dir,
+        module,
+    )
+
+    cmd = [interpreter, "-m", module]
+    if args:
+        cmd.extend(args)
+
+    env = os.environ.copy()
+    env["PYTHONPATH"] = str(root_resolved)
+    if venv_dir is not None:
+        env["VIRTUAL_ENV"] = str(venv_dir)
+        venv_bin = venv_dir / "bin"
+        if venv_bin.exists():
+            path_prepend = str(venv_bin)
+            env["PATH"] = path_prepend + os.pathsep + env.get("PATH", "")
+
+    logger.debug(
+        "Running module in project sandbox: cwd=%s cmd=%s",
+        root_resolved,
+        cmd,
+    )
+    try:
+        result = subprocess.run(
+            cmd,
+            cwd=str(root_resolved),
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=timeout_seconds,
+        )
+        return SandboxRunResult(
+            stdout=result.stdout or "",
+            stderr=result.stderr or "",
+            returncode=result.returncode,
+            timed_out=False,
+        )
+    except subprocess.TimeoutExpired as e:
+        out = getattr(e, "output", None) or getattr(e, "stdout", None)
+        err = getattr(e, "stderr", None)
+        stdout_str = (
+            out.decode(errors="replace") if isinstance(out, bytes) else (out or "")
+        )
+        stderr_str = (
+            err.decode(errors="replace") if isinstance(err, bytes) else (err or "")
+        )
+        return SandboxRunResult(
+            stdout=stdout_str,
+            stderr=stderr_str,
+            returncode=None,
+            timed_out=True,
+        )

@@ -53,7 +53,7 @@ def normalize_root_dir(root_dir: str | Path) -> Path:
 def normalize_abs_path(path: str | Path) -> str:
     """
     DEPRECATED: Use normalize_path_simple() from path_normalization module instead.
-    
+
     Normalize an arbitrary filesystem path into a resolved absolute string path.
 
     Args:
@@ -63,12 +63,14 @@ def normalize_abs_path(path: str | Path) -> str:
         Absolute resolved path as string.
     """
     import warnings
+
     warnings.warn(
         "normalize_abs_path is deprecated. Use normalize_path_simple() from path_normalization module instead.",
         DeprecationWarning,
-        stacklevel=2
+        stacklevel=2,
     )
     from ..path_normalization import normalize_path_simple
+
     return normalize_path_simple(path)
 
 
@@ -242,7 +244,11 @@ def find_project_root_for_path(
 
     # Check for multiple projectid files in path
     projectid_files = []
-    current = file_path_resolved.parent if file_path_resolved.is_file() else file_path_resolved
+    current = (
+        file_path_resolved.parent
+        if file_path_resolved.is_file()
+        else file_path_resolved
+    )
     for watch_dir in watch_dirs_resolved:
         try:
             current.relative_to(watch_dir)

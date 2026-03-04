@@ -51,16 +51,19 @@ class TestDriverRunnerIntegration:
 
     def test_runner_initialization(self, driver_config, socket_path, tmp_path):
         """Test runner initialization (without actually starting)."""
-        # This test verifies that runner can be imported and basic structure works
-        from code_analysis.core.database_driver_pkg.runner import run_database_driver
-
+        # run_database_driver imported at module level
         assert callable(run_database_driver)
 
     @patch("code_analysis.core.database_driver_pkg.runner.RPCServer")
     @patch("code_analysis.core.database_driver_pkg.runner.create_driver")
     @patch("code_analysis.core.database_driver_pkg.runner.RequestQueue")
     def test_runner_components_creation(
-        self, mock_queue, mock_create_driver, mock_rpc_server, driver_config, socket_path
+        self,
+        mock_queue,
+        mock_create_driver,
+        mock_rpc_server,
+        driver_config,
+        socket_path,
     ):
         """Test that runner creates all components."""
         mock_driver = Mock()

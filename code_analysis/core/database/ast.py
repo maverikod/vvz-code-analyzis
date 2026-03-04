@@ -154,4 +154,3 @@ def get_ast_tree(self, file_id: int) -> Optional[Dict[str, Any]]:
         (file_id,),
     )
     return row
-

@@ -6,15 +6,12 @@ email: vasilyvz@gmail.com
 """
 
 import logging
-from pathlib import Path
-from typing import Dict, List, Optional, Any
+from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 
 
-def create_watch_dir(
-    self, watch_dir_id: str, name: Optional[str] = None
-) -> None:
+def create_watch_dir(self, watch_dir_id: str, name: Optional[str] = None) -> None:
     """
     Create a new watch directory entry.
 
@@ -95,9 +92,7 @@ def update_watch_dir_path(
             (watch_dir_id, absolute_path),
         )
     self._commit()
-    logger.debug(
-        f"Updated watch_dir_path: {watch_dir_id} -> {absolute_path}"
-    )
+    logger.debug(f"Updated watch_dir_path: {watch_dir_id} -> {absolute_path}")
 
 
 def get_watch_dir_path(self, watch_dir_id: str) -> Optional[str]:

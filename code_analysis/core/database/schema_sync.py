@@ -10,7 +10,6 @@ email: vasilyvz@gmail.com
 from dataclasses import dataclass
 from typing import Dict, List, Set, Any, Optional, Tuple
 import logging
-import re
 
 logger = logging.getLogger(__name__)
 

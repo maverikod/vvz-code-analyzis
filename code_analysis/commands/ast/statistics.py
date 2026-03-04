@@ -46,7 +46,7 @@ class ASTStatisticsMCPCommand(BaseMCPCommand):
         **kwargs,
     ) -> SuccessResult:
         try:
-            root_path = self._resolve_project_root(project_id)
+            _ = self._resolve_project_root(project_id)
             db = self._open_database()
             proj_id = project_id
 

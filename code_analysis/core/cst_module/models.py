@@ -84,7 +84,9 @@ class CreateOp:
 
     selector: Optional[Selector]
     new_code: str
-    position: str = "end_of_module"  # "end_of_module", "after_selector", "before_selector", "end_of_class", "end_of_function"
+    position: str = (
+        "end_of_module"  # "end_of_module", "after_selector", "before_selector", "end_of_class", "end_of_function"
+    )
     file_docstring: Optional[str] = None
 
 

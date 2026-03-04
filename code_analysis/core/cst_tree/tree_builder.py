@@ -10,7 +10,7 @@ from __future__ import annotations
 import logging
 import uuid
 from pathlib import Path
-from typing import Dict, List, Optional, Set
+from typing import Dict, List, Optional, Set, Tuple
 
 import libcst as cst
 from libcst.metadata import MetadataWrapper, ParentNodeProvider, PositionProvider
@@ -117,15 +117,24 @@ def _build_tree_index(
     node_types: Optional[List[str]] = None,
     max_depth: Optional[int] = None,
     include_children: bool = True,
+    previous_metadata_map: Optional[Dict[str, TreeNodeMetadata]] = None,
+    replaced_positions_to_id: Optional[Dict[Tuple[int, int], str]] = None,
 ) -> None:
     """
     Build node index and metadata for tree.
+
+    When previous_metadata_map and optionally replaced_positions_to_id are
+    provided (e.g. after modify_tree), node_ids are preserved: unchanged nodes
+    keep their id by exact (start_line, start_col, end_line, end_col, type);
+    the node that replaced content at (start_line, start_col) gets the old id.
 
     Args:
         tree: CSTTree to build index for
         node_types: Optional filter by node types
         max_depth: Optional maximum depth
         include_children: Whether to include children information
+        previous_metadata_map: Optional snapshot of metadata before modify (for id preservation)
+        replaced_positions_to_id: Optional (start_line, start_col) -> node_id for replaced nodes
     """
     wrapper = MetadataWrapper(tree.module, unsafe_skip_copy=True)
     parents = wrapper.resolve(ParentNodeProvider)
@@ -134,6 +143,23 @@ def _build_tree_index(
     node_types_set: Optional[Set[str]] = None
     if node_types:
         node_types_set = {t.lower() for t in node_types}
+
+    # Build (start_line, start_col, end_line, end_col, type) -> node_id for id preservation
+    exact_key_to_id: Dict[Tuple[int, int, int, int, str], str] = {}
+    if previous_metadata_map:
+        for nid, meta in previous_metadata_map.items():
+            key = (
+                meta.start_line,
+                meta.start_col,
+                meta.end_line,
+                meta.end_col,
+                meta.type,
+            )
+            exact_key_to_id[key] = nid
+    # Mutable copy so we pop when we assign (each replaced id used at most once)
+    replaced_map: Dict[Tuple[int, int], str] = {}
+    if replaced_positions_to_id:
+        replaced_map = dict(replaced_positions_to_id)
 
     class_stack: List[str] = []
     func_stack: List[str] = []
@@ -183,8 +209,18 @@ def _build_tree_index(
 
         parent = parents.get(node)
 
-        # Use UUID4 for node_id so IDs are stable within a batch (no rebuild between ops)
-        node_id = str(uuid.uuid4())
+        # Preserve node_id when rebuilding after modify: unchanged nodes keep id,
+        # replaced node keeps id for the new content at same start position
+        node_id: Optional[str] = None
+        exact_key = (start_line, start_col, end_line, end_col, node_type)
+        if exact_key in exact_key_to_id:
+            node_id = exact_key_to_id.pop(exact_key)
+        elif replaced_map:
+            start_key = (start_line, start_col)
+            if start_key in replaced_map:
+                node_id = replaced_map.pop(start_key)
+        if node_id is None:
+            node_id = str(uuid.uuid4())
         node_to_uuid[id(node)] = node_id
 
         tree.node_map[node_id] = node

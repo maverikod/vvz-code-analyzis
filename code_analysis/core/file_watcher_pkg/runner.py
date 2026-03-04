@@ -153,9 +153,7 @@ def run_file_watcher_worker(
     )
 
     status_file_path = (
-        Path(worker_log_path).with_suffix(".status.json")
-        if worker_log_path
-        else None
+        Path(worker_log_path).with_suffix(".status.json") if worker_log_path else None
     )
     worker = MultiProjectFileWatcherWorker(
         db_path=Path(db_path),

@@ -357,7 +357,9 @@ def fix_all_stale_fks_in_connection(conn: sqlite3.Connection) -> bool:
         create_sql = row[0]
         create_sql = create_sql.replace('REFERENCES "temp_files"', 'REFERENCES "files"')
         create_sql = create_sql.replace("REFERENCES temp_files", "REFERENCES files")
-        create_sql = create_sql.replace('REFERENCES "temp_methods"', 'REFERENCES "methods"')
+        create_sql = create_sql.replace(
+            'REFERENCES "temp_methods"', 'REFERENCES "methods"'
+        )
         create_sql = create_sql.replace("REFERENCES temp_methods", "REFERENCES methods")
         # New table name to avoid conflict
         create_new = re.sub(
@@ -424,9 +426,7 @@ def fix_entity_cross_ref_stale_fks_in_connection(conn: sqlite3.Connection) -> bo
     return True
 
 
-def fix_all_stale_fks(
-    db_path: Path, *, timeout_seconds: float = 2.0
-) -> bool:
+def fix_all_stale_fks(db_path: Path, *, timeout_seconds: float = 2.0) -> bool:
     """Recreate all tables that have FK to temp_files or temp_methods (stale after migration).
 
     Opens the DB and calls fix_all_stale_fks_in_connection. Use for one-off repair

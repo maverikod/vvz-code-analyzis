@@ -8,11 +8,17 @@ email: vasilyvz@gmail.com
 from __future__ import annotations
 
 import logging
-from typing import List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
 import libcst as cst
 
-from .models import CSTTree, ROOT_NODE_ID_SENTINEL, TreeOperation, TreeOperationType
+from .models import (
+    CSTTree,
+    ROOT_NODE_ID_SENTINEL,
+    TreeOperation,
+    TreeOperationType,
+    TreeNodeMetadata,
+)
 from .tree_builder import _build_tree_index, get_tree
 from .tree_metadata import _resolve_node_id as resolve_parent_id
 from .tree_modifier_ops import (
@@ -81,6 +87,22 @@ def modify_tree(tree_id: str, operations: List[TreeOperation]) -> CSTTree:
     # the updated module.
     sorted_ops = _sort_operations_for_batch(operations, tree)
 
+    # Snapshot metadata before any changes so we can preserve node_ids on rebuild.
+    # Replace: same node_id is assigned to the new content at (start_line, start_col).
+    previous_metadata_map: Dict[str, TreeNodeMetadata] = dict(tree.metadata_map)
+    replaced_positions_to_id: Dict[Tuple[int, int], str] = {}
+    for op in sorted_ops:
+        if op.action == TreeOperationType.REPLACE and op.node_id:
+            meta = tree.metadata_map.get(op.node_id)
+            if meta and hasattr(meta, "start_line") and hasattr(meta, "start_col"):
+                replaced_positions_to_id[(meta.start_line, meta.start_col)] = op.node_id
+        elif op.action == TreeOperationType.REPLACE_RANGE and op.start_node_id:
+            meta = tree.metadata_map.get(op.start_node_id)
+            if meta and hasattr(meta, "start_line") and hasattr(meta, "start_col"):
+                replaced_positions_to_id[(meta.start_line, meta.start_col)] = (
+                    op.start_node_id
+                )
+
     # Create a copy of the module for modification
     # We'll apply all operations to this copy
     modified_module = tree.module
@@ -93,11 +115,18 @@ def modify_tree(tree_id: str, operations: List[TreeOperation]) -> CSTTree:
             tree.module = modified_module
             _remove_operation_nodes_from_index(tree, op)
 
-        # Single rebuild at the end so tree is consistent
+        # Rebuild index preserving node_ids: unchanged nodes keep id, replaced node keeps id
         tree.node_map.clear()
         tree.metadata_map.clear()
         tree.parent_map.clear()
-        _build_tree_index(tree, node_types=None, max_depth=None, include_children=True)
+        _build_tree_index(
+            tree,
+            node_types=None,
+            max_depth=None,
+            include_children=True,
+            previous_metadata_map=previous_metadata_map,
+            replaced_positions_to_id=replaced_positions_to_id or None,
+        )
 
         _validate_module(modified_module)
 

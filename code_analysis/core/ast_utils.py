@@ -17,21 +17,21 @@ logger = logging.getLogger(__name__)
 def parse_with_comments(source: str, filename: str = "<unknown>") -> ast.Module:
     """
     Parse Python code and preserve comments as string expressions in AST.
-    
+
     Comments are added as ast.Expr(ast.Constant(value="# comment")) nodes
     before the statements they precede.
-    
+
     This function extracts comments from source code using tokenize and
     inserts them into the AST as expression nodes, preserving their
     position relative to code statements.
-    
+
     Args:
         source: Python source code string
         filename: Filename for error messages (used in ast.parse)
-        
+
     Returns:
         AST module with comments preserved as string expressions
-        
+
     Example:
         ```python
         source = '''
@@ -79,9 +79,7 @@ def parse_with_comments(source: str, filename: str = "<unknown>") -> ast.Module:
                     return
 
                 # Add comments before this node
-                for col, comment_text in sorted(
-                    comments_map[node_line], reverse=True
-                ):
+                for col, comment_text in sorted(comments_map[node_line], reverse=True):
                     # Only add if comment is before the node definition
                     if col < node.col_offset:
                         comment_node = ast.Expr(ast.Constant(value=comment_text))
@@ -106,9 +104,7 @@ def parse_with_comments(source: str, filename: str = "<unknown>") -> ast.Module:
                 except ValueError:
                     return
 
-                for col, comment_text in sorted(
-                    comments_map[node_line], reverse=True
-                ):
+                for col, comment_text in sorted(comments_map[node_line], reverse=True):
                     if col < getattr(node, "col_offset", 0):
                         comment_node = ast.Expr(ast.Constant(value=comment_text))
                         comment_node.lineno = node_line
@@ -122,4 +118,3 @@ def parse_with_comments(source: str, filename: str = "<unknown>") -> ast.Module:
         add_comments_to_node(node, tree.body)
 
     return tree
-

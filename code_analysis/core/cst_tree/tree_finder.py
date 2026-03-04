@@ -58,7 +58,9 @@ def find_nodes(
     elif search_type == "simple":
         return _find_nodes_simple(tree, node_type, name, qualname, start_line, end_line)
     else:
-        raise ValueError(f"Invalid search_type: {search_type}. Must be 'simple' or 'xpath'")
+        raise ValueError(
+            f"Invalid search_type: {search_type}. Must be 'simple' or 'xpath'"
+        )
 
 
 def _find_nodes_xpath(tree: CSTTree, selector: str) -> List[TreeNodeMetadata]:

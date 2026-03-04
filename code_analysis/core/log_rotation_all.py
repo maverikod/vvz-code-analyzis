@@ -56,7 +56,9 @@ def collect_log_paths(
     """
     items: List[Tuple[Path, str]] = []
     seen: set[str] = set()
-    filter_lower = [s.strip().lower() for s in (log_filter or []) if s and isinstance(s, str)]
+    filter_lower = [
+        s.strip().lower() for s in (log_filter or []) if s and isinstance(s, str)
+    ]
     include_all = not filter_lower
 
     def matches(path: Path, label: str) -> bool:
@@ -212,7 +214,9 @@ def run_rotation_all_logs(
         files (list of per-file results with label), and optional error message.
     """
     global _rotation_status
-    acquired = _rotation_lock.acquire(timeout=timeout_seconds if timeout_seconds else -1)
+    acquired = _rotation_lock.acquire(
+        timeout=timeout_seconds if timeout_seconds else -1
+    )
     if not acquired:
         return {
             "status": "lock_timeout",
@@ -225,7 +229,9 @@ def run_rotation_all_logs(
         files_result: List[Dict[str, Any]] = []
         log_items = collect_log_paths(config_data, config_dir, log_filter=log_filter)
         for path, label in log_items:
-            one = _rotate_and_pack_one(path, backup_count=backup_count, pack_rotated=pack_rotated)
+            one = _rotate_and_pack_one(
+                path, backup_count=backup_count, pack_rotated=pack_rotated
+            )
             one["label"] = label
             files_result.append(one)
         has_error = any(f.get("error") for f in files_result)

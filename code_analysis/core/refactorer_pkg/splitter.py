@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Dict, List, Any, Optional
 
 from .base import BaseRefactorer
+
 try:
     from .formatters import format_code_with_black, format_error_message
 except ImportError:
@@ -179,7 +180,7 @@ class ClassSplitter(BaseRefactorer):
             new_content = self._perform_split(src_class, config)
             with open(self.file_path, "w", encoding="utf-8") as f:
                 f.write(new_content)
-            
+
             # Update database after file write
             if self.database and self.project_id and self.root_dir:
                 try:
@@ -189,7 +190,7 @@ class ClassSplitter(BaseRefactorer):
                     except ValueError:
                         # File is outside root, use absolute path
                         rel_path = str(self.file_path)
-                    
+
                     update_result = self.database.update_file_data(
                         file_path=rel_path,
                         project_id=self.project_id,
@@ -211,7 +212,7 @@ class ClassSplitter(BaseRefactorer):
                         f"Error updating database after class split: {e}",
                         exc_info=True,
                     )
-            
+
             format_success, format_error = format_code_with_black(self.file_path)
             if not format_success:
                 logger.warning(f"Code formatting failed (continuing): {format_error}")

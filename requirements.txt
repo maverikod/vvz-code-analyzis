@@ -6,4 +6,4 @@ svo-client>=2.2.15
 lark>=1.1.0
 libcst>=1.1.0
 embed-client>=3.1.7.24 
-mcp-proxy-adapter>=6.9.114
+mcp-proxy-adapter>=6.9.116

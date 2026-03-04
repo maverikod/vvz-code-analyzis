@@ -56,7 +56,11 @@ class CSTSaveTreeCommand(BaseMCPCommand):
                 "validate": {
                     "type": "boolean",
                     "default": True,
-                    "description": "Whether to validate file before saving",
+                    "description": (
+                        "Whether to validate file before saving. Default true. "
+                        "Set false for controlled incremental edits (for example docstring-only pass), "
+                        "then run format_code/lint_code/type_check_code explicitly."
+                    ),
                 },
                 "backup": {
                     "type": "boolean",
@@ -70,7 +74,10 @@ class CSTSaveTreeCommand(BaseMCPCommand):
                 "auto_reload": {
                     "type": "boolean",
                     "default": True,
-                    "description": "Automatically reload tree from file after save (keeps tree_id valid)",
+                    "description": (
+                        "Automatically reload tree from file after save (keeps tree_id valid). "
+                        "Recommended for AI flows that perform multiple sequential edits."
+                    ),
                 },
             },
             "required": ["tree_id", "project_id", "file_path"],
@@ -244,7 +251,12 @@ class CSTSaveTreeCommand(BaseMCPCommand):
                 "- Backup is created before any changes\n"
                 "- Database transaction ensures consistency\n"
                 "- File system operation (os.replace) is atomic on most filesystems\n"
-                "- Git commit is optional and non-critical (file is already saved)"
+                "- Git commit is optional and non-critical (file is already saved)\n\n"
+                "Recommended AI workflow:\n"
+                "1. Use cst_modify_tree for in-memory changes\n"
+                "2. Save with cst_save_tree\n"
+                "3. Run format_code/lint_code/type_check_code on the saved file\n"
+                "4. Run update_indexes after a batch of file changes"
             ),
             "parameters": {
                 "tree_id": {

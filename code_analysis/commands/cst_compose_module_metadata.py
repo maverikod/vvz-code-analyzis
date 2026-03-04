@@ -30,7 +30,12 @@ def get_compose_cst_module_metadata(cls: Type[Any]) -> Dict[str, Any]:
             "(2) ops — list of selector + new_code patches (e.g. replace by function name, range, cst_query). "
             "Selector kinds: module, function, class, method, range, block_id, node_id, cst_query. "
             "When apply=true (default), validates (compile, flake8, mypy, docstrings), backs up, and writes. "
-            "Use apply=false with return_diff=true to preview without writing."
+            "Use apply=false with return_diff=true to preview without writing.\n\n"
+            "Important for AI usage:\n"
+            "- compose_cst_module (apply=true) performs full quality validation before write.\n"
+            "- If your task is narrow (for example only adding docstrings) and full validation blocks write,\n"
+            "  use cst_modify_tree + cst_save_tree workflow, then run quality checks explicitly.\n"
+            "- Always start with apply=false, return_diff=true before applying."
         ),
         "parameters": {
             "project_id": {
@@ -134,6 +139,25 @@ def _get_usage_examples() -> list[Dict[str, Any]]:
             "explanation": (
                 "Replaces the block covering lines 10-15 (1-based). "
                 "apply=false returns diff without writing; use apply=true to write."
+            ),
+        },
+        {
+            "description": "Preview-only first, then apply",
+            "command": {
+                "project_id": "550e8400-e29b-41d4-a716-446655440000",
+                "file_path": "src/main.py",
+                "ops": [
+                    {
+                        "selector": {"kind": "function", "name": "process_data"},
+                        "new_code": 'def process_data(items):\n    """Process input items and return normalized result."""\n    return items',
+                    }
+                ],
+                "apply": False,
+                "return_diff": True,
+            },
+            "explanation": (
+                "Recommended pattern for AI: first preview changes with apply=false. "
+                "If diff is correct, repeat with apply=true."
             ),
         },
         {

@@ -53,6 +53,38 @@ class UpdateIndexesMCPCommand(BaseMCPCommand):
         """Get JSON schema for command parameters (MCP Proxy validation)."""
         return get_update_indexes_schema()
 
+    def _analyze_file(
+        self: "UpdateIndexesMCPCommand",
+        database: Any,
+        file_path: Path,
+        project_id: str,
+        root_path: Path,
+        force: bool = False,
+    ) -> Dict[str, Any]:
+        """Backward-compatible wrapper for single-file analysis.
+
+        Some database workflows call ``UpdateIndexesMCPCommand._analyze_file`` directly.
+        This method preserves that public surface and delegates to the current
+        implementation in ``update_indexes_analyzer.analyze_file``.
+
+        Args:
+            database: Open database client.
+            file_path: Absolute file path to analyze.
+            project_id: Project identifier.
+            root_path: Project root path.
+            force: Force re-analysis even if mtime is unchanged.
+
+        Returns:
+            Per-file analysis result dictionary.
+        """
+        return analyze_file(
+            database=database,
+            file_path=file_path,
+            project_id=project_id,
+            root_path=root_path,
+            force=force,
+        )
+
     async def execute(
         self: "UpdateIndexesMCPCommand",
         project_id: str,

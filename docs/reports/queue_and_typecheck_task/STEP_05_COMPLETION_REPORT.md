@@ -67,4 +67,4 @@ git add docs/reports/queue_and_typecheck_task/STEP_04_EXTERNAL_ESCALATION_PACKET
 git commit -m "Step 05: queue timeout regression at add_job - escalation packet and completion report"
 ```
 
-Commit hash will be filled after commit.
+**Commit:** `c94dd28` — Step 05: queue timeout regression at add_job - escalation packet and completion report

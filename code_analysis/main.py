@@ -1279,6 +1279,10 @@ def main() -> None:
     # Register shutdown handlers for worker cleanup (before server starts)
     import atexit
     import signal
+    import threading
+
+    cleanup_lock = threading.Lock()
+    cleanup_started = False
 
     def cleanup_workers() -> None:
         """Cleanup all workers on server exit.
@@ -1286,6 +1290,14 @@ def main() -> None:
         Returns:
             None
         """
+        nonlocal cleanup_started
+        with cleanup_lock:
+            if cleanup_started:
+                main_logger.info(
+                    "cleanup_workers() already executed for this shutdown; skipping duplicate invocation"
+                )
+                return
+            cleanup_started = True
         try:
             main_logger.info(
                 "cleanup_workers() invoked (shutdown path); stopping workers"

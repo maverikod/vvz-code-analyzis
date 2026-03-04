@@ -55,6 +55,7 @@ class _NodeInfo:
     start_col: int
     end_line: int
     end_col: int
+    extra_attrs: Optional[dict[str, str]] = None
 
     @property
     def node_type(self) -> str:
@@ -159,6 +160,15 @@ def _build_index(
             name = _node_name(node)
             kind = _node_kind(node, class_stack=class_stack)
             qual = _node_qualname(node, class_stack=class_stack, func_stack=func_stack)
+            extra_attrs: Optional[dict[str, str]] = None
+            if isinstance(node, cst.ImportFrom):
+                try:
+                    module_str = (
+                        module.code_for_node(node.module) if node.module else ""
+                    )
+                    extra_attrs = {"module": module_str}
+                except (AttributeError, TypeError):
+                    extra_attrs = {"module": ""}
             infos.append(
                 _NodeInfo(
                     node=node,
@@ -171,6 +181,7 @@ def _build_index(
                     start_col=start_col,
                     end_line=end_line,
                     end_col=end_col,
+                    extra_attrs=extra_attrs,
                 )
             )
         except (AttributeError, TypeError) as e:
@@ -346,6 +357,7 @@ def _matches_predicate(node: _NodeInfo, pred: Predicate) -> bool:
 
 
 def _get_attr(node: _NodeInfo, attr: str) -> Optional[str]:
+    """Return attribute value for predicate matching. Supports module for ImportFrom."""
     a = attr.lower()
     if a == "type":
         return node.node_type
@@ -359,6 +371,8 @@ def _get_attr(node: _NodeInfo, attr: str) -> Optional[str]:
         return str(node.start_line)
     if a == "end_line":
         return str(node.end_line)
+    if a == "module" and node.extra_attrs and "module" in node.extra_attrs:
+        return node.extra_attrs["module"]
     return None
 
 

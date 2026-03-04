@@ -164,7 +164,10 @@ class CSTModifyTreeCommand(BaseMCPCommand):
                 },
                 "preview": {
                     "type": "boolean",
-                    "description": "Preview mode: show changes without applying (default: false)",
+                    "description": (
+                        "Preview mode: show changes without applying (default: false). "
+                        "Recommended first step for AI models before write operations."
+                    ),
                 },
                 "operations": {
                     "type": "array",
@@ -266,7 +269,9 @@ class CSTModifyTreeCommand(BaseMCPCommand):
                             "parent_node_id": {
                                 "type": "string",
                                 "description": (
-                                    "Parent node ID for insert/move. Use __root__ for module-level placement."
+                                    "Parent node ID for insert/move. Use __root__ for module-level placement. "
+                                    "For module docstring insertion use action=insert, parent_node_id=__root__, "
+                                    "position=first, and code_lines for multiline content."
                                 ),
                             },
                             "target_node_id": {
@@ -511,7 +516,7 @@ class CSTModifyTreeCommand(BaseMCPCommand):
                 diff = "".join(diff_lines)
 
                 # Validate modified code
-                validation_result = {
+                validation_result: Dict[str, Any] = {
                     "syntax_valid": True,
                     "compiles": True,
                     "error": None,
@@ -712,6 +717,12 @@ class CSTModifyTreeCommand(BaseMCPCommand):
                 "- Use cst_save_tree to persist changes to file.\n"
                 "- Tree modifications are in-memory until saved.\n"
                 "- All operations must be valid for any to be applied.\n\n"
+                "Recommended AI workflow:\n"
+                "1. cst_load_file\n"
+                "2. cst_modify_tree with preview=true\n"
+                "3. cst_modify_tree with preview=false\n"
+                "4. cst_save_tree (persist to disk)\n"
+                "5. format_code/lint_code/type_check_code for the changed file\n\n"
                 "Batch behaviour:\n"
                 "When you send multiple replace or delete operations in one request, each node "
                 "is resolved in the current module by its position (from metadata). So the second "

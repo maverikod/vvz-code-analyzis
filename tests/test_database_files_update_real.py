@@ -445,9 +445,7 @@ class TestUpdateFileDataReal:
         # Most importantly: verify CST tree was handled
         # If update succeeded, new CST should exist
         # If update failed, old CST might still exist, but clear_file_data should have been called
-        _ = test_db._fetchone(
-            "SELECT id FROM cst_trees WHERE file_id = ?", (file_id,)
-        )
+        _ = test_db._fetchone("SELECT id FROM cst_trees WHERE file_id = ?", (file_id,))
         # If update succeeded, CST should exist (new one)
         # If update failed, CST might not exist (if clear was called)
         # Either way, the important thing is that clear_file_data includes CST deletion

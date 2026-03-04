@@ -35,7 +35,9 @@ logger = logging.getLogger(__name__)
 
 
 class _RPCHandlersASTModifyMixin:
-    """Mixin for AST tree modify operations."""
+    """Mixin for AST tree modify operations. Subclass must set self.driver."""
+
+    driver: Any
 
     def handle_modify_ast(self, params: Dict[str, Any]) -> DataResult | ErrorResult:
         """Handle modify_ast RPC method.

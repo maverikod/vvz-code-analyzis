@@ -196,7 +196,7 @@ class SQLiteDriver(BaseDatabaseDriver):
 
     def _ensure_code_chunks_migrations(self) -> None:
         """Add code_chunks.token_count if missing (worker add_code_chunk needs it)."""
-        if not self._schema_manager:
+        if not self.conn or not self._schema_manager:
             return
         try:
             info = self._schema_manager.get_table_info("code_chunks")
@@ -293,7 +293,7 @@ class SQLiteDriver(BaseDatabaseDriver):
         Workers (file_watcher, vectorization) use raw SQL that references these columns.
         This ensures the column exists when driver opens the DB (sync_schema may not run).
         """
-        if not self._schema_manager:
+        if not self.conn or not self._schema_manager:
             return
         try:
             info = self._schema_manager.get_table_info("files")
@@ -557,6 +557,8 @@ class SQLiteDriver(BaseDatabaseDriver):
                 else:
                     sql, params_list = payload
                     cursor = conn.cursor()
+                    if params_list is None:
+                        params_list = []
                     try:
                         cursor.executemany(sql, params_list)
                         n = len(params_list)

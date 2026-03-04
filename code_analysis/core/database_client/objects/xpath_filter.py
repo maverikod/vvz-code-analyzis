@@ -6,7 +6,7 @@ email: vasilyvz@gmail.com
 """
 
 from dataclasses import dataclass
-from typing import Optional
+from typing import Any, Dict, Optional
 
 from code_analysis.cst_query import QueryParseError, parse_selector
 
@@ -54,13 +54,13 @@ class XPathFilter:
         except QueryParseError as e:
             raise ValueError(f"Invalid selector syntax: {e}") from e
 
-    def to_dict(self) -> dict:
+    def to_dict(self) -> Dict[str, Any]:
         """Convert filter to dictionary for serialization.
 
         Returns:
             Dictionary representation of filter
         """
-        result = {"selector": self.selector}
+        result: Dict[str, Any] = {"selector": self.selector}
 
         if self.node_type is not None:
             result["node_type"] = self.node_type

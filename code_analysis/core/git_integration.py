@@ -125,6 +125,7 @@ def create_git_commit(
             ["git", "diff", "--cached", "--quiet"],
             cwd=root_dir,
             capture_output=True,
+            text=True,
             timeout=5,
         )
         if result.returncode == 0:
@@ -198,6 +199,7 @@ def create_git_commit_paths(
             ["git", "diff", "--cached", "--quiet"],
             cwd=root_dir,
             capture_output=True,
+            text=True,
             timeout=5,
         )
         if result.returncode == 0:

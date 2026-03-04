@@ -93,7 +93,7 @@ class UsageTracker(ast.NodeVisitor):
                 elif isinstance(func.value, ast.Attribute):
                     # obj.attr.method() - nested attribute
                     # Extract the base object name if possible
-                    base = func.value
+                    base: ast.AST = func.value
                     while isinstance(base, ast.Attribute):
                         base = base.value
                     if (

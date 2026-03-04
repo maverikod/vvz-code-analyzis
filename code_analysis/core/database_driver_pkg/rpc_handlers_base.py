@@ -27,7 +27,9 @@ logger = logging.getLogger(__name__)
 
 
 class _RPCHandlersBaseMixin:
-    """Mixin for base CRUD operations."""
+    """Mixin for base CRUD operations. Subclass must set self.driver."""
+
+    driver: Any
 
     def handle_insert(self, request: InsertRequest) -> SuccessResult | ErrorResult:
         """Handle insert RPC method using InsertRequest.
@@ -161,6 +163,7 @@ class _RPCHandlersBaseMixin:
                     description="sql parameter is required",
                 )
             raw_params = params.get("params")
+            params_tuple: Any
             if raw_params is None:
                 params_tuple = None
             elif isinstance(raw_params, (list, tuple)):

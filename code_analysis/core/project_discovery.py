@@ -21,7 +21,6 @@ from .exceptions import (
     NestedProjectError,
     ProjectIdError,
 )
-from .project_resolution import load_project_id
 
 logger = logging.getLogger(__name__)
 
@@ -63,7 +62,7 @@ def find_project_root(file_path: Path, watch_dirs: List[Path]) -> Optional[Proje
     - watch_dir/projectid - allowed (depth 0)
     - watch_dir/dirA/projectid - allowed (depth 1)
     - watch_dir/dirA/dirB/projectid - NOT allowed (depth 2 - too deep, ignored)
-    
+
     Note: Files can be at ANY depth within a project. Only projectid location
     is restricted to depth 0-1. This function walks up from the file location
     to find the nearest valid projectid.
@@ -107,7 +106,7 @@ def find_project_root(file_path: Path, watch_dirs: List[Path]) -> Optional[Proje
     # Rule: projectid can be ONLY at watch_dir (depth 0) or direct children (depth 1)
     # We scan ALL files recursively, but only check for projectid at depth 0-1
     search_path = current_dir
-    
+
     while True:
         # Check if we've gone beyond the watch_dir
         try:
@@ -122,7 +121,7 @@ def find_project_root(file_path: Path, watch_dirs: List[Path]) -> Optional[Proje
         # Check depth: projectid can be ONLY at watch_dir (depth 0) or direct children (depth 1)
         # relative_path.parts is empty for watch_dir itself, length 1 for direct children
         depth = len(relative_path.parts)
-        
+
         # Only check for projectid if we're at depth 0 or 1
         # If depth > 1, skip projectid check but continue walking up
         if depth <= 1:
@@ -226,9 +225,7 @@ def validate_no_nested_projects(project_root: Path, watch_dir: Path) -> None:
                     parent_project=str(project_root),
                 )
     except OSError as e:
-        logger.warning(
-            f"Error scanning for nested projects in {project_root}: {e}"
-        )
+        logger.warning(f"Error scanning for nested projects in {project_root}: {e}")
         # Don't fail on scan errors, but log warning
 
 
@@ -314,7 +311,7 @@ def discover_projects_in_directory(watch_dir: Path) -> List[ProjectRoot]:
         watch_dir_projectid = watch_dir / "projectid"
         if watch_dir_projectid.exists() and watch_dir_projectid.is_file():
             projectid_files.append(watch_dir_projectid)
-        
+
         # Check direct children only (level 1)
         for item in watch_dir.iterdir():
             if item.is_dir():
@@ -384,7 +381,11 @@ def discover_projects_in_directory(watch_dir: Path) -> List[ProjectRoot]:
             continue
         except NestedProjectError as e:
             # Check if nested project is in subdirectory (child) or parent
-            nested_path = Path(e.child_project)
+            child_project = e.child_project
+            if child_project is None:
+                logger.warning("NestedProjectError with no child_project, skipping")
+                continue
+            nested_path = Path(child_project)
             if nested_path.is_relative_to(project_root) and nested_path != project_root:
                 # Nested project in subdirectory - skip this project, log error
                 logger.error(

@@ -41,10 +41,10 @@ class Issue(BaseObject):
     issue_type: str = ""
     line: Optional[int] = None
     description: Optional[str] = None
-    metadata: Dict[str, Any] = None
+    metadata: Optional[Dict[str, Any]] = None
     created_at: Optional[datetime] = None
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         """Initialize metadata as empty dict if None."""
         if self.metadata is None:
             self.metadata = {}
@@ -55,7 +55,7 @@ class Issue(BaseObject):
         Returns:
             Metadata dictionary
         """
-        return self.metadata if self.metadata else {}
+        return self.metadata if self.metadata is not None else {}
 
     def set_metadata(self, metadata: Dict[str, Any]) -> None:
         """Set metadata.
@@ -126,7 +126,7 @@ class Issue(BaseObject):
         Returns:
             Dictionary suitable for database insertion/update
         """
-        result = {
+        result: Dict[str, Any] = {
             "issue_type": self.issue_type,
         }
         if self.id is not None:
@@ -177,10 +177,10 @@ class Usage(BaseObject):
     target_type: str = ""
     target_class: Optional[str] = None
     target_name: str = ""
-    context: Dict[str, Any] = None
+    context: Optional[Dict[str, Any]] = None
     created_at: Optional[datetime] = None
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         """Initialize context as empty dict if None."""
         if self.context is None:
             self.context = {}
@@ -191,7 +191,7 @@ class Usage(BaseObject):
         Returns:
             Context dictionary
         """
-        return self.context if self.context else {}
+        return self.context if self.context is not None else {}
 
     def set_context(self, context: Dict[str, Any]) -> None:
         """Set context.
@@ -268,7 +268,7 @@ class Usage(BaseObject):
         Returns:
             Dictionary suitable for database insertion/update
         """
-        result = {
+        result: Dict[str, Any] = {
             "file_id": self.file_id,
             "line": self.line,
             "usage_type": self.usage_type,
@@ -355,7 +355,7 @@ class CodeDuplicate(BaseObject):
         Returns:
             Dictionary suitable for database insertion/update
         """
-        result = {
+        result: Dict[str, Any] = {
             "project_id": self.project_id,
             "duplicate_hash": self.duplicate_hash,
             "similarity": self.similarity,

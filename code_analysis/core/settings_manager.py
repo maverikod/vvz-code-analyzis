@@ -12,8 +12,7 @@ email: vasilyvz@gmail.com
 
 import os
 import logging
-from typing import Any, Optional, Dict, List, Set
-from pathlib import Path
+from typing import Any, Optional, Dict, Set
 
 from .constants import (
     # File Extensions
@@ -87,7 +86,7 @@ logger = logging.getLogger(__name__)
 class SettingsManager:
     """
     Unified settings manager with priority: CLI > ENV > Constants.
-    
+
     This class provides a single source of truth for all configuration values.
     Settings can be overridden via CLI arguments or environment variables.
     """
@@ -138,7 +137,10 @@ class SettingsManager:
             "log_max_bytes": (f"{env_prefix}LOG_MAX_BYTES", int),
             "log_backup_count": (f"{env_prefix}LOG_BACKUP_COUNT", int),
             "vector_dim": (f"{env_prefix}VECTOR_DIM", int),
-            "file_modification_tolerance": (f"{env_prefix}FILE_MODIFICATION_TOLERANCE", float),
+            "file_modification_tolerance": (
+                f"{env_prefix}FILE_MODIFICATION_TOLERANCE",
+                float,
+            ),
             "last_modified_epsilon": (f"{env_prefix}LAST_MODIFIED_EPSILON", float),
             # Timeouts and Intervals
             "poll_interval": (f"{env_prefix}POLL_INTERVAL", int),
@@ -147,9 +149,18 @@ class SettingsManager:
             "retry_delay": (f"{env_prefix}RETRY_DELAY", float),
             "command_timeout": (f"{env_prefix}COMMAND_TIMEOUT", float),
             "git_timeout": (f"{env_prefix}GIT_TIMEOUT", float),
-            "proxy_driver_poll_interval": (f"{env_prefix}PROXY_DRIVER_POLL_INTERVAL", float),
-            "db_connection_max_retries": (f"{env_prefix}DB_CONNECTION_MAX_RETRIES", int),
-            "db_connection_retry_delay": (f"{env_prefix}DB_CONNECTION_RETRY_DELAY", float),
+            "proxy_driver_poll_interval": (
+                f"{env_prefix}PROXY_DRIVER_POLL_INTERVAL",
+                float,
+            ),
+            "db_connection_max_retries": (
+                f"{env_prefix}DB_CONNECTION_MAX_RETRIES",
+                int,
+            ),
+            "db_connection_retry_delay": (
+                f"{env_prefix}DB_CONNECTION_RETRY_DELAY",
+                float,
+            ),
             "max_scan_duration": (f"{env_prefix}MAX_SCAN_DURATION", int),
             # Ports and Hosts
             "server_host": (f"{env_prefix}SERVER_HOST", str),
@@ -182,10 +193,17 @@ class SettingsManager:
             env_value = os.getenv(env_var)
             if env_value is not None:
                 try:
+                    value: Any
                     if converter == str:
                         # For string lists (comma-separated), split them
-                        if setting_name in ("code_file_extensions", "config_file_extensions", "default_ignore_patterns"):
-                            value = set(v.strip() for v in env_value.split(",") if v.strip())
+                        if setting_name in (
+                            "code_file_extensions",
+                            "config_file_extensions",
+                            "default_ignore_patterns",
+                        ):
+                            value = set(
+                                v.strip() for v in env_value.split(",") if v.strip()
+                            )
                         else:
                             value = env_value
                     elif converter == int:
@@ -202,7 +220,7 @@ class SettingsManager:
     def set_cli_overrides(self, overrides: Dict[str, Any]) -> None:
         """
         Set CLI argument overrides (highest priority).
-        
+
         Args:
             overrides: Dictionary of setting names to values
         """
@@ -212,11 +230,11 @@ class SettingsManager:
     def get(self, setting_name: str, default: Any = None) -> Any:
         """
         Get setting value with priority: CLI > ENV > Constants.
-        
+
         Args:
             setting_name: Name of the setting
             default: Default value if not found (optional)
-            
+
         Returns:
             Setting value
         """
@@ -369,7 +387,7 @@ class SettingsManager:
 def get_settings() -> SettingsManager:
     """
     Get the global settings manager instance.
-    
+
     Returns:
         SettingsManager instance
     """
@@ -380,13 +398,12 @@ def get_settings() -> SettingsManager:
 def get_setting(setting_name: str, default: Any = None) -> Any:
     """
     Get a setting value quickly.
-    
+
     Args:
         setting_name: Name of the setting
         default: Default value if not found
-        
+
     Returns:
         Setting value
     """
     return get_settings().get(setting_name, default)
-

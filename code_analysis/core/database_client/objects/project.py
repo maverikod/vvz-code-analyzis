@@ -85,7 +85,7 @@ class Project(BaseObject):
         Returns:
             Dictionary suitable for database insertion/update
         """
-        result = {
+        result: Dict[str, Any] = {
             "id": self.id,
             "root_path": self.root_path,
         }

@@ -33,7 +33,7 @@ class Class(BaseObject):
     name: str = ""
     line: int = 0
     docstring: Optional[str] = None
-    bases: List[str] = None
+    bases: Optional[List[str]] = None
     created_at: Optional[datetime] = None
 
     def __post_init__(self):
@@ -47,7 +47,7 @@ class Class(BaseObject):
         Returns:
             List of base class names
         """
-        return self.bases if self.bases else []
+        return self.bases if self.bases is not None else []
 
     def set_bases(self, bases: List[str]) -> None:
         """Set base classes.
@@ -154,11 +154,11 @@ class Function(BaseObject):
     file_id: int = 0
     name: str = ""
     line: int = 0
-    args: List[str] = None
+    args: Optional[List[str]] = None
     docstring: Optional[str] = None
     created_at: Optional[datetime] = None
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         """Initialize args as empty list if None."""
         if self.args is None:
             self.args = []
@@ -169,7 +169,7 @@ class Function(BaseObject):
         Returns:
             List of argument names
         """
-        return self.args if self.args else []
+        return self.args if self.args is not None else []
 
     def set_args(self, args: List[str]) -> None:
         """Set function arguments.

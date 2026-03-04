@@ -13,6 +13,7 @@ email: vasilyvz@gmail.com
 
 from __future__ import annotations
 
+import io
 import json
 import logging
 import threading
@@ -29,6 +30,8 @@ DEFAULT_JOURNAL_BACKUP_COUNT = 5
 
 class SQLiteQueryJournal:
     """Append-only journal of SQL executions for logging and recovery, with rotation."""
+
+    _file: Optional[io.TextIOWrapper]
 
     def __init__(
         self,
@@ -198,6 +201,7 @@ def replay_journal(
                 failed += 1
                 continue
             params_raw = entry.get("params")
+            params: Any
             if params_raw is None:
                 params = None
             elif isinstance(params_raw, dict):

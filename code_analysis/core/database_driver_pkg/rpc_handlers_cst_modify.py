@@ -31,7 +31,9 @@ logger = logging.getLogger(__name__)
 
 
 class _RPCHandlersCSTModifyMixin:
-    """Mixin for CST tree modify operations."""
+    """Mixin for CST tree modify operations. Subclass must set self.driver."""
+
+    driver: Any
 
     def handle_modify_cst(self, params: Dict[str, Any]) -> DataResult | ErrorResult:
         """Handle modify_cst RPC method.

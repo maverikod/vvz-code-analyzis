@@ -23,7 +23,9 @@ logger = logging.getLogger(__name__)
 
 
 class _RPCHandlersSchemaMixin:
-    """Mixin for schema and transaction operations."""
+    """Mixin for schema and transaction operations. Subclass must set self.driver."""
+
+    driver: Any
 
     def handle_create_table(
         self, params: Dict[str, Any]

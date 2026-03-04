@@ -35,7 +35,7 @@ class Method(BaseObject):
     class_id: int = 0
     name: str = ""
     line: int = 0
-    args: List[str] = None
+    args: Optional[List[str]] = None
     docstring: Optional[str] = None
     is_abstract: bool = False
     has_pass: bool = False
@@ -53,7 +53,7 @@ class Method(BaseObject):
         Returns:
             List of argument names
         """
-        return self.args if self.args else []
+        return self.args if self.args is not None else []
 
     def set_args(self, args: List[str]) -> None:
         """Set method arguments.

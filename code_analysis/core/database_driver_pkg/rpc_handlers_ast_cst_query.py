@@ -29,7 +29,9 @@ logger = logging.getLogger(__name__)
 
 
 class _RPCHandlersASTCSTQueryMixin:
-    """Mixin for AST/CST tree query operations."""
+    """Mixin for AST/CST tree query operations. Subclass must set self.driver."""
+
+    driver: Any
 
     def handle_query_ast(self, params: Dict[str, Any]) -> DataResult | ErrorResult:
         """Handle query_ast RPC method.
@@ -126,10 +128,11 @@ class _RPCHandlersASTCSTQueryMixin:
                 if code:
                     # Parse code snippet to get AST node
                     try:
+                        node_ast: ast.AST
                         # Try to parse as expression first (for simple expressions)
                         try:
-                            node_ast = ast.parse(code, mode="eval")
-                            node_ast = node_ast.body
+                            parsed = ast.parse(code, mode="eval")
+                            node_ast = parsed.body
                         except SyntaxError:
                             # If not an expression, parse as statement
                             node_ast_module = ast.parse(code, mode="exec")

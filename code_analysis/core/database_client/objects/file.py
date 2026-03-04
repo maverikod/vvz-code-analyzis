@@ -109,7 +109,7 @@ class File(BaseObject):
         Returns:
             Dictionary suitable for database insertion/update
         """
-        result = {
+        result: Dict[str, Any] = {
             "project_id": self.project_id,
             "path": self.path,
             "deleted": 1 if self.deleted else 0,

@@ -26,6 +26,8 @@ logger = logging.getLogger(__name__)
 class _RPCHandlersIndexFileMixin:
     """Mixin for index_file RPC: run full file index in driver process and clear needs_chunking."""
 
+    driver: Any
+
     def handle_index_file(self, params: Dict[str, Any]) -> SuccessResult | ErrorResult:
         """Handle index_file RPC: index one file (AST, CST, entities, code_content) and clear needs_chunking.
 

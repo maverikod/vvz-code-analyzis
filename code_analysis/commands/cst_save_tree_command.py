@@ -21,6 +21,17 @@ from .base_mcp_command import BaseMCPCommand
 from ..core.cst_tree.tree_saver import save_tree_to_file
 from ..core.cst_tree.tree_builder import reload_tree_from_file
 from ..core.git_integration import commit_after_write
+from ..core.database_client.exceptions import ConnectionError as DBConnectionError
+from ..core.database_client.transient import (
+    CATEGORY_RPC_CONNECT_REFUSED,
+    CATEGORY_SQLITE_DB_LOCKED,
+    MAX_ATTEMPTS,
+    MAX_TOTAL_ELAPSED_SECONDS,
+    compute_retry_delay,
+    format_retry_summary_suffix,
+    is_rpc_connect_refused,
+    is_sqlite_db_locked,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -96,100 +107,183 @@ class CSTSaveTreeCommand(BaseMCPCommand):
         **kwargs,
     ) -> SuccessResult:
         t_start = time.perf_counter()
+        t_retry_start = time.perf_counter()
+        last_connect_error: Optional[Exception] = None
         try:
-            t0 = time.perf_counter()
-            database = self._open_database_from_config(auto_analyze=False)
-            try:
-                absolute_file_path = self._resolve_file_path_from_project(
-                    database, project_id, file_path
-                )
-                project = database.get_project(project_id)
-                if not project:
-                    return ErrorResult(
-                        message=f"Project {project_id} not found",
-                        code="PROJECT_NOT_FOUND",
-                        details={"project_id": project_id},
-                    )
-
-                project_root = Path(project.root_path)
-                logger.info(
-                    "[TIMING] command=cst_save_tree step=resolve_path elapsed_sec=%.4f",
-                    time.perf_counter() - t0,
-                )
-                t0 = time.perf_counter()
-                result = await asyncio.to_thread(
-                    save_tree_to_file,
-                    tree_id=tree_id,
-                    file_path=str(absolute_file_path),
-                    root_dir=project_root,
-                    project_id=project_id,
-                    database=database,
-                    validate=validate,
-                    backup=backup,
-                    commit_message=commit_message,
-                )
-                logger.info(
-                    "[TIMING] command=cst_save_tree step=save_tree_to_file elapsed_sec=%.4f",
-                    time.perf_counter() - t0,
-                )
-                if result.get("timings"):
-                    for step_name, elapsed in sorted(result["timings"].items()):
-                        logger.info(
-                            "[TIMING] command=cst_save_tree step=save_%s elapsed_sec=%.4f",
-                            step_name,
-                            elapsed,
-                        )
-
-                if not result.get("success"):
-                    return ErrorResult(
-                        message=result.get("error", "Failed to save tree"),
-                        code="CST_SAVE_ERROR",
-                        details=result,
-                    )
-
-                if auto_reload:
+            for attempt in range(1, MAX_ATTEMPTS + 1):
+                try:
                     t0 = time.perf_counter()
+                    database = self._open_database_from_config(auto_analyze=False)
                     try:
-                        reload_tree_from_file(tree_id=tree_id)
-                        result["tree_reloaded"] = True
-                    except Exception as reload_error:
-                        logger.warning(
-                            f"Failed to auto-reload tree after save: {reload_error}"
+                        absolute_file_path = self._resolve_file_path_from_project(
+                            database, project_id, file_path
                         )
-                        result["tree_reloaded"] = False
-                        result["reload_error"] = str(reload_error)
-                    else:
+                        project = database.get_project(project_id)
+                        if not project:
+                            return ErrorResult(
+                                message=f"Project {project_id} not found",
+                                code="PROJECT_NOT_FOUND",
+                                details={"project_id": project_id},
+                            )
+
+                        project_root = Path(project.root_path)
                         logger.info(
-                            "[TIMING] command=cst_save_tree step=reload_tree elapsed_sec=%.4f",
+                            "[TIMING] command=cst_save_tree step=resolve_path elapsed_sec=%.4f",
                             time.perf_counter() - t0,
                         )
-                else:
-                    result["tree_reloaded"] = False
+                        t0 = time.perf_counter()
+                        result = await asyncio.to_thread(
+                            save_tree_to_file,
+                            tree_id=tree_id,
+                            file_path=str(absolute_file_path),
+                            root_dir=project_root,
+                            project_id=project_id,
+                            database=database,
+                            validate=validate,
+                            backup=backup,
+                            commit_message=commit_message,
+                        )
+                        logger.info(
+                            "[TIMING] command=cst_save_tree step=save_tree_to_file elapsed_sec=%.4f",
+                            time.perf_counter() - t0,
+                        )
+                        if result.get("timings"):
+                            for step_name, elapsed in sorted(result["timings"].items()):
+                                logger.info(
+                                    "[TIMING] command=cst_save_tree step=save_%s elapsed_sec=%.4f",
+                                    step_name,
+                                    elapsed,
+                                )
 
-                git_ok, git_err = commit_after_write(
-                    project_root,
-                    [Path(absolute_file_path)],
-                    "cst_save_tree",
-                    commit_message_override=commit_message,
-                    config_data=BaseMCPCommand._get_raw_config(),
-                )
-                if not git_ok and git_err:
-                    logger.warning("Git commit after cst_save_tree: %s", git_err)
+                        if not result.get("success"):
+                            err_msg = result.get("error", "Failed to save tree")
+                            if is_sqlite_db_locked(err_msg):
+                                elapsed = time.perf_counter() - t_retry_start
+                                if (
+                                    attempt >= MAX_ATTEMPTS
+                                    or elapsed >= MAX_TOTAL_ELAPSED_SECONDS
+                                ):
+                                    logger.error(
+                                        "cst_save_tree retry exhausted category=%s attempts=%s elapsed_sec=%.2f",
+                                        CATEGORY_SQLITE_DB_LOCKED,
+                                        attempt,
+                                        elapsed,
+                                        extra={"importance": 8},
+                                    )
+                                    suffix = format_retry_summary_suffix(
+                                        attempt, elapsed
+                                    )
+                                    return ErrorResult(
+                                        message=f"{err_msg}{suffix}",
+                                        code="CST_SAVE_ERROR",
+                                        details=result,
+                                    )
+                                delay = compute_retry_delay(attempt)
+                                logger.warning(
+                                    "cst_save_tree transient db lock attempt=%s/%s category=%s next_delay_sec=%.2f",
+                                    attempt,
+                                    MAX_ATTEMPTS,
+                                    CATEGORY_SQLITE_DB_LOCKED,
+                                    delay,
+                                    extra={"importance": 6},
+                                )
+                                time.sleep(delay)
+                                continue
+                            return ErrorResult(
+                                message=err_msg,
+                                code="CST_SAVE_ERROR",
+                                details=result,
+                            )
 
-                logger.info(
-                    "[TIMING] command=cst_save_tree total_elapsed_sec=%.4f",
-                    time.perf_counter() - t_start,
-                )
-                p = Path(absolute_file_path)
-                if p.exists():
-                    result["file_size_bytes"] = p.stat().st_size
-                    result["file_lines"] = len(
-                        p.read_text(encoding="utf-8").splitlines()
+                        if auto_reload:
+                            t0 = time.perf_counter()
+                            try:
+                                reload_tree_from_file(tree_id=tree_id)
+                                result["tree_reloaded"] = True
+                            except Exception as reload_error:
+                                logger.warning(
+                                    "Failed to auto-reload tree after save: %s",
+                                    reload_error,
+                                )
+                                result["tree_reloaded"] = False
+                                result["reload_error"] = str(reload_error)
+                            else:
+                                logger.info(
+                                    "[TIMING] command=cst_save_tree step=reload_tree elapsed_sec=%.4f",
+                                    time.perf_counter() - t0,
+                                )
+                        else:
+                            result["tree_reloaded"] = False
+
+                        git_ok, git_err = commit_after_write(
+                            project_root,
+                            [Path(absolute_file_path)],
+                            "cst_save_tree",
+                            commit_message_override=commit_message,
+                            config_data=BaseMCPCommand._get_raw_config(),
+                        )
+                        if not git_ok and git_err:
+                            logger.warning(
+                                "Git commit after cst_save_tree: %s", git_err
+                            )
+
+                        logger.info(
+                            "[TIMING] command=cst_save_tree total_elapsed_sec=%.4f",
+                            time.perf_counter() - t_start,
+                        )
+                        p = Path(absolute_file_path)
+                        if p.exists():
+                            result["file_size_bytes"] = p.stat().st_size
+                            result["file_lines"] = len(
+                                p.read_text(encoding="utf-8").splitlines()
+                            )
+                        if attempt > 1:
+                            logger.info(
+                                "cst_save_tree succeeded after %s attempts",
+                                attempt,
+                                extra={"importance": 4},
+                            )
+                        return SuccessResult(data=result)
+                    finally:
+                        database.disconnect()
+
+                except DBConnectionError as e:
+                    last_connect_error = e
+                    if not is_rpc_connect_refused(e):
+                        raise
+                    elapsed = time.perf_counter() - t_retry_start
+                    if attempt >= MAX_ATTEMPTS or elapsed >= MAX_TOTAL_ELAPSED_SECONDS:
+                        logger.error(
+                            "cst_save_tree retry exhausted category=%s attempts=%s elapsed_sec=%.2f",
+                            CATEGORY_RPC_CONNECT_REFUSED,
+                            attempt,
+                            elapsed,
+                            extra={"importance": 8},
+                        )
+                        suffix = format_retry_summary_suffix(attempt, elapsed)
+                        return ErrorResult(
+                            message=f"cst_save_tree failed: {e}{suffix}",
+                            code="CST_SAVE_ERROR",
+                        )
+                    delay = compute_retry_delay(attempt)
+                    logger.warning(
+                        "cst_save_tree transient connect refused attempt=%s/%s category=%s next_delay_sec=%.2f",
+                        attempt,
+                        MAX_ATTEMPTS,
+                        CATEGORY_RPC_CONNECT_REFUSED,
+                        delay,
+                        extra={"importance": 6},
                     )
-                return SuccessResult(data=result)
-            finally:
-                database.disconnect()
+                    time.sleep(delay)
 
+            if last_connect_error is not None:
+                suffix = format_retry_summary_suffix(
+                    MAX_ATTEMPTS, time.perf_counter() - t_retry_start
+                )
+                return ErrorResult(
+                    message=f"cst_save_tree failed: {last_connect_error}{suffix}",
+                    code="CST_SAVE_ERROR",
+                )
         except Exception as e:
             logger.exception("cst_save_tree failed: %s", e)
             return ErrorResult(

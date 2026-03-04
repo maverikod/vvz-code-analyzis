@@ -30,6 +30,17 @@ from .tree_modifier_ops import (
 )
 from .tree_modifier_validate import _validate_operation
 
+try:
+    from code_analysis.core.mutable_cst import (
+        apply_operations,
+        build_from_libcst,
+        serialize_to_source,
+    )
+except ImportError:
+    build_from_libcst = None  # type: ignore[assignment]
+    serialize_to_source = None  # type: ignore[assignment]
+    apply_operations = None  # type: ignore[assignment]
+
 logger = logging.getLogger(__name__)
 
 
@@ -54,6 +65,31 @@ def _apply_libcst_codegen_compat() -> None:
 
 
 _apply_libcst_codegen_compat()
+
+
+def _use_mutable_batch_path(operations: List[TreeOperation]) -> bool:
+    """
+    True when batch path (mutable layer) should be used: more than one replace,
+    or more than one insert, or any delete; and no REPLACE_RANGE or MOVE.
+    """
+    if (
+        build_from_libcst is None
+        or serialize_to_source is None
+        or apply_operations is None
+    ):
+        return False
+    replace_count = sum(
+        1 for op in operations if op.action == TreeOperationType.REPLACE
+    )
+    insert_count = sum(1 for op in operations if op.action == TreeOperationType.INSERT)
+    has_delete = any(op.action == TreeOperationType.DELETE for op in operations)
+    has_range_or_move = any(
+        op.action in (TreeOperationType.REPLACE_RANGE, TreeOperationType.MOVE)
+        for op in operations
+    )
+    if has_range_or_move:
+        return False
+    return replace_count > 1 or insert_count > 1 or has_delete
 
 
 def modify_tree(tree_id: str, operations: List[TreeOperation]) -> CSTTree:
@@ -103,11 +139,30 @@ def modify_tree(tree_id: str, operations: List[TreeOperation]) -> CSTTree:
                     op.start_node_id
                 )
 
-    # Create a copy of the module for modification
-    # We'll apply all operations to this copy
-    modified_module = tree.module
-
     try:
+        if _use_mutable_batch_path(operations):
+            mutable_tree = build_from_libcst(
+                tree.module, tree.metadata_map, tree.node_map
+            )
+            apply_operations(mutable_tree, sorted_ops, tree.metadata_map)
+            source = serialize_to_source(mutable_tree)
+            new_module = cst.parse_module(source)
+            _validate_module(new_module)
+            tree.module = new_module
+            tree.node_map.clear()
+            tree.metadata_map.clear()
+            tree.parent_map.clear()
+            _build_tree_index(
+                tree,
+                node_types=None,
+                max_depth=None,
+                include_children=True,
+            )
+            return tree
+
+        # Current LibCST path (single-op or REPLACE_RANGE/MOVE)
+        modified_module = tree.module
+
         # Apply all operations. Do not rebuild index between ops so UUID node_ids
         # for unmodified nodes stay valid (batch replace at multiple points).
         for op in sorted_ops:
@@ -142,11 +197,12 @@ def _sort_operations_for_batch(
     operations: List[TreeOperation], tree: CSTTree
 ) -> List[TreeOperation]:
     """
-    Sort operations so DELETE ops run bottom-to-top (by position).
-    INSERT ops run bottom-to-top by parent position so node_map stays valid.
+    Sort operations so DELETE and REPLACE run bottom-to-top (by position).
+    INSERT ops run bottom-to-top by parent position.
     This prevents position shift from invalidating node references in batch.
     """
     deletes: List[Tuple[int, int, TreeOperation]] = []
+    replaces: List[Tuple[int, int, TreeOperation]] = []
     inserts: List[Tuple[int, int, TreeOperation]] = []
     others: List[TreeOperation] = []
     for op in operations:
@@ -155,6 +211,11 @@ def _sort_operations_for_batch(
             line = meta.start_line if meta else 0
             col = meta.start_col if meta else 0
             deletes.append((-line, -col, op))  # negate for descending
+        elif op.action == TreeOperationType.REPLACE and op.node_id:
+            meta = tree.metadata_map.get(op.node_id)
+            line = meta.start_line if meta else 0
+            col = meta.start_col if meta else 0
+            replaces.append((-line, -col, op))  # bottom-to-top
         elif op.action == TreeOperationType.INSERT and op.parent_node_id:
             meta = tree.metadata_map.get(op.parent_node_id)
             line = meta.start_line if meta else 0
@@ -163,8 +224,14 @@ def _sort_operations_for_batch(
         else:
             others.append(op)
     deletes.sort(key=lambda x: (x[0], x[1]))
+    replaces.sort(key=lambda x: (x[0], x[1]))
     inserts.sort(key=lambda x: (x[0], x[1]))
-    return [op for (_, _, op) in deletes] + [op for (_, _, op) in inserts] + others
+    return (
+        [op for (_, _, op) in deletes]
+        + [op for (_, _, op) in replaces]
+        + [op for (_, _, op) in inserts]
+        + others
+    )
 
 
 def _remove_operation_nodes_from_index(tree: CSTTree, operation: TreeOperation) -> None:

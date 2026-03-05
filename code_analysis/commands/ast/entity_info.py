@@ -5,11 +5,41 @@ Author: Vasiliy Zdanovskiy
 email: vasilyvz@gmail.com
 """
 
-from typing import Any, Dict, Optional
+import uuid
+from typing import Any, Dict, List, Optional
 
 from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 
 from ..base_mcp_command import BaseMCPCommand
+
+
+def _is_valid_uuid4(value: Optional[str]) -> bool:
+    """Return True if value is non-empty and valid UUID4 string; otherwise False."""
+    if not value or not isinstance(value, str):
+        return False
+    s = value.strip()
+    if not s:
+        return False
+    try:
+        u = uuid.UUID(s, version=4)
+        return str(u) == s
+    except (ValueError, TypeError):
+        return False
+
+
+def _normalize_entities(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """
+    Keep only entities with valid cst_node_id (UUID4). Each returned entity
+    has file_path (from JOIN) and cst_node_id; no invalid UUID4 values.
+    """
+    entities: List[Dict[str, Any]] = []
+    for row in rows:
+        node_id = row.get("cst_node_id")
+        if not _is_valid_uuid4(node_id):
+            continue
+        # Row already has file_path from JOIN and cst_node_id from table
+        entities.append(dict(row))
+    return entities
 
 
 class GetCodeEntityInfoMCPCommand(BaseMCPCommand):
@@ -114,8 +144,8 @@ class GetCodeEntityInfoMCPCommand(BaseMCPCommand):
             rows = result.get("data", [])
             db.disconnect()
 
-            if rows:
-                entities = rows
+            entities = _normalize_entities(rows)
+            if entities:
                 return SuccessResult(
                     data={
                         "success": True,
@@ -328,11 +358,11 @@ class GetCodeEntityInfoMCPCommand(BaseMCPCommand):
                         "entity_type": "Entity type that was searched",
                         "entity_name": "Entity name that was searched",
                         "entities": (
-                            "List of entity dictionaries from database. Each contains:\n"
-                            "- For classes: name, file_path, line, bases, docstring, and other class fields\n"
-                            "- For functions: name, file_path, line, parameters, docstring, and other function fields\n"
-                            "- For methods: name, class_name, file_path, line, parameters, docstring, and other method fields\n"
-                            "- All database fields are included"
+                            "List of entity dictionaries from database. Each contains file_path and valid UUID4 cst_node_id.\n"
+                            "- For classes: name, file_path, line, bases, docstring, cst_node_id, and other class fields\n"
+                            "- For functions: name, file_path, line, parameters, docstring, cst_node_id, and other function fields\n"
+                            "- For methods: name, class_name, file_path, line, parameters, docstring, cst_node_id, and other method fields\n"
+                            "- Only entities with valid cst_node_id (UUID4) are returned"
                         ),
                         "count": "Number of matching entities found",
                     },
@@ -347,6 +377,7 @@ class GetCodeEntityInfoMCPCommand(BaseMCPCommand):
                                 "line": 10,
                                 "bases": '["BaseProcessor"]',
                                 "docstring": "Processes data files.",
+                                "cst_node_id": "550e8400-e29b-41d4-a716-446655440000",
                             }
                         ],
                         "count": 1,
@@ -362,6 +393,7 @@ class GetCodeEntityInfoMCPCommand(BaseMCPCommand):
                                 "line": 42,
                                 "parameters": "data, count",
                                 "docstring": "Process data with count.",
+                                "cst_node_id": "660e8400-e29b-41d4-a716-446655440001",
                             }
                         ],
                         "count": 1,

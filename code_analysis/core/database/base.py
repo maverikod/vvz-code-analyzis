@@ -598,6 +598,7 @@ class CodeDatabase:
                     name TEXT NOT NULL,
                     line INTEGER NOT NULL,
                     end_line INTEGER,
+                    cst_node_id TEXT,
                     docstring TEXT,
                     bases TEXT,
                     created_at REAL DEFAULT (julianday('now')),
@@ -614,6 +615,7 @@ class CodeDatabase:
                     name TEXT NOT NULL,
                     line INTEGER NOT NULL,
                     end_line INTEGER,
+                    cst_node_id TEXT,
                     args TEXT,
                     docstring TEXT,
                     is_abstract BOOLEAN DEFAULT 0,
@@ -633,6 +635,7 @@ class CodeDatabase:
                     name TEXT NOT NULL,
                     line INTEGER NOT NULL,
                     end_line INTEGER,
+                    cst_node_id TEXT,
                     args TEXT,
                     docstring TEXT,
                     created_at REAL DEFAULT (julianday('now')),
@@ -1376,6 +1379,29 @@ class CodeDatabase:
             except Exception as e:
                 logger.warning(f"Could not add end_line column to functions: {e}")
 
+        # Migration: Add cst_node_id column to classes, methods, functions (nullable)
+        if "cst_node_id" not in classes_columns:
+            try:
+                logger.info("Migrating classes table: adding cst_node_id column")
+                self._execute("ALTER TABLE classes ADD COLUMN cst_node_id TEXT")
+                self._commit()
+            except Exception as e:
+                logger.warning(f"Could not add cst_node_id column to classes: {e}")
+        if "cst_node_id" not in methods_columns:
+            try:
+                logger.info("Migrating methods table: adding cst_node_id column")
+                self._execute("ALTER TABLE methods ADD COLUMN cst_node_id TEXT")
+                self._commit()
+            except Exception as e:
+                logger.warning(f"Could not add cst_node_id column to methods: {e}")
+        if "cst_node_id" not in functions_columns:
+            try:
+                logger.info("Migrating functions table: adding cst_node_id column")
+                self._execute("ALTER TABLE functions ADD COLUMN cst_node_id TEXT")
+                self._commit()
+            except Exception as e:
+                logger.warning(f"Could not add cst_node_id column to functions: {e}")
+
         # Migration: Create entity_cross_ref table if not exists (existing DBs)
         entity_cross_ref_check = self._fetchone(
             "SELECT name FROM sqlite_master WHERE type='table' AND name='entity_cross_ref'"
@@ -1805,6 +1831,7 @@ def get_schema_definition() -> Dict[str, Any]:
                     {"name": "name", "type": "TEXT", "not_null": True},
                     {"name": "line", "type": "INTEGER", "not_null": True},
                     {"name": "end_line", "type": "INTEGER", "not_null": False},
+                    {"name": "cst_node_id", "type": "TEXT", "not_null": False},
                     {"name": "docstring", "type": "TEXT", "not_null": False},
                     {"name": "bases", "type": "TEXT", "not_null": False},
                     {
@@ -1838,6 +1865,7 @@ def get_schema_definition() -> Dict[str, Any]:
                     {"name": "name", "type": "TEXT", "not_null": True},
                     {"name": "line", "type": "INTEGER", "not_null": True},
                     {"name": "end_line", "type": "INTEGER", "not_null": False},
+                    {"name": "cst_node_id", "type": "TEXT", "not_null": False},
                     {"name": "args", "type": "TEXT", "not_null": False},
                     {"name": "docstring", "type": "TEXT", "not_null": False},
                     {
@@ -1890,6 +1918,7 @@ def get_schema_definition() -> Dict[str, Any]:
                     {"name": "name", "type": "TEXT", "not_null": True},
                     {"name": "line", "type": "INTEGER", "not_null": True},
                     {"name": "end_line", "type": "INTEGER", "not_null": False},
+                    {"name": "cst_node_id", "type": "TEXT", "not_null": False},
                     {"name": "args", "type": "TEXT", "not_null": False},
                     {"name": "docstring", "type": "TEXT", "not_null": False},
                     {"name": "complexity", "type": "INTEGER", "not_null": False},

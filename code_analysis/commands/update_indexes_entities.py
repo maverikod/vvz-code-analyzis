@@ -107,11 +107,11 @@ def index_entities(
             for base in node.bases:
                 if isinstance(base, ast.Name):
                     bases.append(base.id)
-            else:
-                try:
-                    bases.append(ast.unparse(base))
-                except AttributeError:
-                    bases.append(str(base))
+                else:
+                    try:
+                        bases.append(ast.unparse(base))
+                    except AttributeError:
+                        bases.append(str(base))
             end_line_class = getattr(node, "end_lineno", node.lineno)
             class_cst_node = find_node_by_range(
                 cst_tree.tree_id, node.lineno, end_line_class, prefer_exact=True

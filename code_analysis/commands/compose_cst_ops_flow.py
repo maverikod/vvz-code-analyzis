@@ -19,7 +19,8 @@ from typing import Any, Dict, List, Optional
 from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 
 from ..core.backup_manager import BackupManager
-from ..core.cst_module import apply_replace_ops
+from ..core.cst_module import ReplaceOp, Selector, apply_replace_ops
+from ..core.cst_tree.tree_builder import get_tree
 from ..core.exceptions import CSTModulePatchError
 from ..core.git_integration import commit_after_write
 from .base_mcp_command import BaseMCPCommand
@@ -42,11 +43,13 @@ async def run_ops_mode(
     commit_message: Optional[str],
     t_start: float,
     t_prev: float,
+    tree_id: Optional[str] = None,
 ) -> SuccessResult | ErrorResult:
     """
     Execute ops-based compose: build ReplaceOp list, apply_replace_ops, optionally write.
 
     When apply=false, only return diff/stats. When apply=true, backup + validate + write.
+    When ops contain selector kind node_id (UUID4), tree_id from cst_load_file is required.
     """
     target_path = (root_path / file_path).resolve()
     if target_path.suffix != ".py":
@@ -64,6 +67,52 @@ async def run_ops_mode(
             code="INVALID_OPS",
             details={"ops": ops},
         )
+
+    has_node_id_ops = any(
+        op.selector.kind == "node_id" and op.selector.node_id for op in replace_ops
+    )
+    if has_node_id_ops:
+        if not tree_id or not str(tree_id).strip():
+            return ErrorResult(
+                message="tree_id is required when ops contain selector kind node_id (UUID4)",
+                code="INVALID_PARAMS",
+                details={"hint": "Use tree_id from cst_load_file of the same file"},
+            )
+        tree = get_tree(tree_id)
+        if not tree:
+            return ErrorResult(
+                message=f"Tree not found: {tree_id}",
+                code="TREE_NOT_FOUND",
+                details={"tree_id": tree_id},
+            )
+        resolved: List[ReplaceOp] = []
+        for op in replace_ops:
+            sel = op.selector
+            if sel.kind == "node_id" and sel.node_id:
+                meta = tree.metadata_map.get(sel.node_id)
+                if not meta:
+                    return ErrorResult(
+                        message=f"Node not found in tree: {sel.node_id}",
+                        code="NODE_NOT_FOUND",
+                        details={"node_id": sel.node_id, "tree_id": tree_id},
+                    )
+                range_sel = Selector(
+                    kind="range",
+                    start_line=meta.start_line,
+                    start_col=meta.start_col,
+                    end_line=meta.end_line,
+                    end_col=meta.end_col,
+                )
+                resolved.append(
+                    ReplaceOp(
+                        selector=range_sel,
+                        new_code=op.new_code,
+                        file_docstring=op.file_docstring,
+                    )
+                )
+            else:
+                resolved.append(op)
+        replace_ops = resolved
 
     if target_path.exists():
         try:
@@ -135,13 +184,28 @@ async def run_ops_mode(
                 file_id = file_record["id"]
                 file_data_backup = backup_file_data(database, file_id)
 
-        if create_backup and file_exists:
+        # Mandatory backup before overwriting existing file (versions / old_code)
+        if file_exists:
             backup_manager = BackupManager(root_path)
             backup_uuid = backup_manager.create_backup(
                 target_path,
                 command="compose_cst_module",
                 comment=commit_message or "",
             )
+            if not backup_uuid:
+                if temp_file and temp_file.exists():
+                    try:
+                        temp_file.unlink()
+                    except Exception:
+                        pass
+                return ErrorResult(
+                    message=(
+                        "Backup to old_code (versions) is mandatory before write; "
+                        "create_backup failed. Aborting compose_cst_module."
+                    ),
+                    code="BACKUP_REQUIRED",
+                    details={"file_path": str(target_path)},
+                )
 
         transaction_id = database.begin_transaction()
         if not transaction_id:

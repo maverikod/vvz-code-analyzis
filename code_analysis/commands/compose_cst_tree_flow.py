@@ -23,6 +23,7 @@ from ..core.cst_tree.tree_metadata import get_node_metadata
 from ..core.cst_tree.models import TreeOperation, TreeOperationType
 from ..core.cst_tree.tree_modifier import modify_tree
 from ..core.git_integration import commit_after_write
+from ..core.uuid_validation import is_valid_uuid4
 from .base_mcp_command import BaseMCPCommand
 from .compose_cst_db import backup_file_data
 from .compose_cst_writer import apply_changes, validate_and_write_temp
@@ -96,6 +97,12 @@ def run_tree_id_flow(
     file_exists = target_path.exists()
 
     if node_id:
+        if not is_valid_uuid4(node_id):
+            return ErrorResult(
+                message="node_id must be a valid UUID4",
+                code="INVALID_NODE_ID",
+                details={"node_id": node_id, "file_path": str(target_path)},
+            )
         if not file_exists:
             return ErrorResult(
                 message="File does not exist. Cannot attach branch to node in non-existent file.",
@@ -190,6 +197,20 @@ def run_tree_id_flow(
                 command="compose_cst_module",
                 comment=commit_message or "",
             )
+            if not backup_uuid:
+                if temp_file and temp_file.exists():
+                    try:
+                        temp_file.unlink()
+                    except Exception:
+                        pass
+                return ErrorResult(
+                    message=(
+                        "Backup to old_code (versions) is mandatory before write; "
+                        "create_backup failed. Aborting compose_cst_module."
+                    ),
+                    code="BACKUP_REQUIRED",
+                    details={"file_path": str(target_path)},
+                )
         _t = time.perf_counter()
         logger.info(
             "[PROFILE] compose_cst_module step=8 create_file_backup elapsed=%.3fs",

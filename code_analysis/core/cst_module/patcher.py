@@ -16,8 +16,9 @@ import libcst as cst
 from libcst.metadata import MetadataWrapper, PositionProvider
 
 from ...cst_query import query_source
-from .blocks import list_cst_blocks
 from ..exceptions import CSTModulePatchError
+from ..uuid_validation import is_valid_uuid4
+from .blocks import list_cst_blocks
 from .models import BlockInfo, ReplaceOp, Selector
 from .utils import move_module_imports_to_top
 
@@ -350,22 +351,16 @@ def apply_replace_ops(source: str, ops: list[ReplaceOp]) -> tuple[str, dict[str,
             continue
 
         if sel.kind == "node_id" and sel.node_id:
-            kind, span_key = _parse_node_id(sel.node_id)
-            if kind in ("stmt", "function", "class", "method"):
-                new_stmts = _parse_snippet_as_module_body(op.new_code)
-                stmt_replacements_by_span[span_key] = new_stmts
-                replaced += 1 if new_stmts else 0
-                removed += 0 if new_stmts else 1
-            elif kind == "smallstmt":
-                new_small = _parse_small_stmt_snippet(op.new_code)
-                small_replacements_by_span[span_key] = new_small
-                replaced += 1 if new_small else 0
-                removed += 0 if new_small else 1
-            else:
-                raise CSTModulePatchError(
-                    f"node_id replacement supports only stmt/smallstmt/function/class/method nodes, got {kind}"
-                )
-            continue
+            if not is_valid_uuid4(sel.node_id):
+                raise CSTModulePatchError("node_id must be a valid UUID4 for mutation")
+            # UUID4 node_id is resolved to span by the caller (run_ops_mode) using
+            # tree_id and tree.metadata_map; the caller replaces node_id selector
+            # with range selector before calling apply_replace_ops. So we should
+            # not reach here with UUID4. If we do, reject (no fallback).
+            raise CSTModulePatchError(
+                "node_id (UUID4) must be resolved to range by caller using tree_id; "
+                "pass tree_id when using ops with node_id selector"
+            )
 
         if sel.kind == "cst_query" and sel.query:
             matches = query_source(source, sel.query, include_code=False)

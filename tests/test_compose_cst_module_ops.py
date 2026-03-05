@@ -62,6 +62,18 @@ def test_selector_from_dict_node_id_required():
         ComposeCSTModuleCommand._selector_from_dict({"kind": "node_id"})
 
 
+def test_selector_from_dict_node_id_must_be_uuid4():
+    """Selector kind 'node_id' requires valid UUID4 value."""
+    with pytest.raises(ValueError, match="UUID4"):
+        ComposeCSTModuleCommand._selector_from_dict(
+            {"kind": "node_id", "node_id": "not-a-uuid"}
+        )
+    with pytest.raises(ValueError, match="UUID4"):
+        ComposeCSTModuleCommand._selector_from_dict(
+            {"kind": "node_id", "node_id": "function:foo:FunctionDef:1:0-10:0"}
+        )
+
+
 def test_selector_from_dict_cst_query_requires_query():
     """Selector kind 'cst_query' requires query."""
     with pytest.raises(ValueError, match="query"):
@@ -116,6 +128,16 @@ def test_selector_from_dict_valid_block_id():
     )
     assert sel.kind == "block_id"
     assert sel.block_id == "abc-123"
+
+
+def test_selector_from_dict_valid_node_id_uuid4():
+    """Valid node_id selector (UUID4) builds Selector."""
+    uid = "8772a086-688d-4198-a0c4-f03817cc0e6c"
+    sel = ComposeCSTModuleCommand._selector_from_dict(
+        {"kind": "node_id", "node_id": uid}
+    )
+    assert sel.kind == "node_id"
+    assert sel.node_id == uid
 
 
 def test_selector_from_dict_valid_cst_query():
@@ -252,8 +274,8 @@ async def test_execute_requires_either_tree_id_or_ops():
 
 
 @pytest.mark.asyncio
-async def test_execute_rejects_both_tree_id_and_ops():
-    """Execute returns error when both tree_id and ops provided."""
+async def test_execute_accepts_tree_id_with_ops():
+    """Execute accepts both tree_id and ops (tree_id used for node_id resolution in ops)."""
     cmd = ComposeCSTModuleCommand()
     result = await cmd.execute(
         project_id=str(uuid.uuid4()),
@@ -263,9 +285,9 @@ async def test_execute_rejects_both_tree_id_and_ops():
             {"selector": {"kind": "function", "name": "f"}, "new_code": "def f(): pass"}
         ],
     )
+    # With both tree_id and ops we run ops mode; without real project we get project/db error
     assert isinstance(result, ErrorResult)
-    assert result.code == "INVALID_PARAMS"
-    assert "not both" in result.message
+    assert result.code != "INVALID_PARAMS"
 
 
 @pytest.mark.asyncio

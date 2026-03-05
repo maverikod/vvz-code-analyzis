@@ -12,6 +12,7 @@ from __future__ import annotations
 from typing import Any, Dict, List
 
 from ..core.cst_module import ReplaceOp, Selector
+from ..core.uuid_validation import is_valid_uuid4
 
 # Selector kinds supported by apply_replace_ops (for validation and docs).
 SUPPORTED_SELECTOR_KINDS = frozenset(
@@ -64,6 +65,10 @@ def selector_from_dict(d: Dict[str, Any]) -> Selector:
     elif kind == "node_id":
         if not node_id:
             raise ValueError("selector kind 'node_id' requires node_id")
+        if not is_valid_uuid4(str(node_id)):
+            raise ValueError(
+                "selector kind 'node_id' requires a valid UUID4; invalid value"
+            )
     elif kind == "cst_query":
         if not query:
             raise ValueError("selector kind 'cst_query' requires query")

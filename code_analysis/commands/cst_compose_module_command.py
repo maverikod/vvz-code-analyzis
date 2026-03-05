@@ -102,11 +102,11 @@ class ComposeCSTModuleCommand(BaseMCPCommand):
                 },
                 "node_id": {
                     "type": "string",
-                    "description": "Node ID to attach branch to (tree_id mode only). If empty - overwrite file with branch.",
+                    "description": "Node ID (UUID4) to attach branch to (tree_id mode only). If empty - overwrite file with branch. Must be valid UUID4.",
                 },
                 "ops": {
                     "type": "array",
-                    "description": "List of replace operations (ops mode). Each item: { selector: { kind, ... }, new_code [, file_docstring ] }. Selector kinds: module, function, class, method, range, block_id, node_id, cst_query.",
+                    "description": "List of replace operations (ops mode). Each item: { selector: { kind, ... }, new_code [, file_docstring ] }. Selector kinds: module, function, class, method, range, block_id, node_id (UUID4), cst_query. When ops contain node_id selector, tree_id is required.",
                     "items": {
                         "type": "object",
                         "properties": {
@@ -253,15 +253,7 @@ class ComposeCSTModuleCommand(BaseMCPCommand):
 
         has_tree = tree_id is not None and str(tree_id).strip() != ""
         has_ops = ops is not None and len(ops) > 0
-        if has_tree and has_ops:
-            return ErrorResult(
-                message="Provide either tree_id or ops, not both",
-                code="INVALID_PARAMS",
-                details={
-                    "hint": "Use tree_id for branch attach or ops for selector-based patches"
-                },
-            )
-        if not has_tree and not has_ops:
+        if not has_ops and not has_tree:
             return ErrorResult(
                 message="Either tree_id or ops is required",
                 code="INVALID_PARAMS",
@@ -310,6 +302,7 @@ class ComposeCSTModuleCommand(BaseMCPCommand):
                     commit_message=commit_message,
                     t_start=t_start,
                     t_prev=_t,
+                    tree_id=tree_id,
                 )
 
             return run_tree_id_flow(

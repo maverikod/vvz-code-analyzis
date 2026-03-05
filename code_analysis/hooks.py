@@ -154,6 +154,7 @@ def register_code_analysis_commands(reg: registry) -> None:
             GetImportsMCPCommand,
             ListCodeEntitiesMCPCommand,
             ListProjectFilesMCPCommand,
+            ReadOnlyBatchMCPCommand,
             SearchASTNodesMCPCommand,
         )
 
@@ -170,6 +171,7 @@ def register_code_analysis_commands(reg: registry) -> None:
         reg.register(GetClassHierarchyMCPCommand, "custom")
         reg.register(FindUsagesMCPCommand, "custom")
         reg.register(ExportGraphMCPCommand, "custom")
+        reg.register(ReadOnlyBatchMCPCommand, "custom")
     except ImportError:
         pass
 
@@ -387,6 +389,7 @@ def register_code_analysis_commands(reg: registry) -> None:
         from .commands.file_management_mcp_commands import (
             CleanupDeletedFilesMCPCommand,
             CollapseVersionsMCPCommand,
+            DeleteFileMCPCommand,
             ListDeletedFilesMCPCommand,
             RepairDatabaseMCPCommand,
             RestoreDeletedFilesMCPCommand,
@@ -394,6 +397,7 @@ def register_code_analysis_commands(reg: registry) -> None:
         )
 
         reg.register(CleanupDeletedFilesMCPCommand, "custom")
+        reg.register(DeleteFileMCPCommand, "custom")
         reg.register(ListDeletedFilesMCPCommand, "custom")
         reg.register(UnmarkDeletedFileMCPCommand, "custom")
         reg.register(RestoreDeletedFilesMCPCommand, "custom")

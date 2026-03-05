@@ -25,6 +25,7 @@ from .ast import (  # noqa: F401
     ListProjectFilesMCPCommand,
     SearchASTNodesMCPCommand,
 )
+from .read_only_batch_mcp_command import ReadOnlyBatchMCPCommand
 
 __all__ = [
     "GetASTMCPCommand",
@@ -40,4 +41,5 @@ __all__ = [
     "GetClassHierarchyMCPCommand",
     "FindUsagesMCPCommand",
     "ExportGraphMCPCommand",
+    "ReadOnlyBatchMCPCommand",
 ]

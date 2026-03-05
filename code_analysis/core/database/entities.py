@@ -7,9 +7,46 @@ email: vasilyvz@gmail.com
 
 import json
 import logging
+import uuid
 from typing import List, Optional
 
 logger = logging.getLogger(__name__)
+
+
+def _validate_cst_node_id_uuid4(cst_node_id: str, entity_kind: str) -> None:
+    """
+    Validate that cst_node_id is non-empty and valid UUID4. Fail-fast with explicit error.
+
+    Args:
+        cst_node_id: Value to validate.
+        entity_kind: Label for error message (e.g. 'class', 'method', 'function').
+
+    Raises:
+        ValueError: If cst_node_id is missing, empty, or not a valid UUID4.
+    """
+    if not cst_node_id or not isinstance(cst_node_id, str):
+        raise ValueError(
+            f"cst_node_id for {entity_kind} is required and must be a non-empty string; got {type(cst_node_id).__name__!r}"
+        )
+    s = cst_node_id.strip()
+    if not s:
+        raise ValueError(
+            f"cst_node_id for {entity_kind} must be non-empty (got whitespace-only)"
+        )
+    try:
+        u = uuid.UUID(s, version=4)
+        if str(u) != s:
+            raise ValueError(
+                f"cst_node_id for {entity_kind} must be canonical UUID4 string; got {cst_node_id!r}"
+            )
+    except (ValueError, TypeError) as e:
+        if isinstance(e, ValueError) and "version" in str(e).lower():
+            raise ValueError(
+                f"cst_node_id for {entity_kind} must be valid UUID4; got {cst_node_id!r}"
+            ) from e
+        raise ValueError(
+            f"cst_node_id for {entity_kind} must be valid UUID4; got {cst_node_id!r}"
+        ) from e
 
 
 def add_class(
@@ -20,6 +57,7 @@ def add_class(
     docstring: Optional[str],
     bases: List[str],
     end_line: Optional[int] = None,
+    cst_node_id: Optional[str] = None,
 ) -> int:
     """
     Add class to database.
@@ -31,17 +69,22 @@ def add_class(
         docstring: Class docstring
         bases: List of base class names
         end_line: Optional end line (for entity cross-ref resolution)
+        cst_node_id: CST node ID (UUID4); required for entity writes.
 
     Returns:
         Class ID
+
+    Raises:
+        ValueError: If cst_node_id is missing, empty, or not valid UUID4.
     """
+    _validate_cst_node_id_uuid4(cst_node_id or "", "class")
     bases_json = json.dumps(bases)
     self._execute(
         """
-        INSERT OR REPLACE INTO classes (file_id, name, line, end_line, docstring, bases)
-        VALUES (?, ?, ?, ?, ?, ?)
+        INSERT OR REPLACE INTO classes (file_id, name, line, end_line, docstring, bases, cst_node_id)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
         """,
-        (file_id, name, line, end_line, docstring, bases_json),
+        (file_id, name, line, end_line, docstring, bases_json, cst_node_id),
     )
     if not self._in_transaction():
         self._commit()
@@ -59,6 +102,7 @@ def add_method(
     docstring: Optional[str],
     complexity: Optional[int] = None,
     end_line: Optional[int] = None,
+    cst_node_id: Optional[str] = None,
 ) -> int:
     """
     Add method to database.
@@ -71,17 +115,22 @@ def add_method(
         docstring: Method docstring
         complexity: Cyclomatic complexity (optional)
         end_line: Optional end line (for entity cross-ref resolution)
+        cst_node_id: CST node ID (UUID4); required for entity writes.
 
     Returns:
         Method ID
+
+    Raises:
+        ValueError: If cst_node_id is missing, empty, or not valid UUID4.
     """
+    _validate_cst_node_id_uuid4(cst_node_id or "", "method")
     args_json = json.dumps(args)
     self._execute(
         """
-        INSERT OR REPLACE INTO methods (class_id, name, line, end_line, args, docstring)
-        VALUES (?, ?, ?, ?, ?, ?)
+        INSERT OR REPLACE INTO methods (class_id, name, line, end_line, args, docstring, cst_node_id)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
         """,
-        (class_id, name, line, end_line, args_json, docstring),
+        (class_id, name, line, end_line, args_json, docstring, cst_node_id),
     )
     if not self._in_transaction():
         self._commit()
@@ -99,6 +148,7 @@ def add_function(
     docstring: Optional[str],
     complexity: Optional[int] = None,
     end_line: Optional[int] = None,
+    cst_node_id: Optional[str] = None,
 ) -> int:
     """
     Add function to database.
@@ -111,17 +161,22 @@ def add_function(
         docstring: Function docstring
         complexity: Cyclomatic complexity (optional)
         end_line: Optional end line (for entity cross-ref resolution)
+        cst_node_id: CST node ID (UUID4); required for entity writes.
 
     Returns:
         Function ID
+
+    Raises:
+        ValueError: If cst_node_id is missing, empty, or not valid UUID4.
     """
+    _validate_cst_node_id_uuid4(cst_node_id or "", "function")
     args_json = json.dumps(args)
     self._execute(
         """
-        INSERT OR REPLACE INTO functions (file_id, name, line, end_line, args, docstring)
-        VALUES (?, ?, ?, ?, ?, ?)
+        INSERT OR REPLACE INTO functions (file_id, name, line, end_line, args, docstring, cst_node_id)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
         """,
-        (file_id, name, line, end_line, args_json, docstring),
+        (file_id, name, line, end_line, args_json, docstring, cst_node_id),
     )
     if not self._in_transaction():
         self._commit()

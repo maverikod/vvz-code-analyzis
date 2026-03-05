@@ -8,9 +8,42 @@ email: vasilyvz@gmail.com
 import ast
 import logging
 from pathlib import Path
-from typing import Dict, List, Any, Optional
+from typing import Any, Dict, List, Optional
+
+from code_analysis.core.constants import (
+    FILE_MODIFICATION_TOLERANCE,
+    LAST_MODIFIED_EPSILON,
+)
 
 logger = logging.getLogger(__name__)
+
+# Julian day for 1970-01-01 00:00:00 UTC (normalize last_modified to Unix)
+_JD_UNIX_EPOCH = 2440587.5
+
+
+def _last_modified_to_unix(value: Any) -> Optional[float]:
+    """Normalize last_modified from DB to Unix timestamp for comparison with os.stat().st_mtime.
+
+    files.last_modified may be stored as Unix timestamp, datetime (Julian convention),
+    or raw float. Converts to Unix seconds for comparison.
+
+    Args:
+        value: last_modified from DB: None, datetime, or float (Unix or Julian).
+
+    Returns:
+        Unix timestamp (seconds since 1970-01-01 UTC) or None.
+    """
+    if value is None:
+        return None
+    if hasattr(value, "timestamp"):
+        return value.timestamp()
+    try:
+        v = float(value)
+        if v >= 1e9:
+            return v
+        return (v - _JD_UNIX_EPOCH) * 86400.0
+    except (TypeError, ValueError):
+        return None
 
 
 def get_file_by_path(
@@ -276,11 +309,54 @@ def delete_file(self, file_id: int) -> None:
     self._commit()
 
 
+def _clear_file_vectors(self, file_id: int) -> None:
+    """Clear code_chunks and vector_index entries for a file only.
+
+    Entity ids (classes, functions, methods) are read before any deletions
+    so that vector_index rows for class/function/method can be removed.
+    Does not commit; caller is responsible for commit.
+    """
+    class_ids = [
+        row["id"]
+        for row in self._fetchall(
+            "SELECT id FROM classes WHERE file_id = ?", (file_id,)
+        )
+    ]
+    function_ids = [
+        row["id"]
+        for row in self._fetchall(
+            "SELECT id FROM functions WHERE file_id = ?", (file_id,)
+        )
+    ]
+    method_ids = [
+        row["id"]
+        for row in self._fetchall(
+            "SELECT m.id FROM methods m JOIN classes c ON m.class_id = c.id "
+            "WHERE c.file_id = ?",
+            (file_id,),
+        )
+    ]
+    entity_ids = class_ids + function_ids + method_ids
+    self._execute("DELETE FROM code_chunks WHERE file_id = ?", (file_id,))
+    self._execute(
+        "DELETE FROM vector_index WHERE entity_type = 'file' AND entity_id = ?",
+        (file_id,),
+    )
+    if entity_ids:
+        placeholders = ",".join("?" * len(entity_ids))
+        self._execute(
+            "DELETE FROM vector_index WHERE entity_type IN "
+            "('class', 'function', 'method') AND entity_id IN (" + placeholders + ")",
+            tuple(entity_ids),
+        )
+
+
 def clear_file_data(self, file_id: int) -> None:
     """
     Clear all data for a file.
 
     Removes all related data including:
+    - code chunks and vector index (via _clear_file_vectors, entity ids fetched first)
     - classes and their methods
     - functions
     - imports
@@ -289,18 +365,15 @@ def clear_file_data(self, file_id: int) -> None:
     - code_content and FTS index
     - AST trees
     - CST trees
-    - code chunks
-    - vector index entries
 
-    NOTE: When FAISS is implemented, this method should:
-    1. Get all vector_ids from code_chunks for this file_id
-    2. Remove these vectors from FAISS index
-    3. Then delete from database
-    This ensures FAISS stays in sync when files are updated.
+    Vector cleanup uses _clear_file_vectors so entity ids are read before any deletions.
     """
-    self.delete_entity_cross_ref_for_file(file_id)
+    self._clear_file_vectors(file_id)
+
     class_rows = self._fetchall("SELECT id FROM classes WHERE file_id = ?", (file_id,))
     class_ids = [row["id"] for row in class_rows]
+
+    self.delete_entity_cross_ref_for_file(file_id)
     content_rows = self._fetchall(
         "SELECT id FROM code_content WHERE file_id = ?", (file_id,)
     )
@@ -314,7 +387,8 @@ def clear_file_data(self, file_id: int) -> None:
     if class_ids:
         placeholders = ",".join("?" * len(class_ids))
         self._execute(
-            f"DELETE FROM methods WHERE class_id IN ({placeholders})", tuple(class_ids)
+            f"DELETE FROM methods WHERE class_id IN ({placeholders})",
+            tuple(class_ids),
         )
     self._execute("DELETE FROM classes WHERE file_id = ?", (file_id,))
     self._execute("DELETE FROM functions WHERE file_id = ?", (file_id,))
@@ -324,28 +398,6 @@ def clear_file_data(self, file_id: int) -> None:
     self._execute("DELETE FROM code_content WHERE file_id = ?", (file_id,))
     self._execute("DELETE FROM ast_trees WHERE file_id = ?", (file_id,))
     self._execute("DELETE FROM cst_trees WHERE file_id = ?", (file_id,))
-    vector_rows = self._fetchall(
-        "SELECT vector_id FROM code_chunks WHERE file_id = ? AND vector_id IS NOT NULL",
-        (file_id,),
-    )
-    # Store vector_ids for future FAISS cleanup
-    _ = [row["vector_id"] for row in vector_rows]
-    self._execute("DELETE FROM code_chunks WHERE file_id = ?", (file_id,))
-    entity_rows = self._fetchall(
-        "\n            SELECT id FROM classes WHERE file_id = ?\n            UNION\n            SELECT id FROM functions WHERE file_id = ?\n        ",
-        (file_id, file_id),
-    )
-    entity_ids = [row["id"] for row in entity_rows]
-    self._execute(
-        "DELETE FROM vector_index WHERE entity_type = 'file' AND entity_id = ?",
-        (file_id,),
-    )
-    if entity_ids:
-        placeholders = ",".join("?" * len(entity_ids))
-        self._execute(
-            f"\n                DELETE FROM vector_index\n                WHERE entity_type IN ('class', 'function', 'method')\n                AND entity_id IN ({placeholders})\n            ",
-            tuple(entity_ids),
-        )
     self._commit()
 
 
@@ -468,6 +520,39 @@ def update_file_data(
         except Exception:
             current_mtime = file_record.get("last_modified", 0)
 
+        # Skip full reindex if file exists and stored last_modified matches disk mtime
+        normalized_lm = _last_modified_to_unix(file_record.get("last_modified"))
+        if (
+            Path(abs_path).exists()
+            and normalized_lm is not None
+            and abs(normalized_lm - current_mtime) <= FILE_MODIFICATION_TOLERANCE
+        ):
+            try:
+                self._clear_file_vectors(file_id)
+                self._execute(
+                    "UPDATE files SET needs_chunking = 1 WHERE id = ?",
+                    (file_id,),
+                )
+                self._commit()
+            except Exception as e:
+                logger.error(
+                    "Error clearing vectors / setting needs_chunking on skip: %s",
+                    e,
+                    exc_info=True,
+                )
+                return {
+                    "success": False,
+                    "error": f"Failed on skip path: {e}",
+                    "file_path": abs_path,
+                    "file_id": file_id,
+                }
+            return {
+                "success": True,
+                "file_path": abs_path,
+                "file_id": file_id,
+                "skipped": True,
+            }
+
         # Clear all old records (including CST trees - fixed in Phase 1)
         try:
             self.clear_file_data(file_id)
@@ -483,10 +568,8 @@ def update_file_data(
             }
 
         # Update last_modified to be slightly different from file_mtime
-        # This ensures _analyze_file will process the file and save AST/CST
-        # We add a small epsilon to ensure last_modified != file_mtime
-        epsilon = 0.001
-        updated_mtime = current_mtime + epsilon
+        # so _analyze_file will process the file; overwritten with real mtime after success
+        updated_mtime = current_mtime + LAST_MODIFIED_EPSILON
         try:
             self._execute(
                 """
@@ -595,6 +678,21 @@ def update_file_data(
                 + result.get("methods", 0)
             )
 
+            # After successful full reindex, set last_modified to actual disk mtime
+            try:
+                disk_mtime = Path(abs_path).stat().st_mtime
+                self._execute(
+                    "UPDATE files SET last_modified = ? WHERE id = ?",
+                    (disk_mtime, file_id),
+                )
+                self._commit()
+            except Exception as e:
+                logger.warning(
+                    "Failed to update last_modified after reindex for %s: %s",
+                    abs_path,
+                    e,
+                )
+
             # Clear indexing error for this file on successful write
             try:
                 self._execute(
@@ -604,6 +702,21 @@ def update_file_data(
                 self._commit()
             except Exception:
                 pass
+
+            # Clear needs_chunking so direct callers (refactor, cst_save_tree, etc.)
+            # get same behavior as index_file RPC: file is fully reindexed, no re-chunk request
+            try:
+                self._execute(
+                    "UPDATE files SET needs_chunking = 0 WHERE id = ?",
+                    (file_id,),
+                )
+                self._commit()
+            except Exception as e:
+                logger.warning(
+                    "Failed to clear needs_chunking after reindex for %s: %s",
+                    abs_path,
+                    e,
+                )
 
             return {
                 "success": True,
@@ -1048,8 +1161,11 @@ def mark_file_deleted(
     Otherwise version_dir is used (backward compat). Replace-if-exists: if the same
     project_id+original_path is already in trash, the old file is removed before move.
 
+    Path resolution: project root is taken from the projects table (get_project(project_id));
+    relative file_path is resolved against that root.
+
     Args:
-        file_path: Original file path (will be normalized to absolute and moved)
+        file_path: Original file path (relative to project root or absolute; normalized and moved)
         project_id: Project ID
         version_dir: Legacy directory for deleted files (used when trash_dir is None)
         reason: Optional reason for deletion
@@ -1071,7 +1187,7 @@ def mark_file_deleted(
         logger.error("mark_file_deleted: either trash_dir or version_dir must be set")
         return False
 
-    # Try to get project root from database for validation
+    # Resolve project root from projects table
     project_root = None
     try:
         db_project = self.get_project(project_id)
@@ -1636,6 +1752,21 @@ def update_file_data_atomic(
                 "file_id": file_id,
             }
 
+        # Build in-memory CST tree for entity-to-node resolution (cst_node_id).
+        from ..cst_tree.tree_builder import create_tree_from_code
+        from ..cst_tree.tree_range_finder import find_node_by_range
+
+        try:
+            cst_tree = create_tree_from_code(abs_path, source_code)
+        except Exception as e:
+            logger.error(f"Error building CST for {file_path}: {e}", exc_info=True)
+            return {
+                "success": False,
+                "error": f"Failed to build CST: {e}",
+                "file_path": abs_path,
+                "file_id": file_id,
+            }
+
         # Save CST tree in transaction
         cst_hash = hashlib.sha256(source_code.encode()).hexdigest()
         try:
@@ -1705,6 +1836,16 @@ def update_file_data_atomic(
                         except AttributeError:
                             bases.append(str(base))
                 end_line_class = getattr(node, "end_lineno", node.lineno)
+                class_cst_node = find_node_by_range(
+                    cst_tree.tree_id,
+                    node.lineno,
+                    end_line_class,
+                    prefer_exact=True,
+                )
+                if not class_cst_node:
+                    raise ValueError(
+                        f"No CST node found for class {node.name!r} at line {node.lineno}-{end_line_class} in {abs_path}"
+                    )
                 class_id = self.add_class(
                     file_id,
                     node.name,
@@ -1712,6 +1853,7 @@ def update_file_data_atomic(
                     docstring,
                     bases,
                     end_line=end_line_class,
+                    cst_node_id=class_cst_node.node_id,
                 )
                 classes_added += 1
                 class_nodes[node] = class_id
@@ -1750,6 +1892,16 @@ def update_file_data_atomic(
                             )
                             method_complexity = None
                         end_line_method = getattr(item, "end_lineno", item.lineno)
+                        method_cst_node = find_node_by_range(
+                            cst_tree.tree_id,
+                            item.lineno,
+                            end_line_method,
+                            prefer_exact=True,
+                        )
+                        if not method_cst_node:
+                            raise ValueError(
+                                f"No CST node found for method {node.name!r}.{item.name!r} at line {item.lineno}-{end_line_method} in {abs_path}"
+                            )
                         method_id = self.add_method(
                             class_id,
                             item.name,
@@ -1758,6 +1910,7 @@ def update_file_data_atomic(
                             method_docstring,
                             complexity=method_complexity,
                             end_line=end_line_method,
+                            cst_node_id=method_cst_node.node_id,
                         )
                         methods_added += 1
 
@@ -1807,6 +1960,16 @@ def update_file_data_atomic(
                         )
                         function_complexity = None
                     end_line_func = getattr(node, "end_lineno", node.lineno)
+                    function_cst_node = find_node_by_range(
+                        cst_tree.tree_id,
+                        node.lineno,
+                        end_line_func,
+                        prefer_exact=True,
+                    )
+                    if not function_cst_node:
+                        raise ValueError(
+                            f"No CST node found for function {node.name!r} at line {node.lineno}-{end_line_func} in {abs_path}"
+                        )
                     function_id = self.add_function(
                         file_id,
                         node.name,
@@ -1815,6 +1978,7 @@ def update_file_data_atomic(
                         docstring,
                         complexity=function_complexity,
                         end_line=end_line_func,
+                        cst_node_id=function_cst_node.node_id,
                     )
                     functions_added += 1
 

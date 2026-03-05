@@ -7,9 +7,12 @@ email: vasilyvz@gmail.com
 
 import ast
 import logging
+from pathlib import Path
 from typing import Any, Dict, Tuple
 
 from ..core.complexity_analyzer import calculate_complexity
+from ..core.cst_tree.tree_builder import create_tree_from_code
+from ..core.cst_tree.tree_range_finder import find_node_by_range
 
 logger = logging.getLogger(__name__)
 
@@ -68,6 +71,14 @@ def index_entities(
     class_nodes: Dict[ast.ClassDef, int] = {}
     method_node_ids: set[int] = set()
 
+    # Build in-memory CST for cst_node_id resolution (required for entity writes).
+    try:
+        abs_path = str(Path(rel_path).resolve())
+        cst_tree = create_tree_from_code(abs_path, file_content)
+    except Exception as e:
+        logger.error("Failed to build CST for entity indexing in %s: %s", rel_path, e)
+        raise ValueError(f"Failed to build CST for {rel_path}: {e}") from e
+
     try:
         module_docstring = ast.get_docstring(tree)
     except Exception:
@@ -96,13 +107,27 @@ def index_entities(
             for base in node.bases:
                 if isinstance(base, ast.Name):
                     bases.append(base.id)
-                else:
-                    try:
-                        bases.append(ast.unparse(base))
-                    except AttributeError:
-                        bases.append(str(base))
+            else:
+                try:
+                    bases.append(ast.unparse(base))
+                except AttributeError:
+                    bases.append(str(base))
+            end_line_class = getattr(node, "end_lineno", node.lineno)
+            class_cst_node = find_node_by_range(
+                cst_tree.tree_id, node.lineno, end_line_class, prefer_exact=True
+            )
+            if not class_cst_node:
+                raise ValueError(
+                    f"No CST node found for class {node.name!r} at line {node.lineno}-{end_line_class} in {rel_path}"
+                )
             class_id = database.add_class(
-                file_id, node.name, node.lineno, docstring, bases
+                file_id,
+                node.name,
+                node.lineno,
+                docstring,
+                bases,
+                end_line=end_line_class,
+                cst_node_id=class_cst_node.node_id,
             )
             classes_added += 1
             class_nodes[node] = class_id
@@ -141,6 +166,17 @@ def index_entities(
                             e,
                         )
                         method_complexity = None
+                    end_line_method = getattr(item, "end_lineno", item.lineno)
+                    method_cst_node = find_node_by_range(
+                        cst_tree.tree_id,
+                        item.lineno,
+                        end_line_method,
+                        prefer_exact=True,
+                    )
+                    if not method_cst_node:
+                        raise ValueError(
+                            f"No CST node found for method {node.name!r}.{item.name!r} at line {item.lineno}-{end_line_method} in {rel_path}"
+                        )
                     method_id = database.add_method(
                         class_id,
                         item.name,
@@ -148,6 +184,8 @@ def index_entities(
                         method_args,
                         method_docstring,
                         complexity=method_complexity,
+                        end_line=end_line_method,
+                        cst_node_id=method_cst_node.node_id,
                     )
                     methods_added += 1
 
@@ -186,6 +224,17 @@ def index_entities(
                     e,
                 )
                 function_complexity = None
+            end_line_func = getattr(node, "end_lineno", node.lineno)
+            function_cst_node = find_node_by_range(
+                cst_tree.tree_id,
+                node.lineno,
+                end_line_func,
+                prefer_exact=True,
+            )
+            if not function_cst_node:
+                raise ValueError(
+                    f"No CST node found for function {node.name!r} at line {node.lineno}-{end_line_func} in {rel_path}"
+                )
             function_id = database.add_function(
                 file_id,
                 node.name,
@@ -193,6 +242,8 @@ def index_entities(
                 args,
                 docstring,
                 complexity=function_complexity,
+                end_line=end_line_func,
+                cst_node_id=function_cst_node.node_id,
             )
             functions_added += 1
 

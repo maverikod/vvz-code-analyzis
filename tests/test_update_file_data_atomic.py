@@ -115,7 +115,9 @@ def new_function():
         source_code=new_source,
     )
 
-    assert result.get("success") is True, f"Update should succeed: {result.get('error')}"
+    assert (
+        result.get("success") is True
+    ), f"Update should succeed: {result.get('error')}"
     assert result.get("file_id") == file_id, "File ID should match"
     assert result.get("ast_updated") is True, "AST should be updated"
     assert result.get("cst_updated") is True, "CST should be updated"
@@ -142,7 +144,9 @@ def new_function():
         "SELECT cst_code FROM cst_trees WHERE file_id = ?", (file_id,)
     )
     assert len(cst_records) > 0, "CST should be saved"
-    assert new_source in [r["cst_code"] for r in cst_records], "CST should contain new source"
+    assert new_source in [
+        r["cst_code"] for r in cst_records
+    ], "CST should contain new source"
 
 
 def test_update_file_data_atomic_rollback_on_parse_error(temp_db, test_file):
@@ -280,9 +284,23 @@ def test_update_file_data_atomic_clears_old_data(temp_db, test_file):
     """Test that atomic update clears old data."""
     file_id, file_path, project_id, root_dir = test_file
 
-    # First, add some old entities
-    old_class_id = temp_db.add_class(file_id, "OldClass", 1, "Old docstring", [])
-    old_function_id = temp_db.add_function(file_id, "old_function", 10, "", "Old docstring")
+    # First, add some old entities (cst_node_id required for entity writes)
+    old_class_id = temp_db.add_class(
+        file_id,
+        "OldClass",
+        1,
+        "Old docstring",
+        [],
+        cst_node_id="00000000-0000-4000-8000-000000000001",
+    )
+    old_function_id = temp_db.add_function(
+        file_id,
+        "old_function",
+        10,
+        "",
+        "Old docstring",
+        cst_node_id="00000000-0000-4000-8000-000000000002",
+    )
     temp_db._commit()
 
     # Begin transaction
@@ -336,7 +354,8 @@ def new_function():
     assert new_class is not None, "New class should exist"
 
     new_function = temp_db._fetchone(
-        "SELECT name FROM functions WHERE file_id = ? AND name = ?", (file_id, "new_function")
+        "SELECT name FROM functions WHERE file_id = ? AND name = ?",
+        (file_id, "new_function"),
     )
     assert new_function is not None, "New function should exist"
 
@@ -372,4 +391,3 @@ def test():
 
     # Rollback transaction
     temp_db.rollback_transaction()
-

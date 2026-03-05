@@ -5,11 +5,57 @@ Author: Vasiliy Zdanovskiy
 email: vasilyvz@gmail.com
 """
 
-from typing import Any, Dict, Optional
+import json
+import uuid
+from typing import Any, Dict, List, Optional
 
 from mcp_proxy_adapter.commands.result import SuccessResult
 
 from ..base_mcp_command import BaseMCPCommand
+
+
+def _is_valid_uuid4(value: Optional[str]) -> bool:
+    """Return True if value is non-empty and valid UUID4 string; otherwise False."""
+    if not value or not isinstance(value, str):
+        return False
+    s = value.strip()
+    if not s:
+        return False
+    try:
+        u = uuid.UUID(s, version=4)
+        return str(u) == s
+    except (ValueError, TypeError):
+        return False
+
+
+def _get_containing_cst_node_id(db: Any, file_id: int, line: int) -> Optional[str]:
+    """
+    Return cst_node_id of the smallest containing entity (class/function/method)
+    that contains the given line in the file, or None if none has valid cst_node_id.
+    """
+    q = """
+        SELECT cst_node_id FROM (
+            SELECT cst_node_id, line FROM classes
+            WHERE file_id = ? AND line <= ? AND (end_line IS NULL OR end_line >= ?)
+              AND cst_node_id IS NOT NULL AND trim(cst_node_id) != ''
+            UNION ALL
+            SELECT cst_node_id, line FROM functions
+            WHERE file_id = ? AND line <= ? AND (end_line IS NULL OR end_line >= ?)
+              AND cst_node_id IS NOT NULL AND trim(cst_node_id) != ''
+            UNION ALL
+            SELECT m.cst_node_id, m.line FROM methods m
+            JOIN classes c ON m.class_id = c.id
+            WHERE c.file_id = ? AND m.line <= ? AND (m.end_line IS NULL OR m.end_line >= ?)
+              AND m.cst_node_id IS NOT NULL AND trim(m.cst_node_id) != ''
+        ) ORDER BY line DESC LIMIT 1
+    """
+    params = (file_id, line, line) * 3
+    result = db.execute(q, params)
+    rows: List[Dict[str, Any]] = result.get("data", [])
+    if not rows:
+        return None
+    node_id = rows[0].get("cst_node_id")
+    return node_id if _is_valid_uuid4(node_id) else None
 
 
 class FindDependenciesMCPCommand(BaseMCPCommand):
@@ -78,8 +124,7 @@ class FindDependenciesMCPCommand(BaseMCPCommand):
             # - usages table: actual function calls, method calls, class instantiations
             # - imports table: module/class/function imports
             # - classes table: inheritance relationships (bases)
-            results = []
-            import json
+            results: List[Dict[str, Any]] = []
 
             # Search in imports table for class/function/module dependencies
             if entity_type in ("class", "function", "module", None):
@@ -100,10 +145,16 @@ class FindDependenciesMCPCommand(BaseMCPCommand):
                 result = db.execute(import_query, tuple(import_params))
                 import_rows = result.get("data", [])
                 for row in import_rows:
+                    cst_node_id = _get_containing_cst_node_id(
+                        db, row["file_id"], row["line"]
+                    )
+                    if not cst_node_id:
+                        continue
                     results.append(
                         {
                             "type": "import",
                             "file_path": row["file_path"],
+                            "cst_node_id": cst_node_id,
                             "line": row["line"],
                             "module": row.get("module"),
                             "name": row["name"],
@@ -142,10 +193,14 @@ class FindDependenciesMCPCommand(BaseMCPCommand):
                             bases = []
 
                     if entity_name in bases:
+                        node_id = row.get("cst_node_id")
+                        if not _is_valid_uuid4(node_id):
+                            continue
                         results.append(
                             {
                                 "type": "inheritance",
                                 "file_path": row["file_path"],
+                                "cst_node_id": node_id,
                                 "line": row["line"],
                                 "class_name": row["name"],
                                 "bases": bases,
@@ -179,10 +234,16 @@ class FindDependenciesMCPCommand(BaseMCPCommand):
                 result = db.execute(usage_query, tuple(usage_params))
                 usage_rows = result.get("data", [])
                 for row in usage_rows:
+                    cst_node_id = _get_containing_cst_node_id(
+                        db, row["file_id"], row["line"]
+                    )
+                    if not cst_node_id:
+                        continue
                     results.append(
                         {
                             "type": "usage",
                             "file_path": row["file_path"],
+                            "cst_node_id": cst_node_id,
                             "line": row["line"],
                             "target_name": row["target_name"],
                             "target_type": row["target_type"],
@@ -398,12 +459,15 @@ class FindDependenciesMCPCommand(BaseMCPCommand):
                         "entity_name": "Entity name that was searched",
                         "entity_type": "Entity type that was searched (or null)",
                         "dependencies": (
-                            "List of dependency dictionaries. Each contains:\n"
-                            "- type: 'usage' or 'import'\n"
+                            "List of dependency dictionaries. Each contains "
+                            "file_path and valid UUID4 cst_node_id (required).\n"
+                            "- type: 'usage', 'import', or 'inheritance'\n"
                             "- file_path: File where dependency occurs\n"
-                            "- line: Line number where dependency occurs\n"
+                            "- cst_node_id: Valid UUID4 CST node ID of the containing entity\n"
+                            "- line: Line number (auxiliary)\n"
                             "- For usages: target_name, target_type, target_class\n"
-                            "- For imports: module, name, import_type"
+                            "- For imports: module, name, import_type\n"
+                            "- For inheritance: class_name, bases"
                         ),
                         "count": "Number of dependencies found",
                     },
@@ -415,6 +479,7 @@ class FindDependenciesMCPCommand(BaseMCPCommand):
                             {
                                 "type": "usage",
                                 "file_path": "src/main.py",
+                                "cst_node_id": "550e8400-e29b-41d4-a716-446655440000",
                                 "line": 42,
                                 "target_name": "DataProcessor",
                                 "target_type": "class",
@@ -423,6 +488,7 @@ class FindDependenciesMCPCommand(BaseMCPCommand):
                             {
                                 "type": "usage",
                                 "file_path": "src/utils.py",
+                                "cst_node_id": "660e8400-e29b-41d4-a716-446655440001",
                                 "line": 15,
                                 "target_name": "DataProcessor",
                                 "target_type": "class",

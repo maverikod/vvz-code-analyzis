@@ -12,19 +12,71 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+import uuid
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 
 from .base_mcp_command import BaseMCPCommand
-from ..core.cst_tree.models import TreeOperation, TreeOperationType
+from ..core.cst_tree.models import (
+    ROOT_NODE_ID_SENTINEL,
+    TreeOperation,
+    TreeOperationType,
+)
 from ..core.cst_tree.tree_builder import get_tree, rollback_tree_to_code
 from ..core.cst_tree.tree_modifier import modify_tree
 from ..core.cst_tree.tree_saver import save_tree_to_file
 from ..cst_query import QueryParseError, query_source
 
 logger = logging.getLogger(__name__)
+
+
+class InvalidNodeIdError(ValueError):
+    """Raised when a mutation target ID is missing, empty, or not valid UUID4."""
+
+    pass
+
+
+def _is_valid_uuid4(value: Optional[str]) -> bool:
+    """Return True if value is non-empty and valid UUID4 string; otherwise False."""
+    if not value or not isinstance(value, str):
+        return False
+    s = value.strip()
+    if not s:
+        return False
+    try:
+        u = uuid.UUID(s, version=4)
+        return str(u) == s
+    except (ValueError, TypeError):
+        return False
+
+
+def _require_uuid4_mutation_target(
+    value: Optional[str],
+    field_name: str,
+    *,
+    allow_root: bool = False,
+) -> None:
+    """
+    Validate mutation target ID: must be non-empty and UUID4 (or __root__ if allowed).
+    Raises InvalidNodeIdError on failure (fail-fast).
+    """
+    if not value or not isinstance(value, str):
+        raise InvalidNodeIdError(
+            f"{field_name} is required and must be a non-empty UUID4 string; got empty or non-string"
+        )
+    s = value.strip()
+    if not s:
+        raise InvalidNodeIdError(
+            f"{field_name} must be a non-empty UUID4 string; got empty or whitespace"
+        )
+    if allow_root and s == ROOT_NODE_ID_SENTINEL:
+        return
+    if not _is_valid_uuid4(s):
+        raise InvalidNodeIdError(
+            f"{field_name} must be a valid UUID4 (e.g. from cst_find_node or cst_get_node_info); got {s!r}"
+        )
 
 
 def _find_tree_node_id_by_position(
@@ -379,6 +431,44 @@ class CSTModifyTreeCommand(BaseMCPCommand):
                         details={"action": action_str},
                     )
 
+                # UUID4-only mutation targets: validate before resolve/apply
+                try:
+                    if action == TreeOperationType.REPLACE_RANGE:
+                        start_nid = op_dict.get("start_node_id")
+                        end_nid = op_dict.get("end_node_id")
+                        if not start_nid or not end_nid:
+                            raise InvalidNodeIdError(
+                                "replace_range requires start_node_id and end_node_id (both non-empty UUID4)"
+                            )
+                        _require_uuid4_mutation_target(start_nid, "start_node_id")
+                        _require_uuid4_mutation_target(end_nid, "end_node_id")
+                    elif action == TreeOperationType.INSERT:
+                        parent_nid = op_dict.get("parent_node_id")
+                        target_nid = op_dict.get("target_node_id")
+                        if parent_nid is not None and parent_nid != "":
+                            _require_uuid4_mutation_target(
+                                parent_nid, "parent_node_id", allow_root=True
+                            )
+                        if target_nid:
+                            _require_uuid4_mutation_target(target_nid, "target_node_id")
+                    elif action == TreeOperationType.MOVE:
+                        move_node_id = op_dict.get("node_id")
+                        _require_uuid4_mutation_target(move_node_id, "node_id")
+                        parent_nid = op_dict.get("parent_node_id")
+                        if parent_nid is not None and parent_nid != "":
+                            _require_uuid4_mutation_target(
+                                parent_nid, "parent_node_id", allow_root=True
+                            )
+                except InvalidNodeIdError as e:
+                    return ErrorResult(
+                        message=str(e),
+                        code="INVALID_NODE_ID",
+                        details={
+                            "action": action_str,
+                            "hint": "Use UUID4 node_id from cst_find_node or cst_get_node_info",
+                        },
+                    )
+
                 pos_val = op_dict.get("position")
                 position_str: Optional[str] = None
                 position_after_index: Optional[int] = None
@@ -421,6 +511,17 @@ class CSTModifyTreeCommand(BaseMCPCommand):
                             },
                         )
                 if op_node_id:
+                    try:
+                        _require_uuid4_mutation_target(op_node_id, "node_id")
+                    except InvalidNodeIdError as e:
+                        return ErrorResult(
+                            message=str(e),
+                            code="INVALID_NODE_ID",
+                            details={
+                                "action": action_str,
+                                "hint": "Use UUID4 node_id from cst_find_node or cst_get_node_info",
+                            },
+                        )
                     node_ids_to_use = [op_node_id]
                 elif selector and action in (
                     TreeOperationType.REPLACE,
@@ -445,6 +546,23 @@ class CSTModifyTreeCommand(BaseMCPCommand):
                             code="SELECTOR_NO_MATCH",
                             details={"selector": selector},
                         )
+                elif action == TreeOperationType.REPLACE_RANGE:
+                    # Single op: start_node_id and end_node_id already validated as UUID4
+                    tree_operations.append(
+                        TreeOperation(
+                            action=action,
+                            node_id="",
+                            code=op_dict.get("code"),
+                            code_lines=op_dict.get("code_lines"),
+                            position=position_str,
+                            position_after_index=position_after_index,
+                            parent_node_id=op_dict.get("parent_node_id"),
+                            target_node_id=op_dict.get("target_node_id"),
+                            start_node_id=op_dict.get("start_node_id"),
+                            end_node_id=op_dict.get("end_node_id"),
+                        )
+                    )
+                    continue
                 else:
                     node_ids_to_use = [op_dict.get("node_id", "")]
 
@@ -637,6 +755,15 @@ class CSTModifyTreeCommand(BaseMCPCommand):
 
             return SuccessResult(data=data)
 
+        except InvalidNodeIdError as e:
+            return ErrorResult(
+                message=str(e),
+                code="INVALID_NODE_ID",
+                details={
+                    "tree_id": tree_id,
+                    "hint": "Mutation target IDs must be non-empty UUID4 (from cst_find_node or cst_get_node_info). Use __root__ only for parent_node_id.",
+                },
+            )
         except ValueError as e:
             # Extract detailed error information for better error messages
             error_msg = str(e)
@@ -958,6 +1085,15 @@ class CSTModifyTreeCommand(BaseMCPCommand):
                         "- For delete: exactly one of node_id or selector\n"
                         "- For insert: (parent_node_id OR target_node_id) must be provided, code must be valid Python, position must be 'before' or 'after'\n"
                         "All operations in a batch are validated before any are applied."
+                    ),
+                },
+                "INVALID_NODE_ID": {
+                    "description": "Mutation target ID is missing, empty, or not valid UUID4",
+                    "message": "node_id/parent_node_id/target_node_id/start_node_id/end_node_id must be non-empty UUID4",
+                    "solution": (
+                        "Use node_id from cst_find_node or cst_get_node_info (UUID4). "
+                        "For parent_node_id you may use __root__ for module-level. "
+                        "Selector is allowed for replace/delete and resolves to UUID4 internally."
                     ),
                 },
                 "CST_MODIFY_ERROR": {

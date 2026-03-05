@@ -305,6 +305,49 @@ class TestValidationReplaceDelete:
         assert "def foo()" in tree.module.code
 
 
+class TestInvalidNodeIdRejected:
+    """Mutation target IDs must be UUID4; invalid IDs rejected with INVALID_NODE_ID."""
+
+    @pytest.mark.asyncio
+    async def test_replace_with_non_uuid4_node_id_returns_invalid_node_id(
+        self, tree_with_import
+    ):
+        """Replace with legacy-style node_id (not UUID4) -> INVALID_NODE_ID."""
+        cmd = CSTModifyTreeCommand()
+        result = await cmd.execute(
+            tree_id=tree_with_import,
+            operations=[
+                {
+                    "action": "replace",
+                    "node_id": "function:foo:FunctionDef:10:0-20:0",
+                    "code_lines": ["def foo():", "    return 2"],
+                }
+            ],
+        )
+        assert isinstance(result, ErrorResult)
+        assert result.code == "INVALID_NODE_ID"
+        assert "UUID4" in result.message
+
+    @pytest.mark.asyncio
+    async def test_replace_with_empty_node_id_returns_invalid_node_id(
+        self, tree_with_import
+    ):
+        """Replace with empty node_id when selector not given -> validation error."""
+        cmd = CSTModifyTreeCommand()
+        result = await cmd.execute(
+            tree_id=tree_with_import,
+            operations=[
+                {
+                    "action": "replace",
+                    "node_id": "   ",
+                    "code_lines": ["x = 1"],
+                }
+            ],
+        )
+        assert isinstance(result, ErrorResult)
+        assert result.code == "INVALID_NODE_ID"
+
+
 class TestSelectorNoMatch:
     """Selector matches no nodes -> explicit error, no tree mutation."""
 

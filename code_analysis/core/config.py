@@ -15,6 +15,9 @@ from typing import List, Optional, Dict, Any
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 from .constants import (
+    DEFAULT_BATCH_MAX_RESPONSE_BYTES,
+    DEFAULT_BATCH_OUTPUT_DIR,
+    DEFAULT_BATCH_OUTPUT_RETENTION_SECONDS,
     DEFAULT_SERVER_HOST,
     DEFAULT_SERVER_PORT,
     DEFAULT_CHUNKER_PORT,
@@ -300,6 +303,24 @@ class ServerConfig(BaseModel):
         default=None,
         description="Indexing worker configuration (enabled, poll_interval, batch_size, log_path).",
     )
+    batch_max_response_bytes: int = Field(
+        default_factory=lambda: get_settings().get(
+            "batch_max_response_bytes", DEFAULT_BATCH_MAX_RESPONSE_BYTES
+        ),
+        description="Max inline response size in bytes for read-only batch; above this, output goes to file. Must be finite (no bypass of overflow-to-file).",
+    )
+    batch_output_dir: str = Field(
+        default_factory=lambda: get_settings().get(
+            "batch_output_dir", DEFAULT_BATCH_OUTPUT_DIR
+        ),
+        description="Directory for oversized batch output files. Must comply with project writable path policy.",
+    )
+    batch_output_retention_seconds: int = Field(
+        default_factory=lambda: get_settings().get(
+            "batch_output_retention_seconds", DEFAULT_BATCH_OUTPUT_RETENTION_SECONDS
+        ),
+        description="Retention in seconds for batch output files; 0 means no automatic cleanup.",
+    )
 
     @field_validator("port")
     @classmethod
@@ -356,6 +377,56 @@ class ServerConfig(BaseModel):
         """Validate vector dimension."""
         if v is not None and v <= 0:
             raise ValueError("Vector dimension must be positive")
+        return v
+
+    @field_validator("batch_max_response_bytes")
+    @classmethod
+    def validate_batch_max_response_bytes(cls, v: int) -> int:
+        """Ensure finite threshold; no hidden default that bypasses overflow-to-file."""
+        if v <= 0:
+            raise ValueError(
+                "batch_max_response_bytes must be positive (overflow-to-file contract)"
+            )
+        return v
+
+    @field_validator("batch_output_dir")
+    @classmethod
+    def validate_batch_output_dir(cls, v: str) -> str:
+        """Resolve path and enforce writable path policy (no system dirs)."""
+        if not v or not v.strip():
+            raise ValueError("batch_output_dir cannot be empty")
+        path = Path(v.strip()).resolve()
+        # Forbid writable path outside project policy: system/sensitive roots
+        forbidden_prefixes = (
+            "/etc",
+            "/usr",
+            "/bin",
+            "/sbin",
+            "/sys",
+            "/proc",
+            "/root",
+            "/boot",
+            "/lib",
+            "/lib64",
+            "/dev",
+        )
+        path_str = str(path)
+        for prefix in forbidden_prefixes:
+            if path_str == prefix or path_str.startswith(prefix + "/"):
+                raise ValueError(
+                    f"batch_output_dir must not be under system path: {prefix}"
+                )
+        if path_str == "/":
+            raise ValueError("batch_output_dir must not be filesystem root")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        return path_str
+
+    @field_validator("batch_output_retention_seconds")
+    @classmethod
+    def validate_batch_output_retention_seconds(cls, v: int) -> int:
+        """Retention must be non-negative."""
+        if v < 0:
+            raise ValueError("batch_output_retention_seconds must be >= 0")
         return v
 
 

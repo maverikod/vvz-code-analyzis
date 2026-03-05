@@ -331,3 +331,19 @@ FILE_WATCHER_IGNORE_PATTERNS: list[str] = [
     "**/.git/**",
     "**/node_modules/**",
 ]
+
+
+# ============================================================================
+# Read-only batch command output
+# ============================================================================
+
+# Maximum inline response size in bytes; above this, output is written to file.
+# Must be a finite value (no hidden default that bypasses overflow-to-file).
+DEFAULT_BATCH_MAX_RESPONSE_BYTES: int = 1_048_576  # 1 MiB
+
+# Default directory for oversized batch output files (relative or absolute).
+# Resolved at config load; must comply with project writable path policy.
+DEFAULT_BATCH_OUTPUT_DIR: str = "data/batch_output"
+
+# Retention time in seconds for batch output files; 0 means no automatic cleanup.
+DEFAULT_BATCH_OUTPUT_RETENTION_SECONDS: int = 86_400  # 24 hours

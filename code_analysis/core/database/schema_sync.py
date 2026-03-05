@@ -7,11 +7,15 @@ Author: Vasiliy Zdanovskiy
 email: vasilyvz@gmail.com
 """
 
+import copy
+import logging
 from dataclasses import dataclass
 from typing import Dict, List, Set, Any, Optional, Tuple
-import logging
 
 logger = logging.getLogger(__name__)
+
+# Tables that must have cst_node_id NOT NULL in final schema state (after backfill).
+CST_NODE_ID_NOT_NULL_TABLES = ("classes", "functions", "methods")
 
 
 @dataclass
@@ -103,7 +107,26 @@ class SchemaComparator:
             schema_definition: Schema definition from CodeDatabase._get_schema_definition()
         """
         self.driver = driver
-        self.schema_definition = schema_definition
+        self.schema_definition = self._apply_final_state_overrides(
+            copy.deepcopy(schema_definition)
+        )
+
+    def _apply_final_state_overrides(self, schema: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Apply final schema state overrides (e.g. cst_node_id NOT NULL after backfill).
+
+        Does not enforce NOT NULL before backfill; sync will only generate
+        NOT NULL migration when column has no NULLs.
+        """
+        tables = schema.get("tables", {})
+        for table_name in CST_NODE_ID_NOT_NULL_TABLES:
+            if table_name not in tables:
+                continue
+            for col in tables[table_name].get("columns", []):
+                if col.get("name") == "cst_node_id":
+                    col["not_null"] = True
+                    break
+        return schema
 
     def compare_schemas(self) -> SchemaDiff:
         """Compare current DB schema with expected schema."""
@@ -249,6 +272,12 @@ class SchemaComparator:
                 if current_type.upper() != col_def.type.upper():
                     type_changes.append((col_name, current_type, col_def.type))
 
+        # Check for NOT NULL constraint addition (e.g. cst_node_id after backfill)
+        for col_name, col_def in expected_cols.items():
+            if col_name in current_cols and col_def.not_null:
+                if not current_cols[col_name]["not_null"]:
+                    constraint_changes.append(f"{col_name} NOT NULL")
+
         return TableDiff(
             missing_columns=missing_columns,
             extra_columns=extra_columns,
@@ -269,6 +298,16 @@ class SchemaComparator:
                 "primary_key": bool(row["pk"]),
             }
         return columns
+
+    def _column_has_nulls(self, table_name: str, column_name: str) -> bool:
+        """Return True if the column has any NULL values (do not enforce NOT NULL before backfill)."""
+        try:
+            row = self.driver.fetchone(
+                f"SELECT 1 FROM {table_name} WHERE {column_name} IS NULL LIMIT 1"
+            )
+            return row is not None
+        except Exception:
+            return True
 
     def _compare_indexes(self) -> List[IndexDef]:
         """Compare indexes using PRAGMA commands."""
@@ -543,13 +582,67 @@ class SchemaComparator:
         for table_name, table_diff in diff.table_diffs.items():
             for col_def in table_diff.missing_columns:
                 if col_def.not_null:
-                    # Check if column has NULLs (would need to query DB)
-                    # For now, just warn
                     warnings.append(
                         f"Adding NOT NULL column {table_name}.{col_def.name} - ensure no NULLs exist"
                     )
+            for ch in table_diff.constraint_changes:
+                if ch.endswith(" NOT NULL"):
+                    col_name = ch[: -len(" NOT NULL")].strip()
+                    if self._column_has_nulls(table_name, col_name):
+                        return {
+                            "compatible": False,
+                            "error": (
+                                f"Cannot enforce NOT NULL on {table_name}.{col_name}: "
+                                "column has NULLs (run backfill first)"
+                            ),
+                            "warnings": warnings,
+                        }
+                    break
 
         return {"compatible": True, "error": None, "warnings": warnings}
+
+    def validate_cst_node_id_not_null_state(self) -> Dict[str, Any]:
+        """
+        Run validation queries: no NULL cst_node_id and constraint active.
+
+        Returns:
+            {
+                "ok": bool,
+                "tables": { table_name: { "null_count": int, "column_not_null": bool } },
+                "error": Optional[str]
+            }
+        """
+        result: Dict[str, Any] = {"ok": True, "tables": {}, "error": None}
+        for table_name in CST_NODE_ID_NOT_NULL_TABLES:
+            if table_name not in self._get_current_tables():
+                result["tables"][table_name] = {
+                    "null_count": None,
+                    "column_not_null": False,
+                }
+                result["ok"] = False
+                continue
+            try:
+                null_row = self.driver.fetchone(
+                    f"SELECT COUNT(*) AS c FROM {table_name} WHERE cst_node_id IS NULL"
+                )
+                null_count = int(null_row["c"]) if null_row else -1
+                current_cols = self._get_table_columns(table_name)
+                col_info = current_cols.get("cst_node_id", {})
+                column_not_null = bool(col_info.get("not_null", False))
+                result["tables"][table_name] = {
+                    "null_count": null_count,
+                    "column_not_null": column_not_null,
+                }
+                if null_count != 0 or not column_not_null:
+                    result["ok"] = False
+            except Exception as e:
+                result["tables"][table_name] = {
+                    "null_count": None,
+                    "column_not_null": False,
+                }
+                result["ok"] = False
+                result["error"] = str(e)
+        return result
 
     def _recreate_virtual_table(
         self, table_name: str, virtual_table_def: Dict[str, Any]
@@ -780,6 +873,7 @@ class SchemaComparator:
         - CREATE TABLE for missing tables
         - ALTER TABLE ADD COLUMN for missing columns
         - Table recreation for type changes (with data migration)
+        - Table recreation to enforce NOT NULL (e.g. cst_node_id) only when column has no NULLs
         - CREATE INDEX for missing indexes
         - DROP INDEX for extra indexes
         - Virtual table (FTS5) recreation with data preservation
@@ -795,9 +889,27 @@ class SchemaComparator:
         tables_with_type_changes = {
             name for name, td in diff.table_diffs.items() if td.type_changes
         }
+        # Add tables that need NOT NULL enforced (e.g. cst_node_id) only when no NULLs remain.
+        tables_with_not_null_to_enforce: Set[str] = set()
+        for name, td in diff.table_diffs.items():
+            if name in tables_with_type_changes:
+                continue
+            for ch in td.constraint_changes:
+                if ch.endswith(" NOT NULL"):
+                    col_name = ch[: -len(" NOT NULL")].strip()
+                    if not self._column_has_nulls(name, col_name):
+                        tables_with_not_null_to_enforce.add(name)
+                    else:
+                        logger.warning(
+                            "Skipping NOT NULL enforcement for %s.%s: column has NULLs (run backfill first)",
+                            name,
+                            col_name,
+                        )
+                    break
+        tables_to_recreate = tables_with_type_changes | tables_with_not_null_to_enforce
         ordered_recreate = (
-            self._tables_recreate_order(tables_with_type_changes)
-            if tables_with_type_changes
+            self._tables_recreate_order(tables_to_recreate)
+            if tables_to_recreate
             else []
         )
         for table_name in ordered_recreate:

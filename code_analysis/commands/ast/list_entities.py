@@ -71,7 +71,10 @@ class ListCodeEntitiesMCPCommand(BaseMCPCommand):
             entities = []
 
             if not entity_type or entity_type == "class":
-                query = "SELECT c.*, f.path as file_path FROM classes c JOIN files f ON c.file_id = f.id WHERE f.project_id = ?"
+                query = (
+                    "SELECT c.*, f.path as file_path FROM classes c JOIN files f ON c.file_id = f.id "
+                    "WHERE f.project_id = ? AND c.cst_node_id IS NOT NULL AND c.cst_node_id != ''"
+                )
                 params = [proj_id]
                 if file_path:
                     file_record = db.get_file_by_path(file_path, proj_id)
@@ -86,10 +89,15 @@ class ListCodeEntitiesMCPCommand(BaseMCPCommand):
                 result = db.execute(query, tuple(params))
                 rows = result.get("data", [])
                 for row in rows:
+                    if not (row.get("cst_node_id") or "").strip():
+                        continue
                     entities.append({"type": "class", **row})
 
             if not entity_type or entity_type == "function":
-                query = "SELECT func.*, f.path as file_path FROM functions func JOIN files f ON func.file_id = f.id WHERE f.project_id = ?"
+                query = (
+                    "SELECT func.*, f.path as file_path FROM functions func JOIN files f ON func.file_id = f.id "
+                    "WHERE f.project_id = ? AND func.cst_node_id IS NOT NULL AND func.cst_node_id != ''"
+                )
                 params = [proj_id]
                 if file_path:
                     file_record = db.get_file_by_path(file_path, proj_id)
@@ -104,10 +112,16 @@ class ListCodeEntitiesMCPCommand(BaseMCPCommand):
                 result = db.execute(query, tuple(params))
                 rows = result.get("data", [])
                 for row in rows:
+                    if not (row.get("cst_node_id") or "").strip():
+                        continue
                     entities.append({"type": "function", **row})
 
             if not entity_type or entity_type == "method":
-                query = "SELECT m.*, c.name as class_name, f.path as file_path FROM methods m JOIN classes c ON m.class_id = c.id JOIN files f ON c.file_id = f.id WHERE f.project_id = ?"
+                query = (
+                    "SELECT m.*, c.name as class_name, f.path as file_path FROM methods m "
+                    "JOIN classes c ON m.class_id = c.id JOIN files f ON c.file_id = f.id "
+                    "WHERE f.project_id = ? AND m.cst_node_id IS NOT NULL AND m.cst_node_id != ''"
+                )
                 params = [proj_id]
                 if file_path:
                     file_record = db.get_file_by_path(file_path, proj_id)
@@ -122,6 +136,8 @@ class ListCodeEntitiesMCPCommand(BaseMCPCommand):
                 result = db.execute(query, tuple(params))
                 rows = result.get("data", [])
                 for row in rows:
+                    if not (row.get("cst_node_id") or "").strip():
+                        continue
                     entities.append({"type": "method", **row})
 
             db.disconnect()
@@ -305,11 +321,13 @@ class ListCodeEntitiesMCPCommand(BaseMCPCommand):
                         "success": "Always true on success",
                         "entities": (
                             "List of entity dictionaries. Each entity includes:\n"
+                            "- file_path: Path relative to project root (required)\n"
+                            "- cst_node_id: Valid UUID4 CST node identifier (required, non-empty)\n"
                             "- type: Entity type ('class', 'function', or 'method')\n"
-                            "- For classes: name, file_path, line, bases, docstring, and other class fields\n"
-                            "- For functions: name, file_path, line, parameters, docstring, and other function fields\n"
-                            "- For methods: name, class_name, file_path, line, parameters, docstring, and other method fields\n"
-                            "- All database fields are included"
+                            "- For classes: name, line, bases, docstring, and other class fields\n"
+                            "- For functions: name, line, parameters, docstring, and other function fields\n"
+                            "- For methods: name, class_name, line, parameters, docstring, and other method fields\n"
+                            "- Only entities with persisted cst_node_id are returned; no fallback to line-only identity"
                         ),
                         "count": "Number of entities found",
                     },
@@ -320,6 +338,7 @@ class ListCodeEntitiesMCPCommand(BaseMCPCommand):
                                 "type": "class",
                                 "name": "DataProcessor",
                                 "file_path": "src/processor.py",
+                                "cst_node_id": "a1b2c3d4-e5f6-4789-a012-345678901234",
                                 "line": 10,
                                 "bases": '["BaseProcessor"]',
                                 "docstring": "Processes data.",
@@ -328,6 +347,7 @@ class ListCodeEntitiesMCPCommand(BaseMCPCommand):
                                 "type": "function",
                                 "name": "process_data",
                                 "file_path": "src/utils.py",
+                                "cst_node_id": "b2c3d4e5-f6a7-4890-b123-456789012345",
                                 "line": 42,
                                 "parameters": "data, count",
                                 "docstring": "Process data.",
@@ -337,6 +357,7 @@ class ListCodeEntitiesMCPCommand(BaseMCPCommand):
                                 "name": "execute",
                                 "class_name": "TaskHandler",
                                 "file_path": "src/handlers.py",
+                                "cst_node_id": "c3d4e5f6-a7b8-4901-c234-567890123456",
                                 "line": 20,
                                 "parameters": "self, task",
                                 "docstring": "Execute task.",

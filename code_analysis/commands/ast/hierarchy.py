@@ -5,11 +5,26 @@ Author: Vasiliy Zdanovskiy
 email: vasilyvz@gmail.com
 """
 
+import uuid
 from typing import Any, Dict, Optional
 
 from mcp_proxy_adapter.commands.result import SuccessResult
 
 from ..base_mcp_command import BaseMCPCommand
+
+
+def _is_valid_uuid4(value: Optional[str]) -> bool:
+    """Return True if value is non-empty and valid UUID4 string; otherwise False."""
+    if not value or not isinstance(value, str):
+        return False
+    s = value.strip()
+    if not s:
+        return False
+    try:
+        u = uuid.UUID(s, version=4)
+        return str(u) == s
+    except (ValueError, TypeError):
+        return False
 
 
 class GetClassHierarchyMCPCommand(BaseMCPCommand):
@@ -127,13 +142,17 @@ class GetClassHierarchyMCPCommand(BaseMCPCommand):
                         # Try to parse as AST string representation
                         bases = []
 
-                hierarchy[class_name_val] = {
+                entity: Dict[str, Any] = {
                     "name": class_name_val,
                     "file_path": class_info.get("file_path"),
                     "line": class_info.get("line"),
                     "bases": bases,
                     "children": [],
                 }
+                node_id = class_info.get("cst_node_id")
+                if _is_valid_uuid4(node_id):
+                    entity["cst_node_id"] = node_id
+                hierarchy[class_name_val] = entity
                 all_classes.append(class_info)
 
             # Build parent-child relationships
@@ -208,7 +227,8 @@ class GetClassHierarchyMCPCommand(BaseMCPCommand):
                 "8. Builds hierarchy map with parent-child relationships\n"
                 "9. Returns hierarchy structure with bases and children\n\n"
                 "Hierarchy Structure:\n"
-                "- Each class entry contains: name, file_path, line, bases (list), children (list)\n"
+                "- Each class entry contains: name, file_path, line, bases (list), children (list), "
+                "and cst_node_id (UUID4) when available and valid\n"
                 "- bases: List of base/parent class names\n"
                 "- children: List of derived/child class names\n"
                 "- Hierarchy is built by matching base names to class names\n\n"
@@ -317,7 +337,8 @@ class GetClassHierarchyMCPCommand(BaseMCPCommand):
                             "- file_path: File where class is defined\n"
                             "- line: Line number where class is defined\n"
                             "- bases: List of base class names\n"
-                            "- children: List of child class names"
+                            "- children: List of child class names\n"
+                            "- cst_node_id: UUID4 CST node ID (present only when valid)"
                         ),
                         "count": "Number of classes in hierarchy",
                     },
@@ -331,6 +352,7 @@ class GetClassHierarchyMCPCommand(BaseMCPCommand):
                                 "line": 10,
                                 "bases": [],
                                 "children": ["TaskHandler", "DataHandler"],
+                                "cst_node_id": "550e8400-e29b-41d4-a716-446655440000",
                             },
                         },
                         "count": 1,
@@ -345,6 +367,7 @@ class GetClassHierarchyMCPCommand(BaseMCPCommand):
                                 "line": 10,
                                 "bases": [],
                                 "children": ["TaskHandler"],
+                                "cst_node_id": "550e8400-e29b-41d4-a716-446655440000",
                             },
                             "TaskHandler": {
                                 "name": "TaskHandler",
@@ -352,6 +375,7 @@ class GetClassHierarchyMCPCommand(BaseMCPCommand):
                                 "line": 20,
                                 "bases": ["BaseHandler"],
                                 "children": [],
+                                "cst_node_id": "660e8400-e29b-41d4-a716-446655440001",
                             },
                         },
                         "count": 2,

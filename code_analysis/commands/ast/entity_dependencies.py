@@ -5,11 +5,27 @@ Author: Vasiliy Zdanovskiy
 email: vasilyvz@gmail.com
 """
 
+import uuid
 from typing import Any, Dict, List, Optional
 
 from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 
 from ..base_mcp_command import BaseMCPCommand
+
+
+def _is_valid_uuid4(value: Optional[str]) -> bool:
+    """Return True if value is non-empty and valid UUID4 string; otherwise False."""
+    if not value or not isinstance(value, str):
+        return False
+    s = value.strip()
+    if not s:
+        return False
+    try:
+        u = uuid.UUID(s, version=4)
+        return str(u) == s
+    except (ValueError, TypeError):
+        return False
+
 
 CALLER_TYPES = ("class", "method", "function")
 CALLEE_TYPES = ("class", "method", "function")
@@ -45,20 +61,24 @@ def _path_by_file_ids(
 def _get_entity_dependencies_via_execute(
     db: Any, entity_type: str, entity_id: int
 ) -> List[Dict[str, Any]]:
-    """Get dependencies by querying entity_cross_ref via execute()."""
+    """Get dependencies by querying entity_cross_ref with callee cst_node_id from JOINs."""
     if entity_type == "class":
-        col = "caller_class_id"
+        col = "e.caller_class_id"
     elif entity_type == "method":
-        col = "caller_method_id"
+        col = "e.caller_method_id"
     elif entity_type == "function":
-        col = "caller_function_id"
+        col = "e.caller_function_id"
     else:
         return []
 
     sql = f"""
-        SELECT callee_class_id, callee_method_id, callee_function_id,
-               ref_type, file_id, line
-        FROM entity_cross_ref
+        SELECT e.callee_class_id, e.callee_method_id, e.callee_function_id,
+               e.ref_type, e.file_id, e.line,
+               COALESCE(c.cst_node_id, m.cst_node_id, fn.cst_node_id) AS cst_node_id
+        FROM entity_cross_ref e
+        LEFT JOIN classes c ON e.callee_class_id = c.id
+        LEFT JOIN methods m ON e.callee_method_id = m.id
+        LEFT JOIN functions fn ON e.callee_function_id = fn.id
         WHERE {col} = ?
     """
     result = db.execute(sql, (entity_id,))
@@ -74,6 +94,9 @@ def _get_entity_dependencies_via_execute(
     out: List[Dict[str, Any]] = []
     for r in rows:
         d = _row_to_dict(r)
+        cst_node_id = d.get("cst_node_id")
+        if not _is_valid_uuid4(cst_node_id):
+            continue
         if d.get("callee_class_id") is not None:
             callee_type, callee_id = "class", d["callee_class_id"]
         elif d.get("callee_method_id") is not None:
@@ -88,6 +111,7 @@ def _get_entity_dependencies_via_execute(
                 "ref_type": d.get("ref_type", ""),
                 "file_path": path_by_id.get(file_id, ""),
                 "line": d.get("line"),
+                "cst_node_id": cst_node_id,
             }
         )
     return out
@@ -158,20 +182,24 @@ def _resolve_entity_id_by_name(
 def _get_entity_dependents_via_execute(
     db: Any, entity_type: str, entity_id: int
 ) -> List[Dict[str, Any]]:
-    """Get dependents by querying entity_cross_ref via execute()."""
+    """Get dependents by querying entity_cross_ref with caller cst_node_id from JOINs."""
     if entity_type == "class":
-        col = "callee_class_id"
+        col = "e.callee_class_id"
     elif entity_type == "method":
-        col = "callee_method_id"
+        col = "e.callee_method_id"
     elif entity_type == "function":
-        col = "callee_function_id"
+        col = "e.callee_function_id"
     else:
         return []
 
     sql = f"""
-        SELECT caller_class_id, caller_method_id, caller_function_id,
-               ref_type, file_id, line
-        FROM entity_cross_ref
+        SELECT e.caller_class_id, e.caller_method_id, e.caller_function_id,
+               e.ref_type, e.file_id, e.line,
+               COALESCE(c.cst_node_id, m.cst_node_id, fn.cst_node_id) AS cst_node_id
+        FROM entity_cross_ref e
+        LEFT JOIN classes c ON e.caller_class_id = c.id
+        LEFT JOIN methods m ON e.caller_method_id = m.id
+        LEFT JOIN functions fn ON e.caller_function_id = fn.id
         WHERE {col} = ?
     """
     result = db.execute(sql, (entity_id,))
@@ -184,9 +212,12 @@ def _get_entity_dependents_via_execute(
     )
     path_by_id = _path_by_file_ids(db, file_ids)
 
-    out = []
+    out: List[Dict[str, Any]] = []
     for r in rows:
         d = _row_to_dict(r)
+        cst_node_id = d.get("cst_node_id")
+        if not _is_valid_uuid4(cst_node_id):
+            continue
         if d.get("caller_class_id") is not None:
             caller_type, caller_id = "class", d["caller_class_id"]
         elif d.get("caller_method_id") is not None:
@@ -201,6 +232,7 @@ def _get_entity_dependents_via_execute(
                 "ref_type": d.get("ref_type", ""),
                 "file_path": path_by_id.get(file_id, ""),
                 "line": d.get("line"),
+                "cst_node_id": cst_node_id,
             }
         )
     return out
@@ -330,8 +362,8 @@ class GetEntityDependenciesMCPCommand(BaseMCPCommand):
                 "4. If entity_name given, resolves entity_name + entity_type to entity_id in the project; "
                 "if entity_id given, uses it\n"
                 "5. Queries entity_cross_ref table by caller_* column (class_id, method_id, or function_id)\n"
-                "6. Resolves file_id to file_path for each row\n"
-                "7. Returns list of callee entities with type, id, ref_type, file_path, line\n\n"
+                "6. Resolves file_id to file_path and cst_node_id via JOIN with classes/methods/functions\n"
+                "7. Returns list of callee entities with type, id, ref_type, file_path, line, cst_node_id (only valid UUID4)\n\n"
                 "Data source:\n"
                 "- The entity_cross_ref table is populated during update_file_data_atomic (and update_indexes) "
                 "when usages are tracked. Each row links a caller entity (class/method/function) to a callee "
@@ -346,6 +378,7 @@ class GetEntityDependenciesMCPCommand(BaseMCPCommand):
                 "- Use entity_name + entity_type when you have the name from code; the command resolves it to id.\n"
                 "- Use entity_id when you already have the id (e.g. from list_code_entities).\n"
                 "- If no dependencies are recorded (e.g. project not indexed or entity has no usages), returns empty list\n"
+                "- Only entities with valid cst_node_id (UUID4) are returned; no mixed or invalid IDs\n"
                 "- Cross-ref is built from usages; run update_indexes after code changes to refresh"
             ),
             "parameters": {
@@ -476,7 +509,7 @@ class GetEntityDependenciesMCPCommand(BaseMCPCommand):
                         "dependencies": (
                             "List of dicts. Each has: callee_entity_type ('class'|'method'|'function'), "
                             "callee_entity_id, ref_type ('call'|'instantiation'|'attribute'|'inherit'), "
-                            "file_path, line."
+                            "file_path, line, cst_node_id (valid UUID4). Only entities with valid cst_node_id are returned."
                         ),
                     },
                     "example": {
@@ -487,6 +520,7 @@ class GetEntityDependenciesMCPCommand(BaseMCPCommand):
                                 "ref_type": "call",
                                 "file_path": "/path/to/project/src/main.py",
                                 "line": 42,
+                                "cst_node_id": "a1b2c3d4-e5f6-4789-a012-345678901234",
                             },
                         ],
                     },
@@ -629,8 +663,8 @@ class GetEntityDependentsMCPCommand(BaseMCPCommand):
                 "4. If entity_name given, resolves entity_name + entity_type to entity_id in the project; "
                 "if entity_id given, uses it\n"
                 "5. Queries entity_cross_ref table by callee_* column (class_id, method_id, or function_id)\n"
-                "6. Resolves file_id to file_path for each row\n"
-                "7. Returns list of caller entities with type, id, ref_type, file_path, line\n\n"
+                "6. Resolves file_id to file_path and cst_node_id via JOIN with classes/methods/functions\n"
+                "7. Returns list of caller entities with type, id, ref_type, file_path, line, cst_node_id (only valid UUID4)\n\n"
                 "Data source:\n"
                 "- The entity_cross_ref table is populated during update_file_data_atomic (and update_indexes) "
                 "when usages are tracked. Each row links a caller entity to a callee entity. "
@@ -645,6 +679,7 @@ class GetEntityDependentsMCPCommand(BaseMCPCommand):
                 "- Use entity_name + entity_type when you have the name from code; the command resolves it to id.\n"
                 "- Use entity_id when you already have the id (e.g. from list_code_entities).\n"
                 "- If no dependents are recorded, returns empty list\n"
+                "- Only entities with valid cst_node_id (UUID4) are returned; no mixed or invalid IDs\n"
                 "- Cross-ref is built from usages; run update_indexes after code changes to refresh"
             ),
             "parameters": {
@@ -775,7 +810,7 @@ class GetEntityDependentsMCPCommand(BaseMCPCommand):
                         "dependents": (
                             "List of dicts. Each has: caller_entity_type ('class'|'method'|'function'), "
                             "caller_entity_id, ref_type ('call'|'instantiation'|'attribute'|'inherit'), "
-                            "file_path, line."
+                            "file_path, line, cst_node_id (valid UUID4). Only entities with valid cst_node_id are returned."
                         ),
                     },
                     "example": {
@@ -786,6 +821,7 @@ class GetEntityDependentsMCPCommand(BaseMCPCommand):
                                 "ref_type": "call",
                                 "file_path": "/path/to/project/src/main.py",
                                 "line": 42,
+                                "cst_node_id": "b2c3d4e5-f6a7-4890-b123-456789012345",
                             },
                         ],
                     },

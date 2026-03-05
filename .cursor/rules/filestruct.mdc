@@ -26,13 +26,21 @@ alwaysApply: true
   - Analysis reports
 - **Example**: `README.md`, `ANALYSIS.md`, `MIGRATION_SUMMARY.md`
 ### 📁 docs/reports
-- **Purpose**: AI analises and reports
-- **Contents**:
-  - Migration guides
-  - Analysis reports
-- **Example**: `CREATE_PROJECT_VS_GET_DATABASE_STATUS.md`, `ANALYSIS.md`, `MIGRATION_SUMMARY.md`
+- **Purpose**: Analyses and explanations (reports, data-flow and architecture notes).
+- **Contents**: Migration guides, analysis reports, technical explanations.
+- **Example**: `COMPONENT_INTERACTION.md`, `LOG_WRITE_SITES.md`, `FILE_STRUCTURE_AND_OBJECT_SCHEMA.md`
 
-### 📁 log/
+### 📁 docs/plans
+- **Purpose**: Technical specifications and plans (TZ, design, step-by-step plans).
+- **Contents**: Task descriptions, refactor plans, design docs, implementation steps.
+- **Example**: `MUTABLE_CST_LAYER_TASK.md`, `mutable_cst_layer/`, `cst_concept/refactor_plan/`, `design/`
+
+### 📁 docs/standards
+- **Purpose**: Standards and project rules (logging, drivers, paths, commit rules).
+- **Contents**: Standards documents, criteria, format specs.
+- **Example**: `DRIVER_STANDARD.md`, `LOG_IMPORTANCE_CRITERIA.md`, `UNIFIED_LOG_FORMAT.md`, `PROJECT_PATH_AND_VENV_RULES.md`
+
+### 📁 logs/
 - **Purpose**: Server logs
 - **Contents**:
   - Application logs
@@ -57,7 +65,7 @@ alwaysApply: true
 
 1. **ALL documentation files (.md) MUST be in `docs/`**
 2. **ALL scripts (non-pytest) MUST be in `scripts/`**
-3. **ALL log files MUST be in `log/`**
+3. **ALL log files MUST be in `logs/`**
 4. **ALL data files (databases, etc.) MUST be in `data/`**
 5. **Pytest tests MUST remain in `tests/`**
 6. **Source code MUST remain in `code_analysis/`**
@@ -67,7 +75,7 @@ alwaysApply: true
 When adding new files, ensure they are placed in the correct directory:
 - ✅ Documentation → `docs/`
 - ✅ Scripts → `scripts/`
-- ✅ Logs → `log/`
+- ✅ Logs → `logs/`
 - ✅ Data → `data/`
 - ✅ Tests (pytest) → `tests/`
 - ✅ Source code → `code_analysis/`

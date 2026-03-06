@@ -554,3 +554,63 @@ def test_data_type_fidelity_literals_containers(
     assert "[1, 2]" in restored and "{'k': 1}" in restored
     assert "(1, 2)" in restored and "{1, 2}" in restored
     assert restored == code
+
+
+def test_get_snapshot_tree_structure_returns_nodes(
+    test_db, test_project, temp_dir, project_id
+) -> None:
+    """Step 10: get_snapshot_tree_structure returns node_id, parent_node_id, child_index."""
+    from code_analysis.core.database.file_tree_read import get_snapshot_tree_structure
+    from code_analysis.core.database.file_tree_sync import sync_file_to_db_atomic
+
+    code = "a = 1\nb = 2\n"
+    path = temp_dir / "read_api.py"
+    path.write_text(code, encoding="utf-8")
+    file_id = test_db.add_file(
+        path=str(path),
+        lines=len(code.splitlines()),
+        last_modified=path.stat().st_mtime,
+        has_docstring=False,
+        project_id=project_id,
+    )
+    sync_file_to_db_atomic(
+        test_db, project_id, str(path), code, path.stat().st_mtime, file_id
+    )
+    result = get_snapshot_tree_structure(project_id, "read_api.py", test_db)
+    assert result["has_snapshot"] is True
+    assert result["snapshot_id"] is not None
+    assert isinstance(result["snapshot_id"], int)
+    assert result["root_node_id"] is not None
+    assert isinstance(result["root_node_id"], str)
+    assert len(result["nodes"]) >= 1
+    for node in result["nodes"]:
+        assert "node_id" in node
+        assert "parent_node_id" in node
+        assert "child_index" in node
+        assert isinstance(node["child_index"], int)
+    root_ids = {n["node_id"] for n in result["nodes"] if n["parent_node_id"] is None}
+    assert result["root_node_id"] in root_ids or any(
+        n["node_id"] == result["root_node_id"] for n in result["nodes"]
+    )
+
+
+def test_get_snapshot_tree_structure_no_snapshot(
+    test_db, test_project, temp_dir, project_id
+) -> None:
+    """Step 10: get_snapshot_tree_structure returns no_snapshot when no snapshot exists."""
+    from code_analysis.core.database.file_tree_read import get_snapshot_tree_structure
+
+    path = temp_dir / "no_snap.py"
+    path.write_text("x = 1\n", encoding="utf-8")
+    test_db.add_file(
+        path=str(path),
+        lines=1,
+        last_modified=path.stat().st_mtime,
+        has_docstring=False,
+        project_id=project_id,
+    )
+    result = get_snapshot_tree_structure(project_id, "no_snap.py", test_db)
+    assert result["has_snapshot"] is False
+    assert result["snapshot_id"] is None
+    assert result["root_node_id"] is None
+    assert result["nodes"] == []

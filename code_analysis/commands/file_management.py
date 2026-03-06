@@ -1,6 +1,10 @@
 """
 Internal commands for file management (cleanup, unmark, collapse versions).
 
+Restore-from-DB uses full stored payload; safe mode (no overwrite when file exists)
+and force mode (backup then overwrite). Sync-from-file after restore uses the
+unified file-level pipeline (sync_file_to_db_atomic).
+
 Author: Vasiliy Zdanovskiy
 email: vasilyvz@gmail.com
 """
@@ -626,6 +630,7 @@ class RepairDatabaseCommand:
     - version_dir: Version directory for deleted files (used when trash_dir is None)
     - trash_dir: Preferred root for file trash; files under trash_dir/project_id (FILE_TRASH_SPEC)
     - dry_run: If True, only show what would be repaired
+    - force: If True, allow overwriting existing file when restoring from DB (backup first)
     """
 
     def __init__(
@@ -636,6 +641,7 @@ class RepairDatabaseCommand:
         version_dir: str,
         dry_run: bool = False,
         trash_dir: Optional[str] = None,
+        force: bool = False,
     ):
         """
         Initialize repair database command.
@@ -647,6 +653,7 @@ class RepairDatabaseCommand:
             version_dir: Version directory for deleted files (used when trash_dir is None)
             dry_run: If True, only show what would be repaired
             trash_dir: Optional; when set, file trash is under trash_dir/project_id
+            force: If True, overwrite existing file when restoring from DB (after backup)
         """
         self.database = database
         self.project_id = project_id
@@ -654,6 +661,7 @@ class RepairDatabaseCommand:
         self.version_dir = version_dir
         self.dry_run = dry_run
         self.trash_dir = trash_dir
+        self.force = force
 
     async def execute(self) -> Dict[str, Any]:
         """
@@ -796,7 +804,7 @@ class RepairDatabaseCommand:
                         # File not found but not marked as deleted - try to restore from CST
                         try:
                             restored = await self._restore_file_from_cst(
-                                file_id, check_path, file_record
+                                file_id, check_path, file_record, force=self.force
                             )
                             if restored:
                                 result["files_restored_from_cst"].append(
@@ -829,93 +837,134 @@ class RepairDatabaseCommand:
         return result
 
     async def _restore_file_from_cst(
-        self, file_id: int, file_path: str, file_record: Dict[str, Any]
+        self,
+        file_id: int,
+        file_path: str,
+        file_record: Dict[str, Any],
+        force: bool = False,
     ) -> bool:
         """
-        Restore file from CST (source code stored in database).
+        Restore file from DB using full stored payload (snapshot or CST).
+
+        Safe mode: when target file exists, refuse overwrite (return False).
+        Force mode: when target exists and force=True, create backup first, then overwrite.
+        After writing file, sync DB from file via unified pipeline (sync_file_to_db_atomic).
 
         Args:
             file_id: File ID
             file_path: File path
             file_record: File record from database
+            force: If True, allow overwrite after mandatory backup
 
         Returns:
             True if file was restored, False otherwise
         """
         try:
-            # Get CST tree (source code) from database
-            cst_data = await self.database.get_cst_tree(file_id)
-            if not cst_data:
-                logger.warning(f"No CST tree (source code) found for file {file_id}")
-                return False
-
-            cst_code = cst_data.get("cst_code")
-            if not cst_code:
-                logger.warning(f"CST tree has no source code for file {file_id}")
+            source_code = await self._get_restore_payload(file_id)
+            if not source_code:
+                logger.warning(
+                    "No full source payload found for file_id=%s (snapshot or cst_trees)",
+                    file_id,
+                )
                 return False
 
             # Determine target path (FILE_TRASH_SPEC step 13: use path from DB for trash)
             if file_record.get("deleted"):
-                # File is marked as deleted - restore to trash path from DB (trash_dir/project_id/...)
                 target_path = Path(file_record["path"])
                 target_path.parent.mkdir(parents=True, exist_ok=True)
             else:
-                # File should be in project directory
-                target_path = self.root_dir / file_path
+                target_path = (self.root_dir / file_path).resolve()
 
-            # Pre-check: do not overwrite existing file (FILE_TRASH_SPEC Req. 2, step 13)
-            if target_path.exists():
+            # Safe mode: refuse overwrite when file exists and force is False
+            if target_path.exists() and not force:
                 logger.warning(
-                    "Restore-from-CST skipped: target already exists at %s",
+                    "Restore-from-DB skipped: target already exists at %s (use force=True to overwrite with backup)",
                     target_path,
                 )
                 return False
 
-            # Restore file content
-            target_path.parent.mkdir(parents=True, exist_ok=True)
-            target_path.write_text(cst_code, encoding="utf-8")
+            # Force mode: mandatory backup before overwrite
+            if target_path.exists() and force:
+                from ..core.backup_manager import BackupManager
 
-            # Update database after restoration
-            try:
-                project_id = file_record.get("project_id")
-                if project_id:
-                    # Determine root_dir - use self.root_dir if file is not deleted
-                    root_dir = self.root_dir
-                    if file_record.get("deleted"):
-                        # For deleted files, try to get project root from database
-                        project = self.database.get_project(project_id)
-                        if project and project.get("root_path"):
-                            root_dir = Path(project["root_path"])
-
-                    update_result = self.database.update_file_data(
-                        file_path=file_path,
-                        project_id=project_id,
-                        root_dir=root_dir,
-                    )
-                    if not update_result.get("success"):
-                        logger.warning(
-                            f"Failed to update database after restoration: "
-                            f"{update_result.get('error')}"
-                        )
-                    else:
-                        logger.info(
-                            f"Database updated after restoration: "
-                            f"AST={update_result.get('ast_updated')}, "
-                            f"CST={update_result.get('cst_updated')}"
-                        )
-            except Exception as e:
-                logger.error(
-                    f"Error updating database after restoration: {e}",
-                    exc_info=True,
+                backup_manager = BackupManager(self.root_dir)
+                backup_uuid = backup_manager.create_backup(
+                    target_path,
+                    command="restore_from_db_force",
+                    comment="before overwrite from DB",
                 )
-                # Don't fail restoration, just log the error
+                if not backup_uuid:
+                    logger.error(
+                        "Restore-from-DB aborted: backup failed for %s; cannot overwrite without backup",
+                        target_path,
+                    )
+                    return False
+                logger.info("Backup created for force restore: %s", backup_uuid)
 
-            logger.info(f"Restored file {file_path} from CST to {target_path}")
+            # Restore file content (full payload)
+            target_path.parent.mkdir(parents=True, exist_ok=True)
+            target_path.write_text(source_code, encoding="utf-8")
+
+            # Sync DB from file via unified pipeline (file -> db)
+            project_id = file_record.get("project_id")
+            if project_id:
+                from ..core.database.file_tree_sync import sync_file_to_db_atomic
+
+                abs_path = str(target_path)
+                file_mtime = target_path.stat().st_mtime
+                sync_result = sync_file_to_db_atomic(
+                    self.database,
+                    project_id=str(project_id),
+                    absolute_path=abs_path,
+                    source_code=source_code,
+                    file_mtime=file_mtime,
+                    file_id=file_id,
+                )
+                if not sync_result.get("success"):
+                    logger.warning(
+                        "Failed to sync DB after restoration: %s",
+                        sync_result.get("error"),
+                    )
+                else:
+                    logger.info(
+                        "DB synced after restoration: snapshot=%s, nodes=%s",
+                        sync_result.get("snapshot", 0),
+                        sync_result.get("nodes", 0),
+                    )
+
+            logger.info("Restored file %s from DB to %s", file_path, target_path)
             return True
 
         except Exception as e:
-            logger.error(f"Error restoring file from CST: {e}", exc_info=True)
+            logger.error("Error restoring file from DB: %s", e, exc_info=True)
             return False
+
+    async def _get_restore_payload(self, file_id: int) -> Optional[str]:
+        """
+        Get full source payload for restore (snapshot source_payload or cst_trees.cst_code).
+
+        Prefers file_tree_snapshots.source_payload when available; falls back to
+        cst_trees.cst_code for backward compatibility.
+        """
+        try:
+            row_result = self.database.execute(
+                "SELECT source_payload FROM file_tree_snapshots WHERE file_id = ? "
+                "ORDER BY id DESC LIMIT 1",
+                (file_id,),
+            )
+            data = row_result.get("data", [])
+            if data and data[0].get("source_payload"):
+                return data[0]["source_payload"]
+        except Exception as e:
+            logger.debug(
+                "No snapshot payload for file_id=%s (%s), trying cst_trees",
+                file_id,
+                e,
+            )
+        cst_data = await self.database.get_cst_tree(file_id)
+        if cst_data and cst_data.get("cst_code"):
+            return cst_data["cst_code"]
+        return None
 
     async def _stop_all_workers(self) -> Dict[str, Any]:
         """

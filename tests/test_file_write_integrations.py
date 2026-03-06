@@ -54,6 +54,7 @@ def test_project(test_db, temp_dir, project_id):
     test_db._commit()
     # Create projectid file so _queue_file_for_processing can resolve project info
     import json
+
     projectid_file = temp_dir / "projectid"
     projectid_file.write_text(
         json.dumps({"id": project_id, "description": "Test project"}),
@@ -70,11 +71,12 @@ def test_file_with_content(test_db, temp_dir, test_project):
     file_path = temp_dir / "test_module.py"
     file_content = FILE_CONTENT_CLASS_A_B
     file_path.write_text(file_content, encoding="utf-8")
-    
+
     import os
+
     file_mtime = os.path.getmtime(file_path)
     lines = len(file_content.splitlines())
-    
+
     file_id = test_db.add_file(
         path=str(file_path),
         lines=lines,
@@ -82,19 +84,19 @@ def test_file_with_content(test_db, temp_dir, test_project):
         has_docstring=True,
         project_id=test_project,
     )
-    
+
     return file_id, file_path, test_project
 
 
 class TestFileSplitterIntegration:
     """Tests for file splitter integration with update_file_data."""
-    
+
     def test_file_splitter_updates_database(
         self, test_db, test_file_with_content, temp_dir
     ):
         """Test that file splitter updates database for new files."""
         file_id, file_path, project_id = test_file_with_content
-        
+
         # Create splitter with database access
         splitter = FileToPackageSplitter(
             file_path=file_path,
@@ -102,10 +104,10 @@ class TestFileSplitterIntegration:
             project_id=project_id,
             root_dir=temp_dir,
         )
-        
+
         # Load file content and parse AST
         splitter.load_file()
-        
+
         # Split file into package
         config = {
             "modules": {
@@ -119,24 +121,22 @@ class TestFileSplitterIntegration:
                 },
             }
         }
-        
+
         success, message = splitter.split_file_to_package(config)
         assert success is True, f"Split should succeed: {message}"
-        
+
         # Verify new module files exist
         package_dir = file_path.parent / file_path.stem
         module_a_path = package_dir / "module_a.py"
         module_b_path = package_dir / "module_b.py"
-        
+
         assert module_a_path.exists(), "module_a.py should exist"
         assert module_b_path.exists(), "module_b.py should exist"
-        
+
         # Verify database was updated for new files
-        module_a_record = test_db.get_file_by_path(
-            str(module_a_path), project_id
-        )
+        module_a_record = test_db.get_file_by_path(str(module_a_path), project_id)
         assert module_a_record is not None, "module_a.py should be in database"
-        
+
         # Verify AST and CST are saved for new files
         if module_a_record:
             ast_record = test_db._fetchone(
@@ -150,13 +150,13 @@ class TestFileSplitterIntegration:
 
 class TestClassSplitterIntegration:
     """Tests for class splitter integration with update_file_data."""
-    
+
     def test_class_splitter_updates_database(
         self, test_db, test_file_with_content, temp_dir
     ):
         """Test that class splitter updates database after file write."""
         file_id, file_path, project_id = test_file_with_content
-        
+
         # Create splitter with database access
         splitter = ClassSplitter(
             file_path=file_path,
@@ -164,22 +164,23 @@ class TestClassSplitterIntegration:
             project_id=project_id,
             root_dir=temp_dir,
         )
-        
+
         # Load file first
         splitter.load_file()
-        
+
         # Find all methods in ClassA
         import ast
+
         methods = []
         for node in ast.walk(splitter.tree):
             if isinstance(node, ast.ClassDef) and node.name == "ClassA":
                 for item in node.body:
                     if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)):
                         methods.append(item.name)
-        
+
         if len(methods) == 0:
             pytest.skip("ClassA has no methods to split")
-        
+
         # Split class - include ALL methods in config (splitter requires all methods to be specified)
         if len(methods) > 1:
             # Split into two classes
@@ -193,25 +194,25 @@ class TestClassSplitterIntegration:
                     {
                         "name": "ClassA2",
                         "methods": methods[1:],
-                    }
+                    },
                 ],
             }
         else:
             # Only one method - can't really split, but test the update mechanism
             pytest.skip("ClassA has only one method, cannot split")
-        
+
         success, message = splitter.split_class(config)
         assert success is True, f"Split should succeed: {message}"
-        
+
         # Verify file was updated
         content = file_path.read_text(encoding="utf-8")
         assert "ClassA1" in content, "New class should be in file"
-        
+
         # Verify database was updated
         # Get updated file record
         file_record = test_db.get_file_by_path(str(file_path), project_id)
         assert file_record is not None, "File should be in database"
-        
+
         # Verify AST and CST are updated
         if file_record:
             ast_record = test_db._fetchone(
@@ -224,13 +225,13 @@ class TestClassSplitterIntegration:
 
 class TestExtractorIntegration:
     """Tests for superclass extractor integration with update_file_data."""
-    
+
     def test_extractor_updates_database(
         self, test_db, test_file_with_content, temp_dir
     ):
         """Test that extractor updates database after file write."""
         file_id, file_path, project_id = test_file_with_content
-        
+
         # Create extractor with database access
         extractor = SuperclassExtractor(
             file_path=file_path,
@@ -238,23 +239,23 @@ class TestExtractorIntegration:
             project_id=project_id,
             root_dir=temp_dir,
         )
-        
+
         # Extract superclass
         config = {
             "base_class": "BaseClass",
             "child_classes": ["ClassA", "ClassB"],
             "methods": ["method_a", "method_b"],
         }
-        
+
         success, message = extractor.extract_superclass(config)
         # Note: This might fail if methods are not compatible
         # The important thing is that if it succeeds, database is updated
-        
+
         if success:
             # Verify file was updated
             content = file_path.read_text(encoding="utf-8")
             assert "BaseClass" in content, "Base class should be in file"
-            
+
             # Verify database was updated
             file_record = test_db.get_file_by_path(str(file_path), project_id)
             assert file_record is not None, "File should be in database"
@@ -262,11 +263,11 @@ class TestExtractorIntegration:
 
 class TestCommentPreservation:
     """Tests for AST comment preservation (Phase 5)."""
-    
+
     def test_parse_with_comments_preserves_comments(self, temp_dir):
         """Test that parse_with_comments preserves comments in AST."""
         from code_analysis.core.ast_utils import parse_with_comments
-        
+
         source = '''# This is a file-level comment
 """
 Module docstring.
@@ -287,54 +288,55 @@ def test_function():
     pass
 '''
         tree = parse_with_comments(source, filename="test.py")
-        
+
         # Verify comments are in AST
         # Comments should be ast.Expr(ast.Constant(value="# comment")) nodes
         comment_nodes = [
-            node for node in tree.body
+            node
+            for node in tree.body
             if isinstance(node, type(tree.body[0])) and hasattr(node, "value")
         ]
-        
+
         # The exact structure depends on implementation
         # But we should have some comment nodes
         assert len(tree.body) > 0, "AST should have nodes"
-        
+
         # Verify AST can be serialized
         import json
         import ast as ast_module
+
         ast_json = json.dumps(ast_module.dump(tree))
         assert len(ast_json) > 0, "AST should be serializable"
-    
-    def test_ast_saving_with_comments(
-        self, test_db, test_file_with_content, temp_dir
-    ):
+
+    def test_ast_saving_with_comments(self, test_db, test_file_with_content, temp_dir):
         """Test that AST saving preserves comments."""
         file_id, file_path, project_id = test_file_with_content
-        
+
         # Add comments to file
         content_with_comments = file_path.read_text(encoding="utf-8")
         content_with_comments = "# File comment\n" + content_with_comments
         file_path.write_text(content_with_comments, encoding="utf-8")
-        
+
         # Update file data
         result = test_db.update_file_data(
             file_path=str(file_path),
             project_id=project_id,
             root_dir=temp_dir,
         )
-        
+
         assert result.get("success") is True, "Update should succeed"
         assert result.get("ast_updated") is True, "AST should be updated"
-        
+
         # Verify AST contains comments
         ast_record = test_db._fetchone(
             "SELECT ast_json FROM ast_trees WHERE file_id = ?", (file_id,)
         )
         assert ast_record is not None, "AST should be saved"
-        
+
         # Parse AST JSON to verify comments are present
         import json
         import ast as ast_module
+
         ast_data = json.loads(ast_record["ast_json"])
         # Comments should be in the AST structure
         # The exact format depends on implementation
@@ -342,21 +344,21 @@ def test_function():
 
 class TestFileWatcherIntegration:
     """Tests for file watcher integration with update_file_data."""
-    
+
     def test_file_watcher_updates_database(
         self, test_db, test_file_with_content, temp_dir
     ):
         """Test that file watcher updates database on file change."""
         file_id, file_path, project_id = test_file_with_content
-        
+
         from code_analysis.core.file_watcher_pkg.processor import FileChangeProcessor
-        
+
         # Create processor
         processor = FileChangeProcessor(
             database=test_db,
             watch_dirs=[temp_dir],
         )
-        
+
         # Modify file directly (simulating external change)
         new_content = '''"""
 Updated module.
@@ -370,12 +372,13 @@ class UpdatedClass:
     pass
 '''
         file_path.write_text(new_content, encoding="utf-8")
-        
+
         import os
         import time
+
         mtime = os.path.getmtime(file_path)
         time.sleep(0.1)  # Ensure mtime is different
-        
+
         # Queue file for processing (simulating file watcher detection)
         result = processor._queue_file_for_processing(
             file_path=str(file_path),
@@ -383,13 +386,13 @@ class UpdatedClass:
             project_id=project_id,
             project_root=temp_dir,
         )
-        
+
         assert result is True, "File should be queued successfully"
-        
+
         # Verify database was updated
         file_record = test_db.get_file_by_path(str(file_path), project_id)
         assert file_record is not None, "File should be in database"
-        
+
         # Verify AST and CST are updated
         if file_record:
             ast_record = test_db._fetchone(
@@ -399,21 +402,21 @@ class UpdatedClass:
             # AST should be updated
             # Note: In real scenario, this happens asynchronously
             # But update_file_data is called synchronously
-    
+
     def test_file_watcher_multiple_changes(
         self, test_db, test_file_with_content, temp_dir
     ):
         """Test file watcher with multiple file changes."""
         file_id, file_path, project_id = test_file_with_content
-        
+
         from code_analysis.core.file_watcher_pkg.processor import FileChangeProcessor
-        
+
         # Create processor
         processor = FileChangeProcessor(
             database=test_db,
             watch_dirs=[temp_dir],
         )
-        
+
         # Create second file
         file2_path = temp_dir / "test_file2.py"
         file2_content = '''"""
@@ -425,12 +428,13 @@ class SecondClass:
     pass
 '''
         file2_path.write_text(file2_content, encoding="utf-8")
-        
+
         # Add second file to database
         import os
+
         file2_mtime = os.path.getmtime(file2_path)
         lines = len(file2_content.splitlines())
-        
+
         file2_id = test_db.add_file(
             path=str(file2_path),
             lines=lines,
@@ -438,17 +442,18 @@ class SecondClass:
             has_docstring=True,
             project_id=project_id,
         )
-        
+
         # Modify both files
         file_path.write_text("class Updated: pass", encoding="utf-8")
         file2_path.write_text("class Updated2: pass", encoding="utf-8")
-        
+
         import time
+
         time.sleep(0.1)
-        
+
         mtime1 = os.path.getmtime(file_path)
         mtime2 = os.path.getmtime(file2_path)
-        
+
         # Queue both files
         result1 = processor._queue_file_for_processing(
             file_path=str(file_path),
@@ -456,21 +461,20 @@ class SecondClass:
             project_id=project_id,
             project_root=temp_dir,
         )
-        
+
         result2 = processor._queue_file_for_processing(
             file_path=str(file2_path),
             mtime=mtime2,
             project_id=project_id,
             project_root=temp_dir,
         )
-        
+
         assert result1 is True, "First file should be queued"
         assert result2 is True, "Second file should be queued"
-        
+
         # Verify both files are updated in database
         file1_record = test_db.get_file_by_path(str(file_path), project_id)
         file2_record = test_db.get_file_by_path(str(file2_path), project_id)
-        
+
         assert file1_record is not None, "First file should be in database"
         assert file2_record is not None, "Second file should be in database"
-

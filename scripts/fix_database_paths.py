@@ -45,9 +45,11 @@ def get_watch_dirs(config: Dict[str, Any]) -> List[Path]:
     code_analysis_config = config.get("code_analysis", {})
     worker_config = code_analysis_config.get("worker", {})
     watch_dirs = worker_config.get("watch_dirs", [])
-    
+
     # Also check dynamic watch file
-    dynamic_watch_file = worker_config.get("dynamic_watch_file", "data/dynamic_watch_dirs.json")
+    dynamic_watch_file = worker_config.get(
+        "dynamic_watch_file", "data/dynamic_watch_dirs.json"
+    )
     dynamic_path = Path(dynamic_watch_file)
     if dynamic_path.exists():
         try:
@@ -57,7 +59,7 @@ def get_watch_dirs(config: Dict[str, Any]) -> List[Path]:
                 watch_dirs.extend(dynamic_dirs)
         except Exception as e:
             logger.warning(f"Failed to load dynamic watch dirs: {e}")
-    
+
     # Resolve all paths
     resolved_dirs = []
     for watch_dir in watch_dirs:
@@ -70,7 +72,7 @@ def get_watch_dirs(config: Dict[str, Any]) -> List[Path]:
                     logger.warning(f"Watch dir does not exist: {watch_dir}")
             except Exception as e:
                 logger.warning(f"Failed to resolve watch dir {watch_dir}: {e}")
-    
+
     return resolved_dirs
 
 
@@ -82,13 +84,13 @@ def check_file_path(
 ) -> Tuple[bool, Optional[str], Optional[str]]:
     """
     Check if file path is correctly normalized.
-    
+
     Args:
         file_path: Current file path from database
         project_id: Project ID
         project_root: Project root directory (from database)
         watch_dirs: List of watched directories
-        
+
     Returns:
         Tuple of (is_correct, normalized_path, error_message)
     """
@@ -96,12 +98,12 @@ def check_file_path(
         # Normalize current path
         current_path = Path(file_path)
         normalized_path = normalize_path_simple(file_path)
-        
+
         # Check if path exists
         path_obj = Path(normalized_path)
         if not path_obj.exists():
             return False, normalized_path, f"File does not exist: {normalized_path}"
-        
+
         # Verify path is within project root
         try:
             path_obj.relative_to(project_root)
@@ -112,25 +114,37 @@ def check_file_path(
                 project_root_obj = find_project_root(path_obj, watch_dirs)
                 if project_root_obj:
                     # File belongs to a different project root
-                    return False, normalized_path, f"File is outside project root. Correct root: {project_root_obj.root_path}"
+                    return (
+                        False,
+                        normalized_path,
+                        f"File is outside project root. Correct root: {project_root_obj.root_path}",
+                    )
                 else:
-                    return False, normalized_path, f"File is outside project root and no project found"
+                    return (
+                        False,
+                        normalized_path,
+                        f"File is outside project root and no project found",
+                    )
             except Exception as e:
                 return False, normalized_path, f"Error finding project root: {e}"
-        
+
         # Check if normalized path matches current path
         # Also check if path uses symlinks (resolve() resolves symlinks)
         current_resolved = str(Path(file_path).resolve())
         if normalized_path != file_path:
-            return False, normalized_path, f"Path needs normalization: {file_path} -> {normalized_path}"
-        
+            return (
+                False,
+                normalized_path,
+                f"Path needs normalization: {file_path} -> {normalized_path}",
+            )
+
         # Check if path uses symlinks (if original path != resolved path)
         if str(current_path) != str(current_path.resolve()):
             # Path contains symlinks - this is OK, but log it
             logger.debug(f"Path contains symlinks: {file_path} -> {normalized_path}")
-        
+
         return True, normalized_path, None
-        
+
     except Exception as e:
         return False, None, f"Error checking path: {e}"
 
@@ -144,12 +158,12 @@ def fix_database_paths(
 ) -> Dict[str, Any]:
     """
     Check and fix all file paths in database.
-    
+
     Args:
         database: Database instance
         config: Configuration dict
         dry_run: If True, only check without updating
-        
+
     Returns:
         Statistics dictionary
     """
@@ -163,43 +177,43 @@ def fix_database_paths(
         "files_not_found": 0,
         "example_paths": [],
     }
-    
+
     # Get watch_dirs
     watch_dirs = get_watch_dirs(config)
     logger.info(f"Watch directories: {[str(d) for d in watch_dirs]}")
-    
+
     # Get all projects
     projects = database._fetchall("SELECT id, root_path FROM projects")
     logger.info(f"Found {len(projects)} projects in database")
-    
+
     # Process each project
     for project_row in projects:
         project_id = project_row["id"]
         project_root_str = project_row["root_path"]
-        
+
         try:
             project_root = normalize_root_dir(project_root_str)
         except (FileNotFoundError, NotADirectoryError) as e:
             logger.warning(f"Project root does not exist: {project_root_str} ({e})")
             continue
-        
+
         logger.info(f"\nProcessing project {project_id} (root: {project_root})")
-        
+
         # Get all files for this project
         files = database.get_project_files(project_id, include_deleted=False)
         logger.info(f"  Found {len(files)} files in project")
-        
+
         for file_record in files:
             stats["total_files"] += 1
             file_id = file_record["id"]
             file_path = file_record["path"]
-            
+
             try:
                 # Check if path is correct
                 is_correct, normalized_path, error_msg = check_file_path(
                     file_path, project_id, project_root, watch_dirs
                 )
-                
+
                 if is_correct:
                     stats["correct_paths"] += 1
                     if verbose:
@@ -209,19 +223,19 @@ def fix_database_paths(
                     logger.debug(f"  ✓ {file_path}")
                 else:
                     stats["incorrect_paths"] += 1
-                    
+
                     if error_msg:
                         if "does not exist" in error_msg:
                             stats["files_not_found"] += 1
                         elif "outside project root" in error_msg:
                             stats["files_outside_project"] += 1
-                    
+
                     logger.warning(f"  ✗ {file_path}")
                     logger.warning(f"    Error: {error_msg}")
-                    
+
                     if normalized_path and normalized_path != file_path:
                         logger.info(f"    Should be: {normalized_path}")
-                        
+
                         if not dry_run:
                             try:
                                 # Update path in database
@@ -235,18 +249,18 @@ def fix_database_paths(
                             except Exception as e:
                                 stats["errors"] += 1
                                 logger.error(f"    ✗ Failed to fix: {e}")
-            
+
             except Exception as e:
                 stats["errors"] += 1
                 logger.error(f"  ✗ Error processing file {file_id} ({file_path}): {e}")
-    
+
     return stats
 
 
 def main() -> None:
     """Main function."""
     import argparse
-    
+
     parser = argparse.ArgumentParser(description="Check and fix file paths in database")
     parser.add_argument(
         "--config",
@@ -281,32 +295,32 @@ def main() -> None:
         default=10,
         help="Show N examples of correct paths (default: 10)",
     )
-    
+
     args = parser.parse_args()
-    
+
     # Load config
     if not args.config.exists():
         logger.error(f"Config file not found: {args.config}")
         sys.exit(1)
-    
+
     config = load_config(args.config)
-    
+
     # Get database path
     if args.db_path:
         db_path = args.db_path
     else:
         code_analysis_config = config.get("code_analysis", {})
         db_path = Path(code_analysis_config.get("db_path", "data/code_analysis.db"))
-    
+
     if not db_path.exists():
         logger.error(f"Database file not found: {db_path}")
         sys.exit(1)
-    
+
     logger.info(f"Using database: {db_path}")
-    
+
     # Determine if dry run
     dry_run = not args.apply if args.apply else args.dry_run
-    
+
     if dry_run:
         logger.info("DRY RUN MODE - No changes will be made")
     else:
@@ -315,19 +329,20 @@ def main() -> None:
         if response.lower() != "yes":
             logger.info("Aborted by user")
             sys.exit(0)
-    
+
     # Connect to database
     driver_config = create_driver_config_for_worker(db_path, "sqlite_proxy")
     database = CodeDatabase(driver_config)
-    
+
     # Fix paths
     stats = fix_database_paths(
-        database, config, 
+        database,
+        config,
         dry_run=dry_run,
         verbose=args.verbose,
         show_examples=args.show_examples,
     )
-    
+
     # Print summary
     logger.info("\n" + "=" * 60)
     logger.info("SUMMARY")
@@ -340,18 +355,19 @@ def main() -> None:
     if not dry_run:
         logger.info(f"Fixed paths: {stats['fixed_paths']}")
     else:
-        logger.info(f"Paths that would be fixed: {stats['incorrect_paths'] - stats['errors']}")
+        logger.info(
+            f"Paths that would be fixed: {stats['incorrect_paths'] - stats['errors']}"
+        )
     logger.info(f"Errors: {stats['errors']}")
-    
+
     # Show example paths
     if stats["example_paths"]:
         logger.info("\nExample correct paths:")
         for example_path in stats["example_paths"]:
             logger.info(f"  {example_path}")
-    
+
     logger.info("=" * 60)
 
 
 if __name__ == "__main__":
     main()
-

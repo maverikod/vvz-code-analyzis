@@ -102,7 +102,9 @@ def main() -> None:
                 pass
 
         print("=== Vectorization monitor ===")
-        print(f"  Chunks: {done} vectorized, {pending} pending (total {total}) — {pct:.1f}%")
+        print(
+            f"  Chunks: {done} vectorized, {pending} pending (total {total}) — {pct:.1f}%"
+        )
         print(f"  Worker status: {op}")
 
         # Prefer completed cycle for speed (real totals and duration)
@@ -121,14 +123,18 @@ def main() -> None:
                     f"  Last cycle: processed={chunks_processed}, failed={chunks_failed}, "
                     f"skipped={chunks_skipped} (start queue={total_at_start})"
                 )
-                print(f"  Speed: {speed:.2f} chunks/sec (cycle time {float(total_sec):.1f} s)")
+                print(
+                    f"  Speed: {speed:.2f} chunks/sec (cycle time {float(total_sec):.1f} s)"
+                )
             elif avg_sec and float(avg_sec) > 0:
                 speed = 1.0 / float(avg_sec)
                 print(
                     f"  Cycle: processed={chunks_processed}, failed={chunks_failed}, "
                     f"skipped={chunks_skipped}, total_at_start={total_at_start}"
                 )
-                print(f"  Speed: {speed:.2f} chunks/sec (avg {float(avg_sec):.2f} s/chunk)")
+                print(
+                    f"  Speed: {speed:.2f} chunks/sec (avg {float(avg_sec):.2f} s/chunk)"
+                )
             else:
                 print(
                     f"  Cycle: processed={chunks_processed}, failed={chunks_failed}, "

@@ -122,7 +122,14 @@ class FormatCodeCommand(Command):
                 comment="Before format",
             )
             if not backup_uuid:
-                logger.warning("Failed to create backup before format_code")
+                return ErrorResult(
+                    message=(
+                        "Backup to old_code (versions) is mandatory before write; "
+                        "create_backup failed. Aborting format_code."
+                    ),
+                    code="BACKUP_REQUIRED",
+                    details={"file_path": str(path)},
+                )
 
             success, error = format_code_with_black(path)
 

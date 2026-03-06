@@ -159,9 +159,7 @@ class TestSQLiteDriverEdgeCases:
         }
         sqlite_driver.create_table(schema)
 
-        result = sqlite_driver.execute(
-            "INSERT INTO users (name) VALUES (?)", ("Test",)
-        )
+        result = sqlite_driver.execute("INSERT INTO users (name) VALUES (?)", ("Test",))
         assert result["affected_rows"] == 1
 
     def test_get_table_info_nonexistent_table(self, sqlite_driver):
@@ -223,7 +221,9 @@ class TestSQLiteDriverEdgeCases:
 
         # Try to update with invalid column
         with pytest.raises(DriverOperationError):
-            sqlite_driver.update("users", where={"id": 1}, data={"invalid_col": "value"})
+            sqlite_driver.update(
+                "users", where={"id": 1}, data={"invalid_col": "value"}
+            )
 
     def test_delete_rollback_on_error(self, sqlite_driver):
         """Test that delete rolls back on error."""

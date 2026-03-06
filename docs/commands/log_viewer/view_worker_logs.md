@@ -15,10 +15,10 @@ email: vasilyvz@gmail.com
 The view_worker_logs command views worker logs with advanced filtering capabilities. It supports filtering by time range, event types, log levels, and text search patterns. The command parses log files and returns structured log entries.
 
 Operation flow:
-1. Validates log_path exists and is readable
-2. Parses time filters (from_time, to_time) if provided
-3. Selects event patterns based on worker_type
-4. Reads log file line by line
+1. Resolves path: if log_id given, from config (same as rotate_all_logs); else log_path or worker_type
+2. Reads current log and rotated files (.1, .2, ... and .gz) in chronological order
+3. Parses time filters (from_time, to_time) if provided
+4. Selects event patterns based on worker_type (or derived from log_id)
 5. Parses each log line (unified or legacy format) to extract timestamp, level, importance (0-10), and message
 6. Applies filters:
    - Time range filter (from_time to to_time; partial interval supported)
@@ -76,7 +76,8 @@ Important notes:
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `log_path` | string | No | Path to log file |
+| `log_id` | string | No | Log identifier (preferred over path). Resolves path from config; reading includes rotated files (.1, .2, .gz). |
+| `log_path` | string | No | Path to log file (optional if log_id or worker_type set) |
 | `worker_type` | string | No | Type of worker (file_watcher, vectorization, indexing, database_driver, or analysis) Default: `"file_watcher"`. |
 | `from_time` | string | No | Start time filter (ISO format or 'YYYY-MM-DD HH:MM:SS') |
 | `to_time` | string | No | End time filter (ISO format or 'YYYY-MM-DD HH:MM:SS') |
@@ -197,6 +198,7 @@ Returns log entries with importance >= 8 (errors and critical).
 - Use search_pattern for regex search on message
 - Use importance_min/importance_max to filter by severity (0-10)
 - Set appropriate limit to prevent large responses
-- Use list_worker_logs first to find available log files
+- Use list_logs to get log identifiers (log_id), then view_worker_logs with log_id to avoid paths
+- Use list_worker_logs to find log files by path if needed
 
 ---

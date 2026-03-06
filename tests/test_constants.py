@@ -157,14 +157,13 @@ class TestConstants:
         # Note: In Python, we can't truly make constants immutable without using
         # __setattr__ or other mechanisms. This test verifies that constants
         # have correct initial values and types.
-        
+
         # Verify initial values are correct
         assert constants.DEFAULT_MAX_FILE_LINES == 400
         assert ".py" in constants.CODE_FILE_EXTENSIONS
         assert constants.PROJECTID_FILENAME == "projectid"
-        
+
         # Verify types are correct
         assert isinstance(constants.CODE_FILE_EXTENSIONS, set)
         assert isinstance(constants.DEFAULT_MAX_FILE_LINES, int)
         assert isinstance(constants.PROJECTID_FILENAME, str)
-

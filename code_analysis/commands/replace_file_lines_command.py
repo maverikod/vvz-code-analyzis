@@ -194,7 +194,14 @@ class ReplaceFileLinesCommand(BaseMCPCommand):
                         comment=f"Before replace_file_lines {start_line}-{end_line}",
                     )
                     if not backup_uuid:
-                        logger.warning("Failed to create backup, continuing anyway")
+                        return ErrorResult(
+                            message=(
+                                "Backup to old_code (versions) is mandatory before write; "
+                                "create_backup failed. Aborting replace_file_lines."
+                            ),
+                            code="BACKUP_REQUIRED",
+                            details={"file_path": str(absolute_path)},
+                        )
 
                 absolute_path.write_text(source_code, encoding="utf-8")
 

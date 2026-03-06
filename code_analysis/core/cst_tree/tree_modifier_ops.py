@@ -243,6 +243,30 @@ def find_node_in_module_by_position(
             stmt_start = (pos.start.line, pos.start.column)
             if stmt_start == target_start:
                 return stmt
+
+        # Fallback: search whole tree for node with matching start (e.g. method
+        # inside class body, after prior replace shifted end position).
+        class FindByStart(cst.CSTVisitor):
+            def visit(self, node: cst.CSTNode) -> bool:
+                if isinstance(node, (cst.FunctionDef, cst.ClassDef)):
+                    p = positions.get(node)
+                    if (
+                        p
+                        and hasattr(p, "start")
+                        and (
+                            p.start.line,
+                            p.start.column,
+                        )
+                        == target_start
+                    ):
+                        result[0] = node
+                        return False
+                return True
+
+        result[0] = None
+        module.visit(FindByStart())
+        if result[0] is not None:
+            return result[0]
         return None
     # When the matched node is inside a SimpleStatementLine (e.g. ImportFrom),
     # return the statement-level node so leave_Module finds it in module.body.

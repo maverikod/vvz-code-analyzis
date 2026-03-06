@@ -60,11 +60,12 @@ def test_file(test_db, temp_dir, test_project):
     file_path = temp_dir / "test_file.py"
     file_content = DEFAULT_TEST_FILE_CONTENT
     file_path.write_text(file_content, encoding="utf-8")
-    
+
     import os
+
     file_mtime = os.path.getmtime(file_path)
     lines = len(file_content.splitlines())
-    
+
     file_id = test_db.add_file(
         path=str(file_path),
         lines=lines,
@@ -72,16 +73,16 @@ def test_file(test_db, temp_dir, test_project):
         has_docstring=True,
         project_id=test_project,
     )
-    
+
     # Add AST and CST trees directly via SQL
     import ast
     import json
     import hashlib
-    
+
     tree = ast.parse(file_content, filename=str(file_path))
     ast_json = json.dumps(ast.dump(tree))
     ast_hash = hashlib.sha256(ast_json.encode()).hexdigest()
-    
+
     # Insert AST tree
     test_db._execute(
         """
@@ -90,7 +91,7 @@ def test_file(test_db, temp_dir, test_project):
         """,
         (file_id, test_project, ast_json, ast_hash, file_mtime),
     )
-    
+
     # Insert CST tree
     cst_hash = hashlib.sha256(file_content.encode()).hexdigest()
     test_db._execute(
@@ -100,14 +101,20 @@ def test_file(test_db, temp_dir, test_project):
         """,
         (file_id, test_project, file_content, cst_hash, file_mtime),
     )
-    
+
     # Add some entities directly via SQL (line numbers match DEFAULT_TEST_FILE_CONTENT)
     test_db._execute(
         """
         INSERT INTO classes (file_id, name, line, docstring, bases)
         VALUES (?, ?, ?, ?, ?)
         """,
-        (file_id, "TestClass", 10, "Helper class for validation and configuration in tests.", "[]"),
+        (
+            file_id,
+            "TestClass",
+            10,
+            "Helper class for validation and configuration in tests.",
+            "[]",
+        ),
     )
     class_row = test_db._fetchone(
         "SELECT id FROM classes WHERE file_id = ? AND name = ?", (file_id, "TestClass")
@@ -121,7 +128,13 @@ def test_file(test_db, temp_dir, test_project):
             INSERT INTO methods (class_id, name, line, args, docstring)
             VALUES (?, ?, ?, ?, ?)
             """,
-            (class_id, "test_method", 14, "[]", "Validates input configuration and returns True if settings are correct."),
+            (
+                class_id,
+                "test_method",
+                14,
+                "[]",
+                "Validates input configuration and returns True if settings are correct.",
+            ),
         )
 
     # Insert function (test_function starts at line 22)
@@ -130,62 +143,66 @@ def test_file(test_db, temp_dir, test_project):
         INSERT INTO functions (file_id, name, line, args, docstring)
         VALUES (?, ?, ?, ?, ?)
         """,
-        (file_id, "test_function", 22, "[]", "Processes raw data and returns normalized result."),
+        (
+            file_id,
+            "test_function",
+            22,
+            "[]",
+            "Processes raw data and returns normalized result.",
+        ),
     )
-    
+
     test_db._commit()
-    
+
     return file_id, file_path, test_project
 
 
 class TestClearFileData:
     """Tests for clear_file_data method."""
 
-    def test_clear_file_data_includes_cst_trees(
-        self, test_db, test_file, test_project
-    ):
+    def test_clear_file_data_includes_cst_trees(self, test_db, test_file, test_project):
         """Test that clear_file_data deletes CST trees."""
         file_id, file_path, project_id = test_file
-        
+
         # Verify CST tree exists before clearing
         cst_before = test_db._fetchone(
             "SELECT id FROM cst_trees WHERE file_id = ?", (file_id,)
         )
         assert cst_before is not None, "CST tree should exist before clearing"
-        
+
         # Verify AST tree exists before clearing
         ast_before = test_db._fetchone(
             "SELECT id FROM ast_trees WHERE file_id = ?", (file_id,)
         )
         assert ast_before is not None, "AST tree should exist before clearing"
-        
+
         # Verify entities exist before clearing
         classes_before = test_db._fetchall(
             "SELECT id FROM classes WHERE file_id = ?", (file_id,)
         )
         assert len(classes_before) > 0, "Classes should exist before clearing"
-        
+
         # Clear file data
         test_db.clear_file_data(file_id)
-        
+
         # Verify CST tree is deleted
         cst_after = test_db._fetchone(
             "SELECT id FROM cst_trees WHERE file_id = ?", (file_id,)
         )
         assert cst_after is None, "CST tree should be deleted after clearing"
-        
+
         # Verify AST tree is deleted
         ast_after = test_db._fetchone(
             "SELECT id FROM ast_trees WHERE file_id = ?", (file_id,)
         )
         assert ast_after is None, "AST tree should be deleted after clearing"
-        
+
         # Verify entities are deleted
         classes_after = test_db._fetchall(
             "SELECT id FROM classes WHERE file_id = ?", (file_id,)
         )
         assert len(classes_after) == 0, "Classes should be deleted after clearing"
-        
+
         functions_after = test_db._fetchall(
             "SELECT id FROM functions WHERE file_id = ?", (file_id,)
         )
@@ -195,12 +212,10 @@ class TestClearFileData:
 class TestUpdateFileData:
     """Tests for update_file_data method."""
 
-    def test_update_file_data_success(
-        self, test_db, test_file, test_project, temp_dir
-    ):
+    def test_update_file_data_success(self, test_db, test_file, test_project, temp_dir):
         """Test successful file data update."""
         file_id, file_path, project_id = test_file
-        
+
         # Update file content
         new_content = '''"""
 Updated test file.
@@ -221,23 +236,23 @@ def new_function():
     pass
 '''
         file_path.write_text(new_content, encoding="utf-8")
-        
+
         # Use absolute path for update_file_data
         abs_path = str(file_path.resolve())
-        
+
         # Update file data
         result = test_db.update_file_data(
             file_path=abs_path,
             project_id=project_id,
             root_dir=temp_dir,
         )
-        
+
         assert result.get("success") is True, "Update should succeed"
         assert result.get("file_id") == file_id, "File ID should match"
         assert result.get("ast_updated") is True, "AST should be updated"
         assert result.get("cst_updated") is True, "CST should be updated"
         assert result.get("entities_updated") > 0, "Entities should be updated"
-        
+
         # Verify new entities exist
         classes = test_db._fetchall(
             "SELECT name FROM classes WHERE file_id = ?", (file_id,)
@@ -245,7 +260,7 @@ def new_function():
         class_names = [c["name"] for c in classes]
         assert "UpdatedClass" in class_names, "Updated class should exist"
         assert "TestClass" not in class_names, "Old class should be removed"
-        
+
         functions = test_db._fetchall(
             "SELECT name FROM functions WHERE file_id = ?", (file_id,)
         )
@@ -253,38 +268,40 @@ def new_function():
         assert "new_function" in function_names, "New function should exist"
         assert "test_function" not in function_names, "Old function should be removed"
 
-    def test_update_file_data_file_not_found(
-        self, test_db, test_project, temp_dir
-    ):
+    def test_update_file_data_file_not_found(self, test_db, test_project, temp_dir):
         """Test update_file_data with file not in database."""
         result = test_db.update_file_data(
             file_path="nonexistent.py",
             project_id=test_project,
             root_dir=temp_dir,
         )
-        
+
         assert result.get("success") is False, "Update should fail"
-        assert "not found" in result.get("error", "").lower(), "Error should mention file not found"
+        assert (
+            "not found" in result.get("error", "").lower()
+        ), "Error should mention file not found"
 
     def test_update_file_data_syntax_error(
         self, test_db, test_file, test_project, temp_dir
     ):
         """Test update_file_data with syntax error in file."""
         file_id, file_path, project_id = test_file
-        
+
         # Write invalid Python code
-        invalid_content = "class Invalid:\n    def method(\n    pass"  # Missing closing paren
+        invalid_content = (
+            "class Invalid:\n    def method(\n    pass"  # Missing closing paren
+        )
         file_path.write_text(invalid_content, encoding="utf-8")
-        
+
         abs_path = str(file_path.resolve())
-        
+
         # Update file data - should handle syntax error gracefully
         result = test_db.update_file_data(
             file_path=abs_path,
             project_id=project_id,
             root_dir=temp_dir,
         )
-        
+
         # Should fail but not crash
         assert result.get("success") is False, "Update should fail on syntax error"
         assert "error" in result, "Result should contain error information"
@@ -294,15 +311,15 @@ def new_function():
     ):
         """Test that update_file_data clears old records before creating new ones."""
         file_id, file_path, project_id = test_file
-        
+
         # Verify old entities exist
         old_classes = test_db._fetchall(
             "SELECT id FROM classes WHERE file_id = ?", (file_id,)
         )
         assert len(old_classes) > 0, "Old classes should exist"
-        
+
         old_class_ids = [c["id"] for c in old_classes]
-        
+
         # Update file with different content
         new_content = '''"""
 New content.
@@ -313,38 +330,40 @@ class NewClass:
     pass
 '''
         file_path.write_text(new_content, encoding="utf-8")
-        
+
         abs_path = str(file_path.resolve())
-        
+
         # Update file data
         result = test_db.update_file_data(
             file_path=abs_path,
             project_id=project_id,
             root_dir=temp_dir,
         )
-        
+
         assert result.get("success") is True, "Update should succeed"
-        
+
         # Verify old class IDs are gone
         for old_class_id in old_class_ids:
             old_class = test_db._fetchone(
                 "SELECT id FROM classes WHERE id = ?", (old_class_id,)
             )
             assert old_class is None, f"Old class {old_class_id} should be deleted"
-        
+
         # Verify new class exists
         new_classes = test_db._fetchall(
             "SELECT name FROM classes WHERE file_id = ?", (file_id,)
         )
         assert len(new_classes) == 1, "Should have one new class"
-        assert new_classes[0]["name"] == "NewClass", "New class should be named NewClass"
+        assert (
+            new_classes[0]["name"] == "NewClass"
+        ), "New class should be named NewClass"
 
     def test_update_file_data_creates_new_records(
         self, test_db, test_file, test_project, temp_dir
     ):
         """Test that update_file_data creates new records."""
         file_id, file_path, project_id = test_file
-        
+
         # Update file content
         new_content = '''"""
 Test file with multiple entities.
@@ -367,30 +386,32 @@ def func_b():
     pass
 '''
         file_path.write_text(new_content, encoding="utf-8")
-        
+
         abs_path = str(file_path.resolve())
-        
+
         # Update file data
         result = test_db.update_file_data(
             file_path=abs_path,
             project_id=project_id,
             root_dir=temp_dir,
         )
-        
+
         assert result.get("success") is True, "Update should succeed"
-        assert result.get("entities_updated") == 4, "Should have 2 classes + 2 functions"
-        
+        assert (
+            result.get("entities_updated") == 4
+        ), "Should have 2 classes + 2 functions"
+
         # Verify AST and CST are saved
         ast_record = test_db._fetchone(
             "SELECT id FROM ast_trees WHERE file_id = ?", (file_id,)
         )
         assert ast_record is not None, "AST tree should be saved"
-        
+
         cst_record = test_db._fetchone(
             "SELECT id FROM cst_trees WHERE file_id = ?", (file_id,)
         )
         assert cst_record is not None, "CST tree should be saved"
-        
+
         # Verify entities are created
         classes = test_db._fetchall(
             "SELECT name FROM classes WHERE file_id = ?", (file_id,)
@@ -398,11 +419,10 @@ def func_b():
         assert len(classes) == 2, "Should have 2 classes"
         class_names = {c["name"] for c in classes}
         assert class_names == {"ClassA", "ClassB"}, "Should have both classes"
-        
+
         functions = test_db._fetchall(
             "SELECT name FROM functions WHERE file_id = ?", (file_id,)
         )
         assert len(functions) == 2, "Should have 2 functions"
         function_names = {f["name"] for f in functions}
         assert function_names == {"func_a", "func_b"}, "Should have both functions"
-

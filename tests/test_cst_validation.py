@@ -62,8 +62,12 @@ def test_function(x: int) -> str:
         # If validation failed, check which part failed
         failed_parts = [k for k, v in results.items() if not v.success]
         # Allow linter/type_checker to fail, but compile and docstrings must pass
-        assert "compile" not in failed_parts, f"Compilation should pass, but failed: {results.get('compile')}"
-        assert "docstrings" not in failed_parts, f"Docstrings should pass, but failed: {results.get('docstrings')}"
+        assert (
+            "compile" not in failed_parts
+        ), f"Compilation should pass, but failed: {results.get('compile')}"
+        assert (
+            "docstrings" not in failed_parts
+        ), f"Docstrings should pass, but failed: {results.get('docstrings')}"
 
 
 def test_validate_compile_error(temp_file):
@@ -240,7 +244,9 @@ def test_function(x: int) -> str:
 
     assert success is True, f"Validation should succeed: {error}, results: {results}"
     assert "type_checker" in results
-    assert results["type_checker"].success is True  # Should be marked as success when skipped
+    assert (
+        results["type_checker"].success is True
+    )  # Should be marked as success when skipped
     assert "compile" in results
     assert results["compile"].success is True
     assert "docstrings" in results
@@ -274,4 +280,3 @@ def test_function(x: int) -> str:
     assert error is not None
     assert "compile" in results
     assert results["compile"].success is False
-

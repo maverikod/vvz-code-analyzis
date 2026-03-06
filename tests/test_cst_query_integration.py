@@ -19,7 +19,9 @@ BHLFF_DIR = TEST_DATA_DIR / "bhlff"
 class TestCSTQueryIntegrationRealData:
     """Integration tests for CSTQuery on real data from test_data/."""
 
-    @pytest.mark.skipif(not VAST_SRV_DIR.exists(), reason="test_data/vast_srv/ not found")
+    @pytest.mark.skipif(
+        not VAST_SRV_DIR.exists(), reason="test_data/vast_srv/ not found"
+    )
     def test_query_functions_in_real_file(self):
         """Test querying functions in real file from vast_srv."""
         py_files = list(VAST_SRV_DIR.rglob("*.py"))
@@ -41,7 +43,9 @@ class TestCSTQueryIntegrationRealData:
         matches = query_source(source, "class")
         assert len(matches) >= 0  # May have no classes
 
-    @pytest.mark.skipif(not VAST_SRV_DIR.exists(), reason="test_data/vast_srv/ not found")
+    @pytest.mark.skipif(
+        not VAST_SRV_DIR.exists(), reason="test_data/vast_srv/ not found"
+    )
     def test_query_classes_in_real_file(self):
         """Test querying classes in real file from vast_srv."""
         py_files = list(VAST_SRV_DIR.rglob("*.py"))
@@ -65,7 +69,9 @@ class TestCSTQueryIntegrationRealData:
                 )
                 assert len(method_matches) >= 0
 
-    @pytest.mark.skipif(not VAST_SRV_DIR.exists(), reason="test_data/vast_srv/ not found")
+    @pytest.mark.skipif(
+        not VAST_SRV_DIR.exists(), reason="test_data/vast_srv/ not found"
+    )
     def test_query_with_predicates_real_file(self):
         """Test querying with predicates on real file."""
         py_files = list(VAST_SRV_DIR.rglob("*.py"))
@@ -83,7 +89,9 @@ class TestCSTQueryIntegrationRealData:
         matches = query_source(source, 'class[name^="Test"]')
         assert len(matches) >= 0
 
-    @pytest.mark.skipif(not VAST_SRV_DIR.exists(), reason="test_data/vast_srv/ not found")
+    @pytest.mark.skipif(
+        not VAST_SRV_DIR.exists(), reason="test_data/vast_srv/ not found"
+    )
     def test_query_statements_in_real_file(self):
         """Test querying statements in real file."""
         py_files = list(VAST_SRV_DIR.rglob("*.py"))
@@ -101,7 +109,9 @@ class TestCSTQueryIntegrationRealData:
         matches = query_source(source, "stmt")
         assert len(matches) >= 0
 
-    @pytest.mark.skipif(not VAST_SRV_DIR.exists(), reason="test_data/vast_srv/ not found")
+    @pytest.mark.skipif(
+        not VAST_SRV_DIR.exists(), reason="test_data/vast_srv/ not found"
+    )
     def test_query_complex_queries_real_file(self):
         """Test complex queries on real file."""
         py_files = list(VAST_SRV_DIR.rglob("*.py"))
@@ -137,7 +147,9 @@ class TestCSTQueryIntegrationRealData:
         matches = query_source(source, "class")
         assert len(matches) >= 0
 
-    @pytest.mark.skipif(not VAST_SRV_DIR.exists(), reason="test_data/vast_srv/ not found")
+    @pytest.mark.skipif(
+        not VAST_SRV_DIR.exists(), reason="test_data/vast_srv/ not found"
+    )
     def test_query_multiple_files_vast_srv(self):
         """Test querying multiple files from vast_srv."""
         py_files = list(VAST_SRV_DIR.rglob("*.py"))[:5]  # Limit to 5 files
@@ -161,7 +173,9 @@ class TestCSTQueryIntegrationRealData:
         assert total_functions >= 0
         assert total_classes >= 0
 
-    @pytest.mark.skipif(not VAST_SRV_DIR.exists(), reason="test_data/vast_srv/ not found")
+    @pytest.mark.skipif(
+        not VAST_SRV_DIR.exists(), reason="test_data/vast_srv/ not found"
+    )
     def test_query_with_code_included_real_file(self):
         """Test querying with code included on real file."""
         py_files = list(VAST_SRV_DIR.rglob("*.py"))
@@ -181,7 +195,9 @@ class TestCSTQueryIntegrationRealData:
                 assert match.code is not None
                 assert len(match.code) > 0
 
-    @pytest.mark.skipif(not VAST_SRV_DIR.exists(), reason="test_data/vast_srv/ not found")
+    @pytest.mark.skipif(
+        not VAST_SRV_DIR.exists(), reason="test_data/vast_srv/ not found"
+    )
     def test_query_pseudos_real_file(self):
         """Test querying with pseudos on real file."""
         py_files = list(VAST_SRV_DIR.rglob("*.py"))

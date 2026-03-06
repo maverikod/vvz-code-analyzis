@@ -47,12 +47,12 @@ Important notes:
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `tree_id` | string | **Yes** | Tree ID from cst_load_file |
-| `node_id` | string | **Yes** | Node ID, or reserved value `__root__` for the Module (root) node |
+| `node_id` | string | **Yes** | Node ID |
 | `include_code` | boolean | No | Whether to include code snippet Default: `false`. |
 | `include_children` | boolean | No | Whether to include full children information Default: `false`. |
 | `include_parent` | boolean | No | Whether to include parent node information Default: `false`. |
 | `max_children` | integer | No | Maximum number of children to return (if include_children=True) |
-| `children_depth` | integer or string | No | Depth of descendants. Integer: 1=direct only, 2=two levels, 0=full subtree. String: `"direct"` (same as 1), `"recursive"` (same as 0). Default: `1`. Used when include_children=True. |
+| `children_depth` |  | No | Depth of descendants when include_children=True: integer 0=full subtree, 1=direct only, 2+=N levels; or string 'direct' (same as 1), 'recursive' (same as 0). Default: `1`. |
 
 **Schema:** `additionalProperties: false` — only the parameters above are accepted.
 
@@ -68,10 +68,8 @@ All MCP commands return either a **success** result (with `data`) or an **error*
 - `success`: Always True on success
 - `tree_id`: Tree ID
 - `node`: Node metadata dictionary
-- `children`: List of direct child node metadata (if include_children=True; when children_depth>1 this is still level 1 only)
-- `children_count`: Number of direct children (if include_children=True)
-- `descendants`: Flat list of descendant nodes, each with a `depth` field (1=child, 2=grandchild, …); present when include_children=True and children_depth>1 or 0 (full subtree)
-- `descendants_count`: Total descendants returned (if descendants present)
+- `children`: List of child node metadata (if include_children=True)
+- `children_count`: Number of children returned (if include_children=True)
 - `parent`: Parent node metadata (if include_parent=True)
 
 ### Error

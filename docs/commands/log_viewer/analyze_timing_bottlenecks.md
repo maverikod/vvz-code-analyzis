@@ -74,7 +74,7 @@ All MCP commands return either a **success** result (with `data`) or an **error*
 ### Error
 
 - **Shape:** `ErrorResult` with `code` and `message`.
-- **Possible codes:** MISSING_LOG_PATH, LOG_FILE_NOT_FOUND, LOG_READ_ERROR (and others).
+- **Possible codes:** TIMING_DISABLED, MISSING_LOG_PATH, LOG_FILE_NOT_FOUND, LOG_READ_ERROR (and others).
 
 ---
 
@@ -116,6 +116,8 @@ Last 50k lines, return top 20 operations by total time and by average time.
 
 ### Incorrect usage
 
+- **TIMING_DISABLED**: log_all_operations_timing is false in code_analysis.worker config; server does not write [TIMING] lines. Set log_all_operations_timing to true in config and restart the server (or the worker) so that timing lines are written. Then run this command again.
+
 - **MISSING_LOG_PATH**: Neither log_path nor worker_type provided, or path could not be resolved from config. Provide log_path explicitly or set worker_type and ensure server config is available.
 
 - **LOG_FILE_NOT_FOUND**: The resolved log file does not exist or is not a regular file. Check path and that the worker has written to the log (e.g. enable log_all_operations_timing and run the worker).
@@ -126,6 +128,7 @@ Last 50k lines, return top 20 operations by total time and by average time.
 
 | Code | Description | Action |
 |------|-------------|--------|
+| `TIMING_DISABLED` | log_all_operations_timing is false in code_analysis.worker c | Set log_all_operations_timing to true in config an |
 | `MISSING_LOG_PATH` | Neither log_path nor worker_type provided, or path could not | Provide log_path explicitly or set worker_type and |
 | `LOG_FILE_NOT_FOUND` | The resolved log file does not exist or is not a regular fil | Check path and that the worker has written to the  |
 | `LOG_READ_ERROR` | OS error while reading the log file (permission, I/O, etc.) | Ensure file is readable and disk is accessible. |

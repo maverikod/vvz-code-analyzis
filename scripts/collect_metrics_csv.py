@@ -41,7 +41,9 @@ def get_db_path() -> Path:
         )
 
         config_data = load_raw_config(str(config_path))
-        storage = resolve_storage_paths(config_data=config_data, config_path=str(config_path))
+        storage = resolve_storage_paths(
+            config_data=config_data, config_path=str(config_path)
+        )
         return storage.db_path
     except Exception:
         pass
@@ -78,7 +80,9 @@ def collect_row(conn: sqlite3.Connection, db_path: Path, logs_dir: Path) -> list
         "AND (needs_chunking = 0 OR needs_chunking IS NULL)"
     )
     files_indexed = cur.fetchone()[0]
-    files_indexed_pct = round((files_indexed / files_active * 100), 2) if files_active else 0
+    files_indexed_pct = (
+        round((files_indexed / files_active * 100), 2) if files_active else 0
+    )
 
     cur = conn.execute(
         "SELECT COUNT(*) FROM files WHERE (deleted = 0 OR deleted IS NULL) AND needs_chunking = 1"
@@ -149,7 +153,9 @@ def main() -> int:
     """Run 6 collections, 10 minutes apart, appending to data/metrics_YYYYMMDD.csv."""
     import argparse
 
-    parser = argparse.ArgumentParser(description="Collect metrics to CSV every 10 min for 1 hour")
+    parser = argparse.ArgumentParser(
+        description="Collect metrics to CSV every 10 min for 1 hour"
+    )
     parser.add_argument(
         "--once",
         action="store_true",
@@ -168,7 +174,9 @@ def main() -> int:
     if not logs_dir.exists():
         logs_dir = PROJECT_ROOT / "log"
 
-    csv_path = PROJECT_ROOT / "data" / f"metrics_{datetime.now().strftime('%Y%m%d')}.csv"
+    csv_path = (
+        PROJECT_ROOT / "data" / f"metrics_{datetime.now().strftime('%Y%m%d')}.csv"
+    )
     csv_path.parent.mkdir(parents=True, exist_ok=True)
     write_header = not csv_path.exists()
 

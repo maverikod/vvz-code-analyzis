@@ -9,6 +9,7 @@ Implements Step 3 of refactor plan: scan → queue → process phases.
 Deleted file handling (FILE_TRASH_SPEC step 10):
 - When a file disappears from disk, the watcher only sets deleted=1 in the DB.
 - No physical move to trash is performed (the file is already gone from disk).
+- This operation does not require version_dir; marking as deleted is always done.
 - Explicit "mark for deletion" (mark_file_deleted in files.py) moves the file
   to trash_dir/project_id and then sets the flag; that path is the only way
   a file can end up in file-level trash. Workers skip files with deleted=1
@@ -102,8 +103,8 @@ class FileChangeProcessor:
         Args:
             database: CodeDatabase instance
             watch_dirs: List of watched directories for project discovery (REQUIRED)
-            version_dir: If set, allows marking disappeared files as deleted=1
-                in DB (optional). No physical move to trash; see module docstring.
+            version_dir: Optional; not used for marking disappeared-from-disk files
+                as deleted (that is always done). Kept for compatibility/future use.
         """
         self.database = database
         self.watch_dirs = watch_dirs
@@ -469,37 +470,31 @@ class FileChangeProcessor:
                 logger.info(
                     f"[project={project_id}] [DELETED FILE] {file_path_str} | action: soft_delete"
                 )
-                if self.version_dir:
-                    self.database.execute(
-                        """
-                        UPDATE files
-                        SET deleted = 1, updated_at = julianday('now')
-                        WHERE path = ? AND project_id = ?
-                        """,
-                        (file_path_str, project_id),
+                self.database.execute(
+                    """
+                    UPDATE files
+                    SET deleted = 1, updated_at = julianday('now')
+                    WHERE path = ? AND project_id = ?
+                    """,
+                    (file_path_str, project_id),
+                )
+                # Check if row was updated (DatabaseClient has no _commit; execute is auto-commit)
+                res = self.database.execute(
+                    "SELECT id FROM files WHERE path = ? AND project_id = ? AND deleted = 1",
+                    (file_path_str, project_id),
+                )
+                data = res.get("data", [])
+                row = data[0] if data else None
+                if row:
+                    stats["deleted_files"] += 1
+                    logger.info(
+                        f"[project={project_id}] [DELETED FILE] ✓ Marked as deleted: {file_path_str}"
                     )
-                    # Check if row was updated (DatabaseClient has no _commit; execute is auto-commit)
-                    res = self.database.execute(
-                        "SELECT id FROM files WHERE path = ? AND project_id = ? AND deleted = 1",
-                        (file_path_str, project_id),
-                    )
-                    data = res.get("data", [])
-                    row = data[0] if data else None
-                    if row:
-                        stats["deleted_files"] += 1
-                        logger.info(
-                            f"[project={project_id}] [DELETED FILE] ✓ Marked as deleted: {file_path_str}"
-                        )
-                    else:
-                        stats["errors"] += 1
-                        logger.error(
-                            f"[project={project_id}] [DELETED FILE] ✗ Failed to mark as deleted: {file_path_str}"
-                        )
                 else:
-                    logger.warning(
-                        f"[project={project_id}] [DELETED FILE] ✗ version_dir not configured, cannot mark {file_path_str} as deleted"
-                    )
                     stats["errors"] += 1
+                    logger.error(
+                        f"[project={project_id}] [DELETED FILE] ✗ Failed to mark as deleted: {file_path_str}"
+                    )
             except Exception as e:
                 logger.error(
                     f"[project={project_id}] [DELETED FILE] ✗ Error marking file as deleted {file_path_str}: {e}"

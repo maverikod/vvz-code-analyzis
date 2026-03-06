@@ -130,6 +130,51 @@ class TestReplaceIndentedBlockRegression:
         assert "x = 1" not in code
 
 
+class TestReplacePreservesNodeIds:
+    """After replace, unchanged nodes and the replaced node keep their node_ids."""
+
+    def test_replace_one_line_preserves_other_node_ids(self, tmp_path):
+        """Replace one import; other nodes keep same node_id so follow-up requests can use them."""
+        source = '''"""Doc."""
+from a import x
+from b import y
+'''
+        path = str(tmp_path / "two_imports.py")
+        tree = create_tree_from_code(path, source.strip())
+        tree_id = tree.tree_id
+        try:
+            # Get node_ids for both import lines (line 2 and 3)
+            node_id_line2 = None
+            node_id_line3 = None
+            for nid, meta in tree.metadata_map.items():
+                if meta.start_line == 2 and meta.type == "ImportFrom":
+                    node_id_line2 = nid
+                elif meta.start_line == 3 and meta.type == "ImportFrom":
+                    node_id_line3 = nid
+            assert node_id_line2 is not None and node_id_line3 is not None
+
+            # Replace only line 2
+            modified = modify_tree(
+                tree_id,
+                [
+                    TreeOperation(
+                        action=TreeOperationType.REPLACE,
+                        node_id=node_id_line2,
+                        code_lines=["from a import x, z"],
+                    )
+                ],
+            )
+            assert "from a import x, z" in modified.module.code
+            assert "from b import y" in modified.module.code
+
+            # Unchanged node (line 3) keeps its node_id
+            assert node_id_line3 in modified.node_map
+            # Replaced node (line 2) keeps its node_id for the new content
+            assert node_id_line2 in modified.node_map
+        finally:
+            remove_tree(tree_id)
+
+
 class TestReplaceNegative:
     """Invalid node_id and parse-invalid replacement."""
 

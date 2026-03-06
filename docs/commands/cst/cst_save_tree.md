@@ -56,6 +56,12 @@ Important notes:
 - File system operation (os.replace) is atomic on most filesystems
 - Git commit is optional and non-critical (file is already saved)
 
+Recommended AI workflow:
+1. Use cst_modify_tree for in-memory changes
+2. Save with cst_save_tree
+3. Run format_code/lint_code/type_check_code on the saved file
+4. Run update_indexes after a batch of file changes
+
 ---
 
 ## Arguments (Аргументы)
@@ -65,10 +71,10 @@ Important notes:
 | `tree_id` | string | **Yes** | Tree ID from cst_load_file |
 | `project_id` | string | **Yes** | Project ID (UUID4). Required. |
 | `file_path` | string | **Yes** | Target file path (relative to project root) |
-| `validate` | boolean | No | Whether to validate file before saving Default: `true`. |
+| `validate` | boolean | No | Whether to validate file before saving. Default true. Set false for controlled incremental edits (for example docstring-only pass), then run format_code/lint_code/type_check_code explicitly. Default:  |
 | `backup` | boolean | No | Whether to create backup Default: `true`. |
 | `commit_message` | string | No | Optional git commit message |
-| `auto_reload` | boolean | No | Automatically reload tree from file after save (keeps tree_id valid) Default: `true`. |
+| `auto_reload` | boolean | No | Automatically reload tree from file after save (keeps tree_id valid). Recommended for AI flows that perform multiple sequential edits. Default: `true`. |
 
 **Schema:** `additionalProperties: false` — only the parameters above are accepted.
 

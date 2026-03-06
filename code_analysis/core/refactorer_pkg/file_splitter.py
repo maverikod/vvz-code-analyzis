@@ -5,13 +5,21 @@ Author: Vasiliy Zdanovskiy
 email: vasilyvz@gmail.com
 """
 
+from __future__ import annotations
+
 import ast
 import logging
+from collections import defaultdict
 from typing import Any, Dict, List, Optional, Tuple
 
 from .base import BaseRefactorer
 
 logger = logging.getLogger(__name__)
+
+# Lazy import to avoid circular dependency; used only for duplicate-name validation
+def _list_cst_blocks(source: str) -> list:
+    from code_analysis.core.cst_module import list_cst_blocks as _list_blocks
+    return _list_blocks(source)
 
 
 class FileToPackageSplitter(BaseRefactorer):
@@ -48,6 +56,11 @@ class FileToPackageSplitter(BaseRefactorer):
             modules = config.get("modules", {})
             if not modules:
                 return False, "No modules specified in config"
+
+            # Validate: no duplicate top-level class/function names (config is by name only)
+            duplicate_error = self._check_duplicate_top_level_names()
+            if duplicate_error:
+                return False, duplicate_error
 
             # Get file directory and name
             file_dir = self.file_path.parent
@@ -216,6 +229,50 @@ class FileToPackageSplitter(BaseRefactorer):
                 lines.append("\n")
 
         return "".join(lines)
+
+    def _check_duplicate_top_level_names(self) -> Optional[str]:
+        """
+        Check for duplicate top-level class/function names using CST block ids.
+
+        split_file_to_package config references classes/functions by name only;
+        duplicate names would cause only the first occurrence to be moved and
+        the rest to be lost. So we require unique names and return a clear
+        error with CST block identifiers when duplicates exist.
+
+        Returns:
+            None if no duplicates. Otherwise an error message string including
+            code DUPLICATE_TOP_LEVEL_NAMES and CST block ids for each duplicate.
+        """
+        try:
+            blocks = _list_cst_blocks(self.original_content)
+        except Exception as e:
+            logger.warning("Could not run CST block list for duplicate check: %s", e)
+            return (
+                "DUPLICATE_TOP_LEVEL_NAMES_VALIDATION_SKIPPED: "
+                "Could not list CST blocks for duplicate check. "
+                f"Error: {e}. Ensure the file has no syntax errors."
+            )
+
+        by_qualname: Dict[str, List[str]] = defaultdict(list)
+        for b in blocks:
+            if b.kind in ("class", "function"):
+                by_qualname[b.qualname].append(b.block_id)
+
+        duplicates = {
+            name: ids for name, ids in by_qualname.items() if len(ids) > 1
+        }
+        if not duplicates:
+            return None
+
+        parts = [
+            "DUPLICATE_TOP_LEVEL_NAMES: The file contains duplicate top-level "
+            "class or function names. split_file_to_package requires unique "
+            "names (config references symbols by name only). "
+            "Use the following CST block identifiers to disambiguate or rename:"
+        ]
+        for name, block_ids in sorted(duplicates.items()):
+            parts.append(f"  {name}: {block_ids}")
+        return "\n".join(parts)
 
     def _get_file_docstring(self) -> str:
         """Extract file-level docstring."""

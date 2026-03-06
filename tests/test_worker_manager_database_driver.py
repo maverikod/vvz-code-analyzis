@@ -304,6 +304,7 @@ class TestWorkerManagerDatabaseDriver:
         # PID file is created in "logs/" relative to current directory
         # Create logs directory in current working directory
         import os
+
         cwd = Path(os.getcwd())
         logs_dir = cwd / "logs"
         logs_dir.mkdir(parents=True, exist_ok=True)
@@ -326,7 +327,7 @@ class TestWorkerManagerDatabaseDriver:
         if not pid_file.exists():
             # Wait a bit more
             time.sleep(0.3)
-        
+
         # PID file should exist (created by start_database_driver)
         if pid_file.exists():
             with open(pid_file, "r") as f:

@@ -98,13 +98,18 @@ Important notes:
 |-----------|------|----------|-------------|
 | `project_id` | string | **Yes** | Project UUID (from create_project or list_projects). Required for commands that operate on a project. |
 | `file_path` | string | **Yes** | Target python file path (relative to project root) |
-| `selector` | string | **Yes** | CSTQuery selector string |
+| `selector` | string | No | CSTQuery selector string |
 | `include_code` | boolean | No | If true, include code snippets for each match (can be large) Default: `false`. |
 | `max_results` | integer | No | Maximum number of matches to return Default: `200`. |
 | `replace_with` | string | No | If set, replace the matched node(s) with this code (single string). Use code_lines for multi-line to avoid escaping. One call = find + replace. |
 | `code_lines` | array | No | If set, replace the matched node(s) with these lines (joined by newline). Prefer over replace_with for multi-line code. |
 | `match_index` | integer | No | When replacing: which match to replace (0-based). Ignored if replace_all is true. Default: `0`. |
 | `replace_all` | boolean | No | When replacing: if true, replace all matches with the same new code. match_index is ignored. Default: `false`. |
+| `replacements` | array | No | When set: replace multiple matches with different code per match. Each entry: match_index (0-based) and either replace_with or code_lines. Ignored if replace_with/code_lines (single-code path) is used |
+| `start_line` | integer | No | 1-based start line for range-based replace. When used with end_line (and replace_with/code_lines), replace the statement(s) covering this range. Optional; if both start_line and end_line are set, rang |
+| `end_line` | integer | No | 1-based end line for range-based replace. Must be >= start_line. When both start_line and end_line are set, replace that line range. |
+| `preview` | boolean | No | If true, run replace in memory and return diff/modified_source without writing to file. No backup, no file change. Default: `false`. |
+| `dry_run` | boolean | No | Alias for preview: if true, same as preview=true. Default: `false`. |
 
 **Schema:** `additionalProperties: false` — only the parameters above are accepted.
 
@@ -139,7 +144,7 @@ All MCP commands return either a **success** result (with `data`) or an **error*
 ### Error
 
 - **Shape:** `ErrorResult` with `code` and `message`.
-- **Possible codes:** INVALID_FILE, FILE_NOT_FOUND, CST_QUERY_PARSE_ERROR, CST_QUERY_ERROR, CST_QUERY_NO_MATCH, CST_QUERY_MATCH_INDEX, CST_REPLACE_ERROR (and others).
+- **Possible codes:** INVALID_FILE, FILE_NOT_FOUND, CST_QUERY_PARSE_ERROR, CST_QUERY_ERROR, CST_QUERY_NO_MATCH, CST_QUERY_MATCH_INDEX, CST_REPLACE_ERROR, CST_QUERY_REPLACEMENTS_DUPLICATE_INDEX, CST_QUERY_REPLACEMENTS_MISSING_CODE, CST_QUERY_REPLACEMENTS_BOTH_CODE (and others).
 
 ---
 
@@ -150,7 +155,7 @@ All MCP commands return either a **success** result (with `data`) or an **error*
 **Find class by exact name**
 ```json
 {
-  "root_dir": "/home/user/projects/my_project",
+  "project_id": "550e8400-e29b-41d4-a716-446655440000",
   "file_path": "src/main.py",
   "selector": "class[name=\"MyClass\"]"
 }
@@ -161,7 +166,7 @@ Finds all classes named exactly 'MyClass' in main.py. Returns node_id that can b
 **Find class by name prefix**
 ```json
 {
-  "root_dir": "/home/user/projects/my_project",
+  "project_id": "550e8400-e29b-41d4-a716-446655440000",
   "file_path": "src/models.py",
   "selector": "class[name^=\"Base\"]"
 }
@@ -172,7 +177,7 @@ Finds all classes whose names start with 'Base' (e.g., BaseModel, BaseView). Use
 **Find class by name suffix**
 ```json
 {
-  "root_dir": "/home/user/projects/my_project",
+  "project_id": "550e8400-e29b-41d4-a716-446655440000",
   "file_path": "src/handlers.py",
   "selector": "class[name$=\"Handler\"]"
 }
@@ -183,7 +188,7 @@ Finds all classes whose names end with 'Handler' (e.g., RequestHandler, EventHan
 **Find class by name substring**
 ```json
 {
-  "root_dir": "/home/user/projects/my_project",
+  "project_id": "550e8400-e29b-41d4-a716-446655440000",
   "file_path": "src/services.py",
   "selector": "class[name~=\"Service\"]"
 }
@@ -194,7 +199,7 @@ Finds all classes whose names contain 'Service' (e.g., UserService, PaymentServi
 **Find all return statements**
 ```json
 {
-  "root_dir": "/home/user/projects/my_project",
+  "project_id": "550e8400-e29b-41d4-a716-446655440000",
   "file_path": "src/utils.py",
   "selector": "smallstmt[type=\"Return\"]"
 }
@@ -223,6 +228,12 @@ See docs/CST_QUERY.md for syntax reference.
 
 - **CST_REPLACE_ERROR**: Replace failed (e.g. unsupported node kind or parse error). Ensure new code is valid Python; replace supports stmt/smallstmt/function/class/method
 
+- **CST_QUERY_REPLACEMENTS_DUPLICATE_INDEX**: Duplicate match_index in replacements list. Use each match_index at most once in replacements
+
+- **CST_QUERY_REPLACEMENTS_MISSING_CODE**: Replacements entry has neither replace_with nor code_lines. Provide replace_with (string) or code_lines (array of strings)
+
+- **CST_QUERY_REPLACEMENTS_BOTH_CODE**: Replacements entry has both replace_with and code_lines. Use only one of replace_with or code_lines per entry
+
 ## Error codes summary
 
 | Code | Description | Action |
@@ -235,6 +246,9 @@ See docs/CST_QUERY.md for syntax reference.
 | `CST_QUERY_NO_MATCH` | Selector matched no nodes (replace mode only) | Verify selector matches at least one node in the f |
 | `CST_QUERY_MATCH_INDEX` | match_index out of range (replace mode only) | Use match_index between 0 and (match_count - 1), o |
 | `CST_REPLACE_ERROR` | Replace failed (e.g. unsupported node kind or parse error) | Ensure new code is valid Python; replace supports  |
+| `CST_QUERY_REPLACEMENTS_DUPLICATE_INDEX` | Duplicate match_index in replacements list | Use each match_index at most once in replacements |
+| `CST_QUERY_REPLACEMENTS_MISSING_CODE` | Replacements entry has neither replace_with nor code_lines | Provide replace_with (string) or code_lines (array |
+| `CST_QUERY_REPLACEMENTS_BOTH_CODE` | Replacements entry has both replace_with and code_lines | Use only one of replace_with or code_lines per ent |
 
 ## Best practices
 

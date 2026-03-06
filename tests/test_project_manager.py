@@ -262,4 +262,3 @@ class TestProjectManagerRealData:
                     break
 
             assert found, "Created project should be discoverable from filesystem"
-

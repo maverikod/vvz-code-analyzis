@@ -202,4 +202,3 @@ class TestScannerWithDiscovery:
         assert file_info["project_root"] == project_root.resolve()
         assert file_info["size"] > 0
         assert file_info["mtime"] > 0
-

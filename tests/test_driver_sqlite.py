@@ -129,7 +129,9 @@ class TestSQLiteDriverCRUD:
         }
         sqlite_driver.create_table(schema)
 
-        row_id = sqlite_driver.insert("users", {"name": "John", "email": "john@example.com"})
+        row_id = sqlite_driver.insert(
+            "users", {"name": "John", "email": "john@example.com"}
+        )
         assert row_id > 0
 
     def test_select(self, sqlite_driver):
@@ -186,7 +188,9 @@ class TestSQLiteDriverCRUD:
         }
         sqlite_driver.create_table(schema)
 
-        row_id = sqlite_driver.insert("users", {"name": "John", "email": "old@example.com"})
+        row_id = sqlite_driver.insert(
+            "users", {"name": "John", "email": "old@example.com"}
+        )
         affected = sqlite_driver.update(
             "users", where={"id": row_id}, data={"email": "new@example.com"}
         )
@@ -326,8 +330,6 @@ class TestSQLiteDriverExecute:
         }
         sqlite_driver.create_table(schema)
 
-        result = sqlite_driver.execute(
-            "INSERT INTO users (name) VALUES (?)", ("John",)
-        )
+        result = sqlite_driver.execute("INSERT INTO users (name) VALUES (?)", ("John",))
         assert result["affected_rows"] == 1
         assert result["lastrowid"] > 0

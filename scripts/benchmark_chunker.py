@@ -57,7 +57,10 @@ async def main() -> None:
     try:
         await asyncio.wait_for(manager.initialize(), timeout=30.0)
     except asyncio.TimeoutError:
-        print("Chunker connection timed out (e.g. mtls from host to Docker).", file=sys.stderr)
+        print(
+            "Chunker connection timed out (e.g. mtls from host to Docker).",
+            file=sys.stderr,
+        )
         sys.exit(1)
 
     results = []
@@ -65,15 +68,21 @@ async def main() -> None:
         for i, text in enumerate(DOCSTRINGS):
             t0 = time.perf_counter()
             try:
-                chunks = await manager.get_chunks(text=text, type="DocBlock", language="Python")
+                chunks = await manager.get_chunks(
+                    text=text, type="DocBlock", language="Python"
+                )
                 elapsed = time.perf_counter() - t0
                 n_chunks = len(chunks) if chunks else 0
                 results.append((len(text), elapsed, n_chunks, None))
-                print(f"  Request {i+1}: {len(text)} chars -> {n_chunks} chunks in {elapsed:.3f}s")
+                print(
+                    f"  Request {i+1}: {len(text)} chars -> {n_chunks} chunks in {elapsed:.3f}s"
+                )
             except Exception as e:
                 elapsed = time.perf_counter() - t0
                 results.append((len(text), elapsed, 0, str(e)))
-                print(f"  Request {i+1}: {len(text)} chars -> ERROR after {elapsed:.3f}s: {e}")
+                print(
+                    f"  Request {i+1}: {len(text)} chars -> ERROR after {elapsed:.3f}s: {e}"
+                )
 
             if i < len(DOCSTRINGS) - 1:
                 await asyncio.sleep(1.0)
@@ -96,12 +105,16 @@ async def main() -> None:
     total_time = sum(times)
 
     print("\n--- Summary ---")
-    print(f"Requests: {len(successful)} successful, {len(results) - len(successful)} failed")
+    print(
+        f"Requests: {len(successful)} successful, {len(results) - len(successful)} failed"
+    )
     print(f"Total chars: {total_chars}, total time: {total_time:.3f}s")
     print(f"Average docstring length: {avg_len:.0f} chars")
     print(f"Average time per request: {avg_time:.3f}s")
     print(f"Time per average docstring (~{avg_len:.0f} chars): {avg_time:.3f}s")
-    print(f"Throughput: {total_chars / total_time:.1f} chars/s, {len(successful) / total_time:.2f} docstrings/s")
+    print(
+        f"Throughput: {total_chars / total_time:.1f} chars/s, {len(successful) / total_time:.2f} docstrings/s"
+    )
 
 
 if __name__ == "__main__":

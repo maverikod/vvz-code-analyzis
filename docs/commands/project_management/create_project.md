@@ -62,6 +62,10 @@ Use cases:
 - Create a new project from scratch
 - Re-register a project after database cleanup
 
+Option use_existing_dir (default false = old behaviour):
+- use_existing_dir=false (default): if the project directory already exists and is not registered, the command fails with PROJECT_DIR_EXISTS (same as before this option existed).
+- use_existing_dir=true: if the project directory already exists, the command creates only the projectid file (id + description) in that directory and registers the project in the database. Use this to register an existing folder without creating a new directory.
+
 ---
 
 ## Arguments (Аргументы)
@@ -72,6 +76,7 @@ Use cases:
 | `project_name` | string | **Yes** | Name of project subdirectory to create in watch_dir. Required. Must be a valid directory name. |
 | `description` | string | **Yes** | Human-readable description of the project. Required. |
 | `project_id` | string | No | Optional project ID (UUID4). If not provided, will be generated automatically. |
+| `use_existing_dir` | boolean | No | Optional. Default false (old behaviour: fail with PROJECT_DIR_EXISTS if directory exists). If true: when project directory already exists, create only projectid file and register. Default: `false`. |
 
 **Schema:** `additionalProperties: false` — only the parameters above are accepted.
 
@@ -95,13 +100,25 @@ All MCP commands return either a **success** result (with `data`) or an **error*
 ### Error
 
 - **Shape:** `ErrorResult` with `code` and `message`.
-- **Possible codes:** WATCHED_DIR_NOT_FOUND, WATCHED_DIR_NOT_DIRECTORY, PROJECTID_EXISTS_IN_WATCHED_DIR, PROJECT_DIR_NOT_FOUND, PROJECT_DIR_NOT_DIRECTORY, PROJECTID_WRITE_ERROR, DATABASE_REGISTRATION_ERROR, WATCH_DIR_ERROR, CREATE_PROJECT_ERROR (and others).
+- **Possible codes:** WATCHED_DIR_NOT_FOUND, WATCHED_DIR_NOT_DIRECTORY, PROJECTID_EXISTS_IN_WATCHED_DIR, PROJECT_DIR_NOT_FOUND, PROJECT_DIR_NOT_DIRECTORY, PROJECT_DIR_EXISTS, PROJECTID_WRITE_ERROR, DATABASE_REGISTRATION_ERROR, WATCH_DIR_ERROR, CREATE_PROJECT_ERROR (and others).
 
 ---
 
 ## Examples
 
 ### Correct usage
+
+**Register existing directory (use_existing_dir=true)**
+```json
+{
+  "watch_dir_id": "550e8400-e29b-41d4-a716-446655440001",
+  "project_name": "vast_srv",
+  "description": "AI Admin",
+  "use_existing_dir": true
+}
+```
+
+When the folder watch_dir/vast_srv already exists, creates projectid file with description and registers the project without failing with PROJECT_DIR_EXISTS.
 
 **Create new project**
 ```json
@@ -149,6 +166,8 @@ If project is already registered in database, returns existing project info with
 
 - **PROJECT_DIR_NOT_DIRECTORY**: project_dir='/path/to/file.txt'. Ensure project_dir points to a directory, not a file.
 
+- **PROJECT_DIR_EXISTS**: project_name='vast_srv' but test_data/vast_srv already exists. Pass use_existing_dir=true to register the existing directory.
+
 - **PROJECTID_WRITE_ERROR**: Permission denied or disk full. Check file permissions, ensure directory is writable, verify disk space is available.
 
 - **DATABASE_REGISTRATION_ERROR**: Database locked, constraint violation, or connection error. Check database integrity, ensure database is not locked, verify database connection is working.
@@ -166,6 +185,7 @@ If project is already registered in database, returns existing project info with
 | `PROJECTID_EXISTS_IN_WATCHED_DIR` | Watched directory already contains projectid file | Watched directory should not contain projectid fil |
 | `PROJECT_DIR_NOT_FOUND` | Project directory does not exist | Verify project directory path exists and is access |
 | `PROJECT_DIR_NOT_DIRECTORY` | Project path is not a directory | Ensure project_dir points to a directory, not a fi |
+| `PROJECT_DIR_EXISTS` | Project directory already exists and use_existing_dir was no | Pass use_existing_dir=true to register the existin |
 | `PROJECTID_WRITE_ERROR` | Failed to write projectid file | Check file permissions, ensure directory is writab |
 | `DATABASE_REGISTRATION_ERROR` | Failed to register project in database | Check database integrity, ensure database is not l |
 | `WATCH_DIR_ERROR` | Failed to get or create watch_dir for watched_dir | Check database connection and permissions. Verify  |

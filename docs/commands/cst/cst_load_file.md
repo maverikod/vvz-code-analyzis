@@ -25,11 +25,11 @@ Operation flow:
 8. Parses source using LibCST
 9. Builds node index and metadata
 10. Stores tree in memory with tree_id
-11. Returns tree_id and node metadata
+11. Returns tree_id and node metadata (or skeleton when return_format=skeleton)
 
 Node Metadata:
 Each node includes:
-- node_id: UUID4 identifier; stable for the lifetime of the tree so multiple operations in one batch can target different nodes without IDs changing
+- node_id: Stable identifier for operations
 - type: LibCST node type (FunctionDef, ClassDef, etc.)
 - kind: Node kind (function, class, method, stmt, smallstmt, etc.)
 - name: Node name (if applicable)
@@ -40,8 +40,8 @@ Each node includes:
 - parent_id: Parent node ID (if applicable)
 
 Return format:
-- **return_format**: `"full"` (default) — tree_id and full node list; `"skeleton"` — tree_id and collapsed view (full signatures, docstrings, body = comment + pass for callables; module-level content full). Skeleton is built from the same tree (including after syntax-error fix).
-- **selector**: Optional. When set (XPath-like string or list of node_ids), response includes `selected_nodes` with content (code) for matching nodes in one call.
+- return_format=full (default): nodes list. return_format=skeleton: collapsed view (signatures, docstrings, body=comment+pass).
+- selector: optional XPath or list of node_ids; response includes selected_nodes with code.
 
 Filters:
 - node_types: Filter by node types (e.g., ['FunctionDef', 'ClassDef'])
@@ -59,7 +59,11 @@ Important notes:
 - Tree persists until explicitly removed or server restarts
 - Use tree_id with other CST commands
 - Filters reduce returned metadata, but full tree is still stored
-- **When the file had syntax errors**: the server comments out the error lines and adds a placeholder `pass`; the response includes `syntax_errors_fixed`, `commented_lines` (with `parent_node` and `node_id` for each error location), and optionally `temp_file`
+
+When the file had syntax errors on load:
+- The server comments out the error lines and adds a placeholder 'pass'
+- The response includes syntax_errors_fixed: true, commented_lines: [{ line, error, parent_node }], and optionally temp_file
+- Each commented_lines entry has parent_node (dict with node_id) for the block where the error was found; use it to locate the parent (e.g. function/class)
 
 ---
 
@@ -71,9 +75,9 @@ Important notes:
 | `file_path` | string | **Yes** | Target Python file path (relative to project root) |
 | `node_types` | array | No | Optional filter by node types (e.g., ['FunctionDef', 'ClassDef']) |
 | `max_depth` | integer | No | Optional maximum depth for node filtering |
-| `include_children` | boolean | No | Whether to include children information in metadata. Default: `true`. |
-| `return_format` | string | No | `"full"` or `"skeleton"`. Default: `"full"`. Skeleton = collapsed view (signatures, docstrings, body placeholder). |
-| `selector` | string or array | No | Optional. XPath selector or list of node_ids; response includes `selected_nodes` with code. |
+| `include_children` | boolean | No | Whether to include children information in metadata Default: `true`. |
+| `return_format` | string | No | full: return tree_id and full node list. skeleton: return tree_id and collapsed view (signatures, docstrings, body=comment+pass). Default: `"full"`. |
+| `selector` |  | No | Optional: XPath-like selector string or list of node_ids. When set, response includes selected_nodes with content (code) for matching nodes. |
 
 **Schema:** `additionalProperties: false` — only the parameters above are accepted.
 
@@ -89,12 +93,13 @@ All MCP commands return either a **success** result (with `data`) or an **error*
 - `success`: Always True on success
 - `tree_id`: Tree ID for use with other CST commands
 - `file_path`: Path to loaded file
-- `nodes`: List of node metadata dictionaries
-- `total_nodes`: Total number of nodes returned
-- **When the file had syntax errors on load** (optional fields):
-  - `syntax_errors_fixed`: `true` — error lines were commented out and a placeholder `pass` was added
-  - `commented_lines`: list of `{ line, error, parent_node }` — for each commented-out error line: 1-based `line`, parser `error` message, and `parent_node` (dict with `node_id` and other metadata, or `null`) identifying the block (e.g. function/class) where the error was found
-  - `temp_file`: path to the `.tmp` file used for the fixed content (for debugging)
+- `nodes`: List of node metadata dictionaries (when return_format=full)
+- `total_nodes`: Total number of nodes returned (when return_format=full)
+- `skeleton`: Collapsed source code (when return_format=skeleton)
+- `selected_nodes`: Optional. When selector set: matching nodes with code.
+- `syntax_errors_fixed`: Optional. True when file had syntax errors on load; error lines were commented out and a placeholder pass was added.
+- `commented_lines`: Optional. When syntax_errors_fixed is true: list of { line (1-based), error (message), parent_node (dict with node_id, or null) } for each commented-out error line. parent_node identifies the block (e.g. function/class) where the error was found.
+- `temp_file`: Optional. When syntax_errors_fixed is true: path to the .tmp file used for the fixed content (for debugging).
 
 ### Error
 
@@ -153,21 +158,16 @@ Loads file but returns nodes only up to depth 2. Useful for analyzing top-level 
 
 Loads file but excludes children_ids from metadata. Reduces response size when children information is not needed.
 
-**Load specific statement types**
+**Load skeleton (collapsed view)**
 ```json
 {
   "project_id": "928bcf10-db1c-47a3-8341-f60a6d997fe7",
   "file_path": "src/main.py",
-  "node_types": [
-    "If",
-    "For",
-    "Try",
-    "With"
-  ]
+  "return_format": "skeleton"
 }
 ```
 
-Loads file but returns only control flow statements (if, for, try, with). Useful for analyzing control flow patterns.
+Returns tree_id and skeleton: full signatures, docstrings, body = comment+pass. Use to see structure without full bodies.
 
 ### Incorrect usage
 
@@ -190,10 +190,10 @@ Loads file but returns only control flow statements (if, for, try, with). Useful
 - Always provide project_id - it is required and used to form absolute path
 - Ensure project is linked to watch directory before using this command
 - Use relative file_path from project root (e.g., 'src/main.py' not '/absolute/path')
+- Use return_format=skeleton to get collapsed view and reduce context size
+- Use selector (XPath or node_ids) to include selected node content in same call
 - Use node_types filter to reduce metadata size when only specific types are needed
 - Use max_depth to limit analysis scope
 - Set include_children=False if children information is not needed
-- Save tree_id for use with cst_modify_tree and cst_save_tree
-- Tree persists in memory until server restart or explicit removal
 
 ---

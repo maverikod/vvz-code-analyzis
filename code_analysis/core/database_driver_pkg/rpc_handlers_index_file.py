@@ -98,21 +98,23 @@ class _RPCHandlersIndexFileMixin:
                     description=error_msg,
                 )
 
-            # Clear needs_chunking after success (A.3) so indexer and vectorization share one flag
+            # Clear needs_chunking only when full reindex was performed (not skipped)
+            # When skipped, needs_chunking stays 1 so vectorization worker recreates vectors
             abs_path = update_result.get("file_path", file_path)
-            try:
-                self.driver.execute(
-                    "UPDATE files SET needs_chunking = 0 WHERE path = ? AND project_id = ?",
-                    (abs_path, project_id),
-                    None,
-                )
-            except Exception as e:
-                logger.warning(
-                    "Failed to clear needs_chunking after index_file for %s: %s",
-                    abs_path,
-                    e,
-                )
-                # Still return success; index completed
+            if not update_result.get("skipped"):
+                try:
+                    self.driver.execute(
+                        "UPDATE files SET needs_chunking = 0 WHERE path = ? AND project_id = ?",
+                        (abs_path, project_id),
+                        None,
+                    )
+                except Exception as e:
+                    logger.warning(
+                        "Failed to clear needs_chunking after index_file for %s: %s",
+                        abs_path,
+                        e,
+                    )
+                    # Still return success; index completed
 
             # Clear indexing error for this file on successful write
             try:

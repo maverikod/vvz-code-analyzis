@@ -102,4 +102,3 @@ def test_sqlite_proxy_parallel_transactions(temp_db_proxy):
         "SELECT id FROM projects WHERE id = ?", ("parallel-1",)
     )
     assert result is not None
-

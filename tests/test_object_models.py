@@ -642,7 +642,9 @@ class TestASTNodeExtended:
     def test_ast_node_from_dict_missing_fields(self):
         """Test creating ASTNode with missing required fields."""
         with pytest.raises(ValueError, match="ASTNode file_id is required"):
-            ASTNode.from_dict({"project_id": "proj-1", "ast_json": "{}", "ast_hash": "h"})
+            ASTNode.from_dict(
+                {"project_id": "proj-1", "ast_json": "{}", "ast_hash": "h"}
+            )
         with pytest.raises(ValueError, match="ASTNode project_id is required"):
             ASTNode.from_dict({"file_id": 1, "ast_json": "{}", "ast_hash": "h"})
         with pytest.raises(ValueError, match="ASTNode ast_json is required"):
@@ -703,13 +705,17 @@ class TestCSTNodeExtended:
     def test_cst_node_from_dict_missing_fields(self):
         """Test creating CSTNode with missing required fields."""
         with pytest.raises(ValueError, match="CSTNode file_id is required"):
-            CSTNode.from_dict({"project_id": "proj-1", "cst_code": "code", "cst_hash": "h"})
+            CSTNode.from_dict(
+                {"project_id": "proj-1", "cst_code": "code", "cst_hash": "h"}
+            )
         with pytest.raises(ValueError, match="CSTNode project_id is required"):
             CSTNode.from_dict({"file_id": 1, "cst_code": "code", "cst_hash": "h"})
         with pytest.raises(ValueError, match="CSTNode cst_code is required"):
             CSTNode.from_dict({"file_id": 1, "project_id": "proj-1", "cst_hash": "h"})
         with pytest.raises(ValueError, match="CSTNode cst_hash is required"):
-            CSTNode.from_dict({"file_id": 1, "project_id": "proj-1", "cst_code": "code"})
+            CSTNode.from_dict(
+                {"file_id": 1, "project_id": "proj-1", "cst_code": "code"}
+            )
 
     def test_cst_node_from_db_row(self):
         """Test creating CSTNode from database row."""
@@ -764,13 +770,41 @@ class TestVectorIndexExtended:
     def test_vector_index_from_dict_missing_fields(self):
         """Test creating VectorIndex with missing required fields."""
         with pytest.raises(ValueError, match="VectorIndex entity_type is required"):
-            VectorIndex.from_dict({"project_id": "proj-1", "entity_id": 1, "vector_id": 100, "vector_dim": 384})
+            VectorIndex.from_dict(
+                {
+                    "project_id": "proj-1",
+                    "entity_id": 1,
+                    "vector_id": 100,
+                    "vector_dim": 384,
+                }
+            )
         with pytest.raises(ValueError, match="VectorIndex entity_id is required"):
-            VectorIndex.from_dict({"project_id": "proj-1", "entity_type": "file", "vector_id": 100, "vector_dim": 384})
+            VectorIndex.from_dict(
+                {
+                    "project_id": "proj-1",
+                    "entity_type": "file",
+                    "vector_id": 100,
+                    "vector_dim": 384,
+                }
+            )
         with pytest.raises(ValueError, match="VectorIndex vector_id is required"):
-            VectorIndex.from_dict({"project_id": "proj-1", "entity_type": "file", "entity_id": 1, "vector_dim": 384})
+            VectorIndex.from_dict(
+                {
+                    "project_id": "proj-1",
+                    "entity_type": "file",
+                    "entity_id": 1,
+                    "vector_dim": 384,
+                }
+            )
         with pytest.raises(ValueError, match="VectorIndex vector_dim is required"):
-            VectorIndex.from_dict({"project_id": "proj-1", "entity_type": "file", "entity_id": 1, "vector_id": 100})
+            VectorIndex.from_dict(
+                {
+                    "project_id": "proj-1",
+                    "entity_type": "file",
+                    "entity_id": 1,
+                    "vector_id": 100,
+                }
+            )
 
     def test_vector_index_from_db_row(self):
         """Test creating VectorIndex from database row."""
@@ -823,15 +857,50 @@ class TestCodeChunkExtended:
     def test_code_chunk_from_dict_missing_fields(self):
         """Test creating CodeChunk with missing required fields."""
         with pytest.raises(ValueError, match="CodeChunk file_id is required"):
-            CodeChunk.from_dict({"project_id": "proj-1", "chunk_uuid": "u", "chunk_type": "t", "chunk_text": "txt"})
+            CodeChunk.from_dict(
+                {
+                    "project_id": "proj-1",
+                    "chunk_uuid": "u",
+                    "chunk_type": "t",
+                    "chunk_text": "txt",
+                }
+            )
         with pytest.raises(ValueError, match="CodeChunk project_id is required"):
-            CodeChunk.from_dict({"file_id": 1, "chunk_uuid": "u", "chunk_type": "t", "chunk_text": "txt"})
+            CodeChunk.from_dict(
+                {
+                    "file_id": 1,
+                    "chunk_uuid": "u",
+                    "chunk_type": "t",
+                    "chunk_text": "txt",
+                }
+            )
         with pytest.raises(ValueError, match="CodeChunk chunk_uuid is required"):
-            CodeChunk.from_dict({"file_id": 1, "project_id": "proj-1", "chunk_type": "t", "chunk_text": "txt"})
+            CodeChunk.from_dict(
+                {
+                    "file_id": 1,
+                    "project_id": "proj-1",
+                    "chunk_type": "t",
+                    "chunk_text": "txt",
+                }
+            )
         with pytest.raises(ValueError, match="CodeChunk chunk_type is required"):
-            CodeChunk.from_dict({"file_id": 1, "project_id": "proj-1", "chunk_uuid": "u", "chunk_text": "txt"})
+            CodeChunk.from_dict(
+                {
+                    "file_id": 1,
+                    "project_id": "proj-1",
+                    "chunk_uuid": "u",
+                    "chunk_text": "txt",
+                }
+            )
         with pytest.raises(ValueError, match="CodeChunk chunk_text is required"):
-            CodeChunk.from_dict({"file_id": 1, "project_id": "proj-1", "chunk_uuid": "u", "chunk_type": "t"})
+            CodeChunk.from_dict(
+                {
+                    "file_id": 1,
+                    "project_id": "proj-1",
+                    "chunk_uuid": "u",
+                    "chunk_type": "t",
+                }
+            )
 
     def test_code_chunk_from_db_row(self):
         """Test creating CodeChunk from database row."""
@@ -1138,15 +1207,35 @@ class TestUsageExtended:
     def test_usage_from_dict_missing_fields(self):
         """Test creating Usage with missing required fields."""
         with pytest.raises(ValueError, match="Usage file_id is required"):
-            Usage.from_dict({"line": 5, "usage_type": "call", "target_type": "func", "target_name": "x"})
+            Usage.from_dict(
+                {
+                    "line": 5,
+                    "usage_type": "call",
+                    "target_type": "func",
+                    "target_name": "x",
+                }
+            )
         with pytest.raises(ValueError, match="Usage line is required"):
-            Usage.from_dict({"file_id": 1, "usage_type": "call", "target_type": "func", "target_name": "x"})
+            Usage.from_dict(
+                {
+                    "file_id": 1,
+                    "usage_type": "call",
+                    "target_type": "func",
+                    "target_name": "x",
+                }
+            )
         with pytest.raises(ValueError, match="Usage usage_type is required"):
-            Usage.from_dict({"file_id": 1, "line": 5, "target_type": "func", "target_name": "x"})
+            Usage.from_dict(
+                {"file_id": 1, "line": 5, "target_type": "func", "target_name": "x"}
+            )
         with pytest.raises(ValueError, match="Usage target_type is required"):
-            Usage.from_dict({"file_id": 1, "line": 5, "usage_type": "call", "target_name": "x"})
+            Usage.from_dict(
+                {"file_id": 1, "line": 5, "usage_type": "call", "target_name": "x"}
+            )
         with pytest.raises(ValueError, match="Usage target_name is required"):
-            Usage.from_dict({"file_id": 1, "line": 5, "usage_type": "call", "target_type": "func"})
+            Usage.from_dict(
+                {"file_id": 1, "line": 5, "usage_type": "call", "target_type": "func"}
+            )
 
     def test_usage_from_dict_with_json_context(self):
         """Test creating usage from dict with JSON context."""
@@ -1201,7 +1290,9 @@ class TestCodeDuplicateExtended:
         """Test creating CodeDuplicate with missing required fields."""
         with pytest.raises(ValueError, match="CodeDuplicate project_id is required"):
             CodeDuplicate.from_dict({"duplicate_hash": "h", "similarity": 0.9})
-        with pytest.raises(ValueError, match="CodeDuplicate duplicate_hash is required"):
+        with pytest.raises(
+            ValueError, match="CodeDuplicate duplicate_hash is required"
+        ):
             CodeDuplicate.from_dict({"project_id": "proj-1", "similarity": 0.9})
         with pytest.raises(ValueError, match="CodeDuplicate similarity is required"):
             CodeDuplicate.from_dict({"project_id": "proj-1", "duplicate_hash": "h"})

@@ -34,12 +34,11 @@ Operation flow:
 9. Saves results to database (comprehensive_analysis_results table)
 10. Returns comprehensive analysis results
 
-Incremental Analysis:
-- Before analyzing each file, checks file modification time (mtime)
-- Compares mtime with stored analysis results in database
-- Skips files where mtime matches (analysis is up-to-date)
-- Only analyzes changed files (mtime differs)
-- For single file mode: returns cached results if file unchanged
+Incremental Analysis (mtime gate):
+- Analyzes only if file on disk is newer than latest DB analysis (or no prior record).
+- Skips when disk mtime is equal to DB mtime within tolerance (0.1s).
+- Skips when disk mtime is older than DB mtime (no re-analysis of older files).
+- Single file mode: returns cached results when file is skipped.
 
 Analysis Types:
 - Placeholders: Finds TODO, FIXME, XXX, HACK, NOTE comments
@@ -68,9 +67,9 @@ Important notes:
 - Each check can be enabled/disabled via boolean parameters
 - Results include summary statistics for all analysis types
 - Results are saved to database (comprehensive_analysis_results table)
-- Incremental analysis: only analyzes files that have changed since last analysis
-- Files with unchanged mtime are skipped (analysis is up-to-date)
-- Single file mode: returns cached results if file unchanged
+- Incremental analysis: only analyzes files whose disk mtime is newer than latest DB (with tolerance)
+- Older-than-DB files are skipped; equal-within-tolerance files are skipped
+- Single file mode: returns cached results when file is skipped
 
 ---
 
@@ -93,6 +92,8 @@ Important notes:
 | `duplicate_min_lines` | integer | No | Minimum lines for duplicate detection Default: `5`. |
 | `duplicate_min_similarity` | number | No | Minimum similarity for duplicates Default: `0.8`. |
 | `mypy_config_file` | string | No | Optional path to mypy config file |
+| `limit` | integer | No | Max number of files to analyze per run (e.g. 10–15). None = all files. Use with offset for paging. |
+| `offset` | integer | No | Number of files to skip (for paging with limit). Default 0. Default: `0`. |
 
 **Schema:** `additionalProperties: false` — only the parameters above are accepted.
 
@@ -164,6 +165,18 @@ Runs all checks on all files in the specified project only. Faster than analyzin
 
 Runs all checks on src/main.py file only. Faster than project-wide analysis.
 
+**Analyze in batches of 15 files (paging)**
+```json
+{
+  "root_dir": "/home/user/projects/my_project",
+  "project_id": "123e4567-e89b-12d3-a456-426614174000",
+  "limit": 15,
+  "offset": 0
+}
+```
+
+Runs analysis on first 15 files. Next run use offset=15, then offset=30, etc.
+
 **Run only specific checks**
 ```json
 {
@@ -177,17 +190,6 @@ Runs all checks on src/main.py file only. Faster than project-wide analysis.
 ```
 
 Runs only placeholder and stub checks, skipping duplicates and linting.
-
-**Check with custom duplicate settings**
-```json
-{
-  "root_dir": "/home/user/projects/my_project",
-  "duplicate_min_lines": 10,
-  "duplicate_min_similarity": 0.9
-}
-```
-
-Finds duplicates with minimum 10 lines and 90% similarity.
 
 ### Incorrect usage
 

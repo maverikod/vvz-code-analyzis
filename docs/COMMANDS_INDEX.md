@@ -115,6 +115,7 @@ email: vasilyvz@gmail.com
 | Command              | Class                        | Source File                            |
 |----------------------|-----------------------------|----------------------------------------|
 | cleanup_deleted_files| CleanupDeletedFilesMCPCommand| commands/file_management_mcp_commands.py |
+| delete_file         | DeleteFileMCPCommand         | (same)                                 |
 | list_deleted_files   | ListDeletedFilesMCPCommand  | (same)                                 |
 | unmark_deleted_file  | UnmarkDeletedFileMCPCommand | (same)                                 |
 | restore_deleted_files| RestoreDeletedFilesMCPCommand| (same)                                |

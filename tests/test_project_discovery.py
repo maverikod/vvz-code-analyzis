@@ -107,6 +107,7 @@ class TestFindProjectRoot:
         finally:
             # Cleanup
             import shutil
+
             if outside_dir.exists():
                 shutil.rmtree(outside_dir, ignore_errors=True)
 
@@ -401,4 +402,3 @@ class TestProjectRoot:
         # Should raise AttributeError when trying to modify
         with pytest.raises(AttributeError):
             root.project_id = "new-id"
-

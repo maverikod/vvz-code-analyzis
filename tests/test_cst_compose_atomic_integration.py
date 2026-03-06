@@ -92,11 +92,9 @@ def test_file(temp_db, tmp_path, test_project):
 
     # Create projectid file for project_id validation (JSON format)
     import json
+
     projectid_file = tmp_path / "projectid"
-    projectid_data = {
-        "id": test_project,
-        "description": "Test project"
-    }
+    projectid_data = {"id": test_project, "description": "Test project"}
     projectid_file.write_text(json.dumps(projectid_data, indent=4), encoding="utf-8")
 
     # Add file to database via update_file_data
@@ -137,7 +135,7 @@ async def test_compose_cst_module_full_flow(compose_command, test_file, tmp_path
     )
 
     from mcp_proxy_adapter.commands.result import SuccessResult, ErrorResult
-    
+
     # Note: Validation may fail due to linter errors (E302), but operation should complete
     # If validation fails, it's an ErrorResult with VALIDATION_ERROR
     # If validation succeeds, it's a SuccessResult
@@ -153,14 +151,16 @@ async def test_compose_cst_module_full_flow(compose_command, test_file, tmp_path
                 return  # Test passes - validation caught linter errors
         # Other errors should fail the test
         pytest.fail(f"Unexpected error: {result.code}, {result.message}")
-    
+
     assert isinstance(result, SuccessResult), f"Operation should succeed, got: {result}"
     assert result.data.get("applied") is True, "Changes should be applied"
     assert result.data.get("compiled") is True, "Code should compile"
 
     # Verify file was updated
     updated_content = file_path.read_text(encoding="utf-8")
-    assert "Updated test function" in updated_content, "File should contain updated function"
+    assert (
+        "Updated test function" in updated_content
+    ), "File should contain updated function"
 
     # Verify database was updated (same DB as temp_db: test.db)
     from code_analysis.core.database.base import CodeDatabase
@@ -183,7 +183,9 @@ async def test_compose_cst_module_full_flow(compose_command, test_file, tmp_path
 
 @COMPOSE_INTEGRATION_SKIP
 @pytest.mark.asyncio
-async def test_compose_cst_module_validation_failure(compose_command, test_file, tmp_path):
+async def test_compose_cst_module_validation_failure(
+    compose_command, test_file, tmp_path
+):
     """Test compose_cst_module with validation failure (invalid syntax in tree)."""
     file_id, file_path, project_id, root_dir = test_file
 
@@ -213,12 +215,16 @@ def test_function() -> str:
         "CST_COMPOSE_ERROR",
     ), f"Should return validation or compose error, got: {result.code}"
     if result.code == "VALIDATION_ERROR":
-        assert "validation_results" in result.details, "Should include validation results"
+        assert (
+            "validation_results" in result.details
+        ), "Should include validation results"
 
 
 @COMPOSE_INTEGRATION_SKIP
 @pytest.mark.asyncio
-async def test_compose_cst_module_database_rollback(compose_command, test_file, tmp_path):
+async def test_compose_cst_module_database_rollback(
+    compose_command, test_file, tmp_path
+):
     """Test database rollback on error (invalid project_id)."""
     file_id, file_path, project_id, root_dir = test_file
 
@@ -234,12 +240,14 @@ async def test_compose_cst_module_database_rollback(compose_command, test_file, 
     )
 
     from mcp_proxy_adapter.commands.result import SuccessResult, ErrorResult
-    
+
     # Should fail or succeed depending on error handling
     # If it fails, file should not be modified
     if isinstance(result, ErrorResult):
         current_content = file_path.read_text(encoding="utf-8")
-        assert current_content == original_content, "File should not be modified on error"
+        assert (
+            current_content == original_content
+        ), "File should not be modified on error"
 
 
 @COMPOSE_INTEGRATION_SKIP
@@ -272,12 +280,16 @@ def test_function() -> str:
     assert result.code in ("VALIDATION_ERROR", "CST_COMPOSE_ERROR")
 
     current_content = file_path.read_text(encoding="utf-8")
-    assert current_content == original_content, "File should not be modified on validation error"
+    assert (
+        current_content == original_content
+    ), "File should not be modified on validation error"
 
 
 @COMPOSE_INTEGRATION_SKIP
 @pytest.mark.asyncio
-async def test_compose_cst_module_transaction_rollback(compose_command, test_file, tmp_path):
+async def test_compose_cst_module_transaction_rollback(
+    compose_command, test_file, tmp_path
+):
     """Test transaction rollback on error (verify consistency)."""
     file_id, file_path, project_id, root_dir = test_file
 
@@ -298,7 +310,9 @@ async def test_compose_cst_module_transaction_rollback(compose_command, test_fil
 
 @COMPOSE_INTEGRATION_SKIP
 @pytest.mark.asyncio
-async def test_compose_cst_module_temp_file_cleanup(compose_command, test_file, tmp_path):
+async def test_compose_cst_module_temp_file_cleanup(
+    compose_command, test_file, tmp_path
+):
     """Test that temporary file is cleaned up."""
     file_id, file_path, project_id, root_dir = test_file
 
@@ -314,12 +328,16 @@ async def test_compose_cst_module_temp_file_cleanup(compose_command, test_file, 
     )
 
     temp_files_after = list(tmp_path.glob("tmp*.py"))
-    assert len(temp_files_after) <= len(temp_files_before), "Temporary files should be cleaned up"
+    assert len(temp_files_after) <= len(
+        temp_files_before
+    ), "Temporary files should be cleaned up"
 
 
 @COMPOSE_INTEGRATION_SKIP
 @pytest.mark.asyncio
-async def test_compose_cst_module_no_git_commit_on_error(compose_command, test_file, tmp_path):
+async def test_compose_cst_module_no_git_commit_on_error(
+    compose_command, test_file, tmp_path
+):
     """Test that git commit is not performed on validation error."""
     import subprocess
 
@@ -344,7 +362,7 @@ def test_function() -> str:
     )
 
     from mcp_proxy_adapter.commands.result import SuccessResult, ErrorResult
-    
+
     # Should fail validation
     assert isinstance(result, ErrorResult), f"Operation should fail, got: {result}"
 
@@ -353,7 +371,9 @@ def test_function() -> str:
     git_log = subprocess.run(
         ["git", "log", "--oneline"], cwd=root_dir, capture_output=True, text=True
     )
-    assert "Test commit" not in git_log.stdout, "Git commit should not be created on error"
+    assert (
+        "Test commit" not in git_log.stdout
+    ), "Git commit should not be created on error"
 
 
 @pytest.mark.asyncio
@@ -364,7 +384,9 @@ async def test_compose_cst_module_preview_mode(compose_command, test_file, tmp_p
 
 @COMPOSE_INTEGRATION_SKIP
 @pytest.mark.asyncio
-async def test_compose_cst_module_commit_message_required(compose_command, test_file, tmp_path):
+async def test_compose_cst_module_commit_message_required(
+    compose_command, test_file, tmp_path
+):
     """Test that commit_message is required in git repository."""
     import subprocess
 
@@ -373,7 +395,9 @@ async def test_compose_cst_module_commit_message_required(compose_command, test_
     subprocess.run(
         ["git", "config", "user.email", "test@example.com"], cwd=root_dir, check=False
     )
-    subprocess.run(["git", "config", "user.name", "Test User"], cwd=root_dir, check=False)
+    subprocess.run(
+        ["git", "config", "user.name", "Test User"], cwd=root_dir, check=False
+    )
 
     tree = create_tree_from_code(str(file_path), _updated_file_content())
     rel_path = str(file_path.relative_to(root_dir))
@@ -386,14 +410,18 @@ async def test_compose_cst_module_commit_message_required(compose_command, test_
     )
 
     from mcp_proxy_adapter.commands.result import SuccessResult, ErrorResult
-    
+
     assert isinstance(result, ErrorResult), f"Operation should fail, got: {result}"
-    assert result.code == "COMMIT_MESSAGE_REQUIRED", "Should return COMMIT_MESSAGE_REQUIRED error"
+    assert (
+        result.code == "COMMIT_MESSAGE_REQUIRED"
+    ), "Should return COMMIT_MESSAGE_REQUIRED error"
 
 
 @COMPOSE_INTEGRATION_SKIP
 @pytest.mark.asyncio
-async def test_compose_cst_module_no_git_repository(compose_command, test_file, tmp_path):
+async def test_compose_cst_module_no_git_repository(
+    compose_command, test_file, tmp_path
+):
     """Test that operation succeeds without git repository."""
     file_id, file_path, project_id, root_dir = test_file
 
@@ -414,7 +442,7 @@ async def test_compose_cst_module_no_git_repository(compose_command, test_file, 
     )
 
     from mcp_proxy_adapter.commands.result import SuccessResult, ErrorResult
-    
+
     # Operation may fail validation due to linter errors, but should return result
     if isinstance(result, ErrorResult):
         # If validation fails, check if it's just linter errors (acceptable)
@@ -425,7 +453,8 @@ async def test_compose_cst_module_no_git_repository(compose_command, test_file, 
                 # Linter errors are acceptable - test that validation works
                 assert "linter" in validation_results, "Should have linter results"
                 return  # Test passes - validation caught linter errors
-    
-    assert isinstance(result, SuccessResult), f"Operation should succeed without git repository, got: {result}"
-    assert result.data.get("applied") is True, "Changes should be applied"
 
+    assert isinstance(
+        result, SuccessResult
+    ), f"Operation should succeed without git repository, got: {result}"
+    assert result.data.get("applied") is True, "Changes should be applied"

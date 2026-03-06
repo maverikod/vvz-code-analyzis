@@ -56,11 +56,10 @@ class TestSQLiteSchemaManager:
 
     def test_sync_schema_create_tables(self, schema_manager, temp_db_path):
         """Test syncing schema - creating tables."""
+
         def create_table_func(schema):
             conn = schema_manager.conn
-            conn.execute(
-                f"CREATE TABLE {schema['name']} (id INTEGER PRIMARY KEY)"
-            )
+            conn.execute(f"CREATE TABLE {schema['name']} (id INTEGER PRIMARY KEY)")
             conn.commit()
 
         schema_definition = {
@@ -93,6 +92,7 @@ class TestSQLiteSchemaManager:
 
     def test_sync_schema_with_errors(self, schema_manager, temp_db_path):
         """Test syncing schema with errors."""
+
         def create_table_func(schema):
             raise Exception("Table creation failed")
 
@@ -107,6 +107,7 @@ class TestSQLiteSchemaManager:
 
     def test_sync_schema_empty_name(self, schema_manager, temp_db_path):
         """Test syncing schema with empty table name."""
+
         def create_table_func(schema):
             pass
 

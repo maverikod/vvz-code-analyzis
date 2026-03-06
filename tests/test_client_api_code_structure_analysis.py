@@ -16,7 +16,11 @@ from code_analysis.core.database_client.objects.project import Project
 from code_analysis.core.database_client.objects.file import File
 from code_analysis.core.database_client.objects.class_function import Class, Function
 from code_analysis.core.database_client.objects.method_import import Method, Import
-from code_analysis.core.database_client.objects.analysis import Issue, Usage, CodeDuplicate
+from code_analysis.core.database_client.objects.analysis import (
+    Issue,
+    Usage,
+    CodeDuplicate,
+)
 from code_analysis.core.database_driver_pkg.driver_factory import create_driver
 from code_analysis.core.database_driver_pkg.request_queue import RequestQueue
 from code_analysis.core.database_driver_pkg.rpc_server import RPCServer
@@ -449,7 +453,9 @@ class TestClientAPICodeStructureAnalysis:
             class_obj = Class(file_id=created_file.id, name="TestClass", line=10)
             created_class = client.create_class(class_obj)
             Method(class_id=created_class.id, name="test_method", line=15)
-            client.create_method(Method(class_id=created_class.id, name="test_method", line=15))
+            client.create_method(
+                Method(class_id=created_class.id, name="test_method", line=15)
+            )
 
             # Get statistics
             stats = client.get_project_statistics(project.id)

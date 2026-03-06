@@ -11,7 +11,10 @@ import json
 import uuid
 import threading
 from pathlib import Path
-from code_analysis.core.path_normalization import normalize_file_path, normalize_path_simple
+from code_analysis.core.path_normalization import (
+    normalize_file_path,
+    normalize_path_simple,
+)
 from code_analysis.core.project_resolution import (
     find_project_root_for_path,
     load_project_info,
@@ -53,7 +56,7 @@ class TestEdgeCasesInvalidCharacters:
             "test<file.py",
             "test>file.py",
             "test:file.py",
-            "test\"file.py",
+            'test"file.py',
             "test|file.py",
             "test?file.py",
             "test*file.py",
@@ -335,4 +338,3 @@ class TestEdgeCasesFilePermissions:
                     projectid_file.chmod(stat.S_IREAD | stat.S_IWRITE)
                 except (OSError, NotImplementedError):
                     pass
-

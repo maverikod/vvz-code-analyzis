@@ -70,7 +70,9 @@ class TestProjectIdMigration:
             )
 
             # Migrate (should skip)
-            result = migrate_projectid_file(projectid_file, description="New description")
+            result = migrate_projectid_file(
+                projectid_file, description="New description"
+            )
             assert result is False
 
             # Verify content unchanged
@@ -315,4 +317,3 @@ class TestProjectIdMigration:
             # Should find all 3
             assert len(projectid_files) == 3
             assert all(f.name == "projectid" for f in projectid_files)
-

@@ -121,6 +121,7 @@ Before any command modifies existing code, the file is placed in **versions** (b
 | Command | Doc | Purpose |
 |---------|-----|--------|
 | cleanup_deleted_files | [cleanup_deleted_files.md](commands/file_management/cleanup_deleted_files.md) | Clean up DB records for deleted files |
+| delete_file | [delete_file.md](commands/file_management/delete_file.md) | Mark file as deleted and move to trash |
 | list_deleted_files | [list_deleted_files.md](commands/file_management/list_deleted_files.md) | List files marked as deleted |
 | unmark_deleted_file | [unmark_deleted_file.md](commands/file_management/unmark_deleted_file.md) | Unmark file as deleted |
 | restore_deleted_files | [restore_deleted_files.md](commands/file_management/restore_deleted_files.md) | Restore file from deleted state |

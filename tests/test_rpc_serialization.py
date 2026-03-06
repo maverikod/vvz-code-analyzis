@@ -85,10 +85,12 @@ class TestDeserializeRequest:
 
     def test_deserialize_request(self):
         """Test deserializing request."""
-        data = json.dumps({
-            "table_name": "users",
-            "data": {"name": "John"},
-        })
+        data = json.dumps(
+            {
+                "table_name": "users",
+                "data": {"name": "John"},
+            }
+        )
         request = deserialize_request(data, InsertRequest)
         assert isinstance(request, InsertRequest)
         assert request.table_name == "users"
@@ -119,10 +121,12 @@ class TestDeserializeResponse:
 
     def test_deserialize_response(self):
         """Test deserializing response."""
-        data = json.dumps({
-            "success": True,
-            "data": {"row_id": 1},
-        })
+        data = json.dumps(
+            {
+                "success": True,
+                "data": {"row_id": 1},
+            }
+        )
         response = deserialize_response(data, SuccessResult)
         assert isinstance(response, SuccessResult)
         assert response.data == {"row_id": 1}

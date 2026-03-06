@@ -60,9 +60,7 @@ class TestSQLiteOperationsCoverage:
     def test_select_with_offset_only(self, operations, temp_db_path):
         """Test select with offset but no limit."""
         conn = operations.conn
-        conn.execute(
-            "CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)"
-        )
+        conn.execute("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)")
         for i in range(10):
             conn.execute("INSERT INTO users (name) VALUES (?)", (f"User{i}",))
         conn.commit()

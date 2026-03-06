@@ -539,8 +539,11 @@ class _ClientAPIFilesMixin(_DatabaseClientBase):
     ) -> bool:
         """Mark file as deleted (soft delete) and move to file trash. FILE_TRASH_SPEC step 12.
 
+        Path resolution: project root is taken from the projects table in the driver DB;
+        relative file_path is resolved against that root.
+
         Args:
-            file_path: Original file path.
+            file_path: Original file path (relative to project root or absolute).
             project_id: Project UUID.
             version_dir: Legacy version directory (used when trash_dir is None).
             reason: Optional reason for deletion.

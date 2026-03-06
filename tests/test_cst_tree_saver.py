@@ -33,7 +33,9 @@ def _make_db_mock() -> MagicMock:
     db.update_file = MagicMock(return_value=updated)
     # Batch path: execute_batch returns one result per operation
     db.execute_batch = MagicMock(
-        return_value=[{"affected_rows": 1, "lastrowid": i + 1, "data": None} for i in range(100)]
+        return_value=[
+            {"affected_rows": 1, "lastrowid": i + 1, "data": None} for i in range(100)
+        ]
     )
     return db
 

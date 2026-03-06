@@ -42,7 +42,7 @@ class SplitClassMCPCommand(BaseMCPCommand):
                 **base_props,
                 "file_path": {
                     "type": "string",
-                    "description": "Path to Python file (relative to project root)",
+                    "description": "Path to Python file (absolute or relative to project root)",
                 },
                 "config": {
                     "type": "object",
@@ -415,8 +415,16 @@ class SplitClassMCPCommand(BaseMCPCommand):
                     related_files=related_files,
                     comment="",  # Comment can be added later if needed
                 )
-                if backup_uuid:
-                    logger.info(f"Backup created before split: {backup_uuid}")
+                if not backup_uuid:
+                    return ErrorResult(
+                        message=(
+                            "Backup to old_code (versions) is mandatory before write; "
+                            "create_backup failed. Aborting split_class."
+                        ),
+                        code="BACKUP_REQUIRED",
+                        details={"file_path": str(file_path_obj)},
+                    )
+                logger.info(f"Backup created before split: {backup_uuid}")
 
                 config_data = BaseMCPCommand._get_raw_config()
                 git_ok, git_err = commit_after_write(
@@ -510,7 +518,7 @@ class ExtractSuperclassMCPCommand(BaseMCPCommand):
                 **cls._get_base_schema_properties(),
                 "file_path": {
                     "type": "string",
-                    "description": "Path to Python file (relative to project root)",
+                    "description": "Path to Python file (absolute or relative to project root)",
                 },
                 "config": {
                     "type": "object",
@@ -879,8 +887,16 @@ class ExtractSuperclassMCPCommand(BaseMCPCommand):
                     command="extract_superclass",
                     comment="",  # Comment can be added later if needed
                 )
-                if backup_uuid:
-                    logger.info(f"Backup created before extraction: {backup_uuid}")
+                if not backup_uuid:
+                    return ErrorResult(
+                        message=(
+                            "Backup to old_code (versions) is mandatory before write; "
+                            "create_backup failed. Aborting extract_superclass."
+                        ),
+                        code="BACKUP_REQUIRED",
+                        details={"file_path": str(file_path_obj)},
+                    )
+                logger.info(f"Backup created before extraction: {backup_uuid}")
 
                 config_data = BaseMCPCommand._get_raw_config()
                 git_ok, git_err = commit_after_write(
@@ -985,7 +1001,7 @@ class SplitFileToPackageMCPCommand(BaseMCPCommand):
                 **base_props,
                 "file_path": {
                     "type": "string",
-                    "description": "Path to Python file (relative to project root)",
+                    "description": "Path to Python file (absolute or relative to project root)",
                 },
                 "config": {
                     "type": "object",
@@ -1303,10 +1319,18 @@ class SplitFileToPackageMCPCommand(BaseMCPCommand):
                 related_files=related_files,
                 comment="",  # Comment can be added later if needed
             )
-            if backup_uuid:
-                logger.info(
-                    f"Backup created before split_file_to_package: {backup_uuid}"
+            if not backup_uuid:
+                return ErrorResult(
+                    message=(
+                        "Backup to old_code (versions) is mandatory before write; "
+                        "create_backup failed. Aborting split_file_to_package."
+                    ),
+                    code="BACKUP_REQUIRED",
+                    details={"file_path": str(file_path_obj)},
                 )
+            logger.info(
+                f"Backup created before split_file_to_package: {backup_uuid}"
+            )
 
             config_data = BaseMCPCommand._get_raw_config()
             git_ok, git_err = commit_after_write(
@@ -1426,9 +1450,15 @@ class SplitFileToPackageMCPCommand(BaseMCPCommand):
                             )
                 result_data["files"] = files_with_size
                 return SuccessResult(data=result_data)
+            msg = result.get("message", "split_file_to_package failed")
+            code = (
+                "DUPLICATE_TOP_LEVEL_NAMES"
+                if "DUPLICATE_TOP_LEVEL_NAMES" in msg
+                else "SPLIT_FILE_TO_PACKAGE_ERROR"
+            )
             return ErrorResult(
-                message=result.get("message", "split_file_to_package failed"),
-                code="SPLIT_FILE_TO_PACKAGE_ERROR",
+                message=msg,
+                code=code,
                 details=result,
             )
         except Exception as e:

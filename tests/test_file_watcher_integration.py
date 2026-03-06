@@ -9,7 +9,10 @@ import pytest
 import tempfile
 import time
 from pathlib import Path
-from code_analysis.core.file_watcher_pkg.scanner import scan_directory, should_ignore_path
+from code_analysis.core.file_watcher_pkg.scanner import (
+    scan_directory,
+    should_ignore_path,
+)
 from code_analysis.core.file_watcher_pkg.processor import FileChangeProcessor, FileDelta
 from code_analysis.core.database import CodeDatabase
 from code_analysis.core.database.base import create_driver_config_for_worker
@@ -106,8 +109,10 @@ class TestFileWatcherScannerRealData:
                 pytest.skip("No Python files found in test_data/bhlff/")
             else:
                 # Files exist but were not scanned - might be ignored or other issue
-                pytest.skip(f"Found {len(python_files)} Python files but scanner returned 0 files")
-        
+                pytest.skip(
+                    f"Found {len(python_files)} Python files but scanner returned 0 files"
+                )
+
         assert len(scanned_files) > 0
 
         # Check that all files have required fields
@@ -122,17 +127,17 @@ class TestFileWatcherScannerRealData:
         """Test that scanner ignores correct paths."""
         with tempfile.TemporaryDirectory() as tmpdir:
             root_path = Path(tmpdir)
-            
+
             # Create files that should be ignored
             (root_path / "__pycache__").mkdir()
             (root_path / "__pycache__" / "test.pyc").write_text("# compiled")
-            
+
             (root_path / ".git").mkdir()
             (root_path / ".git" / "config").write_text("[core]")
-            
+
             (root_path / "node_modules").mkdir()
             (root_path / "node_modules" / "package.json").write_text("{}")
-            
+
             # Create files that should NOT be ignored
             (root_path / "test.py").write_text("# Test file")
             (root_path / "src").mkdir(parents=True)
@@ -165,7 +170,9 @@ class TestFileWatcherScannerRealData:
         # Test custom ignore patterns
         custom_patterns = ["*.tmp", "temp/*"]
         assert should_ignore_path(Path("/path/to/file.tmp"), custom_patterns) is True
-        assert should_ignore_path(Path("/path/to/temp/file.py"), custom_patterns) is True
+        assert (
+            should_ignore_path(Path("/path/to/temp/file.py"), custom_patterns) is True
+        )
 
 
 class TestFileWatcherProcessorRealData:
@@ -462,5 +469,6 @@ class TestFileWatcherProcessorRealData:
 
         # Log performance metrics
         files_per_second = file_count / scan_duration if scan_duration > 0 else 0
-        print(f"\nScan performance: {file_count} files in {scan_duration:.2f}s ({files_per_second:.1f} files/s)")
-
+        print(
+            f"\nScan performance: {file_count} files in {scan_duration:.2f}s ({files_per_second:.1f} files/s)"
+        )

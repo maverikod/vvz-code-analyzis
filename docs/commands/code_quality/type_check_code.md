@@ -12,59 +12,7 @@ email: vasilyvz@gmail.com
 
 ## Purpose (Предназначение)
 
-The type_check_code command performs static type checking on Python code using mypy. It analyzes type annotations and detects type errors, missing type hints, and type inconsistencies without running the code.
-
-Operation flow:
-1. Validates file_path exists and is a file
-2. If config_file provided, validates it exists
-3. If config_file not provided, auto-detects pyproject.toml in parent directories
-4. If config points to this repository, runs mypy on entire package
-5. Otherwise, runs mypy on single file
-6. Executes mypy via subprocess with sanitized PYTHONPATH
-7. Collects type errors from stdout and stderr
-8. Returns success status and list of errors
-
-Type Checking Behavior:
-- Analyzes type annotations (function parameters, return types, variables)
-- Detects type mismatches and inconsistencies
-- Checks for missing type hints
-- Validates generic types and type aliases
-- Respects mypy configuration from config_file
-- File is not modified (read-only analysis)
-
-Config File Detection:
-- If config_file not provided, searches for pyproject.toml in:
-  1. File's parent directory
-  2. Parent's parent directory (and up)
-- Stops at first found pyproject.toml
-- If config points to this repository, runs package-level check
-- Otherwise, runs file-level check
-
-Package vs File Mode:
-- Package mode: Runs 'mypy -p code_analysis' (checks entire package)
-  - Avoids duplicate module discovery issues
-  - Better relative import resolution
-  - More comprehensive type checking
-- File mode: Runs 'mypy file.py' (checks single file)
-  - Faster for single file checks
-  - May have issues with relative imports
-
-Use cases:
-- Validate type annotations before committing
-- Find type errors without running code
-- Ensure type safety across codebase
-- Check type hints completeness
-- Validate generic types and type aliases
-- Enforce type checking in CI/CD pipelines
-
-Important notes:
-- File is not modified (type checking is read-only)
-- Requires mypy to be installed
-- PYTHONPATH is sanitized to avoid import conflicts
-- Package mode is used when config points to this repository
-- ignore_errors=True treats errors as warnings (still returns errors list)
-- success=True means no type errors found
-- success=False means type errors were found (check errors list)
+Static type checking with mypy. Validates file_path, optional config_file; auto-detects pyproject.toml in parent dirs. Always runs mypy on the single target file (never package-wide). Repo-root config is skipped. Read-only; returns success and list of errors. ignore_errors=True treats errors as warnings.
 
 ---
 
@@ -113,7 +61,7 @@ All MCP commands return either a **success** result (with `data`) or an **error*
 }
 ```
 
-Type checks main.py using auto-detected mypy config. Returns all type errors found.
+Type checks main.py using auto-detected mypy config. Returns all type errors found for that file only.
 
 **Type check with explicit config**
 ```json
@@ -123,7 +71,7 @@ Type checks main.py using auto-detected mypy config. Returns all type errors fou
 }
 ```
 
-Type checks main.py using specified mypy config file. If config points to this repo, runs package-level check.
+Type checks main.py using specified mypy config file. Result is still for the single file only.
 
 **Type check with errors as warnings**
 ```json
@@ -163,6 +111,6 @@ Type checks file but treats errors as warnings. Returns success=True even if err
 - Review errors list to understand type issues
 - Run type_check_code in CI/CD pipelines to enforce type safety
 - Use config_file for project-specific mypy settings
-- Package mode (when config points to repo) provides better type checking
+- This command always checks a single file; result set is scoped to that file
 
 ---

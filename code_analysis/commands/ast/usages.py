@@ -5,11 +5,80 @@ Author: Vasiliy Zdanovskiy
 email: vasilyvz@gmail.com
 """
 
-from typing import Any, Dict, Optional
+import json
+import uuid
+from pathlib import Path
+from typing import Any, Dict, List, Optional
 
 from mcp_proxy_adapter.commands.result import SuccessResult
 
 from ..base_mcp_command import BaseMCPCommand
+from ...core.cst_tree.tree_builder import load_file_to_tree
+from ...core.cst_tree.tree_range_finder import find_node_by_range
+
+
+def _is_valid_uuid4(value: Optional[str]) -> bool:
+    """Return True if value is non-empty and valid UUID4 string; otherwise False."""
+    if not value or not isinstance(value, str):
+        return False
+    s = value.strip()
+    if not s:
+        return False
+    try:
+        u = uuid.UUID(s, version=4)
+        return str(u) == s
+    except (ValueError, TypeError):
+        return False
+
+
+def _resolve_cst_node_id_at_line(
+    root_path: Path, file_path: str, line: int
+) -> Optional[str]:
+    """
+    Resolve CST node ID at (file_path, line). Returns UUID4 node_id or None.
+
+    No fallback identity by line/range; only valid cst_node_id is returned.
+    """
+    abs_path = (root_path / file_path).resolve()
+    if not abs_path.exists() or abs_path.suffix != ".py":
+        return None
+    try:
+        tree = load_file_to_tree(str(abs_path))
+        node = find_node_by_range(tree.tree_id, line, line, prefer_exact=False)
+        if node and _is_valid_uuid4(node.node_id):
+            return node.node_id
+    except (FileNotFoundError, ValueError, OSError):
+        pass
+    return None
+
+
+def _resolve_usages_with_cst_node_id(
+    root_path: Path, raw_usages: List[Dict[str, Any]]
+) -> List[Dict[str, Any]]:
+    """
+    Resolve cst_node_id for each usage by file_path and line. Return only
+    usages that have valid UUID4 cst_node_id (no response path without it).
+    """
+    by_file: Dict[str, List[Dict[str, Any]]] = {}
+    for u in raw_usages:
+        fp = u.get("file_path") or ""
+        if fp not in by_file:
+            by_file[fp] = []
+        by_file[fp].append(u)
+
+    resolved: List[Dict[str, Any]] = []
+    for fpath, group in by_file.items():
+        for rec in group:
+            line = rec.get("line")
+            if line is None:
+                continue
+            node_id = _resolve_cst_node_id_at_line(root_path, fpath, line)
+            if not _is_valid_uuid4(node_id):
+                continue
+            out = dict(rec)
+            out["cst_node_id"] = node_id
+            resolved.append(out)
+    return resolved
 
 
 class FindUsagesMCPCommand(BaseMCPCommand):
@@ -73,7 +142,7 @@ class FindUsagesMCPCommand(BaseMCPCommand):
         **kwargs,
     ) -> SuccessResult:
         try:
-            _ = self._resolve_project_root(project_id)
+            root_path = self._resolve_project_root(project_id)
             db = self._open_database()
             proj_id = project_id
 
@@ -82,8 +151,7 @@ class FindUsagesMCPCommand(BaseMCPCommand):
             # - usages table: actual function calls, method calls, class instantiations
             # - imports table: module/class/function imports
             # - classes table: inheritance relationships (bases)
-            usages = []
-            import json
+            raw_usages: List[Dict[str, Any]] = []
 
             # Search in imports table for class/function usages
             if target_type in ("class", "function", None):
@@ -110,7 +178,7 @@ class FindUsagesMCPCommand(BaseMCPCommand):
                 result = db.execute(import_query, tuple(import_params))
                 import_rows = result.get("data", [])
                 for row in import_rows:
-                    usages.append(
+                    raw_usages.append(
                         {
                             "file_id": row["file_id"],
                             "file_path": row["file_path"],
@@ -160,7 +228,7 @@ class FindUsagesMCPCommand(BaseMCPCommand):
                             bases = []
 
                     if target_name in bases:
-                        usages.append(
+                        raw_usages.append(
                             {
                                 "file_id": row["file_id"],
                                 "file_path": row["file_path"],
@@ -211,7 +279,7 @@ class FindUsagesMCPCommand(BaseMCPCommand):
             result = db.execute(query, tuple(params))
             usage_rows = result.get("data", [])
             for row in usage_rows:
-                usages.append(
+                raw_usages.append(
                     {
                         "file_id": row["file_id"],
                         "file_path": row["file_path"],
@@ -224,13 +292,16 @@ class FindUsagesMCPCommand(BaseMCPCommand):
                     }
                 )
 
+            db.disconnect()
+
+            # Resolve cst_node_id for each usage; keep only records with valid UUID4
+            usages = _resolve_usages_with_cst_node_id(root_path, raw_usages)
+
             # Apply limit and offset to final results
             if limit:
                 usages = usages[offset : offset + limit]
             elif offset:
                 usages = usages[offset:]
-
-            db.disconnect()
 
             return SuccessResult(
                 data={
@@ -280,7 +351,7 @@ class FindUsagesMCPCommand(BaseMCPCommand):
                 "4. Builds query filtering by target_name, target_type, target_class, file_path\n"
                 "5. If file_path provided, limits search to that specific file\n"
                 "6. Applies pagination: limit and offset\n"
-                "7. Returns list of usages with file paths and line numbers\n\n"
+                "7. Returns list of usages with file_path and valid UUID4 cst_node_id per entity\n\n"
                 "Search Behavior:\n"
                 "- Searches usages table for exact matches on target_name\n"
                 "- Can filter by target_type (method/property/class/function)\n"
@@ -295,7 +366,7 @@ class FindUsagesMCPCommand(BaseMCPCommand):
                 "- Code navigation and refactoring support\n"
                 "- Impact analysis before changes\n\n"
                 "Important notes:\n"
-                "- Results include file_id, not just file_path (use get_file_by_path to resolve)\n"
+                "- Each usage entity includes file_path and valid UUID4 cst_node_id; no response without cst_node_id\n"
                 "- Supports pagination with limit and offset\n"
                 "- For methods, use target_class to disambiguate\n"
                 "- If file_path provided, searches only in that file"
@@ -440,13 +511,12 @@ class FindUsagesMCPCommand(BaseMCPCommand):
                         "success": "Always true on success",
                         "target_name": "Target name that was searched",
                         "usages": (
-                            "List of usage dictionaries from database. Each contains:\n"
-                            "- file_id: Database ID of file\n"
+                            "List of usage records. Each contains file_path and valid UUID4 cst_node_id.\n"
+                            "- file_path: Path to file where usage occurs (relative to project root)\n"
+                            "- cst_node_id: UUID4 CST node identifier (required; no record without it)\n"
                             "- line: Line number where usage occurs\n"
-                            "- target_name: Name of target entity\n"
-                            "- target_type: Type of target (method/property/class/function)\n"
-                            "- target_class: Class name if target is method/property\n"
-                            "- Additional database fields as available"
+                            "- target_name, target_type, target_class, usage_type, etc.\n"
+                            "- No fallback identity by line/range; only entities with resolved cst_node_id"
                         ),
                         "count": "Number of usages found",
                     },
@@ -455,14 +525,16 @@ class FindUsagesMCPCommand(BaseMCPCommand):
                         "target_name": "process_data",
                         "usages": [
                             {
-                                "file_id": 1,
+                                "file_path": "src/main.py",
+                                "cst_node_id": "550e8400-e29b-41d4-a716-446655440000",
                                 "line": 42,
                                 "target_name": "process_data",
                                 "target_type": "function",
                                 "target_class": None,
                             },
                             {
-                                "file_id": 2,
+                                "file_path": "tests/test_main.py",
+                                "cst_node_id": "660e8400-e29b-41d4-a716-446655440001",
                                 "line": 15,
                                 "target_name": "process_data",
                                 "target_type": "function",

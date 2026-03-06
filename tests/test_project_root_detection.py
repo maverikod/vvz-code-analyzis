@@ -52,7 +52,9 @@ class TestProjectRootDetectionRealData:
         test_file = python_files[0]
         watch_dirs = [VAST_SRV_DIR.parent]
 
-        project_info = find_project_root_for_path(test_file, [str(w) for w in watch_dirs])
+        project_info = find_project_root_for_path(
+            test_file, [str(w) for w in watch_dirs]
+        )
 
         # If projectid is in old format, project_info might be None
         # or might raise an error during discovery
@@ -76,7 +78,9 @@ class TestProjectRootDetectionRealData:
         test_file = python_files[0]
         watch_dirs = [BHLFF_DIR.parent]
 
-        project_info = find_project_root_for_path(test_file, [str(w) for w in watch_dirs])
+        project_info = find_project_root_for_path(
+            test_file, [str(w) for w in watch_dirs]
+        )
 
         # bhlff might not have projectid, so it's OK if None
         if project_info is not None:
@@ -97,7 +101,9 @@ class TestProjectRootDetectionRealData:
         test_file = python_files[0]
         watch_dirs = [CODE_ANALYSIS_DIR.parent]
 
-        project_info = find_project_root_for_path(test_file, [str(w) for w in watch_dirs])
+        project_info = find_project_root_for_path(
+            test_file, [str(w) for w in watch_dirs]
+        )
 
         # code_analysis might not have projectid, so it's OK if None
         if project_info is not None:
@@ -109,13 +115,16 @@ class TestProjectRootDetectionRealData:
         """Test finding project root for file outside any project."""
         # Create a temporary file outside test_data
         import tempfile
-        with tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False) as f:
+
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
             temp_file = Path(f.name)
             f.write("# Test file\n")
 
         try:
             watch_dirs = [TEST_DATA_DIR]
-            project_info = find_project_root_for_path(temp_file, [str(w) for w in watch_dirs])
+            project_info = find_project_root_for_path(
+                temp_file, [str(w) for w in watch_dirs]
+            )
             assert project_info is None
         finally:
             temp_file.unlink()
@@ -161,7 +170,9 @@ class TestProjectRootDetectionRealData:
         watch_dirs = [VAST_SRV_DIR.parent]
 
         for test_file in python_files:
-            project_info = find_project_root_for_path(test_file, [str(w) for w in watch_dirs])
+            project_info = find_project_root_for_path(
+                test_file, [str(w) for w in watch_dirs]
+            )
             assert project_info is not None
             assert project_info.root_path == VAST_SRV_DIR.resolve()
             assert project_info.project_id is not None
@@ -178,7 +189,9 @@ class TestProjectRootDetectionEdgeCases:
         # find_project_root_for_path should handle nonexistent files
         # It might return None or raise an error depending on implementation
         try:
-            project_info = find_project_root_for_path(nonexistent_file, [str(w) for w in watch_dirs])
+            project_info = find_project_root_for_path(
+                nonexistent_file, [str(w) for w in watch_dirs]
+            )
             assert project_info is None
         except (FileNotFoundError, ValueError):
             # This is also acceptable behavior
@@ -189,11 +202,15 @@ class TestProjectRootDetectionEdgeCases:
         # Create nested structure with multiple projectid files
         root_dir = tmp_path / "root"
         root_dir.mkdir()
-        (root_dir / "projectid").write_text('{"id": "00000000-0000-0000-0000-000000000001", "description": "Root"}')
+        (root_dir / "projectid").write_text(
+            '{"id": "00000000-0000-0000-0000-000000000001", "description": "Root"}'
+        )
 
         nested_dir = root_dir / "nested"
         nested_dir.mkdir()
-        (nested_dir / "projectid").write_text('{"id": "00000000-0000-0000-0000-000000000002", "description": "Nested"}')
+        (nested_dir / "projectid").write_text(
+            '{"id": "00000000-0000-0000-0000-000000000002", "description": "Nested"}'
+        )
 
         test_file = nested_dir / "test.py"
         test_file.write_text("# Test")
@@ -231,7 +248,9 @@ class TestProjectRootDetectionEdgeCases:
 
         watch_dirs = [tmp_path]
 
-        project_info = find_project_root_for_path(test_file, [str(w) for w in watch_dirs])
+        project_info = find_project_root_for_path(
+            test_file, [str(w) for w in watch_dirs]
+        )
         assert project_info is None
 
     def test_find_project_root_empty_projectid(self, tmp_path):
@@ -283,7 +302,8 @@ class TestProjectRootDiscovery:
     def test_find_project_root_file_outside_watch_dir(self):
         """Test finding project root for file outside watch_dir."""
         import tempfile
-        with tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False) as f:
+
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
             temp_file = Path(f.name)
             f.write("# Test file\n")
 
@@ -313,7 +333,9 @@ class TestProjectRootCaching:
         # Call multiple times
         results = []
         for _ in range(5):
-            project_info = find_project_root_for_path(test_file, [str(w) for w in watch_dirs])
+            project_info = find_project_root_for_path(
+                test_file, [str(w) for w in watch_dirs]
+            )
             results.append(project_info)
 
         # All results should be the same
@@ -337,13 +359,15 @@ class TestProjectRootPerformance:
         watch_dirs = [VAST_SRV_DIR.parent]
 
         import time
+
         start_time = time.time()
 
         for test_file in python_files:
-            project_info = find_project_root_for_path(test_file, [str(w) for w in watch_dirs])
+            project_info = find_project_root_for_path(
+                test_file, [str(w) for w in watch_dirs]
+            )
             assert project_info is not None
 
         elapsed_time = time.time() - start_time
         # Should complete 100 files in reasonable time (< 10 seconds)
         assert elapsed_time < 10.0, f"Too slow: {elapsed_time:.2f}s for 100 files"
-

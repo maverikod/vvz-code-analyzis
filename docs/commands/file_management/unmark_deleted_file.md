@@ -77,7 +77,7 @@ All MCP commands return either a **success** result (with `data`) or an **error*
 ### Error
 
 - **Shape:** `ErrorResult` with `code` and `message`.
-- **Possible codes:** PROJECT_NOT_FOUND, FILE_NOT_FOUND, NO_ORIGINAL_PATH, UNMARK_ERROR (and others).
+- **Possible codes:** PROJECT_NOT_FOUND, FILE_NOT_FOUND, NO_ORIGINAL_PATH, FILE_EXISTS_AT_TARGET, UNMARK_ERROR (and others).
 
 ---
 
@@ -114,6 +114,8 @@ Restores src/main.py from version directory back to original location.
 
 - **NO_ORIGINAL_PATH**: File was deleted but original_path is missing. File cannot be restored without original_path. Use repair_database to fix database integrity.
 
+- **FILE_EXISTS_AT_TARGET**: original_path already has a file on disk. Delete or rename the existing file at the target path before restoring.
+
 - **UNMARK_ERROR**: File move error, permission denied, or database error. Check file permissions, verify version directory exists, ensure original location is writable.
 
 ## Error codes summary
@@ -123,6 +125,7 @@ Restores src/main.py from version directory back to original location.
 | `PROJECT_NOT_FOUND` | Project not found in database | Ensure project is registered. Run update_indexes f |
 | `FILE_NOT_FOUND` | File not found in database | Verify file path is correct and file exists in dat |
 | `NO_ORIGINAL_PATH` | File has no original_path, cannot restore | File cannot be restored without original_path. Use |
+| `FILE_EXISTS_AT_TARGET` | Target path already exists in project; restore would overwri | Delete or rename the existing file at the target p |
 | `UNMARK_ERROR` | General error during file restoration | Check file permissions, verify version directory e |
 
 ## Best practices

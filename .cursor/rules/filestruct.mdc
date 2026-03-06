@@ -3,81 +3,19 @@ description:
 alwaysApply: true
 ---
 
-# Project File Organization Standards
-
-## Directory Structure Standards
-
-### 📁 scripts/
-- **Purpose**: Scripts and test utilities (NOT pytest tests)
-- **Contents**: 
-  - Utility scripts
-  - Test scripts (non-pytest)
-  - Helper scripts
-  - Registration scripts
-- **Example**: `register_mcp_server.py`, `test_project_cleanup.py`
-
-### 📁 docs/
-- **Purpose**: ALL documentation
-- **Contents**:
-  - README files
-  - Documentation files (.md)
-  - API documentation
-  - Migration guides
-  - Analysis reports
-- **Example**: `README.md`, `ANALYSIS.md`, `MIGRATION_SUMMARY.md`
-### 📁 docs/reports
-- **Purpose**: Analyses and explanations (reports, data-flow and architecture notes).
-- **Contents**: Migration guides, analysis reports, technical explanations.
-- **Example**: `COMPONENT_INTERACTION.md`, `LOG_WRITE_SITES.md`, `FILE_STRUCTURE_AND_OBJECT_SCHEMA.md`
-
-### 📁 docs/plans
-- **Purpose**: Technical specifications and plans (TZ, design, step-by-step plans).
-- **Contents**: Task descriptions, refactor plans, design docs, implementation steps.
-- **Example**: `MUTABLE_CST_LAYER_TASK.md`, `mutable_cst_layer/`, `cst_concept/refactor_plan/`, `design/`
-
-### 📁 docs/standards
-- **Purpose**: Standards and project rules (logging, drivers, paths, commit rules).
-- **Contents**: Standards documents, criteria, format specs.
-- **Example**: `DRIVER_STANDARD.md`, `LOG_IMPORTANCE_CRITERIA.md`, `UNIFIED_LOG_FORMAT.md`, `PROJECT_PATH_AND_VENV_RULES.md`
-
-### 📁 logs/
-- **Purpose**: Server logs
-- **Contents**:
-  - Application logs
-  - Server logs
-  - Error logs
-  - Access logs
-- **Example**: `mcp_proxy_adapter.log`, `server.log`
-
-### 📁 data/
-- **Purpose**: Data files (databases, data files)
-- **Contents**:
-  - Database files (.db, .sqlite)
-  - Data files
-  - Test data
-  - Configuration data files
-- **Example**: `code_analysis.db`, `test.db`
-
-### 📁 mtls_certificates/
-- **Purpose**: x509 certificates for client to connect to foreign services 
-
-## Rules
-
-1. **ALL documentation files (.md) MUST be in `docs/`**
-2. **ALL scripts (non-pytest) MUST be in `scripts/`**
-3. **ALL log files MUST be in `logs/`**
-4. **ALL data files (databases, etc.) MUST be in `data/`**
-5. **Pytest tests MUST remain in `tests/`**
-6. **Source code MUST remain in `code_analysis/`**
-
-## File Organization Checklist
-
-When adding new files, ensure they are placed in the correct directory:
-- ✅ Documentation → `docs/`
-- ✅ Scripts → `scripts/`
-- ✅ Logs → `logs/`
-- ✅ Data → `data/`
-- ✅ Tests (pytest) → `tests/`
-- ✅ Source code → `code_analysis/`
-
-test_data - directory contain test data for testing purposes. Each dataset musk be palcewd to their directory. Each test project's subdirectory must have their projectid  file
+code_analysis/                    # Корень репозитория
+├── code_analysis/                # Исходный код проекта (пакеты, модули; индексы code_mapper при наличии)
+├── docs/                         # Вся документация
+│   ├── reports/                 # Анализы, пояснения, отчёты (архитектура, потоки данных)
+│   ├── plans/                   # ТЗ, планы, дизайн, пошаговые планы (mutable_cst_layer, cst_concept, design)
+│   ├── standards/               # Стандарты и правила (логи, драйверы, пути, коммиты, раскладка каталогов)
+│   ├── commands/                # Документация по командам (по блокам: ast, cst, file_management и т.д.)
+│   └── *.md, README.md, ...     # Основные гайды и индекс команд в корне docs/
+├── scripts/                     # Скрипты и утилиты (не pytest): хелперы, регистрация, тест-скрипты
+├── tests/                       # Только pytest-тесты
+├── logs/                        # Логи сервера и приложения
+├── data/                        # Данные: БД (.db, .sqlite), конфиг-данные, тестовые данные
+├── mtls_certificates/           # x509-сертификаты для подключения к внешним сервисам
+├── test_data/                   # Тестовые проекты; в каждой подпапке — свой проект с projectid в корне
+├── .cursorrules                 # Правила организации файлов (дублируют стандарт раскладки)
+└── .cursor/rules/               # Cursor-правила (filestruct, test-data, server-managing)

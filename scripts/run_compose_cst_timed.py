@@ -27,11 +27,23 @@ if str(PROJECT_ROOT) not in sys.path:
 async def main() -> int:
     parser = argparse.ArgumentParser(description="Run compose_cst_module with timing")
     parser.add_argument("--config", default="config.json", help="Path to config.json")
-    parser.add_argument("--project-id", default=None, help="Project UUID (required unless --list-projects)")
-    parser.add_argument("--file-path", default=None, help="File path relative to project root")
-    parser.add_argument("--tree-id", default=None, help="CST tree ID (if omitted, load file to get it)")
-    parser.add_argument("--commit-message", default=None, help="Optional git commit message")
-    parser.add_argument("--list-projects", action="store_true", help="List projects and exit")
+    parser.add_argument(
+        "--project-id",
+        default=None,
+        help="Project UUID (required unless --list-projects)",
+    )
+    parser.add_argument(
+        "--file-path", default=None, help="File path relative to project root"
+    )
+    parser.add_argument(
+        "--tree-id", default=None, help="CST tree ID (if omitted, load file to get it)"
+    )
+    parser.add_argument(
+        "--commit-message", default=None, help="Optional git commit message"
+    )
+    parser.add_argument(
+        "--list-projects", action="store_true", help="List projects and exit"
+    )
     args = parser.parse_args()
 
     config_path = Path(args.config)
@@ -42,7 +54,9 @@ async def main() -> int:
         return 1
 
     if args.list_projects:
-        from code_analysis.commands.project_management_mcp_commands import ListProjectsMCPCommand
+        from code_analysis.commands.project_management_mcp_commands import (
+            ListProjectsMCPCommand,
+        )
 
         list_cmd = ListProjectsMCPCommand()
         list_result = await list_cmd.execute()
@@ -55,7 +69,10 @@ async def main() -> int:
     project_id = args.project_id
     file_path = args.file_path
     if not project_id or not file_path:
-        print("--project-id and --file-path are required (or use --list-projects)", file=sys.stderr)
+        print(
+            "--project-id and --file-path are required (or use --list-projects)",
+            file=sys.stderr,
+        )
         return 1
 
     tree_id = args.tree_id
@@ -68,15 +85,22 @@ async def main() -> int:
         t0 = time.perf_counter()
         load_result = await load_cmd.execute(project_id=project_id, file_path=file_path)
         load_elapsed = time.perf_counter() - t0
-        if not getattr(load_result, "data", None) or not load_result.data.get("tree_id"):
-            print(f"cst_load_file failed: {getattr(load_result, 'message', load_result)}", file=sys.stderr)
+        if not getattr(load_result, "data", None) or not load_result.data.get(
+            "tree_id"
+        ):
+            print(
+                f"cst_load_file failed: {getattr(load_result, 'message', load_result)}",
+                file=sys.stderr,
+            )
             return 1
         tree_id = load_result.data["tree_id"]
         print(f"cst_load_file tree_id={tree_id} elapsed={load_elapsed:.3f}s")
     else:
         print(f"Using tree_id={tree_id}")
 
-    from code_analysis.commands.cst_compose_module_command import ComposeCSTModuleCommand
+    from code_analysis.commands.cst_compose_module_command import (
+        ComposeCSTModuleCommand,
+    )
 
     cmd = ComposeCSTModuleCommand()
     t0 = time.perf_counter()
@@ -88,7 +112,9 @@ async def main() -> int:
     )
     elapsed = time.perf_counter() - t0
 
-    success = getattr(result, "success", False) or (hasattr(result, "data") and result.data is not None)
+    success = getattr(result, "success", False) or (
+        hasattr(result, "data") and result.data is not None
+    )
     if hasattr(result, "message"):
         print(f"Result: {result.message}")
     if hasattr(result, "code") and result.code:

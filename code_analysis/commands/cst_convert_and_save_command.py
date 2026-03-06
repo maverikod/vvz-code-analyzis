@@ -191,8 +191,13 @@ class CSTConvertAndSaveCommand(BaseMCPCommand):
                             comment="Before convert and save",
                         )
                         if not backup_uuid:
-                            logger.warning(
-                                "Failed to create backup before cst_convert_and_save"
+                            return ErrorResult(
+                                message=(
+                                    "Backup to old_code (versions) is mandatory before write; "
+                                    "create_backup failed. Aborting cst_convert_and_save."
+                                ),
+                                code="BACKUP_REQUIRED",
+                                details={"file_path": str(abs_path)},
                             )
                     abs_path.write_text(source_code, encoding="utf-8")
                     logger.info(f"Saved code to file: {abs_path}")

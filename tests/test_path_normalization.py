@@ -176,7 +176,8 @@ class TestPathNormalizationEdgeCases:
     def test_normalize_path_outside_project(self):
         """Test normalizing path for file outside any project."""
         import tempfile
-        with tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False) as f:
+
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
             temp_file = Path(f.name)
             f.write("# Test file\n")
 
@@ -211,7 +212,9 @@ class TestPathNormalizationEdgeCases:
         if not subdir_files:
             # No files in subdirectories, use a file at root and create path from parent
             # Create path like: ../vast_srv/file.py from test_data directory
-            path_with_dot_dot = VAST_SRV_DIR.parent / ".." / VAST_SRV_DIR.name / test_file.name
+            path_with_dot_dot = (
+                VAST_SRV_DIR.parent / ".." / VAST_SRV_DIR.name / test_file.name
+            )
             # Resolve to check if it exists
             resolved_path = path_with_dot_dot.resolve()
             if not resolved_path.exists():
@@ -234,7 +237,7 @@ class TestPathNormalizationEdgeCases:
                 resolved_path = path_with_dot_dot.resolve()
                 if not resolved_path.exists():
                     pytest.skip("Cannot create valid .. path for test")
-        
+
         watch_dirs = [VAST_SRV_DIR]
 
         normalized = normalize_file_path(path_with_dot_dot, watch_dirs=watch_dirs)
@@ -284,7 +287,8 @@ class TestPathNormalizationEdgeCases:
                 pytest.skip("projectid file is in old format, needs migration to JSON")
 
         import tempfile
-        with tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False) as f:
+
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
             temp_file = Path(f.name)
             f.write("# Test file\n")
 
@@ -300,11 +304,15 @@ class TestPathNormalizationEdgeCases:
         # Create nested structure with multiple projectid files
         root_dir = tmp_path / "root"
         root_dir.mkdir()
-        (root_dir / "projectid").write_text('{"id": "00000000-0000-0000-0000-000000000001", "description": "Root"}')
+        (root_dir / "projectid").write_text(
+            '{"id": "00000000-0000-0000-0000-000000000001", "description": "Root"}'
+        )
 
         nested_dir = root_dir / "nested"
         nested_dir.mkdir()
-        (nested_dir / "projectid").write_text('{"id": "00000000-0000-0000-0000-000000000002", "description": "Nested"}')
+        (nested_dir / "projectid").write_text(
+            '{"id": "00000000-0000-0000-0000-000000000002", "description": "Nested"}'
+        )
 
         test_file = nested_dir / "test.py"
         test_file.write_text("# Test")
@@ -358,7 +366,9 @@ class TestPathNormalizationRelativePath:
                 pytest.skip("projectid file is in old format, needs migration to JSON")
 
         # Find a file in the root of vast_srv
-        root_files = [f for f in VAST_SRV_DIR.iterdir() if f.is_file() and f.suffix == ".py"]
+        root_files = [
+            f for f in VAST_SRV_DIR.iterdir() if f.is_file() and f.suffix == ".py"
+        ]
         if not root_files:
             pytest.skip("No Python files in vast_srv root")
 
@@ -368,7 +378,10 @@ class TestPathNormalizationRelativePath:
         normalized = normalize_file_path(test_file, watch_dirs=watch_dirs)
 
         # Relative path should be just the filename for root files
-        assert normalized.relative_path == test_file.name or normalized.relative_path.startswith(test_file.name)
+        assert (
+            normalized.relative_path == test_file.name
+            or normalized.relative_path.startswith(test_file.name)
+        )
 
 
 class TestPathNormalizationPerformance:
@@ -394,6 +407,7 @@ class TestPathNormalizationPerformance:
         watch_dirs = [VAST_SRV_DIR.parent]
 
         import time
+
         start_time = time.time()
 
         for test_file in python_files:
@@ -415,7 +429,7 @@ class TestPathNormalizationAdditionalCases:
 
         with pytest.raises(ProjectNotFoundError) as exc_info:
             normalize_file_path(test_file, watch_dirs=[])
-        
+
         assert "no watch_dirs or project_root provided" in str(exc_info.value).lower()
 
     def test_normalize_path_file_not_in_project_root_value_error(self, tmp_path):
@@ -435,7 +449,7 @@ class TestPathNormalizationAdditionalCases:
         # This should trigger ValueError in relative_to, which is caught and re-raised as ProjectNotFoundError
         with pytest.raises(ProjectNotFoundError) as exc_info:
             normalize_file_path(outside_file, project_root=project_root)
-        
+
         # The error should mention that file is not within project root
         error_msg = str(exc_info.value).lower()
         assert "not within project root" in error_msg or "failed to load" in error_msg
@@ -446,14 +460,14 @@ class TestPathNormalizationAdditionalCases:
         test_file.write_text("# Test")
 
         normalized = normalize_path_simple(test_file)
-        
+
         assert isinstance(normalized, str)
         assert normalized == str(test_file.resolve())
-        
+
         # Test with string path
         normalized_str = normalize_path_simple(str(test_file))
         assert normalized_str == str(test_file.resolve())
-        
+
         # Test with relative path (only if file is in current directory or subdirectory)
         try:
             relative_path = test_file.relative_to(Path.cwd())
@@ -462,4 +476,3 @@ class TestPathNormalizationAdditionalCases:
         except ValueError:
             # File is not in current directory, skip relative path test
             pass
-

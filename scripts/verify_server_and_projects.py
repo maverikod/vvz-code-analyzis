@@ -54,7 +54,9 @@ async def main() -> int:
     if hasattr(list_result, "error") and list_result.error:
         logger.error("list_projects failed: %s", list_result.error)
         return 1
-    projects = list_result.data.get("projects", []) if hasattr(list_result, "data") else []
+    projects = (
+        list_result.data.get("projects", []) if hasattr(list_result, "data") else []
+    )
     count = list_result.data.get("count", 0) if hasattr(list_result, "data") else 0
     logger.info("Found %d projects", count)
 
@@ -62,7 +64,9 @@ async def main() -> int:
     watch_dir_id = None
     for p in projects:
         root_path = p.get("root_path") or p.get("root_path", "")
-        if str(test_data_path) in root_path or root_path.startswith(str(test_data_path)):
+        if str(test_data_path) in root_path or root_path.startswith(
+            str(test_data_path)
+        ):
             watch_dir_id = p.get("watch_dir_id")
             if watch_dir_id:
                 break
@@ -75,7 +79,8 @@ async def main() -> int:
 
     # 2. Delete all projects whose root_path is under test_data
     to_delete = [
-        p for p in projects
+        p
+        for p in projects
         if (p.get("root_path") or "").startswith(str(test_data_path))
         or str(test_data_path) in (p.get("root_path") or "")
     ]
@@ -84,7 +89,9 @@ async def main() -> int:
         pid = p.get("id")
         if not pid:
             continue
-        logger.info("Deleting project %s (%s)", pid, p.get("name", p.get("root_path", "")))
+        logger.info(
+            "Deleting project %s (%s)", pid, p.get("name", p.get("root_path", ""))
+        )
         del_result = await delete_cmd.execute(project_id=pid, delete_files=False)
         if hasattr(del_result, "error") and del_result.error:
             logger.warning("delete_project %s failed: %s", pid, del_result.error)
@@ -104,7 +111,11 @@ async def main() -> int:
         if hasattr(create_result, "error") and create_result.error:
             logger.error("create_project %s failed: %s", name, create_result.error)
         else:
-            pid = create_result.data.get("project_id") if hasattr(create_result, "data") else None
+            pid = (
+                create_result.data.get("project_id")
+                if hasattr(create_result, "data")
+                else None
+            )
             logger.info("Created project %s -> %s", name, pid)
 
     logger.info(

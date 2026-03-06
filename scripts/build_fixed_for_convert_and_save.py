@@ -36,7 +36,7 @@ def build_update_test_fixed() -> str:
         "        content = f.read()",
         "    ",
         "    # Update imports",
-        "    content = re.sub(",  # fixed: was "re.sub("," 
+        "    content = re.sub(",  # fixed: was "re.sub(","
         "        r'import asyncio\\nimport aiohttp\\nfrom typing import List, Dict, Any\\nfrom rich\\.console import Console',",
         "        'import asyncio\\nfrom typing import List, Dict, Any\\nfrom test_base import BaseTester',",
         "        content",
@@ -44,8 +44,8 @@ def build_update_test_fixed() -> str:
         "    ",
         "    # Update class definition",
         "    class_name = filename.replace('test_', '').replace('.py', '').title() + 'Tests'",
-        "    pattern = rf'class {class_name}:\\s*\\n\\s*\"\"\"([^\"]*)\"\"\"\\s*\\n\\s*def __init__\\(self, base_url: str, headers: Dict\\[str, str\\] = None\\):\\s*\\n\\s*self\\.base_url = base_url\\s*\\n\\s*self\\.headers = headers or \\{\\}\\s*\\n\\s*self\\.console = Console\\(\\)'",
-        "    repl = rf'class {class_name}(BaseTester):\\n    \"\"\"\\\\1\"\"\"'",
+        '    pattern = rf\'class {class_name}:\\s*\\n\\s*"""([^"]*)"""\\s*\\n\\s*def __init__\\(self, base_url: str, headers: Dict\\[str, str\\] = None\\):\\s*\\n\\s*self\\.base_url = base_url\\s*\\n\\s*self\\.headers = headers or \\{\\}\\s*\\n\\s*self\\.console = Console\\(\\)\'',
+        '    repl = rf\'class {class_name}(BaseTester):\\n    """\\\\1"""\'',
         "    content = re.sub(pattern, repl, content)",
         "    ",
         "    # Update test methods to use _make_request",
@@ -54,7 +54,7 @@ def build_update_test_fixed() -> str:
         "    with open(filename, 'w') as f:",
         "        f.write(content)",
         "    ",
-        "    print(f\"Updated {filename}\")",
+        '    print(f"Updated {filename}")',
         "",
         "def main():",
         '    """Update all test files."""',

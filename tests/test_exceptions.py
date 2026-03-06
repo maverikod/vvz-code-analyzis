@@ -366,4 +366,3 @@ class TestExceptionHierarchy:
         except DatabaseOperationError as e:
             assert e.cause is original_error
             assert isinstance(e, CodeAnalysisError)
-

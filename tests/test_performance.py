@@ -11,7 +11,10 @@ import time
 import json
 import uuid
 from pathlib import Path
-from code_analysis.core.path_normalization import normalize_file_path, normalize_path_simple
+from code_analysis.core.path_normalization import (
+    normalize_file_path,
+    normalize_path_simple,
+)
 from code_analysis.core.project_resolution import (
     find_project_root_for_path,
 )
@@ -54,7 +57,9 @@ class TestPerformanceProjectRootDetection:
 
         # Should complete in reasonable time (< 10 seconds for 1000 files)
         assert elapsed < 10.0
-        print(f"Processed {len(test_files)} files in {elapsed:.2f}s ({len(test_files)/elapsed:.1f} files/s)")
+        print(
+            f"Processed {len(test_files)} files in {elapsed:.2f}s ({len(test_files)/elapsed:.1f} files/s)"
+        )
 
     def test_performance_project_root_detection_caching(self):
         """Test that caching improves performance."""
@@ -115,7 +120,9 @@ class TestPerformancePathNormalization:
 
         # Should complete in reasonable time (< 10 seconds for 1000 paths)
         assert elapsed < 10.0
-        print(f"Normalized {len(test_files)} paths in {elapsed:.2f}s ({len(test_files)/elapsed:.1f} paths/s)")
+        print(
+            f"Normalized {len(test_files)} paths in {elapsed:.2f}s ({len(test_files)/elapsed:.1f} paths/s)"
+        )
 
     def test_performance_path_normalization_relative_paths(self):
         """Test performance with relative paths."""
@@ -223,7 +230,9 @@ class TestPerformanceProjectIdValidation:
 
             # Should complete in reasonable time (< 5 seconds for 1000 files)
             assert elapsed < 5.0
-            print(f"Added {len(test_files)} files in {elapsed:.2f}s ({len(test_files)/elapsed:.1f} files/s)")
+            print(
+                f"Added {len(test_files)} files in {elapsed:.2f}s ({len(test_files)/elapsed:.1f} files/s)"
+            )
 
         finally:
             db.close()
@@ -384,7 +393,9 @@ class TestPerformanceVectorization:
             # Create 50 test files
             for i in range(50):
                 test_file = project_root / f"test_{i}.py"
-                test_file.write_text(f'"""Test docstring {i}."""\ndef func_{i}():\n    pass\n')
+                test_file.write_text(
+                    f'"""Test docstring {i}."""\ndef func_{i}():\n    pass\n'
+                )
 
                 db.add_file(
                     path=str(test_file),
@@ -407,4 +418,3 @@ class TestPerformanceVectorization:
 
         finally:
             db.close()
-

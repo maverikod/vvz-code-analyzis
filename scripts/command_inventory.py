@@ -202,8 +202,14 @@ def check_hooks_registration(commands_to_check: Set[str] = None) -> Dict[str, bo
 
     # Map command names to class names and registration patterns
     registration_map = {
-        "compose_cst_module": ("ComposeCSTModuleCommand", "reg.register(ComposeCSTModuleCommand"),
-        "list_cst_blocks": ("ListCSTBlocksCommand", "reg.register(ListCSTBlocksCommand"),
+        "compose_cst_module": (
+            "ComposeCSTModuleCommand",
+            "reg.register(ComposeCSTModuleCommand",
+        ),
+        "list_cst_blocks": (
+            "ListCSTBlocksCommand",
+            "reg.register(ListCSTBlocksCommand",
+        ),
         "query_cst": ("QueryCSTCommand", "reg.register(QueryCSTCommand"),
     }
 
@@ -300,7 +306,9 @@ def mode_discover(output_file: Path = None, verbose: bool = False) -> int:
         f.write(
             "This document lists all custom commands available in the code-analysis-server.\n"
         )
-        f.write("Standard adapter commands (echo, health, queue_*, etc.) are excluded.\n\n")
+        f.write(
+            "Standard adapter commands (echo, health, queue_*, etc.) are excluded.\n\n"
+        )
 
         f.write(f"**Total custom commands**: {len(custom_commands)}\n\n")
 
@@ -367,8 +375,10 @@ def mode_check(verbose: bool = False) -> int:
     print("Summary")
     print("=" * 80)
 
-    all_checked = set(file_results.keys()) | set(import_results.keys()) | set(
-        hooks_results.keys()
+    all_checked = (
+        set(file_results.keys())
+        | set(import_results.keys())
+        | set(hooks_results.keys())
     )
 
     all_ok = True
@@ -457,7 +467,11 @@ def mode_verify(server_id: str = "code-analysis-server", verbose: bool = False) 
     return 0
 
 
-def mode_full(output_file: Path = None, server_id: str = "code-analysis-server", verbose: bool = False) -> int:
+def mode_full(
+    output_file: Path = None,
+    server_id: str = "code-analysis-server",
+    verbose: bool = False,
+) -> int:
     """Run all checks: discover, check, and verify."""
     print("=" * 80)
     print("Full Command Inventory")
@@ -572,4 +586,3 @@ Examples:
 
 if __name__ == "__main__":
     sys.exit(main())
-

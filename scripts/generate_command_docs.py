@@ -22,76 +22,428 @@ DOCS_COMMANDS = ROOT / "docs" / "commands"
 # Command name -> (module path, class name, block)
 COMMAND_MAP = [
     ("get_ast", "code_analysis.commands.ast.get_ast", "GetASTMCPCommand", "ast"),
-    ("search_ast_nodes", "code_analysis.commands.ast.search_nodes", "SearchASTNodesMCPCommand", "ast"),
-    ("ast_statistics", "code_analysis.commands.ast.statistics", "ASTStatisticsMCPCommand", "ast"),
-    ("list_project_files", "code_analysis.commands.ast.list_files", "ListProjectFilesMCPCommand", "ast"),
-    ("get_code_entity_info", "code_analysis.commands.ast.entity_info", "GetCodeEntityInfoMCPCommand", "ast"),
-    ("list_code_entities", "code_analysis.commands.ast.list_entities", "ListCodeEntitiesMCPCommand", "ast"),
-    ("get_imports", "code_analysis.commands.ast.imports", "GetImportsMCPCommand", "ast"),
-    ("find_dependencies", "code_analysis.commands.ast.dependencies", "FindDependenciesMCPCommand", "ast"),
-    ("get_class_hierarchy", "code_analysis.commands.ast.hierarchy", "GetClassHierarchyMCPCommand", "ast"),
+    (
+        "search_ast_nodes",
+        "code_analysis.commands.ast.search_nodes",
+        "SearchASTNodesMCPCommand",
+        "ast",
+    ),
+    (
+        "ast_statistics",
+        "code_analysis.commands.ast.statistics",
+        "ASTStatisticsMCPCommand",
+        "ast",
+    ),
+    (
+        "list_project_files",
+        "code_analysis.commands.ast.list_files",
+        "ListProjectFilesMCPCommand",
+        "ast",
+    ),
+    (
+        "get_code_entity_info",
+        "code_analysis.commands.ast.entity_info",
+        "GetCodeEntityInfoMCPCommand",
+        "ast",
+    ),
+    (
+        "list_code_entities",
+        "code_analysis.commands.ast.list_entities",
+        "ListCodeEntitiesMCPCommand",
+        "ast",
+    ),
+    (
+        "get_imports",
+        "code_analysis.commands.ast.imports",
+        "GetImportsMCPCommand",
+        "ast",
+    ),
+    (
+        "find_dependencies",
+        "code_analysis.commands.ast.dependencies",
+        "FindDependenciesMCPCommand",
+        "ast",
+    ),
+    (
+        "get_class_hierarchy",
+        "code_analysis.commands.ast.hierarchy",
+        "GetClassHierarchyMCPCommand",
+        "ast",
+    ),
     ("find_usages", "code_analysis.commands.ast.usages", "FindUsagesMCPCommand", "ast"),
-    ("export_graph", "code_analysis.commands.ast.graph", "ExportGraphMCPCommand", "ast"),
-    ("list_backup_files", "code_analysis.commands.backup_mcp_commands", "ListBackupFilesMCPCommand", "backup"),
-    ("list_backup_versions", "code_analysis.commands.backup_mcp_commands", "ListBackupVersionsMCPCommand", "backup"),
-    ("restore_backup_file", "code_analysis.commands.backup_mcp_commands", "RestoreBackupFileMCPCommand", "backup"),
-    ("delete_backup", "code_analysis.commands.backup_mcp_commands", "DeleteBackupMCPCommand", "backup"),
-    ("clear_all_backups", "code_analysis.commands.backup_mcp_commands", "ClearAllBackupsMCPCommand", "backup"),
-    ("update_indexes", "code_analysis.commands.code_mapper_mcp_command", "UpdateIndexesMCPCommand", "code_mapper"),
-    ("list_long_files", "code_analysis.commands.code_mapper_mcp_commands", "ListLongFilesMCPCommand", "code_mapper"),
-    ("list_errors_by_category", "code_analysis.commands.code_mapper_mcp_commands", "ListErrorsByCategoryMCPCommand", "code_mapper"),
-    ("format_code", "code_analysis.commands.code_quality_commands", "FormatCodeCommand", "code_quality"),
-    ("lint_code", "code_analysis.commands.code_quality_commands", "LintCodeCommand", "code_quality"),
-    ("type_check_code", "code_analysis.commands.code_quality_commands", "TypeCheckCodeCommand", "code_quality"),
-    ("check_vectors", "code_analysis.commands.check_vectors_command", "CheckVectorsCommand", "misc"),
-    ("get_worker_status", "code_analysis.commands.worker_status_mcp_commands", "GetWorkerStatusMCPCommand", "worker_status"),
-    ("get_database_status", "code_analysis.commands.worker_status_mcp_commands", "GetDatabaseStatusMCPCommand", "worker_status"),
-    ("start_worker", "code_analysis.commands.worker_management_mcp_commands", "StartWorkerMCPCommand", "worker_management"),
-    ("stop_worker", "code_analysis.commands.worker_management_mcp_commands", "StopWorkerMCPCommand", "worker_management"),
-    ("view_worker_logs", "code_analysis.commands.log_viewer_mcp_commands", "ViewWorkerLogsMCPCommand", "log_viewer"),
-    ("list_worker_logs", "code_analysis.commands.log_viewer_mcp_commands", "ListWorkerLogsMCPCommand", "log_viewer"),
-    ("rotate_worker_logs", "code_analysis.commands.log_viewer_mcp_commands", "RotateWorkerLogsMCPCommand", "log_viewer"),
-    ("analyze_timing_bottlenecks", "code_analysis.commands.log_viewer_mcp_commands", "AnalyzeTimingBottlenecksMCPCommand", "log_viewer"),
-    ("get_database_corruption_status", "code_analysis.commands.database_integrity_mcp_commands", "GetDatabaseCorruptionStatusMCPCommand", "database_integrity"),
-    ("backup_database", "code_analysis.commands.database_integrity_mcp_commands", "BackupDatabaseMCPCommand", "database_integrity"),
-    ("repair_sqlite_database", "code_analysis.commands.database_integrity_mcp_commands", "RepairSQLiteDatabaseMCPCommand", "database_integrity"),
-    ("restore_database", "code_analysis.commands.database_restore_mcp_commands", "RestoreDatabaseFromConfigMCPCommand", "database_restore"),
-    ("cleanup_deleted_files", "code_analysis.commands.file_management_mcp_commands", "CleanupDeletedFilesMCPCommand", "file_management"),
-    ("unmark_deleted_file", "code_analysis.commands.file_management_mcp_commands", "UnmarkDeletedFileMCPCommand", "file_management"),
-    ("collapse_versions", "code_analysis.commands.file_management_mcp_commands", "CollapseVersionsMCPCommand", "file_management"),
-    ("repair_database", "code_analysis.commands.file_management_mcp_commands", "RepairDatabaseMCPCommand", "file_management"),
-    ("change_project_id", "code_analysis.commands.project_management_mcp_commands", "ChangeProjectIdMCPCommand", "project_management"),
-    ("create_project", "code_analysis.commands.project_management_mcp_commands", "CreateProjectMCPCommand", "project_management"),
-    ("delete_project", "code_analysis.commands.project_management_mcp_commands", "DeleteProjectMCPCommand", "project_management"),
-    ("delete_unwatched_projects", "code_analysis.commands.project_management_mcp_commands", "DeleteUnwatchedProjectsMCPCommand", "project_management"),
-    ("list_projects", "code_analysis.commands.project_management_mcp_commands", "ListProjectsMCPCommand", "project_management"),
-    ("start_repair_worker", "code_analysis.commands.repair_worker_mcp_commands", "StartRepairWorkerMCPCommand", "repair_worker"),
-    ("stop_repair_worker", "code_analysis.commands.repair_worker_mcp_commands", "StopRepairWorkerMCPCommand", "repair_worker"),
-    ("repair_worker_status", "code_analysis.commands.repair_worker_mcp_commands", "RepairWorkerStatusMCPCommand", "repair_worker"),
-    ("fulltext_search", "code_analysis.commands.search_mcp_commands", "FulltextSearchMCPCommand", "search"),
-    ("list_class_methods", "code_analysis.commands.search_mcp_commands", "ListClassMethodsMCPCommand", "search"),
-    ("find_classes", "code_analysis.commands.search_mcp_commands", "FindClassesMCPCommand", "search"),
-    ("rebuild_faiss", "code_analysis.commands.vector_commands.rebuild_faiss", "RebuildFaissCommand", "vector"),
-    ("revectorize", "code_analysis.commands.vector_commands.revectorize", "RevectorizeCommand", "vector"),
-    ("split_class", "code_analysis.commands.refactor_mcp_commands", "SplitClassMCPCommand", "refactor"),
-    ("extract_superclass", "code_analysis.commands.refactor_mcp_commands", "ExtractSuperclassMCPCommand", "refactor"),
-    ("split_file_to_package", "code_analysis.commands.refactor_mcp_commands", "SplitFileToPackageMCPCommand", "refactor"),
-    ("analyze_complexity", "code_analysis.commands.analyze_complexity_mcp", "AnalyzeComplexityMCPCommand", "analysis"),
-    ("find_duplicates", "code_analysis.commands.find_duplicates_mcp", "FindDuplicatesMCPCommand", "analysis"),
-    ("comprehensive_analysis", "code_analysis.commands.comprehensive_analysis_mcp", "ComprehensiveAnalysisMCPCommand", "analysis"),
-    ("semantic_search", "code_analysis.commands.semantic_search_mcp", "SemanticSearchMCPCommand", "analysis"),
+    (
+        "export_graph",
+        "code_analysis.commands.ast.graph",
+        "ExportGraphMCPCommand",
+        "ast",
+    ),
+    (
+        "list_backup_files",
+        "code_analysis.commands.backup_mcp_commands",
+        "ListBackupFilesMCPCommand",
+        "backup",
+    ),
+    (
+        "list_backup_versions",
+        "code_analysis.commands.backup_mcp_commands",
+        "ListBackupVersionsMCPCommand",
+        "backup",
+    ),
+    (
+        "restore_backup_file",
+        "code_analysis.commands.backup_mcp_commands",
+        "RestoreBackupFileMCPCommand",
+        "backup",
+    ),
+    (
+        "delete_backup",
+        "code_analysis.commands.backup_mcp_commands",
+        "DeleteBackupMCPCommand",
+        "backup",
+    ),
+    (
+        "clear_all_backups",
+        "code_analysis.commands.backup_mcp_commands",
+        "ClearAllBackupsMCPCommand",
+        "backup",
+    ),
+    (
+        "update_indexes",
+        "code_analysis.commands.code_mapper_mcp_command",
+        "UpdateIndexesMCPCommand",
+        "code_mapper",
+    ),
+    (
+        "list_long_files",
+        "code_analysis.commands.code_mapper_mcp_commands",
+        "ListLongFilesMCPCommand",
+        "code_mapper",
+    ),
+    (
+        "list_errors_by_category",
+        "code_analysis.commands.code_mapper_mcp_commands",
+        "ListErrorsByCategoryMCPCommand",
+        "code_mapper",
+    ),
+    (
+        "format_code",
+        "code_analysis.commands.code_quality_commands",
+        "FormatCodeCommand",
+        "code_quality",
+    ),
+    (
+        "lint_code",
+        "code_analysis.commands.code_quality_commands",
+        "LintCodeCommand",
+        "code_quality",
+    ),
+    (
+        "type_check_code",
+        "code_analysis.commands.code_quality_commands",
+        "TypeCheckCodeCommand",
+        "code_quality",
+    ),
+    (
+        "check_vectors",
+        "code_analysis.commands.check_vectors_command",
+        "CheckVectorsCommand",
+        "misc",
+    ),
+    (
+        "get_worker_status",
+        "code_analysis.commands.worker_status_mcp_commands",
+        "GetWorkerStatusMCPCommand",
+        "worker_status",
+    ),
+    (
+        "get_database_status",
+        "code_analysis.commands.worker_status_mcp_commands",
+        "GetDatabaseStatusMCPCommand",
+        "worker_status",
+    ),
+    (
+        "start_worker",
+        "code_analysis.commands.worker_management_mcp_commands",
+        "StartWorkerMCPCommand",
+        "worker_management",
+    ),
+    (
+        "stop_worker",
+        "code_analysis.commands.worker_management_mcp_commands",
+        "StopWorkerMCPCommand",
+        "worker_management",
+    ),
+    (
+        "view_worker_logs",
+        "code_analysis.commands.log_viewer_mcp_commands",
+        "ViewWorkerLogsMCPCommand",
+        "log_viewer",
+    ),
+    (
+        "list_worker_logs",
+        "code_analysis.commands.log_viewer_mcp_commands",
+        "ListWorkerLogsMCPCommand",
+        "log_viewer",
+    ),
+    (
+        "rotate_worker_logs",
+        "code_analysis.commands.log_viewer_mcp_commands",
+        "RotateWorkerLogsMCPCommand",
+        "log_viewer",
+    ),
+    (
+        "analyze_timing_bottlenecks",
+        "code_analysis.commands.log_viewer_mcp_commands",
+        "AnalyzeTimingBottlenecksMCPCommand",
+        "log_viewer",
+    ),
+    (
+        "get_database_corruption_status",
+        "code_analysis.commands.database_integrity_mcp_commands",
+        "GetDatabaseCorruptionStatusMCPCommand",
+        "database_integrity",
+    ),
+    (
+        "backup_database",
+        "code_analysis.commands.database_integrity_mcp_commands",
+        "BackupDatabaseMCPCommand",
+        "database_integrity",
+    ),
+    (
+        "repair_sqlite_database",
+        "code_analysis.commands.database_integrity_mcp_commands",
+        "RepairSQLiteDatabaseMCPCommand",
+        "database_integrity",
+    ),
+    (
+        "restore_database",
+        "code_analysis.commands.database_restore_mcp_commands",
+        "RestoreDatabaseFromConfigMCPCommand",
+        "database_restore",
+    ),
+    (
+        "cleanup_deleted_files",
+        "code_analysis.commands.file_management_mcp_commands",
+        "CleanupDeletedFilesMCPCommand",
+        "file_management",
+    ),
+    (
+        "unmark_deleted_file",
+        "code_analysis.commands.file_management_mcp_commands",
+        "UnmarkDeletedFileMCPCommand",
+        "file_management",
+    ),
+    (
+        "collapse_versions",
+        "code_analysis.commands.file_management_mcp_commands",
+        "CollapseVersionsMCPCommand",
+        "file_management",
+    ),
+    (
+        "repair_database",
+        "code_analysis.commands.file_management_mcp_commands",
+        "RepairDatabaseMCPCommand",
+        "file_management",
+    ),
+    (
+        "change_project_id",
+        "code_analysis.commands.project_management_mcp_commands",
+        "ChangeProjectIdMCPCommand",
+        "project_management",
+    ),
+    (
+        "create_project",
+        "code_analysis.commands.project_management_mcp_commands",
+        "CreateProjectMCPCommand",
+        "project_management",
+    ),
+    (
+        "delete_project",
+        "code_analysis.commands.project_management_mcp_commands",
+        "DeleteProjectMCPCommand",
+        "project_management",
+    ),
+    (
+        "delete_unwatched_projects",
+        "code_analysis.commands.project_management_mcp_commands",
+        "DeleteUnwatchedProjectsMCPCommand",
+        "project_management",
+    ),
+    (
+        "list_projects",
+        "code_analysis.commands.project_management_mcp_commands",
+        "ListProjectsMCPCommand",
+        "project_management",
+    ),
+    (
+        "run_project_script",
+        "code_analysis.commands.run_project_script_command",
+        "RunProjectScriptCommand",
+        "project_management",
+    ),
+    (
+        "run_project_module",
+        "code_analysis.commands.run_project_module_command",
+        "RunProjectModuleCommand",
+        "project_management",
+    ),
+    (
+        "start_repair_worker",
+        "code_analysis.commands.repair_worker_mcp_commands",
+        "StartRepairWorkerMCPCommand",
+        "repair_worker",
+    ),
+    (
+        "stop_repair_worker",
+        "code_analysis.commands.repair_worker_mcp_commands",
+        "StopRepairWorkerMCPCommand",
+        "repair_worker",
+    ),
+    (
+        "repair_worker_status",
+        "code_analysis.commands.repair_worker_mcp_commands",
+        "RepairWorkerStatusMCPCommand",
+        "repair_worker",
+    ),
+    (
+        "fulltext_search",
+        "code_analysis.commands.search_mcp_commands",
+        "FulltextSearchMCPCommand",
+        "search",
+    ),
+    (
+        "list_class_methods",
+        "code_analysis.commands.search_mcp_commands",
+        "ListClassMethodsMCPCommand",
+        "search",
+    ),
+    (
+        "find_classes",
+        "code_analysis.commands.search_mcp_commands",
+        "FindClassesMCPCommand",
+        "search",
+    ),
+    (
+        "rebuild_faiss",
+        "code_analysis.commands.vector_commands.rebuild_faiss",
+        "RebuildFaissCommand",
+        "vector",
+    ),
+    (
+        "revectorize",
+        "code_analysis.commands.vector_commands.revectorize",
+        "RevectorizeCommand",
+        "vector",
+    ),
+    (
+        "split_class",
+        "code_analysis.commands.refactor_mcp_commands",
+        "SplitClassMCPCommand",
+        "refactor",
+    ),
+    (
+        "extract_superclass",
+        "code_analysis.commands.refactor_mcp_commands",
+        "ExtractSuperclassMCPCommand",
+        "refactor",
+    ),
+    (
+        "split_file_to_package",
+        "code_analysis.commands.refactor_mcp_commands",
+        "SplitFileToPackageMCPCommand",
+        "refactor",
+    ),
+    (
+        "analyze_complexity",
+        "code_analysis.commands.analyze_complexity_mcp",
+        "AnalyzeComplexityMCPCommand",
+        "analysis",
+    ),
+    (
+        "find_duplicates",
+        "code_analysis.commands.find_duplicates_mcp",
+        "FindDuplicatesMCPCommand",
+        "analysis",
+    ),
+    (
+        "comprehensive_analysis",
+        "code_analysis.commands.comprehensive_analysis_mcp",
+        "ComprehensiveAnalysisMCPCommand",
+        "analysis",
+    ),
+    (
+        "semantic_search",
+        "code_analysis.commands.semantic_search_mcp",
+        "SemanticSearchMCPCommand",
+        "analysis",
+    ),
     # CST
-    ("cst_load_file", "code_analysis.commands.cst_load_file_command", "CSTLoadFileCommand", "cst"),
-    ("cst_save_tree", "code_analysis.commands.cst_save_tree_command", "CSTSaveTreeCommand", "cst"),
-    ("cst_reload_tree", "code_analysis.commands.cst_reload_tree_command", "CSTReloadTreeCommand", "cst"),
-    ("cst_find_node", "code_analysis.commands.cst_find_node_command", "CSTFindNodeCommand", "cst"),
-    ("cst_get_node_info", "code_analysis.commands.cst_get_node_info_command", "CSTGetNodeInfoCommand", "cst"),
-    ("cst_get_node_by_range", "code_analysis.commands.cst_get_node_by_range_command", "CSTGetNodeByRangeCommand", "cst"),
-    ("cst_modify_tree", "code_analysis.commands.cst_modify_tree_command", "CSTModifyTreeCommand", "cst"),
-    ("compose_cst_module", "code_analysis.commands.cst_compose_module_command", "ComposeCSTModuleCommand", "cst"),
-    ("cst_create_file", "code_analysis.commands.cst_create_file_command", "CSTCreateFileCommand", "cst"),
-    ("cst_convert_and_save", "code_analysis.commands.cst_convert_and_save_command", "CSTConvertAndSaveCommand", "cst"),
-    ("list_cst_blocks", "code_analysis.commands.list_cst_blocks_command", "ListCSTBlocksCommand", "cst"),
+    (
+        "cst_load_file",
+        "code_analysis.commands.cst_load_file_command",
+        "CSTLoadFileCommand",
+        "cst",
+    ),
+    (
+        "cst_save_tree",
+        "code_analysis.commands.cst_save_tree_command",
+        "CSTSaveTreeCommand",
+        "cst",
+    ),
+    (
+        "cst_reload_tree",
+        "code_analysis.commands.cst_reload_tree_command",
+        "CSTReloadTreeCommand",
+        "cst",
+    ),
+    (
+        "cst_find_node",
+        "code_analysis.commands.cst_find_node_command",
+        "CSTFindNodeCommand",
+        "cst",
+    ),
+    (
+        "cst_get_node_info",
+        "code_analysis.commands.cst_get_node_info_command",
+        "CSTGetNodeInfoCommand",
+        "cst",
+    ),
+    (
+        "cst_get_node_by_range",
+        "code_analysis.commands.cst_get_node_by_range_command",
+        "CSTGetNodeByRangeCommand",
+        "cst",
+    ),
+    (
+        "cst_modify_tree",
+        "code_analysis.commands.cst_modify_tree_command",
+        "CSTModifyTreeCommand",
+        "cst",
+    ),
+    (
+        "compose_cst_module",
+        "code_analysis.commands.cst_compose_module_command",
+        "ComposeCSTModuleCommand",
+        "cst",
+    ),
+    (
+        "cst_create_file",
+        "code_analysis.commands.cst_create_file_command",
+        "CSTCreateFileCommand",
+        "cst",
+    ),
+    (
+        "cst_convert_and_save",
+        "code_analysis.commands.cst_convert_and_save_command",
+        "CSTConvertAndSaveCommand",
+        "cst",
+    ),
+    (
+        "list_cst_blocks",
+        "code_analysis.commands.list_cst_blocks_command",
+        "ListCSTBlocksCommand",
+        "cst",
+    ),
     ("query_cst", "code_analysis.commands.query_cst_command", "QueryCSTCommand", "cst"),
 ]
 
@@ -136,7 +488,9 @@ def _render_md(name, cls_name, block, schema, meta, source_hint):
         "## Purpose (Предназначение)",
         "",
     ]
-    desc = _safe_get(meta, "detailed_description") or _safe_get(meta, "description") or ""
+    desc = (
+        _safe_get(meta, "detailed_description") or _safe_get(meta, "description") or ""
+    )
     if desc:
         lines.append(desc.strip().replace("\n\n", "\n\n").replace("\n", "\n"))
     else:
@@ -154,18 +508,26 @@ def _render_md(name, cls_name, block, schema, meta, source_hint):
     lines.append("")
     add_props = _safe_get(schema, "additionalProperties")
     if add_props is False:
-        lines.append("**Schema:** `additionalProperties: false` — only the parameters above are accepted.")
+        lines.append(
+            "**Schema:** `additionalProperties: false` — only the parameters above are accepted."
+        )
     lines.append("")
     lines.append("---")
     lines.append("")
     lines.append("## Returned data (Возвращаемые данные)")
     lines.append("")
-    lines.append("All MCP commands return either a **success** result (with `data`) or an **error** result (with `code` and `message`).")
+    lines.append(
+        "All MCP commands return either a **success** result (with `data`) or an **error** result (with `code` and `message`)."
+    )
     lines.append("")
     rv = _safe_get(meta, "return_value") or {}
     success_info = _safe_get(rv, "success") or {}
     if isinstance(success_info, dict):
-        data_desc = success_info.get("data") or success_info.get("example") or "See execute() implementation."
+        data_desc = (
+            success_info.get("data")
+            or success_info.get("example")
+            or "See execute() implementation."
+        )
         lines.append("### Success")
         lines.append("")
         lines.append("- **Shape:** `SuccessResult` with `data` object.")
@@ -183,7 +545,11 @@ def _render_md(name, cls_name, block, schema, meta, source_hint):
         lines.append("- **Shape:** `ErrorResult` with `code` and `message`.")
         err_cases = _safe_get(meta, "error_cases") or {}
         if err_cases:
-            lines.append("- **Possible codes:** " + ", ".join(err_cases.keys()) + " (and others).")
+            lines.append(
+                "- **Possible codes:** "
+                + ", ".join(err_cases.keys())
+                + " (and others)."
+            )
     lines.append("")
     lines.append("---")
     lines.append("")
@@ -222,7 +588,9 @@ def _render_md(name, cls_name, block, schema, meta, source_hint):
             lines.append("")
     required = set(_safe_get(schema, "required") or [])
     if required and not err_cases:
-        lines.append("- Missing required parameters → schema validation error or command-specific error (e.g. PROJECT_NOT_FOUND).")
+        lines.append(
+            "- Missing required parameters → schema validation error or command-specific error (e.g. PROJECT_NOT_FOUND)."
+        )
         lines.append("")
     if err_cases:
         lines.append("## Error codes summary")
@@ -264,11 +632,18 @@ def main():
             cls = getattr(mod, cls_name)
             schema = cls.get_schema() if hasattr(cls, "get_schema") else {}
             meta = cls.metadata() if hasattr(cls, "metadata") else {}
-            source_hint = mod_path.replace("code_analysis.commands.", "code_analysis/commands/").replace(".", "/") + ".py"
+            source_hint = (
+                mod_path.replace(
+                    "code_analysis.commands.", "code_analysis/commands/"
+                ).replace(".", "/")
+                + ".py"
+            )
             if "backup_mcp_commands" in mod_path:
                 source_hint = "code_analysis/commands/backup_mcp_commands.py"
             if "project_management_mcp_commands" in mod_path:
-                source_hint = "code_analysis/commands/project_management_mcp_commands.py"
+                source_hint = (
+                    "code_analysis/commands/project_management_mcp_commands.py"
+                )
             if "worker_status_mcp_commands" in mod_path:
                 source_hint = "code_analysis/commands/worker_status_mcp_commands.py"
             if "file_management_mcp_commands" in mod_path:
@@ -276,7 +651,9 @@ def main():
             if "code_mapper_mcp_commands" in mod_path:
                 source_hint = "code_analysis/commands/code_mapper_mcp_commands.py"
             if "database_integrity_mcp_commands" in mod_path:
-                source_hint = "code_analysis/commands/database_integrity_mcp_commands.py"
+                source_hint = (
+                    "code_analysis/commands/database_integrity_mcp_commands.py"
+                )
             if "log_viewer_mcp_commands" in mod_path:
                 source_hint = "code_analysis/commands/log_viewer_mcp_commands.py"
             if "worker_management_mcp_commands" in mod_path:

@@ -381,7 +381,10 @@ def save_tree_to_file(
                     comment=f"Before saving CST tree {tree_id}",
                 )
                 if not backup_uuid:
-                    logger.warning("Failed to create backup, continuing anyway")
+                    raise RuntimeError(
+                        "Backup to old_code (versions) is mandatory before write; "
+                        "create_backup failed. Aborting cst_save_tree."
+                    )
             timings["backup"] = time.perf_counter() - t0
 
             # Step 3: Generate source code from CST tree

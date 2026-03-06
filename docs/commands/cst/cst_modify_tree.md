@@ -24,19 +24,13 @@ Operation flow:
 
 Supported Operations:
 - replace: Replace a node with new code
-  - Requires: node_id, code (or code_lines)
-- insert: Insert a new node (or a comment-only line)
-  - Requires: (parent_node_id OR target_node_id), code or code_lines, position: `first`, `last`, `after` (with `{"after": N}` for 0-based sibling index), or legacy `before`/`after`/`end`
-  - parent_node_id: Use `__root__` for module-level placement. Position: first, last, or after N.
+  - Requires: exactly one of (node_id or selector), and (code or code_lines). If selector: tree_id required; optional match_index (default 0), replace_all.
+- insert: Insert a new node
+  - Requires: (parent_node_id OR target_node_id), code, position ('before' or 'after')
+  - parent_node_id: Insert at beginning/end of parent's body
   - target_node_id: Insert before/after specific target node
-  - Comment-only code is allowed (inserted as EmptyLine with Comment).
-- move: Move an existing node to a new parent and/or position
-  - Requires: node_id, parent_node_id (or `__root__`), position: `first`, `last`, or `after` with `{"after": N}`
 - delete: Delete a node
-  - Requires: node_id
-
-Optional apply + save in one request:
-- When both `project_id` and `file_path` are set, after applying operations the tree is saved to the file (same semantics as cst_save_tree). On save failure: file and database unchanged, in-memory tree is rolled back; response includes `save_error` and `save_error_cause`.
+  - Requires: exactly one of (node_id or selector). If selector: tree_id required; optional match_index, replace_all.
 
 Atomicity:
 - All operations are validated before any are applied
@@ -51,29 +45,23 @@ Use cases:
 - Multiple related changes in one operation
 
 Important notes:
-- **node_id** values are UUID4 (from cst_load_file / cst_find_node). They stay valid for unmodified nodes between operations in the same batch, so you can apply several replace/delete operations in one call.
-- **Batch replace/delete:** each operation resolves the node in the current module by position (from metadata), so the second and later operations see the tree after previous ones are applied; you can replace or delete several nodes in one request.
-- Operations are applied in order
-- Use cst_save_tree to persist changes to file
-- Tree modifications are in-memory until saved
-- All operations must be valid for any to be applied
+- Operations are applied in order.
+- Use cst_save_tree to persist changes to file.
+- Tree modifications are in-memory until saved.
+- All operations must be valid for any to be applied.
 
-### Instructions for the model — insert operation
+Recommended AI workflow:
+1. cst_load_file
+2. cst_modify_tree with preview=true
+3. cst_modify_tree with preview=false
+4. cst_save_tree (persist to disk)
+5. format_code/lint_code/type_check_code for the changed file
 
-When using **insert**:
+Batch behaviour:
+When you send multiple replace or delete operations in one request, each node is resolved in the current module by its position (from metadata). So the second and later operations see the tree after previous ops are applied; you can replace or delete several nodes in one call. Use one batch for related changes.
 
-1. **Parent must be a container node, not the body node.**  
-   For `parent_node_id` you must pass the node ID of:
-   - **Module** (file root), or
-   - **FunctionDef** (the function itself), or
-   - **ClassDef** (the class itself).  
-   Do **not** pass the node ID of an **IndentedBlock** (the body of a function/class). The command expects the container (Module/FunctionDef/ClassDef) and resolves the body internally. If you pass the IndentedBlock node, the server returns an error: *"Parent node has no insertable body"*.
-
-2. **Module-level insert:** use the reserved sentinel **`__root__`** as `parent_node_id` for inserting at file (module) level. Alternatively you can use the Module node ID from the tree.
-
-3. **Insert into a function body:** use the **function's node_id** (the FunctionDef node from `cst_find_node` or `cst_get_node_info`), not the node_id of its child IndentedBlock. Same for classes: use the ClassDef node_id.
-
-4. **Position:** use `first`, `last`, or `{"after": N}` (0-based index of the sibling to insert after). For position `"after"` with a parent, you must supply the index, e.g. `"position": {"after": 6}`.
+Insert — parent_node_id:
+Must be a container node: Module, FunctionDef, or ClassDef (not the body node IndentedBlock). Use __root__ for module-level insert. To insert into a function body, use the function's node_id (FunctionDef from cst_find_node), not its IndentedBlock child.
 
 ---
 
@@ -82,15 +70,8 @@ When using **insert**:
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `tree_id` | string | **Yes** | Tree ID from cst_load_file |
+| `preview` | boolean | No | Preview mode: show changes without applying (default: false). Recommended first step for AI models before write operations. |
 | `operations` | array | **Yes** | List of operations to apply atomically |
-| `preview` | boolean | No | Preview mode: show changes without applying (default: false) |
-| `project_id` | string | No | When set with file_path: apply operations then save tree to file |
-| `file_path` | string | No | Target file path (relative to project root); used with project_id for apply+save |
-| `validate` | boolean | No | Validate before saving when project_id+file_path set (default: true) |
-| `backup` | boolean | No | Create backup when saving (default: true) |
-| `commit_message` | string | No | Optional git commit message when saving |
-
-Operation object: `action` (replace | replace_range | insert | delete | move), `node_id`, `code` or `code_lines`, `parent_node_id` (use `__root__` for module level), `position` (`first` | `last` | `after` or `{"after": N}`), `target_node_id`, `start_node_id`/`end_node_id` (for replace_range).
 
 **Schema:** `additionalProperties: false` — only the parameters above are accepted.
 
@@ -110,7 +91,7 @@ All MCP commands return either a **success** result (with `data`) or an **error*
 ### Error
 
 - **Shape:** `ErrorResult` with `code` and `message`.
-- **Possible codes:** INVALID_OPERATION, CST_MODIFY_ERROR (and others).
+- **Possible codes:** INVALID_OPERATION, CST_MODIFY_ERROR, SELECTOR_NO_MATCH, SELECTOR_PARSE_ERROR (and others).
 
 ---
 
@@ -118,7 +99,7 @@ All MCP commands return either a **success** result (with `data`) or an **error*
 
 ### Correct usage
 
-**Replace a function**
+**Replace a function (by node_id)**
 ```json
 {
   "tree_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
@@ -134,6 +115,24 @@ All MCP commands return either a **success** result (with `data`) or an **error*
 
 Replaces old_function with new_function. The code must be valid Python syntax. Operation is atomic - if code is invalid, tree remains unchanged.
 
+**Replace by selector (no prior cst_find_node)**
+```json
+{
+  "tree_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+  "operations": [
+    {
+      "action": "replace",
+      "selector": "ImportFrom[module='.task_status']",
+      "code_lines": [
+        "from ..task_status import TaskStatus"
+      ]
+    }
+  ]
+}
+```
+
+Replaces the first ImportFrom matching the selector. Use match_index for Nth match; replace_all to replace all matches.
+
 **Delete a statement**
 ```json
 {
@@ -148,18 +147,6 @@ Replaces old_function with new_function. The code must be valid Python syntax. O
 ```
 
 Deletes a pass statement. Node must exist in tree. If node_id is invalid, operation fails and tree remains unchanged.
-
-**Insert a comment line (e.g. mypy directive)**  
-Insert accepts comment-only code. The parser normally returns no statement for a line like `# mypy: ignore-errors`; the command treats it as an `EmptyLine` with a `Comment` and inserts it.
-```json
-{
-  "action": "insert",
-  "parent_node_id": "<module_node_id>",
-  "target_node_id": "<first_statement_node_id>",
-  "code": "# mypy: ignore-errors",
-  "position": "before"
-}
-```
 
 **Insert statement before existing code**
 ```json
@@ -195,44 +182,29 @@ Inserts a logging statement at the beginning of process_data function. Position 
 
 Inserts a logging statement at the end of process_data function. Position 'after' means it will be inserted after existing function body.
 
-**Batch operations - multiple replacements**
-```json
-{
-  "tree_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
-  "operations": [
-    {
-      "action": "replace",
-      "node_id": "function:func1:FunctionDef:10:0-15:0",
-      "code": "def func1():\n    return 'updated1'"
-    },
-    {
-      "action": "replace",
-      "node_id": "function:func2:FunctionDef:20:0-25:0",
-      "code": "def func2():\n    return 'updated2'"
-    }
-  ]
-}
-```
-
-Applies multiple replacements atomically. If any operation fails, all operations are rolled back. Useful for related changes that must succeed together.
-
 ### Incorrect usage
 
 - **INVALID_OPERATION**: Invalid operation parameters. Check operation parameters:
-- For replace: node_id must exist, code must be valid Python
-- For delete: node_id must exist
+- For replace: exactly one of node_id or selector; code or code_lines required
+- For delete: exactly one of node_id or selector
 - For insert: (parent_node_id OR target_node_id) must be provided, code must be valid Python, position must be 'before' or 'after'
 All operations in a batch are validated before any are applied.
 
 - **CST_MODIFY_ERROR**: Error during tree modification. 
+
+- **SELECTOR_NO_MATCH**: Selector matched no nodes. Check selector and tree content; use query_cst to test selector.
+
+- **SELECTOR_PARSE_ERROR**: Invalid selector syntax. Fix selector string; see CSTQuery selector syntax.
 
 ## Error codes summary
 
 | Code | Description | Action |
 |------|-------------|--------|
 | `INVALID_OPERATION` | Invalid operation parameters | Check operation parameters:
-- For replace: node_id |
+- For replace: exactly |
 | `CST_MODIFY_ERROR` | Error during tree modification |  |
+| `SELECTOR_NO_MATCH` | Selector matched no nodes | Check selector and tree content; use query_cst to  |
+| `SELECTOR_PARSE_ERROR` | Invalid selector syntax | Fix selector string; see CSTQuery selector syntax. |
 
 ## Best practices
 

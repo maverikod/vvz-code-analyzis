@@ -173,7 +173,6 @@ def _delete_node(tree: MutableTree, node_id: str) -> None:
     if not node:
         raise ValueError(f"Node not found: {node_id}")
     parent = node.parent
-    parent = node.parent
     if parent is not None:
         try:
             parent.children.remove(node)

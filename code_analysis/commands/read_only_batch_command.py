@@ -106,16 +106,15 @@ async def run_read_only_batch(
             return {
                 "inline": False,
                 "error": err.get("error", "Command not whitelisted"),
-                "error_code": err.get(
-                    "error_code", "BATCH_COMMAND_NOT_WHITELISTED"
-                ),
+                "error_code": err.get("error_code", "BATCH_COMMAND_NOT_WHITELISTED"),
                 "command": err.get("command", command_name),
                 "message": err.get("message", ""),
             }
 
         params = inv.get("params") or {}
-        cmd_instance = reg.get_command_instance(command_name)
-        if cmd_instance is None:
+        try:
+            command_class = reg.get_command(command_name)
+        except KeyError:
             return {
                 "inline": False,
                 "error": f"Command not found: {command_name}",
@@ -123,9 +122,10 @@ async def run_read_only_batch(
                 "command": command_name,
                 "message": "Command is whitelisted but not registered.",
             }
-
+        cmd = command_class()
+        validated_params = cmd.validate_params(params)
         try:
-            result = await cmd_instance.execute(**params)
+            result = await cmd.execute(**validated_params)
         except Exception as e:
             logger.exception("Batch command %s failed", command_name)
             result = ErrorResult(

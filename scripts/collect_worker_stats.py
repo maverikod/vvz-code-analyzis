@@ -97,7 +97,11 @@ class StatisticsCollector:
         print()
 
         for i in range(total_iterations):
-            print(f"[{i+1}/{total_iterations}] Collecting snapshot...", end=" ", flush=True)
+            print(
+                f"[{i+1}/{total_iterations}] Collecting snapshot...",
+                end=" ",
+                flush=True,
+            )
             try:
                 snapshot = await self.collect_snapshot()
                 self.stats.append(snapshot)

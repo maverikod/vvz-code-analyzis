@@ -133,11 +133,13 @@ class TestRPCServerEdgeCases:
             request_queue.enqueue(f"req_{i}", {"data": i})
 
         mock_sock = Mock()
-        request_data = json.dumps({
-            "jsonrpc": "2.0",
-            "method": "insert",
-            "params": {"table_name": "users", "data": {"name": "John"}},
-        }).encode("utf-8")
+        request_data = json.dumps(
+            {
+                "jsonrpc": "2.0",
+                "method": "insert",
+                "params": {"table_name": "users", "data": {"name": "John"}},
+            }
+        ).encode("utf-8")
 
         with patch.object(rpc_server, "_receive_data", return_value=request_data):
             with patch.object(rpc_server, "_send_data") as mock_send:

@@ -17,7 +17,9 @@ from ..db_driver import create_driver
 logger = logging.getLogger(__name__)
 
 # Schema version constant
-SCHEMA_VERSION = "1.4.0"  # indexing_worker_stats table for indexing worker cycle stats
+SCHEMA_VERSION = (
+    "1.5.0"  # file_tree_snapshots, file_tree_snapshot_roots, file_tree_snapshot_nodes
+)
 
 # Migration methods registry: version -> migration function
 # Each migration function receives driver instance and performs version-specific migrations
@@ -2704,6 +2706,95 @@ def get_schema_definition() -> Dict[str, Any]:
                 "unique_constraints": [],
                 "check_constraints": [],
             },
+            "file_tree_snapshots": {
+                "columns": [
+                    {
+                        "name": "id",
+                        "type": "INTEGER",
+                        "not_null": True,
+                        "primary_key": True,
+                        "autoincrement": True,
+                    },
+                    {"name": "file_id", "type": "INTEGER", "not_null": True},
+                    {"name": "project_id", "type": "TEXT", "not_null": True},
+                    {"name": "source_payload", "type": "TEXT", "not_null": True},
+                    {"name": "file_mtime", "type": "REAL", "not_null": True},
+                    {
+                        "name": "created_at",
+                        "type": "REAL",
+                        "not_null": False,
+                        "default": "julianday('now')",
+                    },
+                    {
+                        "name": "updated_at",
+                        "type": "REAL",
+                        "not_null": False,
+                        "default": "julianday('now')",
+                    },
+                ],
+                "foreign_keys": [
+                    {
+                        "columns": ["file_id"],
+                        "references_table": "files",
+                        "references_columns": ["id"],
+                        "on_delete": "CASCADE",
+                    },
+                    {
+                        "columns": ["project_id"],
+                        "references_table": "projects",
+                        "references_columns": ["id"],
+                        "on_delete": "CASCADE",
+                    },
+                ],
+                "unique_constraints": [{"columns": ["file_id"]}],
+                "check_constraints": [],
+            },
+            "file_tree_snapshot_roots": {
+                "columns": [
+                    {
+                        "name": "snapshot_id",
+                        "type": "INTEGER",
+                        "not_null": True,
+                        "primary_key": True,
+                    },
+                    {"name": "root_node_id", "type": "TEXT", "not_null": True},
+                ],
+                "foreign_keys": [
+                    {
+                        "columns": ["snapshot_id"],
+                        "references_table": "file_tree_snapshots",
+                        "references_columns": ["id"],
+                        "on_delete": "CASCADE",
+                    },
+                ],
+                "unique_constraints": [],
+                "check_constraints": [],
+            },
+            "file_tree_snapshot_nodes": {
+                "columns": [
+                    {
+                        "name": "id",
+                        "type": "INTEGER",
+                        "not_null": True,
+                        "primary_key": True,
+                        "autoincrement": True,
+                    },
+                    {"name": "snapshot_id", "type": "INTEGER", "not_null": True},
+                    {"name": "node_id", "type": "TEXT", "not_null": True},
+                    {"name": "parent_node_id", "type": "TEXT", "not_null": False},
+                    {"name": "child_index", "type": "INTEGER", "not_null": True},
+                ],
+                "foreign_keys": [
+                    {
+                        "columns": ["snapshot_id"],
+                        "references_table": "file_tree_snapshots",
+                        "references_columns": ["id"],
+                        "on_delete": "CASCADE",
+                    },
+                ],
+                "unique_constraints": [{"columns": ["snapshot_id", "node_id"]}],
+                "check_constraints": [],
+            },
         },
         "indexes": [
             {
@@ -3046,6 +3137,34 @@ def get_schema_definition() -> Dict[str, Any]:
                 "name": "idx_indexing_worker_stats_start_time",
                 "table": "indexing_worker_stats",
                 "columns": ["cycle_start_time"],
+                "unique": False,
+                "where_clause": None,
+            },
+            {
+                "name": "idx_file_tree_snapshots_file_id",
+                "table": "file_tree_snapshots",
+                "columns": ["file_id"],
+                "unique": False,
+                "where_clause": None,
+            },
+            {
+                "name": "idx_file_tree_snapshots_project_id",
+                "table": "file_tree_snapshots",
+                "columns": ["project_id"],
+                "unique": False,
+                "where_clause": None,
+            },
+            {
+                "name": "idx_file_tree_snapshot_nodes_snapshot_id",
+                "table": "file_tree_snapshot_nodes",
+                "columns": ["snapshot_id"],
+                "unique": False,
+                "where_clause": None,
+            },
+            {
+                "name": "idx_file_tree_snapshot_nodes_parent",
+                "table": "file_tree_snapshot_nodes",
+                "columns": ["snapshot_id", "parent_node_id"],
                 "unique": False,
                 "where_clause": None,
             },

@@ -5,6 +5,7 @@ Author: Vasiliy Zdanovskiy
 email: vasilyvz@gmail.com
 """
 
+import json
 import tempfile
 import uuid
 from pathlib import Path
@@ -36,19 +37,25 @@ def test_db(temp_dir):
         db_path=db_path, driver_type="sqlite"
     )
     db = CodeDatabase(driver_config=driver_config)
+    db.sync_schema()
+    # _clear_file_vectors is not attached (private); stub so clear_file_data runs.
+    db._clear_file_vectors = lambda file_id: None
     yield db
     db.close()
 
 
 @pytest.fixture
 def test_project(test_db, temp_dir, project_id):
-    """Create test project in database."""
+    """Create test project in database and projectid file for path validation."""
     project_name = temp_dir.name
     test_db._execute(
         "INSERT INTO projects (id, root_path, name, updated_at) VALUES (?, ?, ?, julianday('now'))",
         (project_id, str(temp_dir), project_name),
     )
     test_db._commit()
+    (temp_dir / "projectid").write_text(
+        json.dumps({"id": project_id}), encoding="utf-8"
+    )
     return project_id
 
 
@@ -103,10 +110,11 @@ def test_file(test_db, temp_dir, test_project):
     )
 
     # Add some entities directly via SQL (line numbers match DEFAULT_TEST_FILE_CONTENT)
+    # cst_node_id is required (NOT NULL in schema); use placeholder for fixture-only rows.
     test_db._execute(
         """
-        INSERT INTO classes (file_id, name, line, docstring, bases)
-        VALUES (?, ?, ?, ?, ?)
+        INSERT INTO classes (file_id, name, line, docstring, bases, cst_node_id)
+        VALUES (?, ?, ?, ?, ?, ?)
         """,
         (
             file_id,
@@ -114,6 +122,7 @@ def test_file(test_db, temp_dir, test_project):
             10,
             "Helper class for validation and configuration in tests.",
             "[]",
+            "fixture:TestClass:ClassDef:10:0-14:0",
         ),
     )
     class_row = test_db._fetchone(
@@ -125,8 +134,8 @@ def test_file(test_db, temp_dir, test_project):
     if class_id:
         test_db._execute(
             """
-            INSERT INTO methods (class_id, name, line, args, docstring)
-            VALUES (?, ?, ?, ?, ?)
+            INSERT INTO methods (class_id, name, line, args, docstring, cst_node_id)
+            VALUES (?, ?, ?, ?, ?, ?)
             """,
             (
                 class_id,
@@ -134,14 +143,15 @@ def test_file(test_db, temp_dir, test_project):
                 14,
                 "[]",
                 "Validates input configuration and returns True if settings are correct.",
+                "fixture:test_method:FunctionDef:14:0-18:0",
             ),
         )
 
     # Insert function (test_function starts at line 22)
     test_db._execute(
         """
-        INSERT INTO functions (file_id, name, line, args, docstring)
-        VALUES (?, ?, ?, ?, ?)
+        INSERT INTO functions (file_id, name, line, args, docstring, cst_node_id)
+        VALUES (?, ?, ?, ?, ?, ?)
         """,
         (
             file_id,
@@ -149,6 +159,7 @@ def test_file(test_db, temp_dir, test_project):
             22,
             "[]",
             "Processes raw data and returns normalized result.",
+            "fixture:test_function:FunctionDef:22:0-26:0",
         ),
     )
 
@@ -237,6 +248,10 @@ def new_function():
 '''
         file_path.write_text(new_content, encoding="utf-8")
 
+        # Force full reindex: set stored last_modified to old value so mtime check does not skip
+        test_db._execute("UPDATE files SET last_modified = 0 WHERE id = ?", (file_id,))
+        test_db._commit()
+
         # Use absolute path for update_file_data
         abs_path = str(file_path.resolve())
 
@@ -293,6 +308,9 @@ def new_function():
         )
         file_path.write_text(invalid_content, encoding="utf-8")
 
+        test_db._execute("UPDATE files SET last_modified = 0 WHERE id = ?", (file_id,))
+        test_db._commit()
+
         abs_path = str(file_path.resolve())
 
         # Update file data - should handle syntax error gracefully
@@ -330,6 +348,9 @@ class NewClass:
     pass
 '''
         file_path.write_text(new_content, encoding="utf-8")
+
+        test_db._execute("UPDATE files SET last_modified = 0 WHERE id = ?", (file_id,))
+        test_db._commit()
 
         abs_path = str(file_path.resolve())
 
@@ -386,6 +407,9 @@ def func_b():
     pass
 '''
         file_path.write_text(new_content, encoding="utf-8")
+
+        test_db._execute("UPDATE files SET last_modified = 0 WHERE id = ?", (file_id,))
+        test_db._commit()
 
         abs_path = str(file_path.resolve())
 

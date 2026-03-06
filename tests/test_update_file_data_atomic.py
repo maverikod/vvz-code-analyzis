@@ -11,7 +11,7 @@ from pathlib import Path
 import pytest
 import os
 
-from code_analysis.core.database.base import CodeDatabase
+from code_analysis.core.database import CodeDatabase
 
 
 @pytest.fixture
@@ -33,6 +33,9 @@ def temp_db():
 
     try:
         db = CodeDatabase(driver_config)
+        db.sync_schema()
+        # _clear_file_vectors is not attached (private); stub so clear_file_data runs.
+        db._clear_file_vectors = lambda file_id: None
         yield db
         db.close()
     finally:

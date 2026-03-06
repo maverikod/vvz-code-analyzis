@@ -1789,10 +1789,10 @@ def update_file_data_atomic(
             }
 
         # Extract and save entities in transaction
-        # Use helper methods from UpdateIndexesMCPCommand
-        from ...commands.code_mapper_mcp_command import UpdateIndexesMCPCommand
-
-        update_cmd = UpdateIndexesMCPCommand()
+        from ...commands.update_indexes_entities import (
+            _extract_docstring,
+            _extract_args,
+        )
 
         classes_added = 0
         functions_added = 0
@@ -1825,7 +1825,7 @@ def update_file_data_atomic(
         # Extract classes and methods
         for node in ast.walk(tree):
             if isinstance(node, ast.ClassDef):
-                docstring = update_cmd._extract_docstring(node)
+                docstring = _extract_docstring(node)
                 bases: List[str] = []
                 for base in node.bases:
                     if isinstance(base, ast.Name):
@@ -1878,8 +1878,8 @@ def update_file_data_atomic(
                 # Extract methods from class
                 for item in node.body:
                     if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                        method_docstring = update_cmd._extract_docstring(item)
-                        method_args = update_cmd._extract_args(item)
+                        method_docstring = _extract_docstring(item)
+                        method_args = _extract_args(item)
                         # Calculate cyclomatic complexity
                         try:
                             from ..core.complexity import calculate_complexity
@@ -1946,8 +1946,8 @@ def update_file_data_atomic(
                             break
 
                 if not is_method:
-                    docstring = update_cmd._extract_docstring(node)
-                    args = update_cmd._extract_args(node)
+                    docstring = _extract_docstring(node)
+                    args = _extract_args(node)
                     # Calculate cyclomatic complexity
                     try:
                         from ..core.complexity import calculate_complexity

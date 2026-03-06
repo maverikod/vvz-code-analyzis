@@ -1,0 +1,556 @@
+"""
+Fidelity, atomicity, and round-trip test suite for unified file-level DB write.
+
+Proves: unified code path (tree-save and background indexing), file-level atomicity,
+restore policy, and text fidelity end-to-end. TZ §10.1, §10.2, §10.3.
+
+Author: Vasiliy Zdanovskiy
+email: vasilyvz@gmail.com
+"""
+
+from __future__ import annotations
+
+import tempfile
+import uuid
+from pathlib import Path
+from unittest.mock import patch
+
+import pytest
+
+from code_analysis.core.cst_tree.tree_builder import create_tree_from_code
+from code_analysis.core.cst_tree.tree_saver import save_tree_to_file
+from code_analysis.core.database import CodeDatabase
+from code_analysis.core.database.base import create_driver_config_for_worker
+from code_analysis.commands.update_indexes_analyzer import analyze_file
+from code_analysis.commands.file_management import RepairDatabaseCommand
+
+
+# --- Fixtures ---
+
+
+@pytest.fixture
+def temp_dir():
+    """Temporary directory for test files and DB."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        yield Path(tmpdir)
+
+
+@pytest.fixture
+def project_id():
+    """UUID4 project ID."""
+    return str(uuid.uuid4())
+
+
+@pytest.fixture
+def test_db(temp_dir):
+    """CodeDatabase with schema (including file_tree_snapshots)."""
+    db_path = temp_dir / "test.db"
+    driver_config = create_driver_config_for_worker(
+        db_path=db_path, driver_type="sqlite"
+    )
+    db = CodeDatabase(driver_config=driver_config)
+    db.sync_schema()
+    db._clear_file_vectors = lambda file_id: None  # type: ignore[attr-defined]
+    yield db
+    db.close()
+
+
+@pytest.fixture
+def test_project(test_db, temp_dir, project_id):
+    """Project row and projectid file."""
+    test_db._execute(
+        "INSERT INTO projects (id, root_path, name, updated_at) VALUES (?, ?, ?, julianday('now'))",
+        (project_id, str(temp_dir), temp_dir.name),
+    )
+    test_db._commit()
+    (temp_dir / "projectid").write_text(
+        '{"id": "' + project_id + '"}', encoding="utf-8"
+    )
+    return project_id
+
+
+# --- TZ §10.1: Unified code path (tests 1–3) ---
+
+
+def test_tree_save_flow_calls_unified_sync(
+    test_db, test_project, temp_dir, project_id
+) -> None:
+    """TZ 10.1 (1): Tree save flow calls the unified file sync function."""
+    code = "x = 1\n"
+    path = temp_dir / "a.py"
+    path.write_text(code, encoding="utf-8")
+    tree = create_tree_from_code(str(path), code)
+    with patch(
+        "code_analysis.core.database.file_tree_sync.sync_file_to_db_atomic"
+    ) as sync_mock:
+        sync_mock.return_value = {"success": True, "file_id": 1}
+        test_db.get_file_by_path = lambda p, pid: None
+        test_db.add_file = lambda *a, **k: 1
+        created = type("File", (), {"id": 1})()
+        test_db.create_file = lambda *a, **k: created
+        updated = type("File", (), {"id": 1})()
+        test_db.update_file = lambda *a, **k: updated
+        test_db.select = lambda *a, **k: []
+        test_db.execute_batch = lambda *a, **k: [{"lastrowid": 1}]
+        result = save_tree_to_file(
+            tree_id=tree.tree_id,
+            file_path="a.py",
+            root_dir=temp_dir,
+            project_id=project_id,
+            database=test_db,
+            validate=True,
+            backup=False,
+        )
+    assert result.get("success") is True
+    sync_mock.assert_called_once()
+    call_kw = sync_mock.call_args[1]
+    assert call_kw.get("source_code") == code
+    assert call_kw.get("project_id") == project_id
+
+
+def test_background_indexing_flow_calls_unified_sync(
+    test_db, test_project, temp_dir, project_id
+) -> None:
+    """TZ 10.1 (2): Background indexing flow calls the same unified function."""
+    path = temp_dir / "b.py"
+    code = "y = 2\n"
+    path.write_text(code, encoding="utf-8")
+    test_db.get_file_by_path = lambda p, pid: None
+    test_db.add_file = lambda *a, **k: 1
+    with patch(
+        "code_analysis.commands.update_indexes_analyzer.sync_file_to_db_atomic"
+    ) as sync_mock:
+        sync_mock.return_value = {"success": True, "file_id": 1}
+        result = analyze_file(
+            database=test_db,
+            file_path=path,
+            project_id=project_id,
+            root_path=temp_dir,
+        )
+    assert result.get("status") == "success"
+    sync_mock.assert_called_once()
+    # sync_file_to_db_atomic(database, project_id, absolute_path, source_code, file_mtime, file_id=...)
+    call_args, call_kw = sync_mock.call_args
+    assert call_args[3] == code
+    assert call_args[1] == project_id
+
+
+def test_no_bypass_path_both_flows_use_same_sync(
+    test_db, test_project, temp_dir, project_id
+) -> None:
+    """TZ 10.1 (3): No bypass path; both flows call the same sync (spy)."""
+    code = "z = 3\n"
+    path = temp_dir / "c.py"
+    path.write_text(code, encoding="utf-8")
+    tree = create_tree_from_code(str(path), code)
+    test_db.get_file_by_path = lambda p, pid: None
+    test_db.add_file = lambda *a, **k: 1
+    created = type("File", (), {"id": 1})()
+    test_db.create_file = lambda *a, **k: created
+    updated = type("File", (), {"id": 1})()
+    test_db.update_file = lambda *a, **k: updated
+    test_db.select = lambda *a, **k: []
+    with patch(
+        "code_analysis.core.database.file_tree_sync.sync_file_to_db_atomic"
+    ) as sync_mock:
+        sync_mock.return_value = {"success": True, "file_id": 1}
+        save_tree_to_file(
+            tree_id=tree.tree_id,
+            file_path="c.py",
+            root_dir=temp_dir,
+            project_id=project_id,
+            database=test_db,
+            validate=True,
+            backup=False,
+        )
+    sync_mock.assert_called_once()
+    sync_mock.reset_mock()
+    path2 = temp_dir / "d.py"
+    path2.write_text("w = 4\n", encoding="utf-8")
+    test_db.get_file_by_path = lambda p, pid: None
+    test_db.add_file = lambda *a, **k: 1
+    with patch(
+        "code_analysis.commands.update_indexes_analyzer.sync_file_to_db_atomic"
+    ) as sync_mock2:
+        sync_mock2.return_value = {"success": True, "file_id": 1}
+        analyze_file(
+            database=test_db,
+            file_path=path2,
+            project_id=project_id,
+            root_path=temp_dir,
+        )
+    sync_mock2.assert_called_once()
+
+
+# --- TZ §10.2: File-level write unit (tests 4–6) ---
+
+
+def test_inject_failure_during_sync_operation_fails(
+    test_db, test_project, temp_dir, project_id
+) -> None:
+    """TZ 10.2 (4): Inject failure during file DB sync; operation fails for that file."""
+    code = "a = 1\n"
+    path = temp_dir / "fail.py"
+    path.write_text(code, encoding="utf-8")
+    tree = create_tree_from_code(str(path), code)
+    test_db.get_file_by_path = lambda p, pid: None
+    test_db.add_file = lambda *a, **k: 1
+    created = type("File", (), {"id": 1})()
+    test_db.create_file = lambda *a, **k: created
+    updated = type("File", (), {"id": 1})()
+    test_db.update_file = lambda *a, **k: updated
+    test_db.select = lambda *a, **k: []
+    with patch(
+        "code_analysis.core.database.file_tree_sync.sync_file_to_db_atomic"
+    ) as sync_mock:
+        sync_mock.return_value = {"success": False, "error": "injected failure"}
+        result = save_tree_to_file(
+            tree_id=tree.tree_id,
+            file_path="fail.py",
+            root_dir=temp_dir,
+            project_id=project_id,
+            database=test_db,
+            validate=True,
+            backup=False,
+        )
+    assert result.get("success") is False
+    assert (
+        "injected" in result.get("error", "").lower()
+        or "sync" in result.get("error", "").lower()
+    )
+
+
+def test_file_not_reported_success_on_sync_failure(
+    test_db, test_project, temp_dir, project_id
+) -> None:
+    """TZ 10.2 (5): File must not be reported as successfully indexed/saved on failure."""
+    path = temp_dir / "nope.py"
+    path.write_text("b = 2\n", encoding="utf-8")
+    test_db.get_file_by_path = lambda p, pid: None
+    test_db.add_file = lambda *a, **k: 1
+    with patch(
+        "code_analysis.core.database.file_tree_sync.sync_file_to_db_atomic"
+    ) as sync_mock:
+        sync_mock.return_value = {"success": False, "error": "sync failed"}
+        result = analyze_file(
+            database=test_db,
+            file_path=path,
+            project_id=project_id,
+            root_path=temp_dir,
+        )
+    assert result.get("status") != "success"
+    assert result.get("status") in ("error", "syntax_error") or "error" in result
+
+
+def test_rerun_after_failure_restores_full_file_state(
+    test_db, test_project, temp_dir, project_id
+) -> None:
+    """TZ 10.2 (6): Re-run after failure restores consistent full-file state."""
+    code = "c = 3\n"
+    path = temp_dir / "retry.py"
+    path.write_text(code, encoding="utf-8")
+    tree = create_tree_from_code(str(path), code)
+    test_db.get_file_by_path = lambda p, pid: None
+    test_db.add_file = lambda *a, **k: 1
+    created = type("File", (), {"id": 1})()
+    test_db.create_file = lambda *a, **k: created
+    updated = type("File", (), {"id": 1})()
+    test_db.select = lambda *a, **k: []
+    test_db.execute_batch = lambda *a, **k: [{"lastrowid": 1}]
+    call_count = [0]
+
+    def fail_once_then_ok(*args, **kwargs):
+        from code_analysis.core.database import file_tree_sync as m
+
+        call_count[0] += 1
+        if call_count[0] == 1:
+            return {"success": False, "error": "injected"}
+        return m.sync_file_to_db_atomic(
+            test_db, project_id, kwargs["absolute_path"], code, 0.0, 1
+        )
+
+    with patch(
+        "code_analysis.core.database.file_tree_sync.sync_file_to_db_atomic",
+        side_effect=fail_once_then_ok,
+    ):
+        r1 = save_tree_to_file(
+            tree_id=tree.tree_id,
+            file_path="retry.py",
+            root_dir=temp_dir,
+            project_id=project_id,
+            database=test_db,
+            validate=True,
+            backup=False,
+        )
+    assert r1.get("success") is False
+    with patch(
+        "code_analysis.core.database.file_tree_sync.sync_file_to_db_atomic"
+    ) as sync_mock:
+        sync_mock.return_value = {"success": True, "file_id": 1}
+        r2 = save_tree_to_file(
+            tree_id=tree.tree_id,
+            file_path="retry.py",
+            root_dir=temp_dir,
+            project_id=project_id,
+            database=test_db,
+            validate=True,
+            backup=False,
+        )
+    assert r2.get("success") is True
+    assert path.read_text(encoding="utf-8").strip() == code.strip()
+
+
+# --- TZ §10.3: Restoration (tests 7–9) ---
+
+
+@pytest.mark.asyncio
+async def test_restore_file_missing_db_source_exists(
+    test_db, test_project, temp_dir, project_id
+) -> None:
+    """TZ 10.3 (7): File missing + DB source exists -> full restore succeeds."""
+    code = '"""doc"""\nrestored = 1\n'
+    rel = "e.py"
+    path = temp_dir / rel
+    path.write_text(code, encoding="utf-8")
+    file_id = test_db.add_file(
+        path=str(path),
+        lines=len(code.splitlines()),
+        last_modified=path.stat().st_mtime,
+        has_docstring=True,
+        project_id=project_id,
+    )
+    from code_analysis.core.database.file_tree_sync import sync_file_to_db_atomic
+
+    sync_file_to_db_atomic(
+        test_db, project_id, str(path), code, path.stat().st_mtime, file_id
+    )
+    path.unlink()
+    assert not path.exists()
+    cmd = RepairDatabaseCommand(
+        database=test_db,
+        project_id=project_id,
+        root_dir=temp_dir,
+        version_dir=str(temp_dir / "versions"),
+        dry_run=False,
+        force=False,
+    )
+    restored = await cmd._restore_file_from_cst(
+        file_id, rel, {"project_id": project_id, "deleted": False}
+    )
+    assert restored is True
+    assert path.exists()
+    assert path.read_text(encoding="utf-8") == code
+
+
+@pytest.mark.asyncio
+async def test_restore_file_exists_force_false_safe_refusal(
+    test_db, test_project, temp_dir, project_id
+) -> None:
+    """TZ 10.3 (8): File exists + force=false -> safe refusal (no overwrite)."""
+    code = "x = 1\n"
+    path = temp_dir / "f.py"
+    path.write_text(code, encoding="utf-8")
+    file_id = test_db.add_file(
+        path=str(path),
+        lines=1,
+        last_modified=path.stat().st_mtime,
+        has_docstring=False,
+        project_id=project_id,
+    )
+    from code_analysis.core.database.file_tree_sync import sync_file_to_db_atomic
+
+    sync_file_to_db_atomic(
+        test_db, project_id, str(path), code, path.stat().st_mtime, file_id
+    )
+    path.write_text("other\n", encoding="utf-8")
+    cmd = RepairDatabaseCommand(
+        database=test_db,
+        project_id=project_id,
+        root_dir=temp_dir,
+        version_dir=str(temp_dir / "versions"),
+        dry_run=False,
+        force=False,
+    )
+    restored = await cmd._restore_file_from_cst(
+        file_id, "f.py", {"project_id": project_id, "deleted": False}
+    )
+    assert restored is False
+    assert path.read_text(encoding="utf-8") == "other\n"
+
+
+@pytest.mark.asyncio
+async def test_restore_file_exists_force_true_overwrite_with_backup(
+    test_db, test_project, temp_dir, project_id
+) -> None:
+    """TZ 10.3 (9): File exists + force=true -> overwrite with backup."""
+    code = "y = 2\n"
+    path = temp_dir / "g.py"
+    path.write_text("existing\n", encoding="utf-8")
+    file_id = test_db.add_file(
+        path=str(path),
+        lines=1,
+        last_modified=path.stat().st_mtime,
+        has_docstring=False,
+        project_id=project_id,
+    )
+    from code_analysis.core.database.file_tree_sync import sync_file_to_db_atomic
+
+    sync_file_to_db_atomic(
+        test_db, project_id, str(path), code, path.stat().st_mtime, file_id
+    )
+    path.write_text("existing\n", encoding="utf-8")
+    cmd = RepairDatabaseCommand(
+        database=test_db,
+        project_id=project_id,
+        root_dir=temp_dir,
+        version_dir=str(temp_dir / "versions"),
+        dry_run=False,
+        force=True,
+    )
+    with patch("code_analysis.core.backup_manager.BackupManager") as bm_mock:
+        inst = bm_mock.return_value
+        inst.create_backup.return_value = "backup-uuid"
+        restored = await cmd._restore_file_from_cst(
+            file_id,
+            "g.py",
+            {"project_id": project_id, "deleted": False},
+            force=True,
+        )
+    assert restored is True
+    assert path.read_text(encoding="utf-8") == code
+
+
+# --- TZ §10.3: Fidelity (tests 10–13) ---
+
+
+def test_fidelity_index_delete_restore_full_text_equality(
+    test_db, test_project, temp_dir, project_id
+) -> None:
+    """TZ 10.3 (10): Index -> delete -> restore -> full text equality."""
+    code = '"""Fidelity test."""\na = 1\nb = 2\n'
+    path = temp_dir / "h.py"
+    path.write_text(code, encoding="utf-8")
+    file_id = test_db.add_file(
+        path=str(path),
+        lines=len(code.splitlines()),
+        last_modified=path.stat().st_mtime,
+        has_docstring=True,
+        project_id=project_id,
+    )
+    from code_analysis.core.database.file_tree_sync import sync_file_to_db_atomic
+
+    sync_file_to_db_atomic(
+        test_db, project_id, str(path), code, path.stat().st_mtime, file_id
+    )
+    path.unlink()
+    row = test_db._fetchone(
+        "SELECT source_payload FROM file_tree_snapshots WHERE file_id = ? ORDER BY id DESC LIMIT 1",
+        (file_id,),
+    )
+    assert row is not None
+    payload = row.get("source_payload")
+    assert payload == code
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(payload, encoding="utf-8")
+    assert path.read_text(encoding="utf-8") == code
+
+
+def test_sibling_order_roundtrip(test_db, test_project, temp_dir, project_id) -> None:
+    """TZ 10.3 (11): Sibling order round-trip: save/load preserves child order."""
+    code = "a = 1\nb = 2\nc = 3\n"
+    path = temp_dir / "sib.py"
+    path.write_text(code, encoding="utf-8")
+    tree = create_tree_from_code(str(path), code)
+    order_before = [
+        getattr(n, "value", getattr(n, "name", str(n))) for n in tree.module.body
+    ]
+    file_id = test_db.add_file(
+        path=str(path),
+        lines=3,
+        last_modified=path.stat().st_mtime,
+        has_docstring=False,
+        project_id=project_id,
+    )
+    from code_analysis.core.database.file_tree_sync import sync_file_to_db_atomic
+
+    sync_file_to_db_atomic(
+        test_db, project_id, str(path), code, path.stat().st_mtime, file_id
+    )
+    row = test_db._fetchone(
+        "SELECT source_payload FROM file_tree_snapshots WHERE file_id = ? ORDER BY id DESC LIMIT 1",
+        (file_id,),
+    )
+    assert row is not None
+    restored_code = row.get("source_payload")
+    tree2 = create_tree_from_code(str(path), restored_code)
+    order_after = [
+        getattr(n, "value", getattr(n, "name", str(n))) for n in tree2.module.body
+    ]
+    assert order_after == order_before
+    assert restored_code == code
+
+
+def test_comment_docstring_fidelity_roundtrip(
+    test_db, test_project, temp_dir, project_id
+) -> None:
+    """TZ 10.3 (12): Comment/docstring fidelity: round-trip unchanged."""
+    source = '# top\n"""Module doc."""\ndef f():\n    """F doc."""\n    pass  # eol\n'
+    path = temp_dir / "comm.py"
+    path.write_text(source, encoding="utf-8")
+    file_id = test_db.add_file(
+        path=str(path),
+        lines=len(source.splitlines()),
+        last_modified=path.stat().st_mtime,
+        has_docstring=True,
+        project_id=project_id,
+    )
+    from code_analysis.core.database.file_tree_sync import sync_file_to_db_atomic
+
+    sync_file_to_db_atomic(
+        test_db, project_id, str(path), source, path.stat().st_mtime, file_id
+    )
+    row = test_db._fetchone(
+        "SELECT source_payload FROM file_tree_snapshots WHERE file_id = ? ORDER BY id DESC LIMIT 1",
+        (file_id,),
+    )
+    assert row is not None
+    restored = row.get("source_payload")
+    assert "# top" in restored
+    assert '"""Module doc."""' in restored or "Module doc" in restored
+    assert "F doc" in restored
+    assert "# eol" in restored
+
+
+def test_data_type_fidelity_literals_containers(
+    test_db, test_project, temp_dir, project_id
+) -> None:
+    """TZ 10.3 (13): Data-type fidelity: literals and containers preserved."""
+    code = (
+        "n = 42\ns = 'hi'\nb = True\nx = None\n"
+        "lst = [1, 2]\nd = {'k': 1}\nt = (1, 2)\nst = {1, 2}\n"
+    )
+    path = temp_dir / "types.py"
+    path.write_text(code, encoding="utf-8")
+    file_id = test_db.add_file(
+        path=str(path),
+        lines=len(code.splitlines()),
+        last_modified=path.stat().st_mtime,
+        has_docstring=False,
+        project_id=project_id,
+    )
+    from code_analysis.core.database.file_tree_sync import sync_file_to_db_atomic
+
+    sync_file_to_db_atomic(
+        test_db, project_id, str(path), code, path.stat().st_mtime, file_id
+    )
+    row = test_db._fetchone(
+        "SELECT source_payload FROM file_tree_snapshots WHERE file_id = ? ORDER BY id DESC LIMIT 1",
+        (file_id,),
+    )
+    assert row is not None
+    restored = row.get("source_payload")
+    assert "42" in restored and "'hi'" in restored
+    assert "True" in restored and "None" in restored
+    assert "[1, 2]" in restored and "{'k': 1}" in restored
+    assert "(1, 2)" in restored and "{1, 2}" in restored
+    assert restored == code

@@ -2792,7 +2792,10 @@ def get_schema_definition() -> Dict[str, Any]:
                         "on_delete": "CASCADE",
                     },
                 ],
-                "unique_constraints": [{"columns": ["snapshot_id", "node_id"]}],
+                "unique_constraints": [
+                    {"columns": ["snapshot_id", "node_id"]},
+                    {"columns": ["snapshot_id", "parent_node_id", "child_index"]},
+                ],
                 "check_constraints": [],
             },
         },

@@ -17,6 +17,13 @@ logger = logging.getLogger(__name__)
 # Tables that must have cst_node_id NOT NULL in final schema state (after backfill).
 CST_NODE_ID_NOT_NULL_TABLES = ("classes", "functions", "methods")
 
+# Snapshot/root/node tables: invariant checks run when any of these exist.
+FILE_TREE_SNAPSHOT_TABLES = (
+    "file_tree_snapshots",
+    "file_tree_snapshot_roots",
+    "file_tree_snapshot_nodes",
+)
+
 
 @dataclass
 class ColumnDef:
@@ -174,6 +181,10 @@ class SchemaComparator:
         # Compare constraints
         diff.constraint_diffs = self._compare_constraints()
 
+        # Fail loudly if snapshot tables exist and invariants are broken.
+        if current_tables & set(FILE_TREE_SNAPSHOT_TABLES):
+            self._validate_snapshot_invariants(current_tables)
+
         return diff
 
     def _get_current_tables(self) -> Set[str]:
@@ -182,6 +193,57 @@ class SchemaComparator:
             "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'"
         )
         return {row["name"] for row in result}
+
+    def _validate_snapshot_invariants(self, current_tables: Set[str]) -> None:
+        """
+        Validate snapshot/root/node invariants; raise if broken.
+
+        - One root per snapshot: file_tree_snapshot_roots.snapshot_id is PK (enforced by schema).
+        - Unique sibling order per parent: (snapshot_id, parent_node_id, child_index) must be unique.
+        Rejects invalid states instead of silently normalizing.
+
+        Raises:
+            RuntimeError: If duplicate (snapshot_id, parent_node_id, child_index) or
+                multiple roots per snapshot are detected.
+        """
+        if "file_tree_snapshot_roots" in current_tables:
+            try:
+                rows = self.driver.fetchall(
+                    "SELECT snapshot_id, COUNT(*) AS c FROM file_tree_snapshot_roots "
+                    "GROUP BY snapshot_id HAVING COUNT(*) > 1"
+                )
+                if rows:
+                    raise RuntimeError(
+                        "Snapshot invariant violated: multiple roots per snapshot "
+                        "(file_tree_snapshot_roots has duplicate snapshot_id)"
+                    )
+            except RuntimeError:
+                raise
+            except Exception as e:
+                raise RuntimeError(
+                    "Snapshot invariant check failed for file_tree_snapshot_roots"
+                ) from e
+
+        if "file_tree_snapshot_nodes" in current_tables:
+            try:
+                rows = self.driver.fetchall(
+                    "SELECT snapshot_id, parent_node_id, child_index, COUNT(*) AS c "
+                    "FROM file_tree_snapshot_nodes "
+                    "GROUP BY snapshot_id, parent_node_id, child_index HAVING COUNT(*) > 1"
+                )
+                if rows:
+                    raise RuntimeError(
+                        "Snapshot invariant violated: duplicate sibling order "
+                        "(file_tree_snapshot_nodes has duplicate "
+                        "snapshot_id, parent_node_id, child_index); "
+                        "sync path rejects invalid ordering"
+                    )
+            except RuntimeError:
+                raise
+            except Exception as e:
+                raise RuntimeError(
+                    "Snapshot invariant check failed for file_tree_snapshot_nodes"
+                ) from e
 
     def _get_current_virtual_tables(self) -> Dict[str, Dict[str, Any]]:
         """Get current virtual tables from database."""

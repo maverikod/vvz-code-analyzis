@@ -104,6 +104,8 @@ Senior Python backend and database engineer.
 - Run `pytest tests/test_sqlite_schema_edge_cases.py -k "sync_schema" -v --tb=short` and expect exit code 0 and all collected tests to pass.
 - If the project uses a different test path for schema init, run it and expect no regressions (exit code 0, all relevant tests pass).
 
+**Validation exception (documented):** The test `test_sync_schema_with_errors` in `test_sqlite_schema_edge_cases.py` may fail for reasons unrelated to this step: it expects the driver/schema_manager to return a result with an `errors` field when table creation fails, whereas the current driver raises an exception. This is a pre-existing driver contract issue; Step 02 does not change the driver. For Step 02 acceptance, passing the other sync_schema tests (test_database_client, test_driver_sqlite, and the remaining tests in test_sqlite_schema_edge_cases) is sufficient. Fixing the driver/test (return errors vs raise) may be done in a separate task.
+
 ---
 
 ## Decision rules

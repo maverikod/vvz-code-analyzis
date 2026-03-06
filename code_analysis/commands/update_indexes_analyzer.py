@@ -1,19 +1,21 @@
 """
 Single-file analysis for update_indexes: AST/CST extraction and entity indexing.
 
+File-level DB writes are routed through the shared sync_file_to_db_atomic pipeline
+(see code_analysis.core.database.file_tree_sync). No duplicate full-file write path.
+
 Author: Vasiliy Zdanovskiy
 email: vasilyvz@gmail.com
 """
 
 import ast
-import hashlib
-import json
 import logging
 import sys
 from pathlib import Path
 from typing import Any, Callable, Dict, Optional
 
-from .update_indexes_entities import _extract_docstring, index_entities
+from ..core.database.file_tree_sync import sync_file_to_db_atomic
+from .update_indexes_entities import _extract_docstring
 
 logger = logging.getLogger(__name__)
 
@@ -151,129 +153,82 @@ def analyze_file(
         try:
             from ..core.ast_utils import parse_with_comments
 
-            tree = parse_with_comments(file_content, filename=str(file_path))
+            parse_with_comments(file_content, filename=str(file_path))
         except SyntaxError as e:
             logger.warning("Syntax error in %s: %s", rel_path, e)
             return {"file": rel_path, "status": "syntax_error", "error": str(e)}
 
-        ast_json = json.dumps(ast.dump(tree))
-        ast_hash = hashlib.sha256(ast_json.encode()).hexdigest()
+        _heartbeat(PHASE_AST)
+        _heartbeat(PHASE_CST)
+        _heartbeat(PHASE_ENTITIES)
+        sync_result = sync_file_to_db_atomic(
+            database,
+            project_id,
+            abs_file_path,
+            file_content,
+            file_mtime,
+            file_id=file_id,
+        )
+        if not sync_result.get("success"):
+            error_msg = sync_result.get("error", "File sync failed")
+            logger.error("Sync failed for %s: %s", rel_path, error_msg)
+            return {
+                "file": rel_path,
+                "status": "error",
+                "error": error_msg,
+                "error_type": "SyncError",
+            }
 
-        # Per-file transaction: batch AST/CST/entity/usage writes (no commit per row).
-        tid = database.begin_transaction()
+        usages_added = 0
+        _heartbeat(PHASE_USAGE)
         try:
-            _heartbeat(PHASE_AST)
-            try:
-                logger.debug(
-                    "Saving AST for %s, file_id=%s, project_id=%s",
-                    rel_path,
-                    file_id,
-                    project_id,
-                )
-                database.save_ast_tree(
-                    file_id,
-                    project_id,
-                    ast_json,
-                    ast_hash,
-                    file_mtime,
-                    overwrite=True,
-                )
-            except Exception as e:
-                database.rollback_transaction(tid)
-                logger.error("Error saving AST for %s: %s", rel_path, e, exc_info=True)
-                return {
-                    "file": rel_path,
-                    "status": "error",
-                    "error": f"Failed to save AST: {e}",
-                    "error_type": type(e).__name__,
-                }
+            tree = ast.parse(file_content, filename=str(file_path))
+            from ..core.usage_tracker import UsageTracker
 
-            cst_hash = hashlib.sha256(file_content.encode()).hexdigest()
-            _heartbeat(PHASE_CST)
-            try:
-                logger.debug(
-                    "Saving CST for %s, file_id=%s, project_id=%s",
-                    rel_path,
-                    file_id,
-                    project_id,
-                )
-                database.save_cst_tree(
-                    file_id,
-                    project_id,
-                    file_content,
-                    cst_hash,
-                    file_mtime,
-                    overwrite=True,
-                )
-            except Exception as e:
-                database.rollback_transaction(tid)
-                logger.error("Error saving CST for %s: %s", rel_path, e, exc_info=True)
-                return {
-                    "file": rel_path,
-                    "status": "error",
-                    "error": f"Failed to save CST: {e}",
-                    "error_type": type(e).__name__,
-                }
+            def add_usage_callback(usage_record: Dict[str, Any]) -> None:
+                nonlocal usages_added
+                try:
+                    database.add_usage(
+                        file_id=file_id,
+                        line=usage_record["line"],
+                        usage_type=usage_record["usage_type"],
+                        target_type=usage_record["target_type"],
+                        target_name=usage_record["target_name"],
+                        target_class=usage_record.get("target_class"),
+                        context=usage_record.get("context"),
+                    )
+                    usages_added += 1
+                except Exception as e:
+                    logger.debug(
+                        "Failed to add usage for %s at line %s: %s",
+                        usage_record.get("target_name"),
+                        usage_record.get("line"),
+                        e,
+                        exc_info=True,
+                    )
 
-            _heartbeat(PHASE_ENTITIES)
-            classes_added, functions_added, methods_added, imports_added = (
-                index_entities(database, file_id, tree, file_content, rel_path)
+            usage_tracker = UsageTracker(add_usage_callback)
+            usage_tracker.visit(tree)
+            logger.debug("Tracked %s usages in %s", usages_added, rel_path)
+        except Exception as e:
+            logger.warning(
+                "Failed to track usages for %s: %s",
+                rel_path,
+                e,
+                exc_info=True,
             )
 
-            usages_added = 0
-            _heartbeat(PHASE_USAGE)
-            try:
-                from ..core.usage_tracker import UsageTracker
+        database.mark_file_needs_chunking(rel_path, project_id)
 
-                def add_usage_callback(usage_record: Dict[str, Any]) -> None:
-                    nonlocal usages_added
-                    try:
-                        database.add_usage(
-                            file_id=file_id,
-                            line=usage_record["line"],
-                            usage_type=usage_record["usage_type"],
-                            target_type=usage_record["target_type"],
-                            target_name=usage_record["target_name"],
-                            target_class=usage_record.get("target_class"),
-                            context=usage_record.get("context"),
-                        )
-                        usages_added += 1
-                    except Exception as e:
-                        logger.debug(
-                            "Failed to add usage for %s at line %s: %s",
-                            usage_record.get("target_name"),
-                            usage_record.get("line"),
-                            e,
-                            exc_info=True,
-                        )
-
-                usage_tracker = UsageTracker(add_usage_callback)
-                usage_tracker.visit(tree)
-                logger.debug("Tracked %s usages in %s", usages_added, rel_path)
-            except Exception as e:
-                logger.warning(
-                    "Failed to track usages for %s: %s",
-                    rel_path,
-                    e,
-                    exc_info=True,
-                )
-
-            database.mark_file_needs_chunking(rel_path, project_id)
-            database.commit_transaction(tid)
-        except Exception:
-            try:
-                database.rollback_transaction(tid)
-            except Exception:
-                pass
-            raise
-
+        entities_updated = sync_result.get("entities_updated", 0)
         return {
             "file": rel_path,
             "status": "success",
-            "classes": classes_added,
-            "functions": functions_added,
-            "methods": methods_added,
-            "imports": imports_added,
+            "classes": 0,
+            "functions": 0,
+            "methods": 0,
+            "imports": 0,
+            "entities_updated": entities_updated,
             "usages": usages_added,
         }
 

@@ -126,8 +126,13 @@ class GetClassHierarchyMCPCommand(BaseMCPCommand):
             for row in rows:
                 class_info = row
                 class_name_val = class_info["name"]
-                bases_str = class_info.get("bases")
+                node_id = class_info.get("cst_node_id")
+                file_path_val = class_info.get("file_path")
+                # Contract: only include entities with file_path and valid UUID4 cst_node_id.
+                if not _is_valid_uuid4(node_id) or not file_path_val:
+                    continue
 
+                bases_str = class_info.get("bases")
                 # Parse bases (JSON array or string)
                 bases = []
                 if bases_str:
@@ -139,19 +144,16 @@ class GetClassHierarchyMCPCommand(BaseMCPCommand):
                         if not isinstance(bases, list):
                             bases = [bases] if bases else []
                     except (json.JSONDecodeError, TypeError):
-                        # Try to parse as AST string representation
                         bases = []
 
                 entity: Dict[str, Any] = {
                     "name": class_name_val,
-                    "file_path": class_info.get("file_path"),
+                    "file_path": file_path_val,
                     "line": class_info.get("line"),
                     "bases": bases,
                     "children": [],
+                    "cst_node_id": node_id,
                 }
-                node_id = class_info.get("cst_node_id")
-                if _is_valid_uuid4(node_id):
-                    entity["cst_node_id"] = node_id
                 hierarchy[class_name_val] = entity
                 all_classes.append(class_info)
 

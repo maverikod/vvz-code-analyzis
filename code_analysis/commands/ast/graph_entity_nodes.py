@@ -1,6 +1,13 @@
 """
 Build entity_nodes payloads for export_graph (file_path + cst_node_id per entity).
 
+Contract: All entity nodes returned by this module for relationship/graph use MUST
+include "file_path" and "cst_node_id" (valid UUID4). The cst_node_id is the same
+identifier as file_tree_snapshot_nodes.node_id, so clients can correlate entities
+with snapshot tree nodes. No code path in this module returns an entity without
+valid cst_node_id; relationship commands are the read-side counterpart to snapshot
+node identity.
+
 Author: Vasiliy Zdanovskiy
 email: vasilyvz@gmail.com
 """
@@ -15,13 +22,14 @@ def build_entity_nodes_hierarchy(
     """Build entity_nodes from hierarchy query rows (classes with file_path, cst_node_id).
 
     Only includes entries with valid UUID4 cst_node_id and non-empty file_path.
+    Aligns with snapshot node identity: cst_node_id equals file_tree_snapshot_nodes.node_id.
 
     Args:
         rows: Rows from SELECT c.name, c.bases, f.path, c.cst_node_id ...
         is_valid_uuid4: Predicate for valid UUID4 string.
 
     Returns:
-        List of {"node_id", "file_path", "cst_node_id"} dicts.
+        List of {"node_id", "file_path", "cst_node_id"} dicts; all have valid UUID4.
     """
     out: List[Dict[str, str]] = []
     for r in rows:
@@ -53,6 +61,7 @@ def build_entity_nodes_call_graph(
 
     Queries classes, functions, methods with valid cst_node_id and appends
     matching entity payloads. Only includes entries with valid UUID4.
+    cst_node_id aligns with file_tree_snapshot_nodes.node_id for tree correlation.
 
     Args:
         db: Database driver with execute() returning {"data": list of rows}.
@@ -61,7 +70,7 @@ def build_entity_nodes_call_graph(
         is_valid_uuid4: Predicate for valid UUID4 string.
 
     Returns:
-        List of {"node_id", "file_path", "cst_node_id"} dicts.
+        List of {"node_id", "file_path", "cst_node_id"} dicts; all have valid UUID4.
     """
     out: List[Dict[str, str]] = []
     classes_res = db.execute(

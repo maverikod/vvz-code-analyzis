@@ -5,11 +5,26 @@ Author: Vasiliy Zdanovskiy
 email: vasilyvz@gmail.com
 """
 
+import uuid
 from typing import Any, Dict, Optional
 
 from mcp_proxy_adapter.commands.result import SuccessResult
 
 from ..base_mcp_command import BaseMCPCommand
+
+
+def _is_valid_uuid4(value: Optional[str]) -> bool:
+    """Return True if value is non-empty and valid UUID4 string; otherwise False."""
+    if not value or not isinstance(value, str):
+        return False
+    s = value.strip()
+    if not s:
+        return False
+    try:
+        u = uuid.UUID(s, version=4)
+        return str(u) == s
+    except (ValueError, TypeError):
+        return False
 
 
 class ListCodeEntitiesMCPCommand(BaseMCPCommand):
@@ -89,7 +104,9 @@ class ListCodeEntitiesMCPCommand(BaseMCPCommand):
                 result = db.execute(query, tuple(params))
                 rows = result.get("data", [])
                 for row in rows:
-                    if not (row.get("cst_node_id") or "").strip():
+                    if not _is_valid_uuid4(row.get("cst_node_id")) or not row.get(
+                        "file_path"
+                    ):
                         continue
                     entities.append({"type": "class", **row})
 
@@ -112,7 +129,9 @@ class ListCodeEntitiesMCPCommand(BaseMCPCommand):
                 result = db.execute(query, tuple(params))
                 rows = result.get("data", [])
                 for row in rows:
-                    if not (row.get("cst_node_id") or "").strip():
+                    if not _is_valid_uuid4(row.get("cst_node_id")) or not row.get(
+                        "file_path"
+                    ):
                         continue
                     entities.append({"type": "function", **row})
 
@@ -136,7 +155,9 @@ class ListCodeEntitiesMCPCommand(BaseMCPCommand):
                 result = db.execute(query, tuple(params))
                 rows = result.get("data", [])
                 for row in rows:
-                    if not (row.get("cst_node_id") or "").strip():
+                    if not _is_valid_uuid4(row.get("cst_node_id")) or not row.get(
+                        "file_path"
+                    ):
                         continue
                     entities.append({"type": "method", **row})
 

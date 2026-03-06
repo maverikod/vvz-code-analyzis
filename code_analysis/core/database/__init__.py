@@ -55,4 +55,8 @@ _MODULES = [
 for _m in _MODULES:
     _add_functions_as_methods(CodeDatabase, _m)
 
+# Attach private helpers used by public methods (e.g. update_file_data -> _clear_file_vectors)
+if hasattr(files, "_clear_file_vectors"):
+    setattr(CodeDatabase, "_clear_file_vectors", files._clear_file_vectors)
+
 __all__ = ["CodeDatabase", "create_driver_config_for_worker"]

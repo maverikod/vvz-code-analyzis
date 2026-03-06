@@ -134,6 +134,7 @@ def update_file_data_atomic_batch(
             row = class_obj.to_db_row()
             row.pop("id", None)
             row.pop("created_at", None)
+            row.setdefault("cst_node_id", "")
             class_rows.append(row)
             class_nodes_ordered.append(node)
             idx = len(class_rows) - 1
@@ -160,6 +161,7 @@ def update_file_data_atomic_batch(
                     row = method_obj.to_db_row()
                     row.pop("id", None)
                     row.pop("created_at", None)
+                    row.setdefault("cst_node_id", "")
                     method_specs.append((idx, row))
 
     for node in ast.walk(tree):
@@ -197,6 +199,7 @@ def update_file_data_atomic_batch(
             row = func_obj.to_db_row()
             row.pop("id", None)
             row.pop("created_at", None)
+            row.setdefault("cst_node_id", "")
             function_rows.append(row)
 
     for node in ast.walk(tree):

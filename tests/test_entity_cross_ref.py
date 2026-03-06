@@ -33,9 +33,10 @@ def test_db(temp_dir):
     """Create test database with schema (including entity_cross_ref)."""
     db_path = temp_dir / "test.db"
     driver_config = create_driver_config_for_worker(
-        db_path=db_path, driver_type="sqlite"
+        db_path, driver_type="sqlite", backup_dir=temp_dir / "backups"
     )
     db = CodeDatabase(driver_config=driver_config)
+    db.sync_schema()
     yield db
     db.close()
 
@@ -51,6 +52,11 @@ def test_project(test_db, temp_dir, project_id):
     return project_id
 
 
+def _make_uuid4():
+    """Return a valid UUID4 string for test entity cst_node_id."""
+    return str(uuid.uuid4())
+
+
 @pytest.fixture
 def test_file_and_entities(test_db, temp_dir, test_project):
     """Create a file and entities (class, method, function) for cross-ref tests."""
@@ -64,23 +70,26 @@ def test_file_and_entities(test_db, temp_dir, test_project):
     test_db._commit()
     file_id = test_db._lastrowid()
 
+    class_cst_id = _make_uuid4()
     test_db._execute(
-        "INSERT INTO classes (file_id, name, line, end_line, docstring, bases) VALUES (?, ?, ?, ?, ?, ?)",
-        (file_id, "MyClass", 1, 10, None, "[]"),
+        "INSERT INTO classes (file_id, name, line, end_line, docstring, bases, cst_node_id) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        (file_id, "MyClass", 1, 10, None, "[]", class_cst_id),
     )
     test_db._commit()
     class_id = test_db._lastrowid()
 
+    method_cst_id = _make_uuid4()
     test_db._execute(
-        "INSERT INTO methods (class_id, name, line, end_line, args, docstring) VALUES (?, ?, ?, ?, ?, ?)",
-        (class_id, "my_method", 3, 8, "[]", None),
+        "INSERT INTO methods (class_id, name, line, end_line, args, docstring, cst_node_id) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        (class_id, "my_method", 3, 8, "[]", None, method_cst_id),
     )
     test_db._commit()
     method_id = test_db._lastrowid()
 
+    func_cst_id = _make_uuid4()
     test_db._execute(
-        "INSERT INTO functions (file_id, name, line, end_line, args, docstring) VALUES (?, ?, ?, ?, ?, ?)",
-        (file_id, "my_func", 12, 15, "[]", None),
+        "INSERT INTO functions (file_id, name, line, end_line, args, docstring, cst_node_id) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        (file_id, "my_func", 12, 15, "[]", None, func_cst_id),
     )
     test_db._commit()
     function_id = test_db._lastrowid()

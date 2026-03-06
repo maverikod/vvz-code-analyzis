@@ -150,4 +150,4 @@ Return exactly:
 | list_code_entities | Fixed | _is_valid_uuid4 + file_path check; only valid UUID4 entities returned. |
 | get_code_entity_info | OK | _normalize_entities keeps only valid cst_node_id. |
 
-**Validation:** black, flake8, mypy passed on all three files. pytest: test_ast_dependencies_response, test_entity_info_response — 11/11 passed. Four errors in test_entity_cross_ref* are fixture-related (no such table: projects), not caused by this step.
+**Validation:** black, flake8, mypy passed on all three files. pytest: full set (hierarchy, dependencies, usages, graph, list_entities, entity_info) — 20/20 passed. Fixtures in test_entity_cross_ref.py and test_entity_cross_ref_builder.py were fixed: test_db now calls sync_schema() with backup_dir; test data INSERTs include cst_node_id (UUID4) for classes, methods, functions to satisfy NOT NULL schema.

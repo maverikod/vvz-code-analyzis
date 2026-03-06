@@ -38,9 +38,10 @@ def test_db(temp_dir):
     """Create test database with full schema."""
     db_path = temp_dir / "test.db"
     driver_config = create_driver_config_for_worker(
-        db_path=db_path, driver_type="sqlite"
+        db_path, driver_type="sqlite", backup_dir=temp_dir / "backups"
     )
     db = CodeDatabase(driver_config=driver_config)
+    db.sync_schema()
     yield db
     db.close()
 
@@ -54,6 +55,11 @@ def test_project(test_db, temp_dir, project_id):
     )
     test_db._commit()
     return project_id
+
+
+def _make_uuid4():
+    """Return a valid UUID4 string for test entity cst_node_id."""
+    return str(uuid.uuid4())
 
 
 @pytest.fixture
@@ -70,25 +76,28 @@ def file_with_entities(test_db, test_project, temp_dir):
     file_id = test_db._lastrowid()
 
     # Class lines 1-20
+    class_cst_id = _make_uuid4()
     test_db._execute(
-        "INSERT INTO classes (file_id, name, line, end_line, docstring, bases) VALUES (?, ?, ?, ?, ?, ?)",
-        (file_id, "Foo", 1, 20, None, "[]"),
+        "INSERT INTO classes (file_id, name, line, end_line, docstring, bases, cst_node_id) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        (file_id, "Foo", 1, 20, None, "[]", class_cst_id),
     )
     test_db._commit()
     class_id = test_db._lastrowid()
 
     # Method lines 3-8
+    method_cst_id = _make_uuid4()
     test_db._execute(
-        "INSERT INTO methods (class_id, name, line, end_line, args, docstring) VALUES (?, ?, ?, ?, ?, ?)",
-        (class_id, "bar", 3, 8, "[]", None),
+        "INSERT INTO methods (class_id, name, line, end_line, args, docstring, cst_node_id) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        (class_id, "bar", 3, 8, "[]", None, method_cst_id),
     )
     test_db._commit()
     method_id = test_db._lastrowid()
 
     # Function lines 12-18
+    func_cst_id = _make_uuid4()
     test_db._execute(
-        "INSERT INTO functions (file_id, name, line, end_line, args, docstring) VALUES (?, ?, ?, ?, ?, ?)",
-        (file_id, "baz", 12, 18, "[]", None),
+        "INSERT INTO functions (file_id, name, line, end_line, args, docstring, cst_node_id) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        (file_id, "baz", 12, 18, "[]", None, func_cst_id),
     )
     test_db._commit()
     function_id = test_db._lastrowid()

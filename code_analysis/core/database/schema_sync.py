@@ -17,7 +17,10 @@ logger = logging.getLogger(__name__)
 # Tables that must have cst_node_id NOT NULL in final schema state (after backfill).
 CST_NODE_ID_NOT_NULL_TABLES = ("classes", "functions", "methods")
 
-# Snapshot/root/node tables: invariant checks run when any of these exist.
+# Snapshot/root/node tables (Step 02 schema). Invariant checks run when any exist.
+# Enforced in compare_schemas() via _validate_snapshot_invariants (Step 03, TZ §6):
+# - One root per snapshot; duplicate roots cause RuntimeError (do not normalize).
+# - Unique (snapshot_id, parent_node_id, child_index); duplicates cause RuntimeError.
 FILE_TREE_SNAPSHOT_TABLES = (
     "file_tree_snapshots",
     "file_tree_snapshot_roots",
@@ -334,8 +337,12 @@ class SchemaComparator:
                 if current_type.upper() != col_def.type.upper():
                     type_changes.append((col_name, current_type, col_def.type))
 
-        # Check for NOT NULL constraint addition (e.g. cst_node_id after backfill)
+        # Check for NOT NULL constraint addition (e.g. cst_node_id after backfill).
+        # Skip primary-key columns: in SQLite PRIMARY KEY implies NOT NULL, and
+        # PRAGMA table_info may report notnull=0 for PK columns; no separate migration needed.
         for col_name, col_def in expected_cols.items():
+            if col_def.primary_key:
+                continue
             if col_name in current_cols and col_def.not_null:
                 if not current_cols[col_name]["not_null"]:
                     constraint_changes.append(f"{col_name} NOT NULL")
@@ -651,6 +658,16 @@ class SchemaComparator:
                 if ch.endswith(" NOT NULL"):
                     col_name = ch[: -len(" NOT NULL")].strip()
                     if self._column_has_nulls(table_name, col_name):
+                        if (
+                            table_name in CST_NODE_ID_NOT_NULL_TABLES
+                            and col_name == "cst_node_id"
+                        ):
+                            warnings.append(
+                                "Deferred NOT NULL enforcement for "
+                                f"{table_name}.{col_name}: column has NULLs "
+                                "(run backfill first)"
+                            )
+                            continue
                         return {
                             "compatible": False,
                             "error": (
@@ -771,7 +788,9 @@ class SchemaComparator:
 
         return statements
 
-    def _generate_create_table_sql(self, table_name: str) -> str:
+    def _generate_create_table_sql(
+        self, table_name: str, *, relax_cst_node_id_not_null: bool = False
+    ) -> str:
         """Generate CREATE TABLE SQL for a table."""
         table_def = self.schema_definition["tables"][table_name]
         columns = table_def["columns"]
@@ -783,7 +802,14 @@ class SchemaComparator:
                 col_sql += " PRIMARY KEY"
             if col.get("autoincrement"):
                 col_sql += " AUTOINCREMENT"
-            if col.get("not_null") and not col.get("primary_key"):
+            is_relaxed_cst_col = (
+                relax_cst_node_id_not_null and col.get("name") == "cst_node_id"
+            )
+            if (
+                col.get("not_null")
+                and not col.get("primary_key")
+                and not is_relaxed_cst_col
+            ):
                 col_sql += " NOT NULL"
             if col.get("default"):
                 default_val = col["default"]
@@ -847,7 +873,15 @@ class SchemaComparator:
         common_cols = expected_cols & current_columns
 
         # Create new table with correct structure
-        new_table_sql = self._generate_create_table_sql(table_name)
+        relax_cst_not_null = (
+            table_name in CST_NODE_ID_NOT_NULL_TABLES
+            and "cst_node_id" in current_columns
+            and self._column_has_nulls(table_name, "cst_node_id")
+        )
+        new_table_sql = self._generate_create_table_sql(
+            table_name,
+            relax_cst_node_id_not_null=relax_cst_not_null,
+        )
         statements.append(
             new_table_sql.replace("CREATE TABLE IF NOT EXISTS", "CREATE TABLE")
         )
@@ -990,6 +1024,9 @@ class SchemaComparator:
 
         for table_name, table_diff in diff.table_diffs.items():
             if table_diff.type_changes:
+                continue
+            # Do not ADD COLUMN for tables we already recreated (new table has all columns).
+            if table_name in tables_to_recreate:
                 continue
             # Add missing columns (handles ALTER TABLE logic)
             # Note: SQLite doesn't support DEFAULT with functions in ALTER TABLE ADD COLUMN

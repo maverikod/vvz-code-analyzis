@@ -69,7 +69,7 @@ def normalize_abs_path(path: str | Path) -> str:
         DeprecationWarning,
         stacklevel=2,
     )
-    from ..path_normalization import normalize_path_simple
+    from .path_normalization import normalize_path_simple
 
     return normalize_path_simple(path)
 

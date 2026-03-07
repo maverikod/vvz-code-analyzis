@@ -13,10 +13,7 @@ from typing import Dict, List, Any, Optional
 
 from .base import BaseRefactorer
 
-try:
-    from .formatters import format_code_with_black, format_error_message
-except ImportError:
-    from .utils import format_code_with_black, format_error_message
+from .formatters import format_code_with_black, format_error_message
 
 logger = logging.getLogger(__name__)
 
@@ -184,17 +181,9 @@ class ClassSplitter(BaseRefactorer):
             # Update database after file write
             if self.database and self.project_id and self.root_dir:
                 try:
-                    # Get relative path for update_file_data
-                    try:
-                        rel_path = str(self.file_path.relative_to(self.root_dir))
-                    except ValueError:
-                        # File is outside root, use absolute path
-                        rel_path = str(self.file_path)
-
-                    update_result = self.database.update_file_data(
-                        file_path=rel_path,
+                    update_result = self.database.index_file(
+                        file_path=str(self.file_path),
                         project_id=self.project_id,
-                        root_dir=self.root_dir,
                     )
                     if not update_result.get("success"):
                         logger.warning(

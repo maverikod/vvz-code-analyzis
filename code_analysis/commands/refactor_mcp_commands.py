@@ -443,17 +443,9 @@ class SplitClassMCPCommand(BaseMCPCommand):
                 # Update database after successful split
                 if result.get("success"):
                     try:
-                        # Get relative path for update_file_data
-                        try:
-                            rel_path = str(file_path_obj.relative_to(root_path))
-                        except ValueError:
-                            # File is outside root, use absolute path
-                            rel_path = str(file_path_obj)
-
-                        update_result = db.update_file_data(
-                            file_path=rel_path,
+                        update_result = db.index_file(
+                            file_path=str(file_path_obj),
                             project_id=proj_id,
-                            root_dir=root_path,
                         )
                         if update_result.get("success"):
                             logger.info(
@@ -856,7 +848,7 @@ class ExtractSuperclassMCPCommand(BaseMCPCommand):
 
             if dry_run:
                 # Preview mode - return preview without making changes
-                from ..core.refactorer import SuperclassExtractor
+                from ..core.refactorer_pkg.extractor import SuperclassExtractor
 
                 file_path_obj = self._validate_file_path(file_path, root_path)
 
@@ -915,18 +907,15 @@ class ExtractSuperclassMCPCommand(BaseMCPCommand):
                 # Update database after successful extraction
                 if result.get("success"):
                     try:
-                        # Get relative path for update_file_data
                         file_path_obj = Path(file_path)
-                        try:
-                            rel_path = str(file_path_obj.relative_to(root_path))
-                        except ValueError:
-                            # File is outside root, use absolute path
-                            rel_path = str(file_path_obj)
-
-                        update_result = db.update_file_data(
-                            file_path=rel_path,
+                        path_for_index = (
+                            file_path_obj
+                            if file_path_obj.is_absolute()
+                            else (root_path / file_path_obj)
+                        )
+                        update_result = db.index_file(
+                            file_path=str(path_for_index.resolve()),
                             project_id=proj_id,
-                            root_dir=root_path,
                         )
                         if update_result.get("success"):
                             logger.info(
@@ -1328,9 +1317,7 @@ class SplitFileToPackageMCPCommand(BaseMCPCommand):
                     code="BACKUP_REQUIRED",
                     details={"file_path": str(file_path_obj)},
                 )
-            logger.info(
-                f"Backup created before split_file_to_package: {backup_uuid}"
-            )
+            logger.info(f"Backup created before split_file_to_package: {backup_uuid}")
 
             config_data = BaseMCPCommand._get_raw_config()
             git_ok, git_err = commit_after_write(
@@ -1360,10 +1347,19 @@ class SplitFileToPackageMCPCommand(BaseMCPCommand):
                     if init_file.exists():
                         try:
                             rel_init_path = str(init_file.relative_to(root_path))
-                            update_result = db.update_file_data(
-                                file_path=rel_init_path,
+                            init_content = init_file.read_text(encoding="utf-8")
+                            db.add_file(
+                                path=str(init_file.resolve()),
+                                lines=len(init_content.splitlines()),
+                                # Force index_file() to perform full AST/CST extraction.
+                                last_modified=0.0,
+                                has_docstring=init_content.strip().startswith('"""')
+                                or init_content.strip().startswith("'''"),
                                 project_id=proj_id,
-                                root_dir=root_path,
+                            )
+                            update_result = db.index_file(
+                                file_path=str(init_file.resolve()),
+                                project_id=proj_id,
                             )
                             if update_result.get("success"):
                                 logger.info(
@@ -1384,10 +1380,23 @@ class SplitFileToPackageMCPCommand(BaseMCPCommand):
                                     rel_module_path = str(
                                         module_path.relative_to(root_path)
                                     )
-                                    update_result = db.update_file_data(
-                                        file_path=rel_module_path,
+                                    module_content = module_path.read_text(
+                                        encoding="utf-8"
+                                    )
+                                    db.add_file(
+                                        path=str(module_path.resolve()),
+                                        lines=len(module_content.splitlines()),
+                                        # Force index_file() to perform full AST/CST extraction.
+                                        last_modified=0.0,
+                                        has_docstring=module_content.strip().startswith(
+                                            '"""'
+                                        )
+                                        or module_content.strip().startswith("'''"),
                                         project_id=proj_id,
-                                        root_dir=root_path,
+                                    )
+                                    update_result = db.index_file(
+                                        file_path=str(module_path.resolve()),
+                                        project_id=proj_id,
                                     )
                                     if update_result.get("success"):
                                         logger.info(

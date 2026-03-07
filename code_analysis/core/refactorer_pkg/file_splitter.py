@@ -16,9 +16,11 @@ from .base import BaseRefactorer
 
 logger = logging.getLogger(__name__)
 
+
 # Lazy import to avoid circular dependency; used only for duplicate-name validation
 def _list_cst_blocks(source: str) -> list:
-    from code_analysis.core.cst_module import list_cst_blocks as _list_blocks
+    from ..cst_module import list_cst_blocks as _list_blocks
+
     return _list_blocks(source)
 
 
@@ -95,34 +97,23 @@ class FileToPackageSplitter(BaseRefactorer):
                 # Update database for new file
                 if self.database and self.project_id and self.root_dir:
                     try:
-                        # First, add file to database if it doesn't exist
                         import os
 
-                        file_mtime = os.path.getmtime(module_path)
                         lines = len(module_content.splitlines())
                         has_docstring = module_content.strip().startswith(
                             '"""'
                         ) or module_content.strip().startswith("'''")
-
-                        # Add file to database (or update if exists)
                         self.database.add_file(
                             path=str(module_path),
                             lines=lines,
-                            last_modified=file_mtime,
+                            # Force first index_file() to run full AST/CST extraction.
+                            last_modified=0.0,
                             has_docstring=has_docstring,
                             project_id=self.project_id,
                         )
-
-                        # Now update file data (this will parse AST/CST and extract entities)
-                        try:
-                            rel_path = str(module_path.relative_to(self.root_dir))
-                        except ValueError:
-                            rel_path = str(module_path)
-
-                        update_result = self.database.update_file_data(
-                            file_path=rel_path,
+                        update_result = self.database.index_file(
+                            file_path=str(module_path),
                             project_id=self.project_id,
-                            root_dir=self.root_dir,
                         )
                         if not update_result.get("success"):
                             logger.warning(
@@ -140,6 +131,36 @@ class FileToPackageSplitter(BaseRefactorer):
                             f"Error updating database for {module_path}: {e}",
                             exc_info=True,
                         )
+
+            # Ensure package __init__.py is also indexed and visible in files/cst_trees.
+            if self.database and self.project_id and self.root_dir:
+                try:
+                    init_content = init_file.read_text(encoding="utf-8")
+                    init_has_docstring = init_content.strip().startswith(
+                        '"""'
+                    ) or init_content.strip().startswith("'''")
+                    self.database.add_file(
+                        path=str(init_file),
+                        lines=len(init_content.splitlines()),
+                        # Force first index_file() to run full AST/CST extraction.
+                        last_modified=0.0,
+                        has_docstring=init_has_docstring,
+                        project_id=self.project_id,
+                    )
+                    update_result = self.database.index_file(
+                        file_path=str(init_file),
+                        project_id=self.project_id,
+                    )
+                    if not update_result.get("success"):
+                        logger.warning(
+                            f"Failed to update database for {init_file}: "
+                            f"{update_result.get('error')}"
+                        )
+                except Exception as e:
+                    logger.warning(
+                        f"Failed to update database for {init_file}: {e}",
+                        exc_info=True,
+                    )
 
             return (
                 True,
@@ -258,9 +279,7 @@ class FileToPackageSplitter(BaseRefactorer):
             if b.kind in ("class", "function"):
                 by_qualname[b.qualname].append(b.block_id)
 
-        duplicates = {
-            name: ids for name, ids in by_qualname.items() if len(ids) > 1
-        }
+        duplicates = {name: ids for name, ids in by_qualname.items() if len(ids) > 1}
         if not duplicates:
             return None
 

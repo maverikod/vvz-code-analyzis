@@ -1196,14 +1196,22 @@ def mark_file_deleted(
     except Exception as e:
         logger.debug(f"Could not get project root from database: {e}")
 
-    # Use unified path normalization if project_root is available
+    # Use unified path normalization if project_root is available.
+    # Important: normalize_file_path() validates file existence before applying
+    # project_root semantics, so for relative paths we pre-resolve against
+    # project_root to avoid false "File not found" from current working dir.
     abs_path = None
     if project_root and project_root.exists():
         try:
             from ..path_normalization import normalize_file_path
             from ..exceptions import ProjectIdMismatchError
 
-            normalized = normalize_file_path(file_path, project_root=project_root)
+            candidate_path = (
+                str((project_root / file_path).resolve())
+                if not Path(file_path).is_absolute()
+                else file_path
+            )
+            normalized = normalize_file_path(candidate_path, project_root=project_root)
             abs_path = normalized.absolute_path
 
             # Validate project_id matches
@@ -1217,9 +1225,17 @@ def mark_file_deleted(
                     file_project_id=normalized.project_id,
                     db_project_id=project_id,
                 )
-        except (ProjectIdMismatchError, FileNotFoundError):
-            # Re-raise critical errors
+        except ProjectIdMismatchError:
+            # Re-raise critical mismatch
             raise
+        except FileNotFoundError:
+            # File can be absent on disk but still tracked in DB (soft-delete path).
+            from ..path_normalization import normalize_path_simple
+
+            if Path(file_path).is_absolute():
+                abs_path = normalize_path_simple(file_path)
+            else:
+                abs_path = normalize_path_simple(project_root / file_path)
         except Exception as e:
             # Log but continue with simple normalization
             logger.debug(f"Path normalization failed, using simple normalization: {e}")
@@ -1882,7 +1898,7 @@ def update_file_data_atomic(
                         method_args = _extract_args(item)
                         # Calculate cyclomatic complexity
                         try:
-                            from ..core.complexity import calculate_complexity
+                            from ..complexity_analyzer import calculate_complexity
 
                             method_complexity = calculate_complexity(item)
                         except Exception as e:
@@ -1950,7 +1966,7 @@ def update_file_data_atomic(
                     args = _extract_args(node)
                     # Calculate cyclomatic complexity
                     try:
-                        from ..core.complexity import calculate_complexity
+                        from ..complexity_analyzer import calculate_complexity
 
                         function_complexity = calculate_complexity(node)
                     except Exception as e:

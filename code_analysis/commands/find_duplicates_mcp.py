@@ -118,11 +118,12 @@ class FindDuplicatesMCPCommand(BaseMCPCommand):
             svo_client_manager = None
             if use_semantic:
                 try:
-                    from ..core.config_manager import get_config
+                    from ..core.config import load_config
 
-                    config = get_config(root_path)
+                    config_path = Path(root_path) / "config.json"
+                    config = load_config(config_path)
                     svo_client_manager = SVOClientManager(
-                        config_dict=config, root_dir=str(root_path)
+                        config, root_dir=str(root_path)
                     )
                     await svo_client_manager.initialize()
                     detector.set_svo_client_manager(svo_client_manager)

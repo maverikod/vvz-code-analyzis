@@ -1,0 +1,94 @@
+"""
+MCP command: list_watch_dirs.
+
+Author: Vasiliy Zdanovskiy
+email: vasilyvz@gmail.com
+"""
+
+from ._shared import (
+    Any,
+    BaseMCPCommand,
+    Dict,
+    ErrorResult,
+    Optional,
+    SuccessResult,
+    logger,
+)
+
+
+class ListWatchDirsMCPCommand(BaseMCPCommand):
+    """
+    List all watch directories with their IDs and paths.
+
+    Allows models without project source code to discover watch_dir_id
+    for create_project (e.g. call help('list_watch_dirs'), then call_server,
+    then use returned id in create_project).
+    """
+
+    name = "list_watch_dirs"
+    version = "1.0.0"
+    descr = "List watch directories (id and path) for use with create_project"
+    category = "project_management"
+    author = "Vasiliy Zdanovskiy"
+    email = "vasilyvz@gmail.com"
+    use_queue = False
+
+    @classmethod
+    def get_schema(
+        cls: type["ListWatchDirsMCPCommand"],
+    ) -> Dict[str, Any]:
+        return {
+            "type": "object",
+            "description": (
+                "List all watch directories. Returns id (use as watch_dir_id in create_project) "
+                "and absolute_path. Database path is resolved from server config."
+            ),
+            "properties": {},
+            "required": [],
+            "additionalProperties": False,
+        }
+
+    async def execute(
+        self: "ListWatchDirsMCPCommand",
+        **kwargs: Any,
+    ) -> SuccessResult | ErrorResult:
+        try:
+            from ..core.storage_paths import load_raw_config, resolve_storage_paths
+
+            config_path = self._resolve_config_path()
+            config_data = load_raw_config(config_path)
+            storage = resolve_storage_paths(
+                config_data=config_data, config_path=config_path
+            )
+            from ..core.database_client.client import DatabaseClient
+            from .base_mcp_command import _get_socket_path_from_db_path
+
+            socket_path = _get_socket_path_from_db_path(storage.db_path)
+            database = DatabaseClient(socket_path=socket_path)
+            database.connect()
+            try:
+                result = database.execute(
+                    """
+                    SELECT wd.id, wd.name, wdp.absolute_path
+                    FROM watch_dirs wd
+                    LEFT JOIN watch_dir_paths wdp ON wd.id = wdp.watch_dir_id
+                    ORDER BY wd.created_at
+                    """
+                )
+                rows = result.get("data", []) if isinstance(result, dict) else []
+                items = [
+                    {
+                        "id": r.get("id"),
+                        "name": r.get("name"),
+                        "absolute_path": r.get("absolute_path"),
+                    }
+                    for r in rows
+                ]
+                return SuccessResult(
+                    data={"watch_dirs": items, "count": len(items)},
+                    message=f"Found {len(items)} watch directory(ies)",
+                )
+            finally:
+                database.disconnect()
+        except Exception as e:
+            return self._handle_error(e, "LIST_WATCH_DIRS_ERROR", "list_watch_dirs")

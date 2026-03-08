@@ -11,6 +11,7 @@ email: vasilyvz@gmail.com
 from __future__ import annotations
 
 import logging
+import sqlite3
 from pathlib import Path
 from typing import Any, Dict
 
@@ -21,6 +22,14 @@ from code_analysis.core.database_client.protocol import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _is_fk_or_integrity_error(exc: BaseException) -> bool:
+    """Return True if exception is FK or integrity constraint (project-deleted race)."""
+    if isinstance(exc, sqlite3.IntegrityError):
+        return True
+    msg = (getattr(exc, "args", (None,))[0] or str(exc)).lower()
+    return "foreign key" in msg or "integrity" in msg
 
 
 class _RPCHandlersIndexFileMixin:
@@ -87,8 +96,23 @@ class _RPCHandlersIndexFileMixin:
             logger.debug(
                 "[index_file] Using from_existing_driver (single connection, no sync_schema)"
             )
-            db = CodeDatabase.from_existing_driver(self.driver)
-            update_result = db.update_file_data(file_path, project_id, Path(root_path))
+            try:
+                db = CodeDatabase.from_existing_driver(self.driver)
+                update_result = db.update_file_data(
+                    file_path, project_id, Path(root_path)
+                )
+            except sqlite3.IntegrityError as e:
+                # Project deleted during indexing (FK race). Return clear error; do not run cleanup.
+                logger.warning(
+                    "[index_file] FK/integrity (project likely deleted): project_id=%s %s",
+                    project_id,
+                    e,
+                )
+                return ErrorResult(
+                    error_code=ErrorCode.NOT_FOUND,
+                    description="Project no longer exists (deleted during indexing)",
+                )
+
             # Do not disconnect db.driver: it is the RPC server's shared connection.
 
             if not update_result.get("success"):
@@ -108,6 +132,16 @@ class _RPCHandlersIndexFileMixin:
                         (abs_path, project_id),
                         None,
                     )
+                except sqlite3.IntegrityError:
+                    # Project deleted; do not attempt further cleanup SQL
+                    logger.warning(
+                        "[index_file] FK on needs_chunking (project deleted): %s",
+                        abs_path,
+                    )
+                    return ErrorResult(
+                        error_code=ErrorCode.NOT_FOUND,
+                        description="Project no longer exists (deleted during indexing)",
+                    )
                 except Exception as e:
                     logger.warning(
                         "Failed to clear needs_chunking after index_file for %s: %s",
@@ -123,6 +157,9 @@ class _RPCHandlersIndexFileMixin:
                     (project_id, abs_path),
                     None,
                 )
+            except sqlite3.IntegrityError:
+                # Project deleted; no cleanup for missing project
+                pass
             except Exception:
                 pass
 
@@ -132,6 +169,15 @@ class _RPCHandlersIndexFileMixin:
             )
             return SuccessResult(data=update_result)
         except Exception as e:
+            if _is_fk_or_integrity_error(e):
+                logger.warning(
+                    "[index_file] FK/integrity (project likely deleted): %s",
+                    e,
+                )
+                return ErrorResult(
+                    error_code=ErrorCode.NOT_FOUND,
+                    description="Project no longer exists (deleted during indexing)",
+                )
             err_msg = str(e)
             logger.error("index_file failed for %s: %s", file_path, e, exc_info=True)
             if "temp_files" in err_msg:

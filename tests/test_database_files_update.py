@@ -296,6 +296,18 @@ def new_function():
             "not found" in result.get("error", "").lower()
         ), "Error should mention file not found"
 
+    def test_update_file_data_project_not_found(self, test_db, temp_dir):
+        """Test update_file_data when project_id is not in projects (FK race guard)."""
+        missing_project_id = str(uuid.uuid4())
+        result = test_db.update_file_data(
+            file_path=str(temp_dir / "any.py"),
+            project_id=missing_project_id,
+            root_dir=temp_dir,
+        )
+        assert result.get("success") is False
+        assert "Project not found" in result.get("error", "")
+        assert missing_project_id in result.get("error", "")
+
     def test_update_file_data_syntax_error(
         self, test_db, test_file, test_project, temp_dir
     ):

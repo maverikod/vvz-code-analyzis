@@ -17,6 +17,12 @@ from .helpers import _last_modified_to_unix
 logger = logging.getLogger(__name__)
 
 
+def _is_fk_or_integrity_error(exc: Exception) -> bool:
+    """True if the exception is FK or integrity-related (no silent swallow)."""
+    s = str(exc).lower()
+    return "foreign key" in s or "integrity" in s
+
+
 def update_file_data(
     self,
     file_path: str,
@@ -97,6 +103,14 @@ def update_file_data(
                 f"[update_file_data] Failed to validate project_id for {abs_path}: {e}"
             )
 
+        # Early project existence guard: avoid FK race / write when project was deleted
+        if self.get_project(project_id) is None:
+            return {
+                "success": False,
+                "error": f"Project not found: {project_id}",
+                "file_path": abs_path,
+            }
+
         # Get file record
         file_record = self.get_file_by_path(abs_path, project_id)
         if not file_record:
@@ -155,9 +169,14 @@ def update_file_data(
                     e,
                     exc_info=True,
                 )
+                err_msg = (
+                    f"Database foreign key constraint error: {e}"
+                    if _is_fk_or_integrity_error(e)
+                    else f"Failed on skip path: {e}"
+                )
                 return {
                     "success": False,
-                    "error": f"Failed on skip path: {e}",
+                    "error": err_msg,
                     "file_path": abs_path,
                     "file_id": file_id,
                 }
@@ -175,9 +194,14 @@ def update_file_data(
             logger.error(
                 f"Error clearing file data for {file_path}: {e}", exc_info=True
             )
+            err_msg = (
+                f"Database foreign key constraint error: {e}"
+                if _is_fk_or_integrity_error(e)
+                else f"Failed to clear old records: {e}"
+            )
             return {
                 "success": False,
-                "error": f"Failed to clear old records: {e}",
+                "error": err_msg,
                 "file_path": abs_path,
                 "file_id": file_id,
             }
@@ -345,9 +369,14 @@ def update_file_data(
 
         except Exception as e:
             logger.error(f"Error analyzing file {file_path}: {e}", exc_info=True)
+            err_msg = (
+                f"Database foreign key constraint error: {e}"
+                if _is_fk_or_integrity_error(e)
+                else f"Failed to analyze file: {e}"
+            )
             return {
                 "success": False,
-                "error": f"Failed to analyze file: {e}",
+                "error": err_msg,
                 "file_path": abs_path,
                 "file_id": file_id,
             }
@@ -356,6 +385,18 @@ def update_file_data(
         # Re-raise project ID mismatch - this is a critical error that should not be swallowed
         raise
     except Exception as e:
+        if _is_fk_or_integrity_error(e):
+            logger.error(
+                "FK/integrity error in update_file_data for %s: %s",
+                file_path,
+                e,
+                exc_info=True,
+            )
+            return {
+                "success": False,
+                "error": f"Database foreign key constraint error: {e}",
+                "file_path": str(file_path),
+            }
         logger.error(
             f"Unexpected error in update_file_data for {file_path}: {e}",
             exc_info=True,

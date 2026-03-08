@@ -51,6 +51,7 @@ def temp_db(tmp_path):
 
     try:
         db = CodeDatabase(driver_config)
+        db._create_schema()
         yield db
         db.close()
     finally:

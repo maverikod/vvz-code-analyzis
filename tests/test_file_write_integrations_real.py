@@ -12,7 +12,6 @@ from pathlib import Path
 import pytest
 
 from code_analysis.core.database import CodeDatabase
-from code_analysis.core.database.base import create_driver_config_for_worker
 from code_analysis.core.refactorer_pkg.file_splitter import FileToPackageSplitter
 from code_analysis.core.refactorer_pkg.splitter import ClassSplitter
 
@@ -32,25 +31,37 @@ def project_id():
 
 @pytest.fixture
 def test_db(temp_dir):
-    """Create test database."""
+    """Create test database with full schema (including file_tree_snapshots)."""
     db_path = temp_dir / "test.db"
-    driver_config = create_driver_config_for_worker(
-        db_path=db_path, driver_type="sqlite"
-    )
+    backup_dir = temp_dir / "backups"
+    backup_dir.mkdir(exist_ok=True)
+    driver_config = {
+        "type": "sqlite",
+        "config": {"path": str(db_path), "backup_dir": str(backup_dir)},
+    }
     db = CodeDatabase(driver_config=driver_config)
+    db._create_schema()
+    db.sync_schema()
     yield db
     db.close()
 
 
 @pytest.fixture
 def test_project(test_db, temp_dir, project_id):
-    """Create test project in database."""
+    """Create test project in database and projectid file (required by update_file_data)."""
+    import json
+
     project_name = temp_dir.name
     test_db._execute(
         "INSERT INTO projects (id, root_path, name, updated_at) VALUES (?, ?, ?, julianday('now'))",
         (project_id, str(temp_dir), project_name),
     )
     test_db._commit()
+    projectid_file = temp_dir / "projectid"
+    projectid_file.write_text(
+        json.dumps({"id": project_id, "description": "Test project"}),
+        encoding="utf-8",
+    )
     return project_id
 
 
@@ -80,18 +91,19 @@ def real_test_file_with_classes(test_data_root):
 def real_test_file_in_db(
     test_db, test_project, temp_dir, real_test_file_with_classes, test_data_root
 ):
-    """Add real test file to database."""
-    # Read file content
-    file_content = real_test_file_with_classes.read_text(encoding="utf-8")
-
+    """Add real test file to database (copy under temp_dir so path is under project root)."""
     import os
+    import shutil
 
-    file_mtime = os.path.getmtime(real_test_file_with_classes)
+    file_content = real_test_file_with_classes.read_text(encoding="utf-8")
+    copy_path = temp_dir / "real_file.py"
+    shutil.copy2(real_test_file_with_classes, copy_path)
+
+    file_mtime = os.path.getmtime(copy_path)
     lines = len(file_content.splitlines())
 
-    # Add file to database
     file_id = test_db.add_file(
-        path=str(real_test_file_with_classes),
+        path=str(copy_path),
         lines=lines,
         last_modified=file_mtime,
         has_docstring=file_content.strip().startswith('"""')
@@ -99,7 +111,7 @@ def real_test_file_in_db(
         project_id=test_project,
     )
 
-    return file_id, real_test_file_with_classes, test_project, test_data_root
+    return file_id, copy_path, test_project, temp_dir
 
 
 class TestFileSplitterIntegrationReal:
@@ -159,16 +171,16 @@ class TestFileSplitterIntegrationReal:
         import ast
 
         tree = ast.parse(file_content, filename=str(test_file))
-        for node in ast.walk(tree):
-            if isinstance(node, ast.ClassDef):
-                classes.append(node.name)
-            elif isinstance(node, ast.FunctionDef) and not any(
+        for ast_node in ast.walk(tree):
+            if isinstance(ast_node, ast.ClassDef):
+                classes.append(ast_node.name)
+            elif isinstance(ast_node, ast.FunctionDef) and not any(
                 isinstance(parent, ast.ClassDef)
                 for parent in ast.walk(tree)
-                if hasattr(parent, "body") and node in getattr(parent, "body", [])
+                if hasattr(parent, "body") and ast_node in getattr(parent, "body", [])
             ):
                 # Top-level function (not a method)
-                functions.append(node.name)
+                functions.append(ast_node.name)
 
         # Skip if file doesn't have enough entities to split
         if len(classes) < 2 and len(functions) < 2:

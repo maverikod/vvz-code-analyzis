@@ -25,130 +25,14 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterable, List, Optional
 
+from .svo_client_manager_logging import (
+    TRACE_PREVIEW_LEN as _TRACE_PREVIEW_LEN,
+    _get_chunker_logger,
+    _get_vectorization_trace_logger,
+    log_vectorization_trace,
+)
+
 logger = logging.getLogger(__name__)
-
-# Separate logger for chunker requests
-_chunker_logger: Optional[logging.Logger] = None
-
-# Trace logger: what vectorizer sends/receives — text (preview), result (bool), error (str)
-_vectorization_trace_logger: Optional[logging.Logger] = None
-_TRACE_PREVIEW_LEN = 200
-
-
-def _get_vectorization_trace_logger(root_dir: Optional[Path] = None) -> logging.Logger:
-    """
-    Logger for vectorization request/response trace: text (preview), result (true/false), error.
-
-    Writes to logs/vectorization_chunker_trace.log. One line per item:
-    timestamp | text=<preview> | result=True|False | error=<description>
-    """
-    global _vectorization_trace_logger
-    if _vectorization_trace_logger is None:
-        _vectorization_trace_logger = logging.getLogger(
-            "code_analysis.vectorization_chunker_trace"
-        )
-        _vectorization_trace_logger.setLevel(logging.INFO)
-        _vectorization_trace_logger.propagate = False
-        if not _vectorization_trace_logger.handlers:
-            if root_dir:
-                log_dir = Path(root_dir) / "logs"
-            else:
-                current_path = Path.cwd()
-                log_dir = (
-                    current_path / "logs"
-                    if (current_path / "config.json").exists()
-                    else Path("logs")
-                )
-            log_dir.mkdir(parents=True, exist_ok=True)
-            log_file = log_dir / "vectorization_chunker_trace.log"
-            handler = logging.FileHandler(log_file, encoding="utf-8")
-            handler.setLevel(logging.INFO)
-            handler.setFormatter(
-                logging.Formatter(
-                    "%(asctime)s | %(message)s", datefmt="%Y-%m-%d %H:%M:%S"
-                )
-            )
-            _vectorization_trace_logger.addHandler(handler)
-    return _vectorization_trace_logger
-
-
-def log_vectorization_trace(
-    text_preview: str,
-    result: bool,
-    error: str = "",
-    root_dir: Optional[Path] = None,
-) -> None:
-    """
-    Write one line to vectorization_chunker_trace.log: text (preview), result (true/false), error.
-
-    Args:
-        text_preview: Short preview of sent text (e.g. first 200 chars).
-        result: True if chunker returned usable result (e.g. with embedding), False otherwise.
-        error: Error description when result is False; empty when result is True.
-        root_dir: Optional root for log directory.
-    """
-    trace_log = _get_vectorization_trace_logger(root_dir)
-    preview_escaped = (
-        (text_preview or "").replace("\n", " ").replace("\r", " ")[:_TRACE_PREVIEW_LEN]
-    )
-    err_escaped = (error or "").replace("\n", " ").replace("\r", " ")[:500]
-    trace_log.info(
-        "text=%s | result=%s | error=%s",
-        preview_escaped,
-        result,
-        err_escaped,
-    )
-
-
-def _get_chunker_logger(root_dir: Optional[Path] = None) -> logging.Logger:
-    """
-    Get or create logger for chunker requests.
-
-    Args:
-        root_dir: Optional root directory path. If not provided, will try to infer
-            from current working directory or use "logs/" relative path.
-
-    Returns:
-        Logger instance configured to write to logs/chunker_requests.log
-    """
-    global _chunker_logger
-
-    if _chunker_logger is None:
-        _chunker_logger = logging.getLogger("code_analysis.chunker_requests")
-        _chunker_logger.setLevel(logging.INFO)
-
-        # Don't propagate to root logger
-        _chunker_logger.propagate = False
-
-        # Create file handler if not exists
-        if not _chunker_logger.handlers:
-            # Determine log directory
-            if root_dir:
-                log_dir = Path(root_dir) / "logs"
-            else:
-                # Try to find project root by looking for config.json or use current dir
-                current_path = Path.cwd()
-                if (current_path / "config.json").exists():
-                    log_dir = current_path / "logs"
-                else:
-                    # Fallback to relative path
-                    log_dir = Path("logs")
-
-            log_dir.mkdir(parents=True, exist_ok=True)
-            log_file = log_dir / "chunker_requests.log"
-
-            handler = logging.FileHandler(log_file, encoding="utf-8")
-            handler.setLevel(logging.INFO)
-
-            # Format: timestamp | level | message
-            formatter = logging.Formatter(
-                "%(asctime)s | %(levelname)s | %(message)s", datefmt="%Y-%m-%d %H:%M:%S"
-            )
-            handler.setFormatter(formatter)
-
-            _chunker_logger.addHandler(handler)
-
-    return _chunker_logger
 
 
 # Try to import embed_client (vectorization only)

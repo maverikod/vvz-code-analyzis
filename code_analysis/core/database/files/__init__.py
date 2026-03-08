@@ -30,6 +30,11 @@ from .trash import (
     unmark_file_deleted,
 )
 from .update import update_file_data
+from .update_vectorize import (
+    remove_missing_files,
+    update_and_vectorize_file,
+    vectorize_file_immediately,
+)
 from .versions import collapse_file_versions, get_file_versions
 
 __all__ = [
@@ -48,7 +53,10 @@ __all__ = [
     "hard_delete_file",
     "mark_file_deleted",
     "mark_file_needs_chunking",
+    "remove_missing_files",
     "unmark_file_deleted",
+    "update_and_vectorize_file",
     "update_file_data",
     "update_file_data_atomic",
+    "vectorize_file_immediately",
 ]

@@ -1,0 +1,252 @@
+"""
+Register first part of code analysis commands (CST, AST, analysis, search, code_mapper).
+
+Author: Vasiliy Zdanovskiy
+email: vasilyvz@gmail.com
+"""
+
+import logging
+
+from mcp_proxy_adapter.commands.command_registry import registry
+
+logger = logging.getLogger(__name__)
+
+
+def register_commands_part1(reg: registry) -> None:
+    """Register CST, AST, analysis, search, and code_mapper commands."""
+    try:
+        from .commands.analyze_project_command import AnalyzeProjectCommand  # type: ignore[import-not-found]
+        reg.register(AnalyzeProjectCommand, "custom")
+    except ImportError:
+        pass
+
+    try:
+        from .commands.analyze_file_command import AnalyzeFileCommand  # type: ignore[import-not-found]
+        reg.register(AnalyzeFileCommand, "custom")
+    except ImportError:
+        pass
+
+    try:
+        from .commands.help_command import HelpCommand  # type: ignore[import-not-found]
+        reg.register(HelpCommand, "custom")
+    except ImportError:
+        pass
+
+    try:
+        from .commands.check_vectors_command import CheckVectorsCommand  # type: ignore[import-not-found]
+        reg.register(CheckVectorsCommand, "custom")
+    except ImportError:
+        pass
+
+    try:
+        from .commands.cst_compose_module_command import ComposeCSTModuleCommand
+        reg.register(ComposeCSTModuleCommand, "custom")
+    except ImportError:
+        pass
+
+    try:
+        from .commands.list_cst_blocks_command import ListCSTBlocksCommand
+        reg.register(ListCSTBlocksCommand, "custom")
+    except ImportError:
+        pass
+
+    try:
+        from .commands.file_structure_command import FileStructureCommand
+        reg.register(FileStructureCommand, "custom")
+    except ImportError:
+        pass
+
+    try:
+        from .commands.query_cst_command import QueryCSTCommand
+        reg.register(QueryCSTCommand, "custom")
+    except ImportError:
+        pass
+
+    try:
+        from .commands.get_file_lines_command import GetFileLinesCommand
+        reg.register(GetFileLinesCommand, "custom")
+    except ImportError:
+        pass
+
+    try:
+        from .commands.replace_file_lines_command import ReplaceFileLinesCommand
+        reg.register(ReplaceFileLinesCommand, "custom")
+    except ImportError:
+        pass
+
+    try:
+        from .commands.cst_load_file_command import CSTLoadFileCommand
+        from .commands.cst_modify_tree_command import CSTModifyTreeCommand
+        from .commands.cst_save_tree_command import CSTSaveTreeCommand
+        from .commands.cst_reload_tree_command import CSTReloadTreeCommand
+        from .commands.cst_find_node_command import CSTFindNodeCommand
+        from .commands.cst_get_node_info_command import CSTGetNodeInfoCommand
+        from .commands.cst_get_node_by_range_command import CSTGetNodeByRangeCommand
+        from .commands.cst_get_node_at_line_command import CSTGetNodeAtLineCommand
+        from .commands.cst_create_file_command import CSTCreateFileCommand
+        from .commands.cst_convert_and_save_command import CSTConvertAndSaveCommand
+
+        reg.register(CSTLoadFileCommand, "custom")
+        reg.register(CSTModifyTreeCommand, "custom")
+        reg.register(CSTSaveTreeCommand, "custom")
+        reg.register(CSTReloadTreeCommand, "custom")
+        reg.register(CSTFindNodeCommand, "custom")
+        reg.register(CSTGetNodeInfoCommand, "custom")
+        reg.register(CSTGetNodeByRangeCommand, "custom")
+        reg.register(CSTGetNodeAtLineCommand, "custom")
+        reg.register(CSTCreateFileCommand, "custom")
+        reg.register(CSTConvertAndSaveCommand, "custom")
+        logger.info("✅ Registered CST tree commands")
+    except ImportError as e:
+        logger.warning("Failed to import CST tree commands: %s", e)
+    except Exception as e:
+        logger.error("Failed to register CST tree commands: %s", e, exc_info=True)
+
+    try:
+        from .commands.ast_mcp_commands import (
+            ASTStatisticsMCPCommand,
+            ExportGraphMCPCommand,
+            FindDependenciesMCPCommand,
+            FindUsagesMCPCommand,
+            GetASTMCPCommand,
+            GetClassHierarchyMCPCommand,
+            GetCodeEntityInfoMCPCommand,
+            GetEntityDependenciesMCPCommand,
+            GetEntityDependentsMCPCommand,
+            GetImportsMCPCommand,
+            ListCodeEntitiesMCPCommand,
+            ListProjectFilesMCPCommand,
+            ReadOnlyBatchMCPCommand,
+            SearchASTNodesMCPCommand,
+        )
+
+        reg.register(GetASTMCPCommand, "custom")
+        reg.register(SearchASTNodesMCPCommand, "custom")
+        reg.register(ASTStatisticsMCPCommand, "custom")
+        reg.register(ListProjectFilesMCPCommand, "custom")
+        reg.register(GetCodeEntityInfoMCPCommand, "custom")
+        reg.register(ListCodeEntitiesMCPCommand, "custom")
+        reg.register(GetImportsMCPCommand, "custom")
+        reg.register(FindDependenciesMCPCommand, "custom")
+        reg.register(GetEntityDependenciesMCPCommand, "custom")
+        reg.register(GetEntityDependentsMCPCommand, "custom")
+        reg.register(GetClassHierarchyMCPCommand, "custom")
+        reg.register(FindUsagesMCPCommand, "custom")
+        reg.register(ExportGraphMCPCommand, "custom")
+        reg.register(ReadOnlyBatchMCPCommand, "custom")
+    except ImportError:
+        pass
+
+    try:
+        from .commands.code_mapper_mcp_command import UpdateIndexesMCPCommand
+        reg.register(UpdateIndexesMCPCommand, "custom")
+    except ImportError:
+        pass
+
+    try:
+        from .commands.vector_commands import RebuildFaissCommand, RevectorizeCommand
+        reg.register(RebuildFaissCommand, "custom")
+        reg.register(RevectorizeCommand, "custom")
+    except ImportError:
+        pass
+
+    try:
+        from .commands.semantic_search_mcp import SemanticSearchMCPCommand
+        reg.register(SemanticSearchMCPCommand, "custom")
+        logger.info("✅ Registered semantic_search command")
+    except ImportError as e:
+        logger.warning("Failed to import semantic_search command: %s", e)
+    except Exception as e:
+        logger.error("Failed to register semantic_search command: %s", e, exc_info=True)
+
+    try:
+        from .commands.watch_dirs_commands import (  # type: ignore[import-not-found]
+            AddWatchDirCommand,
+            RemoveWatchDirCommand,
+        )
+        reg.register(AddWatchDirCommand, "custom")
+        reg.register(RemoveWatchDirCommand, "custom")
+    except ImportError:
+        pass
+
+    try:
+        from .commands.refactor_mcp_commands import (
+            ExtractSuperclassMCPCommand,
+            SplitClassMCPCommand,
+            SplitFileToPackageMCPCommand,
+        )
+        reg.register(SplitClassMCPCommand, "custom")
+        reg.register(ExtractSuperclassMCPCommand, "custom")
+        reg.register(SplitFileToPackageMCPCommand, "custom")
+    except ImportError:
+        pass
+
+    from .commands.code_quality_commands import (
+        FormatCodeCommand,
+        LintCodeCommand,
+        TypeCheckCodeCommand,
+    )
+    reg.register(FormatCodeCommand, "custom")
+    reg.register(LintCodeCommand, "custom")
+    reg.register(TypeCheckCodeCommand, "custom")
+
+    try:
+        from .commands.analyze_complexity_mcp import AnalyzeComplexityMCPCommand
+        reg.register(AnalyzeComplexityMCPCommand, "custom")
+        logger.info("✅ Registered analyze_complexity command")
+    except ImportError as e:
+        logger.warning("Failed to import analyze_complexity command: %s", e)
+    except Exception as e:
+        logger.error("Failed to register analyze_complexity command: %s", e, exc_info=True)
+
+    try:
+        from .commands.find_duplicates_mcp import FindDuplicatesMCPCommand
+        reg.register(FindDuplicatesMCPCommand, "custom")
+        logger.info("✅ Registered find_duplicates command")
+    except ImportError as e:
+        logger.warning("Failed to import find_duplicates command: %s", e)
+    except Exception as e:
+        logger.error("Failed to register find_duplicates command: %s", e, exc_info=True)
+
+    try:
+        from .commands.comprehensive_analysis_mcp import ComprehensiveAnalysisMCPCommand
+        reg.register(ComprehensiveAnalysisMCPCommand, "custom")
+        logger.info("✅ Registered comprehensive_analysis command")
+    except ImportError as e:
+        logger.warning("Failed to import comprehensive_analysis command: %s", e)
+    except Exception as e:
+        logger.error("Failed to register comprehensive_analysis command: %s", e, exc_info=True)
+
+    try:
+        from .commands.search_mcp_commands import (
+            FindClassesMCPCommand,
+            FulltextSearchMCPCommand,
+            ListClassMethodsMCPCommand,
+        )
+        reg.register(FulltextSearchMCPCommand, "custom")
+        reg.register(ListClassMethodsMCPCommand, "custom")
+        reg.register(FindClassesMCPCommand, "custom")
+        logger.info("✅ Registered search commands")
+    except ImportError as e:
+        logger.warning("Failed to import search commands: %s", e)
+    except Exception as e:
+        logger.error("Failed to register search commands: %s", e, exc_info=True)
+
+    try:
+        from .commands.code_mapper_mcp_command import UpdateIndexesMCPCommand
+        reg.register(UpdateIndexesMCPCommand, "custom")
+    except ImportError:
+        pass
+
+    try:
+        from .commands.code_mapper_mcp_commands import (
+            ListErrorsByCategoryMCPCommand,
+            ListLongFilesMCPCommand,
+        )
+        reg.register(ListLongFilesMCPCommand, "custom")
+        reg.register(ListErrorsByCategoryMCPCommand, "custom")
+        logger.info("✅ Registered code_mapper commands: list_long_files, list_errors_by_category")
+    except ImportError as e:
+        logger.warning("Failed to import code_mapper commands: %s", e)
+    except Exception as e:
+        logger.error("Failed to register code_mapper commands: %s", e, exc_info=True)

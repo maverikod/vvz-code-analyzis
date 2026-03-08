@@ -14,6 +14,11 @@ import threading
 
 from ..db_driver import create_driver
 
+from .base_chunks import (
+    get_all_chunks_for_faiss_rebuild as _get_all_chunks_for_faiss_rebuild,
+    get_non_vectorized_chunks as _get_non_vectorized_chunks,
+    update_chunk_vector_id as _update_chunk_vector_id,
+)
 from .schema_creation import (
     run_create_schema,
     run_migrate_schema,
@@ -530,120 +535,16 @@ class CodeDatabase:
     def get_all_chunks_for_faiss_rebuild(
         self, project_id: Optional[str] = None
     ) -> List[Dict[str, Any]]:
-        """
-        Get all code chunks with embeddings for FAISS index rebuild.
-
-        If project_id is provided, returns chunks for that project only.
-        If project_id is None, returns chunks for all projects (legacy mode).
-
-        Args:
-            project_id: Optional project ID to filter by.
-
-        Returns:
-            List of chunk records with embeddings.
-        """
-        if project_id:
-            # Project-scoped: get chunks for project
-            return self._fetchall(
-                """
-                SELECT 
-                    cc.id,
-                    cc.file_id,
-                    cc.project_id,
-                    cc.chunk_uuid,
-                    cc.chunk_type,
-                    cc.chunk_text,
-                    cc.chunk_ordinal,
-                    cc.vector_id,
-                    cc.embedding_model,
-                    cc.embedding_vector,
-                    cc.class_id,
-                    cc.function_id,
-                    cc.method_id,
-                    cc.line,
-                    cc.ast_node_type,
-                    cc.source_type
-                FROM code_chunks cc
-                WHERE cc.project_id = ?
-                  AND cc.embedding_model IS NOT NULL
-                  AND cc.embedding_vector IS NOT NULL
-                ORDER BY cc.id
-                """,
-                (project_id,),
-            )
-        else:
-            # Legacy mode: all chunks (for backward compatibility)
-            return self._fetchall(
-                """
-                SELECT 
-                    cc.id,
-                    cc.file_id,
-                    cc.project_id,
-                    cc.chunk_uuid,
-                    cc.chunk_type,
-                    cc.chunk_text,
-                    cc.chunk_ordinal,
-                    cc.vector_id,
-                    cc.embedding_model,
-                    cc.embedding_vector,
-                    cc.class_id,
-                    cc.function_id,
-                    cc.method_id,
-                    cc.line,
-                    cc.ast_node_type,
-                    cc.source_type
-                FROM code_chunks cc
-                WHERE cc.embedding_model IS NOT NULL
-                  AND cc.embedding_vector IS NOT NULL
-                ORDER BY cc.id
-                """
-            )
+        """Get all code chunks with embeddings for FAISS index rebuild."""
+        return _get_all_chunks_for_faiss_rebuild(self, project_id)
 
     def get_non_vectorized_chunks(
         self,
         project_id: str,
         limit: int = 10,
     ) -> List[Dict[str, Any]]:
-        """
-        Get chunks that have embeddings but need vector_id assignment.
-
-        Args:
-            project_id: Project ID.
-            limit: Maximum number of chunks to return.
-
-        Returns:
-            List of chunk records that need vector_id assignment.
-        """
-        return self._fetchall(
-            """
-            SELECT 
-                cc.id,
-                cc.file_id,
-                cc.project_id,
-                cc.chunk_uuid,
-                cc.chunk_type,
-                cc.chunk_text,
-                cc.chunk_ordinal,
-                cc.vector_id,
-                cc.embedding_model,
-                cc.embedding_vector,
-                cc.class_id,
-                cc.function_id,
-                cc.method_id,
-                cc.line,
-                cc.ast_node_type,
-                cc.source_type
-            FROM code_chunks cc
-            INNER JOIN files f ON cc.file_id = f.id
-            WHERE cc.project_id = ?
-              AND (f.deleted = 0 OR f.deleted IS NULL)
-              AND cc.embedding_vector IS NOT NULL
-              AND cc.vector_id IS NULL
-            ORDER BY cc.id
-            LIMIT ?
-            """,
-            (project_id, limit),
-        )
+        """Get chunks that have embeddings but need vector_id assignment."""
+        return _get_non_vectorized_chunks(self, project_id, limit)
 
     async def update_chunk_vector_id(
         self,
@@ -651,39 +552,8 @@ class CodeDatabase:
         vector_id: int,
         embedding_model: Optional[str] = None,
     ) -> None:
-        """
-        Update chunk with vector_id and embedding_model.
-
-        This method is called after adding vector to FAISS index.
-        After update, chunk is automatically excluded from get_non_vectorized_chunks query.
-
-        Args:
-            chunk_id: Chunk ID.
-            vector_id: FAISS index position (vector ID).
-            embedding_model: Optional embedding model name.
-
-        Returns:
-            None
-        """
-        if embedding_model:
-            self._execute(
-                """
-                UPDATE code_chunks
-                SET vector_id = ?, embedding_model = ?
-                WHERE id = ?
-                """,
-                (vector_id, embedding_model, chunk_id),
-            )
-        else:
-            self._execute(
-                """
-                UPDATE code_chunks
-                SET vector_id = ?
-                WHERE id = ?
-                """,
-                (vector_id, chunk_id),
-            )
-        self._commit()
+        """Update chunk with vector_id and embedding_model (after FAISS add)."""
+        await _update_chunk_vector_id(self, chunk_id, vector_id, embedding_model)
 
     def _get_schema_definition(self) -> Dict[str, Any]:
         """Return structured schema definition (delegates to get_schema_definition)."""

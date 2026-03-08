@@ -7,14 +7,11 @@ Split files with >400 lines in this order (diff = lines - 400).
 
 | Diff | Lines | File |
 |------|-------|------|
-| 1173 | 1573 | code_analysis/core/database/schema_definition.py |
-| 1087 | 1487 | code_analysis/main.py |
-| 969 | 1369 | code_analysis/commands/file_management_mcp_commands.py |
-| 558 | 958 | code_analysis/core/database/schema_creation.py |
-| 311 | 711 | code_analysis/core/database/base.py |
-| 925 | 1325 | tests/test_object_models.py |
 | 770 | 1170 | code_analysis/commands/backup_mcp_commands.py |
 | 756 | 1156 | code_analysis/core/svo_client_manager.py |
+| 520 | 920 | code_analysis/main.py |
+| 181 | 581 | code_analysis/core/database/base.py |
+| 574 | 974 | code_analysis/core/database/schema_creation_create.py |
 | 750 | 1150 | code_analysis/commands/cst_modify_tree_command.py |
 | 731 | 1131 | code_analysis/core/cst_tree/tree_modifier_ops.py |
 | 674 | 1074 | code_analysis/core/database/schema_sync.py |

@@ -15,61 +15,50 @@ logger = logging.getLogger(__name__)
 def register_commands_part1(reg: registry) -> None:
     """Register CST, AST, analysis, search, and code_mapper commands."""
     try:
-        from .commands.analyze_project_command import AnalyzeProjectCommand  # type: ignore[import-not-found]
-        reg.register(AnalyzeProjectCommand, "custom")
-    except ImportError:
-        pass
+        from .commands.check_vectors_command import CheckVectorsCommand
 
-    try:
-        from .commands.analyze_file_command import AnalyzeFileCommand  # type: ignore[import-not-found]
-        reg.register(AnalyzeFileCommand, "custom")
-    except ImportError:
-        pass
-
-    try:
-        from .commands.help_command import HelpCommand  # type: ignore[import-not-found]
-        reg.register(HelpCommand, "custom")
-    except ImportError:
-        pass
-
-    try:
-        from .commands.check_vectors_command import CheckVectorsCommand  # type: ignore[import-not-found]
         reg.register(CheckVectorsCommand, "custom")
     except ImportError:
         pass
 
     try:
         from .commands.cst_compose_module_command import ComposeCSTModuleCommand
+
         reg.register(ComposeCSTModuleCommand, "custom")
     except ImportError:
         pass
 
     try:
         from .commands.list_cst_blocks_command import ListCSTBlocksCommand
+
         reg.register(ListCSTBlocksCommand, "custom")
     except ImportError:
         pass
 
     try:
         from .commands.file_structure_command import FileStructureCommand
+
         reg.register(FileStructureCommand, "custom")
     except ImportError:
         pass
 
     try:
         from .commands.query_cst_command import QueryCSTCommand
+
         reg.register(QueryCSTCommand, "custom")
     except ImportError:
         pass
 
     try:
         from .commands.get_file_lines_command import GetFileLinesCommand
+
         reg.register(GetFileLinesCommand, "custom")
     except ImportError:
         pass
 
     try:
         from .commands.replace_file_lines_command import ReplaceFileLinesCommand
+
         reg.register(ReplaceFileLinesCommand, "custom")
     except ImportError:
         pass
@@ -139,12 +128,14 @@ def register_commands_part1(reg: registry) -> None:
 
     try:
         from .commands.code_mapper_mcp_command import UpdateIndexesMCPCommand
+
         reg.register(UpdateIndexesMCPCommand, "custom")
     except ImportError:
         pass
 
     try:
         from .commands.vector_commands import RebuildFaissCommand, RevectorizeCommand
+
         reg.register(RebuildFaissCommand, "custom")
         reg.register(RevectorizeCommand, "custom")
     except ImportError:
@@ -152,6 +143,7 @@ def register_commands_part1(reg: registry) -> None:
 
     try:
         from .commands.semantic_search_mcp import SemanticSearchMCPCommand
+
         reg.register(SemanticSearchMCPCommand, "custom")
         logger.info("✅ Registered semantic_search command")
     except ImportError as e:
@@ -160,21 +152,12 @@ def register_commands_part1(reg: registry) -> None:
         logger.error("Failed to register semantic_search command: %s", e, exc_info=True)
 
     try:
-        from .commands.watch_dirs_commands import (  # type: ignore[import-not-found]
-            AddWatchDirCommand,
-            RemoveWatchDirCommand,
-        )
-        reg.register(AddWatchDirCommand, "custom")
-        reg.register(RemoveWatchDirCommand, "custom")
-    except ImportError:
-        pass
-
-    try:
         from .commands.refactor_mcp_commands import (
             ExtractSuperclassMCPCommand,
             SplitClassMCPCommand,
             SplitFileToPackageMCPCommand,
         )
+
         reg.register(SplitClassMCPCommand, "custom")
         reg.register(ExtractSuperclassMCPCommand, "custom")
         reg.register(SplitFileToPackageMCPCommand, "custom")
@@ -186,21 +169,26 @@ def register_commands_part1(reg: registry) -> None:
         LintCodeCommand,
         TypeCheckCodeCommand,
     )
+
     reg.register(FormatCodeCommand, "custom")
     reg.register(LintCodeCommand, "custom")
     reg.register(TypeCheckCodeCommand, "custom")
 
     try:
         from .commands.analyze_complexity_mcp import AnalyzeComplexityMCPCommand
+
         reg.register(AnalyzeComplexityMCPCommand, "custom")
         logger.info("✅ Registered analyze_complexity command")
     except ImportError as e:
         logger.warning("Failed to import analyze_complexity command: %s", e)
     except Exception as e:
-        logger.error("Failed to register analyze_complexity command: %s", e, exc_info=True)
+        logger.error(
+            "Failed to register analyze_complexity command: %s", e, exc_info=True
+        )
 
     try:
         from .commands.find_duplicates_mcp import FindDuplicatesMCPCommand
+
         reg.register(FindDuplicatesMCPCommand, "custom")
         logger.info("✅ Registered find_duplicates command")
     except ImportError as e:
@@ -210,12 +198,15 @@ def register_commands_part1(reg: registry) -> None:
 
     try:
         from .commands.comprehensive_analysis_mcp import ComprehensiveAnalysisMCPCommand
+
         reg.register(ComprehensiveAnalysisMCPCommand, "custom")
         logger.info("✅ Registered comprehensive_analysis command")
     except ImportError as e:
         logger.warning("Failed to import comprehensive_analysis command: %s", e)
     except Exception as e:
-        logger.error("Failed to register comprehensive_analysis command: %s", e, exc_info=True)
+        logger.error(
+            "Failed to register comprehensive_analysis command: %s", e, exc_info=True
+        )
 
     try:
         from .commands.search_mcp_commands import (
@@ -223,6 +214,7 @@ def register_commands_part1(reg: registry) -> None:
             FulltextSearchMCPCommand,
             ListClassMethodsMCPCommand,
         )
+
         reg.register(FulltextSearchMCPCommand, "custom")
         reg.register(ListClassMethodsMCPCommand, "custom")
         reg.register(FindClassesMCPCommand, "custom")
@@ -234,6 +226,7 @@ def register_commands_part1(reg: registry) -> None:
 
     try:
         from .commands.code_mapper_mcp_command import UpdateIndexesMCPCommand
+
         reg.register(UpdateIndexesMCPCommand, "custom")
     except ImportError:
         pass
@@ -243,9 +236,12 @@ def register_commands_part1(reg: registry) -> None:
             ListErrorsByCategoryMCPCommand,
             ListLongFilesMCPCommand,
         )
+
         reg.register(ListLongFilesMCPCommand, "custom")
         reg.register(ListErrorsByCategoryMCPCommand, "custom")
-        logger.info("✅ Registered code_mapper commands: list_long_files, list_errors_by_category")
+        logger.info(
+            "✅ Registered code_mapper commands: list_long_files, list_errors_by_category"
+        )
     except ImportError as e:
         logger.warning("Failed to import code_mapper commands: %s", e)
     except Exception as e:

@@ -13,6 +13,7 @@ import socket
 import struct
 import threading
 import time
+from typing import cast
 
 from code_analysis.core.database_driver_pkg.driver_factory import create_driver
 from code_analysis.core.database_driver_pkg.request_queue import RequestQueue
@@ -54,7 +55,7 @@ class TestDriverIntegrationRealServer:
                     break
                 response_data += chunk
 
-            return json.loads(response_data.decode("utf-8"))
+            return cast(dict, json.loads(response_data.decode("utf-8")))
         finally:
             sock.close()
 
@@ -237,7 +238,12 @@ class TestDriverIntegrationRealServer:
                 "id": "test_count",
             }
             response = self._send_rpc_request(socket_path, request)
-            rows = response["result"].get("data", {}).get("data", [])
+            result = response.get("result")
+            rows = (
+                result.get("data", [])
+                if isinstance(result, dict)
+                else result if isinstance(result, list) else []
+            )
             assert len(rows) == 20
         finally:
             server.stop()

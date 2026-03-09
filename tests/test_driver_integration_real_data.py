@@ -309,8 +309,8 @@ class TestDriverIntegrationRealData:
             while processed < 10:
                 queued_request = request_queue.dequeue()
                 if queued_request:
-                    # Simulate processing
-                    request_data = queued_request.data
+                    # Simulate processing (QueuedRequest.request holds the payload)
+                    request_data = queued_request.request
                     if request_data.get("method") == "insert":
                         driver.insert(
                             request_data["params"]["table_name"],

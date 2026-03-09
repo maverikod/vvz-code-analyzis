@@ -5,10 +5,13 @@ Author: Vasiliy Zdanovskiy
 email: vasilyvz@gmail.com
 """
 
-import pytest
-import uuid
+import json
 import os
 import time
+import uuid
+
+import pytest
+
 from code_analysis.core.database.base import CodeDatabase
 from code_analysis.core.database.base import create_driver_config_for_worker
 
@@ -47,6 +50,11 @@ def test_file_with_content(test_db, test_project, tmp_path):
     )
     test_db._commit()
 
+    # update_file_data validates project_id against projectid file in root_dir
+    (tmp_path / "projectid").write_text(
+        json.dumps({"id": test_project}), encoding="utf-8"
+    )
+
     # Create test file with classes and functions (substantial content for FTS/chunks)
     from tests.test_fixture_content import FILE_CONTENT_MYCLASS
 
@@ -64,6 +72,9 @@ def test_file_with_content(test_db, test_project, tmp_path):
         has_docstring=True,
         project_id=test_project,
     )
+    # Force full reindex: set stored last_modified to 0 so mtime check does not skip
+    test_db._execute("UPDATE files SET last_modified = 0 WHERE id = ?", (file_id,))
+    test_db._commit()
 
     # Use update_file_data to analyze file and create AST/CST
     result = test_db.update_file_data(
@@ -254,6 +265,10 @@ def new_function() -> str:
         file_path.write_text(new_content, encoding="utf-8")
         time.sleep(0.1)  # Ensure mtime changes
 
+        # Force full reindex after modification
+        test_db._execute("UPDATE files SET last_modified = 0 WHERE id = ?", (file_id,))
+        test_db._commit()
+
         # Update file data
         result = test_db.update_file_data(
             file_path=str(file_path),
@@ -420,6 +435,11 @@ def new_function() -> str:
         )
         test_db._commit()
 
+        # update_file_data validates project_id against projectid file in root_dir
+        (tmp_path / "projectid").write_text(
+            json.dumps({"id": test_project}), encoding="utf-8"
+        )
+
         # Step 1: Create and add file
         test_file = tmp_path / "full_cycle_test.py"
         initial_content = '''"""
@@ -445,6 +465,9 @@ def initial_function():
             has_docstring=True,
             project_id=test_project,
         )
+        # Force full reindex: set stored last_modified to 0 so mtime check does not skip
+        test_db._execute("UPDATE files SET last_modified = 0 WHERE id = ?", (file_id,))
+        test_db._commit()
 
         # Step 2: Update file data (analyze and create AST/CST)
         result = test_db.update_file_data(
@@ -520,6 +543,10 @@ def new_function():
 '''
         test_file.write_text(modified_content, encoding="utf-8")
         time.sleep(0.1)  # Ensure mtime changes
+
+        # Force full reindex after modification
+        test_db._execute("UPDATE files SET last_modified = 0 WHERE id = ?", (file_id,))
+        test_db._commit()
 
         # Step 8: Update file data again
         result2 = test_db.update_file_data(

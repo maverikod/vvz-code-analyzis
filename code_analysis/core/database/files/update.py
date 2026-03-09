@@ -311,11 +311,15 @@ def update_file_data(
             except Exception as e:
                 logger.warning(f"Error checking CST: {e}", exc_info=True)
 
-            entities_count = (
-                result.get("classes", 0)
-                + result.get("functions", 0)
-                + result.get("methods", 0)
-            )
+            # Prefer entities_updated from _analyze_file (sync_file_to_db_atomic);
+            # fall back to sum of classes/functions/methods for older callers.
+            entities_count = result.get("entities_updated")
+            if entities_count is None:
+                entities_count = (
+                    result.get("classes", 0)
+                    + result.get("functions", 0)
+                    + result.get("methods", 0)
+                )
 
             # After successful full reindex, set last_modified to actual disk mtime
             try:

@@ -175,7 +175,7 @@ class TestSQLiteDriverEdgeCases:
         assert len(result["created_tables"]) == 0
 
     def test_sync_schema_with_errors(self, sqlite_driver):
-        """Test syncing schema with errors."""
+        """Test syncing schema when table creation fails; driver raises DriverOperationError."""
         schema_definition = {
             "tables": [
                 {
@@ -184,10 +184,12 @@ class TestSQLiteDriverEdgeCases:
                 }
             ]
         }
-        result = sqlite_driver.sync_schema(schema_definition)
-        assert "errors" in result
-        # May or may not have errors depending on validation
-        assert isinstance(result["errors"], list)
+        with pytest.raises(DriverOperationError) as exc_info:
+            sqlite_driver.sync_schema(schema_definition)
+        assert (
+            "invalid_table" in str(exc_info.value)
+            or "column" in str(exc_info.value).lower()
+        )
 
     def test_select_with_offset_only(self, sqlite_driver):
         """Test select with offset but no limit."""

@@ -25,6 +25,7 @@ def temp_db_proxy():
 
     try:
         db = CodeDatabase(driver_config)
+        db.sync_schema()
         yield db
         db.close()
     finally:

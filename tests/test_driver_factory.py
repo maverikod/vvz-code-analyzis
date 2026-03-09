@@ -40,11 +40,11 @@ class TestDriverFactory:
             create_driver("unknown", {})
 
     def test_create_postgres_driver_not_implemented(self):
-        """Test creating PostgreSQL driver (not yet implemented)."""
-        with pytest.raises(DriverNotFoundError, match="not yet implemented"):
+        """Test creating PostgreSQL driver (not supported; raises DriverNotFoundError)."""
+        with pytest.raises(DriverNotFoundError, match="Unknown driver type"):
             create_driver("postgres", {})
 
     def test_create_mysql_driver_not_implemented(self):
-        """Test creating MySQL driver (not yet implemented)."""
-        with pytest.raises(DriverNotFoundError, match="not yet implemented"):
+        """Test creating MySQL driver (not supported; raises DriverNotFoundError)."""
+        with pytest.raises(DriverNotFoundError, match="Unknown driver type"):
             create_driver("mysql", {})

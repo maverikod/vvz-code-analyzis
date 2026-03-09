@@ -91,7 +91,7 @@ class TestSQLiteSchemaManager:
         assert "users" in result["modified_tables"]
 
     def test_sync_schema_with_errors(self, schema_manager, temp_db_path):
-        """Test syncing schema with errors."""
+        """Test syncing schema when table creation raises; driver raises DriverOperationError."""
 
         def create_table_func(schema):
             raise Exception("Table creation failed")
@@ -102,8 +102,10 @@ class TestSQLiteSchemaManager:
             ]
         }
 
-        result = schema_manager.sync_schema(schema_definition, None, create_table_func)
-        assert len(result["errors"]) > 0
+        with pytest.raises(DriverOperationError) as exc_info:
+            schema_manager.sync_schema(schema_definition, None, create_table_func)
+        assert "Table creation failed" in str(exc_info.value)
+        assert "users" in str(exc_info.value)
 
     def test_sync_schema_empty_name(self, schema_manager, temp_db_path):
         """Test syncing schema with empty table name."""

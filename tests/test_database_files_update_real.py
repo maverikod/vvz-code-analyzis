@@ -154,15 +154,16 @@ def real_test_file_in_db(
             docstring = ast.get_docstring(node)
             classes_data.append((node.name, node.lineno, docstring or ""))
 
-    # Add classes to database
+    # Add classes to database (cst_node_id required by schema; use placeholder)
     class_id_map = {}
     for class_name, line_num, docstring in classes_data:
+        cst_node_id = f"fixture:{class_name}:ClassDef:{line_num}:0-0:0"
         test_db._execute(
             """
-            INSERT INTO classes (file_id, name, line, docstring, bases)
-            VALUES (?, ?, ?, ?, ?)
+            INSERT INTO classes (file_id, name, line, docstring, bases, cst_node_id)
+            VALUES (?, ?, ?, ?, ?, ?)
             """,
-            (file_id, class_name, line_num, docstring, "[]"),
+            (file_id, class_name, line_num, docstring, "[]", cst_node_id),
         )
         # Get the inserted class ID
         class_row = test_db._fetchone(
@@ -192,11 +193,12 @@ def real_test_file_in_db(
             docstring = ast.get_docstring(node)
 
             if parent_class and parent_class in class_id_map:
-                # It's a method
+                # It's a method (cst_node_id required by schema; use placeholder)
+                cst_node_id = f"fixture:{node.name}:FunctionDef:{node.lineno}:0-0:0"
                 test_db._execute(
                     """
-                    INSERT INTO methods (class_id, name, line, args, docstring)
-                    VALUES (?, ?, ?, ?, ?)
+                    INSERT INTO methods (class_id, name, line, args, docstring, cst_node_id)
+                    VALUES (?, ?, ?, ?, ?, ?)
                     """,
                     (
                         class_id_map[parent_class],
@@ -204,16 +206,25 @@ def real_test_file_in_db(
                         node.lineno,
                         "[]",
                         docstring or "",
+                        cst_node_id,
                     ),
                 )
             else:
-                # It's a function
+                # It's a function (cst_node_id required by schema; use placeholder)
+                cst_node_id = f"fixture:{node.name}:FunctionDef:{node.lineno}:0-0:0"
                 test_db._execute(
                     """
-                    INSERT INTO functions (file_id, name, line, args, docstring)
-                    VALUES (?, ?, ?, ?, ?)
+                    INSERT INTO functions (file_id, name, line, args, docstring, cst_node_id)
+                    VALUES (?, ?, ?, ?, ?, ?)
                     """,
-                    (file_id, node.name, node.lineno, "[]", docstring or ""),
+                    (
+                        file_id,
+                        node.name,
+                        node.lineno,
+                        "[]",
+                        docstring or "",
+                        cst_node_id,
+                    ),
                 )
 
     test_db._commit()

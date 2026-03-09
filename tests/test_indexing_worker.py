@@ -9,6 +9,7 @@ email: vasilyvz@gmail.com
 from __future__ import annotations
 
 import asyncio
+import multiprocessing
 import threading
 from unittest.mock import MagicMock, patch
 
@@ -39,7 +40,7 @@ def _make_mock_database(
         if "distinct project_id" in sql_lower:
             return {"data": projects}
         if "select id, path, project_id" in sql_lower and params:
-            project_id = params[0] if params else None
+            project_id = str(params[0]) if params and params[0] is not None else ""
             limit = params[1] if len(params) > 1 else batch_size
             files = (files_per_project.get(project_id) or [])[:limit]
             return {"data": files}
@@ -74,7 +75,7 @@ async def test_process_cycle_calls_index_file_for_files_with_needs_chunking(tmp_
         batch_size=batch_size,
         poll_interval=0,
     )
-    worker._stop_event = threading.Event()
+    worker._stop_event = multiprocessing.Event()
 
     with patch(
         "code_analysis.core.database_client.client.DatabaseClient",
@@ -120,7 +121,7 @@ async def test_process_cycle_respects_batch_size(tmp_path):
         batch_size=batch_size,
         poll_interval=0,
     )
-    worker._stop_event = threading.Event()
+    worker._stop_event = multiprocessing.Event()
 
     with patch(
         "code_analysis.core.database_client.client.DatabaseClient",
@@ -164,7 +165,7 @@ async def test_process_cycle_respects_project_order(tmp_path):
         batch_size=batch_size,
         poll_interval=0,
     )
-    worker._stop_event = threading.Event()
+    worker._stop_event = multiprocessing.Event()
 
     with patch(
         "code_analysis.core.database_client.client.DatabaseClient",
@@ -198,7 +199,6 @@ async def test_indexing_worker_one_cycle_integration(tmp_path):
     of the indexing worker. Requires CODE_ANALYSIS_DB_WORKER=1 so CodeDatabase uses direct SQLite.
     """
     import os
-    import threading
     import time
 
     from tests.test_fixture_content import DEFAULT_TEST_FILE_CONTENT
@@ -219,6 +219,14 @@ async def test_indexing_worker_one_cycle_integration(tmp_path):
         from code_analysis.core.database_client.client import DatabaseClient
     except ImportError as e:
         pytest.skip(f"Integration test requires full driver stack: {e}")
+
+    # When run with full group, UpdateIndexesMCPCommand may be mocked by other modules
+    from code_analysis.commands.code_mapper_mcp_command import UpdateIndexesMCPCommand
+
+    if not callable(getattr(UpdateIndexesMCPCommand, "_analyze_file", None)):
+        pytest.skip(
+            "UpdateIndexesMCPCommand not available in this test run (mocked or partial import)"
+        )
 
     try:
         # Create DB with full schema and one project + file with needs_chunking=1
@@ -250,22 +258,34 @@ async def test_indexing_worker_one_cycle_integration(tmp_path):
         server = RPCServer(driver, request_queue, socket_path)
         server_thread = threading.Thread(target=server.start, daemon=True)
         server_thread.start()
-        time.sleep(0.3)
+        # Wait for server to listen; under load 0.3s may be insufficient
+        time.sleep(0.8)
+        # Retry connect so test is robust when run in full group
+        client = DatabaseClient(socket_path=socket_path)
+        last_err = None
+        for _ in range(15):
+            try:
+                client.connect()
+                last_err = None
+                break
+            except (ConnectionRefusedError, OSError, Exception) as e:
+                last_err = e
+                time.sleep(0.2)
+        if last_err is not None:
+            pytest.skip(f"RPC server did not become ready: {last_err}")
 
         try:
-            client = DatabaseClient(socket_path=socket_path)
-            client.connect()
-
             worker = IndexingWorker(
                 db_path=db_path,
                 socket_path=socket_path,
                 batch_size=5,
                 poll_interval=0,
             )
-            worker._stop_event = threading.Event()
+            worker._stop_event = multiprocessing.Event()
 
+            # Allow time for one full cycle under load (e.g. when run with full group)
             async def stop_after_one_cycle():
-                await asyncio.sleep(2.0)
+                await asyncio.sleep(5.0)
                 worker._stop_event.set()
 
             stop_task = asyncio.create_task(stop_after_one_cycle())

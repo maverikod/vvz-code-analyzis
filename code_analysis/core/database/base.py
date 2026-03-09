@@ -263,6 +263,27 @@ class CodeDatabase:
         if isinstance(result, dict):
             setattr(self, "_last_execute_result", result)
 
+    def execute(self, sql: str, params: Optional[tuple] = None) -> Dict[str, Any]:
+        """
+        Execute SQL and return result in RPC/driver contract format.
+
+        Callers that use database.execute() and expect result.get("data", [])
+        work with both DatabaseClient (RPC) and CodeDatabase.
+
+        Args:
+            sql: SQL statement.
+            params: Optional parameters for the statement.
+
+        Returns:
+            Dict with at least key "data": list of rows for SELECT,
+            empty list for INSERT/UPDATE/DELETE etc.
+        """
+        if sql.strip().upper().startswith("SELECT"):
+            rows = self._fetchall(sql, params)
+            return {"data": rows}
+        self._execute(sql, params)
+        return {"data": []}
+
     def _fetchone(
         self, sql: str, params: Optional[tuple] = None
     ) -> Optional[Dict[str, Any]]:

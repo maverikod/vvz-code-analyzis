@@ -350,10 +350,6 @@ def test_function():
         # The exact format depends on implementation
 
 
-@pytest.mark.skip(
-    reason="ProcessorQueueOps uses database.execute(); CodeDatabase only has _execute(). "
-    "Fix in code_analysis/core/file_watcher_pkg/processor_queue.py (or add execute to CodeDatabase)."
-)
 class TestFileWatcherIntegration:
     """Tests for file watcher integration with update_file_data."""
 

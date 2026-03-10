@@ -81,14 +81,15 @@ def startup_database_driver() -> None:
 
         # Force driver to use the same absolute DB path as storage (avoids cwd-dependent
         # resolution: driver process may have different cwd and would open wrong DB otherwise)
+        config_dict: dict = dict(driver_config.get("config", {}) or {})
         driver_config_resolved = {
             "type": driver_config.get("type"),
-            "config": dict(driver_config.get("config", {})),
+            "config": config_dict,
         }
-        driver_config_resolved["config"]["path"] = str(storage.db_path.resolve())
+        config_dict["path"] = str(storage.db_path.resolve())
         # Query journal for inspection and recovery (default: logs/database_queries.jsonl)
-        if "query_log_path" not in driver_config_resolved["config"]:
-            driver_config_resolved["config"]["query_log_path"] = str(
+        if "query_log_path" not in config_dict:
+            config_dict["query_log_path"] = str(
                 storage.config_dir / "logs" / "database_queries.jsonl"
             )
 

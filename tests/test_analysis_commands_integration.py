@@ -58,6 +58,13 @@ async def test_analyze_complexity_structure_and_correctness(ensure_cwd, project_
         file_path="ai_admin/__main__.py",
         min_complexity=1,
     )
+    if isinstance(result, ErrorResult):
+        msg = getattr(result, "message", str(result))
+        msg_s = str(msg)
+        if "Connection refused" in msg_s or "Cannot connect" in msg_s:
+            pytest.skip("RPC server unavailable (connection refused)")
+        if "Shared database is not initialized" in msg_s:
+            pytest.skip("Shared database not initialized (run with full env)")
     assert isinstance(result, SuccessResult), getattr(result, "message", str(result))
     data = result.data
     assert "results" in data
@@ -92,6 +99,13 @@ async def test_analyze_complexity_min_filter(ensure_cwd, project_id):
         file_path="ai_admin/__main__.py",
         min_complexity=100,
     )
+    if isinstance(result, ErrorResult):
+        msg = getattr(result, "message", str(result))
+        msg_s = str(msg)
+        if "Connection refused" in msg_s or "Cannot connect" in msg_s:
+            pytest.skip("RPC server unavailable (connection refused)")
+        if "Shared database is not initialized" in msg_s:
+            pytest.skip("Shared database not initialized (run with full env)")
     assert isinstance(result, SuccessResult)
     assert result.data["min_complexity"] == 100
     assert result.data["total_count"] == 0
@@ -112,6 +126,13 @@ async def test_find_duplicates_structure_and_correctness(ensure_cwd, project_id)
         min_similarity=0.5,
         use_semantic=False,
     )
+    if isinstance(result, ErrorResult):
+        msg = getattr(result, "message", str(result))
+        msg_s = str(msg)
+        if "Connection refused" in msg_s or "Cannot connect" in msg_s:
+            pytest.skip("RPC server unavailable (connection refused)")
+        if "Shared database is not initialized" in msg_s:
+            pytest.skip("Shared database not initialized (run with full env)")
     assert isinstance(result, SuccessResult), getattr(result, "message", str(result))
     data = result.data
     assert "duplicate_groups" in data
@@ -145,6 +166,13 @@ async def test_find_duplicates_with_semantic(ensure_cwd, project_id):
         use_semantic=True,
         semantic_threshold=0.75,
     )
+    if isinstance(result, ErrorResult):
+        msg = getattr(result, "message", str(result))
+        msg_s = str(msg)
+        if "Connection refused" in msg_s or "Cannot connect" in msg_s:
+            pytest.skip("RPC server unavailable (connection refused)")
+        if "Shared database is not initialized" in msg_s:
+            pytest.skip("Shared database not initialized (run with full env)")
     assert isinstance(result, SuccessResult), getattr(result, "message", str(result))
     data = result.data
     assert "duplicate_groups" in data
@@ -164,21 +192,31 @@ async def test_comprehensive_analysis_structure(ensure_cwd, project_id):
     from code_analysis.commands.comprehensive_analysis_mcp import (
         ComprehensiveAnalysisMCPCommand,
     )
+    from code_analysis.core.exceptions import DatabaseError
+    from code_analysis.core.shared_database import SharedDatabaseNotInitializedError
 
     cmd = ComprehensiveAnalysisMCPCommand()
-    result = await cmd.execute(
-        project_id=project_id,
-        file_path="ai_admin/__main__.py",
-        check_placeholders=True,
-        check_stubs=True,
-        check_duplicates=False,
-        check_flake8=False,
-        check_mypy=False,
-    )
-    if isinstance(result, ErrorResult):
-        pytest.skip(
-            f"comprehensive_analysis failed (e.g. DB client): {getattr(result, 'message', result)}"
+    try:
+        result = await cmd.execute(
+            project_id=project_id,
+            file_path="ai_admin/__main__.py",
+            check_placeholders=True,
+            check_stubs=True,
+            check_duplicates=False,
+            check_flake8=False,
+            check_mypy=False,
         )
+    except SharedDatabaseNotInitializedError:
+        pytest.skip("Shared database not initialized (run with full env)")
+    except DatabaseError as e:
+        if "Connection refused" in str(e) or "Cannot connect" in str(e):
+            pytest.skip("RPC server unavailable (connection refused)")
+        raise
+    if isinstance(result, ErrorResult):
+        msg = getattr(result, "message", str(result))
+        if "Connection refused" in str(msg) or "Cannot connect" in str(msg):
+            pytest.skip("RPC server unavailable (connection refused)")
+        pytest.skip(f"comprehensive_analysis failed (e.g. DB client): {msg}")
     assert isinstance(result, SuccessResult), getattr(result, "message", str(result))
     data = result.data
     assert "summary" in data

@@ -2,7 +2,13 @@
 Integration tests for analyze_complexity, find_duplicates, comprehensive_analysis, semantic_search.
 
 Verifies command execution and correctness of response structure and logic.
-Requires: project root as cwd, config.json with code_analysis.db, vast_srv project registered.
+
+Two ways to run (no external server needed by default):
+- With fixture shared_db_with_vast_srv: in-process RPC server + shared DB with vast_srv project
+  (test_data/vast_srv must exist). No need to start the server manually.
+- With real server: start from repo root:
+  python -m code_analysis.cli.server_manager_cli --config config.json start
+  Then ensure vast_srv is registered and config points to code_analysis.db.
 
 Author: Vasiliy Zdanovskiy
 email: vasilyvz@gmail.com
@@ -12,6 +18,9 @@ from __future__ import annotations
 
 import os
 import sys
+import threading
+import time
+import uuid
 from pathlib import Path
 
 import pytest
@@ -23,6 +32,8 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
+TEST_DATA_DIR = REPO_ROOT / "test_data"
+VAST_SRV_DIR = TEST_DATA_DIR / "vast_srv"
 # vast_srv project_id from test_data/vast_srv/projectid
 VAST_SRV_PROJECT_ID = "c86dded6-6f93-4fb0-be54-b6d7b739eeb9"
 
@@ -43,9 +54,121 @@ def ensure_cwd():
     os.chdir(orig)
 
 
+@pytest.fixture
+def shared_db_with_vast_srv(tmp_path):
+    """Start in-process RPC server with DB containing vast_srv project; set shared_db.
+
+    Lets analyze_complexity, find_duplicates, comprehensive_analysis run without
+    starting the full server manually. Skips if test_data/vast_srv is missing.
+    """
+    if not VAST_SRV_DIR.exists():
+        pytest.skip("test_data/vast_srv/ not found")
+    from code_analysis.core.database_client.client import DatabaseClient
+    from code_analysis.core.database_driver_pkg.driver_factory import create_driver
+    from code_analysis.core.database_driver_pkg.request_queue import RequestQueue
+    from code_analysis.core.database_driver_pkg.rpc_server import RPCServer
+    from code_analysis.core.shared_database import (
+        close_shared_database,
+        set_shared_database,
+    )
+
+    db_path = tmp_path / "analysis_commands_test.db"
+    socket_path = str(tmp_path / "analysis_commands.sock")
+    driver = create_driver("sqlite", {"path": str(db_path)})
+
+    driver.execute(
+        """
+        CREATE TABLE IF NOT EXISTS projects (
+            id TEXT PRIMARY KEY,
+            root_path TEXT UNIQUE NOT NULL,
+            name TEXT,
+            comment TEXT,
+            watch_dir_id TEXT,
+            created_at REAL DEFAULT (julianday('now')),
+            updated_at REAL DEFAULT (julianday('now'))
+        )
+        """
+    )
+    driver.execute(
+        """
+        CREATE TABLE IF NOT EXISTS files (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            project_id TEXT NOT NULL,
+            watch_dir_id TEXT,
+            path TEXT NOT NULL,
+            relative_path TEXT,
+            lines INTEGER,
+            last_modified REAL,
+            has_docstring INTEGER DEFAULT 0,
+            deleted INTEGER DEFAULT 0,
+            original_path TEXT,
+            version_dir TEXT,
+            created_at REAL DEFAULT (julianday('now')),
+            updated_at REAL DEFAULT (julianday('now')),
+            FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE,
+            UNIQUE(project_id, path)
+        )
+        """
+    )
+    for schema in (
+        {
+            "name": "watch_dirs",
+            "columns": [
+                {"name": "id", "type": "TEXT", "primary_key": True, "nullable": False},
+                {"name": "name", "type": "TEXT", "nullable": True},
+            ],
+        },
+        {
+            "name": "watch_dir_paths",
+            "columns": [
+                {
+                    "name": "watch_dir_id",
+                    "type": "TEXT",
+                    "primary_key": True,
+                    "nullable": False,
+                },
+                {"name": "absolute_path", "type": "TEXT", "nullable": True},
+            ],
+        },
+    ):
+        driver.create_table(schema)
+
+    watch_dir_id = str(uuid.uuid4())
+    driver.execute(
+        "INSERT INTO watch_dirs (id, name) VALUES (?, ?)",
+        (watch_dir_id, "test_watch"),
+    )
+    driver.execute(
+        "INSERT INTO watch_dir_paths (watch_dir_id, absolute_path) VALUES (?, ?)",
+        (watch_dir_id, str(VAST_SRV_DIR.parent)),
+    )
+    driver.execute(
+        "INSERT INTO projects (id, root_path, name) VALUES (?, ?, ?)",
+        (VAST_SRV_PROJECT_ID, str(VAST_SRV_DIR), "vast_srv"),
+    )
+
+    request_queue = RequestQueue()
+    server = RPCServer(driver, request_queue, socket_path)
+    server_thread = threading.Thread(target=server.start, daemon=True)
+    server_thread.start()
+    time.sleep(0.3)
+
+    client = DatabaseClient(socket_path=socket_path)
+    client.connect()
+    set_shared_database(client)
+    try:
+        yield
+    finally:
+        close_shared_database()
+        server.stop()
+        driver.disconnect()
+
+
 @pytest.mark.integration
 @pytest.mark.asyncio
-async def test_analyze_complexity_structure_and_correctness(ensure_cwd, project_id):
+async def test_analyze_complexity_structure_and_correctness(
+    ensure_cwd, project_id, shared_db_with_vast_srv
+):
     """analyze_complexity: success, results have correct structure and min_complexity filter."""
     from code_analysis.commands.analyze_complexity_mcp import (
         AnalyzeComplexityMCPCommand,
@@ -87,7 +210,9 @@ async def test_analyze_complexity_structure_and_correctness(ensure_cwd, project_
 
 @pytest.mark.integration
 @pytest.mark.asyncio
-async def test_analyze_complexity_min_filter(ensure_cwd, project_id):
+async def test_analyze_complexity_min_filter(
+    ensure_cwd, project_id, shared_db_with_vast_srv
+):
     """analyze_complexity: only returns items with complexity >= min_complexity."""
     from code_analysis.commands.analyze_complexity_mcp import (
         AnalyzeComplexityMCPCommand,
@@ -114,7 +239,9 @@ async def test_analyze_complexity_min_filter(ensure_cwd, project_id):
 
 @pytest.mark.integration
 @pytest.mark.asyncio
-async def test_find_duplicates_structure_and_correctness(ensure_cwd, project_id):
+async def test_find_duplicates_structure_and_correctness(
+    ensure_cwd, project_id, shared_db_with_vast_srv
+):
     """find_duplicates: success, duplicate_groups have similarity and occurrences."""
     from code_analysis.commands.find_duplicates_mcp import FindDuplicatesMCPCommand
 
@@ -153,7 +280,9 @@ async def test_find_duplicates_structure_and_correctness(ensure_cwd, project_id)
 
 @pytest.mark.integration
 @pytest.mark.asyncio
-async def test_find_duplicates_with_semantic(ensure_cwd, project_id):
+async def test_find_duplicates_with_semantic(
+    ensure_cwd, project_id, shared_db_with_vast_srv
+):
     """find_duplicates with use_semantic=True: success and valid structure (or fallback to AST)."""
     from code_analysis.commands.find_duplicates_mcp import FindDuplicatesMCPCommand
 
@@ -187,7 +316,9 @@ async def test_find_duplicates_with_semantic(ensure_cwd, project_id):
 
 @pytest.mark.integration
 @pytest.mark.asyncio
-async def test_comprehensive_analysis_structure(ensure_cwd, project_id):
+async def test_comprehensive_analysis_structure(
+    ensure_cwd, project_id, shared_db_with_vast_srv
+):
     """comprehensive_analysis: success, result has summary and expected list keys."""
     from code_analysis.commands.comprehensive_analysis_mcp import (
         ComprehensiveAnalysisMCPCommand,
@@ -233,7 +364,9 @@ async def test_comprehensive_analysis_structure(ensure_cwd, project_id):
 
 @pytest.mark.integration
 @pytest.mark.asyncio
-async def test_semantic_search_structure_and_scores(ensure_cwd, project_id):
+async def test_semantic_search_structure_and_scores(
+    ensure_cwd, project_id, shared_db_with_vast_srv
+):
     """semantic_search: if successful, results have score and valid range; allow no-index."""
     from code_analysis.commands.semantic_search_mcp import SemanticSearchMCPCommand
 
@@ -262,7 +395,9 @@ async def test_semantic_search_structure_and_scores(ensure_cwd, project_id):
 
 @pytest.mark.integration
 @pytest.mark.asyncio
-async def test_semantic_search_limit_respected(ensure_cwd, project_id):
+async def test_semantic_search_limit_respected(
+    ensure_cwd, project_id, shared_db_with_vast_srv
+):
     """semantic_search: count <= limit when index exists."""
     from code_analysis.commands.semantic_search_mcp import SemanticSearchMCPCommand
 

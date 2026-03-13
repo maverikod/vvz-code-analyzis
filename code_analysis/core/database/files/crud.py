@@ -7,7 +7,7 @@ email: vasilyvz@gmail.com
 
 import logging
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, cast
 
 logger = logging.getLogger(__name__)
 
@@ -52,7 +52,9 @@ def get_file_by_path(
             "SELECT * FROM files WHERE path = ? AND project_id = ? AND (deleted = 0 OR deleted IS NULL)",
             (abs_path, project_id),
         )
-    return row
+    if not isinstance(row, dict):
+        return None
+    return cast(Dict[str, Any], row)
 
 
 def add_file(
@@ -181,7 +183,16 @@ def add_file(
 
     if existing_in_correct_project:
         # Update existing file (including relative_path and watch_dir_id)
-        file_id = existing_in_correct_project["id"]
+        file_id_raw = (
+            existing_in_correct_project.get("id")
+            if isinstance(existing_in_correct_project, dict)
+            else None
+        )
+        if not isinstance(file_id_raw, int):
+            raise ValueError(
+                "Existing file record has invalid id type in add_file update path"
+            )
+        file_id = file_id_raw
         self._execute(
             """
             UPDATE files 
@@ -225,7 +236,8 @@ def add_file(
         if not self._in_transaction():
             self._commit()
         result = self._lastrowid()
-        assert result is not None
+        if not isinstance(result, int):
+            raise ValueError("Database returned invalid lastrowid type")
         return result
 
 
@@ -266,7 +278,10 @@ def get_file_id(
 
 def get_file_by_id(self, file_id: int) -> Optional[Dict[str, Any]]:
     """Get file record by ID."""
-    return self._fetchone("SELECT * FROM files WHERE id = ?", (file_id,))
+    row = self._fetchone("SELECT * FROM files WHERE id = ?", (file_id,))
+    if not isinstance(row, dict):
+        return None
+    return cast(Dict[str, Any], row)
 
 
 def delete_file(self, file_id: int) -> None:
@@ -323,14 +338,8 @@ def clear_file_data(self, file_id: int) -> None:
 
     Removes all related data including:
     - code chunks and vector index (via _clear_file_vectors, entity ids fetched first)
-    - classes and their methods
-    - functions
-    - imports
-    - issues
-    - usages
-    - code_content and FTS index
-    - AST trees
-    - CST trees
+    - entity_cross_ref, code_content_fts, methods, classes, functions, imports,
+      issues, usages, code_content, ast_trees, cst_trees (via one execute_batch).
 
     Vector cleanup uses _clear_file_vectors so entity ids are read before any deletions.
     """
@@ -339,29 +348,68 @@ def clear_file_data(self, file_id: int) -> None:
     class_rows = self._fetchall("SELECT id FROM classes WHERE file_id = ?", (file_id,))
     class_ids = [row["id"] for row in class_rows]
 
-    self.delete_entity_cross_ref_for_file(file_id)
+    method_ids: List[int] = []
+    if class_ids:
+        ph = ",".join("?" * len(class_ids))
+        method_rows = self._fetchall(
+            f"SELECT id FROM methods WHERE class_id IN ({ph})",
+            tuple(class_ids),
+        )
+        method_ids = [r["id"] for r in method_rows]
+
+    func_rows = self._fetchall("SELECT id FROM functions WHERE file_id = ?", (file_id,))
+    function_ids = [r["id"] for r in func_rows]
+
     content_rows = self._fetchall(
         "SELECT id FROM code_content WHERE file_id = ?", (file_id,)
     )
     content_ids = [row["id"] for row in content_rows]
+
+    # Build entity_cross_ref DELETE (same WHERE logic as delete_entity_cross_ref_for_file)
+    conditions = ["file_id = ?"]
+    params: List[Any] = [file_id]
+    if class_ids:
+        ph = ",".join("?" * len(class_ids))
+        conditions.append(f"caller_class_id IN ({ph})")
+        params.extend(class_ids)
+        conditions.append(f"callee_class_id IN ({ph})")
+        params.extend(class_ids)
+    if method_ids:
+        ph = ",".join("?" * len(method_ids))
+        conditions.append(f"caller_method_id IN ({ph})")
+        params.extend(method_ids)
+        conditions.append(f"callee_method_id IN ({ph})")
+        params.extend(method_ids)
+    if function_ids:
+        ph = ",".join("?" * len(function_ids))
+        conditions.append(f"caller_function_id IN ({ph})")
+        params.extend(function_ids)
+        conditions.append(f"callee_function_id IN ({ph})")
+        params.extend(function_ids)
+    where_clause = " OR ".join(conditions)
+    ops: List[tuple] = [
+        (f"DELETE FROM entity_cross_ref WHERE {where_clause}", tuple(params))
+    ]
+
     if content_ids:
-        placeholders = ",".join("?" * len(content_ids))
-        self._execute(
-            f"DELETE FROM code_content_fts WHERE rowid IN ({placeholders})",
-            tuple(content_ids),
+        ph = ",".join("?" * len(content_ids))
+        ops.append(
+            (f"DELETE FROM code_content_fts WHERE rowid IN ({ph})", tuple(content_ids))
         )
     if class_ids:
-        placeholders = ",".join("?" * len(class_ids))
-        self._execute(
-            f"DELETE FROM methods WHERE class_id IN ({placeholders})",
-            tuple(class_ids),
-        )
-    self._execute("DELETE FROM classes WHERE file_id = ?", (file_id,))
-    self._execute("DELETE FROM functions WHERE file_id = ?", (file_id,))
-    self._execute("DELETE FROM imports WHERE file_id = ?", (file_id,))
-    self._execute("DELETE FROM issues WHERE file_id = ?", (file_id,))
-    self._execute("DELETE FROM usages WHERE file_id = ?", (file_id,))
-    self._execute("DELETE FROM code_content WHERE file_id = ?", (file_id,))
-    self._execute("DELETE FROM ast_trees WHERE file_id = ?", (file_id,))
-    self._execute("DELETE FROM cst_trees WHERE file_id = ?", (file_id,))
+        ph = ",".join("?" * len(class_ids))
+        ops.append((f"DELETE FROM methods WHERE class_id IN ({ph})", tuple(class_ids)))
+    ops.extend(
+        [
+            ("DELETE FROM classes WHERE file_id = ?", (file_id,)),
+            ("DELETE FROM functions WHERE file_id = ?", (file_id,)),
+            ("DELETE FROM imports WHERE file_id = ?", (file_id,)),
+            ("DELETE FROM issues WHERE file_id = ?", (file_id,)),
+            ("DELETE FROM usages WHERE file_id = ?", (file_id,)),
+            ("DELETE FROM code_content WHERE file_id = ?", (file_id,)),
+            ("DELETE FROM ast_trees WHERE file_id = ?", (file_id,)),
+            ("DELETE FROM cst_trees WHERE file_id = ?", (file_id,)),
+        ]
+    )
+    self.execute_batch(ops)
     self._commit()

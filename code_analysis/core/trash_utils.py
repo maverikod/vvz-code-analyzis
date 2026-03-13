@@ -7,6 +7,7 @@ email: vasilyvz@gmail.com
 
 from __future__ import annotations
 
+import json
 import re
 from datetime import datetime
 from pathlib import Path
@@ -66,6 +67,9 @@ def get_project_id_from_trash_folder(
     """
     Read project_id from projectid file inside a trashed project folder.
 
+    Supports both JSON format ({"id": "<uuid>", "description": "..."}) and
+    legacy plain UUID on a single line.
+
     Args:
         trash_dir: Trash directory path.
         trash_folder_name: Name of the trashed folder (direct child of trash_dir).
@@ -77,7 +81,16 @@ def get_project_id_from_trash_folder(
     if not path.is_file():
         return None
     try:
-        return path.read_text().strip() or None
+        raw = path.read_text(encoding="utf-8").strip() or None
+        if not raw:
+            return None
+        try:
+            data = json.loads(raw)
+            if isinstance(data, dict) and data.get("id"):
+                return str(data["id"]).strip()
+        except (json.JSONDecodeError, TypeError):
+            pass
+        return raw
     except OSError:
         return None
 

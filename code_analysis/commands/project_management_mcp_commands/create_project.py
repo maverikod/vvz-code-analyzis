@@ -142,7 +142,7 @@ class CreateProjectMCPCommand(BaseMCPCommand):
             database = self._open_database_from_config(auto_analyze=False)
             try:
                 # Import and execute command
-                from .project_creation import CreateProjectCommand
+                from ..project_creation import CreateProjectCommand
 
                 cmd = CreateProjectCommand(
                     database=database,

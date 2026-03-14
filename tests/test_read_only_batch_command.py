@@ -13,7 +13,6 @@ email: vasilyvz@gmail.com
 from __future__ import annotations
 
 from typing import Any, Dict, List, Optional, Sequence, cast
-from unittest.mock import MagicMock
 
 import pytest
 
@@ -29,30 +28,41 @@ from code_analysis.commands.read_only_batch_whitelist import (
 from mcp_proxy_adapter.commands.result import SuccessResult
 
 
-def _make_mock_registry(
-    command_responses: Optional[Dict[str, Any]] = None,
-    command_not_found: Optional[str] = None,
-) -> MagicMock:
-    """Build a registry mock: get_command(name) returns a class with validate_params + execute."""
-    command_responses = command_responses or {}
+class _FakeRegistry:
+    """Fake registry returning real command instances (no MagicMock) so JSON serialization works."""
 
-    def get_command(name: str):
-        if command_not_found is not None and name == command_not_found:
+    def __init__(
+        self,
+        command_responses: Optional[Dict[str, Any]] = None,
+        command_not_found: Optional[str] = None,
+    ) -> None:
+        self._responses = command_responses or {}
+        self._not_found = command_not_found
+
+    def get_command(self, name: str) -> type:
+        if self._not_found is not None and name == self._not_found:
             raise KeyError(f"Command '{name}' not found")
-        data = command_responses.get(name, {"ok": True})
+        data = dict(self._responses.get(name, {"ok": True}))
 
-        class _MockCommand:
+        class _Cmd:
             def validate_params(self, params: Any) -> Dict[str, Any]:
                 return dict(params) if params else {}
 
             async def execute(self, **kwargs: Any) -> SuccessResult:
                 return SuccessResult(data=data)
 
-        return _MockCommand
+        return _Cmd
 
-    registry = MagicMock()
-    registry.get_command = get_command
-    return registry
+
+def _make_mock_registry(
+    command_responses: Optional[Dict[str, Any]] = None,
+    command_not_found: Optional[str] = None,
+) -> _FakeRegistry:
+    """Build a registry: get_command(name) returns a class with validate_params + execute."""
+    return _FakeRegistry(
+        command_responses=command_responses,
+        command_not_found=command_not_found,
+    )
 
 
 @pytest.mark.asyncio

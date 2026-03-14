@@ -119,6 +119,7 @@ class _ClientAPIProjectsMixin(_DatabaseClientBase):
         """List all projects in database. Excludes trashed by checking the files table:
         project is active if it has no files or has at least one file with
         (deleted = 0 OR deleted IS NULL).
+        Uses one row per project (GROUP BY) and INNER JOIN + UNION for speed.
 
         Returns:
             List of Project objects
@@ -129,10 +130,15 @@ class _ClientAPIProjectsMixin(_DatabaseClientBase):
         """
         result = self.execute(
             "SELECT p.* FROM projects p "
-            "WHERE NOT EXISTS (SELECT 1 FROM files f WHERE f.project_id = p.id) "
-            "   OR EXISTS (SELECT 1 FROM files f WHERE f.project_id = p.id "
-            "              AND (f.deleted = 0 OR f.deleted IS NULL)) "
-            "ORDER BY p.created_at",
+            "INNER JOIN ("
+            "  SELECT project_id FROM files "
+            "  WHERE (deleted = 0 OR deleted IS NULL) "
+            "  GROUP BY project_id"
+            ") a ON p.id = a.project_id "
+            "UNION "
+            "SELECT p.* FROM projects p "
+            "WHERE p.id NOT IN (SELECT project_id FROM files) "
+            "ORDER BY created_at",
             (),
         )
         rows = (

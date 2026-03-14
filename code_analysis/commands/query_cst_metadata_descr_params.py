@@ -33,7 +33,7 @@ def get_detailed_description() -> str:
         "- Descendant combinator: whitespace (A B finds B inside A)\n"
         "- Child combinator: > (A > B finds B as direct child of A)\n"
         "- Each step: TYPE or * with optional predicates and pseudos\n"
-        '- Predicates: [attr OP value] (e.g., [name="MyClass"])\n'
+        '- Predicates: [attr OP value] only (e.g. [name="MyClass"]). Bare [attr] like [name] is invalid.\n'
         "- Pseudos: :first, :last, :nth(N)\n\n"
         "Supported TYPE Aliases:\n"
         "- module, class, function, method, stmt, smallstmt, import, node\n"
@@ -91,36 +91,31 @@ def get_detailed_description() -> str:
 def get_parameters() -> Dict[str, Any]:
     """Return the parameters dict for query_cst metadata."""
     return {
-        "root_dir": {
+        "project_id": {
             "description": (
-                "Project root directory path. "
-                "**RECOMMENDED: Use absolute path for reliability.** "
-                "Relative paths are resolved from current working directory, "
-                "which may cause issues if working directory changes. "
-                "Used to resolve relative file_path."
+                "Project UUID (from create_project or list_projects). "
+                "Required for commands that operate on a project. "
+                "Used to resolve file_path relative to project root."
             ),
             "type": "string",
             "required": True,
             "examples": [
-                "/home/user/projects/my_project",  # ✅ RECOMMENDED: Absolute path
-                ".",  # ⚠️ Relative path (resolved from CWD)
-                "./code_analysis",  # ⚠️ Relative path (resolved from CWD)
+                "550e8400-e29b-41d4-a716-446655440000",
+                "c86dded6-6f93-4fb0-be54-b6d7b739eeb9",
             ],
         },
         "file_path": {
             "description": (
-                "Target Python file path. "
-                "**Can be absolute or relative to root_dir.** "
-                "If relative, it is resolved relative to root_dir. "
-                "If absolute, it must be within root_dir (or will be normalized). "
-                "Must be a .py file."
+                "Target Python file path relative to project root. "
+                "Must be a .py file. "
+                "Resolved using project_id (project root from database)."
             ),
             "type": "string",
             "required": True,
             "examples": [
                 "code_analysis/core/backup_manager.py",
-                "/home/user/projects/my_project/src/main.py",
-                "./src/utils.py",
+                "src/main.py",
+                "ai_admin/commands/base.py",
             ],
         },
         "selector": {
@@ -128,6 +123,7 @@ def get_parameters() -> Dict[str, Any]:
                 "CSTQuery selector string. Uses jQuery/XPath-like syntax to find nodes. "
                 "Required for query-only mode. For replace mode, either selector or both "
                 "start_line and end_line are required. "
+                'Predicate must include operator and value: use [name="foo"] not [name] (bare [attr] is invalid). '
                 "Examples:\n"
                 '- class[name="MyClass"] - Find class by name\n'
                 '- method[qualname="MyClass.my_method"] - Find method by qualified name\n'

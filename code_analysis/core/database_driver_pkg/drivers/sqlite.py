@@ -18,31 +18,14 @@ from typing import Any, Dict, List, Optional, Tuple
 from ..exceptions import DriverConnectionError, DriverOperationError
 from ..sqlite_query_journal import SQLiteQueryJournal
 from .base import BaseDatabaseDriver
-from .sqlite_batch import expand_operations, group_for_executemany
+from .sqlite_migrations import run_all_ensure
 from .sqlite_operations import SQLiteOperations
+from .sqlite_run import run_execute, run_execute_batch
 from .sqlite_schema import SQLiteSchemaManager
+from .sqlite_tables import run_create_table, run_drop_table
 from .sqlite_transactions import SQLiteTransactionManager
 
 logger = logging.getLogger(__name__)
-
-# Canonical schema for indexing_worker_stats (create and migrate).
-# Must stay in sync with code_analysis.core.database.base CodeDatabase.
-INDEXING_WORKER_STATS_TABLE = "indexing_worker_stats"
-INDEXING_WORKER_STATS_COLUMNS: List[tuple] = [
-    ("cycle_id", "TEXT PRIMARY KEY"),
-    ("cycle_start_time", "REAL NOT NULL"),
-    ("cycle_end_time", "REAL"),
-    ("files_total_at_start", "INTEGER NOT NULL DEFAULT 0"),
-    ("files_indexed", "INTEGER NOT NULL DEFAULT 0"),
-    ("files_failed", "INTEGER NOT NULL DEFAULT 0"),
-    ("total_processing_time_seconds", "REAL NOT NULL DEFAULT 0.0"),
-    ("average_processing_time_seconds", "REAL"),
-    ("last_updated", "REAL DEFAULT (julianday('now'))"),
-]
-INDEXING_WORKER_STATS_INDEX = (
-    "CREATE INDEX IF NOT EXISTS idx_indexing_worker_stats_start_time "
-    f"ON {INDEXING_WORKER_STATS_TABLE}(cycle_start_time)"
-)
 
 
 class SQLiteDriver(BaseDatabaseDriver):
@@ -126,11 +109,7 @@ class SQLiteDriver(BaseDatabaseDriver):
             self._schema_manager = SQLiteSchemaManager(self.conn)
             self._operations = SQLiteOperations(self.conn)
 
-            # Ensure migrations for columns used by workers (e.g. needs_chunking)
-            self._ensure_files_table_migrations()
-            self._ensure_code_chunks_migrations()
-            self._ensure_indexing_worker_stats_table()
-            self._ensure_indexing_errors_table()
+            run_all_ensure(self.conn, self._schema_manager, self.db_path)
 
             # Optional query journal for inspection and recovery (rotation at 100 MB by default)
             query_log_path = config.get("query_log_path")
@@ -157,180 +136,6 @@ class SQLiteDriver(BaseDatabaseDriver):
         except Exception as e:
             raise DriverConnectionError(f"Failed to connect to database: {e}") from e
 
-    def _ensure_indexing_errors_table(self) -> None:
-        """Create indexing_errors table if missing (file_path + error when indexing fails)."""
-        if not self.conn:
-            return
-        try:
-            cur = self.conn.cursor()
-            cur.execute(
-                "SELECT name FROM sqlite_master WHERE type='table' AND name='indexing_errors'"
-            )
-            if cur.fetchone() is not None:
-                return
-            logger.info("Creating indexing_errors table (driver)")
-            self.conn.execute(
-                """
-                CREATE TABLE IF NOT EXISTS indexing_errors (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    project_id TEXT NOT NULL,
-                    file_path TEXT NOT NULL,
-                    error_type TEXT,
-                    error_message TEXT,
-                    created_at REAL DEFAULT (julianday('now')),
-                    UNIQUE(project_id, file_path)
-                )
-                """
-            )
-            self.conn.execute(
-                "CREATE INDEX IF NOT EXISTS idx_indexing_errors_project_path "
-                "ON indexing_errors(project_id, file_path)"
-            )
-            self.conn.commit()
-        except Exception as e:
-            logger.warning("Could not create indexing_errors table: %s", e)
-            try:
-                self.conn.rollback()
-            except Exception:
-                pass
-
-    def _ensure_code_chunks_migrations(self) -> None:
-        """Add code_chunks.token_count if missing (worker add_code_chunk needs it)."""
-        if not self.conn or not self._schema_manager:
-            return
-        try:
-            info = self._schema_manager.get_table_info("code_chunks")
-            columns = {row["name"] for row in info}
-            if "token_count" not in columns:
-                logger.info(
-                    "Migrating code_chunks table: adding token_count column (driver)"
-                )
-                self.conn.execute(
-                    "ALTER TABLE code_chunks ADD COLUMN token_count INTEGER"
-                )
-                self.conn.commit()
-        except Exception as e:
-            logger.warning("Could not add token_count to code_chunks in driver: %s", e)
-            try:
-                self.conn.rollback()
-            except Exception:
-                pass
-
-    def _ensure_indexing_worker_stats_table(self) -> None:
-        """Create indexing_worker_stats if missing and add any missing columns (canonical structure)."""
-        if not self.conn or not self._schema_manager:
-            return
-        table = INDEXING_WORKER_STATS_TABLE
-        try:
-            info = self._schema_manager.get_table_info(table)
-        except Exception:
-            info = []
-        existing = {row["name"] for row in info} if info else set()
-
-        if not existing:
-            # Table missing: create with full canonical schema
-            try:
-                logger.info(
-                    "Creating %s table in driver (required by indexing worker)",
-                    table,
-                )
-                cols = ", ".join(
-                    f"{name} {spec}" for name, spec in INDEXING_WORKER_STATS_COLUMNS
-                )
-                self.conn.execute(f"CREATE TABLE IF NOT EXISTS {table} ({cols})")
-                self.conn.execute(INDEXING_WORKER_STATS_INDEX)
-                self.conn.commit()
-                return
-            except Exception as e:
-                logger.warning("Could not create %s in driver: %s", table, e)
-                try:
-                    self.conn.rollback()
-                except Exception:
-                    pass
-                return
-
-        # Table exists: add any missing columns (keep structure in sync)
-        for name, spec in INDEXING_WORKER_STATS_COLUMNS:
-            if name in existing:
-                continue
-            if "PRIMARY KEY" in spec:
-                continue  # PK cannot be added via ALTER
-            try:
-                logger.info(
-                    "Migrating %s: adding column %s (driver)",
-                    table,
-                    name,
-                )
-                self.conn.execute(f"ALTER TABLE {table} ADD COLUMN {name} {spec}")
-                self.conn.commit()
-                existing.add(name)
-            except Exception as e:
-                logger.warning(
-                    "Could not add column %s to %s in driver: %s",
-                    name,
-                    table,
-                    e,
-                )
-                try:
-                    self.conn.rollback()
-                except Exception:
-                    pass
-
-        # Ensure index exists
-        try:
-            self.conn.execute(INDEXING_WORKER_STATS_INDEX)
-            self.conn.commit()
-        except Exception as e:
-            logger.debug("Index for %s may already exist: %s", table, e)
-            try:
-                self.conn.rollback()
-            except Exception:
-                pass
-
-    def _ensure_files_table_migrations(self) -> None:
-        """Run migrations on files table (e.g. needs_chunking) if column is missing.
-
-        Workers (file_watcher, vectorization) use raw SQL that references these columns.
-        This ensures the column exists when driver opens the DB (sync_schema may not run).
-        """
-        if not self.conn or not self._schema_manager:
-            return
-        try:
-            info = self._schema_manager.get_table_info("files")
-            columns = {row["name"] for row in info}
-            if "needs_chunking" not in columns:
-                logger.info(
-                    "Migrating files table: adding needs_chunking column (driver)"
-                )
-                self.conn.execute(
-                    "ALTER TABLE files ADD COLUMN needs_chunking INTEGER DEFAULT 0"
-                )
-                self.conn.commit()
-            if "dataset_id" in columns:
-                logger.info(
-                    "Migrating files table: dropping dataset_id column (driver)"
-                )
-                try:
-                    self.conn.execute("ALTER TABLE files DROP COLUMN dataset_id")
-                    self.conn.commit()
-                except Exception as drop_e:
-                    logger.warning(
-                        "Could not drop dataset_id (SQLite 3.35+ required): %s",
-                        drop_e,
-                    )
-                    try:
-                        self.conn.rollback()
-                    except Exception:
-                        pass
-        except Exception as e:
-            logger.warning(
-                "Could not add needs_chunking column to files in driver: %s", e
-            )
-            try:
-                self.conn.rollback()
-            except Exception:
-                pass
-
     def disconnect(self) -> None:
         """Close SQLite connection.
 
@@ -355,102 +160,22 @@ class SQLiteDriver(BaseDatabaseDriver):
             raise DriverConnectionError(f"Failed to disconnect: {e}") from e
 
     def create_table(self, schema: Dict[str, Any]) -> bool:
-        """Create database table.
-
-        Args:
-            schema: Table schema definition with keys:
-                - name: Table name
-                - columns: List of column definitions (name, type, nullable, default, etc.)
-                - constraints: Optional list of constraints (primary_key, foreign_key, etc.)
-
-        Returns:
-            True if table was created successfully, False otherwise
-
-        Raises:
-            DriverOperationError: If operation fails
-        """
+        """Create database table from schema (name, columns, constraints)."""
         if not self.conn:
             raise DriverOperationError("Database connection not established")
-
         try:
-            table_name = schema.get("name")
-            if not table_name:
-                raise DriverOperationError("Table name is required in schema")
-
-            columns = schema.get("columns", [])
-            if not columns:
-                raise DriverOperationError("At least one column is required")
-
-            # Build CREATE TABLE SQL
-            column_defs = []
-            for col in columns:
-                col_name = col.get("name")
-                col_type = col.get("type", "TEXT")
-                nullable = col.get("nullable", True)
-                default = col.get("default")
-                primary_key = col.get("primary_key", False)
-
-                col_def = f"{col_name} {col_type}"
-                if not nullable:
-                    col_def += " NOT NULL"
-                if default is not None:
-                    if isinstance(default, str) and "(" not in default:
-                        col_def += f" DEFAULT '{default}'"
-                    else:
-                        col_def += (
-                            f" DEFAULT ({default})"
-                            if isinstance(default, str)
-                            else f" DEFAULT {default}"
-                        )
-                if primary_key:
-                    col_def += " PRIMARY KEY"
-
-                column_defs.append(col_def)
-
-            # Add constraints
-            constraints = schema.get("constraints", [])
-            for constraint in constraints:
-                if constraint.get("type") == "primary_key":
-                    cols = constraint.get("columns", [])
-                    if cols:
-                        column_defs.append(f"PRIMARY KEY ({', '.join(cols)})")
-                elif constraint.get("type") == "foreign_key":
-                    cols = constraint.get("columns", [])
-                    ref_table = constraint.get("references_table")
-                    ref_cols = constraint.get("references_columns", [])
-                    if cols and ref_table and ref_cols:
-                        column_defs.append(
-                            f"FOREIGN KEY ({', '.join(cols)}) "
-                            f"REFERENCES {ref_table} ({', '.join(ref_cols)})"
-                        )
-
-            sql = f"CREATE TABLE IF NOT EXISTS {table_name} ({', '.join(column_defs)})"
-            self.conn.execute(sql)
-            self.conn.commit()
-            return True
+            return run_create_table(self.conn, schema)
+        except DriverOperationError:
+            raise
         except Exception as e:
             raise DriverOperationError(f"Failed to create table: {e}") from e
 
     def drop_table(self, table_name: str) -> bool:
-        """Drop database table.
-
-        Args:
-            table_name: Name of the table to drop
-
-        Returns:
-            True if table was dropped successfully, False otherwise
-
-        Raises:
-            DriverOperationError: If operation fails
-        """
+        """Drop database table."""
         if not self.conn:
             raise DriverOperationError("Database connection not established")
-
         try:
-            sql = f"DROP TABLE IF EXISTS {table_name}"
-            self.conn.execute(sql)
-            self.conn.commit()
-            return True
+            return run_drop_table(self.conn, table_name)
         except Exception as e:
             raise DriverOperationError(f"Failed to drop table: {e}") from e
 
@@ -495,20 +220,9 @@ class SQLiteDriver(BaseDatabaseDriver):
         operations: List[Tuple[str, Optional[tuple]]],
         transaction_id: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
-        """Execute multiple SQL statements with batch recognition and executemany.
-
-        Each operation's sql may contain several statements separated by ';'
-        (params apply to the first statement only). Consecutive same-SQL
-        operations are run via cursor.executemany(); order of results is
-        preserved (one result per logical statement).
-        """
+        """Execute multiple SQL statements with batch recognition and executemany."""
         if not operations:
             return []
-        expanded = expand_operations(operations)
-        if not expanded:
-            return []
-        runs = group_for_executemany(expanded)
-
         if transaction_id:
             if not self._transaction_manager:
                 raise DriverOperationError("Transaction manager not initialized")
@@ -519,89 +233,12 @@ class SQLiteDriver(BaseDatabaseDriver):
             if not self.conn:
                 raise DriverOperationError("Database connection not established")
             conn = self.conn
-
-        results: List[Dict[str, Any]] = []
-        try:
-            for run_idx, (kind, payload) in enumerate(runs):
-                if kind == "single":
-                    sql, params = payload
-                    bind_params: Optional[tuple] = (
-                        tuple(params) if params is not None else None
-                    )
-                    if bind_params is not None and bind_params == ():
-                        bind_params = None
-                    cursor = conn.cursor()
-                    try:
-                        if bind_params:
-                            cursor.execute(sql, bind_params)
-                        else:
-                            cursor.execute(sql)
-                        res: Dict[str, Any] = {
-                            "affected_rows": cursor.rowcount,
-                            "lastrowid": cursor.lastrowid,
-                        }
-                        if sql.strip().upper().startswith("SELECT"):
-                            res["data"] = [dict(row) for row in cursor.fetchall()]
-                        else:
-                            res["data"] = None
-                        results.append(res)
-                        if self._query_journal:
-                            self._query_journal.write(
-                                sql,
-                                params=bind_params,
-                                transaction_id=transaction_id,
-                                success=True,
-                            )
-                    finally:
-                        cursor.close()
-                else:
-                    sql, params_list = payload
-                    cursor = conn.cursor()
-                    if params_list is None:
-                        params_list = []
-                    try:
-                        cursor.executemany(sql, params_list)
-                        n = len(params_list)
-                        lastrowid = cursor.lastrowid
-                        for i in range(n):
-                            results.append(
-                                {
-                                    "affected_rows": 1,
-                                    "lastrowid": lastrowid if i == n - 1 else None,
-                                    "data": None,
-                                }
-                            )
-                        if self._query_journal:
-                            for p in params_list:
-                                self._query_journal.write(
-                                    sql,
-                                    params=tuple(p),
-                                    transaction_id=transaction_id,
-                                    success=True,
-                                )
-                    finally:
-                        cursor.close()
-            if not transaction_id:
-                try:
-                    conn.commit()
-                except Exception as commit_err:
-                    msg = str(commit_err).lower()
-                    if "no transaction" in msg or "cannot commit" in msg:
-                        logger.debug(
-                            "Commit skipped (no active transaction): %s", commit_err
-                        )
-                    else:
-                        raise DriverOperationError(
-                            f"Failed to commit: {commit_err}"
-                        ) from commit_err
-            return results
-        except Exception as e:
-            if not transaction_id:
-                try:
-                    conn.rollback()
-                except Exception:
-                    pass
-            raise DriverOperationError(f"execute_batch failed: {e}") from e
+        return run_execute_batch(
+            conn,
+            operations,
+            transaction_id,
+            self._query_journal,
+        )
 
     def execute(
         self,
@@ -609,25 +246,7 @@ class SQLiteDriver(BaseDatabaseDriver):
         params: Optional[tuple] = None,
         transaction_id: Optional[str] = None,
     ) -> Dict[str, Any]:
-        """Execute SQL: one or more statements in one text; return only last result.
-
-        If sql contains several statements (separated by ';'), all are executed
-        in order. Only the result of the **last** statement is returned. If the
-        last statement is not SELECT, result has data=None.
-        """
-        from .sqlite_batch import split_batch_sql
-
-        statements = split_batch_sql(sql)
-        if not statements:
-            return {"affected_rows": 0, "lastrowid": None, "data": None}
-
-        sql_preview = (sql.strip()[:60] + "…") if len(sql.strip()) > 60 else sql.strip()
-        logger.info(
-            "[CHAIN] sqlite driver execute sql_preview=%s tid=%s n_stmts=%s",
-            sql_preview,
-            (transaction_id[:8] + "…") if transaction_id else None,
-            len(statements),
-        )
+        """Execute SQL: one or more statements in one text; return only last result."""
         if transaction_id:
             if not self._transaction_manager:
                 raise DriverOperationError("Transaction manager not initialized")
@@ -638,70 +257,13 @@ class SQLiteDriver(BaseDatabaseDriver):
             if not self.conn:
                 raise DriverOperationError("Database connection not established")
             conn = self.conn
-
-        bind_params: Optional[tuple] = None
-        if params is not None:
-            if isinstance(params, (list, tuple)):
-                bind_params = tuple(params) if params else ()
-            else:
-                raise DriverOperationError(
-                    f"execute params must be tuple or list; got {type(params).__name__}"
-                )
-
-        last_result: Dict[str, Any] = {
-            "affected_rows": 0,
-            "lastrowid": None,
-            "data": None,
-        }
-        try:
-            for i, stmt in enumerate(statements):
-                use_params = bind_params if i == 0 else None
-                if use_params is not None and use_params == ():
-                    use_params = None
-                cursor = conn.cursor()
-                try:
-                    if use_params:
-                        cursor.execute(stmt, use_params)
-                    else:
-                        cursor.execute(stmt)
-                    last_result = {
-                        "affected_rows": cursor.rowcount,
-                        "lastrowid": cursor.lastrowid,
-                    }
-                    if stmt.strip().upper().startswith("SELECT"):
-                        last_result["data"] = [dict(row) for row in cursor.fetchall()]
-                    else:
-                        last_result["data"] = None
-                    if self._query_journal:
-                        self._query_journal.write(
-                            stmt,
-                            params=use_params,
-                            transaction_id=transaction_id,
-                            success=True,
-                        )
-                finally:
-                    cursor.close()
-            if not transaction_id:
-                try:
-                    conn.commit()
-                except Exception as commit_err:
-                    msg = str(commit_err).lower()
-                    if "no transaction" in msg or "cannot commit" in msg:
-                        logger.debug(
-                            "Commit skipped (no active transaction): %s", commit_err
-                        )
-                    else:
-                        raise DriverOperationError(
-                            f"Failed to commit: {commit_err}"
-                        ) from commit_err
-            return last_result
-        except Exception as e:
-            if not transaction_id:
-                try:
-                    conn.rollback()
-                except Exception:
-                    pass
-            raise DriverOperationError(f"Failed to execute SQL: {e}") from e
+        return run_execute(
+            conn,
+            sql,
+            params,
+            transaction_id,
+            self._query_journal,
+        )
 
     def begin_transaction(self) -> str:
         """Begin database transaction.

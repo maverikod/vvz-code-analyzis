@@ -1,0 +1,102 @@
+"""
+Thread-safe holder for the long-lived database connection in the MCP server process.
+
+One connection for the whole application; it is closed only when the application
+shuts down (via close_shared_database()). Commands must not close it.
+
+get_shared_database() returns a proxy that forwards all calls to the real client
+except disconnect(), which is a no-op so command code can keep calling
+database.disconnect() in finally blocks without closing the shared connection.
+
+Author: Vasiliy Zdanovskiy
+email: vasilyvz@gmail.com
+"""
+
+from __future__ import annotations
+
+import threading
+from typing import Any, Optional, cast
+
+from .database_client.client import DatabaseClient
+
+_lock = threading.Lock()
+_client: Optional[DatabaseClient] = None
+
+
+class SharedDatabaseNotInitializedError(Exception):
+    """Raised when get_shared_database() is called but no client has been set.
+
+    The shared database must be set at server startup before any command runs.
+    """
+
+    def __init__(self, message: str = "Shared database is not initialized") -> None:
+        super().__init__(message)
+
+
+class _SharedDatabaseProxy:
+    """Proxy that forwards all attribute/method access to the real client except disconnect().
+
+    disconnect() is a no-op so that command code can call database.disconnect()
+    in finally blocks without closing the long-lived shared connection.
+    """
+
+    __slots__ = ("_client",)
+
+    def __init__(self, client: DatabaseClient) -> None:
+        self._client = client
+
+    def disconnect(self) -> None:
+        """No-op: do not close the shared connection when commands call disconnect()."""
+        pass
+
+    def __getattr__(self, name: str) -> Any:
+        """Forward all other attribute and method access to the wrapped client."""
+        return getattr(self._client, name)
+
+
+def set_shared_database(client: DatabaseClient) -> None:
+    """Store the long-lived database client in the thread-safe holder.
+
+    Called once at server startup after the connection is opened.
+    Thread-safe; overwrites if already set.
+
+    Args:
+        client: The real DatabaseClient instance (not a proxy).
+    """
+    global _client
+    with _lock:
+        _client = client
+
+
+def get_shared_database() -> DatabaseClient:
+    """Return a proxy to the shared database client.
+
+    The proxy forwards all methods to the real client except disconnect(),
+    which is a no-op. Commands can safely call database.disconnect() in finally.
+
+    Returns:
+        A proxy implementing the DatabaseClient interface (disconnect is no-op).
+
+    Raises:
+        SharedDatabaseNotInitializedError: If no client has been set (e.g. before
+            startup completed or after shutdown).
+    """
+    with _lock:
+        if _client is None:
+            raise SharedDatabaseNotInitializedError()
+        return cast(DatabaseClient, _SharedDatabaseProxy(_client))
+
+
+def close_shared_database() -> None:
+    """Disconnect the real shared client and clear the holder.
+
+    Called at server shutdown. Idempotent: safe to call when already closed/cleared.
+    """
+    global _client
+    with _lock:
+        if _client is not None:
+            try:
+                _client.disconnect()
+            except Exception:
+                pass
+            _client = None

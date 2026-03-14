@@ -191,7 +191,6 @@
           ]
         }
       ],
-      "dynamic_watch_file": "data/dynamic_watch_dirs.json",
       "log_path": "logs/vectorization_worker.log",
       "circuit_breaker": {
         "failure_threshold": 5,

@@ -14,6 +14,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from code_analysis.core.cst_tree.node_id_markers import strip_persisted_node_ids
 from code_analysis.core.cst_tree.tree_builder import create_tree_from_code
 from code_analysis.core.cst_tree.tree_saver import save_tree_to_file
 
@@ -77,7 +78,11 @@ def test_save_tree_to_file_creates_target_and_removes_tmp(
 
     assert result.get("success") is True
     assert target.exists()
-    assert target.read_text(encoding="utf-8").strip() == '"""Doc."""\n\nx = 1'
+    logical_source, persisted_node_ids = strip_persisted_node_ids(
+        target.read_text(encoding="utf-8")
+    )
+    assert logical_source.strip() == '"""Doc."""\n\nx = 1'
+    assert persisted_node_ids
     assert not path_tmp.exists()
 
 

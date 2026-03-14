@@ -91,10 +91,6 @@ try:
                 if config['code_analysis']['worker']['log_path'] != "$LOG_DIR/vectorization_worker.log":
                     config['code_analysis']['worker']['log_path'] = "$LOG_DIR/vectorization_worker.log"
                     updated = True
-            if 'dynamic_watch_file' in config['code_analysis']['worker']:
-                if config['code_analysis']['worker']['dynamic_watch_file'] != "$DATA_DIR/dynamic_watch_dirs.json":
-                    config['code_analysis']['worker']['dynamic_watch_file'] = "$DATA_DIR/dynamic_watch_dirs.json"
-                    updated = True
         
         if 'file_watcher' in config['code_analysis']:
             if 'log_path' in config['code_analysis']['file_watcher']:

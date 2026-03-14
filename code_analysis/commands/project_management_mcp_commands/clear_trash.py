@@ -13,7 +13,6 @@ from ._shared import (
     Optional,
     Path,
     SuccessResult,
-    _get_socket_path_from_db_path,
     logger,
 )
 
@@ -31,7 +30,7 @@ class ClearTrashMCPCommand(BaseMCPCommand):
     category = "project_management"
     author = "Vasiliy Zdanovskiy"
     email = "vasilyvz@gmail.com"
-    use_queue = False
+    use_queue = True  # Long-running (clear many projects); run via queue
 
     @classmethod
     def get_schema(cls: type["ClearTrashMCPCommand"]) -> Dict[str, Any]:
@@ -66,14 +65,14 @@ class ClearTrashMCPCommand(BaseMCPCommand):
         **kwargs: Any,
     ) -> SuccessResult | ErrorResult:
         try:
-            from ..core.storage_paths import (
+            from ...core.storage_paths import (
                 load_raw_config,
                 resolve_storage_paths,
                 get_faiss_index_path,
             )
-            from ..core.trash_utils import get_project_id_from_trash_folder
-            from .clear_project_data_impl import _clear_project_data_impl
-            from .trash_commands import ClearTrashCommand
+            from ...core.trash_utils import get_project_id_from_trash_folder
+            from ..clear_project_data_impl import _clear_project_data_impl
+            from ..trash_commands import ClearTrashCommand
 
             config_path = self._resolve_config_path()
             config_data = load_raw_config(config_path)
@@ -95,11 +94,7 @@ class ClearTrashMCPCommand(BaseMCPCommand):
                         if pid:
                             project_ids.append(pid)
                 if project_ids:
-                    socket_path = _get_socket_path_from_db_path(Path(storage.db_path))
-                    from ..core.database_client.client import DatabaseClient
-
-                    database = DatabaseClient(socket_path=socket_path)
-                    database.connect()
+                    database = self._open_database_from_config(auto_analyze=False)
                     try:
                         for project_id in project_ids:
                             await _clear_project_data_impl(database, project_id)

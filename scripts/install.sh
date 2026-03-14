@@ -193,8 +193,6 @@ if 'code_analysis' in config:
     if 'worker' in config['code_analysis']:
         if 'log_path' in config['code_analysis']['worker']:
             config['code_analysis']['worker']['log_path'] = "$LOG_DIR/vectorization_worker.log"
-        if 'dynamic_watch_file' in config['code_analysis']['worker']:
-            config['code_analysis']['worker']['dynamic_watch_file'] = "$DATA_DIR/dynamic_watch_dirs.json"
     
     if 'file_watcher' in config['code_analysis']:
         if 'log_path' in config['code_analysis']['file_watcher']:

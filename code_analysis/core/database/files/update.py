@@ -222,25 +222,11 @@ def update_file_data(
         except Exception as e:
             logger.warning(f"Failed to update last_modified: {e}", exc_info=True)
 
-        # Call _analyze_file to recreate all records
+        # Recreate all records via analyze_file (no dependency on MCP command class)
         try:
-            # Import from commands package (relative to code_analysis root)
-            import sys
+            from ....commands.update_indexes_analyzer import analyze_file
 
-            # Add parent directory to path if needed
-            code_analysis_root = Path(__file__).parent.parent.parent
-            if str(code_analysis_root) not in sys.path:
-                sys.path.insert(0, str(code_analysis_root))
-            from code_analysis.commands.code_mapper_mcp_command import (
-                UpdateIndexesMCPCommand,
-            )
-
-            # Create command instance
-            update_cmd = UpdateIndexesMCPCommand()
-
-            # Call _analyze_file with force=True to ensure AST/CST are saved
-            # even if last_modified matches (after clear_file_data)
-            result = update_cmd._analyze_file(
+            result = analyze_file(
                 database=self,
                 file_path=Path(abs_path),
                 project_id=project_id,
@@ -321,45 +307,38 @@ def update_file_data(
                     + result.get("methods", 0)
                 )
 
-            # After successful full reindex, set last_modified to actual disk mtime
+            # Batch final updates: last_modified, clear indexing_errors, clear needs_chunking
+            tid = None
             try:
                 disk_mtime = Path(abs_path).stat().st_mtime
-                self._execute(
-                    "UPDATE files SET last_modified = ? WHERE id = ?",
-                    (disk_mtime, file_id),
-                )
-                self._commit()
+                final_ops = [
+                    (
+                        "UPDATE files SET last_modified = ? WHERE id = ?",
+                        (disk_mtime, file_id),
+                    ),
+                    (
+                        "DELETE FROM indexing_errors WHERE project_id = ? AND file_path = ?",
+                        (project_id, abs_path),
+                    ),
+                    (
+                        "UPDATE files SET needs_chunking = 0 WHERE id = ?",
+                        (file_id,),
+                    ),
+                ]
+                tid = self.begin_transaction()
+                self.execute_batch(final_ops, tid)
+                self.commit_transaction(tid)
             except Exception as e:
                 logger.warning(
-                    "Failed to update last_modified after reindex for %s: %s",
+                    "Failed batch final updates after reindex for %s: %s",
                     abs_path,
                     e,
                 )
-
-            # Clear indexing error for this file on successful write
-            try:
-                self._execute(
-                    "DELETE FROM indexing_errors WHERE project_id = ? AND file_path = ?",
-                    (project_id, abs_path),
-                )
-                self._commit()
-            except Exception:
-                pass
-
-            # Clear needs_chunking so direct callers (refactor, cst_save_tree, etc.)
-            # get same behavior as index_file RPC: file is fully reindexed, no re-chunk request
-            try:
-                self._execute(
-                    "UPDATE files SET needs_chunking = 0 WHERE id = ?",
-                    (file_id,),
-                )
-                self._commit()
-            except Exception as e:
-                logger.warning(
-                    "Failed to clear needs_chunking after reindex for %s: %s",
-                    abs_path,
-                    e,
-                )
+                if tid is not None:
+                    try:
+                        self.rollback_transaction(tid)
+                    except Exception:
+                        pass
 
             return {
                 "success": True,

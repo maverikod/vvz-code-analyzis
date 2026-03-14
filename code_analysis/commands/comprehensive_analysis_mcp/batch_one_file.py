@@ -11,7 +11,7 @@ email: vasilyvz@gmail.com
 import logging
 import time
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from ...core.duplicate_detector import DuplicateDetector
 
@@ -38,9 +38,13 @@ def analyze_one_file_in_batch(
     check_docstrings: bool,
     duplicate_min_lines: int,
     duplicate_min_similarity: float,
+    set_step_desc: Optional[Callable[[str], None]] = None,
 ) -> Tuple[Dict[str, Any], Dict[str, Any], Any]:
     """
     Run all analysis checks for one file in batch mode.
+
+    If set_step_desc is provided, it is called with the current check name
+    (e.g. "placeholders", "flake8", "mypy") before each check for status display.
 
     Mutates timings_sec. Returns (file_results, file_summary, file_project_id).
     """
@@ -56,6 +60,8 @@ def analyze_one_file_in_batch(
     }
 
     if check_placeholders:
+        if set_step_desc:
+            set_step_desc("placeholders")
         t0 = time.perf_counter()
         placeholders = analyzer.find_placeholders(full_path, source_code)
         timings_sec["placeholders"] += time.perf_counter() - t0
@@ -64,6 +70,8 @@ def analyze_one_file_in_batch(
         file_results["placeholders"] = placeholders
 
     if check_stubs:
+        if set_step_desc:
+            set_step_desc("stubs")
         t0 = time.perf_counter()
         stubs = analyzer.find_stubs(full_path, source_code)
         timings_sec["stubs"] += time.perf_counter() - t0
@@ -72,6 +80,8 @@ def analyze_one_file_in_batch(
         file_results["stubs"] = stubs
 
     if check_empty_methods:
+        if set_step_desc:
+            set_step_desc("empty_methods")
         t0 = time.perf_counter()
         empty_methods = analyzer.find_empty_methods(full_path, source_code)
         timings_sec["empty_methods"] += time.perf_counter() - t0
@@ -80,6 +90,8 @@ def analyze_one_file_in_batch(
         file_results["empty_methods"] = empty_methods
 
     if check_imports:
+        if set_step_desc:
+            set_step_desc("imports")
         t0 = time.perf_counter()
         imports_not_at_top = analyzer.find_imports_not_at_top(full_path, source_code)
         timings_sec["imports"] += time.perf_counter() - t0
@@ -88,6 +100,8 @@ def analyze_one_file_in_batch(
         file_results["imports_not_at_top"] = imports_not_at_top
 
     if check_duplicates:
+        if set_step_desc:
+            set_step_desc("duplicates")
         t0 = time.perf_counter()
         detector = DuplicateDetector(
             min_lines=duplicate_min_lines,
@@ -102,6 +116,8 @@ def analyze_one_file_in_batch(
         file_results["duplicates"] = duplicates
 
     if check_flake8:
+        if set_step_desc:
+            set_step_desc("flake8")
         t0 = time.perf_counter()
         flake8_result = analyzer.check_flake8(full_path)
         timings_sec["flake8"] += time.perf_counter() - t0
@@ -110,6 +126,8 @@ def analyze_one_file_in_batch(
             file_results["flake8_errors"] = [flake8_result]
 
     if check_mypy:
+        if set_step_desc:
+            set_step_desc("mypy")
         key = str(full_path.resolve())
         mypy_errors_list = project_mypy_errors.get(key, [])
         if mypy_errors_list:
@@ -125,6 +143,8 @@ def analyze_one_file_in_batch(
             file_results["mypy_errors"] = []
 
     if check_docstrings:
+        if set_step_desc:
+            set_step_desc("docstrings")
         t0 = time.perf_counter()
         missing_docstrings = analyzer.find_missing_docstrings(full_path, source_code)
         timings_sec["docstrings"] += time.perf_counter() - t0

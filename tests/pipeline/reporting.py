@@ -114,6 +114,8 @@ class TestReporter:
         """
         if self.current_suite is None:
             self.start_suite("default")
+        if self.current_suite is None:  # pragma: no cover - defensive typing guard
+            raise RuntimeError("Failed to initialize reporting suite")
 
         result = TestResult(
             name=name,

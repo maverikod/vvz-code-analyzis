@@ -7,7 +7,7 @@ email: vasilyvz@gmail.com
 
 import logging
 from pathlib import Path
-from typing import Any, Dict, Optional, TYPE_CHECKING
+from typing import Any, Dict, List, Optional, TYPE_CHECKING, cast
 
 if TYPE_CHECKING:
     from ...core.database_client.client import DatabaseClient
@@ -76,7 +76,7 @@ class RepairDatabaseCommand:
         Returns:
             Dictionary with repair statistics
         """
-        result = {
+        result: Dict[str, Any] = {
             "files_in_project_restored": [],
             "files_in_versions_marked_deleted": [],
             "files_restored_from_cst": [],
@@ -124,8 +124,13 @@ class RepairDatabaseCommand:
                 f"Found {len(project_files)} files in project, {len(version_files)} in versions"
             )
 
-            # Process each file in database
-            for file_record in all_files:
+            # Process each file in database (convert File to dict if needed)
+            for file_obj in all_files:
+                file_record = (
+                    file_obj.to_db_row()
+                    if hasattr(file_obj, "to_db_row")
+                    else cast(Dict[str, Any], file_obj)
+                )
                 file_id = file_record["id"]
                 db_path = file_record["path"]
                 is_deleted = file_record.get("deleted", 0) == 1
@@ -353,23 +358,27 @@ class RepairDatabaseCommand:
         cst_trees.cst_code for backward compatibility.
         """
         try:
-            row_result = self.database.execute(
-                "SELECT source_payload FROM file_tree_snapshots WHERE file_id = ? "
-                "ORDER BY id DESC LIMIT 1",
-                (file_id,),
+            row_result = cast(
+                Dict[str, Any],
+                self.database.execute(
+                    "SELECT source_payload FROM file_tree_snapshots WHERE file_id = ? "
+                    "ORDER BY id DESC LIMIT 1",
+                    (file_id,),
+                ),
             )
-            data = row_result.get("data", [])
+            data: List[Any] = row_result.get("data", [])
             if data and data[0].get("source_payload"):
-                return data[0]["source_payload"]
+                return str(data[0]["source_payload"])
         except Exception as e:
             logger.debug(
                 "No snapshot payload for file_id=%s (%s), trying cst_trees",
                 file_id,
                 e,
             )
-        cst_data = await self.database.get_cst_tree(file_id)
+        db = cast(Any, self.database)
+        cst_data = await db.get_cst_tree(file_id)
         if cst_data and cst_data.get("cst_code"):
-            return cst_data["cst_code"]
+            return str(cst_data["cst_code"])
         return None
 
     async def _stop_all_workers(self) -> Dict[str, Any]:
@@ -379,7 +388,7 @@ class RepairDatabaseCommand:
         Returns:
             Dictionary with stop results
         """
-        result = {
+        result: Dict[str, Any] = {
             "stopped_count": 0,
             "stopped_workers": [],
             "errors": [],

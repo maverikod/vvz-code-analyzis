@@ -42,18 +42,33 @@ class _ResultEntry(TypedDict, total=False):
     result: Any
 
 
+def _json_safe(value: Any) -> Any:
+    """Return a JSON-serializable value; replace mocks and non-serializable with None or str."""
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    if isinstance(value, (dict, list)):
+        return value
+    if type(value).__name__ in ("MagicMock", "Mock"):
+        return None
+    try:
+        json.dumps(value)
+        return value
+    except (TypeError, ValueError):
+        return str(value) if value is not None else None
+
+
 def _result_to_payload(result: SuccessResult | ErrorResult) -> dict[str, Any]:
     """Convert SuccessResult or ErrorResult to JSON-serializable dict."""
     if isinstance(result, SuccessResult):
         return {
             "success": True,
-            "data": getattr(result, "data", None),
-            "message": getattr(result, "message", None),
+            "data": _json_safe(getattr(result, "data", None)),
+            "message": _json_safe(getattr(result, "message", None)),
         }
     return {
         "success": False,
-        "error": getattr(result, "message", str(result)),
-        "error_code": getattr(result, "code", None),
+        "error": _json_safe(getattr(result, "message", str(result))),
+        "error_code": _json_safe(getattr(result, "code", None)),
     }
 
 

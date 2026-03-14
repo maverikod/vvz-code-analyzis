@@ -46,7 +46,7 @@ class TestObjectModelsRealData:
             },
         }
         db = CodeDatabase(driver_config)
-        db.connect()
+        db.sync_schema()
 
         # Load real projects if available
         if TEST_DATA_DIR.exists():
@@ -63,16 +63,16 @@ class TestObjectModelsRealData:
                                 project_id = content
 
                         if project_id:
-                            db.create_project(
-                                project_id=project_id,
+                            db.get_or_create_project(
                                 root_path=str(project_dir.absolute()),
                                 name=project_dir.name,
+                                project_id=project_id,
                             )
                     except Exception:
                         pass
 
         yield db
-        db.disconnect()
+        db.close()
 
     def _check_test_data_available(self):
         """Check if test data is available."""
@@ -86,7 +86,7 @@ class TestObjectModelsRealData:
         self._check_test_data_available()
 
         # Get projects from database
-        projects_data = test_db.get_projects()
+        projects_data = test_db.get_all_projects()
         if not projects_data:
             pytest.skip("No projects found in test database")
 
@@ -104,7 +104,7 @@ class TestObjectModelsRealData:
         """Test Project object conversion to/from database row."""
         self._check_test_data_available()
 
-        projects_data = test_db.get_projects()
+        projects_data = test_db.get_all_projects()
         if not projects_data:
             pytest.skip("No projects found in test database")
 
@@ -123,13 +123,16 @@ class TestObjectModelsRealData:
         """Test File object with real files from database."""
         self._check_test_data_available()
 
-        projects_data = test_db.get_projects()
+        projects_data = test_db.get_all_projects()
         if not projects_data:
             pytest.skip("No projects found in test database")
 
         # Get files for first project
         project_id = projects_data[0]["id"]
-        files_data = test_db.get_files(project_id=project_id)
+        files_data = test_db._fetchall(
+            "SELECT * FROM files WHERE project_id = ? AND (deleted = 0 OR deleted IS NULL)",
+            (project_id,),
+        )
 
         if not files_data:
             pytest.skip("No files found for test project")
@@ -147,12 +150,15 @@ class TestObjectModelsRealData:
         """Test File object conversion to/from database row."""
         self._check_test_data_available()
 
-        projects_data = test_db.get_projects()
+        projects_data = test_db.get_all_projects()
         if not projects_data:
             pytest.skip("No projects found in test database")
 
         project_id = projects_data[0]["id"]
-        files_data = test_db.get_files(project_id=project_id)
+        files_data = test_db._fetchall(
+            "SELECT * FROM files WHERE project_id = ? AND (deleted = 0 OR deleted IS NULL)",
+            (project_id,),
+        )
 
         if not files_data:
             pytest.skip("No files found for test project")
@@ -172,19 +178,24 @@ class TestObjectModelsRealData:
         """Test Class object with real classes from database."""
         self._check_test_data_available()
 
-        projects_data = test_db.get_projects()
+        projects_data = test_db.get_all_projects()
         if not projects_data:
             pytest.skip("No projects found in test database")
 
         project_id = projects_data[0]["id"]
-        files_data = test_db.get_files(project_id=project_id, limit=10)
+        files_data = test_db._fetchall(
+            "SELECT * FROM files WHERE project_id = ? AND (deleted = 0 OR deleted IS NULL)",
+            (project_id,),
+        )[:10]
 
         if not files_data:
             pytest.skip("No files found for test project")
 
         # Get classes for first file
         file_id = files_data[0]["id"]
-        classes_data = test_db.get_classes(file_id=file_id)
+        classes_data = test_db._fetchall(
+            "SELECT * FROM classes WHERE file_id = ?", (file_id,)
+        )
 
         if classes_data:
             # Convert to Class objects
@@ -199,19 +210,24 @@ class TestObjectModelsRealData:
         """Test Function object with real functions from database."""
         self._check_test_data_available()
 
-        projects_data = test_db.get_projects()
+        projects_data = test_db.get_all_projects()
         if not projects_data:
             pytest.skip("No projects found in test database")
 
         project_id = projects_data[0]["id"]
-        files_data = test_db.get_files(project_id=project_id, limit=10)
+        files_data = test_db._fetchall(
+            "SELECT * FROM files WHERE project_id = ? AND (deleted = 0 OR deleted IS NULL)",
+            (project_id,),
+        )[:10]
 
         if not files_data:
             pytest.skip("No files found for test project")
 
         # Get functions for first file
         file_id = files_data[0]["id"]
-        functions_data = test_db.get_functions(file_id=file_id)
+        functions_data = test_db._fetchall(
+            "SELECT * FROM functions WHERE file_id = ?", (file_id,)
+        )
 
         if functions_data:
             # Convert to Function objects
@@ -228,24 +244,31 @@ class TestObjectModelsRealData:
         """Test Method object with real methods from database."""
         self._check_test_data_available()
 
-        projects_data = test_db.get_projects()
+        projects_data = test_db.get_all_projects()
         if not projects_data:
             pytest.skip("No projects found in test database")
 
         project_id = projects_data[0]["id"]
-        files_data = test_db.get_files(project_id=project_id, limit=10)
+        files_data = test_db._fetchall(
+            "SELECT * FROM files WHERE project_id = ? AND (deleted = 0 OR deleted IS NULL)",
+            (project_id,),
+        )[:10]
 
         if not files_data:
             pytest.skip("No files found for test project")
 
         # Get classes first
         file_id = files_data[0]["id"]
-        classes_data = test_db.get_classes(file_id=file_id)
+        classes_data = test_db._fetchall(
+            "SELECT * FROM classes WHERE file_id = ?", (file_id,)
+        )
 
         if classes_data:
             # Get methods for first class
             class_id = classes_data[0]["id"]
-            methods_data = test_db.get_methods(class_id=class_id)
+            methods_data = test_db._fetchall(
+                "SELECT * FROM methods WHERE class_id = ?", (class_id,)
+            )
 
             if methods_data:
                 # Convert to Method objects
@@ -260,19 +283,24 @@ class TestObjectModelsRealData:
         """Test Import object with real imports from database."""
         self._check_test_data_available()
 
-        projects_data = test_db.get_projects()
+        projects_data = test_db.get_all_projects()
         if not projects_data:
             pytest.skip("No projects found in test database")
 
         project_id = projects_data[0]["id"]
-        files_data = test_db.get_files(project_id=project_id, limit=10)
+        files_data = test_db._fetchall(
+            "SELECT * FROM files WHERE project_id = ? AND (deleted = 0 OR deleted IS NULL)",
+            (project_id,),
+        )[:10]
 
         if not files_data:
             pytest.skip("No files found for test project")
 
         # Get imports for first file
         file_id = files_data[0]["id"]
-        imports_data = test_db.get_imports(file_id=file_id)
+        imports_data = test_db._fetchall(
+            "SELECT * FROM imports WHERE file_id = ?", (file_id,)
+        )
 
         if imports_data:
             # Convert to Import objects
@@ -287,19 +315,24 @@ class TestObjectModelsRealData:
         """Test ASTNode object with real AST trees from database."""
         self._check_test_data_available()
 
-        projects_data = test_db.get_projects()
+        projects_data = test_db.get_all_projects()
         if not projects_data:
             pytest.skip("No projects found in test database")
 
         project_id = projects_data[0]["id"]
-        files_data = test_db.get_files(project_id=project_id, limit=10)
+        files_data = test_db._fetchall(
+            "SELECT * FROM files WHERE project_id = ? AND (deleted = 0 OR deleted IS NULL)",
+            (project_id,),
+        )[:10]
 
         if not files_data:
             pytest.skip("No files found for test project")
 
         # Get AST trees for first file
         file_id = files_data[0]["id"]
-        ast_trees = test_db.get_ast_trees(file_id=file_id)
+        ast_trees = test_db._fetchall(
+            "SELECT * FROM ast_trees WHERE file_id = ?", (file_id,)
+        )
 
         if ast_trees:
             # Convert to ASTNode objects
@@ -315,12 +348,15 @@ class TestObjectModelsRealData:
         """Test CodeChunk object with real code chunks from database."""
         self._check_test_data_available()
 
-        projects_data = test_db.get_projects()
+        projects_data = test_db.get_all_projects()
         if not projects_data:
             pytest.skip("No projects found in test database")
 
         project_id = projects_data[0]["id"]
-        chunks_data = test_db.get_chunks(project_id=project_id, limit=10)
+        chunks_data = test_db._fetchall(
+            "SELECT * FROM code_chunks WHERE project_id = ? LIMIT ?",
+            (project_id, 10),
+        )
 
         if chunks_data:
             # Convert to CodeChunk objects
@@ -336,7 +372,7 @@ class TestObjectModelsRealData:
         """Test mapper functions with real database data."""
         self._check_test_data_available()
 
-        projects_data = test_db.get_projects()
+        projects_data = test_db.get_all_projects()
         if not projects_data:
             pytest.skip("No projects found in test database")
 
@@ -363,7 +399,7 @@ class TestObjectModelsRealData:
         """Test object serialization/deserialization with real data."""
         self._check_test_data_available()
 
-        projects_data = test_db.get_projects()
+        projects_data = test_db.get_all_projects()
         if not projects_data:
             pytest.skip("No projects found in test database")
 
@@ -383,12 +419,15 @@ class TestObjectModelsRealData:
         """Test all object types can be created from real database data."""
         self._check_test_data_available()
 
-        projects_data = test_db.get_projects()
+        projects_data = test_db.get_all_projects()
         if not projects_data:
             pytest.skip("No projects found in test database")
 
         project_id = projects_data[0]["id"]
-        files_data = test_db.get_files(project_id=project_id, limit=5)
+        files_data = test_db._fetchall(
+            "SELECT * FROM files WHERE project_id = ? AND (deleted = 0 OR deleted IS NULL)",
+            (project_id,),
+        )[:5]
 
         if not files_data:
             pytest.skip("No files found for test project")
@@ -397,9 +436,27 @@ class TestObjectModelsRealData:
 
         # Test all object types that might exist
         test_cases = [
-            ("classes", Class, lambda: test_db.get_classes(file_id=file_id)),
-            ("functions", Function, lambda: test_db.get_functions(file_id=file_id)),
-            ("imports", Import, lambda: test_db.get_imports(file_id=file_id)),
+            (
+                "classes",
+                Class,
+                lambda: test_db._fetchall(
+                    "SELECT * FROM classes WHERE file_id = ?", (file_id,)
+                ),
+            ),
+            (
+                "functions",
+                Function,
+                lambda: test_db._fetchall(
+                    "SELECT * FROM functions WHERE file_id = ?", (file_id,)
+                ),
+            ),
+            (
+                "imports",
+                Import,
+                lambda: test_db._fetchall(
+                    "SELECT * FROM imports WHERE file_id = ?", (file_id,)
+                ),
+            ),
         ]
 
         for table_name, obj_class, get_data_func in test_cases:

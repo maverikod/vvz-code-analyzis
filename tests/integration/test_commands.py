@@ -8,12 +8,14 @@ Author: Vasiliy Zdanovskiy
 email: vasilyvz@gmail.com
 """
 
-import pytest
+import asyncio
 import threading
 import time
-import asyncio
+import uuid
 from pathlib import Path
 from unittest.mock import patch
+
+import pytest
 
 from code_analysis.commands.project_management_mcp_commands import (
     CreateProjectMCPCommand,
@@ -25,6 +27,10 @@ from code_analysis.core.database_driver_pkg.driver_factory import create_driver
 from code_analysis.core.database_driver_pkg.request_queue import RequestQueue
 from code_analysis.core.database_driver_pkg.rpc_server import RPCServer
 from code_analysis.core.project_resolution import load_project_info
+from code_analysis.core.shared_database import (
+    close_shared_database,
+    set_shared_database,
+)
 
 # Get test data directory
 TEST_DATA_DIR = Path(__file__).parent.parent.parent / "test_data"
@@ -66,6 +72,39 @@ class TestCommandsIntegration:
         }
         driver.create_table(schema)
 
+        # watch_dirs and watch_dir_paths required for create_project
+        schema = {
+            "name": "watch_dirs",
+            "columns": [
+                {"name": "id", "type": "TEXT", "primary_key": True, "nullable": False},
+                {"name": "name", "type": "TEXT", "nullable": True},
+            ],
+        }
+        driver.create_table(schema)
+        schema = {
+            "name": "watch_dir_paths",
+            "columns": [
+                {
+                    "name": "watch_dir_id",
+                    "type": "TEXT",
+                    "primary_key": True,
+                    "nullable": False,
+                },
+                {"name": "absolute_path", "type": "TEXT", "nullable": True},
+            ],
+        }
+        driver.create_table(schema)
+
+        watch_dir_id = str(uuid.uuid4())
+        driver.execute(
+            "INSERT INTO watch_dirs (id, name) VALUES (?, ?)",
+            (watch_dir_id, "test_watch"),
+        )
+        driver.execute(
+            "INSERT INTO watch_dir_paths (watch_dir_id, absolute_path) VALUES (?, ?)",
+            (watch_dir_id, str(VAST_SRV_DIR.parent)),
+        )
+
         # Start RPC server
         request_queue = RequestQueue()
         server = RPCServer(driver, request_queue, socket_path)
@@ -74,11 +113,23 @@ class TestCommandsIntegration:
         server_thread.start()
         time.sleep(0.2)  # Wait for server to start
 
-        yield server, socket_path, db_path
+        yield server, socket_path, db_path, watch_dir_id
 
         # Cleanup
         server.stop()
         driver.disconnect()
+
+    @pytest.fixture
+    def shared_db_for_commands(self, rpc_server_with_schema):
+        """Set shared database to test RPC client so commands use it (no per-command open)."""
+        _, socket_path, _, _ = rpc_server_with_schema
+        client = DatabaseClient(socket_path=socket_path)
+        client.connect()
+        set_shared_database(client)
+        try:
+            yield
+        finally:
+            close_shared_database()
 
     def _create_storage_paths_mock(self, tmp_path, db_path):
         """Create mock StoragePaths object with all required attributes."""
@@ -103,12 +154,12 @@ class TestCommandsIntegration:
 
     @pytest.mark.asyncio
     async def test_create_project_command_with_real_data(
-        self, rpc_server_with_schema, tmp_path
+        self, rpc_server_with_schema, shared_db_for_commands, tmp_path
     ):
         """Test create project command with real data."""
         self._check_test_data_available()
 
-        _, socket_path, db_path = rpc_server_with_schema
+        _, socket_path, db_path, watch_dir_id = rpc_server_with_schema
 
         # Mock storage paths to use our test database
         storage_paths = self._create_storage_paths_mock(tmp_path, db_path)
@@ -124,16 +175,12 @@ class TestCommandsIntegration:
             ) as mock_socket:
                 mock_socket.return_value = socket_path
 
-                # Create project command requires watched_dir and project_dir
+                # Create project command requires watch_dir_id, project_name, description
                 command = CreateProjectMCPCommand()
-                # Use VAST_SRV_DIR parent as watched_dir and VAST_SRV_DIR as project_dir
-                watched_dir = (
-                    str(VAST_SRV_DIR.parent) if VAST_SRV_DIR.parent else str(tmp_path)
-                )
                 result = await command.execute(
-                    root_dir=str(tmp_path),
-                    watched_dir=watched_dir,
-                    project_dir=str(VAST_SRV_DIR),
+                    watch_dir_id=watch_dir_id,
+                    project_name=VAST_SRV_DIR.name,
+                    description="Test project from integration test",
                 )
 
                 # Check if result is success (SuccessResult) or error (ErrorResult)
@@ -147,12 +194,12 @@ class TestCommandsIntegration:
 
     @pytest.mark.asyncio
     async def test_list_projects_command_with_real_data(
-        self, rpc_server_with_schema, tmp_path
+        self, rpc_server_with_schema, shared_db_for_commands, tmp_path
     ):
         """Test list projects command with real data."""
         self._check_test_data_available()
 
-        _, socket_path, db_path = rpc_server_with_schema
+        _, socket_path, db_path, _ = rpc_server_with_schema
 
         # Setup: Create project in database
         database = DatabaseClient(socket_path=socket_path)
@@ -208,12 +255,12 @@ class TestCommandsIntegration:
 
     @pytest.mark.asyncio
     async def test_get_file_command_with_real_data(
-        self, rpc_server_with_schema, tmp_path
+        self, rpc_server_with_schema, shared_db_for_commands, tmp_path
     ):
         """Test get file command with real data."""
         self._check_test_data_available()
 
-        _, socket_path, db_path = rpc_server_with_schema
+        _, socket_path, db_path, _ = rpc_server_with_schema
 
         # Setup: Create project and file in database
         database = DatabaseClient(socket_path=socket_path)
@@ -290,9 +337,11 @@ class TestCommandsIntegration:
                     assert hasattr(result, "error")
 
     @pytest.mark.asyncio
-    async def test_commands_error_handling(self, rpc_server_with_schema, tmp_path):
+    async def test_commands_error_handling(
+        self, rpc_server_with_schema, shared_db_for_commands, tmp_path
+    ):
         """Test commands error handling."""
-        _, socket_path, db_path = rpc_server_with_schema
+        _, socket_path, db_path, _ = rpc_server_with_schema
 
         # Mock storage paths
         storage_paths = self._create_storage_paths_mock(tmp_path, db_path)
@@ -325,10 +374,10 @@ class TestCommandsIntegration:
         reason="test_data/vast_srv not found (optional test data)",
     )
     async def test_commands_concurrent_execution(
-        self, rpc_server_with_schema, tmp_path
+        self, rpc_server_with_schema, shared_db_for_commands, tmp_path
     ):
         """Test concurrent command execution."""
-        _, socket_path, db_path = rpc_server_with_schema
+        _, socket_path, db_path, _ = rpc_server_with_schema
 
         # Setup: Create project
         database = DatabaseClient(socket_path=socket_path)

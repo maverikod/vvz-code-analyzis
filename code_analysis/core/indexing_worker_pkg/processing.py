@@ -225,6 +225,11 @@ async def process_cycle(self: Any, poll_interval: int = 30) -> Dict[str, Any]:
                     else:
                         cycle_indexed = 0
                         cycle_had_activity = False
+                        errors_to_clear: list[tuple[str, str]] = []
+                        errors_to_insert: list[tuple[str, str, str, str]] = []
+                        cycle_files_indexed = 0
+                        cycle_files_failed = 0
+                        cycle_total_time = 0.0
                         for project_id in project_ids:
                             files_result = database.execute(
                                 "SELECT id, path, project_id FROM files "
@@ -283,13 +288,9 @@ async def process_cycle(self: Any, poll_interval: int = 30) -> Dict[str, Any]:
                                     if result.get("success"):
                                         total_indexed += 1
                                         logger.debug("Indexed %s", path)
-                                        try:
-                                            database.execute(
-                                                "DELETE FROM indexing_errors WHERE project_id = ? AND file_path = ?",
-                                                (project_id, path),
-                                            )
-                                        except Exception:
-                                            pass
+                                        errors_to_clear.append((project_id, path))
+                                        cycle_files_indexed += 1
+                                        cycle_total_time += elapsed
                                     else:
                                         total_errors += 1
                                         err_msg = result.get("error", "unknown")
@@ -298,56 +299,16 @@ async def process_cycle(self: Any, poll_interval: int = 30) -> Dict[str, Any]:
                                             path,
                                             err_msg,
                                         )
-                                        try:
-                                            database.execute(
-                                                """
-                                                INSERT OR REPLACE INTO indexing_errors
-                                                (project_id, file_path, error_type, error_message, created_at)
-                                                VALUES (?, ?, ?, ?, julianday('now'))
-                                                """,
-                                                (
-                                                    project_id,
-                                                    path,
-                                                    "index_error",
-                                                    err_msg,
-                                                ),
+                                        errors_to_insert.append(
+                                            (project_id, path, "index_error", err_msg)
+                                        )
+                                        cycle_files_failed += 1
+                                        cycle_total_time += elapsed
+                                        if "temp_files" in (err_msg or ""):
+                                            logger.error(
+                                                "[indexing_errors] Stored temp_files-related error (caller=index_file): %s",
+                                                err_msg,
                                             )
-                                            if "temp_files" in (err_msg or ""):
-                                                logger.error(
-                                                    "[indexing_errors] Stored temp_files-related error (caller=index_file): %s",
-                                                    err_msg,
-                                                )
-                                        except Exception:
-                                            pass
-                                    database.execute(
-                                        """
-                                        UPDATE indexing_worker_stats
-                                        SET
-                                            files_indexed = files_indexed + ?,
-                                            files_failed = files_failed + ?,
-                                            total_processing_time_seconds = total_processing_time_seconds + ?,
-                                            last_updated = julianday('now')
-                                        WHERE cycle_id = ?
-                                        """,
-                                        (
-                                            1 if result.get("success") else 0,
-                                            0 if result.get("success") else 1,
-                                            elapsed,
-                                            cycle_id,
-                                        ),
-                                    )
-                                    database.execute(
-                                        """
-                                        UPDATE indexing_worker_stats
-                                        SET average_processing_time_seconds = CASE
-                                            WHEN (files_indexed + files_failed) > 0
-                                            THEN total_processing_time_seconds / (files_indexed + files_failed)
-                                            ELSE NULL
-                                        END
-                                        WHERE cycle_id = ?
-                                        """,
-                                        (cycle_id,),
-                                    )
                                     cycle_indexed += 1
                                     cycle_had_activity = True
                                 except Exception as e:
@@ -355,6 +316,17 @@ async def process_cycle(self: Any, poll_interval: int = 30) -> Dict[str, Any]:
                                     cycle_indexed += 1
                                     cycle_had_activity = True
                                     elapsed = time.time() - file_start
+                                    err_str = str(e)
+                                    errors_to_insert.append(
+                                        (
+                                            project_id,
+                                            path,
+                                            "index_exception",
+                                            err_str,
+                                        )
+                                    )
+                                    cycle_files_failed += 1
+                                    cycle_total_time += elapsed
                                     log_operation_timing(
                                         log_timing,
                                         logger,
@@ -362,7 +334,7 @@ async def process_cycle(self: Any, poll_interval: int = 30) -> Dict[str, Any]:
                                         elapsed,
                                         path=path[:80] if path else "",
                                         success=False,
-                                        error=str(e)[:60],
+                                        error=err_str[:60],
                                     )
                                     try:
                                         logger.warning(
@@ -370,54 +342,50 @@ async def process_cycle(self: Any, poll_interval: int = 30) -> Dict[str, Any]:
                                         )
                                     except Exception:
                                         pass
-                                    try:
-                                        err_str = str(e)
-                                        database.execute(
-                                            """
-                                            INSERT OR REPLACE INTO indexing_errors
-                                            (project_id, file_path, error_type, error_message, created_at)
-                                            VALUES (?, ?, ?, ?, julianday('now'))
-                                            """,
-                                            (
-                                                project_id,
-                                                path,
-                                                "index_exception",
-                                                err_str,
-                                            ),
+                                    if "temp_files" in err_str:
+                                        logger.error(
+                                            "[indexing_errors] Stored temp_files-related exception (caller=index_file): %s",
+                                            err_str,
                                         )
-                                        if "temp_files" in err_str:
-                                            logger.error(
-                                                "[indexing_errors] Stored temp_files-related exception (caller=index_file): %s",
-                                                err_str,
-                                            )
-                                    except Exception:
-                                        pass
-                                    try:
-                                        database.execute(
-                                            """
-                                            UPDATE indexing_worker_stats
-                                            SET
-                                                files_failed = files_failed + 1,
-                                                total_processing_time_seconds = total_processing_time_seconds + ?,
-                                                last_updated = julianday('now')
-                                            WHERE cycle_id = ?
-                                            """,
-                                            (elapsed, cycle_id),
-                                        )
-                                        database.execute(
-                                            """
-                                            UPDATE indexing_worker_stats
-                                            SET average_processing_time_seconds = CASE
-                                                WHEN (files_indexed + files_failed) > 0
-                                                THEN total_processing_time_seconds / (files_indexed + files_failed)
-                                                ELSE NULL
-                                            END
-                                            WHERE cycle_id = ?
-                                            """,
-                                            (cycle_id,),
-                                        )
-                                    except Exception:
-                                        pass
+                        batch_ops: list[tuple[str, tuple[Any, ...] | None]] = []
+                        for p, file_path in errors_to_clear:
+                            batch_ops.append(
+                                (
+                                    "DELETE FROM indexing_errors WHERE project_id = ? AND file_path = ?",
+                                    (p, file_path),
+                                )
+                            )
+                        for p, file_path, typ, msg in errors_to_insert:
+                            batch_ops.append(
+                                (
+                                    "INSERT OR REPLACE INTO indexing_errors "
+                                    "(project_id, file_path, error_type, error_message, created_at) "
+                                    "VALUES (?, ?, ?, ?, julianday('now'))",
+                                    (p, file_path, typ, msg),
+                                )
+                            )
+                        total_files = cycle_files_indexed + cycle_files_failed
+                        avg_time = (
+                            cycle_total_time / total_files if total_files > 0 else None
+                        )
+                        batch_ops.append(
+                            (
+                                "UPDATE indexing_worker_stats SET "
+                                "files_indexed = ?, files_failed = ?, "
+                                "total_processing_time_seconds = ?, "
+                                "average_processing_time_seconds = ?, "
+                                "last_updated = julianday('now') WHERE cycle_id = ?",
+                                (
+                                    cycle_files_indexed,
+                                    cycle_files_failed,
+                                    cycle_total_time,
+                                    avg_time,
+                                    cycle_id,
+                                ),
+                            )
+                        )
+                        if batch_ops:
+                            database.execute_batch(batch_ops)
                         write_worker_status(
                             getattr(self, "status_file_path", None),
                             STATUS_OPERATION_IDLE,

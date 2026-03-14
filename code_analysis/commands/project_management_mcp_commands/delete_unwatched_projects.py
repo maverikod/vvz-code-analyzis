@@ -49,7 +49,7 @@ class DeleteUnwatchedProjectsMCPCommand(BaseMCPCommand):
     category = "project_management"
     author = "Vasiliy Zdanovskiy"
     email = "vasilyvz@gmail.com"
-    use_queue = False
+    use_queue = True  # Deletion of multiple projects; run via queue
 
     @classmethod
     def get_schema(
@@ -114,7 +114,7 @@ class DeleteUnwatchedProjectsMCPCommand(BaseMCPCommand):
             config_path = self._resolve_config_path()
             config_dir = config_path.parent.resolve()
             if watched_dirs is None:
-                from ..core.storage_paths import load_raw_config
+                from ...core.storage_paths import load_raw_config
 
                 config_data = load_raw_config(config_path)
                 worker_config = config_data.get("code_analysis", {}).get("worker", {})
@@ -125,23 +125,6 @@ class DeleteUnwatchedProjectsMCPCommand(BaseMCPCommand):
                         watched_dirs.append(item["path"])
                     elif isinstance(item, str):
                         watched_dirs.append(item)
-                dynamic_watch_file = worker_config.get("dynamic_watch_file")
-                if dynamic_watch_file:
-                    dynamic_path = config_dir / dynamic_watch_file
-                    if dynamic_path.exists():
-                        try:
-                            import json
-
-                            with open(dynamic_path, "r", encoding="utf-8") as f:
-                                dynamic_dirs = json.load(f)
-                                if isinstance(dynamic_dirs, list):
-                                    for item in dynamic_dirs:
-                                        if isinstance(item, dict) and "path" in item:
-                                            watched_dirs.append(item["path"])
-                                        elif isinstance(item, str):
-                                            watched_dirs.append(item)
-                        except Exception as e:
-                            logger.warning(f"Failed to load dynamic watch dirs: {e}")
 
             if not watched_dirs:
                 return self._handle_error(
@@ -156,7 +139,7 @@ class DeleteUnwatchedProjectsMCPCommand(BaseMCPCommand):
 
             database = self._open_database_from_config(auto_analyze=False)
             try:
-                from .delete_unwatched_projects_command import (
+                from ..delete_unwatched_projects_command import (
                     DeleteUnwatchedProjectsCommand,
                 )
 
@@ -243,8 +226,8 @@ class DeleteUnwatchedProjectsMCPCommand(BaseMCPCommand):
                 "watched_dirs": {
                     "description": (
                         "Optional list of watched directory paths. If not provided, will be read from "
-                        "config.json (code_analysis.worker.watch_dirs). Also checks dynamic_watch_file "
-                        "if configured. These are the directories where projects should be kept."
+                        "config.json (code_analysis.worker.watch_dirs) only. These are the directories "
+                        "where projects should be kept."
                     ),
                     "type": "array",
                     "required": False,

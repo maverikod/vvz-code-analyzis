@@ -20,9 +20,7 @@ def validate_field_types_impl(
     if server:
         validate_field_type(results, "server", "host", server.get("host"), str)
         validate_field_type(results, "server", "port", server.get("port"), int)
-        validate_field_type(
-            results, "server", "protocol", server.get("protocol"), str
-        )
+        validate_field_type(results, "server", "protocol", server.get("protocol"), str)
         validate_field_type(
             results, "server", "servername", server.get("servername"), str
         )
@@ -33,15 +31,11 @@ def validate_field_types_impl(
             server.get("advertised_host"),
             str,
         )
-        validate_field_type(
-            results, "server", "debug", server.get("debug"), bool
-        )
+        validate_field_type(results, "server", "debug", server.get("debug"), bool)
         validate_field_type(
             results, "server", "log_level", server.get("log_level"), str
         )
-        validate_field_type(
-            results, "server", "log_dir", server.get("log_dir"), str
-        )
+        validate_field_type(results, "server", "log_dir", server.get("log_dir"), str)
 
         ssl = server.get("ssl")
         if ssl and isinstance(ssl, dict):

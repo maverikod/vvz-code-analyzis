@@ -6,7 +6,7 @@ email: vasilyvz@gmail.com
 """
 
 import logging
-from typing import Any, Dict, TYPE_CHECKING
+from typing import Any, Dict, List, TYPE_CHECKING, cast
 
 if TYPE_CHECKING:
     from ...core.database_client.client import DatabaseClient
@@ -57,7 +57,7 @@ class CollapseVersionsCommand:
         Returns:
             Dictionary with collapse statistics
         """
-        result = {
+        result: Dict[str, Any] = {
             "kept_count": 0,
             "deleted_count": 0,
             "collapsed_files": [],
@@ -65,28 +65,30 @@ class CollapseVersionsCommand:
         }
 
         try:
+            db = cast(Any, self.database)
             if self.dry_run:
                 # Just analyze, don't delete
-                query_result = self.database.execute(
-                    """
+                query_result = cast(
+                    Dict[str, Any],
+                    self.database.execute(
+                        """
                     SELECT path, COUNT(*) as version_count
                     FROM files
                     WHERE project_id = ?
                     GROUP BY path
                     HAVING COUNT(*) > 1
                     """,
-                    (self.project_id,),
+                        (self.project_id,),
+                    ),
                 )
-                files_with_versions = query_result.get("data", [])
+                files_with_versions: List[Any] = query_result.get("data", [])
 
                 for path_row in files_with_versions:
                     file_path = path_row["path"]
                     version_count = path_row["version_count"]
 
                     # Get all versions
-                    versions = self.database.get_file_versions(
-                        file_path, self.project_id
-                    )
+                    versions = db.get_file_versions(file_path, self.project_id)
 
                     if self.keep_latest:
                         keep_version = versions[0]  # Latest
@@ -118,7 +120,7 @@ class CollapseVersionsCommand:
                 )
             else:
                 # Actually collapse
-                collapse_result = self.database.collapse_file_versions(
+                collapse_result = db.collapse_file_versions(
                     self.project_id, self.keep_latest
                 )
                 result.update(collapse_result)

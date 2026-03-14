@@ -5,6 +5,8 @@ Author: Vasiliy Zdanovskiy
 email: vasilyvz@gmail.com
 """
 
+import asyncio
+
 from ._shared import (
     Any,
     BaseMCPCommand,
@@ -15,6 +17,12 @@ from ._shared import (
     SuccessResult,
     logger,
 )
+
+# Timeout for the whole run (open_db + list_projects + watch_dir_paths).
+# open_database_from_config includes: ensure_database_integrity (check_sqlite_integrity
+# can block up to 2s on locked DB) and db.connect() (retries up to 5s after restart).
+# So 5s was too low; use 15s so list_projects completes after server restart.
+_LIST_PROJECTS_DB_TIMEOUT = 15.0
 
 
 class ListProjectsMCPCommand(BaseMCPCommand):
@@ -31,7 +39,7 @@ class ListProjectsMCPCommand(BaseMCPCommand):
         category: Command category.
         author: Command author.
         email: Author email.
-        use_queue: Whether to run in the background queue.
+        use_queue: False — fast read-only DB query; runs in HTTP handler (sync).
     """
 
     name = "list_projects"
@@ -241,37 +249,26 @@ class ListProjectsMCPCommand(BaseMCPCommand):
             },
         }
 
-    async def execute(
+    def _run_list_projects_sync(
         self: "ListProjectsMCPCommand",
         watched_dir_id: Optional[str] = None,
-        **kwargs: Any,
     ) -> SuccessResult | ErrorResult:
-        """
-        Execute list projects command.
+        """Run blocking DB work for list_projects (called from executor).
 
-        Args:
-            self: Command instance.
-            watched_dir_id: Optional watched directory identifier (UUID4) to filter projects.
-            **kwargs: Extra args (unused).
-
-        Returns:
-            SuccessResult with list of projects or ErrorResult on failure.
+        Uses one list_projects query and one batch query for watch_dir_paths
+        (WHERE watch_dir_id IN (...)) instead of N+1 per-project selects.
         """
         try:
             database = self._open_database_from_config(auto_analyze=False)
-
             try:
-                # Get all projects using DatabaseClient
                 project_objects = database.list_projects()
 
-                # Filter by watched_dir_id if provided
                 if watched_dir_id:
-                    # Validate watched_dir_id exists
                     watch_dir = database.select(
                         "watch_dirs", where={"id": watched_dir_id}, limit=1
                     )
                     if not watch_dir:
-                        from ..core.exceptions import ValidationError
+                        from ...core.exceptions import ValidationError
 
                         return self._handle_error(
                             ValidationError(
@@ -283,25 +280,37 @@ class ListProjectsMCPCommand(BaseMCPCommand):
                             "list_projects",
                         )
 
-                    # Filter projects by watched_dir_id
                     project_objects = [
                         p for p in project_objects if p.watch_dir_id == watched_dir_id
                     ]
 
-                # Resolve watch_dir path for each project and build response.
-                # Always return: project id, watch_dir (path), project dir name (name).
+                # One batch query for all watch_dir paths (no N+1).
+                watch_dir_ids = list(
+                    {p.watch_dir_id for p in project_objects if p.watch_dir_id}
+                )
+                path_by_watch_dir: Dict[str, str] = {}
+                if watch_dir_ids:
+                    placeholders = ",".join("?" * len(watch_dir_ids))
+                    sql = (
+                        "SELECT watch_dir_id, absolute_path FROM watch_dir_paths "
+                        f"WHERE watch_dir_id IN ({placeholders})"
+                    )
+                    result = database.execute(sql, tuple(watch_dir_ids))
+                    rows = result.get("data") if isinstance(result, dict) else []
+                    if isinstance(rows, list):
+                        for row in rows:
+                            if isinstance(row, dict) and row.get("absolute_path"):
+                                path_by_watch_dir[row["watch_dir_id"]] = row[
+                                    "absolute_path"
+                                ]
+
                 projects = []
                 for project in project_objects:
-                    watch_dir_path: Optional[str] = None
-                    if project.watch_dir_id:
-                        rows = database.select(
-                            "watch_dir_paths",
-                            where={"watch_dir_id": project.watch_dir_id},
-                            columns=["absolute_path"],
-                            limit=1,
-                        )
-                        if rows and rows[0].get("absolute_path"):
-                            watch_dir_path = rows[0]["absolute_path"]
+                    watch_dir_path = (
+                        path_by_watch_dir.get(project.watch_dir_id)
+                        if project.watch_dir_id
+                        else None
+                    )
                     project_dict = {
                         "id": project.id,
                         "watch_dir": watch_dir_path,
@@ -334,3 +343,38 @@ class ListProjectsMCPCommand(BaseMCPCommand):
                 database.disconnect()
         except Exception as e:
             return self._handle_error(e, "LIST_PROJECTS_ERROR", "list_projects")
+
+    async def execute(
+        self: "ListProjectsMCPCommand",
+        watched_dir_id: Optional[str] = None,
+        **kwargs: Any,
+    ) -> SuccessResult | ErrorResult:
+        """
+        Execute list projects command.
+
+        Args:
+            self: Command instance.
+            watched_dir_id: Optional watched directory identifier (UUID4) to filter projects.
+            **kwargs: Extra args (unused).
+
+        Returns:
+            SuccessResult with list of projects or ErrorResult on failure.
+        """
+        try:
+            result = await asyncio.wait_for(
+                asyncio.get_event_loop().run_in_executor(
+                    None,
+                    self._run_list_projects_sync,
+                    watched_dir_id,
+                ),
+                timeout=_LIST_PROJECTS_DB_TIMEOUT,
+            )
+            return result
+        except asyncio.TimeoutError:
+            return self._handle_error(
+                TimeoutError(
+                    f"list_projects did not complete within {_LIST_PROJECTS_DB_TIMEOUT}s"
+                ),
+                "LIST_PROJECTS_TIMEOUT",
+                "list_projects",
+            )

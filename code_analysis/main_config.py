@@ -1,0 +1,135 @@
+"""
+Config load, validation, storage, and app_config merge for main entry point.
+
+Author: Vasiliy Zdanovskiy
+email: vasilyvz@gmail.com
+"""
+
+from __future__ import annotations
+
+import json
+import sys
+from pathlib import Path
+from typing import Any, Tuple
+
+from mcp_proxy_adapter.core.config.simple_config import SimpleConfig
+
+from code_analysis.core.storage_paths import (
+    ensure_storage_dirs,
+    resolve_storage_paths,
+)
+from code_analysis.main_validation import report_validation_failure
+
+
+def load_config_and_validate(
+    args: Any,
+) -> Tuple[Path, dict[str, Any]]:
+    """
+    Load config file and validate. Exits on error.
+    Returns (config_path, full_config).
+    """
+    config_path = Path(args.config)
+    if not config_path.exists():
+        print(f"❌ Configuration file not found: {config_path}", file=sys.stderr)
+        print(
+            "   Generate one with: python -m code_analysis.cli.config_cli generate",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    try:
+        with open(config_path, "r", encoding="utf-8") as f:
+            full_config = json.load(f)
+    except json.JSONDecodeError as e:
+        print(f"❌ Invalid JSON in configuration file: {e}", file=sys.stderr)
+        sys.exit(1)
+    except Exception as e:
+        print(f"❌ Failed to read configuration file: {e}", file=sys.stderr)
+        sys.exit(1)
+
+    from code_analysis.core.config_validator import CodeAnalysisConfigValidator
+
+    validator = CodeAnalysisConfigValidator(str(config_path))
+    try:
+        validator.load_config()
+        validation_results = validator.validate_config()
+        summary = validator.get_validation_summary()
+
+        if not summary["is_valid"]:
+            report_validation_failure(
+                validation_results, summary, full_config, config_path
+            )
+
+    except Exception as e:
+        print(f"❌ Failed to validate configuration: {e}", file=sys.stderr)
+        import traceback
+
+        traceback.print_exc()
+        sys.exit(1)
+
+    return (config_path, full_config)
+
+
+def ensure_storage_and_load_app_config(
+    config_path: Path,
+    full_config: dict[str, Any],
+    args: Any,
+) -> Tuple[dict[str, Any], SimpleConfig, str, int]:
+    """
+    Ensure storage dirs, load SimpleConfig, merge app_config, resolve server host/port.
+    Exits on error. Returns (app_config, simple_config, server_host, server_port).
+    """
+    try:
+        storage_paths = resolve_storage_paths(
+            config_data=full_config,
+            config_path=config_path.resolve(),
+        )
+        ensure_storage_dirs(storage_paths)
+    except Exception as e:
+        print(f"❌ Failed to prepare storage directories: {e}", file=sys.stderr)
+        sys.exit(1)
+
+    try:
+        simple_config = SimpleConfig(str(config_path))
+        model = simple_config.load()
+    except Exception as e:
+        print(f"❌ Failed to load configuration: {e}", file=sys.stderr)
+        sys.exit(1)
+
+    if args.host:
+        simple_config.model.server.host = args.host
+    if args.port:
+        simple_config.model.server.port = args.port
+
+    from code_analysis.core.settings_manager import get_settings
+
+    settings = get_settings()
+    server_host = (
+        settings.get("server_host") or args.host or simple_config.model.server.host
+    )
+    server_port = (
+        settings.get("server_port") or args.port or simple_config.model.server.port
+    )
+
+    app_config = simple_config.to_dict()
+    for key, value in full_config.items():
+        if key not in app_config:
+            app_config[key] = value
+
+    return (app_config, simple_config, server_host, server_port)
+
+
+def apply_global_config(
+    config_path: Path,
+    simple_config: SimpleConfig,
+    app_config: dict[str, Any],
+) -> None:
+    """Update global config instance used by adapter internals."""
+    from mcp_proxy_adapter.config import get_config
+
+    cfg = get_config()
+    cfg.config_path = str(config_path)
+    setattr(cfg, "model", simple_config.model)
+    cfg.config_data = app_config
+    if hasattr(cfg, "feature_manager"):
+        cfg.feature_manager.config_data = cfg.config_data

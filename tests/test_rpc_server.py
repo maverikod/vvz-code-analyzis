@@ -96,7 +96,7 @@ class TestRPCServerTableOperations:
         )
         response = rpc_server._process_request(request)
         assert response.is_success()
-        assert response.result == {"success": True}
+        assert response.result.get("data") == {"success": True}
 
     def test_process_insert(self, rpc_server, mock_driver):
         """Test processing insert request."""
@@ -108,7 +108,7 @@ class TestRPCServerTableOperations:
         )
         response = rpc_server._process_request(request)
         assert response.is_success()
-        assert response.result == {"row_id": 456}
+        assert response.result.get("data", {}).get("row_id") == 456
 
     def test_process_select(self, rpc_server, mock_driver):
         """Test processing select request."""
@@ -177,7 +177,7 @@ class TestRPCServerSocketCommunication:
 
             assert response["jsonrpc"] == "2.0"
             assert "result" in response
-            assert response["result"]["row_id"] == 789
+            assert response["result"].get("data", {}).get("row_id") == 789
             assert response["id"] == "test_123"
         finally:
             server.stop()

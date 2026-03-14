@@ -41,24 +41,10 @@ def load_config(config_path: Path) -> Dict[str, Any]:
 
 
 def get_watch_dirs(config: Dict[str, Any]) -> List[Path]:
-    """Extract watch_dirs from config."""
+    """Extract watch_dirs from config (code_analysis.worker.watch_dirs only)."""
     code_analysis_config = config.get("code_analysis", {})
     worker_config = code_analysis_config.get("worker", {})
     watch_dirs = worker_config.get("watch_dirs", [])
-
-    # Also check dynamic watch file
-    dynamic_watch_file = worker_config.get(
-        "dynamic_watch_file", "data/dynamic_watch_dirs.json"
-    )
-    dynamic_path = Path(dynamic_watch_file)
-    if dynamic_path.exists():
-        try:
-            with open(dynamic_path, "r", encoding="utf-8") as f:
-                dynamic_config = json.load(f)
-                dynamic_dirs = dynamic_config.get("watch_dirs", [])
-                watch_dirs.extend(dynamic_dirs)
-        except Exception as e:
-            logger.warning(f"Failed to load dynamic watch dirs: {e}")
 
     # Resolve all paths
     resolved_dirs = []

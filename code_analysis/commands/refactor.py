@@ -8,7 +8,7 @@ email: vasilyvz@gmail.com
 import asyncio
 import logging
 from pathlib import Path
-from typing import Dict, Any, Optional
+from typing import Any, Dict, Optional
 
 from ..core.refactorer_pkg.splitter import ClassSplitter
 from ..core.refactorer_pkg.extractor import SuperclassExtractor

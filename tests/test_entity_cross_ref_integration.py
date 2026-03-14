@@ -28,6 +28,7 @@ def temp_db():
     os.environ["CODE_ANALYSIS_DB_WORKER"] = "1"
     try:
         db = CodeDatabase(driver_config)
+        db.sync_schema()
         yield db
         db.close()
     finally:

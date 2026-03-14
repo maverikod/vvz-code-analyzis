@@ -14,7 +14,6 @@ email: vasilyvz@gmail.com
 
 from __future__ import annotations
 
-import json
 import logging
 import threading
 from pathlib import Path
@@ -23,8 +22,11 @@ from typing import Any, Dict, List, Optional, Tuple
 import numpy as np
 
 from typing import Union
+
 from .database import CodeDatabase
 from .database_client.client import DatabaseClient
+from .faiss_manager_rebuild import rebuild_from_database_impl
+from .faiss_manager_sync import check_index_sync_impl
 
 try:
     import faiss
@@ -32,9 +34,6 @@ except ImportError:
     faiss = None
 
 logger = logging.getLogger(__name__)
-
-# Max rows per RPC response when rebuilding from DB (avoids "Response too large" > 10 MB)
-REBUILD_FROM_DB_BATCH_SIZE = 500
 
 
 class FaissIndexManager:
@@ -321,16 +320,11 @@ class FaissIndexManager:
 
         Args:
             self: Instance.
-            database: CodeDatabase instance.
+            database: CodeDatabase or DatabaseClient.
             project_id: Project ID to check.
 
         Returns:
-            Tuple of (is_synced: bool, details: dict) where details contains:
-            - db_vector_count: Number of chunks with vector_id in database
-            - index_vector_count: Number of vectors in FAISS index
-            - missing_in_index: List of vector_id values in DB but not in index
-            - max_db_vector_id: Maximum vector_id in database
-            - max_index_vector_id: Maximum vector_id in index (ntotal - 1)
+            Tuple of (is_synced: bool, details: dict).
         """
         if self.index is None:
             return False, {
@@ -338,85 +332,13 @@ class FaissIndexManager:
                 "db_vector_count": 0,
                 "index_vector_count": 0,
             }
-
-        # Get all vector_id values from database for this project
-        if isinstance(database, DatabaseClient):
-            result = database.execute(
-                """
-                SELECT DISTINCT vector_id
-                FROM code_chunks
-                WHERE project_id = ?
-                  AND vector_id IS NOT NULL
-                  AND embedding_vector IS NOT NULL
-                ORDER BY vector_id
-                """,
-                (project_id,),
-            )
-            rows = result.get("data", []) if isinstance(result, dict) else []
-        else:
-            rows = database._fetchall(
-                """
-                SELECT DISTINCT vector_id
-                FROM code_chunks
-                WHERE project_id = ?
-                  AND vector_id IS NOT NULL
-                  AND embedding_vector IS NOT NULL
-                ORDER BY vector_id
-                """,
-                (project_id,),
-            )
-
-        db_vector_ids = {
-            row["vector_id"] for row in rows if row["vector_id"] is not None
-        }
-        db_vector_count = len(db_vector_ids)
-        index_vector_count = int(self.index.ntotal)
-
-        # Check if index has ID mapping (IndexIDMap2)
-        if hasattr(self.index, "id_map") and self.index.id_map is not None:
-            # Get all IDs from index
-            index_ids = set()
-            try:
-                # For IndexIDMap2, id_map is Int64Vector
-                # Use ntotal to get the number of vectors
-                id_map = self.index.id_map
-                # Convert Int64Vector to set of IDs
-                index_ids = {int(id_map.at(i)) for i in range(index_vector_count)}
-            except Exception as e:
-                logger.warning(f"Failed to get IDs from FAISS index id_map: {e}")
-                # Fallback: assume dense range 0..ntotal-1
-                index_ids = set(range(index_vector_count))
-        else:
-            # No ID mapping - assume dense range 0..ntotal-1
-            index_ids = set(range(index_vector_count))
-
-        # Find missing vectors
-        missing_in_index = db_vector_ids - index_ids
-        extra_in_index = index_ids - db_vector_ids
-
-        max_db_vector_id = max(db_vector_ids) if db_vector_ids else -1
-        max_index_vector_id = max(index_ids) if index_ids else -1
-
-        is_synced = (
-            len(missing_in_index) == 0
-            and len(extra_in_index) == 0
-            and db_vector_count == index_vector_count
+        id_map = getattr(self.index, "id_map", None)
+        return check_index_sync_impl(
+            int(self.index.ntotal),
+            id_map,
+            database,
+            project_id,
         )
-
-        details = {
-            "db_vector_count": db_vector_count,
-            "index_vector_count": index_vector_count,
-            "missing_in_index": sorted(list(missing_in_index))[
-                :100
-            ],  # Limit to first 100
-            "missing_in_index_count": len(missing_in_index),
-            "extra_in_index": sorted(list(extra_in_index))[:100],  # Limit to first 100
-            "extra_in_index_count": len(extra_in_index),
-            "max_db_vector_id": max_db_vector_id,
-            "max_index_vector_id": max_index_vector_id,
-        }
-
-        return is_synced, details
 
     async def rebuild_from_database(
         self: "FaissIndexManager",
@@ -430,271 +352,18 @@ class FaissIndexManager:
         If project_id is provided, rebuilds index for that project only.
         If project_id is None, rebuilds index for all projects (legacy mode).
 
-        This operation recreates the FAISS index file from `code_chunks.embedding_vector`.
-
         Args:
             self: Instance.
-            database: CodeDatabase instance
-            svo_client_manager: Optional SVOClientManager to get embeddings if missing
-            project_id: Optional project ID to filter by
+            database: CodeDatabase or DatabaseClient.
+            svo_client_manager: Optional SVOClientManager to get embeddings if missing.
+            project_id: Optional project ID to filter by.
 
         Returns:
-            Number of vectors loaded
+            Number of vectors loaded.
         """
-        scope_desc = f"project={project_id}" if project_id else "all projects"
-        logger.info(f"Rebuilding FAISS index from database ({scope_desc})...")
-
-        # Ensure `vector_id` is dense and unique (single SQL statement).
-        try:
-            if isinstance(database, DatabaseClient):
-                if project_id:
-                    # Project-scoped: normalize vector_id for project
-                    database.execute(
-                        """
-                        WITH ranked AS (
-                            SELECT
-                                id,
-                                (ROW_NUMBER() OVER (ORDER BY id) - 1) AS new_vector_id
-                            FROM code_chunks
-                            WHERE project_id = ?
-                              AND embedding_model IS NOT NULL
-                              AND embedding_vector IS NOT NULL
-                        )
-                        UPDATE code_chunks
-                        SET vector_id = (SELECT new_vector_id FROM ranked WHERE ranked.id = code_chunks.id)
-                        WHERE id IN (SELECT id FROM ranked)
-                        """,
-                        (project_id,),
-                    )
-                else:
-                    # Legacy mode: normalize vector_id for all chunks
-                    database.execute(
-                        """
-                        WITH ranked AS (
-                            SELECT
-                                id,
-                                (ROW_NUMBER() OVER (ORDER BY id) - 1) AS new_vector_id
-                            FROM code_chunks
-                            WHERE embedding_model IS NOT NULL
-                              AND embedding_vector IS NOT NULL
-                        )
-                        UPDATE code_chunks
-                        SET vector_id = (SELECT new_vector_id FROM ranked WHERE ranked.id = code_chunks.id)
-                        WHERE id IN (SELECT id FROM ranked)
-                        """,
-                        None,
-                    )
-            else:
-                # CodeDatabase
-                if project_id:
-                    database._execute(
-                        """
-                        WITH ranked AS (
-                            SELECT
-                                id,
-                                (ROW_NUMBER() OVER (ORDER BY id) - 1) AS new_vector_id
-                            FROM code_chunks
-                            WHERE project_id = ?
-                              AND embedding_model IS NOT NULL
-                              AND embedding_vector IS NOT NULL
-                        )
-                        UPDATE code_chunks
-                        SET vector_id = (SELECT new_vector_id FROM ranked WHERE ranked.id = code_chunks.id)
-                        WHERE id IN (SELECT id FROM ranked)
-                        """,
-                        (project_id,),
-                    )
-                else:
-                    # Legacy mode: normalize vector_id for all chunks
-                    database._execute(
-                        """
-                        WITH ranked AS (
-                            SELECT
-                                id,
-                                (ROW_NUMBER() OVER (ORDER BY id) - 1) AS new_vector_id
-                        FROM code_chunks
-                        WHERE embedding_model IS NOT NULL
-                          AND embedding_vector IS NOT NULL
-                    )
-                    UPDATE code_chunks
-                    SET vector_id = (SELECT new_vector_id FROM ranked WHERE ranked.id = code_chunks.id)
-                    WHERE id IN (SELECT id FROM ranked)
-                    """
-                    )
-                database._commit()
-        except Exception as e:
-            logger.warning(
-                "Failed to normalize code_chunks.vector_id mapping: %s",
-                e,
-                exc_info=True,
-            )
-
-        # Create fresh index (this clears all existing vectors)
-        old_vector_count = int(self.index.ntotal) if self.index is not None else 0
-        self._create_index()
-        if old_vector_count > 0:
-            logger.info(
-                "Cleared %d vectors from FAISS index (rebuild)", old_vector_count
-            )
-
-        # Get chunks with embeddings (filtered by project_id if provided).
-        # DatabaseClient: fetch in batches to stay under RPC response size limit (~10 MB).
-        chunks: List[Dict[str, Any]] = []
-        if isinstance(database, DatabaseClient):
-            sql_common = """
-                SELECT
-                    cc.id, cc.file_id, cc.project_id, cc.chunk_uuid, cc.chunk_type,
-                    cc.chunk_text, cc.chunk_ordinal, cc.vector_id, cc.embedding_model,
-                    cc.embedding_vector, cc.class_id, cc.function_id, cc.method_id,
-                    cc.line, cc.ast_node_type, cc.source_type
-                FROM code_chunks cc
-                WHERE cc.embedding_model IS NOT NULL
-                  AND cc.embedding_vector IS NOT NULL
-            """
-            if project_id:
-                sql_common += " AND cc.project_id = ?"
-            sql_common += " ORDER BY cc.id LIMIT ? OFFSET ?"
-            offset = 0
-            while True:
-                params: Tuple[Any, ...]
-                if project_id:
-                    params = (project_id, REBUILD_FROM_DB_BATCH_SIZE, offset)
-                else:
-                    params = (REBUILD_FROM_DB_BATCH_SIZE, offset)
-                result = database.execute(sql_common, params)
-                batch = result.get("data", []) if isinstance(result, dict) else []
-                if not batch:
-                    break
-                chunks.extend(batch)
-                offset += len(batch)
-                if len(batch) < REBUILD_FROM_DB_BATCH_SIZE:
-                    break
-        else:
-            chunks = database.get_all_chunks_for_faiss_rebuild(project_id=project_id)
-        if not chunks:
-            logger.info("No chunks with embeddings found in database")
-            self.save_index()
-            return 0
-
-        loaded_count = 0
-        missing_embeddings = 0
-
-        for chunk in chunks:
-            vector_id = chunk.get("vector_id")
-            embedding_vector_json = chunk.get("embedding_vector")
-            chunk_text = chunk.get("chunk_text", "")
-            chunk_id = chunk.get("id")
-            embedding_model = chunk.get("embedding_model")
-
-            if vector_id is None:
-                continue
-
-            # Try to get embedding from database first (embedding_vector column)
-            embedding_array = None
-
-            if embedding_vector_json:
-                try:
-                    embedding_list = json.loads(embedding_vector_json)
-                    embedding_array = np.array(embedding_list, dtype="float32")
-                    logger.debug(
-                        f"Loaded embedding from database for chunk {chunk.get('id')}"
-                    )
-                except Exception as e:
-                    logger.warning(
-                        f"Failed to parse embedding_vector from database for chunk {chunk.get('id')}: {e}"
-                    )
-
-            # If embedding not in database, try to get from embedding service (SVO client manager).
-            if embedding_array is None and svo_client_manager:
-                logger.debug(
-                    f"Embedding not in database for chunk {chunk.get('id')}, "
-                    "requesting from embedding service..."
-                )
-                try:
-
-                    class _TmpChunk:
-                        def __init__(self, text: str):
-                            self.body = text
-                            self.text = text
-
-                    tmp = _TmpChunk(chunk_text)
-                    chunks_with_emb = await svo_client_manager.get_embeddings([tmp])
-                    if chunks_with_emb and hasattr(chunks_with_emb[0], "embedding"):
-                        embedding = getattr(chunks_with_emb[0], "embedding")
-                        if embedding is not None:
-                            embedding_array = np.array(embedding, dtype="float32")
-                            # Get model from response; do not save vector without model
-                            save_model = (
-                                getattr(chunks_with_emb[0], "embedding_model", None)
-                                or embedding_model
-                            )
-                            if save_model and str(save_model).strip():
-                                try:
-                                    embedding_json = json.dumps(
-                                        embedding_array.tolist()
-                                    )
-                                    database._execute(
-                                        "UPDATE code_chunks SET embedding_vector = ?, embedding_model = ? WHERE id = ?",
-                                        (embedding_json, save_model, chunk_id),
-                                    )
-                                except Exception as e:
-                                    logger.warning(
-                                        f"Failed to save embedding to database: {e}"
-                                    )
-                            else:
-                                logger.warning(
-                                    "Embedding service returned no model; not saving vector to DB"
-                                )
-                                missing_embeddings += 1
-                                continue
-                    else:
-                        missing_embeddings += 1
-                except Exception as e:
-                    logger.warning(
-                        f"Failed to get embedding from SVO service for chunk {chunk.get('id')}: {e}"
-                    )
-                    missing_embeddings += 1
-            elif embedding_array is None:
-                # Cannot get embedding
-                missing_embeddings += 1
-                logger.debug(
-                    f"Skipping chunk {chunk.get('id')}: no embedding in database and no SVO client"
-                )
-                continue
-
-            # Add vector to FAISS index
-            if embedding_array is not None:
-                try:
-                    self.add_vector(embedding_array, vector_id=int(vector_id))
-                    loaded_count += 1
-                except Exception as e:
-                    logger.error(
-                        f"Failed to add vector to FAISS index for chunk {chunk.get('id')}: {e}"
-                    )
-                    missing_embeddings += 1
-
-        if missing_embeddings > 0:
-            logger.warning(
-                f"Could not load {missing_embeddings} vectors: embeddings not available"
-            )
-
-        # Commit only for CodeDatabase (DatabaseClient.execute() auto-commits)
-        if not isinstance(database, DatabaseClient):
-            try:
-                database._commit()
-            except Exception:
-                pass
-
-        # Save rebuilt index
-        self.save_index()
-
-        logger.info(
-            "Rebuilt FAISS index: loaded %d vectors, missing %d embeddings",
-            loaded_count,
-            missing_embeddings,
+        return await rebuild_from_database_impl(
+            self, database, svo_client_manager, project_id
         )
-
-        return loaded_count
 
     def get_stats(self: "FaissIndexManager") -> Dict[str, Any]:
         """

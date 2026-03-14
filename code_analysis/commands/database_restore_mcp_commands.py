@@ -205,11 +205,8 @@ class RestoreDatabaseFromConfigMCPCommand(BaseMCPCommand):
                 )
 
             db = BaseMCPCommand._open_database_from_config(auto_analyze=False)
-            cmd = None
             try:
-                from .code_mapper_mcp_command import UpdateIndexesMCPCommand
-
-                cmd = UpdateIndexesMCPCommand()
+                from .update_indexes_analyzer import analyze_file
 
                 totals = {
                     "files_total": 0,
@@ -249,7 +246,7 @@ class RestoreDatabaseFromConfigMCPCommand(BaseMCPCommand):
                     totals["files_total"] += len(py_files)
 
                     for file_path in py_files:
-                        res = cmd._analyze_file(  # noqa: SLF001
+                        res = analyze_file(
                             database=db,
                             file_path=file_path,
                             project_id=project_id,

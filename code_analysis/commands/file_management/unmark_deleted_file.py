@@ -7,7 +7,7 @@ email: vasilyvz@gmail.com
 
 import logging
 from pathlib import Path
-from typing import Any, Dict, TYPE_CHECKING
+from typing import Any, Dict, TYPE_CHECKING, cast
 
 if TYPE_CHECKING:
     from ...core.database_client.client import DatabaseClient
@@ -71,17 +71,20 @@ class UnmarkDeletedFileCommand:
 
         try:
             # Get file info
-            result = self.database.execute(
-                """
-                SELECT id, path, original_path, version_dir 
-                FROM files 
-                WHERE project_id = ? AND (path = ? OR original_path = ?)
-                ORDER BY last_modified DESC
-                LIMIT 1
-                """,
-                (self.project_id, self.file_path, self.file_path),
+            response = cast(
+                Dict[str, Any],
+                self.database.execute(
+                    """
+                    SELECT id, path, original_path, version_dir 
+                    FROM files 
+                    WHERE project_id = ? AND (path = ? OR original_path = ?)
+                    ORDER BY last_modified DESC
+                    LIMIT 1
+                    """,
+                    (self.project_id, self.file_path, self.file_path),
+                ),
             )
-            data = result.get("data", [])
+            data = response.get("data", [])
             row = data[0] if data else None
 
             if not row:

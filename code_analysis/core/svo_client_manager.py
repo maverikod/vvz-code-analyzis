@@ -25,35 +25,21 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterable, List, Optional
 
-from .svo_client_manager_logging import (
-    TRACE_PREVIEW_LEN as _TRACE_PREVIEW_LEN,
-    _get_chunker_logger,
-    _get_vectorization_trace_logger,
-    log_vectorization_trace,
+from .svo_client_manager_config import build_config
+from .svo_client_manager_chunker import (
+    close_chunker,
+    fetch_chunk_limits,
+    get_chunks as _get_chunks_impl,
+    get_chunks_batch as _get_chunks_batch_impl,
+    init_chunker,
+)
+from .svo_client_manager_embedding import (
+    close_embedding,
+    get_embeddings as _get_embeddings_impl,
+    init_embedding,
 )
 
 logger = logging.getLogger(__name__)
-
-
-# Try to import embed_client (vectorization only)
-try:
-    from embed_client.async_client import EmbeddingServiceAsyncClient
-    from embed_client.client_factory import ClientFactory
-
-    EMBED_CLIENT_AVAILABLE = True
-except ImportError:
-    EmbeddingServiceAsyncClient = None  # type: ignore
-    ClientFactory = None  # type: ignore
-    EMBED_CLIENT_AVAILABLE = False
-
-# Try to import svo_client (chunker - chunks and vectorizes)
-try:
-    from svo_client import ChunkerClient
-
-    CHUNKER_CLIENT_AVAILABLE = True
-except ImportError:
-    ChunkerClient = None  # type: ignore
-    CHUNKER_CLIENT_AVAILABLE = False
 
 
 @dataclass(frozen=True)
@@ -99,149 +85,24 @@ class SVOClientManager:
 
         Args:
             server_config: Parsed config model or dict. The manager expects
-                `code_analysis.embedding` and `code_analysis.vector_dim` keys when a dict.
+                code_analysis.embedding and code_analysis.vector_dim when a dict.
             root_dir: Optional root directory path for resolving relative certificate paths.
-                If not provided, will try to infer from config (db_path or log path).
         """
-        # Store root_dir for chunker logger
-        self._root_dir = Path(root_dir) if root_dir else None
-
-        cfg = self._to_dict(server_config)
-
-        # Handle both formats: full config dict with "code_analysis" key, or ServerConfig object
-        if "code_analysis" in cfg:
-            ca_cfg = cfg.get("code_analysis") or {}
-        else:
-            # server_config is already a ServerConfig object (parsed code_analysis section)
-            ca_cfg = cfg
-
-        # Convert nested objects to dicts if needed
-        if hasattr(ca_cfg, "chunker") and hasattr(ca_cfg.chunker, "enabled"):
-            # ServerConfig object - extract directly
-            chunker_cfg = self._to_dict(ca_cfg.chunker) if ca_cfg.chunker else {}
-            emb_cfg = self._to_dict(ca_cfg.embedding) if ca_cfg.embedding else {}
-            worker_dict = self._to_dict(ca_cfg.worker) if ca_cfg.worker else {}
-            worker_cfg = (
-                worker_dict.get("circuit_breaker") or {}
-                if isinstance(worker_dict, dict)
-                else {}
-            )
-            self.vector_dim: int = int(ca_cfg.vector_dim or 384)
-            self.chunker_enabled: bool = bool(chunker_cfg.get("enabled", False))
-            self.embedding_enabled: bool = bool(emb_cfg.get("enabled", False))
-            self._log_chunker_trace: bool = bool(
-                getattr(ca_cfg, "log_vectorization_chunker_trace", False)
-            )
-        else:
-            # Dict format - extract as before
-            chunker_cfg = ca_cfg.get("chunker") or {}
-            emb_cfg = ca_cfg.get("embedding") or {}
-            worker_cfg = (ca_cfg.get("worker") or {}).get("circuit_breaker") or {}
-            self.vector_dim: int = int(ca_cfg.get("vector_dim", 384))
-            self.chunker_enabled: bool = bool(chunker_cfg.get("enabled", False))
-            self.embedding_enabled: bool = bool(emb_cfg.get("enabled", False))
-            self._log_chunker_trace = bool(
-                ca_cfg.get("log_vectorization_chunker_trace", False)
-            )
-
-        self.failure_threshold: int = int(worker_cfg.get("failure_threshold", 5))
-        self.recovery_timeout: float = float(worker_cfg.get("recovery_timeout", 60.0))
-        self.success_threshold: int = int(worker_cfg.get("success_threshold", 2))
-        self.initial_backoff: float = float(worker_cfg.get("initial_backoff", 5.0))
-        self.max_backoff: float = float(worker_cfg.get("max_backoff", 300.0))
-        self.backoff_multiplier: float = float(
-            worker_cfg.get("backoff_multiplier", 2.0)
-        )
-
-        # Circuit breaker internals
+        cfg = build_config(server_config, root_dir)
+        for key, value in cfg.items():
+            setattr(self, key, value)
         self._state: str = "closed"
         self._failures: int = 0
         self._opened_at: Optional[float] = None
         self._half_open_successes: int = 0
-
-        # Track service availability status (for logging only on status change)
         self._chunker_available: bool = True
         self._chunker_status_logged: bool = False
         self._embedding_available: bool = True
         self._embedding_status_logged: bool = False
-
-        # Chunk size limits from chunker service (fetched dynamically)
         self._min_chunk_length: Optional[int] = None
         self._max_chunk_length: Optional[int] = None
-
-        # Keep original cfg for client creation
-        self._config: dict[str, Any] = cfg
-
-        # Chunker client (SVO - chunks and vectorizes)
         self._chunker_client: Optional[Any] = None
-
-        # Extract chunker configuration (ensure dict format)
-        chunker_cfg_dict = (
-            self._to_dict(chunker_cfg)
-            if not isinstance(chunker_cfg, dict)
-            else chunker_cfg
-        )
-        self._chunker_url: str = str(
-            chunker_cfg_dict.get("url") or chunker_cfg_dict.get("host") or "localhost"
-        )
-        self._chunker_port: int = int(chunker_cfg_dict.get("port", 8009))
-        self._chunker_protocol: str = str(chunker_cfg_dict.get("protocol", "http"))
-        self._chunker_cert_file: Optional[str] = chunker_cfg_dict.get("cert_file")
-        self._chunker_key_file: Optional[str] = chunker_cfg_dict.get("key_file")
-        self._chunker_ca_cert_file: Optional[str] = chunker_cfg_dict.get("ca_cert_file")
-        self._chunker_crl_file: Optional[str] = chunker_cfg_dict.get("crl_file")
-        # Default 120s for chunk_batch job polling (~1 chunk per 3s; 120 allows ~40 chunks)
-        self._chunker_timeout: float = float(
-            chunker_cfg_dict.get("timeout", 120.0)
-            if chunker_cfg_dict.get("timeout") is not None
-            else 120.0
-        )
-        self._chunker_check_hostname: bool = bool(
-            chunker_cfg_dict.get("check_hostname", False)
-        )
-
-        # Embedding client (embed-client - only vectorization)
         self._embedding_client: Optional[Any] = None
-
-        # Extract embedding configuration (ensure dict format)
-        emb_cfg_dict = (
-            self._to_dict(emb_cfg) if not isinstance(emb_cfg, dict) else emb_cfg
-        )
-        self._embedding_url: str = str(
-            emb_cfg_dict.get("url") or emb_cfg_dict.get("host") or "localhost"
-        )
-        self._embedding_port: int = int(emb_cfg_dict.get("port", 8001))
-        self._embedding_protocol: str = str(emb_cfg_dict.get("protocol", "http"))
-        # Store certificate paths as-is (will be resolved relative to config file location if needed)
-        self._embedding_cert_file: Optional[str] = emb_cfg_dict.get("cert_file")
-        self._embedding_key_file: Optional[str] = emb_cfg_dict.get("key_file")
-        self._embedding_ca_cert_file: Optional[str] = emb_cfg_dict.get("ca_cert_file")
-        self._embedding_crl_file: Optional[str] = emb_cfg_dict.get("crl_file")
-        self._embedding_timeout: Optional[float] = emb_cfg_dict.get("timeout")
-        self._embedding_check_hostname: bool = bool(
-            emb_cfg_dict.get("check_hostname", False)
-        )
-
-        # Store root path for resolving relative certificate paths
-        # Priority: explicit root_dir > infer from config > current working directory
-        self._root_path: Optional[Path] = None
-        if root_dir:
-            self._root_path = Path(root_dir)
-        elif "code_analysis" in cfg:
-            # Try to infer from db_path or log path
-            db_path = ca_cfg.get("db_path")
-            if db_path:
-                self._root_path = Path(
-                    db_path
-                ).parent.parent  # data/code_analysis.db -> project root
-            else:
-                log_path = ca_cfg.get("log")
-                if log_path:
-                    self._root_path = Path(
-                        log_path
-                    ).parent.parent  # logs/code_analysis.log -> project root
-
-        # Async init/close markers
         self._initialized: bool = False
         self._lock = asyncio.Lock()
 
@@ -249,233 +110,36 @@ class SVOClientManager:
         """
         Initialize underlying clients.
 
-        Creates:
-        - ChunkerClient (SVO) if chunker is enabled - for chunking and vectorization
-        - EmbeddingServiceAsyncClient (embed-client) if embedding is enabled - for vectorization only
+        Creates ChunkerClient (SVO) if chunker enabled and EmbeddingServiceAsyncClient
+        (embed-client) if embedding enabled.
         """
-
         async with self._lock:
-            # Initialize chunker client (SVO - chunks and vectorizes)
-            if self.chunker_enabled and CHUNKER_CLIENT_AVAILABLE:
-                try:
-                    # Create ChunkerClient (uses host and port, not url)
-                    # Map cert_file/key_file/ca_cert_file to cert/key/ca
-                    chunker_kwargs: dict[str, Any] = {
-                        "host": self._chunker_url,
-                        "port": self._chunker_port,
-                        "check_hostname": self._chunker_check_hostname,
-                        "timeout": self._chunker_timeout,
-                    }
-
-                    # Map certificate files to ChunkerClient parameters
-                    if self._chunker_protocol in ("mtls", "https"):
-                        if self._chunker_cert_file:
-                            cert_path = Path(self._chunker_cert_file)
-                            if not cert_path.is_absolute() and self._root_path:
-                                cert_path = self._root_path / cert_path
-                            chunker_kwargs["cert"] = str(cert_path.resolve())
-                        if self._chunker_key_file:
-                            key_path = Path(self._chunker_key_file)
-                            if not key_path.is_absolute() and self._root_path:
-                                key_path = self._root_path / key_path
-                            chunker_kwargs["key"] = str(key_path.resolve())
-                        if self._chunker_ca_cert_file:
-                            ca_cert_path = Path(self._chunker_ca_cert_file)
-                            if not ca_cert_path.is_absolute() and self._root_path:
-                                ca_cert_path = self._root_path / ca_cert_path
-                            chunker_kwargs["ca"] = str(ca_cert_path.resolve())
-
-                    # Create ChunkerClient and enter context manager
-                    self._chunker_client = ChunkerClient(**chunker_kwargs)
-                    await self._chunker_client.__aenter__()
-
-                    # Fetch chunk size limits from chunker service
-                    await self._fetch_chunk_limits()
-
-                    logger.info(
-                        "SVOClientManager initialized with real chunker service "
-                        "(url=%s:%s, protocol=%s)",
-                        self._chunker_url,
-                        self._chunker_port,
-                        self._chunker_protocol,
-                    )
-                except Exception as e:
-                    logger.error(
-                        "Failed to initialize real chunker client: %s",
-                        e,
-                        exc_info=True,
-                    )
-                    raise RuntimeError(
-                        f"Failed to initialize chunker service: {e}"
-                    ) from e
-            else:
-                if self.chunker_enabled and not CHUNKER_CLIENT_AVAILABLE:
-                    error_msg = (
-                        "svo_client library is not available. "
-                        "Install it to use chunker service."
-                    )
-                    logger.error(error_msg)
-                    raise RuntimeError(error_msg)
-
-            # Initialize embedding client (embed-client - only vectorization)
-            if self.embedding_enabled and EMBED_CLIENT_AVAILABLE:
-                try:
-                    # Determine base URL based on protocol
-                    if self._embedding_protocol == "mtls":
-                        base_url = f"https://{self._embedding_url}"
-                    elif self._embedding_protocol == "https":
-                        base_url = f"https://{self._embedding_url}"
-                    else:
-                        base_url = f"http://{self._embedding_url}"
-
-                    # Create client using ClientFactory
-                    client_kwargs: dict[str, Any] = {}
-                    if self._embedding_timeout:
-                        client_kwargs["timeout"] = self._embedding_timeout
-
-                    # Configure SSL/TLS for mTLS or HTTPS
-                    if self._embedding_protocol in ("mtls", "https"):
-                        ssl_enabled = True
-                        if self._embedding_protocol == "mtls":
-                            if self._embedding_cert_file and self._embedding_key_file:
-                                # Resolve relative paths
-                                cert_path = Path(self._embedding_cert_file)
-                                key_path = Path(self._embedding_key_file)
-                                if not cert_path.is_absolute() and self._root_path:
-                                    cert_path = self._root_path / cert_path
-                                if not key_path.is_absolute() and self._root_path:
-                                    key_path = self._root_path / key_path
-                                client_kwargs["cert_file"] = str(cert_path.resolve())
-                                client_kwargs["key_file"] = str(key_path.resolve())
-                            if self._embedding_ca_cert_file:
-                                ca_cert_path = Path(self._embedding_ca_cert_file)
-                                if not ca_cert_path.is_absolute() and self._root_path:
-                                    ca_cert_path = self._root_path / ca_cert_path
-                                client_kwargs["ca_cert_file"] = str(
-                                    ca_cert_path.resolve()
-                                )
-                            if self._embedding_crl_file:
-                                crl_path = Path(self._embedding_crl_file)
-                                if not crl_path.is_absolute() and self._root_path:
-                                    crl_path = self._root_path / crl_path
-                                client_kwargs["crl_file"] = str(crl_path.resolve())
-                        else:
-                            # HTTPS without client certs
-                            if self._embedding_ca_cert_file:
-                                ca_cert_path = Path(self._embedding_ca_cert_file)
-                                if not ca_cert_path.is_absolute() and self._root_path:
-                                    ca_cert_path = self._root_path / ca_cert_path
-                                client_kwargs["ca_cert_file"] = str(
-                                    ca_cert_path.resolve()
-                                )
-                    else:
-                        ssl_enabled = False
-
-                    # Add check_hostname if SSL is enabled
-                    if ssl_enabled:
-                        client_kwargs["verify"] = self._embedding_check_hostname
-
-                    # Create client
-                    self._embedding_client = ClientFactory.create_client(
-                        base_url=base_url,
-                        port=self._embedding_port,
-                        auth_method="none",  # Can be extended later
-                        ssl_enabled=ssl_enabled,
-                        **client_kwargs,
-                    )
-
-                    # Initialize client (enter context manager)
-                    await self._embedding_client.__aenter__()
-
-                    logger.info(
-                        "SVOClientManager initialized with real embedding service "
-                        "(url=%s:%s, protocol=%s, vector_dim=%s)",
-                        self._embedding_url,
-                        self._embedding_port,
-                        self._embedding_protocol,
-                        self.vector_dim,
-                    )
-                except Exception as e:
-                    logger.error(
-                        "Failed to initialize real embedding client: %s",
-                        e,
-                        exc_info=True,
-                    )
-                    raise RuntimeError(
-                        f"Failed to initialize embedding service: {e}"
-                    ) from e
-            else:
-                if not self.embedding_enabled:
-                    error_msg = (
-                        "Embedding service is disabled in configuration. "
-                        "Set code_analysis.embedding.enabled=true to enable."
-                    )
-                    logger.error(error_msg)
-                    raise RuntimeError(error_msg)
-                elif not EMBED_CLIENT_AVAILABLE:
-                    error_msg = (
-                        "embed_client library is not available. "
-                        "Install it to use embedding service."
-                    )
-                    logger.error(error_msg)
-                    raise RuntimeError(error_msg)
-
+            if self.chunker_enabled:
+                await init_chunker(self)
+            if self.embedding_enabled:
+                await init_embedding(self)
             self._initialized = True
 
     async def close(self) -> None:
-        """
-        Close underlying clients.
-        """
-
+        """Close underlying clients."""
         async with self._lock:
-            if self._chunker_client:
-                try:
-                    # Use context manager exit for proper cleanup
-                    await self._chunker_client.__aexit__(None, None, None)
-                except Exception as e:
-                    logger.warning("Error closing chunker client: %s", e, exc_info=True)
-                finally:
-                    self._chunker_client = None
-
-            if self._embedding_client:
-                try:
-                    await self._embedding_client.__aexit__(None, None, None)
-                except Exception as e:
-                    logger.warning(
-                        "Error closing embedding client: %s", e, exc_info=True
-                    )
-                finally:
-                    self._embedding_client = None
-
+            await close_chunker(self)
+            await close_embedding(self)
             self._initialized = False
         logger.info("SVOClientManager closed")
 
     def get_circuit_state(self) -> CircuitState:
-        """
-        Get circuit breaker state snapshot.
-
-        Returns:
-            CircuitState snapshot.
-        """
-
+        """Get circuit breaker state snapshot."""
         self._maybe_transition()
         return CircuitState(
             state=self._state, failures=self._failures, opened_at=self._opened_at
         )
 
     def get_backoff_delay(self) -> float:
-        """
-        Get current backoff delay based on circuit breaker state.
-
-        Returns:
-            Backoff delay in seconds.
-        """
-
+        """Get current backoff delay based on circuit breaker state (seconds)."""
         self._maybe_transition()
         if self._state != "open":
             return 0.0
-
-        # Exponential backoff bounded by max_backoff
         delay = self.initial_backoff * (
             self.backoff_multiplier ** max(0, self._failures - 1)
         )
@@ -484,418 +148,21 @@ class SVOClientManager:
     async def get_chunks(self, text: str, **kwargs: Any) -> List[Any]:
         """
         Get chunks with embeddings from chunker service (SVO) via WebSocket.
-
-        Chunking is done only via WebSocket: submit job, wait for completion
-        push on /ws (svo_client ChunkerClient.chunk uses execute_command_unified
-        with auto_poll over WebSocket). Returns chunks with embeddings.
-
-        Args:
-            text: Text to chunk and vectorize.
-            **kwargs: Additional chunking parameters (type, language, etc.).
-                     Timeout can be overridden; default is config chunker timeout.
-
-        Returns:
-            List of chunk objects with embeddings (SemanticChunk from svo_client).
-
-        Raises:
-            RuntimeError: If chunker service is not available or not enabled.
         """
-
-        self._maybe_transition()
-
-        # Require real chunker service
-        if not self._chunker_client or not self.chunker_enabled:
-            error_msg = (
-                "Chunker service is not available or not enabled. "
-                "Ensure code_analysis.chunker.enabled=true and service is running."
-            )
-            logger.error(
-                "get_chunks called but chunker service is not available: "
-                "client=%s, enabled=%s",
-                self._chunker_client is not None,
-                self.chunker_enabled,
-            )
-            raise RuntimeError(error_msg)
-
-        # Check text length: chunker rejects if too short (server min=15)
-        min_len = self._min_chunk_length if self._min_chunk_length is not None else 15
-        text_length = len(text)
-        if text_length < min_len:
-            logger.debug(
-                f"Text length ({text_length}) is below chunker minimum "
-                f"({min_len} characters). Skipping chunker, will save to DB without embedding."
-            )
-            return []
-
-        if self._max_chunk_length is not None and text_length > self._max_chunk_length:
-            logger.debug(
-                f"Text length ({text_length}) exceeds chunker maximum "
-                f"({self._max_chunk_length} characters). Chunker will split the text."
-            )  # Not an error, chunker will handle splitting
-
-        # Log request details to separate file
-        chunker_log = _get_chunker_logger(self._root_dir)
-        request_start_time = time.time()
-        text_preview = text[:200] + "..." if len(text) > 200 else text
-        chunker_log.info(
-            f"REQUEST | text_length={len(text)} | text_preview={text_preview!r} | "
-            f"kwargs={kwargs}"
-        )
-
-        try:
-            # Chunk via WebSocket only (queue + completion push); pass timeout from config
-            chunk_timeout = kwargs.get("timeout") or self._chunker_timeout or 0.0
-            chunk_kwargs = {k: v for k, v in kwargs.items() if k != "timeout"}
-            batch = await self._chunker_client.chunk(
-                texts=[text], timeout=float(chunk_timeout), **chunk_kwargs
-            )
-            chunks = batch[0] if batch else []
-            request_duration = time.time() - request_start_time
-
-            # Log success
-            chunks_count = len(chunks) if chunks else 0
-            has_embeddings = False
-            if chunks and len(chunks) > 0:
-                first_chunk = chunks[0]
-                emb = getattr(first_chunk, "embedding", None)
-                has_embeddings = emb is not None and (
-                    (isinstance(emb, list) and len(emb) > 0)
-                    or (
-                        hasattr(first_chunk, "vector")
-                        and first_chunk.vector is not None
-                    )
-                )
-
-            chunker_log.info(
-                f"SUCCESS | duration={request_duration:.3f}s | "
-                f"chunks_count={chunks_count} | has_embeddings={has_embeddings}"
-            )
-            if self._log_chunker_trace:
-                log_vectorization_trace(
-                    text_preview,
-                    has_embeddings,
-                    error="",
-                    root_dir=self._root_dir,
-                )
-
-            was_unavailable = not self._chunker_available
-            self._record_success()
-            # Service is available
-            if was_unavailable:
-                # Status changed: unavailable -> available
-                logger.info("✅ Chunker service is now available")
-                self._chunker_available = True
-                self._chunker_status_logged = True
-                # Refetch chunk limits after service recovery
-                asyncio.create_task(self._fetch_chunk_limits())
-            else:
-                self._chunker_status_logged = False  # Already logged as available
-            return chunks
-        except Exception as e:
-            request_duration = time.time() - request_start_time
-
-            # Log error
-            error_type = type(e).__name__
-            error_msg = str(e)
-            chunker_log.error(
-                f"ERROR | duration={request_duration:.3f}s | "
-                f"error_type={error_type} | error={error_msg}"
-            )
-            if self._log_chunker_trace:
-                log_vectorization_trace(
-                    text_preview,
-                    False,
-                    error=f"{error_type}: {error_msg}",
-                    root_dir=self._root_dir,
-                )
-            self._record_failure()
-            # Check if error indicates service unavailability
-            error_str = str(e).lower()
-            is_unavailable_error = (
-                "model rpc server failed" in error_str
-                or "connection" in error_str
-                or "timeout" in error_str
-                or "unavailable" in error_str
-                or "failed after" in error_str
-            )
-
-            if is_unavailable_error:
-                if self._chunker_available:
-                    # Status changed: available -> unavailable
-                    logger.warning(f"⚠️  Chunker service is now unavailable: {e}")
-                    self._chunker_available = False
-                    self._chunker_status_logged = True
-                elif not self._chunker_status_logged:
-                    # First time logging unavailability
-                    logger.warning(f"⚠️  Chunker service is unavailable: {e}")
-                    self._chunker_status_logged = True
-                else:
-                    # Already logged, don't spam
-                    self._chunker_status_logged = False
-            else:
-                # Other error (not availability-related), log normally
-                logger.error(
-                    "Failed to get chunks from chunker service: %s",
-                    e,
-                    exc_info=True,
-                )
-            raise
+        return await _get_chunks_impl(self, text, **kwargs)
 
     async def get_chunks_batch(
         self, texts: List[str], **kwargs: Any
     ) -> List[List[Any]]:
-        """
-        Get chunks with embeddings for multiple texts via WebSocket.
-
-        Chunking is only via WebSocket (svo_client ChunkerClient.chunk:
-        execute_command_unified with auto_poll over /ws). One list of
-        SemanticChunk per input text; texts below min_chunk_length get [].
-
-        Args:
-            texts: List of texts to chunk and vectorize.
-            **kwargs: Additional chunking parameters (type, language, etc.).
-                     Timeout can be overridden; default is config chunker timeout.
-
-        Returns:
-            List of lists of chunk objects (one list per input text, same order).
-        """
-        self._maybe_transition()
-        if not self._chunker_client or not self.chunker_enabled:
-            raise RuntimeError(
-                "Chunker service is not available or not enabled. "
-                "Ensure code_analysis.chunker.enabled=true and service is running."
-            )
-        if not texts:
-            return []
-
-        # Filter by min length: chunker rejects batch if any text too short (e.g. min=15)
-        min_len = self._min_chunk_length if self._min_chunk_length is not None else 15
-        valid_indices: List[int] = []
-        valid_texts: List[str] = []
-        for i, text in enumerate(texts):
-            if len(text) < min_len:
-                continue
-            valid_indices.append(i)
-            valid_texts.append(text)
-
-        result: List[List[Any]] = [[] for _ in texts]
-        if not valid_texts:
-            return result
-
-        chunker_log = _get_chunker_logger(self._root_dir)
-        request_start_time = time.time()
-        chunker_log.info(
-            f"BATCH REQUEST | texts_count={len(valid_texts)} | " f"kwargs={kwargs}"
-        )
-        try:
-            chunk_timeout = kwargs.get("timeout") or self._chunker_timeout or 0.0
-            chunk_kwargs = {k: v for k, v in kwargs.items() if k != "timeout"}
-            batch = await self._chunker_client.chunk(
-                texts=valid_texts, timeout=float(chunk_timeout), **chunk_kwargs
-            )
-            request_duration = time.time() - request_start_time
-            for k, idx in enumerate(valid_indices):
-                if k < len(batch):
-                    result[idx] = batch[k]
-            if self._log_chunker_trace:
-                for k, text in enumerate(valid_texts):
-                    chunks_k = batch[k] if k < len(batch) else []
-                    has_emb = False
-                    if chunks_k:
-                        ch = chunks_k[0]
-                        emb = getattr(ch, "embedding", None) or getattr(
-                            ch, "vector", None
-                        )
-                        has_emb = emb is not None and (
-                            (not isinstance(emb, list))
-                            or (isinstance(emb, list) and len(emb) > 0)
-                        )
-                    log_vectorization_trace(
-                        text[:_TRACE_PREVIEW_LEN] if text else "",
-                        has_emb,
-                        error=(
-                            ""
-                            if has_emb
-                            else "no embedding from chunker (empty or no model)"
-                        ),
-                        root_dir=self._root_dir,
-                    )
-            chunker_log.info(
-                f"BATCH SUCCESS | duration={request_duration:.3f}s | "
-                f"texts_count={len(valid_texts)}"
-            )
-            self._record_success()
-            if not self._chunker_available:
-                self._chunker_available = True
-                self._chunker_status_logged = True
-                asyncio.create_task(self._fetch_chunk_limits())
-            return result
-        except Exception as e:
-            request_duration = time.time() - request_start_time
-            chunker_log.error(
-                f"BATCH ERROR | duration={request_duration:.3f}s | "
-                f"error_type={type(e).__name__} | error={str(e)}"
-            )
-            if self._log_chunker_trace:
-                err_msg = f"{type(e).__name__}: {str(e)}"
-                for text in valid_texts:
-                    log_vectorization_trace(
-                        text[:_TRACE_PREVIEW_LEN] if text else "",
-                        False,
-                        error=err_msg,
-                        root_dir=self._root_dir,
-                    )
-            self._record_failure()
-            raise
+        """Get chunks with embeddings for multiple texts via WebSocket."""
+        return await _get_chunks_batch_impl(self, texts, **kwargs)
 
     async def get_embeddings(self, chunks: Iterable[Any], **kwargs: Any) -> List[Any]:
-        """
-        Get embeddings for provided chunks using real embedding service.
-
-        The method is compatible with existing code expecting each chunk object
-        to receive an `embedding` attribute.
-
-        Requires real embedding service to be available and enabled.
-        No fallback mechanisms - raises exception if service is unavailable.
-
-        Args:
-            chunks: Iterable of objects with either `.body` or `.text` attributes.
-            **kwargs: Extra parameters accepted for compatibility with callers
-                (e.g. `type`, `language`, etc.).
-
-        Returns:
-            List of the same chunk objects, each augmented with `.embedding`.
-
-        Raises:
-            RuntimeError: If embedding service is not available or not enabled.
-            ValueError: If embedding service returns invalid response.
-        """
-
-        self._maybe_transition()
-        chunks_list = list(chunks)
-        if not chunks_list:
-            return []
-
-        # Require real embedding service
-        if not self._embedding_client or not self.embedding_enabled:
-            error_msg = (
-                "Embedding service is not available or not enabled. "
-                "Ensure code_analysis.embedding.enabled=true and service is running."
-            )
-            logger.error(
-                "get_embeddings called but embedding service is not available: "
-                "client=%s, enabled=%s",
-                self._embedding_client is not None,
-                self.embedding_enabled,
-            )
-            raise RuntimeError(error_msg)
-
-        try:
-            # Extract texts from chunks
-            texts: list[str] = []
-            for ch in chunks_list:
-                text = self._get_chunk_text(ch)
-                texts.append(text)
-
-            # Call embedding service
-            result = await self._embedding_client.cmd(
-                command="embed",
-                params={"texts": texts},
-            )
-
-            # Extract embeddings from response
-            if result and "result" in result:
-                result_data = result["result"]
-                if result_data.get("success") and "data" in result_data:
-                    data = result_data["data"]
-                    # Try different response formats
-                    embeddings = None
-                    if "embeddings" in data:
-                        embeddings = data["embeddings"]
-                    elif "results" in data:
-                        # New format with results array
-                        results = data["results"]
-                        embeddings = [
-                            r.get("embedding") if isinstance(r, dict) else None
-                            for r in results
-                        ]
-
-                    if embeddings and len(embeddings) == len(chunks_list):
-                        # Assign embeddings to chunks
-                        for ch, emb in zip(chunks_list, embeddings):
-                            if emb is not None:
-                                setattr(ch, "embedding", emb)
-                                # Also set embedding_model if available
-                                if isinstance(data, dict) and "model" in data:
-                                    setattr(ch, "embedding_model", data["model"])
-                        self._record_success()
-                        return chunks_list
-                    else:
-                        error_msg = "Embedding service returned unexpected format or count mismatch"
-                        logger.error(
-                            "%s: expected %d embeddings, got %d",
-                            error_msg,
-                            len(chunks_list),
-                            len(embeddings) if embeddings else 0,
-                        )
-                        raise ValueError(error_msg)
-                else:
-                    error_msg = result_data.get("error", "Unknown error")
-                    logger.error(
-                        "Embedding service returned error: %s (response: %s)",
-                        error_msg,
-                        result_data,
-                    )
-                    raise ValueError(f"Embedding service error: {error_msg}")
-            else:
-                error_msg = "Invalid embedding service response"
-                logger.error(
-                    "%s: result structure is invalid (result=%s)",
-                    error_msg,
-                    result,
-                )
-                raise ValueError(error_msg)
-
-        except Exception as e:
-            self._record_failure()
-            # Check if error indicates service unavailability
-            error_str = str(e).lower()
-            is_unavailable_error = (
-                "connection" in error_str
-                or "timeout" in error_str
-                or "unavailable" in error_str
-                or "failed after" in error_str
-            )
-
-            if is_unavailable_error:
-                if self._embedding_available:
-                    # Status changed: available -> unavailable
-                    logger.warning(f"⚠️  Embedding service is now unavailable: {e}")
-                    self._embedding_available = False
-                    self._embedding_status_logged = True
-                elif not self._embedding_status_logged:
-                    # First time logging unavailability
-                    logger.warning(f"⚠️  Embedding service is unavailable: {e}")
-                    self._embedding_status_logged = True
-                else:
-                    # Already logged, don't spam
-                    self._embedding_status_logged = False
-            else:
-                # Other error (not availability-related), log normally
-                logger.error(
-                    "Failed to get embeddings from real service: %s",
-                    e,
-                    exc_info=True,
-                )
-            raise
-
-    # ==========================
-    # Internal helpers
-    # ==========================
+        """Get embeddings for provided chunks using real embedding service."""
+        return await _get_embeddings_impl(self, chunks, **kwargs)
 
     def _record_success(self) -> None:
         """Record a successful call and update circuit breaker."""
-
         if self._state == "half_open":
             self._half_open_successes += 1
             if self._half_open_successes >= self.success_threshold:
@@ -904,19 +171,15 @@ class SVOClientManager:
                 self._opened_at = None
                 self._half_open_successes = 0
                 return
-
         if self._state == "closed":
             self._failures = 0
         elif self._state == "open":
-            # Should not happen often, but reset softly
             self._failures = 0
 
     def _record_failure(self) -> None:
         """Record a failed call and update circuit breaker."""
-
         self._failures += 1
         self._half_open_successes = 0
-
         if (
             self._state in ("closed", "half_open")
             and self._failures >= self.failure_threshold
@@ -926,7 +189,6 @@ class SVOClientManager:
 
     def _maybe_transition(self) -> None:
         """Handle open -> half_open transition after recovery timeout."""
-
         if self._state != "open":
             return
         if self._opened_at is None:
@@ -937,104 +199,5 @@ class SVOClientManager:
             self._half_open_successes = 0
 
     async def _fetch_chunk_limits(self) -> None:
-        """
-        Fetch chunk size limits from chunker service.
-
-        Called during initialization and after service recovery.
-        Uses get_chunk_config() when the chunker client provides it (optional);
-        otherwise limits remain None and length checks are skipped.
-        """
-        if not self._chunker_client:
-            return
-
-        get_chunk_config = getattr(self._chunker_client, "get_chunk_config", None)
-        if not callable(get_chunk_config):
-            logger.debug(
-                "Chunker client has no get_chunk_config; skipping chunk limits."
-            )
-            return
-
-        try:
-            config_result = await get_chunk_config()
-
-            if isinstance(config_result, dict):
-                # Try different response formats:
-                # 1. Direct format: {"config": {...}, "descriptions": {...}}
-                config = config_result.get("config")
-
-                # 2. Wrapped format: {"success": True, "data": {"config": {...}, "descriptions": {...}}}
-                if config is None:
-                    data = config_result.get("data", {})
-                    if isinstance(data, dict):
-                        config = data.get("config")
-
-                # 3. MCP double-wrapped: {"success": True, "result": {"success": True, "data": {...}}}
-                if config is None:
-                    result = config_result.get("result", {})
-                    if isinstance(result, dict):
-                        data = result.get("data", {})
-                        if isinstance(data, dict):
-                            config = data.get("config")
-
-                if config and isinstance(config, dict):
-                    chunk_size = config.get("chunk_size", {})
-                    if isinstance(chunk_size, dict):
-                        self._min_chunk_length = chunk_size.get("min_chunk_length")
-                        self._max_chunk_length = chunk_size.get("max_chunk_length")
-
-                        logger.info(
-                            f"Chunker limits fetched: min={self._min_chunk_length}, "
-                            f"max={self._max_chunk_length}"
-                        )
-                    else:
-                        logger.warning(f"chunk_size is not a dict: {type(chunk_size)}")
-                else:
-                    logger.warning(
-                        f"Could not extract config from get_chunk_config response. "
-                        f"Keys: {list(config_result.keys())}"
-                    )
-            else:
-                logger.warning(
-                    f"get_chunk_config returned non-dict: {type(config_result)}"
-                )
-        except Exception as e:
-            logger.warning(
-                f"Failed to fetch chunk limits from chunker service: {e}. "
-                "Using defaults or previously cached values.",
-                exc_info=True,
-            )
-
-    @staticmethod
-    def _get_chunk_text(chunk: Any) -> str:
-        """Extract text from chunk-like object."""
-
-        if hasattr(chunk, "body") and getattr(chunk, "body") is not None:
-            return str(getattr(chunk, "body"))
-        if hasattr(chunk, "text") and getattr(chunk, "text") is not None:
-            return str(getattr(chunk, "text"))
-        return str(chunk)
-
-    @staticmethod
-    def _to_dict(cfg: Any) -> dict[str, Any]:
-        """Convert config model/dict into a plain dict."""
-
-        if cfg is None:
-            return {}
-        if isinstance(cfg, dict):
-            return cfg
-        # SimpleConfigModel / pydantic-style models
-        if hasattr(cfg, "to_dict") and callable(getattr(cfg, "to_dict")):
-            try:
-                return dict(cfg.to_dict())
-            except Exception:
-                pass
-        if hasattr(cfg, "dict") and callable(getattr(cfg, "dict")):
-            try:
-                return dict(cfg.dict())
-            except Exception:
-                pass
-        # Fallback: best effort via vars()
-        try:
-            return dict(vars(cfg))
-        except Exception:
-            return {}
+        """Fetch chunk size limits from chunker service (e.g. after recovery)."""
+        await fetch_chunk_limits(self)

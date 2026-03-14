@@ -53,7 +53,9 @@ class SQLiteDriverProxy(BaseDatabaseDriver):
         self._lastrowid: Optional[int] = None
         self._socket_timeout: float = 5.0
         self._transaction_id: Optional[str] = None
-        logger.debug("[SQLITE_PROXY] __init__ completed, poll_interval=%s", self.poll_interval)
+        logger.debug(
+            "[SQLITE_PROXY] __init__ completed, poll_interval=%s", self.poll_interval
+        )
 
     def connect(self, config: Dict[str, Any]) -> None:
         """

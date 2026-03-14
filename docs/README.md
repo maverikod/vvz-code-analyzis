@@ -610,6 +610,14 @@ pip install -e ".[dev]"
 pytest
 ```
 
+**Tests that require the server:** Some integration tests expect the code-analysis server (and shared database) to be running; otherwise they are skipped (e.g. "Shared database not initialized", "RPC server unavailable"). To run those tests as well, start the server from the project root with the project venv activated:
+
+```bash
+python -m code_analysis.cli.server_manager_cli --config config.json start
+```
+
+Then run `pytest`. Use `restart` instead of `start` if the server is already running.
+
 ### Code formatting
 
 ```bash

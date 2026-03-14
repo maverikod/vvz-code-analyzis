@@ -5,7 +5,7 @@ Author: Vasiliy Zdanovskiy
 email: vasilyvz@gmail.com
 """
 
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, cast
 
 
 def get_all_chunks_for_faiss_rebuild(
@@ -25,8 +25,10 @@ def get_all_chunks_for_faiss_rebuild(
         List of chunk records with embeddings.
     """
     if project_id:
-        return db._fetchall(
-            """
+        return cast(
+            List[Dict[str, Any]],
+            db._fetchall(
+                """
             SELECT 
                 cc.id,
                 cc.file_id,
@@ -50,11 +52,14 @@ def get_all_chunks_for_faiss_rebuild(
               AND cc.embedding_vector IS NOT NULL
             ORDER BY cc.id
             """,
-            (project_id,),
+                (project_id,),
+            ),
         )
     else:
-        return db._fetchall(
-            """
+        return cast(
+            List[Dict[str, Any]],
+            db._fetchall(
+                """
             SELECT 
                 cc.id,
                 cc.file_id,
@@ -76,7 +81,8 @@ def get_all_chunks_for_faiss_rebuild(
             WHERE cc.embedding_model IS NOT NULL
               AND cc.embedding_vector IS NOT NULL
             ORDER BY cc.id
-            """
+                """
+            ),
         )
 
 
@@ -96,8 +102,10 @@ def get_non_vectorized_chunks(
     Returns:
         List of chunk records that need vector_id assignment.
     """
-    return db._fetchall(
-        """
+    return cast(
+        List[Dict[str, Any]],
+        db._fetchall(
+            """
         SELECT 
             cc.id,
             cc.file_id,
@@ -124,7 +132,8 @@ def get_non_vectorized_chunks(
         ORDER BY cc.id
         LIMIT ?
         """,
-        (project_id, limit),
+            (project_id, limit),
+        ),
     )
 
 

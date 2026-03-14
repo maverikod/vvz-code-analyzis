@@ -8,7 +8,7 @@ email: vasilyvz@gmail.com
 import logging
 import time
 from pathlib import Path
-from typing import Any, Dict, Optional, TYPE_CHECKING
+from typing import Any, Dict, Optional, TYPE_CHECKING, cast
 
 if TYPE_CHECKING:
     from ...core.database_client.client import DatabaseClient
@@ -70,7 +70,7 @@ class CleanupDeletedFilesCommand:
         Returns:
             Dictionary with cleanup statistics
         """
-        result = {
+        result: Dict[str, Any] = {
             "deleted_files": [],
             "total_files": 0,
             "total_size": 0,
@@ -84,7 +84,10 @@ class CleanupDeletedFilesCommand:
                 deleted_files = self.database.get_deleted_files(self.project_id)
             else:
                 # Get all projects and their deleted files
-                projects_result = self.database.execute("SELECT id FROM projects")
+                projects_result = cast(
+                    Dict[str, Any],
+                    self.database.execute("SELECT id FROM projects"),
+                )
                 projects = projects_result.get("data", [])
                 deleted_files = []
                 for project_row in projects:

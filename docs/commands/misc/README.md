@@ -3,20 +3,15 @@
 Author: Vasiliy Zdanovskiy  
 email: vasilyvz@gmail.com
 
-Other commands: analyze project/file, help, check vectors, watch dirs (add/remove). Some may be optional (ImportError handled in hooks).
+This block covers miscellaneous commands such as check_vectors. The commands analyze_project, analyze_file, help, add_watch_dir, and remove_watch_dir have been removed.
 
 ## Commands → File Mapping
 
-| MCP/Command Name | Class                  | Source File                          |
-|------------------|------------------------|--------------------------------------|
-| analyze_project  | AnalyzeProjectCommand  | `commands/analyze_project_command` (optional)|
-| analyze_file     | AnalyzeFileCommand     | `commands/analyze_file_command` (optional)|
-| help             | HelpCommand            | `commands/help_command` (optional)   |
-| check_vectors    | CheckVectorsCommand     | `commands/check_vectors_command.py`  |
-| add_watch_dir    | AddWatchDirCommand     | `commands/watch_dirs_commands` (optional)|
-| remove_watch_dir | RemoveWatchDirCommand  | (same)                               |
+| MCP/Command Name | Class                 | Source File                          |
+|------------------|-----------------------|--------------------------------------|
+| check_vectors    | CheckVectorsCommand   | `commands/check_vectors_command.py`  |
 
-Registration: `code_analysis/hooks.py` (try/except for optional commands).
+Registration: `code_analysis/hooks.py`.
 
 ## Detailed Command Descriptions
 

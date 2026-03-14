@@ -20,8 +20,9 @@ def extract_restore_dirs_from_config(cfg: dict[str, Any]) -> list[str]:
     Returns:
         List of directory paths (as strings). May be empty.
     """
-    code_cfg = (
-        cfg.get("code_analysis") if isinstance(cfg.get("code_analysis"), dict) else {}
+    code_analysis_val = cfg.get("code_analysis")
+    code_cfg: dict[str, Any] = (
+        code_analysis_val if isinstance(code_analysis_val, dict) else {}
     )
     dirs = code_cfg.get("dirs")
     if isinstance(dirs, list) and all(isinstance(x, str) for x in dirs):
@@ -29,9 +30,8 @@ def extract_restore_dirs_from_config(cfg: dict[str, Any]) -> list[str]:
         if non_empty_dirs:
             return non_empty_dirs
 
-    worker_cfg = (
-        code_cfg.get("worker") if isinstance(code_cfg.get("worker"), dict) else {}
-    )
+    worker_val = code_cfg.get("worker")
+    worker_cfg: dict[str, Any] = worker_val if isinstance(worker_val, dict) else {}
     watch_dirs = worker_cfg.get("watch_dirs")
     if isinstance(watch_dirs, list) and all(isinstance(x, str) for x in watch_dirs):
         non_empty_watch_dirs = [x for x in watch_dirs if x]

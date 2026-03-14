@@ -116,6 +116,7 @@ def update_file_record(
     target_path: Path,
     source_code: str,
     file_id: Optional[int],
+    transaction_id: Optional[str] = None,
 ) -> int:
     """
     Add or update file record in database.
@@ -158,6 +159,7 @@ def update_file_record(
         WHERE id = ?
         """,
         (lines, has_docstring, file_id),
+        transaction_id=transaction_id,
     )
     return file_id
 
@@ -271,7 +273,13 @@ def apply_changes(
         t_prev = _t
 
         file_id = update_file_record(
-            database, project_id, root_path, target_path, source_code, file_id
+            database,
+            project_id,
+            root_path,
+            target_path,
+            source_code,
+            file_id,
+            transaction_id=transaction_id,
         )
         _t = time.perf_counter()
         logger.info(

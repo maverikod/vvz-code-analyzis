@@ -94,6 +94,7 @@ Implementer: change BaseMCPCommand so that _open_database_from_config() and _ope
 ## Decision rules
 
 - If any test or code path runs outside the HTTP server process (e.g. CLI or worker) and expects _open_database_from_config to open a new connection, that path must be identified and either excluded (workers are out of scope) or handled via a separate mechanism; do not re-introduce a fallback in this step.
+- **If pytest fails because get_shared_database() is not set** (e.g. SharedDatabaseNotInitializedError): add or adjust a fixture (e.g. in conftest.py or the failing test module) that in setup calls set_shared_database(open_database_from_config_impl(resolve_config_path_fn, get_socket_path_fn)) with the same callables used by open_database_from_config_impl (see base_mcp_command_open_db and base_mcp_command), and in teardown calls close_shared_database(). Do not add a fallback inside production code; only test setup may set the shared database for isolated tests.
 
 ---
 

@@ -12,6 +12,7 @@ from typing import Any, Dict, List, Optional
 
 from ..core.cst_tree.models import ROOT_NODE_ID_SENTINEL
 from ..cst_query import query_source
+from ..core.cst_tree.node_id_markers import build_exact_key_to_id_from_metadata
 
 
 class InvalidNodeIdError(ValueError):
@@ -72,7 +73,7 @@ def _find_tree_node_id_by_position(
             and meta.end_line == end_line
             and meta.end_col == end_col
         ):
-            return nid
+            return str(nid)
     return None
 
 
@@ -150,27 +151,25 @@ def _resolve_selector_to_tree_node_ids(
 ) -> List[str]:
     """
     Resolve selector to tree's node_ids (UUIDs in node_map).
-    Uses query_source for matches, then finds tree metadata by position.
+    Uses query_source with the tree's persisted UUID mapping.
     """
-    source = tree.module.code
-    matches = query_source(source, selector, include_code=False)
+    matches = query_source(
+        tree.module.code,
+        selector,
+        include_code=False,
+        node_ids_by_exact_key=build_exact_key_to_id_from_metadata(tree.metadata_map),
+    )
     if not matches:
         return []
     node_ids: List[str] = []
     if replace_all:
         for m in matches:
-            nid = _find_tree_node_id_by_position(
-                tree, m.start_line, m.start_col, m.end_line, m.end_col
-            )
-            if nid:
-                node_ids.append(nid)
+            if m.node_id in tree.metadata_map:
+                node_ids.append(m.node_id)
     else:
         idx = match_index if match_index is not None else 0
         if 0 <= idx < len(matches):
             m = matches[idx]
-            nid = _find_tree_node_id_by_position(
-                tree, m.start_line, m.start_col, m.end_line, m.end_col
-            )
-            if nid:
-                node_ids.append(nid)
+            if m.node_id in tree.metadata_map:
+                node_ids.append(m.node_id)
     return node_ids

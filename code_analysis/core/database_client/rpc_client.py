@@ -382,15 +382,13 @@ class RPCClient:
     def health_check(self) -> bool:
         """Check if RPC server is healthy.
 
-        Returns:
-            True if server is healthy, False otherwise
-        """
-        if not self.is_connected():
-            return False
+        When not connected, returns True if the socket file exists (server likely up).
+        When connected, returns True if socket exists.
 
+        Returns:
+            True if server is healthy (socket exists), False otherwise
+        """
         try:
-            # Try a simple call (if server supports health check method)
-            # For now, just check if socket exists and is accessible
             return Path(self.socket_path).exists()
         except Exception:
             return False

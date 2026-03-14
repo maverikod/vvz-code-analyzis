@@ -10,7 +10,7 @@ from __future__ import annotations
 import logging
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from .processor_delta import FileDelta
 
@@ -44,6 +44,21 @@ class ProcessorQueueOps:
             return {"data": [row]} if row else {"data": []}
         return {"data": []}
 
+    def _db_execute_batch(
+        self,
+        operations: List[Tuple[str, Optional[tuple]]],
+    ) -> List[Dict[str, Any]]:
+        """Run multiple SQL operations in one batch if database supports it."""
+        if not operations:
+            return []
+        if hasattr(self.database, "execute_batch"):
+            return self.database.execute_batch(operations)
+        results: List[Dict[str, Any]] = []
+        for sql, params in operations:
+            self._db_execute(sql, params or ())
+            results.append({"data": []})
+        return results
+
     def queue_changes(
         self, root_dir: Path, deltas: Dict[str, FileDelta]
     ) -> Dict[str, Any]:
@@ -58,17 +73,29 @@ class ProcessorQueueOps:
         for project_id, delta in deltas.items():
             try:
                 project_obj = self.database.get_project(project_id)
-                # get_project returns a dict (DB row)
-                project = (
-                    {
-                        "id": project_obj["id"],
-                        "root_path": project_obj["root_path"],
-                        "name": project_obj["name"],
-                    }
-                    if project_obj
-                    else None
-                )
-                if not project:
+                # get_project may return a dict (local DB) or a Project object (RPC client)
+                if not project_obj:
+                    project = None
+                else:
+                    # Use attribute access for Project, subscript for dict (avoid TypeError)
+                    id_ = (
+                        project_obj["id"]
+                        if isinstance(project_obj, dict)
+                        else getattr(project_obj, "id", None)
+                    )
+                    root_path = (
+                        project_obj["root_path"]
+                        if isinstance(project_obj, dict)
+                        else getattr(project_obj, "root_path", None)
+                    )
+                    name = (
+                        project_obj.get("name")
+                        if isinstance(project_obj, dict)
+                        else getattr(project_obj, "name", None)
+                    )
+                    project = {"id": id_, "root_path": root_path, "name": name}
+                root_path_val = project.get("root_path") if project else None
+                if not project or not root_path_val:
                     logger.error(
                         f"[QUEUE] Project {project_id} not found in database. Skipping."
                     )
@@ -79,7 +106,7 @@ class ProcessorQueueOps:
                     )
                     continue
 
-                project_root = Path(project["root_path"])
+                project_root = Path(root_path_val)
                 project_stats = self._queue_project_delta(
                     project_id, delta, project_root
                 )
@@ -104,98 +131,149 @@ class ProcessorQueueOps:
     def _queue_project_delta(
         self, project_id: str, delta: FileDelta, project_root: Path
     ) -> Dict[str, Any]:
-        """Queue file changes for a single project."""
+        """Queue file changes for a single project (batch INSERT/UPDATE where possible)."""
+        from ..path_normalization import normalize_file_path
+        from ..exceptions import ProjectIdMismatchError
+
         stats = {
             "new_files": 0,
             "changed_files": 0,
             "deleted_files": 0,
             "errors": 0,
         }
+        watch_dirs: List[Path] = list(self.watch_dirs_resolved)
+
+        # Collect (abs_path, lines, mtime, has_docstring, is_new) for batch when project_root is set
+        batch_rows: List[Tuple[str, int, float, bool, bool]] = []
+
+        def _collect_one(
+            file_path_str: str, mtime: float, size: int, is_new: bool
+        ) -> bool:
+            try:
+                normalized = normalize_file_path(
+                    file_path_str,
+                    watch_dirs=watch_dirs,
+                    project_root=project_root,
+                )
+                if normalized.project_id != project_id:
+                    raise ProjectIdMismatchError(
+                        message=(
+                            f"Project ID mismatch: file {normalized.absolute_path}"
+                        ),
+                        file_project_id=normalized.project_id,
+                        db_project_id=project_id,
+                    )
+                abs_path = normalized.absolute_path
+                path_obj = Path(abs_path)
+                lines = 0
+                has_docstring = False
+                if path_obj.exists() and path_obj.is_file():
+                    try:
+                        text = path_obj.read_text(encoding="utf-8", errors="ignore")
+                        lines = text.count("\n") + (1 if text else 0)
+                        stripped = text.lstrip()
+                        has_docstring = stripped.startswith(
+                            '"""'
+                        ) or stripped.startswith("'''")
+                    except Exception:
+                        pass
+                batch_rows.append((abs_path, lines, mtime, has_docstring, is_new))
+                return True
+            except Exception as e:
+                logger.debug(
+                    "Skip batch for %s: %s",
+                    file_path_str,
+                    e,
+                )
+                return False
+            return True
 
         for file_path_str, mtime, size in delta.new_files:
-            try:
-                mtime_str = datetime.fromtimestamp(mtime).strftime("%Y-%m-%d %H:%M:%S")
-                logger.info(
-                    f"[project={project_id}] [NEW FILE] {file_path_str} | "
-                    f"mtime: {mtime_str} ({mtime}) | size: {size} bytes"
-                )
+            mtime_str = datetime.fromtimestamp(mtime).strftime("%Y-%m-%d %H:%M:%S")
+            logger.info(
+                f"[project={project_id}] [NEW FILE] {file_path_str} | "
+                f"mtime: {mtime_str} ({mtime}) | size: {size} bytes"
+            )
+            if not _collect_one(file_path_str, mtime, size, is_new=True):
                 if self._queue_file_for_processing(
                     file_path_str, mtime, project_id, project_root
                 ):
                     stats["new_files"] += 1
-                    logger.info(
-                        f"[project={project_id}] [NEW FILE] ✓ Queued: {file_path_str}"
-                    )
                 else:
                     stats["errors"] += 1
-                    logger.error(
-                        f"[project={project_id}] [NEW FILE] ✗ Failed: {file_path_str}"
-                    )
-            except Exception as e:
-                logger.error(
-                    f"[project={project_id}] Error queueing new file {file_path_str}: {e}"
-                )
-                stats["errors"] += 1
 
         for file_path_str, mtime, size in delta.changed_files:
-            try:
-                mtime_str = datetime.fromtimestamp(mtime).strftime("%Y-%m-%d %H:%M:%S")
-                logger.info(
-                    f"[project={project_id}] [CHANGED FILE] {file_path_str} | "
-                    f"mtime: {mtime_str} ({mtime}) | size: {size} bytes"
-                )
+            mtime_str = datetime.fromtimestamp(mtime).strftime("%Y-%m-%d %H:%M:%S")
+            logger.info(
+                f"[project={project_id}] [CHANGED FILE] {file_path_str} | "
+                f"mtime: {mtime_str} ({mtime}) | size: {size} bytes"
+            )
+            if not _collect_one(file_path_str, mtime, size, is_new=False):
                 if self._queue_file_for_processing(
                     file_path_str, mtime, project_id, project_root
                 ):
                     stats["changed_files"] += 1
-                    logger.info(
-                        f"[project={project_id}] [CHANGED FILE] ✓ Queued: {file_path_str}"
-                    )
                 else:
                     stats["errors"] += 1
-                    logger.error(
-                        f"[project={project_id}] [CHANGED FILE] ✗ Failed: {file_path_str}"
-                    )
-            except Exception as e:
-                logger.error(
-                    f"[project={project_id}] Error queueing changed file {file_path_str}: {e}"
-                )
-                stats["errors"] += 1
 
-        for file_path_str in delta.deleted_files:
+        # Batch INSERT and UPDATE for collected rows
+        if batch_rows:
+            insert_sql = (
+                "INSERT OR REPLACE INTO files "
+                "(path, lines, last_modified, has_docstring, project_id, created_at, updated_at) "
+                "VALUES (?, ?, ?, ?, ?, julianday('now'), julianday('now'))"
+            )
+            update_sql = (
+                "UPDATE files SET needs_chunking = 1 WHERE path = ? AND project_id = ?"
+            )
+            insert_ops: List[Tuple[str, Optional[tuple]]] = [
+                (insert_sql, (path, lines, mtime, has_docstring, project_id))
+                for (path, lines, mtime, has_docstring, _) in batch_rows
+            ]
+            update_ops: List[Tuple[str, Optional[tuple]]] = [
+                (update_sql, (path, project_id)) for (path, _, _, _, _) in batch_rows
+            ]
             try:
-                logger.info(
-                    f"[project={project_id}] [DELETED FILE] {file_path_str} | action: soft_delete"
-                )
-                self._db_execute(
-                    """
-                    UPDATE files
-                    SET deleted = 1, updated_at = julianday('now')
-                    WHERE path = ? AND project_id = ?
-                    """,
-                    (file_path_str, project_id),
-                )
-                res = self._db_execute(
-                    "SELECT id FROM files WHERE path = ? AND project_id = ? AND deleted = 1",
-                    (file_path_str, project_id),
-                )
-                data = res.get("data", [])
-                row = data[0] if data else None
-                if row:
-                    stats["deleted_files"] += 1
-                    logger.info(
-                        f"[project={project_id}] [DELETED FILE] ✓ Marked: {file_path_str}"
-                    )
-                else:
-                    stats["errors"] += 1
-                    logger.error(
-                        f"[project={project_id}] [DELETED FILE] ✗ Failed: {file_path_str}"
-                    )
+                self._db_execute_batch(insert_ops)
+                self._db_execute_batch(update_ops)
+                for _, _, _, _, is_new in batch_rows:
+                    if is_new:
+                        stats["new_files"] += 1
+                    else:
+                        stats["changed_files"] += 1
             except Exception as e:
                 logger.error(
-                    f"[project={project_id}] [DELETED FILE] ✗ Error {file_path_str}: {e}"
+                    "Batch queue failed for project %s: %s",
+                    project_id,
+                    e,
+                    exc_info=True,
                 )
-                stats["errors"] += 1
+                stats["errors"] += len(batch_rows)
+
+        # Batch soft-delete for removed files
+        if delta.deleted_files:
+            delete_sql = (
+                "UPDATE files SET deleted = 1, updated_at = julianday('now') "
+                "WHERE path = ? AND project_id = ?"
+            )
+            delete_ops: List[Tuple[str, Optional[tuple]]] = [
+                (delete_sql, (path, project_id)) for path in delta.deleted_files
+            ]
+            try:
+                for path in delta.deleted_files:
+                    logger.info(
+                        f"[project={project_id}] [DELETED FILE] {path} | action: soft_delete"
+                    )
+                self._db_execute_batch(delete_ops)
+                stats["deleted_files"] = len(delta.deleted_files)
+            except Exception as e:
+                logger.error(
+                    "Batch delete failed for project %s: %s",
+                    project_id,
+                    e,
+                    exc_info=True,
+                )
+                stats["errors"] += len(delta.deleted_files)
 
         return stats
 

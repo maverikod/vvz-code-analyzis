@@ -17,7 +17,7 @@ from typing import Any, Dict, List, Optional, Tuple
 import libcst as cst
 
 from ..core.cst_tree.models import CSTTree
-from ..core.cst_tree.skeleton import skeleton_from_tree
+from ..core.cst_tree.skeleton import build_declarative_overview
 from ..core.cst_tree.tree_finder import find_nodes
 from ..core.cst_tree.tree_metadata import get_node_metadata
 
@@ -279,14 +279,16 @@ def build_load_response(
     commented_lines_info: List[Dict[str, Any]],
     path_tmp: Optional[Path],
 ) -> Dict[str, Any]:
-    """Build response dict for cst_load_file (full or skeleton, optional selected_nodes)."""
+    """Build response dict for cst_load_file (full or declarative, optional selected_nodes)."""
     data: Dict[str, Any] = {
         "success": True,
         "tree_id": tree.tree_id,
         "file_path": str(target),
     }
-    if return_format == "skeleton":
-        data["skeleton"] = skeleton_from_tree(tree)
+    if return_format in {"declarative", "skeleton"}:
+        overview, outline_nodes = build_declarative_overview(tree)
+        data["declarative"] = overview
+        data["outline_nodes"] = outline_nodes
     else:
         nodes = [meta.to_dict() for meta in tree.metadata_map.values()]
         data["nodes"] = nodes

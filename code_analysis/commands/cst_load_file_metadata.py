@@ -35,7 +35,7 @@ def get_cst_load_file_metadata(cls: Type[Any]) -> Dict[str, Any]:
             "8. Parses source using LibCST\n"
             "9. Builds node index and metadata\n"
             "10. Stores tree in memory with tree_id\n"
-            "11. Returns tree_id and node metadata (or skeleton when return_format=skeleton)\n\n"
+            "11. Returns tree_id and node metadata (or declarative overview when return_format=declarative)\n\n"
             "Node Metadata:\n"
             "Each node includes:\n"
             "- node_id: Stable identifier for operations\n"
@@ -48,7 +48,8 @@ def get_cst_load_file_metadata(cls: Type[Any]) -> Dict[str, Any]:
             "- children_ids: List of child node IDs (if include_children=True)\n"
             "- parent_id: Parent node ID (if applicable)\n\n"
             "Return format:\n"
-            "- return_format=full (default): nodes list. return_format=skeleton: collapsed view (signatures, docstrings, body=comment+pass).\n"
+            "- return_format=full (default): nodes list. return_format=declarative: overview with signatures, docstrings, node_ids, and hidden bodies.\n"
+            "- return_format=skeleton remains as a backward-compatible alias to declarative during migration.\n"
             "- selector: optional XPath or list of node_ids; response includes selected_nodes with code.\n\n"
             "Filters:\n"
             "- node_types: Filter by node types (e.g., ['FunctionDef', 'ClassDef'])\n"
@@ -105,7 +106,7 @@ def get_cst_load_file_metadata(cls: Type[Any]) -> Dict[str, Any]:
                 "default": True,
             },
             "return_format": {
-                "description": "full (default) or skeleton. Skeleton returns collapsed view (signatures, docstrings, body placeholder).",
+                "description": "full (default), declarative, or skeleton alias. Declarative returns overview with signatures, docstrings, node_ids, and hidden bodies.",
                 "type": "string",
                 "required": False,
                 "default": "full",
@@ -125,7 +126,8 @@ def get_cst_load_file_metadata(cls: Type[Any]) -> Dict[str, Any]:
                     "file_path": "Path to loaded file",
                     "nodes": "List of node metadata dictionaries (when return_format=full)",
                     "total_nodes": "Total number of nodes returned (when return_format=full)",
-                    "skeleton": "Collapsed source code (when return_format=skeleton)",
+                    "declarative": "Declarative overview text (when return_format=declarative or skeleton alias)",
+                    "outline_nodes": "Compact visible structure nodes with node_id, depth, and signature",
                     "selected_nodes": "Optional. When selector set: matching nodes with code.",
                     "syntax_errors_fixed": "Optional. True when file had syntax errors on load; error lines were commented out and a placeholder pass was added.",
                     "commented_lines": "Optional. When syntax_errors_fixed is true: list of { line (1-based), error (message), parent_node (dict with node_id, or null) } for each commented-out error line. parent_node identifies the block (e.g. function/class) where the error was found.",
@@ -214,15 +216,15 @@ def get_cst_load_file_metadata(cls: Type[Any]) -> Dict[str, Any]:
                 ),
             },
             {
-                "description": "Load skeleton (collapsed view)",
+                "description": "Load declarative overview",
                 "command": {
                     "project_id": "928bcf10-db1c-47a3-8341-f60a6d997fe7",
                     "file_path": "src/main.py",
-                    "return_format": "skeleton",
+                    "return_format": "declarative",
                 },
                 "explanation": (
-                    "Returns tree_id and skeleton: full signatures, docstrings, body = comment+pass. "
-                    "Use to see structure without full bodies."
+                    "Returns tree_id and declarative overview: signatures, docstrings, node_ids, hidden bodies, "
+                    "and compact outline_nodes. Use this as the first model-facing view before requesting full code."
                 ),
             },
         ],
@@ -263,7 +265,7 @@ def get_cst_load_file_metadata(cls: Type[Any]) -> Dict[str, Any]:
             "Always provide project_id - it is required and used to form absolute path",
             "Ensure project is linked to watch directory before using this command",
             "Use relative file_path from project root (e.g., 'src/main.py' not '/absolute/path')",
-            "Use return_format=skeleton to get collapsed view and reduce context size",
+            "Use return_format=declarative to get a high-level overview and reduce context size",
             "Use selector (XPath or node_ids) to include selected node content in same call",
             "Use node_types filter to reduce metadata size when only specific types are needed",
             "Use max_depth to limit analysis scope",

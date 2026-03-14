@@ -59,9 +59,9 @@ Implementer: in the HTTP server startup event, after the database driver process
 
 ## Expected file change
 
-- In the startup handler: after `startup_database_driver()` (inside _start_workers_bg), add: resolve config path, load config, resolve storage paths, ensure_database_integrity(db_path). **If integrity is not OK → log the error and stop** (abort startup; do not continue). If OK: create DatabaseClient(socket_path), connect(); **if connect fails → log and stop**. Run the two probe selects (and sync_schema if needed); **if probe fails → log and stop**. If all succeed, set_shared_database(proxy or client). Use the same config/path resolution as open_database_from_config_impl. **TZ: any error during integrity/connect/probe → write to log and stop.**
+- In the startup handler: after the database driver is started, open the long-lived DB connection (resolve config, ensure_database_integrity, create DatabaseClient, connect(), probe selects, then set_shared_database). **The server MUST NOT accept requests before set_shared_database() has been called.** So either: (A) run the DB open in the main startup flow (before starting the worker background thread), so startup blocks until the shared connection is set; or (B) run it in the existing background thread but have the startup handler wait for completion (e.g. thread.join(timeout) or a threading.Event set when set_shared_database is done) before returning. **If integrity is not OK → log the error and stop** (abort startup). **If connect or probe fails → log and stop.** Use the same config/path resolution as open_database_from_config_impl.
 - In the shutdown handler: before calling worker_manager.stop_all_workers(), call close_shared_database(). Ensure shutdown event runs in a context where the shared_database module is available.
-- No removal of existing worker startup/shutdown; only addition of DB open/set and close_shared_database before stop_all_workers.
+- No removal of existing worker startup/shutdown; only addition of DB open/set (with wait-before-serve) and close_shared_database before stop_all_workers.
 
 ---
 
@@ -78,6 +78,7 @@ Implementer: in the HTTP server startup event, after the database driver process
 2. Call set_shared_database(returned_client_or_proxy) only when integrity, connect, and probe all succeed. **If integrity fails, or connect fails, or probe fails → log the error and stop** (abort startup; e.g. raise from the startup thread or call sys.exit / trigger app shutdown so the server does not serve requests).
 3. In the shutdown handler, call close_shared_database() before stop_all_workers(timeout=...).
 4. Ensure the helper that opens the connection is either in main_app_events or imported from base_mcp_command_open_db (e.g. a new function open_database_for_shared_once() that does integrity + connect + probes and returns the client).
+5. Ensure startup does not return (and thus the server does not accept requests) until set_shared_database() has been called: either run DB open in the main startup flow before starting the worker thread, or run in the worker thread and wait for it (e.g. join or Event) before returning from the startup handler.
 
 ---
 
@@ -105,6 +106,7 @@ Implementer: in the HTTP server startup event, after the database driver process
 - Stop if BaseMCPCommand or any command file is modified in this step.
 - Stop if integrity or probe runs outside the single startup path.
 - Stop if on integrity/connect/probe failure the server continues to start instead of logging and stopping.
+- Stop if the server can accept HTTP/MCP requests before set_shared_database() has been called (no request handling until shared connection is set).
 
 ---
 

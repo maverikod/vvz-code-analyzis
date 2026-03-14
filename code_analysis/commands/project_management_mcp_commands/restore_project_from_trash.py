@@ -14,7 +14,6 @@ from ._shared import (
     Path,
     SuccessResult,
     ValidationError,
-    _get_socket_path_from_db_path,
     logger,
 )
 
@@ -73,9 +72,9 @@ class RestoreProjectFromTrashMCPCommand(BaseMCPCommand):
         try:
             import shutil
 
-            from ..core.storage_paths import load_raw_config, resolve_storage_paths
-            from ..core.trash_utils import get_project_id_from_trash_folder
-            from .clear_project_data_impl import unmark_project_deleted_impl
+            from ...core.storage_paths import load_raw_config, resolve_storage_paths
+            from ...core.trash_utils import get_project_id_from_trash_folder
+            from ..clear_project_data_impl import unmark_project_deleted_impl
 
             config_path = self._resolve_config_path()
             config_data = load_raw_config(config_path)
@@ -112,11 +111,7 @@ class RestoreProjectFromTrashMCPCommand(BaseMCPCommand):
                     "restore_project_from_trash",
                 )
 
-            socket_path = _get_socket_path_from_db_path(Path(storage.db_path))
-            from ..core.database_client.client import DatabaseClient
-
-            database = DatabaseClient(socket_path=socket_path)
-            database.connect()
+            database = self._open_database_from_config(auto_analyze=False)
             try:
                 rows = database.select(
                     "projects",

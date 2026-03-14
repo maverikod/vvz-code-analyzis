@@ -48,7 +48,7 @@ class DeleteProjectMCPCommand(BaseMCPCommand):
     category = "project_management"
     author = "Vasiliy Zdanovskiy"
     email = "vasilyvz@gmail.com"
-    use_queue = False
+    use_queue = True  # Long-running (DB clear + disk); run via queue
 
     @classmethod
     def get_schema(
@@ -132,26 +132,19 @@ class DeleteProjectMCPCommand(BaseMCPCommand):
             SuccessResult with deletion summary or ErrorResult on failure.
         """
         try:
-            from ..core.exceptions import ValidationError, DatabaseError
+            from ...core.exceptions import ValidationError, DatabaseError
             from pathlib import Path
 
-            # Resolve database path from config
-            from ..core.storage_paths import load_raw_config, resolve_storage_paths
+            # Config and storage for version_dir/trash_dir (DeleteProjectCommand)
+            from ...core.storage_paths import load_raw_config, resolve_storage_paths
 
             config_path = self._resolve_config_path()
             config_data = load_raw_config(config_path)
             storage = resolve_storage_paths(
                 config_data=config_data, config_path=config_path
             )
-            db_path = storage.db_path
 
-            # Get socket path and create DatabaseClient
-            from ..core.database_client.client import DatabaseClient
-            from .base_mcp_command import _get_socket_path_from_db_path
-
-            socket_path = _get_socket_path_from_db_path(db_path)
-            database = DatabaseClient(socket_path=socket_path)
-            database.connect()
+            database = self._open_database_from_config(auto_analyze=False)
 
             try:
                 # Get project from database to verify it exists and get root_path
@@ -181,7 +174,7 @@ class DeleteProjectMCPCommand(BaseMCPCommand):
                     trash_dir = str(storage.trash_dir)
 
                 # Import and execute command
-                from .project_deletion import DeleteProjectCommand
+                from ..project_deletion import DeleteProjectCommand
 
                 cmd = DeleteProjectCommand(
                     database=database,

@@ -21,23 +21,8 @@ logger = logging.getLogger(__name__)
 def _refresh_config(self) -> None:
     """Reload worker watch_dirs from config file if it changed."""
     try:
-        # load dynamic watch list
-        dynamic_paths: List[Path] = []
-        if self.dynamic_watch_file and self.dynamic_watch_file.exists():
-            try:
-                with open(self.dynamic_watch_file, "r", encoding="utf-8") as df:
-                    dyn = json.load(df)
-                    for p in dyn.get("watch_dirs", []):
-                        if p:
-                            path_obj = Path(p)
-                            setattr(path_obj, "is_dynamic", True)
-                            dynamic_paths.append(path_obj)
-            except Exception as e:
-                logger.error(f"Failed to load dynamic watch dirs: {e}", exc_info=True)
-
         if not self.config_path:
-            # Only dynamic paths
-            combined = dynamic_paths
+            combined: List[Path] = []
             if set(map(str, combined)) != set(map(str, self.watch_dirs)):
                 self.watch_dirs = combined
             return
@@ -53,14 +38,7 @@ def _refresh_config(self) -> None:
         ca_cfg = raw_cfg.get("code_analysis") or raw_cfg
         worker_cfg = ca_cfg.get("worker", {})
         new_watch = worker_cfg.get("watch_dirs", [])
-        new_watch_paths = [Path(p) for p in new_watch if p]
-
-        # Updated list: new config paths (non-dynamic) + existing dynamic
-        updated_paths: List[Path] = []
-        for p in new_watch_paths:
-            updated_paths.append(p)
-        # keep dynamic from file
-        updated_paths.extend(dynamic_paths)
+        updated_paths = [Path(p) for p in new_watch if p]
 
         if set(map(str, updated_paths)) != set(map(str, self.watch_dirs)):
             logger.info(

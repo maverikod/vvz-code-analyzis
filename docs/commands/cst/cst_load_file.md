@@ -25,7 +25,7 @@ Operation flow:
 8. Parses source using LibCST
 9. Builds node index and metadata
 10. Stores tree in memory with tree_id
-11. Returns tree_id and node metadata (or skeleton when return_format=skeleton)
+11. Returns tree_id and node metadata (or declarative overview when `return_format=declarative`)
 
 Node Metadata:
 Each node includes:
@@ -40,7 +40,9 @@ Each node includes:
 - parent_id: Parent node ID (if applicable)
 
 Return format:
-- return_format=full (default): nodes list. return_format=skeleton: collapsed view (signatures, docstrings, body=comment+pass).
+- `return_format=full` (default): nodes list.
+- `return_format=declarative`: overview with signatures, docstrings, node_ids, and hidden bodies.
+- `return_format=skeleton`: backward-compatible alias to `declarative`.
 - selector: optional XPath or list of node_ids; response includes selected_nodes with code.
 
 Filters:
@@ -76,7 +78,7 @@ When the file had syntax errors on load:
 | `node_types` | array | No | Optional filter by node types (e.g., ['FunctionDef', 'ClassDef']) |
 | `max_depth` | integer | No | Optional maximum depth for node filtering |
 | `include_children` | boolean | No | Whether to include children information in metadata Default: `true`. |
-| `return_format` | string | No | full: return tree_id and full node list. skeleton: return tree_id and collapsed view (signatures, docstrings, body=comment+pass). Default: `"full"`. |
+| `return_format` | string | No | `full`: return tree_id and full node list. `declarative`: return overview with signatures, docstrings, node_ids, and hidden bodies. `skeleton`: alias to `declarative`. Default: `"full"`. |
 | `selector` |  | No | Optional: XPath-like selector string or list of node_ids. When set, response includes selected_nodes with content (code) for matching nodes. |
 
 **Schema:** `additionalProperties: false` — only the parameters above are accepted.
@@ -95,7 +97,8 @@ All MCP commands return either a **success** result (with `data`) or an **error*
 - `file_path`: Path to loaded file
 - `nodes`: List of node metadata dictionaries (when return_format=full)
 - `total_nodes`: Total number of nodes returned (when return_format=full)
-- `skeleton`: Collapsed source code (when return_format=skeleton)
+- `declarative`: Overview text with signatures, docstrings, node_ids, and hidden bodies (when `return_format=declarative` or `skeleton`)
+- `outline_nodes`: Compact visible structure nodes with `node_id`, `depth`, and `signature`
 - `selected_nodes`: Optional. When selector set: matching nodes with code.
 - `syntax_errors_fixed`: Optional. True when file had syntax errors on load; error lines were commented out and a placeholder pass was added.
 - `commented_lines`: Optional. When syntax_errors_fixed is true: list of { line (1-based), error (message), parent_node (dict with node_id, or null) } for each commented-out error line. parent_node identifies the block (e.g. function/class) where the error was found.
@@ -158,16 +161,16 @@ Loads file but returns nodes only up to depth 2. Useful for analyzing top-level 
 
 Loads file but excludes children_ids from metadata. Reduces response size when children information is not needed.
 
-**Load skeleton (collapsed view)**
+**Load declarative overview**
 ```json
 {
   "project_id": "928bcf10-db1c-47a3-8341-f60a6d997fe7",
   "file_path": "src/main.py",
-  "return_format": "skeleton"
+  "return_format": "declarative"
 }
 ```
 
-Returns tree_id and skeleton: full signatures, docstrings, body = comment+pass. Use to see structure without full bodies.
+Returns `tree_id`, `declarative`, and `outline_nodes`: signatures, docstrings, visible structure, node ids, and hidden bodies. Use this as the first high-level view before requesting full code with `cst_get_node_info`.
 
 ### Incorrect usage
 
@@ -190,7 +193,7 @@ Returns tree_id and skeleton: full signatures, docstrings, body = comment+pass. 
 - Always provide project_id - it is required and used to form absolute path
 - Ensure project is linked to watch directory before using this command
 - Use relative file_path from project root (e.g., 'src/main.py' not '/absolute/path')
-- Use return_format=skeleton to get collapsed view and reduce context size
+- Use `return_format=declarative` to get a high-level overview and reduce context size
 - Use selector (XPath or node_ids) to include selected node content in same call
 - Use node_types filter to reduce metadata size when only specific types are needed
 - Use max_depth to limit analysis scope

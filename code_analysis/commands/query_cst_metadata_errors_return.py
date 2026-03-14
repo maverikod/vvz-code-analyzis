@@ -28,8 +28,8 @@ def get_error_cases() -> Dict[str, Any]:
             "message": "Invalid selector: {error details}",
             "solution": (
                 "Check selector syntax. Ensure:\n"
-                "- Proper predicate syntax: [attr OP value]\n"
-                "- Valid operators: =, !=, ~=, ^=, $=\n"
+                '- Predicate requires operator and value: use [name="x"] not [name] (bare [attr] is invalid)\n'
+                "- Proper predicate syntax: [attr OP value] with OP one of =, !=, ~=, ^=, $=\n"
                 "- Valid pseudos: :first, :last, :nth(N)\n"
                 "- Proper combinator usage: whitespace or >\n"
                 "See docs/CST_QUERY.md for syntax reference."

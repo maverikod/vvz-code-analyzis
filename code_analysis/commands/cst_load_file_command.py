@@ -76,11 +76,12 @@ class CSTLoadFileCommand(BaseMCPCommand):
                 },
                 "return_format": {
                     "type": "string",
-                    "enum": ["full", "skeleton"],
+                    "enum": ["full", "declarative", "skeleton"],
                     "default": "full",
                     "description": (
                         "full: return tree_id and full node list. "
-                        "skeleton: return tree_id and collapsed view (signatures, docstrings, body=comment+pass)."
+                        "declarative: return high-level overview (signatures, docstrings, node_ids, hidden bodies). "
+                        "skeleton is a backward-compatible alias to declarative."
                     ),
                 },
                 "selector": {

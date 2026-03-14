@@ -71,7 +71,6 @@ from .constants import (
     # File Paths
     DEFAULT_DB_PATH,
     DEFAULT_FAISS_DIR,
-    DEFAULT_DYNAMIC_WATCH_FILE,
     DEFAULT_VECTORIZATION_WORKER_LOG,
     DEFAULT_FILE_WATCHER_LOG,
     # Database Driver
@@ -182,7 +181,6 @@ class SettingsManager:
             # File Paths
             "db_path": (f"{env_prefix}DB_PATH", str),
             "faiss_dir": (f"{env_prefix}FAISS_DIR", str),
-            "dynamic_watch_file": (f"{env_prefix}DYNAMIC_WATCH_FILE", str),
             "vectorization_worker_log": (f"{env_prefix}VECTORIZATION_WORKER_LOG", str),
             "file_watcher_log": (f"{env_prefix}FILE_WATCHER_LOG", str),
             # Database Driver
@@ -300,7 +298,6 @@ class SettingsManager:
             # File Paths
             "db_path": DEFAULT_DB_PATH,
             "faiss_dir": DEFAULT_FAISS_DIR,
-            "dynamic_watch_file": DEFAULT_DYNAMIC_WATCH_FILE,
             "vectorization_worker_log": DEFAULT_VECTORIZATION_WORKER_LOG,
             "file_watcher_log": DEFAULT_FILE_WATCHER_LOG,
             # Database Driver

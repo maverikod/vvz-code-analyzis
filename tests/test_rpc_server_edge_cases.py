@@ -107,7 +107,8 @@ class TestRPCServerEdgeCases:
         )
         response = rpc_server._process_request(request)
         assert response.is_error()
-        assert response.error.code == ErrorCode.INTERNAL_ERROR
+        # Handler maps Exception from driver to DATABASE_ERROR
+        assert response.error.code == ErrorCode.DATABASE_ERROR
 
     def test_handle_client_no_data(self, rpc_server):
         """Test handling client with no data."""

@@ -22,10 +22,12 @@ from ..core.exceptions import (
 )
 from ..core.storage_paths import (
     StoragePaths,
-    ensure_storage_dirs,
     load_raw_config,
     resolve_storage_paths,
 )
+from ..core.shared_database import get_shared_database
+from .base_mcp_command_open_db import ensure_database_integrity
+from .base_mcp_command_resolve_path import resolve_file_path_from_project
 
 logger = logging.getLogger(__name__)
 
@@ -63,298 +65,20 @@ class BaseMCPCommand(Command):
 
     @staticmethod
     def _ensure_database_integrity(db_path: Path) -> Dict[str, Any]:
-        """Ensure SQLite physical integrity for a database file.
-
-        Notes:
-            If corruption is detected, this method:
-            - creates filesystem backups of the DB file (+ sidecars);
-            - writes a persistent corruption marker next to the DB.
-
-            It does NOT attempt to recreate the DB automatically. Once a project is
-            marked corrupted, DB-dependent commands must be blocked until explicit
-            repair/restore.
-
-        Args:
-            db_path: Path to SQLite database file.
-
-        Returns:
-            Dict with keys:
-                ok: True only if DB is OK and not blocked by a marker.
-                repaired: Always False here (repair is explicit via separate commands).
-                message: Human-readable summary.
-                backup_paths: List of created backup file paths (if any).
-                marker_path: Corruption marker path if present/created.
-        """
-        from ..core.db_integrity import (
-            backup_sqlite_files,
-            check_sqlite_integrity,
-            corruption_marker_path,
-            read_corruption_marker,
-            write_corruption_marker,
-        )
-
-        marker_path = corruption_marker_path(db_path)
-        marker_data = read_corruption_marker(db_path)
-        if marker_data is not None:
-            msg = str(marker_data.get("message") or "Database is marked as corrupted")
-            backups = marker_data.get("backup_paths")
-            backup_paths: list[str] = []
-            if isinstance(backups, list):
-                backup_paths = [str(p) for p in backups]
-            return {
-                "ok": False,
-                "repaired": False,
-                "message": msg,
-                "backup_paths": backup_paths,
-                "marker_path": str(marker_path),
-            }
-
-        check = check_sqlite_integrity(db_path)
-        if check.ok:
-            return {
-                "ok": True,
-                "repaired": False,
-                "message": check.message,
-                "backup_paths": [],
-                "marker_path": None,
-            }
-
-        backups = backup_sqlite_files(
-            db_path, backup_dir=db_path.parent, include_sidecars=True
-        )
-        marker = write_corruption_marker(
-            db_path,
-            message=check.message,
-            backup_paths=backups,
-        )
-        return {
-            "ok": False,
-            "repaired": False,
-            "message": check.message,
-            "backup_paths": list(backups),
-            "marker_path": marker,
-        }
+        """Ensure SQLite physical integrity; delegates to open_db module."""
+        return ensure_database_integrity(db_path)
 
     @staticmethod
     def _open_database_from_config(auto_analyze: bool = False) -> DatabaseClient:
-        """Open database connection using server config only.
-
-        Database path is resolved from server configuration (config.json).
-        No project root or root_dir is used.
-
-        Args:
-            auto_analyze: If True, run analysis when DB is empty (unused when opening from config).
-
-        Returns:
-            DatabaseClient instance.
-
-        Raises:
-            DatabaseError: If database cannot be opened or created.
-        """
-        try:
-            config_path = BaseMCPCommand._resolve_config_path()
-            config_data = load_raw_config(config_path)
-            storage = resolve_storage_paths(
-                config_data=config_data, config_path=config_path
-            )
-            ensure_storage_dirs(storage)
-            db_path = storage.db_path
-
-            integrity = BaseMCPCommand._ensure_database_integrity(db_path)
-            if integrity.get("ok") is False:
-                # Stop all workers aggressively: they must not operate on corrupted DB.
-                try:
-                    from ..core.worker_manager import get_worker_manager
-
-                    stop_result = get_worker_manager().stop_all_workers(timeout=10.0)
-                    logger.warning(
-                        "🛑 Stopped all workers due to corrupted database. %s",
-                        stop_result.get("message"),
-                    )
-                except Exception as e:
-                    logger.error(
-                        "Failed to stop workers after corruption detection: %s",
-                        e,
-                        exc_info=True,
-                    )
-
-                marker_path = integrity.get("marker_path")
-                backup_paths = integrity.get("backup_paths")
-                raise DatabaseError(
-                    "Database is corrupted and project is in safe mode. "
-                    "Only backup/restore/repair commands are allowed.",
-                    operation="database_corrupted",
-                    details={
-                        "db_path": str(db_path),
-                        "marker_path": marker_path,
-                        "backup_paths": backup_paths,
-                        "integrity_message": integrity.get("message"),
-                        "allowed_commands": [
-                            "get_database_corruption_status",
-                            "backup_database",
-                            "repair_sqlite_database",
-                            "restore_database",
-                            "list_backup_files",
-                            "list_backup_versions",
-                            "restore_backup_file",
-                            "delete_backup",
-                            "clear_all_backups",
-                        ],
-                    },
-                )
-
-            socket_path = _get_socket_path_from_db_path(db_path)
-            db = DatabaseClient(socket_path=socket_path)
-            db.connect()
-
-            # Ensure schema exists (empty DB after delete-and-recreate has no tables)
-            try:
-                db.select("projects", columns=["id"], limit=1)
-            except Exception as e:
-                err_msg = str(e).lower()
-                cause_msg = str(getattr(e, "__cause__", "") or "").lower()
-                if (
-                    "no such table" in err_msg
-                    or "no such table" in repr(e).lower()
-                    or "no such table" in cause_msg
-                ):
-                    logger.info(
-                        "Database has no tables, initializing schema via sync_schema"
-                    )
-                    try:
-                        from ..core.database.base import get_schema_definition
-
-                        schema_def = get_schema_definition()
-                        # Driver expects tables as list; columns use "nullable" (we have "not_null"); constraints from foreign_keys
-                        tables = schema_def.get("tables")
-                        if isinstance(tables, dict):
-                            tables_list = []
-                            for k, v in tables.items():
-                                t = {"name": k, **v}
-                                cols = t.get("columns") or []
-                                t["columns"] = [
-                                    {
-                                        **c,
-                                        "nullable": not c.get("not_null", False),
-                                        "type": (
-                                            "INTEGER"
-                                            if c.get("type") == "BOOLEAN"
-                                            else c.get("type", "TEXT")
-                                        ),
-                                    }
-                                    for c in cols
-                                ]
-                                fks = t.pop("foreign_keys", [])
-                                t["constraints"] = [
-                                    {
-                                        "type": "foreign_key",
-                                        "columns": c.get("columns", []),
-                                        "references_table": c.get(
-                                            "references_table", ""
-                                        ),
-                                        "references_columns": c.get(
-                                            "references_columns", []
-                                        ),
-                                    }
-                                    for c in fks
-                                ]
-                                tables_list.append(t)
-                            schema_def = {**schema_def, "tables": tables_list}
-                        backup_dir = getattr(storage, "backup_dir", None)
-                        db.sync_schema(
-                            schema_def,
-                            backup_dir=str(backup_dir) if backup_dir else None,
-                        )
-                        logger.info("Schema initialized successfully")
-                        # Verify schema: retry select so we do not return with broken DB
-                        db.select("projects", columns=["id"], limit=1)
-                    except Exception as schema_err:
-                        logger.warning(
-                            "Failed to initialize schema: %s", schema_err, exc_info=True
-                        )
-                        raise DatabaseError(
-                            f"Schema init failed (empty DB): {schema_err}",
-                            operation="sync_schema",
-                            details={"error": str(schema_err)},
-                        ) from schema_err
-                else:
-                    raise
-
-            # Ensure virtual tables (e.g. code_content_fts) exist (older DBs may lack them)
-            try:
-                db.select("code_content_fts", columns=["rowid"], limit=1)
-            except Exception as e:
-                err_msg = str(e).lower()
-                cause_msg = str(getattr(e, "__cause__", "") or "").lower()
-                if "no such table" in err_msg or "no such table" in cause_msg:
-                    logger.info(
-                        "code_content_fts missing, running sync_schema for virtual tables"
-                    )
-                    try:
-                        from ..core.database.base import get_schema_definition
-
-                        schema_def = get_schema_definition()
-                        tables = schema_def.get("tables")
-                        if isinstance(tables, dict):
-                            tables_list = []
-                            for k, v in tables.items():
-                                t = {"name": k, **v}
-                                cols = t.get("columns") or []
-                                t["columns"] = [
-                                    {
-                                        **c,
-                                        "nullable": not c.get("not_null", False),
-                                        "type": (
-                                            "INTEGER"
-                                            if c.get("type") == "BOOLEAN"
-                                            else c.get("type", "TEXT")
-                                        ),
-                                    }
-                                    for c in cols
-                                ]
-                                fks = t.pop("foreign_keys", [])
-                                t["constraints"] = [
-                                    {
-                                        "type": "foreign_key",
-                                        "columns": c.get("columns", []),
-                                        "references_table": c.get(
-                                            "references_table", ""
-                                        ),
-                                        "references_columns": c.get(
-                                            "references_columns", []
-                                        ),
-                                    }
-                                    for c in fks
-                                ]
-                                tables_list.append(t)
-                            schema_def = {**schema_def, "tables": tables_list}
-                        backup_dir = getattr(storage, "backup_dir", None)
-                        db.sync_schema(
-                            schema_def,
-                            backup_dir=str(backup_dir) if backup_dir else None,
-                        )
-                        logger.info("Virtual tables synced successfully")
-                    except Exception as sync_err:
-                        logger.warning(
-                            "Failed to sync virtual tables: %s", sync_err, exc_info=True
-                        )
-
-            return db
-        except DatabaseError:
-            raise
-        except Exception as e:
-            raise DatabaseError(
-                f"Failed to open database: {str(e)}",
-                operation="open_database",
-                details={"error": str(e)},
-            ) from e
+        """Return the shared long-lived database client (no per-command open)."""
+        return get_shared_database()
 
     def _open_database(
         self: "BaseMCPCommand",
         root_dir: Optional[str] = None,
         auto_analyze: bool = False,
     ) -> DatabaseClient:
-        """Open database from server config. root_dir is ignored (use project_id and _resolve_project_root)."""
+        """Open database via universal entrypoint only (config-based). root_dir is ignored; no path selection."""
         return BaseMCPCommand._open_database_from_config(auto_analyze=auto_analyze)
 
     @staticmethod
@@ -560,96 +284,8 @@ class BaseMCPCommand(Command):
         project_id: str,
         relative_file_path: str,
     ) -> Path:
-        """
-        Resolve absolute file path from project_id and relative path.
-
-        Path formation: watch_dir_path / project_name / relative_file_path
-
-        Args:
-            database: DatabaseClient instance
-            project_id: Project identifier (UUID4)
-            relative_file_path: File path relative to project root
-
-        Returns:
-            Resolved absolute Path object
-
-        Raises:
-            ValidationError: If project not found, watch_dir not found, or path invalid
-        """
-        # Get project from database
-        project = database.get_project(project_id)
-        if not project:
-            raise ValidationError(
-                f"Project with ID {project_id} not found in database",
-                field="project_id",
-                details={"project_id": project_id},
-            )
-
-        if not project.watch_dir_id:
-            raise ValidationError(
-                f"Project {project_id} is not linked to a watch directory",
-                field="project_id",
-                details={"project_id": project_id, "project_name": project.name},
-            )
-
-        if not project.name:
-            raise ValidationError(
-                f"Project {project_id} does not have a name",
-                field="project_id",
-                details={"project_id": project_id},
-            )
-
-        # Get watch_dir_path from database
-        watch_dir_path_result = database.execute(
-            "SELECT absolute_path FROM watch_dir_paths WHERE watch_dir_id = ?",
-            (project.watch_dir_id,),
-        )
-        # execute may return list directly (DataResult) or dict with "data" key
-        if isinstance(watch_dir_path_result, list):
-            watch_dir_paths = watch_dir_path_result
-        else:
-            watch_dir_paths = watch_dir_path_result.get("data", [])
-
-        if not watch_dir_paths:
-            raise ValidationError(
-                f"Watch directory path not found for watch_dir_id {project.watch_dir_id}",
-                field="project_id",
-                details={
-                    "project_id": project_id,
-                    "watch_dir_id": project.watch_dir_id,
-                },
-            )
-
-        # Each row is a dict with column names as keys
-        watch_dir_path = watch_dir_paths[0].get("absolute_path")
-        if not watch_dir_path:
-            raise ValidationError(
-                f"Watch directory path is NULL for watch_dir_id {project.watch_dir_id}",
-                field="project_id",
-                details={
-                    "project_id": project_id,
-                    "watch_dir_id": project.watch_dir_id,
-                },
-            )
-
-        # Form absolute path: watch_dir_path / project_name / relative_file_path
-        absolute_path = Path(watch_dir_path) / project.name / relative_file_path
-        resolved_path = absolute_path.resolve()
-
-        # Verify path exists
-        if not resolved_path.exists():
-            raise ValidationError(
-                f"File does not exist: {resolved_path}",
-                field="file_path",
-                details={
-                    "relative_file_path": relative_file_path,
-                    "absolute_path": str(resolved_path),
-                    "watch_dir_path": watch_dir_path,
-                    "project_name": project.name,
-                },
-            )
-
-        return resolved_path
+        """Resolve absolute file path from project_id and relative path."""
+        return resolve_file_path_from_project(database, project_id, relative_file_path)
 
     def _handle_error(
         self: "BaseMCPCommand", error: Exception, error_code: str, operation: str = None

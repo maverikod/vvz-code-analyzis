@@ -561,6 +561,7 @@ def run_create_schema(db: Any) -> None:
         "CREATE INDEX IF NOT EXISTS idx_code_chunks_created_at ON code_chunks(created_at)",
         "CREATE INDEX IF NOT EXISTS idx_code_chunks_project_embedding_model ON code_chunks(project_id) WHERE embedding_model IS NOT NULL",
         "CREATE INDEX IF NOT EXISTS idx_files_deleted ON files(deleted) WHERE deleted = 1",
+        "CREATE INDEX IF NOT EXISTS idx_files_deleted_project_id ON files(deleted, project_id)",
         "CREATE INDEX IF NOT EXISTS idx_files_updated_at ON files(updated_at)",
         "CREATE INDEX IF NOT EXISTS idx_files_needs_indexing ON files(project_id, updated_at) WHERE (deleted = 0 OR deleted IS NULL) AND needs_chunking = 1",
         "CREATE INDEX IF NOT EXISTS idx_code_duplicates_project ON code_duplicates(project_id)",

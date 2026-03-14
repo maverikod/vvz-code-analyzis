@@ -87,6 +87,7 @@ class TestRegressionBackwardCompatibility:
             db_path=db_path, driver_type="sqlite"
         )
         db = CodeDatabase(driver_config=driver_config)
+        db.sync_schema()
 
         try:
             # Should be able to create and query projects
@@ -312,7 +313,7 @@ class TestRegressionExistingWorkflows:
             pytest.skip("test_data/ directory not found")
 
         # Should be able to discover projects
-        projects = discover_projects_in_directory(TEST_DATA_DIR, [TEST_DATA_DIR])
+        projects = discover_projects_in_directory(TEST_DATA_DIR)
 
         # Should find at least one project if test_data exists
         assert isinstance(projects, list)
@@ -338,6 +339,7 @@ class TestRegressionExistingWorkflows:
             db_path=db_path, driver_type="sqlite"
         )
         db = CodeDatabase(driver_config=driver_config)
+        db.sync_schema()
 
         try:
             # Create project

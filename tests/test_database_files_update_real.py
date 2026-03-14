@@ -1,11 +1,20 @@
 """
-Tests for database file update operations using real files from test_data.
+Tests for database file update operations using real or synthetic files.
+
+Uses synthetic files (created in temp_dir) with guaranteed structure so tests
+do not depend on test_data contents. Optional real-file fixtures kept for
+backward compatibility.
 
 Author: Vasiliy Zdanovskiy
 email: vasilyvz@gmail.com
 """
 
+import ast
+import hashlib
+import json
+import os
 import tempfile
+import time
 import uuid
 from pathlib import Path
 
@@ -13,6 +22,133 @@ import pytest
 
 from code_analysis.core.database import CodeDatabase
 from code_analysis.core.database.base import create_driver_config_for_worker
+
+
+# Synthetic file content: at least one top-level function and one class with method
+SYNTHETIC_FILE_WITH_FUNCTION_AND_CLASS = '''def top_level_func():
+    """A top-level function for tests."""
+    pass
+
+
+class MyClass:
+    """A class for tests."""
+
+    def method(self):
+        return 1
+'''
+
+# Synthetic file content: one class with one method (for class-only tests)
+SYNTHETIC_FILE_WITH_CLASS_ONLY = '''class Helper:
+    """Helper class for tests."""
+
+    def run(self):
+        return 42
+'''
+
+
+def _insert_ast_cst_and_entities(
+    test_db,
+    file_id: int,
+    project_id: str,
+    file_content: str,
+    file_path: Path,
+    file_mtime: float,
+) -> None:
+    """Insert AST, CST and entity rows for a file (shared by real and synthetic fixtures)."""
+    tree = ast.parse(file_content, filename=str(file_path))
+    ast_json = json.dumps(ast.dump(tree))
+    ast_hash = hashlib.sha256(ast_json.encode()).hexdigest()
+
+    test_db._execute(
+        """
+        INSERT INTO ast_trees (file_id, project_id, ast_json, ast_hash, file_mtime)
+        VALUES (?, ?, ?, ?, ?)
+        """,
+        (file_id, project_id, ast_json, ast_hash, file_mtime),
+    )
+
+    cst_hash = hashlib.sha256(file_content.encode()).hexdigest()
+    test_db._execute(
+        """
+        INSERT INTO cst_trees (file_id, project_id, cst_code, cst_hash, file_mtime)
+        VALUES (?, ?, ?, ?, ?)
+        """,
+        (file_id, project_id, file_content, cst_hash, file_mtime),
+    )
+
+    classes_data = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ClassDef):
+            docstring = ast.get_docstring(node)
+            classes_data.append((node.name, node.lineno, docstring or ""))
+
+    class_id_map = {}
+    for class_name, line_num, docstring in classes_data:
+        cst_node_id = f"fixture:{class_name}:ClassDef:{line_num}:0-0:0"
+        test_db._execute(
+            """
+            INSERT INTO classes (file_id, name, line, docstring, bases, cst_node_id)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (file_id, class_name, line_num, docstring, "[]", cst_node_id),
+        )
+        class_row = test_db._fetchone(
+            "SELECT id FROM classes WHERE file_id = ? AND name = ? AND line = ?",
+            (file_id, class_name, line_num),
+        )
+        if class_row:
+            class_id_map[class_name] = class_row["id"]
+
+    def is_method(node, tree):
+        for parent in ast.walk(tree):
+            if isinstance(parent, ast.ClassDef):
+                for item in parent.body:
+                    if (
+                        isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef))
+                        and item == node
+                    ):
+                        return parent.name
+        return None
+
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            parent_class = is_method(node, tree)
+            docstring = ast.get_docstring(node)
+
+            if parent_class and parent_class in class_id_map:
+                cst_node_id = f"fixture:{node.name}:FunctionDef:{node.lineno}:0-0:0"
+                test_db._execute(
+                    """
+                    INSERT INTO methods (class_id, name, line, args, docstring, cst_node_id)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        class_id_map[parent_class],
+                        node.name,
+                        node.lineno,
+                        "[]",
+                        docstring or "",
+                        cst_node_id,
+                    ),
+                )
+            else:
+                cst_node_id = f"fixture:{node.name}:FunctionDef:{node.lineno}:0-0:0"
+                test_db._execute(
+                    """
+                    INSERT INTO functions (file_id, name, line, args, docstring, cst_node_id)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        file_id,
+                        node.name,
+                        node.lineno,
+                        "[]",
+                        docstring or "",
+                        cst_node_id,
+                    ),
+                )
+
+    test_db._commit()
 
 
 @pytest.fixture
@@ -43,13 +179,19 @@ def test_db(temp_dir):
 
 @pytest.fixture
 def test_project(test_db, temp_dir, project_id):
-    """Create test project in database."""
+    """Create test project in database and projectid file in temp_dir (required by update_file_data)."""
     project_name = temp_dir.name
     test_db._execute(
         "INSERT INTO projects (id, root_path, name, updated_at) VALUES (?, ?, ?, julianday('now'))",
         (project_id, str(temp_dir), project_name),
     )
     test_db._commit()
+    (temp_dir / "projectid").write_text(
+        json.dumps(
+            {"id": project_id, "description": "Test project for update_file_data"}
+        ),
+        encoding="utf-8",
+    )
     return project_id
 
 
@@ -89,7 +231,6 @@ def real_test_file(test_data_root):
 @pytest.fixture
 def real_test_file_with_class(test_data_root):
     """Get a real test file with classes from test_data."""
-    # Use test_github.py which has a class
     test_file = test_data_root / "vast_srv" / "test_github.py"
     if not test_file.exists():
         pytest.skip(f"Test file not found: {test_file}")
@@ -97,19 +238,71 @@ def real_test_file_with_class(test_data_root):
 
 
 @pytest.fixture
+def synthetic_file_in_db(test_db, test_project, temp_dir):
+    """Create a synthetic Python file with guaranteed function and class, add to DB."""
+    synthetic_path = temp_dir / "synthetic.py"
+    synthetic_path.write_text(SYNTHETIC_FILE_WITH_FUNCTION_AND_CLASS, encoding="utf-8")
+    file_mtime = os.path.getmtime(synthetic_path)
+    lines = len(SYNTHETIC_FILE_WITH_FUNCTION_AND_CLASS.splitlines())
+
+    file_id = test_db.add_file(
+        path=str(synthetic_path),
+        lines=lines,
+        last_modified=file_mtime,
+        has_docstring=True,
+        project_id=test_project,
+    )
+
+    _insert_ast_cst_and_entities(
+        test_db,
+        file_id,
+        test_project,
+        SYNTHETIC_FILE_WITH_FUNCTION_AND_CLASS,
+        synthetic_path,
+        file_mtime,
+    )
+
+    return file_id, synthetic_path, test_project, temp_dir
+
+
+@pytest.fixture
+def synthetic_class_file_in_db(test_db, test_project, temp_dir):
+    """Create a synthetic Python file with one class and method, add to DB."""
+    synthetic_path = temp_dir / "synthetic_class.py"
+    synthetic_path.write_text(SYNTHETIC_FILE_WITH_CLASS_ONLY, encoding="utf-8")
+    file_mtime = os.path.getmtime(synthetic_path)
+    content = SYNTHETIC_FILE_WITH_CLASS_ONLY
+    lines = len(content.splitlines())
+
+    file_id = test_db.add_file(
+        path=str(synthetic_path),
+        lines=lines,
+        last_modified=file_mtime,
+        has_docstring=True,
+        project_id=test_project,
+    )
+
+    _insert_ast_cst_and_entities(
+        test_db,
+        file_id,
+        test_project,
+        content,
+        synthetic_path,
+        file_mtime,
+    )
+
+    return file_id, synthetic_path, test_project, temp_dir
+
+
+@pytest.fixture
 def real_test_file_in_db(
     test_db, test_project_real_root, real_test_file, test_data_root
 ):
-    """Add real test file to database (project root = test_data_root)."""
-    # Read file content
+    """Add real test file from test_data to database (skips if file missing)."""
     file_content = real_test_file.read_text(encoding="utf-8")
-
-    import os
-
     file_mtime = os.path.getmtime(real_test_file)
     lines = len(file_content.splitlines())
 
-    # Add file to database (project root is test_data_root so path is under it)
     file_id = test_db.add_file(
         path=str(real_test_file),
         lines=lines,
@@ -118,128 +311,26 @@ def real_test_file_in_db(
         project_id=test_project_real_root,
     )
 
-    # Add AST and CST trees directly via SQL
-    import ast
-    import json
-    import hashlib
-
-    tree = ast.parse(file_content, filename=str(real_test_file))
-    ast_json = json.dumps(ast.dump(tree))
-    ast_hash = hashlib.sha256(ast_json.encode()).hexdigest()
-
-    # Insert AST tree
-    test_db._execute(
-        """
-        INSERT INTO ast_trees (file_id, project_id, ast_json, ast_hash, file_mtime)
-        VALUES (?, ?, ?, ?, ?)
-        """,
-        (file_id, test_project_real_root, ast_json, ast_hash, file_mtime),
+    _insert_ast_cst_and_entities(
+        test_db,
+        file_id,
+        test_project_real_root,
+        file_content,
+        real_test_file,
+        file_mtime,
     )
-
-    # Insert CST tree
-    cst_hash = hashlib.sha256(file_content.encode()).hexdigest()
-    test_db._execute(
-        """
-        INSERT INTO cst_trees (file_id, project_id, cst_code, cst_hash, file_mtime)
-        VALUES (?, ?, ?, ?, ?)
-        """,
-        (file_id, test_project_real_root, file_content, cst_hash, file_mtime),
-    )
-
-    # Extract and add entities from real file using proper AST traversal
-    # First pass: collect all classes
-    classes_data = []
-    for node in ast.walk(tree):
-        if isinstance(node, ast.ClassDef):
-            docstring = ast.get_docstring(node)
-            classes_data.append((node.name, node.lineno, docstring or ""))
-
-    # Add classes to database (cst_node_id required by schema; use placeholder)
-    class_id_map = {}
-    for class_name, line_num, docstring in classes_data:
-        cst_node_id = f"fixture:{class_name}:ClassDef:{line_num}:0-0:0"
-        test_db._execute(
-            """
-            INSERT INTO classes (file_id, name, line, docstring, bases, cst_node_id)
-            VALUES (?, ?, ?, ?, ?, ?)
-            """,
-            (file_id, class_name, line_num, docstring, "[]", cst_node_id),
-        )
-        # Get the inserted class ID
-        class_row = test_db._fetchone(
-            "SELECT id FROM classes WHERE file_id = ? AND name = ? AND line = ?",
-            (file_id, class_name, line_num),
-        )
-        if class_row:
-            class_id_map[class_name] = class_row["id"]
-
-    # Second pass: collect functions and methods
-    # We need to check if function is inside a class
-    def is_method(node, tree):
-        """Check if function node is a method (inside a class)."""
-        for parent in ast.walk(tree):
-            if isinstance(parent, ast.ClassDef):
-                for item in parent.body:
-                    if (
-                        isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef))
-                        and item == node
-                    ):
-                        return parent.name
-        return None
-
-    for node in ast.walk(tree):
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            parent_class = is_method(node, tree)
-            docstring = ast.get_docstring(node)
-
-            if parent_class and parent_class in class_id_map:
-                # It's a method (cst_node_id required by schema; use placeholder)
-                cst_node_id = f"fixture:{node.name}:FunctionDef:{node.lineno}:0-0:0"
-                test_db._execute(
-                    """
-                    INSERT INTO methods (class_id, name, line, args, docstring, cst_node_id)
-                    VALUES (?, ?, ?, ?, ?, ?)
-                    """,
-                    (
-                        class_id_map[parent_class],
-                        node.name,
-                        node.lineno,
-                        "[]",
-                        docstring or "",
-                        cst_node_id,
-                    ),
-                )
-            else:
-                # It's a function (cst_node_id required by schema; use placeholder)
-                cst_node_id = f"fixture:{node.name}:FunctionDef:{node.lineno}:0-0:0"
-                test_db._execute(
-                    """
-                    INSERT INTO functions (file_id, name, line, args, docstring, cst_node_id)
-                    VALUES (?, ?, ?, ?, ?, ?)
-                    """,
-                    (
-                        file_id,
-                        node.name,
-                        node.lineno,
-                        "[]",
-                        docstring or "",
-                        cst_node_id,
-                    ),
-                )
-
-    test_db._commit()
 
     return file_id, real_test_file, test_project_real_root, test_data_root
 
 
 class TestClearFileDataReal:
-    """Tests for clear_file_data method using real files."""
+    """Tests for clear_file_data method (using synthetic file with guaranteed entities)."""
 
     def test_clear_file_data_includes_cst_trees_real(
-        self, test_db, real_test_file_in_db, test_project
+        self, test_db, synthetic_file_in_db, test_project
     ):
-        """Test that clear_file_data deletes CST trees from real file."""
-        file_id, file_path, project_id, root_dir = real_test_file_in_db
+        """Test that clear_file_data deletes CST trees and entities."""
+        file_id, file_path, project_id, root_dir = synthetic_file_in_db
 
         # Verify CST tree exists before clearing
         cst_before = test_db._fetchone(
@@ -253,13 +344,16 @@ class TestClearFileDataReal:
         )
         assert ast_before is not None, "AST tree should exist before clearing"
 
-        # Verify entities exist before clearing (file may have classes, functions, or both)
-        _ = test_db._fetchall("SELECT id FROM classes WHERE file_id = ?", (file_id,))
+        # Verify entities exist before clearing (synthetic file has both function and class)
+        classes_before = test_db._fetchall(
+            "SELECT id FROM classes WHERE file_id = ?", (file_id,)
+        )
         functions_before = test_db._fetchall(
             "SELECT id FROM functions WHERE file_id = ?", (file_id,)
         )
-        # File should have at least functions (this file has functions but no classes)
-        assert len(functions_before) > 0, "Functions should exist before clearing"
+        assert (
+            len(functions_before) > 0 or len(classes_before) > 0
+        ), "At least one of functions or classes should exist before clearing"
 
         # Clear file data
         test_db.clear_file_data(file_id)
@@ -289,18 +383,20 @@ class TestClearFileDataReal:
 
 
 class TestUpdateFileDataReal:
-    """Tests for update_file_data method using real files."""
+    """Tests for update_file_data method (using synthetic files with guaranteed structure)."""
 
     def test_update_file_data_with_real_file(
-        self, test_db, real_test_file_in_db, test_project
+        self, test_db, synthetic_file_in_db, test_project
     ):
-        """Test update_file_data with real file from test_data."""
-        file_id, file_path, project_id, root_dir = real_test_file_in_db
+        """Test update_file_data with synthetic file."""
+        file_id, file_path, project_id, root_dir = synthetic_file_in_db
 
         # Modify file content (add a comment at the end)
         original_content = file_path.read_text(encoding="utf-8")
         modified_content = original_content + "\n# Modified for testing\n"
         file_path.write_text(modified_content, encoding="utf-8")
+        # Ensure file mtime differs from DB so update_file_data does not skip (FILE_MODIFICATION_TOLERANCE)
+        os.utime(file_path, (time.time(), time.time() + 2.0))
 
         # Update file data
         result = test_db.update_file_data(
@@ -329,12 +425,11 @@ class TestUpdateFileDataReal:
                 ), "CST should contain modification"
 
     def test_update_file_data_clears_old_entities_real(
-        self, test_db, real_test_file_in_db, test_project
+        self, test_db, synthetic_file_in_db, test_project
     ):
-        """Test that update_file_data clears old entities from real file."""
-        file_id, file_path, project_id, root_dir = real_test_file_in_db
+        """Test that update_file_data clears old entities."""
+        file_id, file_path, project_id, root_dir = synthetic_file_in_db
 
-        # Get original entities (file may have classes, functions, or both)
         original_classes = test_db._fetchall(
             "SELECT id, name FROM classes WHERE file_id = ?", (file_id,)
         )
@@ -345,14 +440,16 @@ class TestUpdateFileDataReal:
         )
         original_function_ids = [f["id"] for f in original_functions]
         assert (
-            len(original_function_ids) > 0
-        ), "Should have original functions (at minimum)"
+            len(original_function_ids) > 0 or len(original_class_ids) > 0
+        ), "Synthetic file should have at least one function or class"
 
         # Modify file significantly (remove a class or function)
         original_content = file_path.read_text(encoding="utf-8")
         # Just add a comment - real modification would require AST manipulation
         modified_content = original_content + "\n# Test modification\n"
         file_path.write_text(modified_content, encoding="utf-8")
+        # Ensure file mtime differs from DB so update_file_data does not skip (FILE_MODIFICATION_TOLERANCE)
+        os.utime(file_path, (time.time(), time.time() + 2.0))
 
         # Update file data
         result = test_db.update_file_data(
@@ -377,49 +474,16 @@ class TestUpdateFileDataReal:
     def test_update_file_data_with_class_file(
         self,
         test_db,
-        test_project_real_root,
-        real_test_file_with_class,
-        test_data_root,
+        synthetic_class_file_in_db,
     ):
-        """Test update_file_data with real file containing classes."""
-        # Read file content
-        file_content = real_test_file_with_class.read_text(encoding="utf-8")
+        """Test update_file_data with synthetic file containing a class and method."""
+        file_id, file_path, project_id, root_dir = synthetic_class_file_in_db
 
-        import os
-
-        file_mtime = os.path.getmtime(real_test_file_with_class)
-        lines = len(file_content.splitlines())
-
-        # Add file to database (project root = test_data_root)
-        file_id = test_db.add_file(
-            path=str(real_test_file_with_class),
-            lines=lines,
-            last_modified=file_mtime,
-            has_docstring=True,
-            project_id=test_project_real_root,
-        )
-
-        # Use analyze_file to properly extract all entities
-        from code_analysis.commands.update_indexes_analyzer import analyze_file
-
-        result = analyze_file(
-            database=test_db,
-            file_path=real_test_file_with_class,
-            project_id=test_project_real_root,
-            root_path=test_data_root,
-        )
-
-        # Verify analysis succeeded
-        if result.get("status") != "success":
-            pytest.skip(f"Analysis failed: {result.get('error')}")
-
-        # Verify file has classes
         classes = test_db._fetchall(
             "SELECT id, name FROM classes WHERE file_id = ?", (file_id,)
         )
-        assert len(classes) > 0, "File should have classes"
+        assert len(classes) > 0, "Synthetic class file should have classes"
 
-        # Verify file has methods
         class_ids = [c["id"] for c in classes]
         methods = test_db._fetchall(
             "SELECT id FROM methods WHERE class_id IN ({})".format(
@@ -427,39 +491,19 @@ class TestUpdateFileDataReal:
             ),
             tuple(class_ids),
         )
-        assert len(methods) > 0, "Classes should have methods"
+        assert len(methods) > 0, "Synthetic class should have methods"
 
-        # Now test update_file_data
-        # Modify file slightly
-        modified_content = file_content + "\n# Test modification\n"
-        real_test_file_with_class.write_text(modified_content, encoding="utf-8")
+        original_content = file_path.read_text(encoding="utf-8")
+        modified_content = original_content + "\n# Test modification\n"
+        file_path.write_text(modified_content, encoding="utf-8")
 
-        # Update file data
         update_result = test_db.update_file_data(
-            file_path=str(real_test_file_with_class),
-            project_id=test_project_real_root,
-            root_dir=test_data_root,
+            file_path=str(file_path),
+            project_id=project_id,
+            root_dir=root_dir,
         )
 
-        # Verify update was attempted (may fail due to analyze_file issues, but clear should work)
         assert "file_id" in update_result, "Result should contain file_id"
         assert update_result.get("file_id") == file_id, "File ID should match"
 
-        # Verify that old entities were cleared (even if update failed)
-        # This is the key test - clear_file_data should have been called
-        old_class_ids = [c["id"] for c in classes]
-        for old_class_id in old_class_ids:
-            # If clear_file_data was called, old classes should be gone
-            # We can't verify this directly if update failed, but we can check CST was cleared
-            pass
-
-        # Most importantly: verify CST tree was handled
-        # If update succeeded, new CST should exist
-        # If update failed, old CST might still exist, but clear_file_data should have been called
-        _ = test_db._fetchone("SELECT id FROM cst_trees WHERE file_id = ?", (file_id,))
-        # If update succeeded, CST should exist (new one)
-        # If update failed, CST might not exist (if clear was called)
-        # Either way, the important thing is that clear_file_data includes CST deletion
-
-        # Restore original file
-        real_test_file_with_class.write_text(file_content, encoding="utf-8")
+        file_path.write_text(original_content, encoding="utf-8")

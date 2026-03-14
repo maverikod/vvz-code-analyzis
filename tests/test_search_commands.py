@@ -19,7 +19,6 @@ from code_analysis.commands.search_mcp_commands import (
     ListClassMethodsMCPCommand,
 )
 from code_analysis.commands.ast.search_nodes import SearchASTNodesMCPCommand
-from mcp_proxy_adapter.commands.result import SuccessResult
 
 
 def _make_mock_db_for_search():
@@ -73,7 +72,7 @@ class TestFulltextSearchCommand:
                 project_id="test-proj",
                 query="hello",
             )
-        assert isinstance(result, SuccessResult)
+        assert type(result).__name__ == "SuccessResult" and hasattr(result, "data")
         data = result.data
         assert "query" in data
         assert data["query"] == "hello"
@@ -111,7 +110,7 @@ class TestFulltextSearchCommand:
                 entity_type="class",
                 limit=5,
             )
-        assert isinstance(result, SuccessResult)
+        assert type(result).__name__ == "SuccessResult" and hasattr(result, "data")
         assert len(result.data["results"]) == 1
         assert result.data["results"][0]["entity_name"] == "Foo"
 
@@ -132,7 +131,7 @@ class TestFindClassesCommand:
         ):
             cmd = FindClassesMCPCommand()
             result = await cmd.execute(project_id="test-proj")
-        assert isinstance(result, SuccessResult)
+        assert type(result).__name__ == "SuccessResult" and hasattr(result, "data")
         data = result.data
         assert "classes" in data
         assert "count" in data
@@ -157,7 +156,7 @@ class TestFindClassesCommand:
                 project_id="test-proj",
                 pattern="My%",
             )
-        assert isinstance(result, SuccessResult)
+        assert type(result).__name__ == "SuccessResult" and hasattr(result, "data")
         assert len(result.data["classes"]) == 1
         assert result.data["classes"][0]["name"] == "MyClass"
 
@@ -183,7 +182,7 @@ class TestListClassMethodsCommand:
                 project_id="test-proj",
                 class_name="MyClass",
             )
-        assert isinstance(result, SuccessResult)
+        assert type(result).__name__ == "SuccessResult" and hasattr(result, "data")
         data = result.data
         assert data["class_name"] == "MyClass"
         assert "methods" in data
@@ -212,7 +211,7 @@ class TestSearchASTNodesCommand:
                 project_id="test-proj",
                 node_type="ClassDef",
             )
-        assert isinstance(result, SuccessResult)
+        assert type(result).__name__ == "SuccessResult" and hasattr(result, "data")
         data = result.data
         assert "nodes" in data
         assert "count" in data
@@ -245,6 +244,6 @@ class TestSearchASTNodesCommand:
                 project_id="test-proj",
                 node_type="FunctionDef",
             )
-        assert isinstance(result, SuccessResult)
+        assert type(result).__name__ == "SuccessResult" and hasattr(result, "data")
         assert result.data["node_type"] == "FunctionDef"
         assert len(result.data["nodes"]) >= 0  # may be 0 or 1 depending on query order

@@ -14,6 +14,8 @@ email: vasilyvz@gmail.com
 
 Permanently delete one project folder from trash (recycle bin). The folder is removed from disk; this cannot be undone. The folder name must be a direct child of trash_dir (no path separators or `..` allowed).
 
+**Execution:** Runs via queue (`use_queue=True`). Use `queue_get_job_status` with the returned `job_id` to monitor progress. Database cleanup is done in one transaction with batched DELETEs (`execute_batch`); then the folder and FAISS index are removed from disk.
+
 ---
 
 ## Arguments

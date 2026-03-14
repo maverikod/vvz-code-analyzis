@@ -19,8 +19,8 @@ class PipelineConfig:
         test_data_dir: Optional[Path] = None,
         test_db_path: Optional[Path] = None,
         server_config_path: Optional[Path] = None,
-        server_host: str = "127.0.0.1",
-        server_port: int = 15001,
+        server_host: Optional[str] = None,
+        server_port: Optional[int] = None,
         timeout: int = 300,
     ):
         """Initialize pipeline configuration.
@@ -36,13 +36,29 @@ class PipelineConfig:
         self.test_data_dir = (
             test_data_dir or Path(__file__).parent.parent.parent / "test_data"
         )
-        self.test_db_path = (
-            test_db_path or Path(tempfile.gettempdir()) / "test_code_analysis.db"
-        )
+        self.test_db_path = test_db_path
         self.server_config_path = server_config_path
         self.server_host = server_host
         self.server_port = server_port
         self.timeout = timeout
+
+    def get_db_path(self) -> Path:
+        """Return absolute database path used by real server config."""
+        if self.test_db_path is not None:
+            return self.test_db_path.expanduser().resolve()
+
+        config = self._load_base_config()
+        code_analysis_section = config.get("code_analysis", {})
+        if isinstance(code_analysis_section, dict):
+            db_path = code_analysis_section.get("db_path")
+            if isinstance(db_path, str) and db_path.strip():
+                db_candidate = Path(db_path).expanduser()
+                if db_candidate.is_absolute():
+                    return db_candidate.resolve()
+                repo_root = Path(__file__).parent.parent.parent
+                return (repo_root / db_candidate).resolve()
+
+        return (Path(tempfile.gettempdir()) / "test_code_analysis.db").resolve()
 
     def get_test_projects(self) -> list[Path]:
         """Get list of test project directories.
@@ -50,7 +66,7 @@ class PipelineConfig:
         Returns:
             List of project paths
         """
-        projects = []
+        projects: list[Path] = []
         if not self.test_data_dir.exists():
             return projects
 
@@ -60,60 +76,206 @@ class PipelineConfig:
 
         return projects
 
-    def create_test_config(self, output_path: Path) -> None:
-        """Create test server configuration file.
+    def _load_base_config(self) -> Dict[str, Any]:
+        """Load base server config from repository root config.json."""
+        base_config_path = (
+            self.server_config_path
+            if self.server_config_path is not None
+            else Path(__file__).parent.parent.parent / "config.json"
+        )
+        if not base_config_path.exists():
+            return {}
 
-        Args:
-            output_path: Path to write config file
-        """
-        # Load base config if exists
-        base_config_path = Path(__file__).parent.parent.parent / "config.json"
-        if base_config_path.exists():
-            with open(base_config_path, "r", encoding="utf-8") as f:
-                config: Dict[str, Any] = json.load(f)
-        else:
-            config = {}
+        with open(base_config_path, "r", encoding="utf-8") as f:
+            loaded_config: Any = json.load(f)
 
-        # Override server settings for testing
-        if "server" not in config:
+        if isinstance(loaded_config, dict):
+            return loaded_config
+        return {}
+
+    @staticmethod
+    def _extract_network_settings(config: Dict[str, Any]) -> Dict[str, Any]:
+        """Extract host/port/protocol from config with deterministic defaults."""
+        server_section = config.get("server", {})
+        if not isinstance(server_section, dict):
+            server_section = {}
+
+        return {
+            "host": server_section.get("host", "127.0.0.1"),
+            "port": server_section.get("port", 15001),
+            "protocol": server_section.get("protocol", "http"),
+        }
+
+    @staticmethod
+    def _extract_mtls_ssl_paths(config: Dict[str, Any]) -> Dict[str, str]:
+        """Extract normalized mTLS certificate paths from server config."""
+        server_section = config.get("server", {})
+        if not isinstance(server_section, dict):
+            server_section = {}
+        ssl_section = server_section.get("ssl", {})
+        if not isinstance(ssl_section, dict):
+            ssl_section = config.get("ssl", {})
+        if not isinstance(ssl_section, dict):
+            ssl_section = {}
+
+        mtls_paths: Dict[str, str] = {}
+        for key in ("cert", "key", "ca", "cert_path", "key_path", "ca_path"):
+            value = ssl_section.get(key)
+            if value:
+                mtls_paths[key] = str(Path(str(value)).expanduser().resolve())
+        return mtls_paths
+
+    def build_test_config(self) -> Dict[str, Any]:
+        """Build test config where DB and network values are single-source-of-truth."""
+        config = self._load_base_config()
+
+        if "server" not in config or not isinstance(config["server"], dict):
             config["server"] = {}
-        config["server"]["host"] = self.server_host
-        config["server"]["port"] = self.server_port
+        if self.server_host is not None:
+            config["server"]["host"] = self.server_host
+        if self.server_port is not None:
+            config["server"]["port"] = self.server_port
 
-        # Override database path for testing
-        if "code_analysis" not in config:
+        if "code_analysis" not in config or not isinstance(
+            config["code_analysis"], dict
+        ):
             config["code_analysis"] = {}
-        config["code_analysis"]["db_path"] = str(self.test_db_path)
+        config["code_analysis"]["db_path"] = str(self.get_db_path())
 
-        # Add test_data to watch_dirs if not exists
-        if "code_analysis" in config:
-            if "worker" not in config["code_analysis"]:
-                config["code_analysis"]["worker"] = {}
-            if "watch_dirs" not in config["code_analysis"]["worker"]:
-                config["code_analysis"]["worker"]["watch_dirs"] = []
+        worker_section = config["code_analysis"].setdefault("worker", {})
+        if not isinstance(worker_section, dict):
+            worker_section = {}
+            config["code_analysis"]["worker"] = worker_section
+        # Pipeline tests need deterministic DB writes from direct command calls.
+        # Disable background workers to avoid concurrent writes and DB lock contention.
+        worker_section["enabled"] = False
 
-            # Check if test_data already in watch_dirs
-            test_data_path = str(self.test_data_dir.absolute())
-            watch_dirs = config["code_analysis"]["worker"]["watch_dirs"]
-            if isinstance(watch_dirs, list):
-                found = False
-                for watch_dir in watch_dirs:
-                    if (
-                        isinstance(watch_dir, dict)
-                        and watch_dir.get("path") == test_data_path
-                    ):
-                        found = True
-                        break
-                    elif isinstance(watch_dir, str) and watch_dir == test_data_path:
-                        found = True
-                        break
+        indexing_worker = config["code_analysis"].setdefault("indexing_worker", {})
+        if not isinstance(indexing_worker, dict):
+            indexing_worker = {}
+            config["code_analysis"]["indexing_worker"] = indexing_worker
+        indexing_worker["enabled"] = False
 
-                if not found:
-                    watch_dirs.append({"id": "test-pipeline", "path": test_data_path})
+        file_watcher = config["code_analysis"].setdefault("file_watcher", {})
+        if not isinstance(file_watcher, dict):
+            file_watcher = {}
+            config["code_analysis"]["file_watcher"] = file_watcher
+        file_watcher["enabled"] = False
 
-        # Write config
+        watch_dirs = worker_section.setdefault("watch_dirs", [])
+        if not isinstance(watch_dirs, list):
+            watch_dirs = []
+            worker_section["watch_dirs"] = watch_dirs
+
+        test_data_path = str(self.test_data_dir.absolute())
+        found = False
+        for watch_dir in watch_dirs:
+            if isinstance(watch_dir, dict) and watch_dir.get("path") == test_data_path:
+                found = True
+                break
+            if isinstance(watch_dir, str) and watch_dir == test_data_path:
+                found = True
+                break
+
+        if not found:
+            watch_dirs.append({"id": "test-pipeline", "path": test_data_path})
+
+        return config
+
+    def create_test_config(self, output_path: Path) -> None:
+        """Create test server configuration file from unified config source."""
+        config = self.build_test_config()
         with open(output_path, "w", encoding="utf-8") as f:
             json.dump(config, f, indent=2)
+
+    def get_db_path_from_config(self, config_path: Path) -> Path:
+        """Load absolute DB path from an already written config file."""
+        with open(config_path, "r", encoding="utf-8") as f:
+            config: Dict[str, Any] = json.load(f)
+
+        code_analysis_section = config.get("code_analysis", {})
+        if not isinstance(code_analysis_section, dict):
+            raise ValueError("Invalid config format: code_analysis must be an object")
+
+        db_path = code_analysis_section.get("db_path")
+        if not db_path:
+            raise ValueError("Invalid config format: code_analysis.db_path is missing")
+
+        return Path(str(db_path)).expanduser().resolve()
+
+    def get_network_settings(self) -> Dict[str, Any]:
+        """Return host/port/protocol from generated server config."""
+        return self._extract_network_settings(self.build_test_config())
+
+    def get_mtls_ssl_paths(self) -> Dict[str, str]:
+        """Return normalized SSL path mapping when protocol=mtls."""
+        config = self.build_test_config()
+        network = self._extract_network_settings(config)
+        if str(network.get("protocol", "")).lower() != "mtls":
+            return {}
+        ssl_paths = self._extract_mtls_ssl_paths(config)
+        required_paths = ("cert", "key", "ca")
+        missing = [name for name in required_paths if not ssl_paths.get(name)]
+        if missing:
+            raise ValueError(
+                "mTLS protocol requires server SSL paths for "
+                f"{', '.join(missing)} in server.ssl"
+            )
+        return ssl_paths
+
+    def generate_adapter_client_settings(self) -> Dict[str, Any]:
+        """Generate adapter/client settings directly from server config values."""
+        config = self.build_test_config()
+        settings = self._extract_network_settings(config)
+        if str(settings["protocol"]).lower() == "mtls":
+            settings["ssl"] = self.get_mtls_ssl_paths()
+        return settings
+
+    def validate_adapter_settings(
+        self,
+        adapter_settings: Dict[str, Any],
+        server_config: Optional[Dict[str, Any]] = None,
+    ) -> bool:
+        """Validate adapter settings are fully aligned with server config values."""
+        reference_config = server_config or self.build_test_config()
+        expected_network = self._extract_network_settings(reference_config)
+
+        for key in ("host", "port", "protocol"):
+            if adapter_settings.get(key) != expected_network.get(key):
+                raise ValueError(
+                    f"Adapter/server mismatch for '{key}': "
+                    f"{adapter_settings.get(key)!r} != {expected_network.get(key)!r}"
+                )
+
+        protocol = str(expected_network.get("protocol", "")).lower()
+        if protocol == "mtls":
+            expected_ssl = self._extract_mtls_ssl_paths(reference_config)
+            required_ssl = ("cert", "key", "ca")
+            missing_in_server = [
+                name for name in required_ssl if not expected_ssl.get(name)
+            ]
+            if missing_in_server:
+                raise ValueError(
+                    "Server config protocol is mtls but server.ssl is missing "
+                    f"{', '.join(missing_in_server)}"
+                )
+            adapter_ssl = adapter_settings.get("ssl")
+            if not isinstance(adapter_ssl, dict):
+                raise ValueError("Adapter SSL settings are required for mtls protocol")
+            for key, expected_value in expected_ssl.items():
+                adapter_value = adapter_ssl.get(key)
+                if adapter_value is None:
+                    raise ValueError(f"Missing adapter SSL path for '{key}'")
+                normalized_adapter = str(
+                    Path(str(adapter_value)).expanduser().resolve()
+                )
+                if normalized_adapter != expected_value:
+                    raise ValueError(
+                        f"Adapter/server SSL mismatch for '{key}': "
+                        f"{normalized_adapter!r} != {expected_value!r}"
+                    )
+
+        return True
 
     def verify_test_data(self) -> bool:
         """Verify test data is available.

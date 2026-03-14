@@ -19,6 +19,8 @@ from typing import Any, Dict, List, Optional
 
 from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 
+from ..core.cst_tree.node_id_markers import build_exact_key_to_id_from_metadata
+from ..core.cst_tree.tree_builder import create_tree_from_code, remove_tree
 from .base_mcp_command import BaseMCPCommand
 from .query_cst_handler import (
     build_ops_from_replacements,
@@ -212,9 +214,19 @@ class QueryCSTCommand(BaseMCPCommand):
             else:
                 selector_for_query = selector or ""
                 t_query = time.perf_counter()
-                matches = query_source(
-                    source, selector_for_query, include_code=include_code
-                )
+                tree = create_tree_from_code(str(target), source)
+                try:
+                    node_ids_by_exact_key = build_exact_key_to_id_from_metadata(
+                        tree.metadata_map
+                    )
+                    matches = query_source(
+                        source,
+                        selector_for_query,
+                        include_code=include_code,
+                        node_ids_by_exact_key=node_ids_by_exact_key,
+                    )
+                finally:
+                    remove_tree(tree.tree_id)
             if not range_only:
                 logger.info(
                     "[TIMING] command=query_cst step=query_source matches=%d elapsed_sec=%.4f",

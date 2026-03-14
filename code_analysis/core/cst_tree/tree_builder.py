@@ -16,6 +16,14 @@ import libcst as cst
 from libcst.metadata import MetadataWrapper, ParentNodeProvider, PositionProvider
 
 from .models import CSTTree, TreeNodeMetadata
+from .node_id_markers import (
+    PersistedNodeIds,
+    build_marker_path,
+    build_exact_key_to_id_from_metadata,
+    build_exact_node_key,
+    strip_persisted_node_ids,
+)
+from .node_type_utils import get_node_kind, get_node_name, get_node_qualname
 
 logger = logging.getLogger(__name__)
 
@@ -49,24 +57,19 @@ def load_file_to_tree(
     if not is_py and not is_py_tmp:
         raise ValueError(f"File must be a Python file (.py): {file_path}")
 
-    # Read and parse file
     source = path.read_text(encoding="utf-8")
-    module = cst.parse_module(source)
-
-    # Create tree
+    logical_source, persisted_node_ids = strip_persisted_node_ids(source)
+    module = cst.parse_module(logical_source)
     tree = CSTTree.create(str(path.resolve()), module)
-
-    # Build node index and metadata
     _build_tree_index(
         tree,
         node_types=node_types,
         max_depth=max_depth,
         include_children=include_children,
+        persisted_node_ids=persisted_node_ids,
     )
 
-    # Store in memory
     _trees[tree.tree_id] = tree
-
     return tree
 
 
@@ -92,23 +95,19 @@ def create_tree_from_code(
     Returns:
         CSTTree with tree_id and metadata
     """
-    # Parse source code
-    module = cst.parse_module(source_code)
+    logical_source, persisted_node_ids = strip_persisted_node_ids(source_code)
+    module = cst.parse_module(logical_source)
 
-    # Create tree
     tree = CSTTree.create(str(Path(file_path).resolve()), module)
-
-    # Build node index and metadata
     _build_tree_index(
         tree,
         node_types=node_types,
         max_depth=max_depth,
         include_children=include_children,
+        persisted_node_ids=persisted_node_ids,
     )
 
-    # Store in memory
     _trees[tree.tree_id] = tree
-
     return tree
 
 
@@ -118,7 +117,8 @@ def _build_tree_index(
     max_depth: Optional[int] = None,
     include_children: bool = True,
     previous_metadata_map: Optional[Dict[str, TreeNodeMetadata]] = None,
-    replaced_positions_to_id: Optional[Dict[Tuple[int, int], str]] = None,
+    replaced_positions_to_id: Optional[Dict[Tuple[int, int, str], str]] = None,
+    persisted_node_ids: Optional[PersistedNodeIds] = None,
 ) -> None:
     """
     Build node index and metadata for tree.
@@ -146,18 +146,15 @@ def _build_tree_index(
 
     # Build (start_line, start_col, end_line, end_col, type) -> node_id for id preservation
     exact_key_to_id: Dict[Tuple[int, int, int, int, str], str] = {}
+    if persisted_node_ids:
+        exact_key_to_id.update(persisted_node_ids)
     if previous_metadata_map:
-        for nid, meta in previous_metadata_map.items():
-            key = (
-                meta.start_line,
-                meta.start_col,
-                meta.end_line,
-                meta.end_col,
-                meta.type,
-            )
-            exact_key_to_id[key] = nid
+        for key, node_id in build_exact_key_to_id_from_metadata(
+            previous_metadata_map
+        ).items():
+            exact_key_to_id.setdefault(key, node_id)
     # Mutable copy so we pop when we assign (each replaced id used at most once)
-    replaced_map: Dict[Tuple[int, int], str] = {}
+    replaced_map: Dict[Tuple[int, int, str], str] = {}
     if replaced_positions_to_id:
         replaced_map = dict(replaced_positions_to_id)
 
@@ -166,7 +163,7 @@ def _build_tree_index(
     # Map node object id -> node_id (UUID4) so parent/children resolve after visit
     node_to_uuid: Dict[int, str] = {}
 
-    def visit(node: cst.CSTNode, depth: int) -> None:
+    def visit(node: cst.CSTNode, depth: int, path_indices: tuple[int, ...]) -> None:
         # Check depth filter
         if max_depth is not None and depth > max_depth:
             return
@@ -212,11 +209,20 @@ def _build_tree_index(
         # Preserve node_id when rebuilding after modify: unchanged nodes keep id,
         # replaced node keeps id for the new content at same start position
         node_id: Optional[str] = None
-        exact_key = (start_line, start_col, end_line, end_col, node_type)
-        if exact_key in exact_key_to_id:
+        marker_path = build_marker_path(path_indices)
+        exact_key = build_exact_node_key(
+            start_line,
+            start_col,
+            end_line,
+            end_col,
+            node_type,
+        )
+        if persisted_node_ids and marker_path in persisted_node_ids:
+            node_id = persisted_node_ids[marker_path]
+        elif exact_key in exact_key_to_id:
             node_id = exact_key_to_id.pop(exact_key)
         elif replaced_map:
-            start_key = (start_line, start_col)
+            start_key = (start_line, start_col, node_type)
             if start_key in replaced_map:
                 node_id = replaced_map.pop(start_key)
         if node_id is None:
@@ -227,9 +233,9 @@ def _build_tree_index(
         parent_id = node_to_uuid.get(id(parent)) if parent else None
         tree.parent_map[node_id] = parent_id
 
-        name = _get_node_name(node)
-        qualname = _get_node_qualname(node, class_stack, func_stack)
-        kind = _get_node_kind(node, class_stack)
+        name = get_node_name(node)
+        qualname = get_node_qualname(node, class_stack, func_stack)
+        kind = get_node_kind(node, class_stack)
 
         # Track class/function stacks before visiting children
         entered_class = False
@@ -242,8 +248,8 @@ def _build_tree_index(
             entered_func = True
 
         # Visit children first so they are registered in node_to_uuid
-        for child in node.children:
-            visit(child, depth + 1)
+        for child_index, child in enumerate(node.children):
+            visit(child, depth + 1, path_indices + (child_index,))
 
         # Build children_ids from registered children (only when include_children)
         children_ids = (
@@ -275,101 +281,7 @@ def _build_tree_index(
         if entered_class:
             class_stack.pop()
 
-    visit(tree.module, 0)
-
-
-def _generate_node_id(
-    node: cst.CSTNode,
-    start_line: int,
-    start_col: int,
-    end_line: int,
-    end_col: int,
-    class_stack: List[str],
-    func_stack: List[str],
-) -> str:
-    """Generate stable node ID."""
-    node_type = node.__class__.__name__
-    kind = _get_node_kind(node, class_stack)
-    qualname = _get_node_qualname(node, class_stack, func_stack) or ""
-    return (
-        f"{kind}:{qualname}:{node_type}:{start_line}:{start_col}-{end_line}:{end_col}"
-    )
-
-
-def _get_node_id_for_node(
-    node: cst.CSTNode,
-    positions: dict,
-    class_stack: List[str],
-    func_stack: List[str],
-) -> Optional[str]:
-    """Get node_id for a node (used for parent lookup)."""
-    pos = positions.get(node)
-    if pos is None:
-        return None
-    try:
-        start_line = (
-            pos.start.line
-            if hasattr(pos, "start") and hasattr(pos.start, "line")
-            else 1
-        )
-        start_col = (
-            pos.start.column
-            if hasattr(pos, "start") and hasattr(pos.start, "column")
-            else 0
-        )
-        end_line = (
-            pos.end.line if hasattr(pos, "end") and hasattr(pos.end, "line") else 1
-        )
-        end_col = (
-            pos.end.column if hasattr(pos, "end") and hasattr(pos.end, "column") else 0
-        )
-        return _generate_node_id(
-            node, start_line, start_col, end_line, end_col, class_stack, func_stack
-        )
-    except (AttributeError, TypeError):
-        return None
-
-
-def _get_node_name(node: cst.CSTNode) -> Optional[str]:
-    """Get node name."""
-    if isinstance(node, (cst.FunctionDef, cst.ClassDef)):
-        return node.name.value
-    if isinstance(node, cst.Name):
-        return node.value
-    return None
-
-
-def _get_node_kind(node: cst.CSTNode, class_stack: List[str]) -> str:
-    """Get node kind."""
-    if isinstance(node, cst.ClassDef):
-        return "class"
-    if isinstance(node, cst.FunctionDef):
-        return "method" if class_stack else "function"
-    if isinstance(node, (cst.Import, cst.ImportFrom)):
-        return "import"
-    if isinstance(node, cst.BaseSmallStatement):
-        return "smallstmt"
-    if isinstance(node, cst.BaseStatement):
-        return "stmt"
-    return "node"
-
-
-def _get_node_qualname(
-    node: cst.CSTNode, class_stack: List[str], func_stack: List[str]
-) -> Optional[str]:
-    """Get qualified name for node."""
-    if isinstance(node, cst.ClassDef):
-        return (
-            ".".join(class_stack + [node.name.value])
-            if class_stack
-            else node.name.value
-        )
-    if isinstance(node, cst.FunctionDef):
-        if class_stack:
-            return ".".join(class_stack + [node.name.value])
-        parts = list(func_stack[:-1]) + [node.name.value]
-        return ".".join(parts) if parts else node.name.value
-    return ".".join(class_stack + func_stack) if (class_stack or func_stack) else None
+    visit(tree.module, 0, (0,))
 
 
 def get_tree(tree_id: str) -> Optional[CSTTree]:
@@ -422,7 +334,9 @@ def reload_tree_from_file(
         raise ValueError(f"File must be a Python file (.py): {tree.file_path}")
 
     source = path.read_text(encoding="utf-8")
-    module = cst.parse_module(source)
+    logical_source, persisted_node_ids = strip_persisted_node_ids(source)
+    module = cst.parse_module(logical_source)
+    previous_metadata_map = dict(tree.metadata_map)
 
     # Update tree in place
     tree.module = module
@@ -437,6 +351,8 @@ def reload_tree_from_file(
         node_types=node_types,
         max_depth=max_depth,
         include_children=include_children,
+        previous_metadata_map=previous_metadata_map,
+        persisted_node_ids=persisted_node_ids,
     )
 
     return tree
@@ -468,7 +384,9 @@ def rollback_tree_to_code(
     tree = get_tree(tree_id)
     if not tree:
         return False
-    tree.module = cst.parse_module(code)
+    logical_source, persisted_node_ids = strip_persisted_node_ids(code)
+    previous_metadata_map = dict(tree.metadata_map)
+    tree.module = cst.parse_module(logical_source)
     tree.node_map.clear()
     tree.metadata_map.clear()
     tree.parent_map.clear()
@@ -477,5 +395,7 @@ def rollback_tree_to_code(
         node_types=node_types,
         max_depth=max_depth,
         include_children=include_children,
+        previous_metadata_map=previous_metadata_map,
+        persisted_node_ids=persisted_node_ids,
     )
     return True

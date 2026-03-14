@@ -6,7 +6,7 @@ email: vasilyvz@gmail.com
 """
 
 import logging
-from typing import Any, Dict, List
+from typing import Any, Dict, List, cast
 
 logger = logging.getLogger(__name__)
 
@@ -33,13 +33,16 @@ def get_file_versions(self, file_path: str, project_id: str) -> List[Dict[str, A
     # Normalize path to absolute (Step 5: absolute paths everywhere)
     abs_path = normalize_path_simple(file_path)
 
-    return self._fetchall(
-        """
+    return cast(
+        List[Dict[str, Any]],
+        self._fetchall(
+            """
         SELECT * FROM files 
         WHERE project_id = ? AND path = ?
         ORDER BY last_modified DESC
         """,
-        (project_id, abs_path),
+            (project_id, abs_path),
+        ),
     )
 
 

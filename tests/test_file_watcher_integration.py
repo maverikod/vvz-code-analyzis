@@ -5,17 +5,19 @@ Author: Vasiliy Zdanovskiy
 email: vasilyvz@gmail.com
 """
 
-import pytest
+import os
 import tempfile
 import time
 from pathlib import Path
+
+import pytest
+
 from code_analysis.core.file_watcher_pkg.scanner import (
     scan_directory,
     should_ignore_path,
 )
 from code_analysis.core.file_watcher_pkg.processor import FileChangeProcessor, FileDelta
 from code_analysis.core.database import CodeDatabase
-from code_analysis.core.database.base import create_driver_config_for_worker
 from code_analysis.core.project_resolution import load_project_info
 
 
@@ -27,15 +29,24 @@ BHLFF_DIR = TEST_DATA_DIR / "bhlff"
 
 @pytest.fixture
 def temp_db(tmp_path):
-    """Create temporary database for tests."""
+    """Create temporary database for tests (in-process SQLite)."""
     db_path = tmp_path / "test.db"
-    driver_config = create_driver_config_for_worker(
-        db_path=db_path, driver_type="sqlite"
-    )
-    db = CodeDatabase(driver_config=driver_config)
-    db.sync_schema()
-    yield db
-    db.close()
+    driver_config = {
+        "type": "sqlite",
+        "config": {"path": str(db_path)},
+    }
+    original_env = os.environ.get("CODE_ANALYSIS_DB_WORKER")
+    os.environ["CODE_ANALYSIS_DB_WORKER"] = "1"
+    try:
+        db = CodeDatabase(driver_config=driver_config)
+        db.sync_schema()
+        yield db
+        db.close()
+    finally:
+        if original_env is None:
+            os.environ.pop("CODE_ANALYSIS_DB_WORKER", None)
+        else:
+            os.environ["CODE_ANALYSIS_DB_WORKER"] = original_env
 
 
 class TestFileWatcherScannerRealData:

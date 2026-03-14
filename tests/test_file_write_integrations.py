@@ -5,6 +5,7 @@ Author: Vasiliy Zdanovskiy
 email: vasilyvz@gmail.com
 """
 
+import os
 import tempfile
 import uuid
 from pathlib import Path
@@ -12,7 +13,6 @@ from pathlib import Path
 import pytest
 
 from code_analysis.core.database import CodeDatabase
-from code_analysis.core.database.base import create_driver_config_for_worker
 from code_analysis.core.refactorer_pkg.file_splitter import FileToPackageSplitter
 from code_analysis.core.refactorer_pkg.splitter import ClassSplitter
 from code_analysis.core.refactorer_pkg.extractor import SuperclassExtractor
@@ -33,15 +33,24 @@ def project_id():
 
 @pytest.fixture
 def test_db(temp_dir):
-    """Create test database."""
+    """Create test database (in-process SQLite)."""
     db_path = temp_dir / "test.db"
-    driver_config = create_driver_config_for_worker(
-        db_path=db_path, driver_type="sqlite"
-    )
-    db = CodeDatabase(driver_config=driver_config)
-    db._create_schema()
-    yield db
-    db.close()
+    driver_config = {
+        "type": "sqlite",
+        "config": {"path": str(db_path)},
+    }
+    original_env = os.environ.get("CODE_ANALYSIS_DB_WORKER")
+    os.environ["CODE_ANALYSIS_DB_WORKER"] = "1"
+    try:
+        db = CodeDatabase(driver_config=driver_config)
+        db._create_schema()
+        yield db
+        db.close()
+    finally:
+        if original_env is None:
+            os.environ.pop("CODE_ANALYSIS_DB_WORKER", None)
+        else:
+            os.environ["CODE_ANALYSIS_DB_WORKER"] = original_env
 
 
 @pytest.fixture

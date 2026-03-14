@@ -16,12 +16,13 @@ from code_analysis.core.project_resolution import load_project_id, load_project_
 
 @pytest.fixture
 def temp_db(tmp_path):
-    """Create temporary database for tests."""
+    """Create temporary database for tests with schema (e.g. projects table)."""
     db_path = tmp_path / "test.db"
     driver_config = create_driver_config_for_worker(
         db_path=db_path, driver_type="sqlite"
     )
     db = CodeDatabase(driver_config=driver_config)
+    db.sync_schema()
     yield db
     db.close()
 

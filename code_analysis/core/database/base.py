@@ -5,12 +5,12 @@ Author: Vasiliy Zdanovskiy
 email: vasilyvz@gmail.com
 """
 
-import uuid
-from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Tuple
-from contextlib import contextmanager
 import logging
 import threading
+import uuid
+from contextlib import contextmanager
+from pathlib import Path
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from ..db_driver import create_driver
 
@@ -163,7 +163,7 @@ class CodeDatabase:
         # DO NOT call _create_schema() here
         # Schema creation happens via sync_schema() in driver
 
-        # Connect driver (schema is not applied here; use CLI: python -m code_analysis.cli.config_cli schema)
+        # Connect driver then sync schema so DB is ready to use
         try:
             logger.info(f"[CodeDatabase] Connecting driver: type={driver_type}")
             self.driver.connect(driver_cfg)
@@ -171,6 +171,14 @@ class CodeDatabase:
         except Exception as e:
             logger.error(
                 f"[CodeDatabase] Failed to connect driver '{driver_type}': {e}",
+                exc_info=True,
+            )
+            raise
+        try:
+            self._do_sync_schema()
+        except Exception as e:
+            logger.error(
+                f"[CodeDatabase] Schema sync failed after connect: {e}",
                 exc_info=True,
             )
             raise

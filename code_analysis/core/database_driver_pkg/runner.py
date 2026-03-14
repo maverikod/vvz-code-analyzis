@@ -14,7 +14,6 @@ import logging
 import os
 import signal
 import sys
-import time
 from pathlib import Path
 from typing import Any, Dict, Optional
 
@@ -22,7 +21,9 @@ from ..constants import (
     DEFAULT_LOG_BACKUP_COUNT,
     DEFAULT_LOG_MAX_BYTES,
     DEFAULT_QUEUE_MAX_SIZE,
-    DRIVER_MAIN_LOOP_INTERVAL,
+    DEFAULT_RPC_WORKER_POOL_SIZE,
+    SQLITE_RPC_SINGLE_CONSUMER_POOL_SIZE,
+    SQLITE_SERIALIZED_EXECUTION_MODE,
 )
 
 from .driver_factory import create_driver
@@ -35,6 +36,32 @@ from .rpc_server import RPCServer
 os.environ["CODE_ANALYSIS_DB_DRIVER"] = "1"
 
 logger = logging.getLogger(__name__)
+
+# Driver type that must use serialized (single-consumer) execution for SQLite.
+_SQLITE_DRIVER_TYPE: str = "sqlite"
+
+
+def _resolve_execution_mode(driver_type: str) -> tuple[str, int]:
+    """Resolve execution mode and worker pool size from driver type.
+
+    SQLite uses serialized mode (exactly one DB executor thread). All other
+    driver types use default multi-worker pool size.
+
+    Args:
+        driver_type: Driver type identifier (e.g. 'sqlite', 'postgres').
+
+    Returns:
+        Tuple of (mode_name, worker_pool_size).
+
+    Raises:
+        ValueError: If driver_type is missing or invalid for resolution.
+    """
+    if not driver_type or not str(driver_type).strip():
+        raise ValueError("driver_type is required for execution mode resolution")
+    normalized = str(driver_type).strip().lower()
+    if normalized == _SQLITE_DRIVER_TYPE:
+        return (SQLITE_SERIALIZED_EXECUTION_MODE, SQLITE_RPC_SINGLE_CONSUMER_POOL_SIZE)
+    return ("default", DEFAULT_RPC_WORKER_POOL_SIZE)
 
 
 def _setup_driver_logging(
@@ -147,25 +174,33 @@ def run_database_driver(
             logger.error(f"Failed to create driver: {e}", exc_info=True)
             raise DriverConnectionError(f"Failed to create driver: {e}") from e
 
-        # Create RPC server
+        # Resolve execution mode by driver type (SQLite: serialized single consumer)
+        execution_mode, worker_pool_size = _resolve_execution_mode(driver_type)
+        logger.info(
+            "Execution mode: %s (worker_pool_size=%s)",
+            execution_mode,
+            worker_pool_size,
+        )
+
+        # Create RPC server with resolved worker pool size
         try:
-            rpc_server = RPCServer(driver, request_queue, socket_path)
+            rpc_server = RPCServer(
+                driver,
+                request_queue,
+                socket_path,
+                worker_pool_size=worker_pool_size,
+            )
             logger.info("RPC server created")
         except Exception as e:
             logger.error(f"Failed to create RPC server: {e}", exc_info=True)
             raise DriverOperationError(f"Failed to create RPC server: {e}") from e
 
-        # Start RPC server (runs in main thread)
+        # Start RPC server (blocks in main thread until shutdown)
         try:
             rpc_server.start()
         except Exception as e:
             logger.error(f"Failed to start RPC server: {e}", exc_info=True)
             raise DriverOperationError(f"Failed to start RPC server: {e}") from e
-
-        # Wait for shutdown signal
-        logger.info("Driver process running, waiting for requests...")
-        while not shutdown_event:
-            time.sleep(DRIVER_MAIN_LOOP_INTERVAL)  # Small sleep to avoid busy waiting
 
     except KeyboardInterrupt:
         logger.info("Driver process interrupted by keyboard")

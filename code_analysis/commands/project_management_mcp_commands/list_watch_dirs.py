@@ -53,19 +53,7 @@ class ListWatchDirsMCPCommand(BaseMCPCommand):
         **kwargs: Any,
     ) -> SuccessResult | ErrorResult:
         try:
-            from ..core.storage_paths import load_raw_config, resolve_storage_paths
-
-            config_path = self._resolve_config_path()
-            config_data = load_raw_config(config_path)
-            storage = resolve_storage_paths(
-                config_data=config_data, config_path=config_path
-            )
-            from ..core.database_client.client import DatabaseClient
-            from .base_mcp_command import _get_socket_path_from_db_path
-
-            socket_path = _get_socket_path_from_db_path(storage.db_path)
-            database = DatabaseClient(socket_path=socket_path)
-            database.connect()
+            database = self._open_database_from_config(auto_analyze=False)
             try:
                 result = database.execute(
                     """

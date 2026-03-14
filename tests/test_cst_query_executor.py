@@ -49,6 +49,19 @@ class TestClass:
         assert matches[0].name == "TestClass"
         assert matches[0].kind == "class"
 
+    def test_query_module(self):
+        """Selector 'Module' or 'module' must match the root Module node."""
+        source = '''
+"""Docstring."""
+x = 1
+'''
+        for selector in ("Module", "module"):
+            matches = query_source(source, selector)
+            assert len(matches) == 1, f"selector {selector!r} should match exactly one node"
+            assert matches[0].node_type == "Module"
+            assert matches[0].kind == "module"
+            assert matches[0].start_line == 1 and matches[0].end_line >= 1
+
     def test_query_type_wildcard_def_star(self):
         """Test Def:* matches FunctionDef and ClassDef (suffix match)."""
         source = """

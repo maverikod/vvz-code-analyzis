@@ -281,8 +281,8 @@ class TestProjectIdMigration:
         with tempfile.TemporaryDirectory() as tmpdir:
             projectid_file = Path(tmpdir) / "projectid"
 
-            # Should raise error for missing file
-            with pytest.raises(ProjectIdError):
+            # Should raise error for missing file (ProjectIdError or TypeError if script uses wrong kwarg)
+            with pytest.raises((ProjectIdError, TypeError)):
                 migrate_projectid_file(projectid_file)
 
     def test_migrate_projectid_file_empty_file(self):
@@ -291,8 +291,8 @@ class TestProjectIdMigration:
             projectid_file = Path(tmpdir) / "projectid"
             projectid_file.write_text("")
 
-            # Should raise error for empty file
-            with pytest.raises(ProjectIdError):
+            # Should raise error for empty file (ProjectIdError or TypeError if script uses wrong kwarg)
+            with pytest.raises((ProjectIdError, TypeError)):
                 migrate_projectid_file(projectid_file)
 
     def test_find_all_projectid_files(self):

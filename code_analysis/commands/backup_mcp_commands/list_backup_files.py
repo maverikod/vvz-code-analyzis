@@ -67,11 +67,12 @@ class ListBackupFilesMCPCommand(BaseMCPCommand):
                     latest = versions[0]
                     backup_uuid = latest["uuid"]
                     backup_info = index.get(backup_uuid, {})
-                    file_info_with_details = file_info.copy()
+                    file_info_with_details: Dict[str, Any] = dict(file_info)
                     file_info_with_details["command"] = backup_info.get("command", "")
+                    related_raw = backup_info.get("related_files")
                     file_info_with_details["related_files"] = (
-                        backup_info.get("related_files", "").split(",")
-                        if backup_info.get("related_files")
+                        (related_raw.split(",") if isinstance(related_raw, str) else [])
+                        if related_raw
                         else []
                     )
                     files_with_info.append(file_info_with_details)

@@ -4,9 +4,10 @@ CSTQuery executor for Python source (LibCST).
 The executor traverses a LibCST tree, builds a lightweight parent-linked index,
 and evaluates a parsed selector against nodes.
 
-This is intentionally focused on pragmatics:
-- stable-enough node_id based on span + kind + qualname
-- targeting statement-like nodes for refactoring workflows
+This executor prefers persisted UUID4 node identifiers when they are available
+from a loaded CST tree or from the file's trailing marker block. It falls back
+to the legacy span-based identifier only for raw source that has not been
+assigned persisted UUIDs yet.
 
 Author: Vasiliy Zdanovskiy
 email: vasilyvz@gmail.com
@@ -14,67 +15,21 @@ email: vasilyvz@gmail.com
 
 from __future__ import annotations
 
-import logging
-from dataclasses import dataclass
-from typing import Any, Optional
+from typing import Optional
 
 import libcst as cst
-from libcst.metadata import MetadataWrapper, ParentNodeProvider, PositionProvider
 
 from .ast import Combinator, Predicate, PredicateOp, PseudoKind, Query, SelectorStep
+from .index_builder import Match, NodeInfo, build_index, parse_source_for_query
 from .parser import parse_selector
-
-logger = logging.getLogger(__name__)
-
-
-@dataclass(frozen=True)
-class Match:
-    """A single selector match."""
-
-    node_id: str
-    kind: str
-    node_type: str
-    name: Optional[str]
-    qualname: Optional[str]
-    start_line: int
-    start_col: int
-    end_line: int
-    end_col: int
-    code: Optional[str] = None
-
-
-@dataclass(frozen=True)
-class _NodeInfo:
-    node: cst.CSTNode
-    parent: Optional[cst.CSTNode]
-    depth: int
-    kind: str
-    name: Optional[str]
-    qualname: Optional[str]
-    start_line: int
-    start_col: int
-    end_line: int
-    end_col: int
-    extra_attrs: Optional[dict[str, str]] = None
-
-    @property
-    def node_type(self) -> str:
-        return self.node.__class__.__name__
-
-    @property
-    def span_key(self) -> tuple[int, int, int, int]:
-        return (self.start_line, self.start_col, self.end_line, self.end_col)
-
-    def to_id(self) -> str:
-        q = self.qualname or ""
-        return (
-            f"{self.kind}:{q}:{self.node_type}:"
-            f"{self.start_line}:{self.start_col}-{self.end_line}:{self.end_col}"
-        )
 
 
 def query_source(
-    source: str, selector: str, *, include_code: bool = False
+    source: str,
+    selector: str,
+    *,
+    include_code: bool = False,
+    node_ids_by_exact_key: dict[tuple[int, int, int, int, str], str] | None = None,
 ) -> list[Match]:
     """
     Query python source using CSTQuery selectors.
@@ -85,12 +40,21 @@ def query_source(
         include_code: include `code_for_node` snippet for each match (can be large)
     """
     q = parse_selector(selector)
-    module = cst.parse_module(source)
-    wrapper = MetadataWrapper(module, unsafe_skip_copy=True)
-    parents = wrapper.resolve(ParentNodeProvider)
-    positions = wrapper.resolve(PositionProvider)
+    (
+        _logical_source,
+        module,
+        parents,
+        positions,
+        persisted_node_ids,
+    ) = parse_source_for_query(source)
 
-    nodes = _build_index(module, parents=parents, positions=positions)
+    nodes = build_index(
+        module,
+        parents=parents,
+        positions=positions,
+        persisted_node_ids=persisted_node_ids,
+        node_ids_by_exact_key=node_ids_by_exact_key,
+    )
     matched = _eval_query(nodes, q)
 
     out: list[Match] = []
@@ -98,7 +62,7 @@ def query_source(
         code = module.code_for_node(info.node) if include_code else None
         out.append(
             Match(
-                node_id=info.to_id(),
+                node_id=info.node_id or _legacy_node_id(info),
                 kind=info.kind,
                 node_type=info.node_type,
                 name=info.name,
@@ -113,144 +77,16 @@ def query_source(
     return out
 
 
-def _build_index(
-    module: cst.Module,
-    *,
-    parents: dict[cst.CSTNode, cst.CSTNode],
-    positions: dict[cst.CSTNode, Any],
-) -> list[_NodeInfo]:
-    """
-    Build a traversal-ordered node list with parent pointers and basic attributes.
-
-    We include all nodes because selection can target any node_type, but replacement
-    workflows mainly care about stmt/smallstmt nodes.
-    """
-    infos: list[_NodeInfo] = []
-
-    class_stack: list[str] = []
-    func_stack: list[str] = []
-
-    def visit(node: cst.CSTNode, depth: int) -> None:
-        parent = parents.get(node)
-        pos = positions.get(node)
-        if pos is None:
-            # Some nodes may not carry positions; skip them.
-            return
-        try:
-            # Safely access position attributes
-            start_line = (
-                pos.start.line
-                if hasattr(pos, "start") and hasattr(pos.start, "line")
-                else 1
-            )
-            start_col = (
-                pos.start.column
-                if hasattr(pos, "start") and hasattr(pos.start, "column")
-                else 0
-            )
-            end_line = (
-                pos.end.line if hasattr(pos, "end") and hasattr(pos.end, "line") else 1
-            )
-            end_col = (
-                pos.end.column
-                if hasattr(pos, "end") and hasattr(pos.end, "column")
-                else 0
-            )
-
-            name = _node_name(node)
-            kind = _node_kind(node, class_stack=class_stack)
-            qual = _node_qualname(node, class_stack=class_stack, func_stack=func_stack)
-            extra_attrs: Optional[dict[str, str]] = None
-            if isinstance(node, cst.ImportFrom):
-                try:
-                    module_str = (
-                        module.code_for_node(node.module) if node.module else ""
-                    )
-                    extra_attrs = {"module": module_str}
-                except (AttributeError, TypeError):
-                    extra_attrs = {"module": ""}
-            infos.append(
-                _NodeInfo(
-                    node=node,
-                    parent=parent,
-                    depth=depth,
-                    kind=kind,
-                    name=name,
-                    qualname=qual,
-                    start_line=start_line,
-                    start_col=start_col,
-                    end_line=end_line,
-                    end_col=end_col,
-                    extra_attrs=extra_attrs,
-                )
-            )
-        except (AttributeError, TypeError) as e:
-            # Skip nodes with invalid positions
-            logger.debug(f"Skipping node with invalid position: {e}")
-            return
-
-        entered_class = False
-        entered_func = False
-        if isinstance(node, cst.ClassDef):
-            class_stack.append(node.name.value)
-            entered_class = True
-        elif isinstance(node, cst.FunctionDef):
-            func_stack.append(node.name.value)
-            entered_func = True
-
-        for child in node.children:
-            visit(child, depth + 1)
-
-        if entered_func:
-            func_stack.pop()
-        if entered_class:
-            class_stack.pop()
-
-    visit(module, 0)
-    return infos
+def _legacy_node_id(info: NodeInfo) -> str:
+    """Fallback ID used only for raw source without persisted UUIDs."""
+    q = info.qualname or ""
+    return (
+        f"{info.kind}:{q}:{info.node_type}:"
+        f"{info.start_line}:{info.start_col}-{info.end_line}:{info.end_col}"
+    )
 
 
-def _node_name(node: cst.CSTNode) -> Optional[str]:
-    if isinstance(node, (cst.FunctionDef, cst.ClassDef)):
-        return node.name.value
-    if isinstance(node, cst.Name):
-        return node.value
-    return None
-
-
-def _node_kind(node: cst.CSTNode, *, class_stack: list[str]) -> str:
-    if isinstance(node, cst.ClassDef):
-        return "class"
-    if isinstance(node, cst.FunctionDef):
-        return "method" if class_stack else "function"
-    if isinstance(node, (cst.Import, cst.ImportFrom)):
-        return "import"
-    if isinstance(node, cst.BaseSmallStatement):
-        return "smallstmt"
-    if isinstance(node, cst.BaseStatement):
-        return "stmt"
-    return "node"
-
-
-def _node_qualname(
-    node: cst.CSTNode, *, class_stack: list[str], func_stack: list[str]
-) -> Optional[str]:
-    if isinstance(node, cst.ClassDef):
-        return (
-            ".".join(class_stack + [node.name.value])
-            if class_stack
-            else node.name.value
-        )
-    if isinstance(node, cst.FunctionDef):
-        if class_stack:
-            return ".".join(class_stack + [node.name.value])
-        # For nested functions, include outer functions if present.
-        parts = list(func_stack[:-1]) + [node.name.value]
-        return ".".join(parts) if parts else node.name.value
-    return ".".join(class_stack + func_stack) if (class_stack or func_stack) else None
-
-
-def _eval_query(nodes: list[_NodeInfo], q: Query) -> list[_NodeInfo]:
+def _eval_query(nodes: list[NodeInfo], q: Query) -> list[NodeInfo]:
     parent_map: dict[cst.CSTNode, Optional[cst.CSTNode]] = {
         n.node: n.parent for n in nodes
     }
@@ -264,12 +100,12 @@ def _eval_query(nodes: list[_NodeInfo], q: Query) -> list[_NodeInfo]:
 
 
 def _apply_combinator(
-    prev: list[_NodeInfo],
-    nxt: list[_NodeInfo],
+    prev: list[NodeInfo],
+    nxt: list[NodeInfo],
     comb: Combinator,
     *,
     parent_map: dict[cst.CSTNode, Optional[cst.CSTNode]],
-) -> list[_NodeInfo]:
+) -> list[NodeInfo]:
     if not prev or not nxt:
         return []
     prev_nodes = {p.node for p in prev}
@@ -279,7 +115,7 @@ def _apply_combinator(
 
     # Descendant: any ancestor match.
     prev_set = prev_nodes
-    out: list[_NodeInfo] = []
+    out: list[NodeInfo] = []
     for n in nxt:
         p = n.parent
         while p is not None:
@@ -290,7 +126,7 @@ def _apply_combinator(
     return out
 
 
-def _apply_step(nodes: list[_NodeInfo], step: SelectorStep) -> list[_NodeInfo]:
+def _apply_step(nodes: list[NodeInfo], step: SelectorStep) -> list[NodeInfo]:
     matched = [n for n in nodes if _matches_step(n, step)]
     for pseudo in step.pseudos:
         if pseudo.kind == PseudoKind.FIRST:
@@ -303,7 +139,7 @@ def _apply_step(nodes: list[_NodeInfo], step: SelectorStep) -> list[_NodeInfo]:
     return matched
 
 
-def _matches_step(node: _NodeInfo, step: SelectorStep) -> bool:
+def _matches_step(node: NodeInfo, step: SelectorStep) -> bool:
     if not _matches_node_type(node, step.node_type):
         return False
     for pred in step.predicates:
@@ -312,7 +148,7 @@ def _matches_step(node: _NodeInfo, step: SelectorStep) -> bool:
     return True
 
 
-def _matches_node_type(node: _NodeInfo, node_type: str) -> bool:
+def _matches_node_type(node: NodeInfo, node_type: str) -> bool:
     if not node_type or node_type == "*":
         return True
     t = node_type.strip()
@@ -349,14 +185,14 @@ def _matches_node_type(node: _NodeInfo, node_type: str) -> bool:
     return node.node_type.lower() == t.lower()
 
 
-def _matches_predicate(node: _NodeInfo, pred: Predicate) -> bool:
+def _matches_predicate(node: NodeInfo, pred: Predicate) -> bool:
     val = _get_attr(node, pred.attr)
     if val is None:
         return False
     return _compare(str(val), pred.op, pred.value)
 
 
-def _get_attr(node: _NodeInfo, attr: str) -> Optional[str]:
+def _get_attr(node: NodeInfo, attr: str) -> Optional[str]:
     """Return attribute value for predicate matching. Supports module for ImportFrom."""
     a = attr.lower()
     if a == "type":

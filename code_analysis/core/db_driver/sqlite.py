@@ -363,14 +363,17 @@ class SQLiteDriver(BaseDatabaseDriver):
                 logger.info(f"Running migration for version {migration_version}")
                 migration_func(self)
 
+            # Disable FK checks before transaction start.
+            # In SQLite, PRAGMA foreign_keys changes can be ignored when executed
+            # after BEGIN; set it first, then run migration transaction.
+            self.execute("PRAGMA foreign_keys = OFF")
+
             # Begin transaction for atomic schema changes. All statements must run in
             # this single transaction (no per-statement commit) so that e.g. after
             # "ALTER TABLE files RENAME TO temp_files", the following
             # "INSERT INTO files ... FROM temp_files" sees temp_files in the same connection.
             self.begin_transaction()
             try:
-                # Disable FK checks so table rename/copy does not fail on referenced tables
-                self.execute("PRAGMA foreign_keys = OFF")
                 migration_sql = comparator.generate_migration_sql(diff)
                 for i, sql in enumerate(migration_sql):
                     try:

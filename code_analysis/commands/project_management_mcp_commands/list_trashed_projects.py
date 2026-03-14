@@ -54,7 +54,7 @@ class ListTrashedProjectsMCPCommand(BaseMCPCommand):
         **kwargs: Any,
     ) -> SuccessResult | ErrorResult:
         try:
-            from ..core.storage_paths import load_raw_config, resolve_storage_paths
+            from ...core.storage_paths import load_raw_config, resolve_storage_paths
 
             config_path = self._resolve_config_path()
             config_data = load_raw_config(config_path)
@@ -64,7 +64,7 @@ class ListTrashedProjectsMCPCommand(BaseMCPCommand):
             trash_dir = kwargs.get("trash_dir")
             if not trash_dir:
                 trash_dir = str(storage.trash_dir)
-            from .trash_commands import ListTrashedProjectsCommand
+            from ..trash_commands import ListTrashedProjectsCommand
 
             cmd = ListTrashedProjectsCommand(trash_dir=trash_dir)
             result = cmd.execute()

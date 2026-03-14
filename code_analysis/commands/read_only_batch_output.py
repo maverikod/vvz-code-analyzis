@@ -17,6 +17,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Sequence, TypedDict
 
+
 def _default_serializer(obj: Any) -> Any:
     """Convert non-JSON types to deterministic serializable form."""
     if isinstance(obj, datetime):

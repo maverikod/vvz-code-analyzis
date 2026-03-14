@@ -98,7 +98,10 @@ async def unmark_project_deleted_impl(
 
 
 def _build_delete_batch_no_files(project_id: str) -> List[Tuple[str, Tuple[Any, ...]]]:
-    """Build list of (sql, params) for project with no files."""
+    """Build list of (sql, params) for project with no files.
+
+    Order must respect FK: duplicate_occurrences -> code_duplicates -> projects.
+    """
     return [
         ("DELETE FROM cst_trees WHERE project_id = ?", (project_id,)),
         ("DELETE FROM indexing_errors WHERE project_id = ?", (project_id,)),
@@ -107,21 +110,126 @@ def _build_delete_batch_no_files(project_id: str) -> List[Tuple[str, Tuple[Any, 
             (project_id,),
         ),
         ("DELETE FROM vector_index WHERE project_id = ?", (project_id,)),
+        (
+            "DELETE FROM duplicate_occurrences WHERE duplicate_id IN "
+            "(SELECT id FROM code_duplicates WHERE project_id = ?)",
+            (project_id,),
+        ),
+        ("DELETE FROM code_duplicates WHERE project_id = ?", (project_id,)),
         ("DELETE FROM projects WHERE id = ?", (project_id,)),
     ]
+
+
+def _append_entity_cross_ref_deletes(
+    ops: List[Tuple[str, Tuple[Any, ...]]],
+    file_ids: List[int],
+    class_ids: List[int],
+    method_ids: List[int],
+    function_ids: List[int],
+    placeholders: str,
+) -> None:
+    """Append DELETE(s) for entity_cross_ref by file_id and caller/callee entity ids.
+
+    Schema: entity_cross_ref has FK to classes(id), methods(id), functions(id).
+    Rows can reference our entities with file_id from another file or NULL;
+    so we must delete by file_id IN (...) OR caller_class_id IN (...) OR ...
+    """
+    conditions = [f"file_id IN ({placeholders})"]
+    params: List[Any] = list(file_ids)
+    if class_ids:
+        ph = ",".join("?" * len(class_ids))
+        conditions.append(f"caller_class_id IN ({ph})")
+        conditions.append(f"callee_class_id IN ({ph})")
+        params.extend(class_ids)
+        params.extend(class_ids)
+    if method_ids:
+        ph = ",".join("?" * len(method_ids))
+        conditions.append(f"caller_method_id IN ({ph})")
+        conditions.append(f"callee_method_id IN ({ph})")
+        params.extend(method_ids)
+        params.extend(method_ids)
+    if function_ids:
+        ph = ",".join("?" * len(function_ids))
+        conditions.append(f"caller_function_id IN ({ph})")
+        conditions.append(f"callee_function_id IN ({ph})")
+        params.extend(function_ids)
+        params.extend(function_ids)
+    ops.append(
+        (
+            "DELETE FROM entity_cross_ref WHERE " + " OR ".join(conditions),
+            tuple(params),
+        )
+    )
+
+
+def _append_issues_deletes(
+    ops: List[Tuple[str, Tuple[Any, ...]]],
+    file_ids: List[int],
+    class_ids: List[int],
+    method_ids: List[int],
+    function_ids: List[int],
+    placeholders: str,
+) -> None:
+    """Append DELETE for issues by file_id and by class_id, function_id, method_id.
+
+    Schema: issues has FK to files(id), classes(id), functions(id), methods(id).
+    Remove all issue rows that reference our files or our entities first.
+    """
+    conditions = [f"file_id IN ({placeholders})"]
+    params: List[Any] = list(file_ids)
+    if class_ids:
+        ph = ",".join("?" * len(class_ids))
+        conditions.append(f"class_id IN ({ph})")
+        params.extend(class_ids)
+    if method_ids:
+        ph = ",".join("?" * len(method_ids))
+        conditions.append(f"method_id IN ({ph})")
+        params.extend(method_ids)
+    if function_ids:
+        ph = ",".join("?" * len(function_ids))
+        conditions.append(f"function_id IN ({ph})")
+        params.extend(function_ids)
+    ops.append(
+        (
+            "DELETE FROM issues WHERE " + " OR ".join(conditions),
+            tuple(params),
+        )
+    )
 
 
 def _build_delete_batch_with_files(
     project_id: str,
     file_ids: List[int],
     class_ids: List[int],
+    method_ids: List[int],
+    function_ids: List[int],
     content_ids: List[int],
     placeholders: str,
 ) -> List[Tuple[str, Tuple[Any, ...]]]:
     """Build list of (sql, params) for all deletes in FK order (one RPC batch).
-    Duplicate tables are run separately (optional schema) before this batch.
+
+    Order: dependents first, then parents. Key dependencies (from schema):
+    - duplicate_occurrences -> code_duplicates, files
+    - code_chunks -> files, classes, functions, methods
+    - issues, entity_cross_ref -> files, classes, functions, methods
+    - methods -> classes -> files
+    - file_tree_snapshot_nodes/roots -> file_tree_snapshots -> files
+    - files -> projects
+
+    entity_cross_ref has FK to classes, methods, functions (caller_*/callee_*);
+    must delete by all of class_ids, method_ids, function_ids and file_id.
     """
     ops: List[Tuple[str, Tuple[Any, ...]]] = []
+
+    # Duplicates first (duplicate_occurrences -> code_duplicates)
+    ops.append(
+        (
+            "DELETE FROM duplicate_occurrences WHERE duplicate_id IN "
+            "(SELECT id FROM code_duplicates WHERE project_id = ?)",
+            (project_id,),
+        )
+    )
+    ops.append(("DELETE FROM code_duplicates WHERE project_id = ?", (project_id,)))
 
     # FTS in batches of 1000
     batch_size = 1000
@@ -142,6 +250,15 @@ def _build_delete_batch_with_files(
             tuple(file_ids),
         )
     )
+    # issues have FK to file_id, class_id, function_id, method_id; delete by all before entities
+    _append_issues_deletes(
+        ops, file_ids, class_ids, method_ids, function_ids, placeholders
+    )
+    # entity_cross_ref has FK to classes, methods, functions (caller_*/callee_*);
+    # delete by file_id and by all entity ids so no row references our classes/methods/functions
+    _append_entity_cross_ref_deletes(
+        ops, file_ids, class_ids, method_ids, function_ids, placeholders
+    )
     # Child tables (methods before classes)
     if class_ids:
         method_ph = ",".join("?" * len(class_ids))
@@ -152,7 +269,7 @@ def _build_delete_batch_with_files(
             )
         )
 
-    # File-related tables
+    # File-related tables (no FK to classes/methods/functions)
     ops.append(
         (f"DELETE FROM classes WHERE file_id IN ({placeholders})", tuple(file_ids))
     )
@@ -161,9 +278,6 @@ def _build_delete_batch_with_files(
     )
     ops.append(
         (f"DELETE FROM imports WHERE file_id IN ({placeholders})", tuple(file_ids))
-    )
-    ops.append(
-        (f"DELETE FROM issues WHERE file_id IN ({placeholders})", tuple(file_ids))
     )
     ops.append(
         (
@@ -186,16 +300,37 @@ def _build_delete_batch_with_files(
     ops.append(
         (f"DELETE FROM usages WHERE file_id IN ({placeholders})", tuple(file_ids))
     )
-    # entity_cross_ref may not exist in all schemas
     ops.append(
         (
-            f"DELETE FROM entity_cross_ref WHERE file_id IN ({placeholders})",
+            f"DELETE FROM comprehensive_analysis_results WHERE file_id IN ({placeholders})",
+            tuple(file_ids),
+        )
+    )
+    # duplicate_occurrences has FK to files(id); delete by file_id before deleting files
+    ops.append(
+        (
+            f"DELETE FROM duplicate_occurrences WHERE file_id IN ({placeholders})",
+            tuple(file_ids),
+        )
+    )
+    # file_tree_* (optional schema): nodes/roots -> snapshots -> files; delete before files
+    ops.append(
+        (
+            f"DELETE FROM file_tree_snapshot_nodes WHERE snapshot_id IN "
+            f"(SELECT id FROM file_tree_snapshots WHERE file_id IN ({placeholders}))",
             tuple(file_ids),
         )
     )
     ops.append(
         (
-            f"DELETE FROM comprehensive_analysis_results WHERE file_id IN ({placeholders})",
+            f"DELETE FROM file_tree_snapshot_roots WHERE snapshot_id IN "
+            f"(SELECT id FROM file_tree_snapshots WHERE file_id IN ({placeholders}))",
+            tuple(file_ids),
+        )
+    )
+    ops.append(
+        (
+            f"DELETE FROM file_tree_snapshots WHERE file_id IN ({placeholders})",
             tuple(file_ids),
         )
     )
@@ -273,6 +408,14 @@ async def _clear_project_data_impl(database: DatabaseClient, project_id: str) ->
                 file_ids_tuple,
             ),
             (
+                f"SELECT id FROM methods WHERE class_id IN (SELECT id FROM classes WHERE file_id IN ({placeholders}))",
+                file_ids_tuple,
+            ),
+            (
+                f"SELECT id FROM functions WHERE file_id IN ({placeholders})",
+                file_ids_tuple,
+            ),
+            (
                 f"SELECT id FROM code_content WHERE file_id IN ({placeholders})",
                 file_ids_tuple,
             ),
@@ -280,16 +423,19 @@ async def _clear_project_data_impl(database: DatabaseClient, project_id: str) ->
         select_results = database.execute_batch(
             select_ops, transaction_id=transaction_id
         )
-        classes_data = (
-            select_results[0].get("data", []) if len(select_results) > 0 else []
-        )
-        content_data = (
-            select_results[1].get("data", []) if len(select_results) > 1 else []
-        )
-        class_ids = [c["id"] for c in classes_data]
-        content_ids = [c["id"] for c in content_data]
+
+        def _ids_at(idx: int) -> List[int]:
+            if idx < len(select_results):
+                data = select_results[idx].get("data", [])
+                return [r["id"] for r in data]
+            return []
+
+        class_ids = _ids_at(0)
+        method_ids = _ids_at(1)
+        function_ids = _ids_at(2)
+        content_ids = _ids_at(3)
         logger.info(
-            f"[CLEAR_PROJECT_DATA] Got class/content IDs in {time.time() - step_start:.3f}s"
+            f"[CLEAR_PROJECT_DATA] Got class/method/function/content IDs in {time.time() - step_start:.3f}s"
         )
 
         # Optional schema: duplicates (one execute_batch of two DELETEs)
@@ -315,8 +461,40 @@ async def _clear_project_data_impl(database: DatabaseClient, project_id: str) ->
         except Exception as e:
             logger.warning(f"Failed to delete duplicates for project {project_id}: {e}")
 
+        # Optional schema: file_tree_* (FK: nodes/roots -> snapshots -> files)
+        try:
+            database.execute_batch(
+                [
+                    (
+                        f"DELETE FROM file_tree_snapshot_nodes WHERE snapshot_id IN "
+                        f"(SELECT id FROM file_tree_snapshots WHERE file_id IN ({placeholders}))",
+                        tuple(file_ids),
+                    ),
+                    (
+                        f"DELETE FROM file_tree_snapshot_roots WHERE snapshot_id IN "
+                        f"(SELECT id FROM file_tree_snapshots WHERE file_id IN ({placeholders}))",
+                        tuple(file_ids),
+                    ),
+                    (
+                        f"DELETE FROM file_tree_snapshots WHERE file_id IN ({placeholders})",
+                        tuple(file_ids),
+                    ),
+                ],
+                transaction_id=transaction_id,
+            )
+        except Exception as e:
+            logger.warning(
+                "Failed to delete file_tree_* for project %s: %s", project_id, e
+            )
+
         delete_ops = _build_delete_batch_with_files(
-            project_id, file_ids, class_ids, content_ids, placeholders
+            project_id,
+            file_ids,
+            class_ids,
+            method_ids,
+            function_ids,
+            content_ids,
+            placeholders,
         )
         batch_start = time.time()
         database.execute_batch(

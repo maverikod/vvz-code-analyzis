@@ -6,7 +6,7 @@ email: vasilyvz@gmail.com
 """
 
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, cast
 
 logger = logging.getLogger(__name__)
 
@@ -21,9 +21,10 @@ def get_file_summary(self, file_path: str, project_id: str) -> Optional[Dict[str
     file_id = self.get_file_id(file_path, project_id)
     if not file_id:
         return None
-    file_info = self._fetchone("SELECT * FROM files WHERE id = ?", (file_id,))
-    if not file_info:
+    file_info_raw = self._fetchone("SELECT * FROM files WHERE id = ?", (file_id,))
+    if not isinstance(file_info_raw, dict):
         return None
+    file_info = dict(file_info_raw)
     class_count_row = self._fetchone(
         "SELECT COUNT(*) as count FROM classes WHERE file_id = ?", (file_id,)
     )
@@ -62,9 +63,12 @@ def get_files_needing_chunking(
     Returns:
         List of file records that need chunking
     """
-    return self._fetchall(
-        "\n                SELECT DISTINCT f.id, f.project_id, f.path, f.has_docstring\n                FROM files f\n                WHERE f.project_id = ?\n                AND (f.deleted = 0 OR f.deleted IS NULL)\n                AND (\n                    f.has_docstring = 1\n                    OR EXISTS (\n                        SELECT 1 FROM classes c\n                        WHERE c.file_id = f.id AND c.docstring IS NOT NULL AND c.docstring != ''\n                    )\n                    OR EXISTS (\n                        SELECT 1 FROM functions fn\n                        WHERE fn.file_id = f.id AND fn.docstring IS NOT NULL AND fn.docstring != ''\n                    )\n                    OR EXISTS (\n                        SELECT 1 FROM methods m\n                        JOIN classes c ON m.class_id = c.id\n                        WHERE c.file_id = f.id AND m.docstring IS NOT NULL AND m.docstring != ''\n                    )\n                )\n                AND (f.needs_chunking = 1 OR NOT EXISTS (\n                    SELECT 1 FROM code_chunks cc\n                    WHERE cc.file_id = f.id\n                ))\n                ORDER BY f.updated_at DESC\n                LIMIT ?\n                ",
-        (project_id, limit),
+    return cast(
+        List[Dict[str, Any]],
+        self._fetchall(
+            "\n                SELECT DISTINCT f.id, f.project_id, f.path, f.has_docstring\n                FROM files f\n                WHERE f.project_id = ?\n                AND (f.deleted = 0 OR f.deleted IS NULL)\n                AND (\n                    f.has_docstring = 1\n                    OR EXISTS (\n                        SELECT 1 FROM classes c\n                        WHERE c.file_id = f.id AND c.docstring IS NOT NULL AND c.docstring != ''\n                    )\n                    OR EXISTS (\n                        SELECT 1 FROM functions fn\n                        WHERE fn.file_id = f.id AND fn.docstring IS NOT NULL AND fn.docstring != ''\n                    )\n                    OR EXISTS (\n                        SELECT 1 FROM methods m\n                        JOIN classes c ON m.class_id = c.id\n                        WHERE c.file_id = f.id AND m.docstring IS NOT NULL AND m.docstring != ''\n                    )\n                )\n                AND (f.needs_chunking = 1 OR NOT EXISTS (\n                    SELECT 1 FROM code_chunks cc\n                    WHERE cc.file_id = f.id\n                ))\n                ORDER BY f.updated_at DESC\n                LIMIT ?\n                ",
+            (project_id, limit),
+        ),
     )
 
 

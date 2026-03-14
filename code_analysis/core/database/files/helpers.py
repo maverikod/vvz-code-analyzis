@@ -25,8 +25,12 @@ def _last_modified_to_unix(value: Any) -> Optional[float]:
     """
     if value is None:
         return None
-    if hasattr(value, "timestamp"):
-        return value.timestamp()
+    timestamp_getter = getattr(value, "timestamp", None)
+    if callable(timestamp_getter):
+        try:
+            return float(timestamp_getter())
+        except (TypeError, ValueError):
+            return None
     try:
         v = float(value)
         if v >= 1e9:

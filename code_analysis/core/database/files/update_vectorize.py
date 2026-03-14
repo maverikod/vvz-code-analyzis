@@ -214,18 +214,31 @@ async def update_and_vectorize_file(
         Combined result from update_file_data + vectorize_file_immediately
     """
     # Step 1: Update database
-    update_result = self.update_file_data(
+    update_result_raw = self.update_file_data(
         file_path=file_path,
         project_id=project_id,
         root_dir=root_dir,
     )
+    if not isinstance(update_result_raw, dict):
+        return {
+            "success": False,
+            "error": "update_file_data returned non-dict result",
+        }
+    update_result = update_result_raw
 
     if not update_result.get("success"):
         return update_result
 
     # Step 2: Try immediate vectorization
-    file_id = update_result.get("file_id")
-    abs_path = update_result.get("file_path")
+    file_id_raw = update_result.get("file_id")
+    if not isinstance(file_id_raw, int):
+        return {
+            "success": False,
+            "error": "update_file_data returned invalid file_id",
+        }
+    file_id = file_id_raw
+    abs_path_raw = update_result.get("file_path")
+    abs_path = str(abs_path_raw) if abs_path_raw is not None else file_path
 
     if svo_client_manager:
         try:

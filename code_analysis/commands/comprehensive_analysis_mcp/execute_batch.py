@@ -10,6 +10,7 @@ email: vasilyvz@gmail.com
 
 import logging
 import time
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Dict, List
 
@@ -81,6 +82,8 @@ async def run_batch(
         analysis_logger.info(
             f"Starting comprehensive analysis: {files_total} files in batches of {_DEFAULT_BATCH_SIZE}"
         )
+        if progress_tracker and files_total > 0:
+            progress_tracker.set_description(f"Preparing: {files_total} files to scan")
     else:
         files_total = 0
 
@@ -94,10 +97,25 @@ async def run_batch(
     all_missing_docstrings: List[Dict[str, Any]] = []
     file_records: List[Dict[str, Any]] = []
 
-    last_percent = -1
     files_analyzed = 0
     files_skipped = 0
     t_loop_start = time.perf_counter()
+
+    def _avg_eta_suffix(current: int, total: int, start_sec: float) -> str:
+        """Return ' | avg X.Xs/file ETA HH:MM' or '' if not computable."""
+        if current <= 0 or total <= 0:
+            return ""
+        elapsed = time.perf_counter() - start_sec
+        if elapsed <= 0:
+            return ""
+        avg_sec = elapsed / current
+        remaining = total - current
+        if remaining <= 0:
+            return f" | avg {avg_sec:.1f}s/file"
+        eta_sec = remaining * avg_sec
+        eta_dt = datetime.now() + timedelta(seconds=eta_sec)
+        return f" | avg {avg_sec:.1f}s/file ETA {eta_dt:%H:%M}"
+
     save_batch: List[tuple] = []
     timings_sec: Dict[str, float] = {
         "placeholders": 0.0,
@@ -114,6 +132,8 @@ async def run_batch(
 
     project_mypy_errors: Dict[str, List[str]] = {}
     if check_mypy:
+        if progress_tracker:
+            progress_tracker.set_description("mypy (project)")
         t0 = time.perf_counter()
         from ...core.code_quality.type_checker import (
             type_check_project_with_mypy,
@@ -181,13 +201,24 @@ async def run_batch(
 
         log_timing("multi_get_files", t_get_files)
         if progress_tracker and files_total > 0:
-            progress_tracker.set_description(f"Analyzing up to {files_total} files...")
+            progress_tracker.set_description(f"scanning: 0% 0/{files_total} —")
             progress_tracker.set_progress(0)
 
         for idx, file_record in enumerate(files):
             t_file_start = time.perf_counter()
             file_path_str = file_record["path"]
             file_id = file_record["id"]
+
+            # Show current file in progress (for every file we consider, skip or analyze)
+            if progress_tracker and files_total > 0:
+                global_idx = batch_offset + idx + 1
+                percent = int((global_idx / files_total) * 100)
+                file_name = Path(file_path_str).name
+                progress_tracker.set_progress(percent)
+                suffix = _avg_eta_suffix(global_idx, files_total, t_start)
+                progress_tracker.set_description(
+                    f"scanning: {percent}% {global_idx}/{files_total} {file_name}{suffix}"
+                )
 
             if Path(file_path_str).is_absolute():
                 full_path = Path(file_path_str)
@@ -246,10 +277,20 @@ async def run_batch(
 
             files_analyzed += 1
             global_idx = batch_offset + idx + 1
+            percent = int((global_idx / files_total) * 100)
+            file_name = Path(file_path_str).name
             logger.info(f"Analyzing file {global_idx}/{files_total}: {file_path_str}")
             analysis_logger.info(
                 f"Analyzing file {global_idx}/{files_total}: {file_path_str}"
             )
+
+            def set_step_desc(step: str) -> None:
+                if progress_tracker and files_total > 0:
+                    suffix = _avg_eta_suffix(global_idx, files_total, t_start)
+                    progress_tracker.set_description(
+                        f"scanning: {percent}% {global_idx}/{files_total} "
+                        f"{file_name} — {step}{suffix}"
+                    )
 
             file_results, file_summary, file_project_id = analyze_one_file_in_batch(
                 full_path,
@@ -271,6 +312,7 @@ async def run_batch(
                 check_docstrings,
                 duplicate_min_lines,
                 duplicate_min_similarity,
+                set_step_desc=set_step_desc,
             )
             all_placeholders.extend(file_results["placeholders"])
             all_stubs.extend(file_results["stubs"])
@@ -323,16 +365,6 @@ async def run_batch(
                 file_elapsed,
             )
 
-            if progress_tracker and files_total > 0:
-                global_idx = batch_offset + idx + 1
-                percent = int((global_idx / files_total) * 100)
-                if percent != last_percent:
-                    progress_tracker.set_progress(percent)
-                    progress_tracker.set_description(
-                        f"Analyzing: {global_idx}/{files_total} ({percent}%)"
-                    )
-                    last_percent = percent
-
         batch_offset += len(files)
         if limit is not None:
             break
@@ -341,6 +373,8 @@ async def run_batch(
         t_get_files = time.perf_counter()
 
     if save_batch:
+        if progress_tracker:
+            progress_tracker.set_description("saving")
         try:
             t_save0 = time.perf_counter()
             db.save_comprehensive_analysis_results_batch(save_batch)
@@ -384,6 +418,8 @@ async def run_batch(
         f"Analysis complete: {files_analyzed} files analyzed, {files_skipped} files skipped (unchanged)"
     )
 
+    if progress_tracker:
+        progress_tracker.set_description("summary")
     results["summary"] = build_batch_summary(
         results, files_analyzed, files_skipped, files_total
     )

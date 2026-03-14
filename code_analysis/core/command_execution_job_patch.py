@@ -63,7 +63,8 @@ def patch_command_execution_job():
             # Update mcp_params with modified context
             self.mcp_params["context"] = context
 
-            # Call original run method (it will use the updated context)
+            # Call original run (adapter no longer overwrites progress/description
+            # before await, so command-driven progress is visible in queue_get_job_status)
             original_run(self)
 
         # Mark as patched

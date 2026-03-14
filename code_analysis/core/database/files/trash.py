@@ -7,7 +7,7 @@ email: vasilyvz@gmail.com
 
 import logging
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, cast
 
 logger = logging.getLogger(__name__)
 
@@ -335,13 +335,16 @@ def get_deleted_files(self, project_id: str) -> List[Dict[str, Any]]:
     Returns:
         List of deleted file records (path, original_path, version_dir, etc.)
     """
-    return self._fetchall(
-        """
+    return cast(
+        List[Dict[str, Any]],
+        self._fetchall(
+            """
         SELECT * FROM files 
         WHERE project_id = ? AND deleted = 1
         ORDER BY updated_at DESC
         """,
-        (project_id,),
+            (project_id,),
+        ),
     )
 
 

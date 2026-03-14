@@ -12,6 +12,7 @@ from typing import List, Optional
 
 from ...cst_query import query_source
 from .models import CSTTree, TreeNodeMetadata
+from .node_id_markers import build_exact_key_to_id_from_metadata
 from .tree_builder import get_tree
 
 logger = logging.getLogger(__name__)
@@ -31,12 +32,13 @@ def find_nodes(
     Find nodes in tree.
 
     Supports two search modes:
-    1. Simple search: by node_type, name, qualname, line range
+    1. Simple search: by node_type, name, qualname, line range; or by query
+      (when query is provided with search_type=simple, it is evaluated as xpath).
     2. XPath-like search: using CSTQuery selector syntax
 
     Args:
         tree_id: Tree ID
-        query: CSTQuery selector string (for xpath search)
+        query: CSTQuery selector string (for xpath; with simple, if set, same as xpath)
         search_type: "simple" or "xpath" (default: "xpath")
         node_type: Node type filter (for simple search)
         name: Node name filter (for simple search)
@@ -56,6 +58,8 @@ def find_nodes(
             raise ValueError("query parameter required for xpath search")
         return _find_nodes_xpath(tree, query)
     elif search_type == "simple":
+        if query and query.strip():
+            return _find_nodes_xpath(tree, query)
         return _find_nodes_simple(tree, node_type, name, qualname, start_line, end_line)
     else:
         raise ValueError(
@@ -65,34 +69,17 @@ def find_nodes(
 
 def _find_nodes_xpath(tree: CSTTree, selector: str) -> List[TreeNodeMetadata]:
     """Find nodes using CSTQuery selector."""
-    # Get source code from module
-    source = tree.module.code
-
-    # Use existing query_source function
-    matches = query_source(source, selector, include_code=False)
-
-    # Map matches to node_ids and get metadata
-    result: List[TreeNodeMetadata] = []
-    for match in matches:
-        # Try to find node by matching position
-        node_id = match.node_id
-        metadata = tree.metadata_map.get(node_id)
-        if metadata:
-            result.append(metadata)
-        else:
-            # Try to find by position if node_id doesn't match exactly
-            for meta in tree.metadata_map.values():
-                if (
-                    meta.start_line == match.start_line
-                    and meta.start_col == match.start_col
-                    and meta.end_line == match.end_line
-                    and meta.end_col == match.end_col
-                    and meta.type == match.node_type
-                ):
-                    result.append(meta)
-                    break
-
-    return result
+    matches = query_source(
+        tree.module.code,
+        selector,
+        include_code=False,
+        node_ids_by_exact_key=build_exact_key_to_id_from_metadata(tree.metadata_map),
+    )
+    return [
+        tree.metadata_map[match.node_id]
+        for match in matches
+        if match.node_id in tree.metadata_map
+    ]
 
 
 def _find_nodes_simple(

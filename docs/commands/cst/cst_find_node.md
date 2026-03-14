@@ -48,7 +48,8 @@ Use cases:
 Important notes:
 - Tree must be loaded first with cst_load_file
 - XPath search requires query parameter
-- Simple search can use any combination of filters
+- Simple search can use any combination of filters (node_type, name, qualname, line range)
+- For finding by name/type via a selector string (e.g. `function[name='main']`), use **xpath**; **simple** is for explicit parameters. If `query` is provided with `search_type=simple`, it is evaluated as xpath for consistency.
 - Returns node metadata (not full nodes)
 - Use node_id from results with cst_modify_tree
 

@@ -304,7 +304,10 @@ class TestRPCClient:
                 },
             )
             assert select_response.is_success()
-            rows = (select_response.result or {}).get("data", {}).get("data", [])
+            # RPC result is {"success": True, "data": [rows]} for select
+            rows = (select_response.result or {}).get("data", [])
+            if not isinstance(rows, list):
+                rows = []
             assert len(rows) == 1
             assert rows[0]["name"] == "Test User"
         finally:

@@ -32,7 +32,7 @@ CSTQuery Selector Syntax:
 - Descendant combinator: whitespace (A B finds B inside A)
 - Child combinator: > (A > B finds B as direct child of A)
 - Each step: TYPE or * with optional predicates and pseudos
-- Predicates: [attr OP value] (e.g., [name="MyClass"])
+- Predicates: [attr OP value] only (e.g. [name="MyClass"]). Bare [attr] like [name] is invalid; operator and value are required.
 - Pseudos: :first, :last, :nth(N)
 
 Supported TYPE Aliases:
@@ -98,7 +98,7 @@ Important notes:
 |-----------|------|----------|-------------|
 | `project_id` | string | **Yes** | Project UUID (from create_project or list_projects). Required for commands that operate on a project. |
 | `file_path` | string | **Yes** | Target python file path (relative to project root) |
-| `selector` | string | No | CSTQuery selector string |
+| `selector` | string | No | CSTQuery selector string. Predicate must be [attr OP value] (e.g. [name=\"foo\"]); [name] alone is invalid. |
 | `include_code` | boolean | No | If true, include code snippets for each match (can be large) Default: `false`. |
 | `max_results` | integer | No | Maximum number of matches to return Default: `200`. |
 | `replace_with` | string | No | If set, replace the matched node(s) with this code (single string). Use code_lines for multi-line to avoid escaping. One call = find + replace. |

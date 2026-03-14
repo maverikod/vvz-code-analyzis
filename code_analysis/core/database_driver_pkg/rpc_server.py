@@ -27,6 +27,7 @@ from ..constants import (
     RPC_MAX_REQUEST_SIZE,
     RPC_PROCESSING_LOOP_INTERVAL,
     RPC_SERVER_SOCKET_TIMEOUT,
+    SQLITE_SERIALIZED_EXECUTION_MODE,
 )
 
 from code_analysis.core.database_client.protocol import (
@@ -44,6 +45,7 @@ from code_analysis.core.database_client.protocol import (
     RPCResponse,
 )
 from .drivers.base import BaseDatabaseDriver
+from .drivers.sqlite import SQLiteDriver
 from .exceptions import RPCServerError
 from .request_queue import RequestPriority, RequestQueue
 from .rpc_handlers import RPCHandlers
@@ -82,6 +84,7 @@ class RPCServer:
         self._lock = threading.Lock()
         self.handlers = RPCHandlers(driver)
         self.worker_pool_size = worker_pool_size
+        self._use_serial_sqlite = isinstance(driver, SQLiteDriver)
         self.worker_pool: Optional[ThreadPoolExecutor] = None
         # Map request_id -> (client_sock, condition, response)
         self._pending_responses: Dict[
@@ -111,11 +114,16 @@ class RPCServer:
             self.running = True
             logger.info(f"RPC server started on socket: {self.socket_path}")
 
-            # Start worker pool for async request processing
-            self.worker_pool = ThreadPoolExecutor(
-                max_workers=self.worker_pool_size, thread_name_prefix="RPCWorker"
-            )
-            logger.info(f"RPC worker pool started (size: {self.worker_pool_size})")
+            if self._use_serial_sqlite:
+                logger.info(
+                    "RPC execution mode: %s (single SQL consumer)",
+                    SQLITE_SERIALIZED_EXECUTION_MODE,
+                )
+            else:
+                self.worker_pool = ThreadPoolExecutor(
+                    max_workers=self.worker_pool_size, thread_name_prefix="RPCWorker"
+                )
+                logger.info("RPC worker pool started (size: %s)", self.worker_pool_size)
 
             # Start request processing thread
             processing_thread = threading.Thread(
@@ -182,6 +190,23 @@ class RPCServer:
 
             logger.info("RPC server stopped")
 
+    def _priority_for_request(self, rpc_request: RPCRequest) -> RequestPriority:
+        """Return queue priority for a request.
+
+        Single-row lookups that unblock queue jobs (e.g. get_project at start of
+        update_indexes) get HIGH priority so they are not stuck behind bulk
+        worker traffic (file_watcher, indexing, vectorization).
+        """
+        if rpc_request.method != "select":
+            return RequestPriority.NORMAL
+        params = rpc_request.params or {}
+        if params.get("table_name") != "projects":
+            return RequestPriority.NORMAL
+        where = params.get("where")
+        if not isinstance(where, dict) or len(where) != 1 or "id" not in where:
+            return RequestPriority.NORMAL
+        return RequestPriority.HIGH
+
     def _handle_client(self, client_sock: socket.socket) -> None:
         """Handle client connection.
 
@@ -223,12 +248,15 @@ class RPCServer:
                     None,
                 )
 
-            # Add request to queue for async processing
+            # Add request to queue for async processing.
+            # Use HIGH priority for small, latency-sensitive lookups (e.g. get_project
+            # from update_indexes) so queue jobs are not stuck behind bulk worker traffic.
+            priority = self._priority_for_request(rpc_request)
             try:
                 self.request_queue.enqueue(
                     rpc_request.request_id,
                     rpc_request,
-                    priority=RequestPriority.NORMAL,
+                    priority=priority,
                 )
                 logger.debug(
                     f"Request {rpc_request.request_id} enqueued for async processing"
@@ -290,61 +318,85 @@ class RPCServer:
                 pass
 
     def _process_requests_loop(self) -> None:
-        """Background loop to process requests from queue asynchronously."""
+        """Background loop: dequeue and process requests.
+
+        For SQLite driver, processing is serialized in this thread (single
+        SQL-executing consumer). For other drivers, requests are submitted
+        to the worker pool.
+        """
         logger.info("RPC request processing loop started")
         while self.running:
             try:
-                # Get next request from queue
                 queued_request = self.request_queue.dequeue()
                 if queued_request is None:
-                    # No requests available, sleep briefly
                     time.sleep(RPC_PROCESSING_LOOP_INTERVAL)
                     continue
 
-                # Process request in worker pool
-                if self.worker_pool:
-                    logger.debug(
-                        f"Submitting request {queued_request.request_id} to worker pool"
-                    )
-                    self.worker_pool.submit(
-                        self._process_request_async,
-                        queued_request.request_id,
-                        queued_request.request,
-                    )
+                if self._use_serial_sqlite:
+                    try:
+                        response = self._process_request(queued_request.request)
+                    except Exception as e:
+                        logger.error(
+                            "Error processing request %s: %s",
+                            queued_request.request_id,
+                            e,
+                            exc_info=True,
+                        )
+                        response = RPCResponse(
+                            error=RPCError(
+                                code=ErrorCode.INTERNAL_ERROR,
+                                message=f"Request processing error: {e}",
+                            ),
+                            request_id=queued_request.request_id,
+                        )
+                    self._deliver_response(queued_request.request_id, response)
+                else:
+                    if self.worker_pool:
+                        logger.debug(
+                            "Submitting request %s to worker pool",
+                            queued_request.request_id,
+                        )
+                        self.worker_pool.submit(
+                            self._process_request_async,
+                            queued_request.request_id,
+                            queued_request.request,
+                        )
             except Exception as e:
                 logger.error(f"Error in request processing loop: {e}", exc_info=True)
-                time.sleep(RPC_PROCESSING_LOOP_INTERVAL * 10)  # Wait before retrying
+                time.sleep(RPC_PROCESSING_LOOP_INTERVAL * 10)
 
         logger.info("RPC request processing loop stopped")
 
+    def _deliver_response(self, request_id: str, response: RPCResponse) -> None:
+        """Store response and notify waiting client. Thread-safe."""
+        with self._responses_lock:
+            if request_id in self._pending_responses:
+                client_sock, condition, _ = self._pending_responses[request_id]
+                self._pending_responses[request_id] = (
+                    client_sock,
+                    condition,
+                    response,
+                )
+                condition.notify()
+
     def _process_request_async(self, request_id: str, request: RPCRequest) -> None:
-        """Process request asynchronously and send response to client.
+        """Process request in worker thread and deliver response.
+
+        Used only when not in SQLite serialized mode (worker pool path).
 
         Args:
             request_id: Request ID
             request: RPC request to process
         """
         try:
-            logger.debug(f"Processing request {request_id} asynchronously")
-            # Process request
+            logger.debug("Processing request %s asynchronously", request_id)
             response = self._process_request(request)
-            logger.debug(f"Request {request_id} processed, sending response")
-
-            # Send response to waiting client
-            with self._responses_lock:
-                if request_id in self._pending_responses:
-                    client_sock, condition, _ = self._pending_responses[request_id]
-                    self._pending_responses[request_id] = (
-                        client_sock,
-                        condition,
-                        response,
-                    )
-                    # Notify waiting client
-                    # Note: condition uses self._responses_lock, so we're already holding it
-                    condition.notify()
+            logger.debug("Request %s processed, sending response", request_id)
+            self._deliver_response(request_id, response)
         except Exception as e:
-            logger.error(f"Error processing request {request_id}: {e}", exc_info=True)
-            # Send error response
+            logger.error(
+                "Error processing request %s: %s", request_id, e, exc_info=True
+            )
             error_response = RPCResponse(
                 error=RPCError(
                     code=ErrorCode.INTERNAL_ERROR,
@@ -352,17 +404,7 @@ class RPCServer:
                 ),
                 request_id=request_id,
             )
-            with self._responses_lock:
-                if request_id in self._pending_responses:
-                    client_sock, condition, _ = self._pending_responses[request_id]
-                    self._pending_responses[request_id] = (
-                        client_sock,
-                        condition,
-                        error_response,
-                    )
-                    # Notify waiting client
-                    # Note: condition uses self._responses_lock, so we're already holding it
-                    condition.notify()
+            self._deliver_response(request_id, error_response)
 
     def _process_request(self, request: RPCRequest) -> RPCResponse:
         """Process RPC request and return response.

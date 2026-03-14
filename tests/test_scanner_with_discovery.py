@@ -5,6 +5,7 @@ Author: Vasiliy Zdanovskiy
 email: vasilyvz@gmail.com
 """
 
+import json
 import tempfile
 import uuid
 from pathlib import Path
@@ -28,9 +29,12 @@ def project_id():
 
 
 def create_projectid_file(project_dir: Path, project_id: str) -> None:
-    """Create projectid file in project directory."""
+    """Create projectid file in JSON format (required by load_project_info)."""
     projectid_path = project_dir / "projectid"
-    projectid_path.write_text(project_id, encoding="utf-8")
+    projectid_path.write_text(
+        json.dumps({"id": project_id, "description": "Test"}),
+        encoding="utf-8",
+    )
 
 
 def create_file(directory: Path, filename: str, content: str = "") -> Path:
@@ -160,9 +164,9 @@ class TestScannerWithDiscovery:
         project_root.mkdir()
         create_projectid_file(project_root, project_id)
 
-        # Create files
+        # Create files (only .py is in code_file_extensions; .json is excluded by scanner)
         file1 = create_file(project_root, "file1.py", "print('hello')")
-        file2 = create_file(project_root, "file2.json", '{"key": "value"}')
+        create_file(project_root, "file2.json", '{"key": "value"}')
 
         # Create file in ignored directory
         ignored_dir = project_root / "__pycache__"
@@ -171,9 +175,8 @@ class TestScannerWithDiscovery:
         # Scan directory
         files = scan_directory(temp_dir, [temp_dir])
 
-        # Check results - ignored files should not be included
+        # Check results - code file included, __pycache__ and non-code extensions excluded
         assert str(file1.resolve()) in files
-        assert str(file2.resolve()) in files
         assert str(ignored_file.resolve()) not in files
 
     def test_scan_directory_file_metadata(self, temp_dir, project_id):

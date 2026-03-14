@@ -226,15 +226,12 @@ email: vasilyvz@gmail.com
 
 ## Miscellaneous (`docs/commands/misc/`)
 
-| Command         | Class                 | Source File / Note                    |
-|-----------------|----------------------|----------------------------------------|
-| analyze_project | AnalyzeProjectCommand| commands/analyze_project_command (optional) |
-| analyze_file    | AnalyzeFileCommand   | commands/analyze_file_command (optional) |
-| help            | HelpCommand          | commands/help_command (optional)       |
-| check_vectors  | CheckVectorsCommand  | commands/check_vectors_command.py      |
-| add_watch_dir   | AddWatchDirCommand   | commands/watch_dirs_commands (optional) |
-| remove_watch_dir| RemoveWatchDirCommand| (same)                                |
+| Command        | Class                | Source File                          |
+|----------------|----------------------|--------------------------------------|
+| check_vectors  | CheckVectorsCommand  | commands/check_vectors_command.py    |
+
+*Removed commands: analyze_project, analyze_file, help, add_watch_dir, remove_watch_dir. Use update_indexes and comprehensive_analysis (with optional file_path) instead of analyze_project/analyze_file.*
 
 ---
 
-Registration of all commands: `code_analysis/hooks.py` → `register_code_analysis_commands(reg)`.
+Registration of all commands: `code_analysis/hooks.py` → `register_code_analysis_commands(reg)`. `code_analysis/hooks.py` → `register_code_analysis_commands(reg)`.

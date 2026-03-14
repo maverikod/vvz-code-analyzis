@@ -126,18 +126,20 @@ def modify_tree(tree_id: str, operations: List[TreeOperation]) -> CSTTree:
     # Snapshot metadata before any changes so we can preserve node_ids on rebuild.
     # Replace: same node_id is assigned to the new content at (start_line, start_col).
     previous_metadata_map: Dict[str, TreeNodeMetadata] = dict(tree.metadata_map)
-    replaced_positions_to_id: Dict[Tuple[int, int], str] = {}
+    replaced_positions_to_id: Dict[Tuple[int, int, str], str] = {}
     for op in sorted_ops:
         if op.action == TreeOperationType.REPLACE and op.node_id:
             meta = tree.metadata_map.get(op.node_id)
             if meta and hasattr(meta, "start_line") and hasattr(meta, "start_col"):
-                replaced_positions_to_id[(meta.start_line, meta.start_col)] = op.node_id
+                replaced_positions_to_id[
+                    (meta.start_line, meta.start_col, meta.type)
+                ] = op.node_id
         elif op.action == TreeOperationType.REPLACE_RANGE and op.start_node_id:
             meta = tree.metadata_map.get(op.start_node_id)
             if meta and hasattr(meta, "start_line") and hasattr(meta, "start_col"):
-                replaced_positions_to_id[(meta.start_line, meta.start_col)] = (
-                    op.start_node_id
-                )
+                replaced_positions_to_id[
+                    (meta.start_line, meta.start_col, meta.type)
+                ] = op.start_node_id
 
     try:
         if _use_mutable_batch_path(operations):

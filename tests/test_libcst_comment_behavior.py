@@ -54,40 +54,42 @@ def test_libcst_preserves_multiple_comment_lines():
 
 
 def test_libcst_preserves_inline_comment_after_statement():
-    """LibCST round-trip preserves comment after a simple statement."""
+    """LibCST round-trip preserves comment after a simple statement (inline)."""
     source = "pass  # after pass\n"
     result = _round_trip(source)
-    assert "# after pass" in result
+    assert (
+        "# after pass" in result
+    ), "LibCST must preserve inline (same-line) comments in module.code"
 
 
 # --- Docstrings ---
 
 
 def test_libcst_preserves_module_docstring():
-    """LibCST round-trip preserves module-level docstring."""
+    """LibCST round-trip preserves module-level docstring (TZ §4.1 policy evidence)."""
     source = '"""Module docstring."""\nx = 1\n'
     result = _round_trip(source)
     assert (
         '"""Module docstring."""' in result or "Module docstring" in result
-    ), "LibCST must preserve module docstring in module.code"
+    ), "LibCST must preserve module docstring in module.code; TZ §4.1 docstrings as-is"
 
 
 def test_libcst_preserves_function_docstring():
-    """LibCST round-trip preserves function docstring."""
+    """LibCST round-trip preserves function docstring (TZ §4.1 policy evidence)."""
     source = 'def f():\n    """Function doc."""\n    pass\n'
     result = _round_trip(source)
     assert (
         "Function doc" in result or '"""Function doc."""' in result
-    ), "LibCST must preserve function docstring in module.code"
+    ), "LibCST must preserve function docstring in module.code; TZ §4.1 docstrings as-is"
 
 
 def test_libcst_preserves_class_docstring():
-    """LibCST round-trip preserves class docstring."""
+    """LibCST round-trip preserves class docstring (TZ §4.1 policy evidence)."""
     source = 'class C:\n    """Class doc."""\n    pass\n'
     result = _round_trip(source)
     assert (
         "Class doc" in result or '"""Class doc."""' in result
-    ), "LibCST must preserve class docstring in module.code"
+    ), "LibCST must preserve class docstring in module.code; TZ §4.1 docstrings as-is"
 
 
 # --- Mixed comments and docstrings ---
@@ -98,8 +100,12 @@ def test_libcst_preserves_comment_and_docstring_together():
     source = '# top comment\n"""Module doc."""\ndef f():\n    """F doc."""\n    pass  # eol\n'
     result = _round_trip(source)
     assert "# top comment" in result, "Standalone comment must be preserved"
-    assert "Module doc" in result or '"""Module doc."""' in result
-    assert "F doc" in result or '"""F doc."""' in result
+    assert (
+        "Module doc" in result or '"""Module doc."""' in result
+    ), "LibCST must preserve module docstring when mixed with comments"
+    assert (
+        "F doc" in result or '"""F doc."""' in result
+    ), "LibCST must preserve function docstring when mixed with comments"
     assert "# eol" in result, "End-of-line comment must be preserved"
 
 
@@ -107,9 +113,11 @@ def test_libcst_preserves_comment_between_docstring_and_code():
     """LibCST round-trip preserves comment between docstring and following code."""
     source = '"""Doc."""\n# comment between\na = 1\n'
     result = _round_trip(source)
-    assert "# comment between" in result
-    assert "Doc" in result
-    assert "a = 1" in result
+    assert (
+        "# comment between" in result
+    ), "Comment between docstring and code must be preserved as comment"
+    assert "Doc" in result, "Docstring content must be preserved"
+    assert "a = 1" in result, "Code after comment must be preserved"
 
 
 # --- Negative guard: comments are not converted to docstrings ---
@@ -167,11 +175,14 @@ def test_libcst_comment_and_docstring_remain_distinct():
 def test_libcst_round_trip_identity_for_simple_module_with_comments():
     """
     For a simple module with only comments (no docstrings), round-trip output
-    should match original or preserve all comment tokens so behavior is deterministic.
+    preserves all comment tokens; behavior is deterministic (policy evidence).
     """
     source = "a = 1\n# comment\nb = 2  # eol\n"
     result = _round_trip(source)
-    assert "a = 1" in result and "b = 2" in result
-    assert "# comment" in result and "# eol" in result
-    # LibCST may normalize trailing newlines; we only require content fidelity
-    assert result.strip().count("#") >= 2
+    assert "a = 1" in result and "b = 2" in result, "Code lines must be preserved"
+    assert (
+        "# comment" in result and "# eol" in result
+    ), "All comments must be preserved in round-trip for policy compliance"
+    assert (
+        result.strip().count("#") >= 2
+    ), "Comment count must be preserved; no silent loss or conversion"

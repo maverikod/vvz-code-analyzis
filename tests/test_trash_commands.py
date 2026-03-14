@@ -173,12 +173,12 @@ class TestClearTrashCommand:
         assert result["removed"] == []
 
     def test_clear_skips_files(self, trash_dir):
-        """Clear only removes directories; files are left (not in removed list)."""
+        """Clear removes both directories and files; removed_count counts all removed."""
         path = Path(trash_dir)
         (path / "Dir_2025-01-29T12-00-00Z").mkdir()
         (path / "readme.txt").write_text("x")
         cmd = ClearTrashCommand(trash_dir=trash_dir, dry_run=False)
         result = cmd.execute()
         assert result["success"] is True
-        assert result["removed_count"] == 1
-        assert (path / "readme.txt").exists()
+        assert result["removed_count"] == 2
+        assert not (path / "readme.txt").exists()

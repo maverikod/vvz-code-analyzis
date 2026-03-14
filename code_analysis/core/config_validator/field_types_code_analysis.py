@@ -25,9 +25,7 @@ def validate_field_types_code_analysis_impl(
     validate_field_type(
         results, "code_analysis", "port", code_analysis.get("port"), int
     )
-    validate_field_type(
-        results, "code_analysis", "log", code_analysis.get("log"), str
-    )
+    validate_field_type(results, "code_analysis", "log", code_analysis.get("log"), str)
     validate_field_type(
         results,
         "code_analysis",

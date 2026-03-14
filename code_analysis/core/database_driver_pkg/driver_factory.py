@@ -1,6 +1,9 @@
 """
 Driver factory for creating database driver instances.
 
+Strict universal-to-specific driver mapping: only driver types in the supported map
+are resolved; all others raise DriverNotFoundError. No implicit fallbacks.
+
 Author: Vasiliy Zdanovskiy
 email: vasilyvz@gmail.com
 """
@@ -13,31 +16,46 @@ from .drivers.base import BaseDatabaseDriver
 from .drivers.sqlite import SQLiteDriver
 from .exceptions import DriverNotFoundError
 
+# Supported driver types: explicit map only. No hidden fallbacks.
+_SUPPORTED_DRIVERS: Dict[str, type[BaseDatabaseDriver]] = {
+    "sqlite": SQLiteDriver,
+}
+
+
+def _normalize_driver_type(driver_type: str) -> str:
+    """Normalize driver type for lookup: strip and lower-case."""
+    if not driver_type or not isinstance(driver_type, str):
+        return ""
+    return driver_type.strip().lower()
+
 
 def create_driver(driver_type: str, config: Dict[str, Any]) -> BaseDatabaseDriver:
     """Create database driver instance.
 
+    Driver type is validated against the supported map only. Unsupported or
+    ambiguous values raise DriverNotFoundError. No implicit default driver.
+
     Args:
-        driver_type: Driver type ('sqlite', 'postgres', 'mysql', etc.)
-        config: Driver-specific configuration dictionary
+        driver_type: Driver type ('sqlite' supported; others raise).
+        config: Driver-specific configuration dictionary.
 
     Returns:
-        Driver instance
+        Connected driver instance.
 
     Raises:
-        DriverNotFoundError: If driver type is not found
+        DriverNotFoundError: If driver type is not in the supported map.
     """
-    driver_type_lower = driver_type.lower()
+    normalized = _normalize_driver_type(driver_type)
+    if not normalized:
+        raise DriverNotFoundError("Driver type is required and must be non-empty")
 
-    if driver_type_lower == "sqlite":
-        driver = SQLiteDriver()
-        driver.connect(config)
-        return driver
-    elif driver_type_lower == "postgres":
-        # Future implementation
-        raise DriverNotFoundError(f"Driver type '{driver_type}' not yet implemented")
-    elif driver_type_lower == "mysql":
-        # Future implementation
-        raise DriverNotFoundError(f"Driver type '{driver_type}' not yet implemented")
-    else:
-        raise DriverNotFoundError(f"Unknown driver type: {driver_type}")
+    if normalized not in _SUPPORTED_DRIVERS:
+        supported = list(_SUPPORTED_DRIVERS.keys())
+        raise DriverNotFoundError(
+            f"Unknown driver type: {driver_type!r}. Supported: {supported}."
+        )
+
+    driver_class = _SUPPORTED_DRIVERS[normalized]
+    driver: BaseDatabaseDriver = driver_class()
+    driver.connect(config)
+    return driver

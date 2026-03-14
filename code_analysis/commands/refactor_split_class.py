@@ -31,7 +31,7 @@ class SplitClassMCPCommand(BaseMCPCommand):
     category = "refactor"
     author = "Vasiliy Zdanovskiy"
     email = "vasilyvz@gmail.com"
-    use_queue = False
+    use_queue = True
 
     @classmethod
     def get_schema(cls) -> Dict[str, Any]:
@@ -365,10 +365,20 @@ class SplitClassMCPCommand(BaseMCPCommand):
         dry_run: bool = False,
         **kwargs,
     ) -> SuccessResult:
+        from ..core.progress_tracker import get_progress_tracker_from_context
+
+        progress_tracker = get_progress_tracker_from_context(
+            kwargs.get("context") or {}
+        )
         try:
             root_path = self._resolve_project_root(project_id)
             db = self._open_database()
             proj_id = project_id
+
+            if progress_tracker:
+                progress_tracker.set_status("running")
+                progress_tracker.set_description("Validating project and config...")
+                progress_tracker.set_progress(0)
 
             # Parse config if it's a string
             if isinstance(config, str):
@@ -385,6 +395,10 @@ class SplitClassMCPCommand(BaseMCPCommand):
                 db.disconnect()
 
                 if success:
+                    if progress_tracker:
+                        progress_tracker.set_progress(100)
+                        progress_tracker.set_description("Preview completed")
+                        progress_tracker.set_status("completed")
                     return SuccessResult(
                         data={
                             "success": True,
@@ -400,6 +414,9 @@ class SplitClassMCPCommand(BaseMCPCommand):
             else:
                 # Execute mode - perform actual split
                 # Create backup before modification
+                if progress_tracker:
+                    progress_tracker.set_description("Creating backup...")
+                    progress_tracker.set_progress(5)
                 file_path_obj = self._validate_file_path(file_path, root_path)
                 backup_manager = BackupManager(root_path)
 
@@ -425,6 +442,9 @@ class SplitClassMCPCommand(BaseMCPCommand):
                         details={"file_path": str(file_path_obj)},
                     )
                 logger.info(f"Backup created before split: {backup_uuid}")
+                if progress_tracker:
+                    progress_tracker.set_description("Splitting class...")
+                    progress_tracker.set_progress(25)
 
                 config_data = BaseMCPCommand._get_raw_config()
                 git_ok, git_err = commit_after_write(
@@ -439,9 +459,14 @@ class SplitClassMCPCommand(BaseMCPCommand):
 
                 cmd = InternalRefactorCommand(proj_id, database=db, root_dir=root_path)
                 result = await cmd.split_class(str(root_path), file_path, config)
+                if progress_tracker:
+                    progress_tracker.set_progress(70)
 
                 # Update database after successful split
                 if result.get("success"):
+                    if progress_tracker:
+                        progress_tracker.set_description("Updating database...")
+                        progress_tracker.set_progress(80)
                     try:
                         update_result = db.index_file(
                             file_path=str(file_path_obj),
@@ -469,6 +494,10 @@ class SplitClassMCPCommand(BaseMCPCommand):
                 db.disconnect()
 
                 if result.get("success"):
+                    if progress_tracker:
+                        progress_tracker.set_progress(100)
+                        progress_tracker.set_description("Split completed")
+                        progress_tracker.set_status("completed")
                     git_ok, git_err = commit_after_write(
                         root_path,
                         [file_path_obj],
@@ -488,4 +517,7 @@ class SplitClassMCPCommand(BaseMCPCommand):
                     details=result,
                 )
         except Exception as e:
+            if progress_tracker:
+                progress_tracker.set_status("failed")
+                progress_tracker.set_description(str(e)[:512])
             return self._handle_error(e, "SPLIT_CLASS_ERROR", "split_class")

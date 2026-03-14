@@ -31,7 +31,7 @@ class ExtractSuperclassMCPCommand(BaseMCPCommand):
     category = "refactor"
     author = "Vasiliy Zdanovskiy"
     email = "vasilyvz@gmail.com"
-    use_queue = False
+    use_queue = True
 
     @classmethod
     def get_schema(cls) -> Dict[str, Any]:
@@ -368,10 +368,20 @@ class ExtractSuperclassMCPCommand(BaseMCPCommand):
         dry_run: bool = False,
         **kwargs,
     ) -> SuccessResult:
+        from ..core.progress_tracker import get_progress_tracker_from_context
+
+        progress_tracker = get_progress_tracker_from_context(
+            kwargs.get("context") or {}
+        )
         try:
             root_path = self._resolve_project_root(project_id)
             db = self._open_database()
             proj_id = project_id
+
+            if progress_tracker:
+                progress_tracker.set_status("running")
+                progress_tracker.set_description("Validating project and config...")
+                progress_tracker.set_progress(0)
 
             # Parse config if it's a string
             if isinstance(config, str):
@@ -388,6 +398,10 @@ class ExtractSuperclassMCPCommand(BaseMCPCommand):
                 db.disconnect()
 
                 if success:
+                    if progress_tracker:
+                        progress_tracker.set_progress(100)
+                        progress_tracker.set_description("Preview completed")
+                        progress_tracker.set_status("completed")
                     return SuccessResult(
                         data={
                             "success": True,
@@ -402,6 +416,9 @@ class ExtractSuperclassMCPCommand(BaseMCPCommand):
                 )
             else:
                 # Execute mode - perform actual extraction
+                if progress_tracker:
+                    progress_tracker.set_description("Creating backup...")
+                    progress_tracker.set_progress(5)
                 # Create backup before modification
                 file_path_obj = self._validate_file_path(file_path, root_path)
                 backup_manager = BackupManager(root_path)
@@ -420,6 +437,9 @@ class ExtractSuperclassMCPCommand(BaseMCPCommand):
                         details={"file_path": str(file_path_obj)},
                     )
                 logger.info(f"Backup created before extraction: {backup_uuid}")
+                if progress_tracker:
+                    progress_tracker.set_description("Extracting superclass...")
+                    progress_tracker.set_progress(25)
 
                 config_data = BaseMCPCommand._get_raw_config()
                 git_ok, git_err = commit_after_write(
@@ -434,9 +454,14 @@ class ExtractSuperclassMCPCommand(BaseMCPCommand):
 
                 cmd = InternalRefactorCommand(proj_id, database=db, root_dir=root_path)
                 result = await cmd.extract_superclass(str(root_path), file_path, config)
+                if progress_tracker:
+                    progress_tracker.set_progress(70)
 
                 # Update database after successful extraction
                 if result.get("success"):
+                    if progress_tracker:
+                        progress_tracker.set_description("Updating database...")
+                        progress_tracker.set_progress(80)
                     try:
                         file_path_obj = Path(file_path)
                         path_for_index = (
@@ -470,6 +495,10 @@ class ExtractSuperclassMCPCommand(BaseMCPCommand):
                 db.disconnect()
 
                 if result.get("success"):
+                    if progress_tracker:
+                        progress_tracker.set_progress(100)
+                        progress_tracker.set_description("Extraction completed")
+                        progress_tracker.set_status("completed")
                     path_for_commit = (
                         file_path_obj
                         if file_path_obj.is_absolute()
@@ -496,6 +525,9 @@ class ExtractSuperclassMCPCommand(BaseMCPCommand):
                     details=result,
                 )
         except Exception as e:
+            if progress_tracker:
+                progress_tracker.set_status("failed")
+                progress_tracker.set_description(str(e)[:512])
             return self._handle_error(
                 e, "EXTRACT_SUPERCLASS_ERROR", "extract_superclass"
             )

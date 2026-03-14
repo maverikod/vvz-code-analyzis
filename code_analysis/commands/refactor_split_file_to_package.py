@@ -31,7 +31,7 @@ class SplitFileToPackageMCPCommand(BaseMCPCommand):
     category = "refactor"
     author = "Vasiliy Zdanovskiy"
     email = "vasilyvz@gmail.com"
-    use_queue = False
+    use_queue = True
 
     @classmethod
     def get_schema(cls) -> Dict[str, Any]:
@@ -336,14 +336,27 @@ class SplitFileToPackageMCPCommand(BaseMCPCommand):
         config: Any,
         **kwargs,
     ) -> SuccessResult:
+        from ..core.progress_tracker import get_progress_tracker_from_context
+
+        progress_tracker = get_progress_tracker_from_context(
+            kwargs.get("context") or {}
+        )
         try:
             root_path = self._resolve_project_root(project_id)
             db = self._open_database()
             proj_id = project_id
 
+            if progress_tracker:
+                progress_tracker.set_status("running")
+                progress_tracker.set_description("Validating project and config...")
+                progress_tracker.set_progress(0)
+
             if isinstance(config, str):
                 config = json.loads(config)
 
+            if progress_tracker:
+                progress_tracker.set_description("Creating backup...")
+                progress_tracker.set_progress(5)
             # Create backup before modification
             file_path_obj = self._validate_file_path(file_path, root_path)
             backup_manager = BackupManager(root_path)
@@ -370,6 +383,9 @@ class SplitFileToPackageMCPCommand(BaseMCPCommand):
                     details={"file_path": str(file_path_obj)},
                 )
             logger.info(f"Backup created before split_file_to_package: {backup_uuid}")
+            if progress_tracker:
+                progress_tracker.set_description("Splitting file to package...")
+                progress_tracker.set_progress(25)
 
             config_data = BaseMCPCommand._get_raw_config()
             git_ok, git_err = commit_after_write(
@@ -384,9 +400,14 @@ class SplitFileToPackageMCPCommand(BaseMCPCommand):
 
             cmd = InternalRefactorCommand(proj_id, database=db, root_dir=root_path)
             result = await cmd.split_file_to_package(str(root_path), file_path, config)
+            if progress_tracker:
+                progress_tracker.set_progress(65)
 
             # Update database for all created files after successful split
             if result.get("success"):
+                if progress_tracker:
+                    progress_tracker.set_description("Updating database...")
+                    progress_tracker.set_progress(75)
                 try:
                     # Get file directory and name to determine package path
                     file_path_obj_resolved = file_path_obj.resolve()
@@ -468,6 +489,10 @@ class SplitFileToPackageMCPCommand(BaseMCPCommand):
             db.disconnect()
 
             if result.get("success"):
+                if progress_tracker:
+                    progress_tracker.set_progress(100)
+                    progress_tracker.set_description("Split completed")
+                    progress_tracker.set_status("completed")
                 file_dir = file_path_obj.resolve().parent
                 file_stem = file_path_obj.resolve().stem
                 package_dir = file_dir / file_stem
@@ -523,6 +548,9 @@ class SplitFileToPackageMCPCommand(BaseMCPCommand):
                 details=result,
             )
         except Exception as e:
+            if progress_tracker:
+                progress_tracker.set_status("failed")
+                progress_tracker.set_description(str(e)[:512])
             return self._handle_error(
                 e, "SPLIT_FILE_TO_PACKAGE_ERROR", "split_file_to_package"
             )

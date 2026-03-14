@@ -16,6 +16,7 @@ from typing import Any, Dict, Optional
 
 from ..backup_manager import BackupManager
 from ..file_lock import file_lock
+from .node_id_markers import append_persisted_node_ids
 from .tree_builder import get_tree
 
 logger = logging.getLogger(__name__)
@@ -127,7 +128,12 @@ def save_tree_to_file(
 
             # Step 3: Generate source code from CST tree
             t0 = time.perf_counter()
-            source_code = tree.module.code
+            clean_source_code = tree.module.code
+            source_code = append_persisted_node_ids(
+                clean_source_code,
+                tree.metadata_map,
+                tree.root_node_id,
+            )
             timings["code_gen"] = time.perf_counter() - t0
 
             # Step 4: Write to target.tmp (same directory as target)
@@ -156,8 +162,8 @@ def save_tree_to_file(
 
             # Step 7: Ensure file record exists (create or update in files table)
             t0 = time.perf_counter()
-            lines = source_code.count("\n") + (1 if source_code else 0)
-            stripped = source_code.lstrip()
+            lines = clean_source_code.count("\n") + (1 if clean_source_code else 0)
+            stripped = clean_source_code.lstrip()
             has_docstring = stripped.startswith('"""') or stripped.startswith("'''")
             last_modified_timestamp = target_path.stat().st_mtime
             last_modified = datetime.fromtimestamp(last_modified_timestamp)
@@ -202,6 +208,7 @@ def save_tree_to_file(
             t0 = time.perf_counter()
             from ..database.file_tree_sync import sync_file_to_db_atomic
 
+            # Pass source_code with markers so DB tree gets same node_ids as in-memory tree.
             sync_result = sync_file_to_db_atomic(
                 database=database,
                 project_id=project_id,

@@ -67,31 +67,56 @@ class ListProjectsMCPCommand(BaseMCPCommand):
             "type": "object",
             "description": (
                 "List all projects in the database with their UUID and metadata. "
-                "Allowed parameter: watched_dir_id (optional). Does NOT accept root_dir; "
-                "database path is resolved from server configuration."
+                "Optional filters: watched_dir_id, name_contains, comment_contains. "
+                "Database path is resolved from server configuration."
             ),
             "properties": {
                 "watched_dir_id": {
                     "type": "string",
                     "description": (
                         "Optional watched directory identifier (UUID4). "
-                        "If provided, only projects from this watched directory will be returned. "
-                        "If not provided, all projects from all watched directories are returned."
+                        "If provided, only projects from this watched directory will be returned."
                     ),
                     "examples": [
                         "550e8400-e29b-41d4-a716-446655440000",
                     ],
+                },
+                "name_contains": {
+                    "type": "string",
+                    "description": (
+                        "Optional substring to filter projects by name (case-insensitive). "
+                        "Only projects whose name contains this string are returned."
+                    ),
+                    "examples": ["vast_srv", "code_analysis"],
+                },
+                "comment_contains": {
+                    "type": "string",
+                    "description": (
+                        "Optional substring to filter projects by comment/description (case-insensitive). "
+                        "Only projects whose comment contains this string are returned."
+                    ),
+                    "examples": ["AI Admin", "pipeline"],
                 },
             },
             "required": [],
             "additionalProperties": False,
             "examples": [
                 {},
-                {
-                    "watched_dir_id": "550e8400-e29b-41d4-a716-446655440000",
-                },
+                {"watched_dir_id": "550e8400-e29b-41d4-a716-446655440000"},
+                {"name_contains": "vast_srv"},
+                {"comment_contains": "pipeline"},
             ],
         }
+
+    def validate_params(
+        self: "ListProjectsMCPCommand", params: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """Validate params; if watched_dir_id is provided, ensure it exists."""
+        params = super().validate_params(params)
+        watched_dir_id = params.get("watched_dir_id")
+        if watched_dir_id:
+            BaseMCPCommand._validate_watch_dir_id_exists(watched_dir_id)
+        return params
 
     @classmethod
     def metadata(cls: type["ListProjectsMCPCommand"]) -> Dict[str, Any]:
@@ -118,34 +143,48 @@ class ListProjectsMCPCommand(BaseMCPCommand):
             "detailed_description": (
                 "The list_projects command retrieves all projects from the database "
                 "and returns for each project: project id, watch_dir (observed directory path), "
-                "and project directory name, plus root_path, comment, watch_dir_id, updated_at.\n\n"
-                "Parameters: Only watched_dir_id (optional). Database path is from server config only.\n\n"
+                "name, comment (description), root_path, watch_dir_id, updated_at.\n\n"
+                "Optional filters: watched_dir_id (UUID), name_contains (substring in name), "
+                "comment_contains (substring in comment/description). All filters are case-insensitive.\n\n"
                 "Operation flow:\n"
-                "1. Opens database from server configuration (config.json)\n"
-                "2. If watched_dir_id is provided, filters projects by watched_dir_id\n"
-                "3. For each project, resolves watch_dir path from watch_dir_paths table\n"
-                "4. Returns list with id, watch_dir (path), name (project dir name), and other metadata\n\n"
+                "1. Validates all present parameters against schema (strict type check)\n"
+                "2. Opens database from server configuration (config.json)\n"
+                "3. Applies watched_dir_id filter if provided\n"
+                "4. Applies name_contains and comment_contains substring filters if provided\n"
+                "5. Resolves watch_dir path from watch_dir_paths table\n"
+                "6. Returns list with id, watch_dir, name, comment, root_path, watch_dir_id, updated_at\n\n"
                 "Use cases:\n"
-                "- Discover all projects and get project_id for other commands\n"
-                "- Get watch_dir path and project directory name per project\n"
-                "- Filter projects by watched directory\n\n"
-                "Important: Each project always includes id, watch_dir (path or None), and name."
+                "- Discover all projects and get project_id (UUID) for other commands\n"
+                "- Find projects by name or description: use name_contains or comment_contains\n"
+                "- Filter by watched directory with watched_dir_id\n\n"
+                "Important: project_id in other commands must be the UUID (id), not the name."
             ),
             "parameters": {
                 "watched_dir_id": {
-                    "description": (
-                        "Optional watched directory identifier (UUID4). "
-                        "If provided, only projects belonging to this watched directory will be returned. "
-                        "If not provided or omitted, all projects from all watched directories are returned. "
-                        "The watched_dir_id can be found in the watch_dirs table or obtained from project metadata. "
-                        "This command has no other parameters; root_dir is not accepted (database path from server config)."
-                    ),
+                    "description": "Optional watched directory identifier (UUID4). Filter by watch_dir.",
                     "type": "string",
                     "required": False,
                     "examples": [
                         "550e8400-e29b-41d4-a716-446655440000",
                         "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
                     ],
+                },
+                "name_contains": {
+                    "description": (
+                        "Optional substring to filter by project name (case-insensitive). "
+                        "Use to find project by name and then use returned id as project_id."
+                    ),
+                    "type": "string",
+                    "required": False,
+                    "examples": ["vast_srv", "code_analysis"],
+                },
+                "comment_contains": {
+                    "description": (
+                        "Optional substring to filter by project comment/description (case-insensitive)."
+                    ),
+                    "type": "string",
+                    "required": False,
+                    "examples": ["AI Admin", "pipeline"],
                 },
             },
             "usage_examples": [
@@ -164,9 +203,20 @@ class ListProjectsMCPCommand(BaseMCPCommand):
                         "watched_dir_id": "550e8400-e29b-41d4-a716-446655440000",
                     },
                     "explanation": (
-                        "Lists only projects that belong to the specified watched directory. "
-                        "Useful for filtering projects by their watch directory location."
+                        "Lists only projects that belong to the specified watched directory."
                     ),
+                },
+                {
+                    "description": "Find projects by name (e.g. get project_id for vast_srv)",
+                    "command": {"name_contains": "vast_srv"},
+                    "explanation": (
+                        "Returns projects whose name contains 'vast_srv'. Use the returned id as project_id in other commands."
+                    ),
+                },
+                {
+                    "description": "Find projects by description/comment",
+                    "command": {"comment_contains": "pipeline"},
+                    "explanation": "Returns projects whose comment contains 'pipeline'.",
                 },
             ],
             "error_cases": {
@@ -252,16 +302,94 @@ class ListProjectsMCPCommand(BaseMCPCommand):
     def _run_list_projects_sync(
         self: "ListProjectsMCPCommand",
         watched_dir_id: Optional[str] = None,
+        name_contains: Optional[str] = None,
+        comment_contains: Optional[str] = None,
     ) -> SuccessResult | ErrorResult:
         """Run blocking DB work for list_projects (called from executor).
 
         Uses one list_projects query and one batch query for watch_dir_paths
         (WHERE watch_dir_id IN (...)) instead of N+1 per-project selects.
         """
+        # #region agent log
+        _t2 = __import__("time").time()
+        try:
+            _log2 = (
+                __import__("json").dumps(
+                    {
+                        "sessionId": "880dc2",
+                        "hypothesisId": "H3",
+                        "location": "list_projects._run_sync.entry",
+                        "message": "sync_entry",
+                        "data": {"t2": _t2},
+                        "timestamp": int(_t2 * 1000),
+                    }
+                )
+                + "\n"
+            )
+            open(
+                "/home/vasilyvz/projects/tools/code_analysis/.cursor/debug-880dc2.log",
+                "a",
+            ).write(_log2)
+        except Exception:  # noqa: S110
+            pass
+        # #endregion
         try:
             database = self._open_database_from_config(auto_analyze=False)
+            # #region agent log
+            _t3 = __import__("time").time()
+            try:
+                _log3 = (
+                    __import__("json").dumps(
+                        {
+                            "sessionId": "880dc2",
+                            "hypothesisId": "H1",
+                            "location": "list_projects._run_sync.after_open_db",
+                            "message": "after_open_db",
+                            "data": {
+                                "t3": _t3,
+                                "elapsed_ms": round((_t3 - _t2) * 1000),
+                            },
+                            "timestamp": int(_t3 * 1000),
+                        }
+                    )
+                    + "\n"
+                )
+                open(
+                    "/home/vasilyvz/projects/tools/code_analysis/.cursor/debug-880dc2.log",
+                    "a",
+                ).write(_log3)
+            except Exception:  # noqa: S110
+                pass
+            # #endregion
             try:
                 project_objects = database.list_projects()
+                # #region agent log
+                _t4 = __import__("time").time()
+                try:
+                    _log4 = (
+                        __import__("json").dumps(
+                            {
+                                "sessionId": "880dc2",
+                                "hypothesisId": "H2",
+                                "location": "list_projects._run_sync.after_list_projects",
+                                "message": "after_list_projects",
+                                "data": {
+                                    "t4": _t4,
+                                    "elapsed_ms": round((_t4 - _t3) * 1000),
+                                    "n": len(project_objects),
+                                },
+                                "timestamp": int(_t4 * 1000),
+                            }
+                        )
+                        + "\n"
+                    )
+                    open(
+                        "/home/vasilyvz/projects/tools/code_analysis/.cursor/debug-880dc2.log",
+                        "a",
+                    ).write(_log4)
+                except Exception:  # noqa: S110
+                    pass
+                # #endregion
 
                 if watched_dir_id:
                     watch_dir = database.select(
@@ -282,6 +410,21 @@ class ListProjectsMCPCommand(BaseMCPCommand):
 
                     project_objects = [
                         p for p in project_objects if p.watch_dir_id == watched_dir_id
+                    ]
+
+                if name_contains is not None:
+                    needle = name_contains.lower()
+                    project_objects = [
+                        p
+                        for p in project_objects
+                        if (p.name or "").lower().find(needle) >= 0
+                    ]
+                if comment_contains is not None:
+                    needle = comment_contains.lower()
+                    project_objects = [
+                        p
+                        for p in project_objects
+                        if (p.comment or "").lower().find(needle) >= 0
                     ]
 
                 # One batch query for all watch_dir paths (no N+1).
@@ -326,11 +469,42 @@ class ListProjectsMCPCommand(BaseMCPCommand):
                     }
                     projects.append(project_dict)
 
+                parts = []
+                if watched_dir_id:
+                    parts.append(f"watched_dir_id: {watched_dir_id}")
+                if name_contains is not None:
+                    parts.append(f"name_contains: {name_contains!r}")
+                if comment_contains is not None:
+                    parts.append(f"comment_contains: {comment_contains!r}")
                 filter_msg = (
-                    f" (filtered by watched_dir_id: {watched_dir_id})"
-                    if watched_dir_id
-                    else ""
+                    (" (filtered by " + ", ".join(parts) + ")") if parts else ""
                 )
+                # #region agent log
+                _t6 = __import__("time").time()
+                try:
+                    _log6 = (
+                        __import__("json").dumps(
+                            {
+                                "sessionId": "880dc2",
+                                "hypothesisId": "H5",
+                                "location": "list_projects._run_sync.before_return",
+                                "message": "before_return",
+                                "data": {
+                                    "t6": _t6,
+                                    "elapsed_since_t4_ms": round((_t6 - _t4) * 1000),
+                                },
+                                "timestamp": int(_t6 * 1000),
+                            }
+                        )
+                        + "\n"
+                    )
+                    open(
+                        "/home/vasilyvz/projects/tools/code_analysis/.cursor/debug-880dc2.log",
+                        "a",
+                    ).write(_log6)
+                except Exception:  # noqa: S110
+                    pass
+                # #endregion
 
                 return SuccessResult(
                     data={
@@ -347,6 +521,8 @@ class ListProjectsMCPCommand(BaseMCPCommand):
     async def execute(
         self: "ListProjectsMCPCommand",
         watched_dir_id: Optional[str] = None,
+        name_contains: Optional[str] = None,
+        comment_contains: Optional[str] = None,
         **kwargs: Any,
     ) -> SuccessResult | ErrorResult:
         """
@@ -355,22 +531,142 @@ class ListProjectsMCPCommand(BaseMCPCommand):
         Args:
             self: Command instance.
             watched_dir_id: Optional watched directory identifier (UUID4) to filter projects.
-            **kwargs: Extra args (unused).
+            name_contains: Optional substring to filter by project name (case-insensitive).
+            comment_contains: Optional substring to filter by project comment (case-insensitive).
+            **kwargs: Extra args; validated and rejected if not in schema.
 
         Returns:
             SuccessResult with list of projects or ErrorResult on failure.
         """
+        # #region agent log
+        _t0 = __import__("time").time()
+        try:
+            _log = (
+                __import__("json").dumps(
+                    {
+                        "sessionId": "880dc2",
+                        "hypothesisId": "H4",
+                        "location": "list_projects.execute.entry",
+                        "message": "entry",
+                        "data": {"t0": _t0},
+                        "timestamp": int(_t0 * 1000),
+                    }
+                )
+                + "\n"
+            )
+            open(
+                "/home/vasilyvz/projects/tools/code_analysis/.cursor/debug-880dc2.log",
+                "a",
+            ).write(_log)
+        except Exception:  # noqa: S110
+            pass
+        # #endregion
+        params: Dict[str, Any] = {
+            "watched_dir_id": watched_dir_id,
+            "name_contains": name_contains,
+            "comment_contains": comment_contains,
+        }
+        params.update(kwargs)
+        schema_props = set((self.get_schema().get("properties") or {}).keys())
+        params_present = {
+            k: v for k, v in params.items() if v is not None and k in schema_props
+        }
+        BaseMCPCommand.validate_params_against_schema(
+            params_present,
+            self.get_schema(),
+            command_name=self.name,
+        )
+        # #region agent log
+        _t1 = __import__("time").time()
+        try:
+            _log1 = (
+                __import__("json").dumps(
+                    {
+                        "sessionId": "880dc2",
+                        "hypothesisId": "H4",
+                        "location": "list_projects.execute.after_validate",
+                        "message": "after_validate",
+                        "data": {"t1": _t1, "elapsed_ms": round((_t1 - _t0) * 1000)},
+                        "timestamp": int(_t1 * 1000),
+                    }
+                )
+                + "\n"
+            )
+            open(
+                "/home/vasilyvz/projects/tools/code_analysis/.cursor/debug-880dc2.log",
+                "a",
+            ).write(_log1)
+        except Exception:  # noqa: S110
+            pass
+        # #endregion
         try:
             result = await asyncio.wait_for(
                 asyncio.get_event_loop().run_in_executor(
                     None,
                     self._run_list_projects_sync,
                     watched_dir_id,
+                    name_contains,
+                    comment_contains,
                 ),
                 timeout=_LIST_PROJECTS_DB_TIMEOUT,
             )
+            # #region agent log
+            _t_end = __import__("time").time()
+            try:
+                _log_end = (
+                    __import__("json").dumps(
+                        {
+                            "sessionId": "880dc2",
+                            "hypothesisId": "H4",
+                            "location": "list_projects.execute.exit",
+                            "message": "exit",
+                            "data": {
+                                "t_end": _t_end,
+                                "elapsed_total_ms": round((_t_end - _t0) * 1000),
+                                "elapsed_after_validate_ms": round(
+                                    (_t_end - _t1) * 1000
+                                ),
+                            },
+                            "timestamp": int(_t_end * 1000),
+                        }
+                    )
+                    + "\n"
+                )
+                open(
+                    "/home/vasilyvz/projects/tools/code_analysis/.cursor/debug-880dc2.log",
+                    "a",
+                ).write(_log_end)
+            except Exception:  # noqa: S110
+                pass
+            # #endregion
             return result
         except asyncio.TimeoutError:
+            # #region agent log
+            _t_to = __import__("time").time()
+            try:
+                _log_to = (
+                    __import__("json").dumps(
+                        {
+                            "sessionId": "880dc2",
+                            "hypothesisId": "timeout",
+                            "location": "list_projects.execute.timeout",
+                            "message": "TimeoutError",
+                            "data": {
+                                "t_timeout": _t_to,
+                                "elapsed_since_t0_ms": round((_t_to - _t0) * 1000),
+                            },
+                            "timestamp": int(_t_to * 1000),
+                        }
+                    )
+                    + "\n"
+                )
+                open(
+                    "/home/vasilyvz/projects/tools/code_analysis/.cursor/debug-880dc2.log",
+                    "a",
+                ).write(_log_to)
+            except Exception:  # noqa: S110
+                pass
+            # #endregion
             return self._handle_error(
                 TimeoutError(
                     f"list_projects did not complete within {_LIST_PROJECTS_DB_TIMEOUT}s"

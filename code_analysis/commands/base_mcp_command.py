@@ -193,6 +193,85 @@ class BaseMCPCommand(Command):
         return resolve_storage_paths(config_data=config_data, config_path=config_path)
 
     @staticmethod
+    def _validate_project_id_exists(project_id: str) -> None:
+        """
+        Validate that project_id exists in the database. Use before queuing or heavy work.
+
+        Args:
+            project_id: Project UUID to check.
+
+        Raises:
+            ValidationError: If project_id is empty or project not found in database.
+        """
+        if not project_id or not isinstance(project_id, str):
+            raise ValidationError(
+                "project_id is required",
+                field="project_id",
+                details={},
+            )
+        project_id = project_id.strip()
+        if not project_id:
+            raise ValidationError(
+                "project_id is required",
+                field="project_id",
+                details={},
+            )
+        db = BaseMCPCommand._open_database_from_config()
+        try:
+            project = db.get_project(project_id)
+            if not project:
+                hint = ""
+                if "-" not in project_id or len(project_id) < 36:
+                    hint = (
+                        " Use list_projects to get the project id (UUID), or read "
+                        "projectid in the project root."
+                    )
+                raise ValidationError(
+                    f"Project with ID {project_id!r} not found in database.{hint}",
+                    field="project_id",
+                    details={"project_id": project_id},
+                )
+        finally:
+            db.disconnect()
+
+    @staticmethod
+    def _validate_watch_dir_id_exists(watch_dir_id: str) -> None:
+        """
+        Validate that watch_dir_id exists in the database. Use before create_project or list_projects filter.
+
+        Args:
+            watch_dir_id: Watch directory UUID to check.
+
+        Raises:
+            ValidationError: If watch_dir_id is empty or watch dir not found in database.
+        """
+        if not watch_dir_id or not isinstance(watch_dir_id, str):
+            raise ValidationError(
+                "watch_dir_id is required",
+                field="watch_dir_id",
+                details={},
+            )
+        watch_dir_id = watch_dir_id.strip()
+        if not watch_dir_id:
+            raise ValidationError(
+                "watch_dir_id is required",
+                field="watch_dir_id",
+                details={},
+            )
+        db = BaseMCPCommand._open_database_from_config()
+        try:
+            rows = db.select("watch_dirs", where={"id": watch_dir_id}, columns=["id"])
+            if not rows:
+                hint = " Use list_watch_dirs to get watch directory IDs."
+                raise ValidationError(
+                    f"Watch directory with ID {watch_dir_id!r} not found in database.{hint}",
+                    field="watch_dir_id",
+                    details={"watch_dir_id": watch_dir_id},
+                )
+        finally:
+            db.disconnect()
+
+    @staticmethod
     def _resolve_project_root(project_id: str) -> Path:
         """
         Resolve project root directory from project_id (database only).
@@ -218,8 +297,11 @@ class BaseMCPCommand(Command):
         try:
             project = db.get_project(project_id)
             if not project:
+                hint = ""
+                if "-" not in project_id or len(project_id) < 36:
+                    hint = " Use list_projects to get the project id (UUID), or read projectid in the project root."
                 raise ValidationError(
-                    f"Project with ID {project_id} not found in database",
+                    f"Project with ID {project_id!r} not found in database.{hint}",
                     field="project_id",
                     details={"project_id": project_id},
                 )
@@ -342,3 +424,126 @@ class BaseMCPCommand(Command):
                 "description": "Project UUID (from create_project or list_projects). Required for commands that operate on a project.",
             },
         }
+
+    @staticmethod
+    def validate_params_against_schema(
+        params: Dict[str, Any],
+        schema: Dict[str, Any],
+        command_name: str = "command",
+    ) -> None:
+        """
+        Validate that all present parameters conform to the command schema.
+        Required/optional only control presence; if a param is present it must match type/enum.
+
+        Args:
+            params: Incoming parameters dict (e.g. from MCP request).
+            schema: JSON Schema object with "properties" and optionally "additionalProperties".
+            command_name: Name of the command for error messages.
+
+        Raises:
+            ValidationError: If any key is disallowed or any value fails type/enum check.
+        """
+        if not isinstance(params, dict):
+            raise ValidationError(
+                f"{command_name}: params must be a dict, got {type(params).__name__}",
+                field="params",
+                details={},
+            )
+        props = schema.get("properties") or {}
+        additional_ok = schema.get("additionalProperties", True)
+        required_set = set(schema.get("required") or [])
+        for key, value in params.items():
+            if key not in props:
+                if not additional_ok:
+                    raise ValidationError(
+                        f"{command_name}: unknown parameter {key!r}. "
+                        "Only schema-defined properties are allowed.",
+                        field=key,
+                        details={"allowed": list(props.keys())},
+                    )
+                continue
+            if value is None:
+                continue
+            prop = props[key]
+            expected_type = prop.get("type")
+            if expected_type == "string":
+                if not isinstance(value, str):
+                    raise ValidationError(
+                        f"{command_name}: parameter {key!r} must be string, got {type(value).__name__}",
+                        field=key,
+                        details={},
+                    )
+            elif expected_type == "integer":
+                if not isinstance(value, int) or isinstance(value, bool):
+                    raise ValidationError(
+                        f"{command_name}: parameter {key!r} must be integer, got {type(value).__name__}",
+                        field=key,
+                        details={},
+                    )
+            elif expected_type == "number":
+                if not isinstance(value, (int, float)) or isinstance(value, bool):
+                    raise ValidationError(
+                        f"{command_name}: parameter {key!r} must be number, got {type(value).__name__}",
+                        field=key,
+                        details={},
+                    )
+            elif expected_type == "boolean":
+                if not isinstance(value, bool):
+                    raise ValidationError(
+                        f"{command_name}: parameter {key!r} must be boolean, got {type(value).__name__}",
+                        field=key,
+                        details={},
+                    )
+            elif expected_type == "array":
+                if not isinstance(value, list):
+                    raise ValidationError(
+                        f"{command_name}: parameter {key!r} must be array, got {type(value).__name__}",
+                        field=key,
+                        details={},
+                    )
+            elif expected_type == "object":
+                if not isinstance(value, dict):
+                    raise ValidationError(
+                        f"{command_name}: parameter {key!r} must be object, got {type(value).__name__}",
+                        field=key,
+                        details={},
+                    )
+            if "enum" in prop and value is not None:
+                if value not in prop["enum"]:
+                    raise ValidationError(
+                        f"{command_name}: parameter {key!r} must be one of {prop['enum']!r}, got {value!r}",
+                        field=key,
+                        details={"enum": prop["enum"]},
+                    )
+        # Required keys presence check
+        for key in required_set:
+            if key not in params or params[key] is None:
+                raise ValidationError(
+                    f"{command_name}: required parameter {key!r} is missing",
+                    field=key,
+                    details={},
+                )
+
+    def validate_params(
+        self: "BaseMCPCommand", params: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """
+        Validate parameters against command schema. Override to add identifier checks.
+
+        Call this before queuing so invalid project_id (and other IDs) are rejected
+        immediately instead of after job start.
+
+        Args:
+            params: Incoming parameters dict.
+
+        Returns:
+            Validated params (same dict if valid).
+
+        Raises:
+            ValidationError: If params fail schema or identifier validation.
+        """
+        schema = self.get_schema()
+        BaseMCPCommand.validate_params_against_schema(
+            params, schema, command_name=getattr(self, "name", "command")
+        )
+        return params

@@ -114,6 +114,14 @@ class CreateProjectMCPCommand(BaseMCPCommand):
             "additionalProperties": False,
         }
 
+    def validate_params(
+        self: "CreateProjectMCPCommand", params: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """Validate params and reject unknown watch_dir_id before execution."""
+        params = super().validate_params(params)
+        BaseMCPCommand._validate_watch_dir_id_exists(params["watch_dir_id"])
+        return params
+
     async def execute(
         self: "CreateProjectMCPCommand",
         watch_dir_id: str,

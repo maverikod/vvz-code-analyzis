@@ -106,4 +106,4 @@ email: vasilyvz@gmail.com
 - Adapter: `core/job_push/events.py`, `core/job_push/notifier.py`, `core/job_push/lifespan_wiring.py`.
 - Adapter client: `client/jsonrpc_client/command_api.py` (`execute_command_unified`, `wait_for_job_via_websocket`), `client/jsonrpc_client/ws_job_status.py`.
 - Example: `examples/websocket_examples/client_websocket_job_status.py`.
-- This project: `tests/pipeline/mcp_client.py` (`call_command` with `use_queue=True` → `execute_command_unified(..., expect_queue=True, auto_poll=True)`).
+- This project: `scripts/pipeline/mcp_client.py` (`call_command` with `use_queue=True` → `execute_command_unified(..., expect_queue=True, auto_poll=True)`).

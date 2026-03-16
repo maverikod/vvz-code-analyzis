@@ -83,7 +83,9 @@ async def run_batch(
             f"Starting comprehensive analysis: {files_total} files in batches of {_DEFAULT_BATCH_SIZE}"
         )
         if progress_tracker and files_total > 0:
-            progress_tracker.set_description(f"Preparing: {files_total} files to scan")
+            progress_tracker.set_description(
+                f"Processing {files_total} file(s) for analysis..."
+            )
     else:
         files_total = 0
 
@@ -133,7 +135,7 @@ async def run_batch(
     project_mypy_errors: Dict[str, List[str]] = {}
     if check_mypy:
         if progress_tracker:
-            progress_tracker.set_description("mypy (project)")
+            progress_tracker.set_description("Analysis: mypy (project)")
         t0 = time.perf_counter()
         from ...core.code_quality.type_checker import (
             type_check_project_with_mypy,
@@ -201,7 +203,7 @@ async def run_batch(
 
         log_timing("multi_get_files", t_get_files)
         if progress_tracker and files_total > 0:
-            progress_tracker.set_description(f"scanning: 0% 0/{files_total} —")
+            progress_tracker.set_description(f"Analyzing: 0/{files_total} (0%)")
             progress_tracker.set_progress(0)
 
         for idx, file_record in enumerate(files):
@@ -217,7 +219,7 @@ async def run_batch(
                 progress_tracker.set_progress(percent)
                 suffix = _avg_eta_suffix(global_idx, files_total, t_start)
                 progress_tracker.set_description(
-                    f"scanning: {percent}% {global_idx}/{files_total} {file_name}{suffix}"
+                    f"Analyzing: {global_idx}/{files_total} ({percent}%) — {file_name}{suffix}"
                 )
 
             if Path(file_path_str).is_absolute():
@@ -288,8 +290,7 @@ async def run_batch(
                 if progress_tracker and files_total > 0:
                     suffix = _avg_eta_suffix(global_idx, files_total, t_start)
                     progress_tracker.set_description(
-                        f"scanning: {percent}% {global_idx}/{files_total} "
-                        f"{file_name} — {step}{suffix}"
+                        f"Analyzing: {global_idx}/{files_total} ({percent}%) — {step}{suffix}"
                     )
 
             file_results, file_summary, file_project_id = analyze_one_file_in_batch(
@@ -374,7 +375,7 @@ async def run_batch(
 
     if save_batch:
         if progress_tracker:
-            progress_tracker.set_description("saving")
+            progress_tracker.set_description("Analysis: saving results")
         try:
             t_save0 = time.perf_counter()
             db.save_comprehensive_analysis_results_batch(save_batch)
@@ -419,7 +420,7 @@ async def run_batch(
     )
 
     if progress_tracker:
-        progress_tracker.set_description("summary")
+        progress_tracker.set_description("Analysis: building summary")
     results["summary"] = build_batch_summary(
         results, files_analyzed, files_skipped, files_total
     )
@@ -428,9 +429,9 @@ async def run_batch(
     db.disconnect()
 
     if progress_tracker:
-        progress_tracker.set_status("completed")
-        progress_tracker.set_description("Analysis completed")
         progress_tracker.set_progress(100)
+        progress_tracker.set_description("Analysis completed")
+        progress_tracker.set_status("completed")
 
     analysis_logger.info(
         f"Comprehensive analysis completed. Summary: {results['summary']}"

@@ -23,7 +23,7 @@ class AnalyzeComplexityMCPCommand(BaseMCPCommand):
     category = "analysis"
     author = "Vasiliy Zdanovskiy"
     email = "vasilyvz@gmail.com"
-    use_queue = False
+    use_queue = True
 
     @classmethod
     def get_schema(cls) -> Dict[str, Any]:
@@ -56,6 +56,12 @@ class AnalyzeComplexityMCPCommand(BaseMCPCommand):
             "additionalProperties": False,
         }
 
+    def validate_params(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        """Validate params and reject unknown project_id before queuing."""
+        params = super().validate_params(params)
+        BaseMCPCommand._validate_project_id_exists(params["project_id"])
+        return params
+
     async def execute(
         self,
         project_id: str,
@@ -73,15 +79,35 @@ class AnalyzeComplexityMCPCommand(BaseMCPCommand):
         Returns:
             SuccessResult with complexity analysis data.
         """
+        from ..core.progress_tracker import get_progress_tracker_from_context
+
+        progress_tracker = get_progress_tracker_from_context(
+            kwargs.get("context") or {}
+        )
         try:
+            if progress_tracker:
+                progress_tracker.set_status("running")
+                progress_tracker.set_description(
+                    "Complexity: resolving project root..."
+                )
+                progress_tracker.set_progress(0)
+
             root_path = self._resolve_project_root(project_id)
+
+            if progress_tracker:
+                progress_tracker.set_description("Complexity: opening database...")
+                progress_tracker.set_progress(0)
+
             db = self._open_database()
+
             proj_id = project_id
 
             results: List[Dict[str, Any]] = []
 
             if file_path:
                 # Analyze specific file
+                if progress_tracker:
+                    progress_tracker.set_description("Complexity: 1/1 (0%)")
                 file_path_obj = self._validate_file_path(file_path, root_path)
                 analysis = analyze_file_complexity(str(file_path_obj))
 
@@ -110,6 +136,10 @@ class AnalyzeComplexityMCPCommand(BaseMCPCommand):
                                 "class_name": method.get("class_name"),
                             }
                         )
+                if progress_tracker:
+                    progress_tracker.set_progress(100)
+                    progress_tracker.set_description("Complexity analysis completed")
+                    progress_tracker.set_status("completed")
             else:
                 # Analyze all files in project
                 result = db.execute(
@@ -118,7 +148,13 @@ class AnalyzeComplexityMCPCommand(BaseMCPCommand):
                 )
                 files = result.get("data", [])
 
-                for file_record in files:
+                if progress_tracker and files:
+                    progress_tracker.set_description(
+                        f"Processing {len(files)} file(s) for complexity..."
+                    )
+                    progress_tracker.set_progress(0)
+
+                for idx, file_record in enumerate(files):
                     file_path_str = file_record["path"]
 
                     # Resolve full path
@@ -165,7 +201,20 @@ class AnalyzeComplexityMCPCommand(BaseMCPCommand):
                         # Skip files that can't be analyzed
                         continue
 
+                    if progress_tracker and files:
+                        total = len(files)
+                        percent = int(((idx + 1) / total) * 100)
+                        progress_tracker.set_progress(percent)
+                        progress_tracker.set_description(
+                            f"Complexity: {idx + 1}/{total} ({percent}%)"
+                        )
+
             db.disconnect()
+
+            if progress_tracker and not file_path and files:
+                progress_tracker.set_progress(100)
+                progress_tracker.set_description("Complexity analysis completed")
+                progress_tracker.set_status("completed")
 
             # Sort by complexity (descending)
             results.sort(key=lambda x: x["complexity"], reverse=True)
@@ -178,6 +227,9 @@ class AnalyzeComplexityMCPCommand(BaseMCPCommand):
                 }
             )
         except Exception as e:
+            if progress_tracker:
+                progress_tracker.set_status("failed")
+                progress_tracker.set_description(str(e)[:512])
             return self._handle_error(
                 e, "ANALYZE_COMPLEXITY_ERROR", "analyze_complexity"
             )

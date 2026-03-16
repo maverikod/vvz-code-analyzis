@@ -8,7 +8,7 @@ email: vasilyvz@gmail.com
 import pytest
 from pathlib import Path
 
-from tests.pipeline.config import PipelineConfig
+from scripts.pipeline.config import PipelineConfig
 
 
 @pytest.fixture

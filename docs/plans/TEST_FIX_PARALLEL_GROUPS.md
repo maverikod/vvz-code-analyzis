@@ -126,11 +126,11 @@ tests/test_analysis_commands_integration.py
 tests/test_search_commands.py
 tests/test_trash_commands.py
 tests/test_trash_utils.py
-tests/pipeline/test_mcp_commands_skeleton.py
-tests/pipeline/test_mcp_commands_db_project_file.py
-tests/pipeline/test_mcp_commands_db_other.py
-tests/pipeline/test_data_setup.py
-tests/pipeline/test_pipeline.py
+scripts/pipeline/test_mcp_commands_skeleton.py
+scripts/pipeline/test_mcp_commands_db_project_file.py
+scripts/pipeline/test_mcp_commands_db_other.py
+scripts/pipeline/test_data_setup.py
+Run pipeline: python scripts/run_pipeline.py
 tests/integration/test_commands.py
 ```
 

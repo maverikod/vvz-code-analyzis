@@ -1,5 +1,5 @@
 """
-Test pipeline package for unified testing.
+Pipeline package: MCP command suites and runner support.
 
 Author: Vasiliy Zdanovskiy
 email: vasilyvz@gmail.com

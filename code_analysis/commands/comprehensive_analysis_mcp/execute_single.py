@@ -52,6 +52,8 @@ async def run_single_file(
     duplicate_min_similarity = ctx["duplicate_min_similarity"]
 
     t_single_start = time.perf_counter()
+    if progress_tracker:
+        progress_tracker.set_description("Analyzing: 1/1 (0%)")
     file_path_obj = cmd._validate_file_path(file_path, root_path)
     if not file_path_obj.exists():
         db.disconnect()
@@ -180,8 +182,9 @@ async def run_single_file(
                 db.disconnect()
                 if progress_tracker:
                     progress_tracker.set_status("completed")
-                    progress_tracker.set_description("Analysis completed (cached)")
                     progress_tracker.set_progress(100)
+                    progress_tracker.set_description("Analysis completed (cached)")
+                    progress_tracker.set_status("completed")
                 reason = gate.get("reason", "unknown")
                 analysis_logger.info(
                     "Skipping %s: %s (db_mtime=%s, disk_mtime=%s)",
@@ -378,9 +381,9 @@ async def run_single_file(
 
     db.disconnect()
     if progress_tracker:
-        progress_tracker.set_status("completed")
-        progress_tracker.set_description("Analysis completed")
         progress_tracker.set_progress(100)
+        progress_tracker.set_description("Analysis completed")
+        progress_tracker.set_status("completed")
 
     for handler in analysis_logger.handlers[:]:
         handler.close()

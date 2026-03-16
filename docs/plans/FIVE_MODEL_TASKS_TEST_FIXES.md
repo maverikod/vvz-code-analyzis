@@ -58,7 +58,7 @@ Each model gets **one group**. No model may edit files from another group. Share
 **Task:**
 
 1. Run the Group 3 path list:  
-   `pytest tests/test_project_manager.py tests/test_project_id_validation.py tests/test_project_root_detection.py tests/test_project_discovery.py tests/test_analysis_commands_integration.py tests/test_search_commands.py tests/test_trash_commands.py tests/test_trash_utils.py tests/pipeline/test_mcp_commands_skeleton.py tests/pipeline/test_mcp_commands_db_project_file.py tests/pipeline/test_mcp_commands_db_other.py tests/pipeline/test_data_setup.py tests/pipeline/test_pipeline.py tests/integration/test_commands.py -q`
+   `pytest tests/test_project_manager.py tests/test_project_id_validation.py tests/test_project_root_detection.py tests/test_project_discovery.py tests/test_analysis_commands_integration.py tests/test_search_commands.py tests/test_trash_commands.py tests/test_trash_utils.py tests/integration/test_commands.py -q` (pipeline: python scripts/run_pipeline.py)
 2. Fix every collection error and every test failure in this set. Do not change test files outside Group 3.
 3. Tests that require a running server/DB (e.g. pipeline MCP) may be skipped when the service is unavailable; if you skip them, add a clear skip reason and ensure the rest of the group is green.
 4. After fixes: run the same command again; the run must finish with **zero failures** and **zero errors** for the tests that run (skipped are allowed).

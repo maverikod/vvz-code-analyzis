@@ -6,7 +6,9 @@ email: vasilyvz@gmail.com
 """
 
 import asyncio
+import json
 import logging
+import time
 from pathlib import Path
 from typing import Any, Dict, Optional
 
@@ -150,6 +152,29 @@ class RefactorCommand:
         Returns:
             Dictionary with success status and message
         """
+        # #region agent log
+        _debug_log = (
+            "/home/vasilyvz/projects/tools/code_analysis/.cursor/debug-cbd1d4.log"
+        )
+        _t0 = time.monotonic()
+        try:
+            with open(_debug_log, "a", encoding="utf-8") as _f:
+                _f.write(
+                    json.dumps(
+                        {
+                            "sessionId": "cbd1d4",
+                            "timestamp": int(time.time() * 1000),
+                            "message": "timing:refactor_split_start",
+                            "data": {"phase": "refactor_split_start", "elapsed_ms": 0},
+                            "hypothesisId": "timing",
+                        }
+                    )
+                    + "\n"
+                )
+        except Exception:
+            pass
+        # #endregion
+
         logger.info(
             f"Splitting file to package in {file_path} (project: {self.project_id})"
         )
@@ -171,6 +196,28 @@ class RefactorCommand:
             success, message = await asyncio.to_thread(
                 splitter.split_file_to_package, config
             )
+            # #region agent log
+            try:
+                _elapsed = (time.monotonic() - _t0) * 1000
+                with open(_debug_log, "a", encoding="utf-8") as _f:
+                    _f.write(
+                        json.dumps(
+                            {
+                                "sessionId": "cbd1d4",
+                                "timestamp": int(time.time() * 1000),
+                                "message": "timing:refactor_split_end",
+                                "data": {
+                                    "phase": "refactor_split_end",
+                                    "elapsed_ms": round(_elapsed, 2),
+                                },
+                                "hypothesisId": "timing",
+                            }
+                        )
+                        + "\n"
+                    )
+            except Exception:
+                pass
+            # #endregion
             if success:
                 logger.info(f"File split to package successful: {message}")
             else:

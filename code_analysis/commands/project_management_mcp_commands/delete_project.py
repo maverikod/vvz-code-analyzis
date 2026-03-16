@@ -111,6 +111,14 @@ class DeleteProjectMCPCommand(BaseMCPCommand):
             ],
         }
 
+    def validate_params(
+        self: "DeleteProjectMCPCommand", params: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """Validate params and reject unknown project_id before queuing."""
+        params = super().validate_params(params)
+        BaseMCPCommand._validate_project_id_exists(params["project_id"])
+        return params
+
     async def execute(
         self: "DeleteProjectMCPCommand",
         project_id: str,

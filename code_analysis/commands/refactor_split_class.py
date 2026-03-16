@@ -76,6 +76,12 @@ class SplitClassMCPCommand(BaseMCPCommand):
             "additionalProperties": False,
         }
 
+    def validate_params(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        """Validate params and reject unknown project_id before queuing."""
+        params = super().validate_params(params)
+        BaseMCPCommand._validate_project_id_exists(params["project_id"])
+        return params
+
     @classmethod
     def metadata(cls: type["SplitClassMCPCommand"]) -> Dict[str, Any]:
         """
@@ -371,13 +377,24 @@ class SplitClassMCPCommand(BaseMCPCommand):
             kwargs.get("context") or {}
         )
         try:
+            if progress_tracker:
+                progress_tracker.set_status("running")
+                progress_tracker.set_description(
+                    "split_class: resolving project root..."
+                )
+                progress_tracker.set_progress(0)
+
             root_path = self._resolve_project_root(project_id)
+
+            if progress_tracker:
+                progress_tracker.set_description("split_class: opening database...")
+                progress_tracker.set_progress(0)
+
             db = self._open_database()
             proj_id = project_id
 
             if progress_tracker:
-                progress_tracker.set_status("running")
-                progress_tracker.set_description("Validating project and config...")
+                progress_tracker.set_description("split_class: validating config...")
                 progress_tracker.set_progress(0)
 
             # Parse config if it's a string

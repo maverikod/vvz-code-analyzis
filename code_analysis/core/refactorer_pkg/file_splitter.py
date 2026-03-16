@@ -93,74 +93,10 @@ class FileToPackageSplitter(BaseRefactorer):
                 )
                 module_path.write_text(module_content)
                 created_modules.append(module_name)
+                # DB update (add_file + index_file) is done once in the MCP command
+                # db_update block to avoid double indexing (~13s + ~14s saved).
 
-                # Update database for new file
-                if self.database and self.project_id and self.root_dir:
-                    try:
-                        import os
-
-                        lines = len(module_content.splitlines())
-                        has_docstring = module_content.strip().startswith(
-                            '"""'
-                        ) or module_content.strip().startswith("'''")
-                        self.database.add_file(
-                            path=str(module_path),
-                            lines=lines,
-                            # Force first index_file() to run full AST/CST extraction.
-                            last_modified=0.0,
-                            has_docstring=has_docstring,
-                            project_id=self.project_id,
-                        )
-                        update_result = self.database.index_file(
-                            file_path=str(module_path),
-                            project_id=self.project_id,
-                        )
-                        if not update_result.get("success"):
-                            logger.warning(
-                                f"Failed to update database for {module_path}: "
-                                f"{update_result.get('error')}"
-                            )
-                        else:
-                            logger.debug(
-                                f"Database updated for {module_path}: "
-                                f"AST={update_result.get('ast_updated')}, "
-                                f"CST={update_result.get('cst_updated')}"
-                            )
-                    except Exception as e:
-                        logger.error(
-                            f"Error updating database for {module_path}: {e}",
-                            exc_info=True,
-                        )
-
-            # Ensure package __init__.py is also indexed and visible in files/cst_trees.
-            if self.database and self.project_id and self.root_dir:
-                try:
-                    init_content = init_file.read_text(encoding="utf-8")
-                    init_has_docstring = init_content.strip().startswith(
-                        '"""'
-                    ) or init_content.strip().startswith("'''")
-                    self.database.add_file(
-                        path=str(init_file),
-                        lines=len(init_content.splitlines()),
-                        # Force first index_file() to run full AST/CST extraction.
-                        last_modified=0.0,
-                        has_docstring=init_has_docstring,
-                        project_id=self.project_id,
-                    )
-                    update_result = self.database.index_file(
-                        file_path=str(init_file),
-                        project_id=self.project_id,
-                    )
-                    if not update_result.get("success"):
-                        logger.warning(
-                            f"Failed to update database for {init_file}: "
-                            f"{update_result.get('error')}"
-                        )
-                except Exception as e:
-                    logger.warning(
-                        f"Failed to update database for {init_file}: {e}",
-                        exc_info=True,
-                    )
+            # __init__.py: DB update is done in the MCP command db_update block only.
 
             return (
                 True,

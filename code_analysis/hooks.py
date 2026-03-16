@@ -37,6 +37,7 @@ register_custom_commands_hook(register_code_analysis_commands)
 # Patch must be imported in the worker so CommandExecutionJob.run is patched and
 # context["progress_tracker"] is set; otherwise progress/description never update.
 register_auto_import_module("code_analysis.core.command_execution_job_patch")
+register_auto_import_module("code_analysis.core.shared_database_spawn_init")
 register_auto_import_module("code_analysis.commands.check_vectors_command")
 register_auto_import_module("code_analysis.commands.cst_compose_module_command")
 register_auto_import_module("code_analysis.commands.list_cst_blocks_command")

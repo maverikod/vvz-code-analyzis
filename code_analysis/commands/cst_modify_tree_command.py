@@ -51,6 +51,13 @@ class CSTModifyTreeCommand(BaseMCPCommand):
     def get_schema(cls) -> Dict[str, Any]:
         return get_cst_modify_tree_schema()
 
+    def validate_params(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        """Validate params and reject unknown project_id when present."""
+        params = super().validate_params(params)
+        if params.get("project_id"):
+            BaseMCPCommand._validate_project_id_exists(params["project_id"])
+        return params
+
     async def execute(
         self,
         tree_id: str,

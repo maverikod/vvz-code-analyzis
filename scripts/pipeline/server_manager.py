@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Optional
 
 if TYPE_CHECKING:
-    from tests.pipeline.config import PipelineConfig
+    from scripts.pipeline.config import PipelineConfig
 
 
 class ServerManager:

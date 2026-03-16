@@ -44,6 +44,12 @@ class ComprehensiveAnalysisMCPCommand(BaseMCPCommand):
         """Get JSON schema for command parameters."""
         return schema.get_schema(cls)
 
+    def validate_params(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        """Validate params and reject unknown project_id before queuing."""
+        params = super().validate_params(params)
+        BaseMCPCommand._validate_project_id_exists(params["project_id"])
+        return params
+
     async def execute(
         self,
         project_id: str,
@@ -109,18 +115,21 @@ class ComprehensiveAnalysisMCPCommand(BaseMCPCommand):
             return time.perf_counter()
 
         try:
+            if progress_tracker:
+                progress_tracker.set_status("running")
+                progress_tracker.set_description("Analysis: resolving project root...")
+                progress_tracker.set_progress(0)
+
             log_timing("init_resolve_root", t_start)
             t_after = time.perf_counter()
+
+            if progress_tracker:
+                progress_tracker.set_description("Analysis: opening database...")
+                progress_tracker.set_progress(0)
+
             db = self._open_database()
             t_after = log_timing("db_open", t_after)
             proj_id = project_id
-
-            if progress_tracker:
-                progress_tracker.set_status("running")
-                progress_tracker.set_description(
-                    "Initializing comprehensive analysis..."
-                )
-                progress_tracker.set_progress(0)
 
             analyzer = ComprehensiveAnalyzer(max_lines=max_lines)
             results: Dict[str, Any] = {

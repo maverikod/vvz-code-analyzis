@@ -9,8 +9,9 @@ email: vasilyvz@gmail.com
 
 import json
 import logging
+import time
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 
@@ -20,6 +21,36 @@ from ..core.backup_manager import BackupManager
 from ..core.git_integration import commit_after_write
 
 logger = logging.getLogger(__name__)
+
+# Debug timing log (NDJSON); path matches debug session log path
+_DEBUG_TIMING_LOG_PATH = (
+    "/home/vasilyvz/projects/tools/code_analysis/.cursor/debug-cbd1d4.log"
+)
+
+
+def _timing_log(
+    phase: str, elapsed_ms: float, data: Optional[Dict[str, Any]] = None
+) -> None:
+    """Append one NDJSON timing line to debug log for bottleneck analysis."""
+    # #region agent log
+    try:
+        payload = {
+            "sessionId": "cbd1d4",
+            "timestamp": int(time.time() * 1000),
+            "location": "refactor_split_file_to_package.py",
+            "message": f"timing:{phase}",
+            "data": {
+                "phase": phase,
+                "elapsed_ms": round(elapsed_ms, 2),
+                **(data or {}),
+            },
+            "hypothesisId": "timing",
+        }
+        with open(_DEBUG_TIMING_LOG_PATH, "a", encoding="utf-8") as f:
+            f.write(json.dumps(payload, ensure_ascii=False) + "\n")
+    except Exception:
+        pass
+    # #endregion
 
 
 class SplitFileToPackageMCPCommand(BaseMCPCommand):
@@ -73,6 +104,12 @@ class SplitFileToPackageMCPCommand(BaseMCPCommand):
             "required": ["project_id", "file_path", "config"],
             "additionalProperties": False,
         }
+
+    def validate_params(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        """Validate params and reject unknown project_id before queuing."""
+        params = super().validate_params(params)
+        BaseMCPCommand._validate_project_id_exists(params["project_id"])
+        return params
 
     @classmethod
     def metadata(cls: type["SplitFileToPackageMCPCommand"]) -> Dict[str, Any]:
@@ -338,35 +375,62 @@ class SplitFileToPackageMCPCommand(BaseMCPCommand):
     ) -> SuccessResult:
         from ..core.progress_tracker import get_progress_tracker_from_context
 
+        t0 = time.monotonic()
         progress_tracker = get_progress_tracker_from_context(
             kwargs.get("context") or {}
         )
         try:
+            if progress_tracker:
+                progress_tracker.set_status("running")
+                progress_tracker.set_description("Resolving project root...")
+                progress_tracker.set_progress(0)
+            _timing_log("entry", (time.monotonic() - t0) * 1000, {"progress_pct": 0})
+
             root_path = self._resolve_project_root(project_id)
+            if progress_tracker:
+                progress_tracker.set_description("Opening database...")
+                progress_tracker.set_progress(5)
+            _timing_log(
+                "after_resolve_project_root",
+                (time.monotonic() - t0) * 1000,
+                {"progress_pct": 5},
+            )
+
             db = self._open_database()
             proj_id = project_id
 
             if progress_tracker:
-                progress_tracker.set_status("running")
-                progress_tracker.set_description("Validating project and config...")
-                progress_tracker.set_progress(0)
-
+                progress_tracker.set_description("Validating config...")
+                progress_tracker.set_progress(8)
             if isinstance(config, str):
                 config = json.loads(config)
+            _timing_log(
+                "after_open_database",
+                (time.monotonic() - t0) * 1000,
+                {"progress_pct": 8},
+            )
 
             if progress_tracker:
-                progress_tracker.set_description("Creating backup...")
-                progress_tracker.set_progress(5)
+                progress_tracker.set_description("Validating file path...")
+                progress_tracker.set_progress(10)
             # Create backup before modification
             file_path_obj = self._validate_file_path(file_path, root_path)
-            backup_manager = BackupManager(root_path)
+            _timing_log(
+                "after_validate_config",
+                (time.monotonic() - t0) * 1000,
+                {"progress_pct": 10},
+            )
 
+            backup_manager = BackupManager(root_path)
             # Extract created modules from config for related files
             related_files = []
             if isinstance(config, dict):
                 modules = config.get("modules", {})
                 related_files = list(modules.keys())
 
+            if progress_tracker:
+                progress_tracker.set_description("Creating backup...")
+                progress_tracker.set_progress(12)
             backup_uuid = backup_manager.create_backup(
                 file_path_obj,
                 command="split_file_to_package",
@@ -384,8 +448,11 @@ class SplitFileToPackageMCPCommand(BaseMCPCommand):
                 )
             logger.info(f"Backup created before split_file_to_package: {backup_uuid}")
             if progress_tracker:
-                progress_tracker.set_description("Splitting file to package...")
-                progress_tracker.set_progress(25)
+                progress_tracker.set_description("Git commit (before split)...")
+                progress_tracker.set_progress(18)
+            _timing_log(
+                "after_backup", (time.monotonic() - t0) * 1000, {"progress_pct": 18}
+            )
 
             config_data = BaseMCPCommand._get_raw_config()
             git_ok, git_err = commit_after_write(
@@ -397,9 +464,23 @@ class SplitFileToPackageMCPCommand(BaseMCPCommand):
             )
             if not git_ok and git_err:
                 logger.warning("Git commit before split_file_to_package: %s", git_err)
+            _timing_log(
+                "after_git_before", (time.monotonic() - t0) * 1000, {"progress_pct": 22}
+            )
+
+            if progress_tracker:
+                progress_tracker.set_description("Splitting file to package (CST)...")
+                progress_tracker.set_progress(25)
+            _timing_log(
+                "split_start", (time.monotonic() - t0) * 1000, {"progress_pct": 25}
+            )
 
             cmd = InternalRefactorCommand(proj_id, database=db, root_dir=root_path)
             result = await cmd.split_file_to_package(str(root_path), file_path, config)
+
+            _timing_log(
+                "split_end", (time.monotonic() - t0) * 1000, {"progress_pct": 65}
+            )
             if progress_tracker:
                 progress_tracker.set_progress(65)
 
@@ -407,7 +488,12 @@ class SplitFileToPackageMCPCommand(BaseMCPCommand):
             if result.get("success"):
                 if progress_tracker:
                     progress_tracker.set_description("Updating database...")
-                    progress_tracker.set_progress(75)
+                    progress_tracker.set_progress(70)
+                _timing_log(
+                    "db_update_start",
+                    (time.monotonic() - t0) * 1000,
+                    {"progress_pct": 70},
+                )
                 try:
                     # Get file directory and name to determine package path
                     file_path_obj_resolved = file_path_obj.resolve()
@@ -485,14 +571,30 @@ class SplitFileToPackageMCPCommand(BaseMCPCommand):
                         exc_info=True,
                     )
                     # Don't fail the operation, just log the error
+                _timing_log(
+                    "db_update_end",
+                    (time.monotonic() - t0) * 1000,
+                    {"progress_pct": 85},
+                )
 
             db.disconnect()
 
             if result.get("success"):
                 if progress_tracker:
+                    progress_tracker.set_description("Finalizing...")
+                    progress_tracker.set_progress(95)
+                _timing_log(
+                    "before_completed",
+                    (time.monotonic() - t0) * 1000,
+                    {"progress_pct": 95},
+                )
+                if progress_tracker:
                     progress_tracker.set_progress(100)
                     progress_tracker.set_description("Split completed")
                     progress_tracker.set_status("completed")
+                _timing_log(
+                    "completed", (time.monotonic() - t0) * 1000, {"progress_pct": 100}
+                )
                 file_dir = file_path_obj.resolve().parent
                 file_stem = file_path_obj.resolve().stem
                 package_dir = file_dir / file_stem

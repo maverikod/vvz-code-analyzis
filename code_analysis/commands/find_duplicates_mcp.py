@@ -5,6 +5,7 @@ Author: Vasiliy Zdanovskiy
 email: vasilyvz@gmail.com
 """
 
+import asyncio
 import logging
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -27,7 +28,7 @@ class FindDuplicatesMCPCommand(BaseMCPCommand):
     category = "analysis"
     author = "Vasiliy Zdanovskiy"
     email = "vasilyvz@gmail.com"
-    use_queue = False
+    use_queue = True
 
     @classmethod
     def get_schema(cls) -> Dict[str, Any]:
@@ -78,6 +79,12 @@ class FindDuplicatesMCPCommand(BaseMCPCommand):
             "additionalProperties": False,
         }
 
+    def validate_params(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        """Validate params and reject unknown project_id before queuing."""
+        params = super().validate_params(params)
+        BaseMCPCommand._validate_project_id_exists(params["project_id"])
+        return params
+
     async def execute(
         self,
         project_id: str,
@@ -101,10 +108,31 @@ class FindDuplicatesMCPCommand(BaseMCPCommand):
         Returns:
             SuccessResult with duplicate groups.
         """
+        from ..core.progress_tracker import get_progress_tracker_from_context
+
+        progress_tracker = get_progress_tracker_from_context(
+            kwargs.get("context") or {}
+        )
         try:
+            if progress_tracker:
+                progress_tracker.set_status("running")
+                progress_tracker.set_description(
+                    "Duplicates: resolving project root..."
+                )
+                progress_tracker.set_progress(0)
+
             root_path = self._resolve_project_root(project_id)
+
+            if progress_tracker:
+                progress_tracker.set_description("Duplicates: opening database...")
+                progress_tracker.set_progress(0)
+
             db = self._open_database()
             proj_id = project_id
+
+            if progress_tracker:
+                progress_tracker.set_description("Duplicates: creating detector...")
+                progress_tracker.set_progress(1)
 
             detector = DuplicateDetector(
                 min_lines=min_lines,
@@ -117,6 +145,11 @@ class FindDuplicatesMCPCommand(BaseMCPCommand):
             # Initialize SVO client manager for semantic search if enabled
             svo_client_manager = None
             if use_semantic:
+                if progress_tracker:
+                    progress_tracker.set_description(
+                        "Duplicates: initializing semantic client..."
+                    )
+                    progress_tracker.set_progress(2)
                 try:
                     from ..core.config import load_config
 
@@ -125,8 +158,19 @@ class FindDuplicatesMCPCommand(BaseMCPCommand):
                     svo_client_manager = SVOClientManager(
                         config, root_dir=str(root_path)
                     )
-                    await svo_client_manager.initialize()
-                    detector.set_svo_client_manager(svo_client_manager)
+                    try:
+                        await asyncio.wait_for(
+                            svo_client_manager.initialize(),
+                            timeout=30.0,
+                        )
+                    except asyncio.TimeoutError:
+                        logger.warning(
+                            "Semantic client initialization timed out (30s); "
+                            "falling back to AST-only detection."
+                        )
+                        detector.use_semantic = False
+                    else:
+                        detector.set_svo_client_manager(svo_client_manager)
                     logger.info("Semantic duplicate detection enabled")
                 except Exception as e:
                     logger.warning(
@@ -134,14 +178,25 @@ class FindDuplicatesMCPCommand(BaseMCPCommand):
                         "Falling back to AST-only detection."
                     )
                     detector.use_semantic = False
+                if progress_tracker:
+                    progress_tracker.set_progress(3)
 
             all_duplicate_groups: List[Dict[str, Any]] = []
 
             if file_path:
                 # Analyze specific file
+                if progress_tracker:
+                    progress_tracker.set_description("Duplicates: 1/1 (0%)")
+                    progress_tracker.set_progress(5)
                 file_path_obj = self._validate_file_path(file_path, root_path)
                 with open(file_path_obj, "r", encoding="utf-8") as f:
                     source_code = f.read()
+
+                if progress_tracker:
+                    progress_tracker.set_description(
+                        "Duplicates: 1/1 (0%) — analyzing..."
+                    )
+                    progress_tracker.set_progress(10)
 
                 try:
                     import ast
@@ -163,6 +218,10 @@ class FindDuplicatesMCPCommand(BaseMCPCommand):
                 except SyntaxError:
                     # Skip files with syntax errors
                     pass
+                if progress_tracker:
+                    progress_tracker.set_progress(100)
+                    progress_tracker.set_description("Duplicate search completed")
+                    progress_tracker.set_status("completed")
             else:
                 # Analyze all files in project
                 result = db.execute(
@@ -171,7 +230,14 @@ class FindDuplicatesMCPCommand(BaseMCPCommand):
                 )
                 files = result.get("data", [])
 
-                for file_record in files:
+                if progress_tracker and files:
+                    progress_tracker.set_description(
+                        f"Processing {len(files)} file(s) for duplicates..."
+                    )
+                    progress_tracker.set_progress(0)
+
+                total_files = len(files)
+                for idx, file_record in enumerate(files):
                     file_path_str = file_record["path"]
 
                     # Resolve full path
@@ -211,6 +277,18 @@ class FindDuplicatesMCPCommand(BaseMCPCommand):
                         # Skip files that can't be analyzed
                         continue
 
+                    if progress_tracker and total_files > 0:
+                        percent = int(((idx + 1) / total_files) * 100)
+                        progress_tracker.set_progress(percent)
+                        progress_tracker.set_description(
+                            f"Duplicates: {idx + 1}/{total_files} ({percent}%)"
+                        )
+
+            if progress_tracker and not file_path and files:
+                progress_tracker.set_progress(100)
+                progress_tracker.set_description("Duplicate search completed")
+                progress_tracker.set_status("completed")
+
             # Cleanup
             if svo_client_manager:
                 try:
@@ -244,6 +322,9 @@ class FindDuplicatesMCPCommand(BaseMCPCommand):
                 }
             )
         except Exception as e:
+            if progress_tracker:
+                progress_tracker.set_status("failed")
+                progress_tracker.set_description(str(e)[:512])
             return self._handle_error(e, "FIND_DUPLICATES_ERROR", "find_duplicates")
 
     @classmethod

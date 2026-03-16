@@ -14,6 +14,7 @@ email: vasilyvz@gmail.com
 
 from __future__ import annotations
 
+import os
 import threading
 from typing import Any, Optional, cast
 
@@ -21,6 +22,7 @@ from .database_client.client import DatabaseClient
 
 _lock = threading.Lock()
 _client: Optional[DatabaseClient] = None
+_owner_pid: Optional[int] = None
 
 
 class SharedDatabaseNotInitializedError(Exception):
@@ -63,9 +65,16 @@ def set_shared_database(client: DatabaseClient) -> None:
     Args:
         client: The real DatabaseClient instance (not a proxy).
     """
-    global _client
+    global _client, _owner_pid
     with _lock:
         _client = client
+        _owner_pid = os.getpid()
+
+
+def is_shared_database_current_process() -> bool:
+    """Return True when shared DB is initialized for the current process."""
+    with _lock:
+        return _client is not None and _owner_pid == os.getpid()
 
 
 def get_shared_database() -> DatabaseClient:
@@ -84,6 +93,10 @@ def get_shared_database() -> DatabaseClient:
     with _lock:
         if _client is None:
             raise SharedDatabaseNotInitializedError()
+        if _owner_pid != os.getpid():
+            raise SharedDatabaseNotInitializedError(
+                "Shared database is initialized in a different process"
+            )
         return cast(DatabaseClient, _SharedDatabaseProxy(_client))
 
 
@@ -92,7 +105,7 @@ def close_shared_database() -> None:
 
     Called at server shutdown. Idempotent: safe to call when already closed/cleared.
     """
-    global _client
+    global _client, _owner_pid
     with _lock:
         if _client is not None:
             try:
@@ -100,3 +113,4 @@ def close_shared_database() -> None:
             except Exception:
                 pass
             _client = None
+        _owner_pid = None

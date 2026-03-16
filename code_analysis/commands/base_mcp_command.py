@@ -531,18 +531,22 @@ class BaseMCPCommand(Command):
         Validate parameters against command schema. Override to add identifier checks.
 
         Call this before queuing so invalid project_id (and other IDs) are rejected
-        immediately instead of after job start.
+        immediately instead of after job start. When schema has additionalProperties
+        False, only allowed keys are passed through (transport may inject extra keys).
 
         Args:
             params: Incoming parameters dict.
 
         Returns:
-            Validated params (same dict if valid).
+            Validated params (filtered to schema properties when additionalProperties False).
 
         Raises:
             ValidationError: If params fail schema or identifier validation.
         """
         schema = self.get_schema()
+        props = schema.get("properties") or {}
+        if not schema.get("additionalProperties", True):
+            params = {k: v for k, v in params.items() if k in props}
         BaseMCPCommand.validate_params_against_schema(
             params, schema, command_name=getattr(self, "name", "command")
         )

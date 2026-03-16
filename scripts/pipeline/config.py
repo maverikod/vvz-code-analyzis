@@ -21,7 +21,7 @@ class PipelineConfig:
         server_config_path: Optional[Path] = None,
         server_host: Optional[str] = None,
         server_port: Optional[int] = None,
-        timeout: int = 300,
+        timeout: int = 900,
     ):
         """Initialize pipeline configuration.
 
@@ -31,7 +31,7 @@ class PipelineConfig:
             server_config_path: Path to server config file
             server_host: Server host for testing
             server_port: Server port for testing
-            timeout: Test timeout in seconds
+            timeout: Test timeout in seconds (default 900)
         """
         self.test_data_dir = (
             test_data_dir or Path(__file__).parent.parent.parent / "test_data"
@@ -107,23 +107,39 @@ class PipelineConfig:
         }
 
     @staticmethod
-    def _extract_mtls_ssl_paths(config: Dict[str, Any]) -> Dict[str, str]:
-        """Extract normalized mTLS certificate paths from server config."""
-        server_section = config.get("server", {})
-        if not isinstance(server_section, dict):
-            server_section = {}
-        ssl_section = server_section.get("ssl", {})
+    def _extract_ssl_paths_from_section(ssl_section: Any) -> Dict[str, str]:
+        """Normalize cert/key/ca paths from an ssl dict."""
         if not isinstance(ssl_section, dict):
-            ssl_section = config.get("ssl", {})
-        if not isinstance(ssl_section, dict):
-            ssl_section = {}
-
+            return {}
         mtls_paths: Dict[str, str] = {}
         for key in ("cert", "key", "ca", "cert_path", "key_path", "ca_path"):
             value = ssl_section.get(key)
             if value:
                 mtls_paths[key] = str(Path(str(value)).expanduser().resolve())
         return mtls_paths
+
+    @staticmethod
+    def _extract_mtls_ssl_paths(config: Dict[str, Any]) -> Dict[str, str]:
+        """Extract normalized mTLS certificate paths from server config (server.ssl)."""
+        server_section = config.get("server", {})
+        if not isinstance(server_section, dict):
+            server_section = {}
+        ssl_section = server_section.get("ssl", {})
+        if not isinstance(ssl_section, dict):
+            ssl_section = config.get("ssl", {})
+        return PipelineConfig._extract_ssl_paths_from_section(ssl_section)
+
+    @staticmethod
+    def _extract_client_mtls_ssl_paths(config: Dict[str, Any]) -> Dict[str, str]:
+        """Extract client cert/key/ca for outgoing mTLS (client.ssl). Fallback to server.ssl."""
+        client_section = config.get("client", {})
+        if isinstance(client_section, dict):
+            ssl_section = client_section.get("ssl", {})
+            if isinstance(ssl_section, dict) and any(
+                ssl_section.get(k) for k in ("cert", "cert_path", "key", "key_path")
+            ):
+                return PipelineConfig._extract_ssl_paths_from_section(ssl_section)
+        return PipelineConfig._extract_mtls_ssl_paths(config)
 
     def build_test_config(self) -> Dict[str, Any]:
         """Build test config where DB and network values are single-source-of-truth."""
@@ -208,18 +224,18 @@ class PipelineConfig:
         return self._extract_network_settings(self.build_test_config())
 
     def get_mtls_ssl_paths(self) -> Dict[str, str]:
-        """Return normalized SSL path mapping when protocol=mtls."""
+        """Return normalized SSL path mapping for client connection when protocol=mtls (client.ssl)."""
         config = self.build_test_config()
         network = self._extract_network_settings(config)
         if str(network.get("protocol", "")).lower() != "mtls":
             return {}
-        ssl_paths = self._extract_mtls_ssl_paths(config)
+        ssl_paths = self._extract_client_mtls_ssl_paths(config)
         required_paths = ("cert", "key", "ca")
         missing = [name for name in required_paths if not ssl_paths.get(name)]
         if missing:
             raise ValueError(
-                "mTLS protocol requires server SSL paths for "
-                f"{', '.join(missing)} in server.ssl"
+                "mTLS protocol requires client SSL paths for "
+                f"{', '.join(missing)} in client.ssl (or server.ssl fallback)"
             )
         return ssl_paths
 
@@ -249,15 +265,16 @@ class PipelineConfig:
 
         protocol = str(expected_network.get("protocol", "")).lower()
         if protocol == "mtls":
-            expected_ssl = self._extract_mtls_ssl_paths(reference_config)
+            # Adapter is the outgoing client: expect client.ssl (fallback server.ssl)
+            expected_ssl = self._extract_client_mtls_ssl_paths(reference_config)
             required_ssl = ("cert", "key", "ca")
-            missing_in_server = [
+            missing_in_config = [
                 name for name in required_ssl if not expected_ssl.get(name)
             ]
-            if missing_in_server:
+            if missing_in_config:
                 raise ValueError(
-                    "Server config protocol is mtls but server.ssl is missing "
-                    f"{', '.join(missing_in_server)}"
+                    "Server config protocol is mtls but client.ssl (or server.ssl) is missing "
+                    f"{', '.join(missing_in_config)}"
                 )
             adapter_ssl = adapter_settings.get("ssl")
             if not isinstance(adapter_ssl, dict):
@@ -271,7 +288,7 @@ class PipelineConfig:
                 )
                 if normalized_adapter != expected_value:
                     raise ValueError(
-                        f"Adapter/server SSL mismatch for '{key}': "
+                        f"Adapter/client SSL mismatch for '{key}': "
                         f"{normalized_adapter!r} != {expected_value!r}"
                     )
 

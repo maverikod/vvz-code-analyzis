@@ -10,6 +10,8 @@ email: vasilyvz@gmail.com
 
 import logging
 
+from .shared_database_spawn_init import ensure_shared_database_for_current_process
+
 logger = logging.getLogger(__name__)
 
 
@@ -44,6 +46,11 @@ def patch_command_execution_job():
 
         def patched_run(self):
             """Patched run method that creates and passes ProgressTracker."""
+            # Queue jobs run in dedicated child processes. In Linux fork mode the child
+            # inherits the parent's shared DB holder, but that client is not valid for
+            # the new PID. Reinitialize the process-local shared DB before commands use it.
+            ensure_shared_database_for_current_process()
+
             # Get context from mcp_params
             context = self.mcp_params.get("context", {}) or {}
             if not isinstance(context, dict):

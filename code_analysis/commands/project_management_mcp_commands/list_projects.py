@@ -307,89 +307,55 @@ class ListProjectsMCPCommand(BaseMCPCommand):
     ) -> SuccessResult | ErrorResult:
         """Run blocking DB work for list_projects (called from executor).
 
-        Uses one list_projects query and one batch query for watch_dir_paths
-        (WHERE watch_dir_id IN (...)) instead of N+1 per-project selects.
+        Uses a single SQL query that fetches active projects and watch_dir_paths
+        (LEFT JOIN) in one round-trip to minimize DB lock time.
         """
-        # #region agent log
-        _t2 = __import__("time").time()
-        try:
-            _log2 = (
-                __import__("json").dumps(
-                    {
-                        "sessionId": "880dc2",
-                        "hypothesisId": "H3",
-                        "location": "list_projects._run_sync.entry",
-                        "message": "sync_entry",
-                        "data": {"t2": _t2},
-                        "timestamp": int(_t2 * 1000),
-                    }
-                )
-                + "\n"
-            )
-            open(
-                "/home/vasilyvz/projects/tools/code_analysis/.cursor/debug-880dc2.log",
-                "a",
-            ).write(_log2)
-        except Exception:  # noqa: S110
-            pass
-        # #endregion
         try:
             database = self._open_database_from_config(auto_analyze=False)
-            # #region agent log
-            _t3 = __import__("time").time()
             try:
-                _log3 = (
-                    __import__("json").dumps(
+                # Single query: active projects (same semantics as list_projects) plus
+                # watch_dir path in one round-trip to reduce lock time and avoid H5 peak.
+                _list_sql = (
+                    "SELECT p.id, p.root_path, p.name, p.comment, p.watch_dir_id, "
+                    "p.created_at, p.updated_at, w.absolute_path AS watch_dir_path "
+                    "FROM ("
+                    "  SELECT p.* FROM projects p "
+                    "  INNER JOIN ("
+                    "    SELECT project_id FROM files "
+                    "    WHERE (deleted = 0 OR deleted IS NULL) GROUP BY project_id"
+                    "  ) a ON p.id = a.project_id "
+                    "  UNION "
+                    "  SELECT p.* FROM projects p "
+                    "  WHERE p.id NOT IN (SELECT project_id FROM files)"
+                    ") p "
+                    "LEFT JOIN watch_dir_paths w ON w.watch_dir_id = p.watch_dir_id "
+                    "ORDER BY p.created_at"
+                )
+                result = database.execute(_list_sql, ())
+                raw_rows = (
+                    result.get("data", [])
+                    if isinstance(result, dict)
+                    else (result if isinstance(result, list) else [])
+                )
+
+                projects = []
+                for row in raw_rows if isinstance(raw_rows, list) else []:
+                    if not isinstance(row, dict):
+                        continue
+                    updated_at = row.get("updated_at")
+                    if updated_at is not None and hasattr(updated_at, "isoformat"):
+                        updated_at = updated_at.isoformat()
+                    projects.append(
                         {
-                            "sessionId": "880dc2",
-                            "hypothesisId": "H1",
-                            "location": "list_projects._run_sync.after_open_db",
-                            "message": "after_open_db",
-                            "data": {
-                                "t3": _t3,
-                                "elapsed_ms": round((_t3 - _t2) * 1000),
-                            },
-                            "timestamp": int(_t3 * 1000),
+                            "id": row.get("id"),
+                            "watch_dir": row.get("watch_dir_path"),
+                            "name": row.get("name"),
+                            "root_path": row.get("root_path"),
+                            "comment": row.get("comment"),
+                            "watch_dir_id": row.get("watch_dir_id"),
+                            "updated_at": updated_at,
                         }
                     )
-                    + "\n"
-                )
-                open(
-                    "/home/vasilyvz/projects/tools/code_analysis/.cursor/debug-880dc2.log",
-                    "a",
-                ).write(_log3)
-            except Exception:  # noqa: S110
-                pass
-            # #endregion
-            try:
-                project_objects = database.list_projects()
-                # #region agent log
-                _t4 = __import__("time").time()
-                try:
-                    _log4 = (
-                        __import__("json").dumps(
-                            {
-                                "sessionId": "880dc2",
-                                "hypothesisId": "H2",
-                                "location": "list_projects._run_sync.after_list_projects",
-                                "message": "after_list_projects",
-                                "data": {
-                                    "t4": _t4,
-                                    "elapsed_ms": round((_t4 - _t3) * 1000),
-                                    "n": len(project_objects),
-                                },
-                                "timestamp": int(_t4 * 1000),
-                            }
-                        )
-                        + "\n"
-                    )
-                    open(
-                        "/home/vasilyvz/projects/tools/code_analysis/.cursor/debug-880dc2.log",
-                        "a",
-                    ).write(_log4)
-                except Exception:  # noqa: S110
-                    pass
-                # #endregion
 
                 if watched_dir_id:
                     watch_dir = database.select(
@@ -407,67 +373,24 @@ class ListProjectsMCPCommand(BaseMCPCommand):
                             "INVALID_WATCHED_DIR_ID",
                             "list_projects",
                         )
-
-                    project_objects = [
-                        p for p in project_objects if p.watch_dir_id == watched_dir_id
+                    projects = [
+                        p for p in projects if p.get("watch_dir_id") == watched_dir_id
                     ]
 
                 if name_contains is not None:
                     needle = name_contains.lower()
-                    project_objects = [
+                    projects = [
                         p
-                        for p in project_objects
-                        if (p.name or "").lower().find(needle) >= 0
+                        for p in projects
+                        if (p.get("name") or "").lower().find(needle) >= 0
                     ]
                 if comment_contains is not None:
                     needle = comment_contains.lower()
-                    project_objects = [
+                    projects = [
                         p
-                        for p in project_objects
-                        if (p.comment or "").lower().find(needle) >= 0
+                        for p in projects
+                        if (p.get("comment") or "").lower().find(needle) >= 0
                     ]
-
-                # One batch query for all watch_dir paths (no N+1).
-                watch_dir_ids = list(
-                    {p.watch_dir_id for p in project_objects if p.watch_dir_id}
-                )
-                path_by_watch_dir: Dict[str, str] = {}
-                if watch_dir_ids:
-                    placeholders = ",".join("?" * len(watch_dir_ids))
-                    sql = (
-                        "SELECT watch_dir_id, absolute_path FROM watch_dir_paths "
-                        f"WHERE watch_dir_id IN ({placeholders})"
-                    )
-                    result = database.execute(sql, tuple(watch_dir_ids))
-                    rows = result.get("data") if isinstance(result, dict) else []
-                    if isinstance(rows, list):
-                        for row in rows:
-                            if isinstance(row, dict) and row.get("absolute_path"):
-                                path_by_watch_dir[row["watch_dir_id"]] = row[
-                                    "absolute_path"
-                                ]
-
-                projects = []
-                for project in project_objects:
-                    watch_dir_path = (
-                        path_by_watch_dir.get(project.watch_dir_id)
-                        if project.watch_dir_id
-                        else None
-                    )
-                    project_dict = {
-                        "id": project.id,
-                        "watch_dir": watch_dir_path,
-                        "name": project.name,
-                        "root_path": project.root_path,
-                        "comment": project.comment,
-                        "watch_dir_id": project.watch_dir_id,
-                        "updated_at": (
-                            project.updated_at.isoformat()
-                            if project.updated_at
-                            else None
-                        ),
-                    }
-                    projects.append(project_dict)
 
                 parts = []
                 if watched_dir_id:
@@ -479,32 +402,6 @@ class ListProjectsMCPCommand(BaseMCPCommand):
                 filter_msg = (
                     (" (filtered by " + ", ".join(parts) + ")") if parts else ""
                 )
-                # #region agent log
-                _t6 = __import__("time").time()
-                try:
-                    _log6 = (
-                        __import__("json").dumps(
-                            {
-                                "sessionId": "880dc2",
-                                "hypothesisId": "H5",
-                                "location": "list_projects._run_sync.before_return",
-                                "message": "before_return",
-                                "data": {
-                                    "t6": _t6,
-                                    "elapsed_since_t4_ms": round((_t6 - _t4) * 1000),
-                                },
-                                "timestamp": int(_t6 * 1000),
-                            }
-                        )
-                        + "\n"
-                    )
-                    open(
-                        "/home/vasilyvz/projects/tools/code_analysis/.cursor/debug-880dc2.log",
-                        "a",
-                    ).write(_log6)
-                except Exception:  # noqa: S110
-                    pass
-                # #endregion
 
                 return SuccessResult(
                     data={
@@ -538,29 +435,6 @@ class ListProjectsMCPCommand(BaseMCPCommand):
         Returns:
             SuccessResult with list of projects or ErrorResult on failure.
         """
-        # #region agent log
-        _t0 = __import__("time").time()
-        try:
-            _log = (
-                __import__("json").dumps(
-                    {
-                        "sessionId": "880dc2",
-                        "hypothesisId": "H4",
-                        "location": "list_projects.execute.entry",
-                        "message": "entry",
-                        "data": {"t0": _t0},
-                        "timestamp": int(_t0 * 1000),
-                    }
-                )
-                + "\n"
-            )
-            open(
-                "/home/vasilyvz/projects/tools/code_analysis/.cursor/debug-880dc2.log",
-                "a",
-            ).write(_log)
-        except Exception:  # noqa: S110
-            pass
-        # #endregion
         params: Dict[str, Any] = {
             "watched_dir_id": watched_dir_id,
             "name_contains": name_contains,
@@ -576,29 +450,6 @@ class ListProjectsMCPCommand(BaseMCPCommand):
             self.get_schema(),
             command_name=self.name,
         )
-        # #region agent log
-        _t1 = __import__("time").time()
-        try:
-            _log1 = (
-                __import__("json").dumps(
-                    {
-                        "sessionId": "880dc2",
-                        "hypothesisId": "H4",
-                        "location": "list_projects.execute.after_validate",
-                        "message": "after_validate",
-                        "data": {"t1": _t1, "elapsed_ms": round((_t1 - _t0) * 1000)},
-                        "timestamp": int(_t1 * 1000),
-                    }
-                )
-                + "\n"
-            )
-            open(
-                "/home/vasilyvz/projects/tools/code_analysis/.cursor/debug-880dc2.log",
-                "a",
-            ).write(_log1)
-        except Exception:  # noqa: S110
-            pass
-        # #endregion
         try:
             result = await asyncio.wait_for(
                 asyncio.get_event_loop().run_in_executor(
@@ -610,63 +461,8 @@ class ListProjectsMCPCommand(BaseMCPCommand):
                 ),
                 timeout=_LIST_PROJECTS_DB_TIMEOUT,
             )
-            # #region agent log
-            _t_end = __import__("time").time()
-            try:
-                _log_end = (
-                    __import__("json").dumps(
-                        {
-                            "sessionId": "880dc2",
-                            "hypothesisId": "H4",
-                            "location": "list_projects.execute.exit",
-                            "message": "exit",
-                            "data": {
-                                "t_end": _t_end,
-                                "elapsed_total_ms": round((_t_end - _t0) * 1000),
-                                "elapsed_after_validate_ms": round(
-                                    (_t_end - _t1) * 1000
-                                ),
-                            },
-                            "timestamp": int(_t_end * 1000),
-                        }
-                    )
-                    + "\n"
-                )
-                open(
-                    "/home/vasilyvz/projects/tools/code_analysis/.cursor/debug-880dc2.log",
-                    "a",
-                ).write(_log_end)
-            except Exception:  # noqa: S110
-                pass
-            # #endregion
             return result
         except asyncio.TimeoutError:
-            # #region agent log
-            _t_to = __import__("time").time()
-            try:
-                _log_to = (
-                    __import__("json").dumps(
-                        {
-                            "sessionId": "880dc2",
-                            "hypothesisId": "timeout",
-                            "location": "list_projects.execute.timeout",
-                            "message": "TimeoutError",
-                            "data": {
-                                "t_timeout": _t_to,
-                                "elapsed_since_t0_ms": round((_t_to - _t0) * 1000),
-                            },
-                            "timestamp": int(_t_to * 1000),
-                        }
-                    )
-                    + "\n"
-                )
-                open(
-                    "/home/vasilyvz/projects/tools/code_analysis/.cursor/debug-880dc2.log",
-                    "a",
-                ).write(_log_to)
-            except Exception:  # noqa: S110
-                pass
-            # #endregion
             return self._handle_error(
                 TimeoutError(
                     f"list_projects did not complete within {_LIST_PROJECTS_DB_TIMEOUT}s"

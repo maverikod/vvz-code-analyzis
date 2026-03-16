@@ -1,5 +1,8 @@
 """
-Direct mcp-proxy-adapter client wrapper for pipeline command calls.
+Pipeline client: thin wrapper around mcp-proxy-adapter JsonRpcClient.
+
+Used to poll the running code-analysis-server (started by pipeline). All command
+calls go through this client; no direct HTTP or other transport.
 
 Author: Vasiliy Zdanovskiy
 email: vasilyvz@gmail.com
@@ -18,7 +21,7 @@ try:
 except Exception:  # pragma: no cover - compatibility fallback
     from mcp_proxy_adapter.client.jsonrpc_client import JsonRpcClient
 
-from tests.pipeline.config import PipelineConfig
+from scripts.pipeline.config import PipelineConfig
 
 _IMPORT_ERROR: Optional[Exception]
 
@@ -73,7 +76,7 @@ def run_preflight_checks(
 
 
 class MCPClientWrapper:
-    """Thin sync wrapper around direct JsonRpcClient for real server tests.
+    """Sync wrapper around mcp-proxy-adapter JsonRpcClient; pipeline polls server via this.
 
     Attributes:
         config: Shared pipeline configuration.

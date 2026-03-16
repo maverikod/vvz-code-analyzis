@@ -233,9 +233,9 @@ class TestCommandsIntegration:
             ) as mock_socket:
                 mock_socket.return_value = socket_path
 
-                # List projects command
+                # List projects command (no root_dir; DB path from config/mock)
                 command = ListProjectsMCPCommand()
-                result = await command.execute(root_dir=str(tmp_path))
+                result = await command.execute()
 
                 # Check if result is success
                 if hasattr(result, "success"):
@@ -358,7 +358,7 @@ class TestCommandsIntegration:
 
                 # Try to list projects (should work even if empty)
                 command = ListProjectsMCPCommand()
-                result = await command.execute(root_dir=str(tmp_path))
+                result = await command.execute()
 
                 # Check if result is success
                 if hasattr(result, "success"):
@@ -414,7 +414,7 @@ class TestCommandsIntegration:
                 # Execute commands concurrently
                 async def run_command():
                     command = ListProjectsMCPCommand()
-                    return await command.execute(root_dir=str(tmp_path))
+                    return await command.execute()
 
                 tasks = [run_command() for _ in range(10)]
                 results = await asyncio.gather(*tasks)

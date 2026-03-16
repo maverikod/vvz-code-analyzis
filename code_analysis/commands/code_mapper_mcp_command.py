@@ -53,6 +53,14 @@ class UpdateIndexesMCPCommand(BaseMCPCommand):
         """Get JSON schema for command parameters (MCP Proxy validation)."""
         return get_update_indexes_schema()
 
+    def validate_params(
+        self: "UpdateIndexesMCPCommand", params: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """Validate params and reject unknown project_id before queuing."""
+        params = super().validate_params(params)
+        BaseMCPCommand._validate_project_id_exists(params["project_id"])
+        return params
+
     def _analyze_file(
         self: "UpdateIndexesMCPCommand",
         database: Any,
@@ -122,11 +130,15 @@ class UpdateIndexesMCPCommand(BaseMCPCommand):
         try:
             if progress_tracker:
                 progress_tracker.set_status("running")
-                progress_tracker.set_description("Resolving project...")
+                progress_tracker.set_description("Indexing: opening database...")
                 progress_tracker.set_progress(0)
 
             database = self._open_database_from_config(auto_analyze=False)
             try:
+                if progress_tracker:
+                    progress_tracker.set_description("Indexing: resolving project...")
+                    progress_tracker.set_progress(0)
+
                 project = database.get_project(project_id)
                 if not project or not project.root_path:
                     return ErrorResult(

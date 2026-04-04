@@ -20,7 +20,10 @@ INITIAL_DELAY_SECONDS = 0.2
 BACKOFF_MULTIPLIER = 2.0
 MAX_DELAY_SECONDS = 1.0
 JITTER_FRACTION = 0.05  # ±5%
-MAX_TOTAL_ELAPSED_SECONDS = 5.0
+# Transient retry loop wall clock: must cover long sync_file_to_db_atomic under
+# watcher/index contention while staying bounded. Shared MCP DatabaseClient uses
+# ~300s; 120s matches interactive patience without approaching that ceiling.
+MAX_TOTAL_ELAPSED_SECONDS = 120.0
 
 # Transient category codes (for logging)
 CATEGORY_RPC_CONNECT_REFUSED = "rpc_connect_refused"

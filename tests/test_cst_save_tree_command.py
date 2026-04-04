@@ -94,6 +94,50 @@ class TestCstSaveTreeTransientConnectRefusalRecovery:
         assert call_count == 3
 
 
+class TestCstSaveTreeTransientConnectRefusedInSaveResult:
+    """Connect refused surfaced as save_tree_to_file error string (not raised DBConnectionError)."""
+
+    @pytest.mark.asyncio
+    async def test_connect_refused_in_save_result_then_success(
+        self, project_root: Path, out_py: Path
+    ) -> None:
+        """First 2 save results report connection refused in error text, 3rd succeeds."""
+        mock_db = MagicMock()
+        mock_db.disconnect = MagicMock()
+        refused = {
+            "success": False,
+            "error": "Failed to sync file to DB: [Errno 111] Connection refused",
+            "file_path": str(out_py),
+        }
+        with patch.object(
+            BaseMCPCommand,
+            "_open_database_from_config",
+            return_value=mock_db,
+        ), patch.object(
+            BaseMCPCommand,
+            "_resolve_file_path_from_project",
+            return_value=out_py,
+        ), patch(
+            "code_analysis.commands.cst_save_tree_command.save_tree_to_file"
+        ) as mock_save:
+            mock_save.side_effect = [refused, refused, _success_result(str(out_py))]
+            with patch(
+                "code_analysis.commands.cst_save_tree_command.reload_tree_from_file"
+            ), patch(
+                "code_analysis.commands.cst_save_tree_command.commit_after_write",
+                return_value=(True, None),
+            ):
+                cmd = CSTSaveTreeCommand()
+                result = await cmd.execute(
+                    tree_id="test-tree-id",
+                    project_id="test-project-id",
+                    file_path="out.py",
+                )
+        assert isinstance(result, SuccessResult)
+        assert result.data.get("success") is True
+        assert mock_save.call_count == 3
+
+
 class TestCstSaveTreeTransientDbLockRecovery:
     """Transient DB lock then success: retry until save succeeds."""
 
@@ -222,6 +266,41 @@ class TestCstSaveTreeRetryBudgetExhaustion:
         assert isinstance(result, ErrorResult)
         assert result.code == "CST_SAVE_ERROR"
         assert "database is locked" in result.message
+        assert "after 4 attempts" in result.message
+
+    @pytest.mark.asyncio
+    async def test_connect_refused_in_save_result_exhaustion(
+        self, project_root: Path, out_py: Path
+    ) -> None:
+        """All attempts return connect-refused in save error text; fail with suffix."""
+        mock_db = MagicMock()
+        mock_db.disconnect = MagicMock()
+        refused = {
+            "success": False,
+            "error": "Failed to sync file to DB: connection refused",
+            "file_path": str(out_py),
+        }
+        with patch.object(
+            BaseMCPCommand,
+            "_open_database_from_config",
+            return_value=mock_db,
+        ), patch.object(
+            BaseMCPCommand,
+            "_resolve_file_path_from_project",
+            return_value=out_py,
+        ), patch(
+            "code_analysis.commands.cst_save_tree_command.save_tree_to_file",
+            return_value=refused,
+        ):
+            cmd = CSTSaveTreeCommand()
+            result = await cmd.execute(
+                tree_id="test-tree-id",
+                project_id="test-project-id",
+                file_path="out.py",
+            )
+        assert isinstance(result, ErrorResult)
+        assert result.code == "CST_SAVE_ERROR"
+        assert "connection refused" in result.message.lower()
         assert "after 4 attempts" in result.message
 
 

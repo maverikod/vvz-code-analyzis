@@ -27,6 +27,26 @@ CATEGORY_RPC_CONNECT_REFUSED = "rpc_connect_refused"
 CATEGORY_SQLITE_DB_LOCKED = "sqlite_db_locked"
 
 
+def _connection_refused_in_text(text: str) -> bool:
+    """Return True if lowercased text looks like transient connect refused (RPC/Unix)."""
+    msg = text.lower()
+    return "connection refused" in msg or "errno 111" in msg or ": 111]" in msg
+
+
+def is_rpc_connect_refused_message(message: str | None) -> bool:
+    """Return True if an error string from save_tree_to_file / sync indicates connect refused.
+
+    When DB RPC fails inside ``save_tree_to_file``, exceptions are often converted to
+    ``success: False`` with ``error`` text rather than raising
+    :class:`~code_analysis.core.database_client.exceptions.ConnectionError`.
+    The cst_save_tree retry policy uses this to align with
+    :func:`is_rpc_connect_refused`.
+    """
+    if not message:
+        return False
+    return _connection_refused_in_text(message)
+
+
 def is_rpc_connect_refused(exc: BaseException) -> bool:
     """Return True if the exception indicates transient RPC connection refused.
 
@@ -45,8 +65,7 @@ def is_rpc_connect_refused(exc: BaseException) -> bool:
     cause = getattr(exc, "__cause__", None)
     if cause is not None and getattr(cause, "errno", None) == errno.ECONNREFUSED:
         return True
-    msg = str(exc).lower()
-    if "connection refused" in msg or "errno 111" in msg or ": 111]" in msg:
+    if _connection_refused_in_text(str(exc)):
         return True
     return False
 

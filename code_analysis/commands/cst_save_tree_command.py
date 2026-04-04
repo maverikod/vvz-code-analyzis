@@ -30,6 +30,7 @@ from ..core.database_client.transient import (
     compute_retry_delay,
     format_retry_summary_suffix,
     is_rpc_connect_refused,
+    is_rpc_connect_refused_message,
     is_sqlite_db_locked,
 )
 
@@ -234,6 +235,54 @@ class CSTSaveTreeCommand(BaseMCPCommand):
                                     delay,
                                     extra={
                                         "cst_save_stage": "sqlite_lock_retry",
+                                        "project_id": project_id,
+                                        "tree_id": tree_id,
+                                        "file_path": str(absolute_file_path),
+                                        "attempt": attempt,
+                                    },
+                                )
+                                time.sleep(delay)
+                                continue
+                            if is_rpc_connect_refused_message(err_msg):
+                                elapsed = time.perf_counter() - t_retry_start
+                                if (
+                                    attempt >= MAX_ATTEMPTS
+                                    or elapsed >= MAX_TOTAL_ELAPSED_SECONDS
+                                ):
+                                    logger.error(
+                                        "cst_save_tree retry exhausted category=%s attempts=%s elapsed_sec=%.2f",
+                                        CATEGORY_RPC_CONNECT_REFUSED,
+                                        attempt,
+                                        elapsed,
+                                        extra={
+                                            "cst_save_stage": "rpc_connect_refused_exhausted_save_result",
+                                            "failure_phase": "save_tree_result",
+                                            "project_id": project_id,
+                                            "tree_id": tree_id,
+                                            "file_path": str(absolute_file_path),
+                                            "attempt": attempt,
+                                            "exc_type": "RpcConnectRefusedEmbedded",
+                                        },
+                                    )
+                                    suffix = format_retry_summary_suffix(
+                                        attempt, elapsed
+                                    )
+                                    return ErrorResult(
+                                        message=f"{err_msg}{suffix}",
+                                        code="CST_SAVE_ERROR",
+                                        details=result,
+                                    )
+                                delay = compute_retry_delay(attempt)
+                                logger.warning(
+                                    "cst_save_tree transient connect refused "
+                                    "(save result) attempt=%s/%s category=%s next_delay_sec=%.2f",
+                                    attempt,
+                                    MAX_ATTEMPTS,
+                                    CATEGORY_RPC_CONNECT_REFUSED,
+                                    delay,
+                                    extra={
+                                        "cst_save_stage": "rpc_connect_refused_retry_save_result",
+                                        "failure_phase": "save_tree_result",
                                         "project_id": project_id,
                                         "tree_id": tree_id,
                                         "file_path": str(absolute_file_path),

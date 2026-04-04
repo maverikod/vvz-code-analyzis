@@ -246,7 +246,6 @@ class BaseMCPCommand(Command):
                             CATEGORY_RPC_CONNECT_REFUSED,
                             attempt,
                             elapsed,
-                            extra={"importance": 8},
                         )
                         raise
                     delay = compute_retry_delay(attempt)
@@ -257,7 +256,6 @@ class BaseMCPCommand(Command):
                         MAX_ATTEMPTS,
                         CATEGORY_RPC_CONNECT_REFUSED,
                         delay,
-                        extra={"importance": 6},
                     )
                     time.sleep(delay)
                     continue

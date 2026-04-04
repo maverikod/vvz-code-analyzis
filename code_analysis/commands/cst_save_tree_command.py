@@ -174,7 +174,6 @@ class CSTSaveTreeCommand(BaseMCPCommand):
                                         CATEGORY_SQLITE_DB_LOCKED,
                                         attempt,
                                         elapsed,
-                                        extra={"importance": 8},
                                     )
                                     suffix = format_retry_summary_suffix(
                                         attempt, elapsed
@@ -191,7 +190,6 @@ class CSTSaveTreeCommand(BaseMCPCommand):
                                     MAX_ATTEMPTS,
                                     CATEGORY_SQLITE_DB_LOCKED,
                                     delay,
-                                    extra={"importance": 6},
                                 )
                                 time.sleep(delay)
                                 continue
@@ -247,7 +245,6 @@ class CSTSaveTreeCommand(BaseMCPCommand):
                             logger.info(
                                 "cst_save_tree succeeded after %s attempts",
                                 attempt,
-                                extra={"importance": 4},
                             )
                         return SuccessResult(data=result)
                     finally:
@@ -264,7 +261,6 @@ class CSTSaveTreeCommand(BaseMCPCommand):
                             CATEGORY_RPC_CONNECT_REFUSED,
                             attempt,
                             elapsed,
-                            extra={"importance": 8},
                         )
                         suffix = format_retry_summary_suffix(attempt, elapsed)
                         return ErrorResult(
@@ -278,7 +274,6 @@ class CSTSaveTreeCommand(BaseMCPCommand):
                         MAX_ATTEMPTS,
                         CATEGORY_RPC_CONNECT_REFUSED,
                         delay,
-                        extra={"importance": 6},
                     )
                     time.sleep(delay)
 

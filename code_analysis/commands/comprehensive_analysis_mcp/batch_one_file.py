@@ -108,7 +108,7 @@ def analyze_one_file_in_batch(
             min_similarity=duplicate_min_similarity,
             use_semantic=False,
         )
-        duplicates = detector.find_duplicates_in_file(str(full_path))
+        duplicates = detector.find_duplicates_in_code(source_code, str(full_path))
         timings_sec["duplicates"] += time.perf_counter() - t0
         for group in duplicates:
             for occ in group["occurrences"]:

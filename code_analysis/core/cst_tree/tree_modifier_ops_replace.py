@@ -19,6 +19,7 @@ from .tree_modifier_ops_find import (
 )
 from .tree_modifier_ops_parse import (
     FINE_GRAINED_REPLACE_NODE_TYPES,
+    parse_annotation_snippet,
     parse_code_snippet,
     parse_param_snippet,
 )
@@ -72,6 +73,8 @@ def replace_node(
         replacements_list = [cst.parse_expression(stripped)]
     elif isinstance(node, cst.Param):
         replacements_list = [parse_param_snippet(code=new_code)]
+    elif isinstance(node, cst.Annotation):
+        replacements_list = [parse_annotation_snippet(code=new_code)]
     else:
         replacements_list = cast(List[cst.CSTNode], list(parse_code_snippet(new_code)))
 

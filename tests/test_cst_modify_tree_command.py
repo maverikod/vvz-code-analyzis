@@ -953,3 +953,156 @@ class TestBatchedTwoParamReplacesEquivalence:
         code_batch = tree_batch.module.code
 
         assert code_batch == code_seq
+
+
+SOURCE_ANNOTATION_SIGNATURE = """def g(x: int) -> None:
+    pass
+"""
+
+
+def _annotation_node_ids_on_line(tree, line: int) -> list[str]:
+    """Return Annotation node_ids on `line` sorted left-to-right."""
+    pairs = [
+        (nid, meta)
+        for nid, meta in tree.metadata_map.items()
+        if meta.type == "Annotation" and meta.start_line == line
+    ]
+    pairs.sort(key=lambda x: (x[1].start_col, x[1].end_col))
+    ids = [nid for nid, _ in pairs]
+    if len(ids) < 2:
+        pytest.fail(
+            f"Expected at least two Annotation nodes on line {line}, found {len(ids)}"
+        )
+    return ids
+
+
+class TestReplaceLeafAnnotation:
+    """Replace leaf Annotation (param / return) without rewriting whole signature."""
+
+    def test_build_ops_replace_param_annotation_keeps_return_and_body(self, tmp_path):
+        path = str(tmp_path / "ann_param.py")
+        tree = create_tree_from_code(path, SOURCE_ANNOTATION_SIGNATURE)
+        tree_id = tree.tree_id
+        ids = _annotation_node_ids_on_line(tree, line=1)
+        assert len(ids) >= 2
+        param_ann_id = ids[0]
+        ops, err = build_tree_operations(
+            tree,
+            [
+                {
+                    "action": "replace",
+                    "node_id": param_ann_id,
+                    "code_lines": [": str"],
+                }
+            ],
+        )
+        assert err is None
+        assert len(ops) == 1
+        assert ops[0].node_id == param_ann_id
+        modify_tree(tree_id, ops)
+        out = get_tree(tree_id)
+        assert out is not None
+        code = out.module.code
+        assert "x: str" in code
+        assert "-> None" in code
+        assert "pass" in code
+
+    def test_build_ops_replace_return_annotation_keeps_param_and_body(self, tmp_path):
+        path = str(tmp_path / "ann_return.py")
+        tree = create_tree_from_code(path, SOURCE_ANNOTATION_SIGNATURE)
+        tree_id = tree.tree_id
+        ids = _annotation_node_ids_on_line(tree, line=1)
+        return_ann_id = ids[1]
+        ops, err = build_tree_operations(
+            tree,
+            [
+                {
+                    "action": "replace",
+                    "node_id": return_ann_id,
+                    "code_lines": ["-> bool"],
+                }
+            ],
+        )
+        assert err is None
+        assert len(ops) == 1
+        modify_tree(tree_id, ops)
+        out = get_tree(tree_id)
+        assert out is not None
+        code = out.module.code
+        assert "x: int" in code
+        assert "-> bool" in code
+        assert "-> None" not in code
+        assert "pass" in code
+
+
+class TestBatchedTwoAnnotationReplacesEquivalence:
+    def test_two_annotation_replaces_one_modify_matches_sequential(self, tmp_path):
+        """Batch two Annotation replaces equals two sequential modifies."""
+        path = str(tmp_path / "seq_two_ann.py")
+        tree = create_tree_from_code(path, SOURCE_ANNOTATION_SIGNATURE)
+        tree_id = tree.tree_id
+        ids = _annotation_node_ids_on_line(tree, line=1)
+        assert len(ids) >= 2
+
+        ops, err = build_tree_operations(
+            tree,
+            [
+                {
+                    "action": "replace",
+                    "node_id": ids[0],
+                    "code_lines": [": str"],
+                }
+            ],
+        )
+        assert err is None
+        assert len(ops) == 1
+        modify_tree(tree_id, ops)
+
+        tree_mid = get_tree(tree_id)
+        assert tree_mid is not None
+        ids_mid = _annotation_node_ids_on_line(tree_mid, line=1)
+        ops2, err2 = build_tree_operations(
+            tree_mid,
+            [
+                {
+                    "action": "replace",
+                    "node_id": ids_mid[1],
+                    "code_lines": ["-> bool"],
+                }
+            ],
+        )
+        assert err2 is None
+        modify_tree(tree_id, ops2)
+
+        tree_seq = get_tree(tree_id)
+        assert tree_seq is not None
+        code_seq = tree_seq.module.code
+
+        path_b = str(tmp_path / "batch_two_ann.py")
+        tree_b = create_tree_from_code(path_b, SOURCE_ANNOTATION_SIGNATURE)
+        tree_id_b = tree_b.tree_id
+        ids_b = _annotation_node_ids_on_line(tree_b, line=1)
+        ops_b, err_b = build_tree_operations(
+            tree_b,
+            [
+                {
+                    "action": "replace",
+                    "node_id": ids_b[0],
+                    "code_lines": [": str"],
+                },
+                {
+                    "action": "replace",
+                    "node_id": ids_b[1],
+                    "code_lines": ["-> bool"],
+                },
+            ],
+        )
+        assert err_b is None
+        assert len(ops_b) == 2
+        modify_tree(tree_id_b, ops_b)
+
+        tree_batch = get_tree(tree_id_b)
+        assert tree_batch is not None
+        code_batch = tree_batch.module.code
+
+        assert code_batch == code_seq

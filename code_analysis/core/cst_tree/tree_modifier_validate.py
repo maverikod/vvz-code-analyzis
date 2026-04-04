@@ -15,6 +15,7 @@ from .models import CSTTree, ROOT_NODE_ID_SENTINEL, TreeOperation, TreeOperation
 from .tree_metadata import _resolve_node_id as resolve_parent_id
 from .tree_modifier_ops import (
     FINE_GRAINED_REPLACE_NODE_TYPES,
+    parse_annotation_snippet,
     parse_code_snippet,
     parse_param_snippet,
 )
@@ -48,9 +49,17 @@ def _validate_operation(tree: CSTTree, operation: TreeOperation) -> None:
                         else (operation.code or "")
                     )
                     cst.parse_expression(text.strip())
-                else:
+                elif meta.type == "Annotation":
+                    parse_annotation_snippet(
+                        code=operation.code, code_lines=operation.code_lines
+                    )
+                elif meta.type == "Param":
                     parse_param_snippet(
                         code=operation.code, code_lines=operation.code_lines
+                    )
+                else:
+                    raise ValueError(
+                        f"Unexpected fine-grained replace type: {meta.type!r}"
                     )
             else:
                 parse_code_snippet(code=operation.code, code_lines=operation.code_lines)

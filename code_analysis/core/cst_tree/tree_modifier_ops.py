@@ -23,6 +23,7 @@ from .tree_modifier_ops_insert import (
 )
 from .tree_modifier_ops_parse import (
     FINE_GRAINED_REPLACE_NODE_TYPES,
+    parse_annotation_snippet,
     parse_code_snippet,
     parse_code_snippet_or_comment,
     parse_param_snippet,
@@ -31,6 +32,7 @@ from .tree_modifier_ops_replace import replace_node, replace_range
 
 __all__ = [
     "FINE_GRAINED_REPLACE_NODE_TYPES",
+    "parse_annotation_snippet",
     "parse_code_snippet",
     "parse_code_snippet_or_comment",
     "parse_param_snippet",

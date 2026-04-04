@@ -13,7 +13,7 @@ import libcst as cst
 
 # Node types for replace/delete that resolve by exact span (no promotion to
 # enclosing Module/IndentedBlock statement).
-FINE_GRAINED_REPLACE_NODE_TYPES = frozenset({"Param", "Name"})
+FINE_GRAINED_REPLACE_NODE_TYPES = frozenset({"Annotation", "Name", "Param"})
 
 
 def _snippet_as_string(code: Optional[str], code_lines: Optional[List[str]]) -> str:
@@ -59,6 +59,50 @@ def parse_param_snippet(
             f"got {len(collected)}"
         )
     return collected[0]
+
+
+def parse_annotation_snippet(
+    code: Optional[str] = None,
+    code_lines: Optional[List[str]] = None,
+) -> cst.Annotation:
+    """Parse a parameter or return annotation snippet for leaf Annotation replacement."""
+    raw = _snippet_as_string(code, code_lines)
+    if not raw.strip():
+        raise ValueError("Annotation replacement code is empty")
+    normalized = _normalize_snippet_indentation(raw)
+    text = normalized.strip()
+    if text.startswith("->"):
+        wrapped = f"def __ann_return__(){text}:\n    pass\n"
+        try:
+            mod = cst.parse_module(wrapped)
+        except cst.ParserSyntaxError as e:
+            raise ValueError(f"Invalid return annotation syntax: {e}") from e
+        if not mod.body or not isinstance(mod.body[0], cst.FunctionDef):
+            raise ValueError(
+                "Return annotation snippet did not parse as a function return annotation"
+            )
+        fd = mod.body[0]
+        if fd.returns is None or not isinstance(fd.returns, cst.Annotation):
+            raise ValueError("Parsed function has no Annotation for returns")
+        return fd.returns
+    wrapped = f"def __ann_param__(x{text}):\n    pass\n"
+    try:
+        mod = cst.parse_module(wrapped)
+    except cst.ParserSyntaxError as e:
+        raise ValueError(f"Invalid parameter annotation syntax: {e}") from e
+    if not mod.body or not isinstance(mod.body[0], cst.FunctionDef):
+        raise ValueError(
+            "Parameter annotation snippet did not parse as a function parameter"
+        )
+    fd = mod.body[0]
+    if not fd.params.params:
+        raise ValueError(
+            "Parameter annotation snippet did not parse as a function parameter"
+        )
+    param0 = fd.params.params[0]
+    if param0.annotation is None or not isinstance(param0.annotation, cst.Annotation):
+        raise ValueError("Parsed parameter has no Annotation")
+    return param0.annotation
 
 
 def _normalize_snippet_indentation(code: str) -> str:

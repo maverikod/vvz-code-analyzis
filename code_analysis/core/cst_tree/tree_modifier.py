@@ -28,6 +28,7 @@ from .tree_modifier_ops import (
     replace_node,
     replace_range,
 )
+from .tree_modifier_ops_parse import FINE_GRAINED_REPLACE_NODE_TYPES
 from .tree_modifier_validate import _validate_operation
 
 try:
@@ -67,10 +68,13 @@ def _apply_libcst_codegen_compat() -> None:
 _apply_libcst_codegen_compat()
 
 
-def _use_mutable_batch_path(operations: List[TreeOperation]) -> bool:
+def _use_mutable_batch_path(operations: List[TreeOperation], tree: CSTTree) -> bool:
     """
     True when batch path (mutable layer) should be used: more than one replace,
     or more than one insert, or any delete; and no REPLACE_RANGE or MOVE.
+
+    Batches that include REPLACE or DELETE targeting fine-grained node types
+    (Param, Name) use the LibCST sequential path instead.
     """
     if (
         build_from_libcst is None
@@ -89,6 +93,18 @@ def _use_mutable_batch_path(operations: List[TreeOperation]) -> bool:
     )
     if has_range_or_move:
         return False
+    for op in operations:
+        if op.action not in (TreeOperationType.REPLACE, TreeOperationType.DELETE):
+            continue
+        nid = op.node_id
+        if not nid:
+            continue
+        meta = tree.metadata_map.get(nid)
+        if meta is None:
+            continue
+        node_type = getattr(meta, "type", "")
+        if node_type and node_type in FINE_GRAINED_REPLACE_NODE_TYPES:
+            return False
     return replace_count > 1 or insert_count > 1 or has_delete
 
 
@@ -141,8 +157,10 @@ def modify_tree(tree_id: str, operations: List[TreeOperation]) -> CSTTree:
                     (meta.start_line, meta.start_col, meta.type)
                 ] = op.start_node_id
 
+    use_mutable_batch = _use_mutable_batch_path(operations, tree)
+
     try:
-        if _use_mutable_batch_path(operations):
+        if use_mutable_batch:
             mutable_tree = build_from_libcst(
                 tree.module, tree.metadata_map, tree.node_map
             )
@@ -165,25 +183,58 @@ def modify_tree(tree_id: str, operations: List[TreeOperation]) -> CSTTree:
         # Current LibCST path (single-op or REPLACE_RANGE/MOVE)
         modified_module = tree.module
 
-        # Apply all operations. Do not rebuild index between ops so UUID node_ids
-        # for unmodified nodes stay valid (batch replace at multiple points).
+        # Apply all operations. For mutable batch, sibling statement replaces skip
+        # mid-loop rebuild (node_map stays valid). When the batch path is skipped
+        # (e.g. fine-grained Param/Name replaces), multiple ops on the same parent
+        # require a fresh index after each op so LibCST node references match
+        # tree.module.
+        sequential_multi = len(sorted_ops) > 1 and not use_mutable_batch
+        completed_replaced: Dict[Tuple[int, int, str], str] = {}
         for op in sorted_ops:
             modified_module = _apply_operation(modified_module, tree, op)
             tree.module = modified_module
             _remove_operation_nodes_from_index(tree, op)
+            if sequential_multi:
+                if op.action == TreeOperationType.REPLACE and op.node_id:
+                    om = previous_metadata_map.get(op.node_id)
+                    if om and hasattr(om, "start_line") and hasattr(om, "start_col"):
+                        completed_replaced[(om.start_line, om.start_col, om.type)] = (
+                            op.node_id
+                        )
+                elif op.action == TreeOperationType.REPLACE_RANGE and op.start_node_id:
+                    om = previous_metadata_map.get(op.start_node_id)
+                    if om and hasattr(om, "start_line") and hasattr(om, "start_col"):
+                        completed_replaced[(om.start_line, om.start_col, om.type)] = (
+                            op.start_node_id
+                        )
+                tree.node_map.clear()
+                tree.metadata_map.clear()
+                tree.parent_map.clear()
+                _build_tree_index(
+                    tree,
+                    node_types=None,
+                    max_depth=None,
+                    include_children=True,
+                    previous_metadata_map=previous_metadata_map,
+                    replaced_positions_to_id=(
+                        dict(completed_replaced) if completed_replaced else None
+                    ),
+                )
 
-        # Rebuild index preserving node_ids: unchanged nodes keep id, replaced node keeps id
-        tree.node_map.clear()
-        tree.metadata_map.clear()
-        tree.parent_map.clear()
-        _build_tree_index(
-            tree,
-            node_types=None,
-            max_depth=None,
-            include_children=True,
-            previous_metadata_map=previous_metadata_map,
-            replaced_positions_to_id=replaced_positions_to_id or None,
-        )
+        if not sequential_multi:
+            # Rebuild index preserving node_ids: unchanged nodes keep id, replaced
+            # node keeps id
+            tree.node_map.clear()
+            tree.metadata_map.clear()
+            tree.parent_map.clear()
+            _build_tree_index(
+                tree,
+                node_types=None,
+                max_depth=None,
+                include_children=True,
+                previous_metadata_map=previous_metadata_map,
+                replaced_positions_to_id=replaced_positions_to_id or None,
+            )
 
         _validate_module(modified_module)
 

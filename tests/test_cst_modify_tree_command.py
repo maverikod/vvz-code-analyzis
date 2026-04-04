@@ -799,12 +799,32 @@ SOURCE_PARAM_AND_NAME = """def foo(a):
     return a + 1
 """
 
+SOURCE_TWO_PARAMS = """def f(a: int, b: int) -> None:
+    pass
+"""
+
 
 def _node_id_first_type(tree, node_type: str, *, line: int):
     for nid, meta in tree.metadata_map.items():
         if meta.type == node_type and meta.start_line == line:
             return nid
     pytest.fail(f"No {node_type} on line {line}")
+
+
+def _param_node_ids_on_line(tree, line: int) -> list[str]:
+    """Return Param node_ids on `line` sorted left-to-right."""
+    pairs = [
+        (nid, meta)
+        for nid, meta in tree.metadata_map.items()
+        if meta.type == "Param" and meta.start_line == line
+    ]
+    pairs.sort(key=lambda x: (x[1].start_col, x[1].end_col))
+    ids = [nid for nid, _ in pairs]
+    if len(ids) < 2:
+        pytest.fail(
+            f"Expected at least two Param nodes on line {line}, found {len(ids)}"
+        )
+    return ids
 
 
 class TestReplaceLeafParamAndName:
@@ -860,3 +880,76 @@ class TestReplaceLeafParamAndName:
         assert "def foo(a):" in code
         assert "return x + 1" in code
         assert "return a + 1" not in code
+
+
+class TestBatchedTwoParamReplacesEquivalence:
+    def test_two_param_replaces_one_modify_matches_sequential(self, tmp_path):
+        """Batch two Param replaces equals two sequential modifies."""
+        path = str(tmp_path / "seq_two_param.py")
+        tree = create_tree_from_code(path, SOURCE_TWO_PARAMS)
+        tree_id = tree.tree_id
+        ids = _param_node_ids_on_line(tree, line=1)
+        assert len(ids) >= 2
+
+        ops, err = build_tree_operations(
+            tree,
+            [
+                {
+                    "action": "replace",
+                    "node_id": ids[0],
+                    "code_lines": ["x: int"],
+                }
+            ],
+        )
+        assert err is None
+        assert len(ops) == 1
+        modify_tree(tree_id, ops)
+
+        tree_mid = get_tree(tree_id)
+        assert tree_mid is not None
+        ids_mid = _param_node_ids_on_line(tree_mid, line=1)
+        ops2, err2 = build_tree_operations(
+            tree_mid,
+            [
+                {
+                    "action": "replace",
+                    "node_id": ids_mid[1],
+                    "code_lines": ["y: int"],
+                }
+            ],
+        )
+        assert err2 is None
+        modify_tree(tree_id, ops2)
+
+        tree_seq = get_tree(tree_id)
+        assert tree_seq is not None
+        code_seq = tree_seq.module.code
+
+        path_b = str(tmp_path / "batch_two_param.py")
+        tree_b = create_tree_from_code(path_b, SOURCE_TWO_PARAMS)
+        tree_id_b = tree_b.tree_id
+        ids_b = _param_node_ids_on_line(tree_b, line=1)
+        ops_b, err_b = build_tree_operations(
+            tree_b,
+            [
+                {
+                    "action": "replace",
+                    "node_id": ids_b[0],
+                    "code_lines": ["x: int"],
+                },
+                {
+                    "action": "replace",
+                    "node_id": ids_b[1],
+                    "code_lines": ["y: int"],
+                },
+            ],
+        )
+        assert err_b is None
+        assert len(ops_b) == 2
+        modify_tree(tree_id_b, ops_b)
+
+        tree_batch = get_tree(tree_id_b)
+        assert tree_batch is not None
+        code_batch = tree_batch.module.code
+
+        assert code_batch == code_seq

@@ -384,13 +384,26 @@ class RPCClient:
     def health_check(self) -> bool:
         """Check if RPC server is healthy.
 
-        When not connected, returns True if the socket file exists (server likely up).
-        When connected, returns True if socket exists.
+        Verifies the Unix socket path exists and accepts a connection (not only
+        that a path entry exists), so stale socket files are reported unhealthy.
+
+        When this client is already connected, returns True without an extra
+        probe so a full connection pool does not starve a short connect probe.
 
         Returns:
-            True if server is healthy (socket exists), False otherwise
+            True if the driver socket is usable, False otherwise
         """
         try:
-            return Path(self.socket_path).exists()
+            path = Path(self.socket_path)
+            if not path.exists():
+                return False
+            if self.is_connected():
+                return True
+            probe = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            try:
+                probe.settimeout(1.0)
+                return probe.connect_ex(str(path)) == 0
+            finally:
+                probe.close()
         except Exception:
             return False

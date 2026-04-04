@@ -241,6 +241,13 @@ class TestRPCClient:
         client = RPCClient(socket_path)
         assert not client.health_check()
 
+    def test_health_check_path_exists_but_not_listening(self, tmp_path):
+        """Stale path entry (not a listening socket) is unhealthy."""
+        not_a_socket = tmp_path / "not_a_socket.sock"
+        not_a_socket.write_bytes(b"")
+        client = RPCClient(str(not_a_socket))
+        assert not client.health_check()
+
     def test_connection_pooling(self, rpc_server):
         """Test connection pooling."""
         _, socket_path = rpc_server

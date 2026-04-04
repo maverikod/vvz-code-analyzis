@@ -6,4 +6,5 @@ svo-client>=2.2.15
 lark>=1.1.0
 libcst>=1.1.0
 embed-client>=3.1.7.24 
-mcp-proxy-adapter>=6.9.117
+# Step 20: bounded transport batch; floor aligned with PyPI (transport layer fixes)
+mcp-proxy-adapter>=6.10.1

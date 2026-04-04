@@ -139,7 +139,7 @@
         "config": {
           "path": "data/code_analysis.db",
           "worker_config": {
-            "command_timeout": 30.0,
+            "command_timeout": 300.0,
             "poll_interval": 0.01
           }
         }

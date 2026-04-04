@@ -9,6 +9,7 @@ import logging
 from pathlib import Path
 from typing import Any, Callable, Dict
 
+from ..core.constants import DEFAULT_REQUEST_TIMEOUT
 from ..core.database_client.client import DatabaseClient
 from ..core.exceptions import DatabaseError
 from ..core.storage_paths import (
@@ -200,7 +201,9 @@ def open_database_once_for_shared(
             )
 
         socket_path = get_socket_path_fn(db_path)
-        db = DatabaseClient(socket_path=socket_path)
+        # Interactive MCP paths (e.g. repeat cst_save_tree) may wait on
+        # sync_file_to_db_atomic or queue backlog; match DEFAULT_REQUEST_TIMEOUT.
+        db = DatabaseClient(socket_path=socket_path, timeout=DEFAULT_REQUEST_TIMEOUT)
         db.connect()
 
         from ..core.database.base import get_schema_definition

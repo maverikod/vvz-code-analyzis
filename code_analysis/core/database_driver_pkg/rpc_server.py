@@ -54,6 +54,13 @@ from .serialization import serialize_response
 logger = logging.getLogger(__name__)
 
 
+def _short_request_id(request_id: Optional[str]) -> str:
+    if not request_id:
+        return "none"
+    s = str(request_id)
+    return (s[:8] + "…") if len(s) > 8 else s
+
+
 class RPCServer:
     """RPC server for database driver process.
 
@@ -258,8 +265,12 @@ class RPCServer:
                     rpc_request,
                     priority=priority,
                 )
-                logger.debug(
-                    f"Request {rpc_request.request_id} enqueued for async processing"
+                logger.info(
+                    "[CHAIN] rpc_server request_enqueued method=%s request_id=%s "
+                    "queue_depth=%s",
+                    rpc_request.method,
+                    _short_request_id(rpc_request.request_id),
+                    self.request_queue.size(),
                 )
             except Exception as e:
                 # Remove from pending and send error immediately
@@ -290,6 +301,14 @@ class RPCServer:
                     pending_entry = self._pending_responses.get(rpc_request.request_id)
                     if pending_entry:
                         response = pending_entry[2]
+                    if response is None:
+                        logger.info(
+                            "[CHAIN] rpc_server client_wait_timeout method=%s "
+                            "request_id=%s queue_depth=%s",
+                            rpc_request.method,
+                            _short_request_id(rpc_request.request_id),
+                            self.request_queue.size(),
+                        )
 
             # Remove from pending (condition lock already released)
             with self._responses_lock:

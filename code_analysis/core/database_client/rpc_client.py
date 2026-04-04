@@ -32,6 +32,14 @@ from .exceptions import (
 logger = logging.getLogger(__name__)
 
 
+def _short_request_id(request_id: Optional[str]) -> str:
+    """First 8 chars + ellipsis for log lines (matches [CHAIN] style elsewhere)."""
+    if not request_id:
+        return "none"
+    s = str(request_id)
+    return (s[:8] + "…") if len(s) > 8 else s
+
+
 class RPCClient:
     """RPC client for database driver communication.
 
@@ -215,6 +223,14 @@ class RPCClient:
                         f"Retrying RPC call (attempt {attempt + 1}/{effective_retries}): {e}"
                     )
                 else:
+                    logger.info(
+                        "[CHAIN] rpc_client call exhausted_retries method=%s "
+                        "request_id=%s attempts=%s last_error=%s",
+                        method,
+                        _short_request_id(request_id),
+                        effective_retries,
+                        repr(last_error),
+                    )
                     if is_process_control:
                         raise ConnectionError(
                             "Process manager is unavailable for process-control request"
@@ -250,11 +266,17 @@ class RPCClient:
             RPCResponseError: If response contains error
         """
         sock: Optional[socket.socket] = None
+        t0 = time.perf_counter()
+        method = request.method
+        rid_short = _short_request_id(request.request_id)
+        socket_source = "unknown"
         try:
             # Get connection from pool or create new one
             try:
                 sock = self._connection_pool.get(timeout=pool_wait_timeout)
+                socket_source = "pool"
             except Empty:
+                socket_source = "after_pool_empty"
                 sock = self._create_connection()
 
             # Set timeout
@@ -271,6 +293,15 @@ class RPCClient:
             # Receive response
             response_data = self._receive_data(sock)
             if not response_data:
+                elapsed_ms = (time.perf_counter() - t0) * 1000.0
+                logger.info(
+                    "[CHAIN] rpc_client _send_request failure method=%s request_id=%s "
+                    "error_kind=empty_response socket_source=%s elapsed_ms=%.1f",
+                    method,
+                    rid_short,
+                    socket_source,
+                    elapsed_ms,
+                )
                 raise ConnectionError("Failed to receive response")
 
             # Parse response
@@ -284,6 +315,17 @@ class RPCClient:
 
             # Check for errors in response
             if response.is_error() and response.error:
+                elapsed_ms = (time.perf_counter() - t0) * 1000.0
+                err_msg = response.error.message
+                logger.info(
+                    "[CHAIN] rpc_client _send_request failure method=%s request_id=%s "
+                    "error_kind=rpc_response_error socket_source=%s exc=%s elapsed_ms=%.1f",
+                    method,
+                    rid_short,
+                    socket_source,
+                    err_msg,
+                    elapsed_ms,
+                )
                 raise RPCResponseError(
                     message=response.error.message,
                     error_code=response.error.code.value,
@@ -296,10 +338,55 @@ class RPCClient:
             timeout_value = (
                 request_timeout if request_timeout is not None else self.timeout
             )
+            elapsed_ms = (time.perf_counter() - t0) * 1000.0
+            logger.info(
+                "[CHAIN] rpc_client _send_request failure method=%s request_id=%s "
+                "error_kind=socket_io_timeout socket_source=%s elapsed_ms=%.1f",
+                method,
+                rid_short,
+                socket_source,
+                elapsed_ms,
+            )
             raise TimeoutError(f"Request timed out after {timeout_value} seconds")
-        except socket.error as e:
+        except ConnectionError as e:
+            # Empty-response path logs above then raises this exact message; do not
+            # double-log as OSError.
+            if str(e) == "Failed to receive response":
+                raise
+            elapsed_ms = (time.perf_counter() - t0) * 1000.0
+            logger.info(
+                "[CHAIN] rpc_client _send_request failure method=%s request_id=%s "
+                "error_kind=connection_error socket_source=%s exc=%s elapsed_ms=%.1f",
+                method,
+                rid_short,
+                socket_source,
+                repr(e),
+                elapsed_ms,
+            )
+            raise
+        except OSError as e:
+            elapsed_ms = (time.perf_counter() - t0) * 1000.0
+            logger.info(
+                "[CHAIN] rpc_client _send_request failure method=%s request_id=%s "
+                "error_kind=socket_error socket_source=%s exc=%s elapsed_ms=%.1f",
+                method,
+                rid_short,
+                socket_source,
+                repr(e),
+                elapsed_ms,
+            )
             raise ConnectionError(f"Socket error: {e}") from e
         except json.JSONDecodeError as e:
+            elapsed_ms = (time.perf_counter() - t0) * 1000.0
+            logger.info(
+                "[CHAIN] rpc_client _send_request failure method=%s request_id=%s "
+                "error_kind=json_decode socket_source=%s exc=%s elapsed_ms=%.1f",
+                method,
+                rid_short,
+                socket_source,
+                repr(e),
+                elapsed_ms,
+            )
             raise RPCClientError(f"Failed to parse response: {e}") from e
         finally:
             if sock:

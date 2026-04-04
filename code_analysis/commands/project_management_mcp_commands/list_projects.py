@@ -463,6 +463,10 @@ class ListProjectsMCPCommand(BaseMCPCommand):
             )
             return result
         except asyncio.TimeoutError:
+            logger.info(
+                "[CHAIN] list_projects asyncio.TimeoutError timeout_s=%s",
+                _LIST_PROJECTS_DB_TIMEOUT,
+            )
             return self._handle_error(
                 TimeoutError(
                     f"list_projects did not complete within {_LIST_PROJECTS_DB_TIMEOUT}s"

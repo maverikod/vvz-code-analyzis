@@ -25,6 +25,11 @@ from .exceptions import RequestQueueError, RequestQueueFullError
 logger = logging.getLogger(__name__)
 
 
+def _short_request_id(request_id: str) -> str:
+    s = str(request_id)
+    return (s[:8] + "…") if len(s) > 8 else s
+
+
 class RequestPriority(IntEnum):
     """Request priority levels."""
 
@@ -139,6 +144,11 @@ class RequestQueue:
             self._statistics.total_requests += 1
             self._statistics.current_size += 1
             self._statistics.pending_requests += 1
+            logger.debug(
+                "[CHAIN] request_queue enqueue request_id=%s current_size=%s",
+                _short_request_id(request_id),
+                self._statistics.current_size,
+            )
 
     def dequeue(self) -> Optional[QueuedRequest]:
         """Get next request from queue (highest priority first).
@@ -168,6 +178,11 @@ class RequestQueue:
                     self._statistics.current_size -= 1
                     self._statistics.pending_requests -= 1
                     self._statistics.processed_requests += 1
+                    logger.debug(
+                        "[CHAIN] request_queue dequeue request_id=%s current_size=%s",
+                        _short_request_id(request.request_id),
+                        self._statistics.current_size,
+                    )
                     return request
 
             return None

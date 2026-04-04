@@ -137,7 +137,31 @@ class CSTSaveTreeCommand(BaseMCPCommand):
                             "[TIMING] command=cst_save_tree step=resolve_path elapsed_sec=%.4f",
                             time.perf_counter() - t0,
                         )
+                        logger.info(
+                            "cst_save_tree path resolved",
+                            extra={
+                                "cst_save_stage": "path_resolved",
+                                "project_id": project_id,
+                                "tree_id": tree_id,
+                                "file_path": str(absolute_file_path),
+                                "attempt": attempt,
+                                "validate": validate,
+                                "backup": backup,
+                            },
+                        )
                         t0 = time.perf_counter()
+                        logger.info(
+                            "cst_save_tree save_tree_to_file thread enter",
+                            extra={
+                                "cst_save_stage": "save_thread_before",
+                                "project_id": project_id,
+                                "tree_id": tree_id,
+                                "file_path": str(absolute_file_path),
+                                "attempt": attempt,
+                                "validate": validate,
+                                "backup": backup,
+                            },
+                        )
                         result = await asyncio.to_thread(
                             save_tree_to_file,
                             tree_id=tree_id,
@@ -148,6 +172,16 @@ class CSTSaveTreeCommand(BaseMCPCommand):
                             validate=validate,
                             backup=backup,
                             commit_message=commit_message,
+                        )
+                        logger.info(
+                            "cst_save_tree save_tree_to_file thread returned",
+                            extra={
+                                "cst_save_stage": "save_thread_after",
+                                "project_id": project_id,
+                                "tree_id": tree_id,
+                                "file_path": str(absolute_file_path),
+                                "attempt": attempt,
+                            },
                         )
                         logger.info(
                             "[TIMING] command=cst_save_tree step=save_tree_to_file elapsed_sec=%.4f",
@@ -174,6 +208,14 @@ class CSTSaveTreeCommand(BaseMCPCommand):
                                         CATEGORY_SQLITE_DB_LOCKED,
                                         attempt,
                                         elapsed,
+                                        extra={
+                                            "cst_save_stage": "sqlite_lock_retry_exhausted",
+                                            "project_id": project_id,
+                                            "tree_id": tree_id,
+                                            "file_path": str(absolute_file_path),
+                                            "attempt": attempt,
+                                            "exc_type": "SqliteLockedTransient",
+                                        },
                                     )
                                     suffix = format_retry_summary_suffix(
                                         attempt, elapsed
@@ -190,6 +232,13 @@ class CSTSaveTreeCommand(BaseMCPCommand):
                                     MAX_ATTEMPTS,
                                     CATEGORY_SQLITE_DB_LOCKED,
                                     delay,
+                                    extra={
+                                        "cst_save_stage": "sqlite_lock_retry",
+                                        "project_id": project_id,
+                                        "tree_id": tree_id,
+                                        "file_path": str(absolute_file_path),
+                                        "attempt": attempt,
+                                    },
                                 )
                                 time.sleep(delay)
                                 continue
@@ -200,6 +249,15 @@ class CSTSaveTreeCommand(BaseMCPCommand):
                             )
 
                         if auto_reload:
+                            logger.info(
+                                "cst_save_tree auto_reload before",
+                                extra={
+                                    "cst_save_stage": "auto_reload_before",
+                                    "project_id": project_id,
+                                    "tree_id": tree_id,
+                                    "file_path": str(absolute_file_path),
+                                },
+                            )
                             t0 = time.perf_counter()
                             try:
                                 reload_tree_from_file(tree_id=tree_id)
@@ -208,10 +266,26 @@ class CSTSaveTreeCommand(BaseMCPCommand):
                                 logger.warning(
                                     "Failed to auto-reload tree after save: %s",
                                     reload_error,
+                                    extra={
+                                        "cst_save_stage": "auto_reload_error",
+                                        "project_id": project_id,
+                                        "tree_id": tree_id,
+                                        "file_path": str(absolute_file_path),
+                                        "exc_type": type(reload_error).__name__,
+                                    },
                                 )
                                 result["tree_reloaded"] = False
                                 result["reload_error"] = str(reload_error)
                             else:
+                                logger.info(
+                                    "cst_save_tree auto_reload after",
+                                    extra={
+                                        "cst_save_stage": "auto_reload_after",
+                                        "project_id": project_id,
+                                        "tree_id": tree_id,
+                                        "file_path": str(absolute_file_path),
+                                    },
+                                )
                                 logger.info(
                                     "[TIMING] command=cst_save_tree step=reload_tree elapsed_sec=%.4f",
                                     time.perf_counter() - t0,
@@ -261,6 +335,14 @@ class CSTSaveTreeCommand(BaseMCPCommand):
                             CATEGORY_RPC_CONNECT_REFUSED,
                             attempt,
                             elapsed,
+                            extra={
+                                "cst_save_stage": "rpc_connect_refused_exhausted",
+                                "project_id": project_id,
+                                "tree_id": tree_id,
+                                "file_path": file_path,
+                                "attempt": attempt,
+                                "exc_type": "DBConnectionError",
+                            },
                         )
                         suffix = format_retry_summary_suffix(attempt, elapsed)
                         return ErrorResult(
@@ -274,6 +356,13 @@ class CSTSaveTreeCommand(BaseMCPCommand):
                         MAX_ATTEMPTS,
                         CATEGORY_RPC_CONNECT_REFUSED,
                         delay,
+                        extra={
+                            "cst_save_stage": "rpc_connect_refused_retry",
+                            "project_id": project_id,
+                            "tree_id": tree_id,
+                            "file_path": file_path,
+                            "attempt": attempt,
+                        },
                     )
                     time.sleep(delay)
 
@@ -286,7 +375,17 @@ class CSTSaveTreeCommand(BaseMCPCommand):
                     code="CST_SAVE_ERROR",
                 )
         except Exception as e:
-            logger.exception("cst_save_tree failed: %s", e)
+            logger.exception(
+                "cst_save_tree failed: %s",
+                e,
+                extra={
+                    "cst_save_stage": "execute_outer_error",
+                    "project_id": project_id,
+                    "tree_id": tree_id,
+                    "file_path": file_path,
+                    "exc_type": type(e).__name__,
+                },
+            )
             return ErrorResult(
                 message=f"cst_save_tree failed: {e}", code="CST_SAVE_ERROR"
             )

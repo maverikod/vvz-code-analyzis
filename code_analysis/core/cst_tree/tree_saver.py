@@ -109,6 +109,15 @@ def save_tree_to_file(
             # Step 2: Create backup (mandatory before overwriting existing file)
             t0 = time.perf_counter()
             if target_path.exists():
+                logger.info(
+                    "cst_save_tree backup before create",
+                    extra={
+                        "cst_save_stage": "backup_before",
+                        "project_id": project_id,
+                        "tree_id": tree_id,
+                        "file_path": str(target_path),
+                    },
+                )
                 backup_manager = BackupManager(root_dir)
                 try:
                     rel_path = str(target_path.relative_to(root_dir))
@@ -124,6 +133,26 @@ def save_tree_to_file(
                         "Backup to old_code (versions) is mandatory before write; "
                         "create_backup failed. Aborting cst_save_tree."
                     )
+                logger.info(
+                    "cst_save_tree backup after create",
+                    extra={
+                        "cst_save_stage": "backup_after",
+                        "project_id": project_id,
+                        "tree_id": tree_id,
+                        "file_path": str(target_path),
+                        "backup_uuid": backup_uuid,
+                    },
+                )
+            else:
+                logger.debug(
+                    "cst_save_tree no existing target file; backup skipped",
+                    extra={
+                        "cst_save_stage": "backup_skipped",
+                        "project_id": project_id,
+                        "tree_id": tree_id,
+                        "file_path": str(target_path),
+                    },
+                )
             timings["backup"] = time.perf_counter() - t0
 
             # Step 3: Generate source code from CST tree
@@ -156,12 +185,41 @@ def save_tree_to_file(
 
             # Step 6: Atomically replace file
             t0 = time.perf_counter()
+            logger.info(
+                "cst_save_tree atomic replace before",
+                extra={
+                    "cst_save_stage": "replace_before",
+                    "project_id": project_id,
+                    "tree_id": tree_id,
+                    "file_path": str(target_path),
+                    "backup_uuid": backup_uuid,
+                },
+            )
             os.replace(str(temp_file), str(target_path))
             temp_file = None  # File was moved, don't delete it
+            logger.info(
+                "cst_save_tree atomic replace after",
+                extra={
+                    "cst_save_stage": "replace_after",
+                    "project_id": project_id,
+                    "tree_id": tree_id,
+                    "file_path": str(target_path),
+                    "backup_uuid": backup_uuid,
+                },
+            )
             timings["replace"] = time.perf_counter() - t0
 
             # Step 7: Ensure file record exists (create or update in files table)
             t0 = time.perf_counter()
+            logger.info(
+                "cst_save_tree DB file record ops before",
+                extra={
+                    "cst_save_stage": "db_file_record_before",
+                    "project_id": project_id,
+                    "tree_id": tree_id,
+                    "file_path": str(target_path),
+                },
+            )
             lines = clean_source_code.count("\n") + (1 if clean_source_code else 0)
             stripped = clean_source_code.lstrip()
             has_docstring = stripped.startswith('"""') or stripped.startswith("'''")
@@ -202,12 +260,32 @@ def save_tree_to_file(
                 )
                 created_file = database.create_file(file_obj)
                 file_id = created_file.id
+            logger.info(
+                "cst_save_tree DB file record ops after",
+                extra={
+                    "cst_save_stage": "db_file_record_after",
+                    "project_id": project_id,
+                    "tree_id": tree_id,
+                    "file_path": normalized_path,
+                    "file_id": file_id,
+                },
+            )
             timings["db_file_record"] = time.perf_counter() - t0
 
             # Step 8: Sync file to DB via shared file-level pipeline
             t0 = time.perf_counter()
             from ..database.file_tree_sync import sync_file_to_db_atomic
 
+            logger.info(
+                "cst_save_tree sync_file_to_db_atomic before",
+                extra={
+                    "cst_save_stage": "sync_db_before",
+                    "project_id": project_id,
+                    "tree_id": tree_id,
+                    "file_path": normalized_path,
+                    "file_id": file_id,
+                },
+            )
             # Pass source_code with markers so DB tree gets same node_ids as in-memory tree.
             sync_result = sync_file_to_db_atomic(
                 database=database,
@@ -216,6 +294,17 @@ def save_tree_to_file(
                 source_code=source_code,
                 file_mtime=last_modified_timestamp,
                 file_id=file_id,
+            )
+            logger.info(
+                "cst_save_tree sync_file_to_db_atomic after",
+                extra={
+                    "cst_save_stage": "sync_db_after",
+                    "project_id": project_id,
+                    "tree_id": tree_id,
+                    "file_path": normalized_path,
+                    "file_id": file_id,
+                    "sync_success": bool(sync_result.get("success")),
+                },
             )
             timings["sync_file_to_db"] = time.perf_counter() - t0
 
@@ -244,6 +333,17 @@ def save_tree_to_file(
             }
 
         except Exception as e:
+            logger.error(
+                "cst_save_tree error before backup restore",
+                extra={
+                    "cst_save_stage": "error_before_restore",
+                    "project_id": project_id,
+                    "tree_id": tree_id,
+                    "file_path": str(target_path),
+                    "backup_uuid": backup_uuid,
+                    "exc_type": type(e).__name__,
+                },
+            )
             # Restore file from backup if backup was created
             if backup_uuid and backup_manager and target_path.exists():
                 try:

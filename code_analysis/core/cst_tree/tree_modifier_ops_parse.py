@@ -11,6 +11,80 @@ from typing import List, Optional, Union, cast
 
 import libcst as cst
 
+# Node types for replace/delete that resolve by exact span (no promotion to
+# enclosing Module/IndentedBlock statement).
+FINE_GRAINED_REPLACE_NODE_TYPES = frozenset({"Param", "Name"})
+
+
+def _snippet_as_string(code: Optional[str], code_lines: Optional[List[str]]) -> str:
+    if code_lines is not None:
+        if code is not None:
+            raise ValueError("Cannot provide both code and code_lines")
+        return "\n".join(code_lines)
+    if code is None:
+        return ""
+    return code
+
+
+def parse_param_snippet(
+    code: Optional[str] = None, code_lines: Optional[List[str]] = None
+) -> cst.Param:
+    """
+    Parse a single function parameter (e.g. ``self``, ``x: int``, ``*args``)
+    for leaf Param replacement.
+    """
+    raw = _snippet_as_string(code, code_lines)
+    if not raw.strip():
+        raise ValueError("Param replacement code is empty")
+    normalized = _normalize_snippet_indentation(raw)
+    wrapped = f"def __leaf_param__({normalized.strip()}): pass\n"
+    try:
+        mod = cst.parse_module(wrapped)
+    except cst.ParserSyntaxError as e:
+        raise ValueError(f"Invalid parameter syntax: {e}") from e
+    if not mod.body or not isinstance(mod.body[0], cst.FunctionDef):
+        raise ValueError("Param snippet did not parse as a function parameter list")
+    fd = mod.body[0]
+    params = fd.params
+    collected: List[cst.Param] = list(params.params)
+    if params.star_arg and isinstance(params.star_arg, cst.Param):
+        collected.append(params.star_arg)
+    if params.kwonly_params:
+        collected.extend(params.kwonly_params)
+    if params.star_kwarg:
+        collected.append(params.star_kwarg)
+    if len(collected) != 1:
+        raise ValueError(
+            "Param replacement must expand to exactly one parameter; "
+            f"got {len(collected)}"
+        )
+    return collected[0]
+
+
+def _normalize_snippet_indentation(code: str) -> str:
+    lines = code.splitlines()
+    if not lines:
+        return code
+    min_indent = None
+    for line in lines:
+        stripped = line.lstrip()
+        if stripped:
+            indent = len(line) - len(stripped)
+            if min_indent is None or indent < min_indent:
+                min_indent = indent
+    if min_indent is None or min_indent == 0:
+        return code
+    normalized_lines: List[str] = []
+    for line in lines:
+        if line.strip():
+            if len(line) >= min_indent:
+                normalized_lines.append(line[min_indent:])
+            else:
+                normalized_lines.append(line)
+        else:
+            normalized_lines.append("")
+    return "\n".join(normalized_lines)
+
 
 def parse_code_snippet(
     code: Optional[str] = None, code_lines: Optional[List[str]] = None
@@ -47,35 +121,7 @@ def parse_code_snippet(
     if not code.strip():
         return []
 
-    # Normalize indentation: find minimum common indentation and remove it
-    lines = code.splitlines()
-    if not lines:
-        return []
-
-    # Find minimum indentation (excluding empty lines)
-    min_indent = None
-    for line in lines:
-        stripped = line.lstrip()
-        if stripped:  # Skip empty lines
-            indent = len(line) - len(stripped)
-            if min_indent is None or indent < min_indent:
-                min_indent = indent
-
-    # If all lines are empty or no indentation found, use original
-    if min_indent is None or min_indent == 0:
-        normalized = code
-    else:
-        # Remove minimum indentation from all lines
-        normalized_lines = []
-        for line in lines:
-            if line.strip():  # Non-empty line
-                if len(line) >= min_indent:
-                    normalized_lines.append(line[min_indent:])
-                else:
-                    normalized_lines.append(line)
-            else:  # Empty line
-                normalized_lines.append("")
-        normalized = "\n".join(normalized_lines)
+    normalized = _normalize_snippet_indentation(code)
 
     # Try parsing as module first
     try:

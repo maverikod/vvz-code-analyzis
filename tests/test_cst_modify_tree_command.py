@@ -14,11 +14,13 @@ from __future__ import annotations
 import pytest
 
 from code_analysis.commands.cst_modify_tree_command import CSTModifyTreeCommand
+from code_analysis.commands.cst_modify_tree_ops_build import build_tree_operations
 from code_analysis.core.cst_tree.tree_builder import (
     create_tree_from_code,
     get_tree,
     remove_tree,
 )
+from code_analysis.core.cst_tree.tree_modifier import modify_tree
 from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 
 
@@ -791,3 +793,70 @@ class TestFallbackCollisionSafety:
         # No stray old content
         assert "from .a import A" not in code
         assert "from .b import B" not in code
+
+
+SOURCE_PARAM_AND_NAME = """def foo(a):
+    return a + 1
+"""
+
+
+def _node_id_first_type(tree, node_type: str, *, line: int):
+    for nid, meta in tree.metadata_map.items():
+        if meta.type == node_type and meta.start_line == line:
+            return nid
+    pytest.fail(f"No {node_type} on line {line}")
+
+
+class TestReplaceLeafParamAndName:
+    """Replace Param / inner Name without promoting to whole FunctionDef."""
+
+    def test_build_ops_replace_param_keeps_node_id_and_body_unchanged(self, tmp_path):
+        path = str(tmp_path / "leaf.py")
+        tree = create_tree_from_code(path, SOURCE_PARAM_AND_NAME)
+        tree_id = tree.tree_id
+        param_id = _node_id_first_type(tree, "Param", line=1)
+        ops, err = build_tree_operations(
+            tree,
+            [
+                {
+                    "action": "replace",
+                    "node_id": param_id,
+                    "code_lines": ["b"],
+                }
+            ],
+        )
+        assert err is None
+        assert len(ops) == 1
+        assert ops[0].node_id == param_id
+        modify_tree(tree_id, ops)
+        out = get_tree(tree_id)
+        assert out is not None
+        code = out.module.code
+        assert "def foo(b):" in code
+        assert "return a + 1" in code
+        assert "def foo(a):" not in code
+
+    def test_build_ops_replace_name_in_return_keeps_signature(self, tmp_path):
+        path = str(tmp_path / "leaf2.py")
+        tree = create_tree_from_code(path, SOURCE_PARAM_AND_NAME)
+        tree_id = tree.tree_id
+        name_id = _node_id_first_type(tree, "Name", line=2)
+        ops, err = build_tree_operations(
+            tree,
+            [
+                {
+                    "action": "replace",
+                    "node_id": name_id,
+                    "code_lines": ["x"],
+                }
+            ],
+        )
+        assert err is None
+        assert ops[0].node_id == name_id
+        modify_tree(tree_id, ops)
+        out = get_tree(tree_id)
+        assert out is not None
+        code = out.module.code
+        assert "def foo(a):" in code
+        assert "return x + 1" in code
+        assert "return a + 1" not in code

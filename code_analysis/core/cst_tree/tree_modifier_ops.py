@@ -12,6 +12,7 @@ from __future__ import annotations
 
 from .tree_modifier_ops_find import (
     delete_node,
+    find_leaf_node_in_module_by_position,
     find_node_in_module_by_position,
     find_parent_in_module_by_position,
 )
@@ -21,15 +22,20 @@ from .tree_modifier_ops_insert import (
     insert_node_relative,
 )
 from .tree_modifier_ops_parse import (
+    FINE_GRAINED_REPLACE_NODE_TYPES,
     parse_code_snippet,
     parse_code_snippet_or_comment,
+    parse_param_snippet,
 )
 from .tree_modifier_ops_replace import replace_node, replace_range
 
 __all__ = [
+    "FINE_GRAINED_REPLACE_NODE_TYPES",
     "parse_code_snippet",
     "parse_code_snippet_or_comment",
+    "parse_param_snippet",
     "delete_node",
+    "find_leaf_node_in_module_by_position",
     "find_node_in_module_by_position",
     "find_parent_in_module_by_position",
     "replace_node",

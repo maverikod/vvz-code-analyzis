@@ -178,8 +178,8 @@ DEFAULT_WORKER_STOP_TIMEOUT: float = 10.0
 # Default worker monitoring interval in seconds
 DEFAULT_WORKER_MONITOR_INTERVAL: float = 30.0
 
-# Driver startup delay in seconds (wait for socket creation)
-DRIVER_STARTUP_DELAY: float = 0.5
+# Driver startup delay in seconds (wait for socket creation; bind can lag under load)
+DRIVER_STARTUP_DELAY: float = 2.0
 
 # RPC server socket timeout in seconds
 RPC_SERVER_SOCKET_TIMEOUT: float = 1.0

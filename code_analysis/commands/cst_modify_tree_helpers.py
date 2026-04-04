@@ -11,8 +11,9 @@ import uuid
 from typing import Any, Dict, List, Optional
 
 from ..core.cst_tree.models import ROOT_NODE_ID_SENTINEL
-from ..cst_query import query_source
 from ..core.cst_tree.node_id_markers import build_exact_key_to_id_from_metadata
+from ..core.cst_tree.tree_modifier_ops_parse import FINE_GRAINED_REPLACE_NODE_TYPES
+from ..cst_query import query_source
 
 
 class InvalidNodeIdError(ValueError):
@@ -80,9 +81,15 @@ def _find_tree_node_id_by_position(
 def _resolve_to_replaceable_node_id(tree: Any, node_id: str) -> str:
     """
     Resolve node_id to the replaceable ancestor (direct child of Module or
-    IndentedBlock). tree_modifier replace only works on body statements.
+    IndentedBlock) for statement-level replace/delete.
+
+    Fine-grained nodes (Param, Name) keep their node_id so the modifier can
+    replace the exact indexed node without promoting to the enclosing
+    FunctionDef or statement.
     """
     meta = tree.metadata_map.get(node_id)
+    if meta and (getattr(meta, "type", "") or "") in FINE_GRAINED_REPLACE_NODE_TYPES:
+        return node_id
     if not meta or not getattr(meta, "parent_id", None):
         return node_id
     current_id = node_id

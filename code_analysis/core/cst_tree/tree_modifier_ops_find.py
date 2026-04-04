@@ -13,6 +13,7 @@ import libcst as cst
 from libcst.metadata import MetadataWrapper, PositionProvider
 
 from .models import CSTTree
+from .tree_modifier_ops_parse import FINE_GRAINED_REPLACE_NODE_TYPES
 
 
 def delete_node(module: cst.Module, tree: CSTTree, node_id: str) -> cst.Module:
@@ -20,13 +21,23 @@ def delete_node(module: cst.Module, tree: CSTTree, node_id: str) -> cst.Module:
     metadata = tree.metadata_map.get(node_id)
     node = None
     if metadata and hasattr(metadata, "start_line"):
-        node = find_node_in_module_by_position(
-            module,
-            metadata.start_line,
-            metadata.start_col,
-            metadata.end_line,
-            metadata.end_col,
-        )
+        use_leaf = metadata.type in FINE_GRAINED_REPLACE_NODE_TYPES
+        if use_leaf:
+            node = find_leaf_node_in_module_by_position(
+                module,
+                metadata.start_line,
+                metadata.start_col,
+                metadata.end_line,
+                metadata.end_col,
+            )
+        if node is None:
+            node = find_node_in_module_by_position(
+                module,
+                metadata.start_line,
+                metadata.start_col,
+                metadata.end_line,
+                metadata.end_col,
+            )
     if node is None:
         node = tree.node_map.get(node_id)
     if not node:
@@ -158,6 +169,40 @@ def find_node_in_module_by_position(
         if stmt_start == target_start:
             return stmt
     return found
+
+
+def find_leaf_node_in_module_by_position(
+    module: cst.Module,
+    start_line: int,
+    start_col: int,
+    end_line: int,
+    end_col: int,
+) -> Optional[cst.CSTNode]:
+    """
+    Find the CST node whose span exactly matches (start_line, start_col,
+    end_line, end_col). No promotion to the enclosing Module/IndentedBlock
+    statement (unlike find_node_in_module_by_position).
+    """
+    wrapper = MetadataWrapper(module, unsafe_skip_copy=True)
+    positions = wrapper.resolve(PositionProvider)
+    result: List[Optional[cst.CSTNode]] = [None]
+
+    class ExactFinder(cst.CSTVisitor):
+        def visit(self, node: cst.CSTNode) -> bool:
+            pos = positions.get(node)
+            if pos is not None and hasattr(pos, "start") and hasattr(pos, "end"):
+                if (
+                    pos.start.line == start_line
+                    and pos.start.column == start_col
+                    and pos.end.line == end_line
+                    and pos.end.column == end_col
+                ):
+                    result[0] = node
+                    return False
+            return True
+
+    module.visit(ExactFinder())
+    return result[0]
 
 
 def find_parent_in_module_by_position(

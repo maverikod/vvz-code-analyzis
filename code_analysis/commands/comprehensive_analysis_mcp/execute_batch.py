@@ -100,7 +100,12 @@ async def run_batch(
     file_records: List[Dict[str, Any]] = []
 
     files_analyzed = 0
+    # Legacy summary key: skipped only when mtime/up-to-date gate says not to re-analyze.
     files_skipped = 0
+    # Explicit bucket matching files_skipped (gate / up-to-date); kept in sync for clarity in summary.
+    files_skipped_up_to_date = 0
+    # Missing path, not a file, stat() failure, or read_text failure (rows that hit continue before analyze).
+    files_skipped_unreadable_or_missing = 0
     t_loop_start = time.perf_counter()
 
     def _avg_eta_suffix(current: int, total: int, start_sec: float) -> str:
@@ -229,18 +234,21 @@ async def run_batch(
 
             if not full_path.exists() or not full_path.is_file():
                 logger.debug(f"Skipping non-existent file: {file_path_str}")
+                files_skipped_unreadable_or_missing += 1
                 continue
 
             try:
                 file_mtime = full_path.stat().st_mtime
             except Exception as e:
                 logger.warning(f"Failed to get mtime for {file_path_str}: {e}")
+                files_skipped_unreadable_or_missing += 1
                 continue
 
             if hasattr(db, "should_analyze_file"):
                 gate = db.should_analyze_file(file_id, file_mtime)
                 if not gate["should_analyze"]:
                     files_skipped += 1
+                    files_skipped_up_to_date += 1
                     reason = gate.get("reason", "unknown")
                     logger.debug(
                         "Skipping %s: %s (disk_mtime older or equal)",
@@ -267,6 +275,7 @@ async def run_batch(
                 source_code = full_path.read_text(encoding="utf-8")
             except Exception as e:
                 logger.warning(f"Failed to read file {file_path_str}: {e}")
+                files_skipped_unreadable_or_missing += 1
                 continue
             timings_sec["read_file"] += time.perf_counter() - t0
 
@@ -416,13 +425,21 @@ async def run_batch(
         log_timing("multi_long_files", t0)
 
     analysis_logger.info(
-        f"Analysis complete: {files_analyzed} files analyzed, {files_skipped} files skipped (unchanged)"
+        "Analysis complete: analyzed=%s skipped_up_to_date=%s skipped_missing_or_unreadable=%s",
+        files_analyzed,
+        files_skipped,
+        files_skipped_unreadable_or_missing,
     )
 
     if progress_tracker:
         progress_tracker.set_description("Analysis: building summary")
     results["summary"] = build_batch_summary(
-        results, files_analyzed, files_skipped, files_total
+        results,
+        files_analyzed,
+        files_skipped,
+        files_total,
+        files_skipped_up_to_date=files_skipped_up_to_date,
+        files_skipped_unreadable_or_missing=files_skipped_unreadable_or_missing,
     )
 
     log_timing("total_elapsed", t_start)

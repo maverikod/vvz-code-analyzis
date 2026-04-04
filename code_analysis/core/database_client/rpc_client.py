@@ -50,7 +50,8 @@ class RPCClient:
         max_retries: int = 3,
         retry_delay: float = 0.1,
         pool_size: int = 5,
-        startup_connect_timeout: float = 5.0,
+        # Default 30s: driver socket may bind slowly under CPU/IO load.
+        startup_connect_timeout: float = 30.0,
         process_control_timeout: float = 2.0,
         process_control_max_retries: int = 1,
     ):
@@ -63,7 +64,8 @@ class RPCClient:
             retry_delay: Delay between retries in seconds (default: 0.1)
             pool_size: Connection pool size (default: 5)
             startup_connect_timeout: Max seconds to wait for driver socket to
-                become connectable during initial connect() after restarts.
+                become connectable during initial connect() after restarts
+                (default 30.0).
             process_control_timeout: Timeout for process-control methods
                 (get_job_status/stop_job) to avoid blocking calls.
             process_control_max_retries: Retry count for process-control methods.

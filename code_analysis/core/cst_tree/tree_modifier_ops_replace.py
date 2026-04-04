@@ -7,31 +7,48 @@ email: vasilyvz@gmail.com
 
 from __future__ import annotations
 
-from typing import Optional
+from typing import List, Optional, cast
 
 import libcst as cst
 
 from .models import CSTTree
-from .tree_modifier_ops_find import delete_node, find_node_in_module_by_position
-from .tree_modifier_ops_parse import parse_code_snippet
+from .tree_modifier_ops_find import (
+    delete_node,
+    find_leaf_node_in_module_by_position,
+    find_node_in_module_by_position,
+)
+from .tree_modifier_ops_parse import (
+    FINE_GRAINED_REPLACE_NODE_TYPES,
+    parse_code_snippet,
+    parse_param_snippet,
+)
 
 
 def replace_node(
     module: cst.Module, tree: CSTTree, node_id: str, new_code: str
 ) -> cst.Module:
-    """Replace a node in module with one or more statements."""
+    """Replace a node in module with one or more statements or a leaf node."""
     metadata = tree.metadata_map.get(node_id)
     # Resolve target node: use node from current module by position when
     # available (after prior ops tree.node_map may point at stale module nodes).
     node: Optional[cst.CSTNode] = None
     if metadata and hasattr(metadata, "start_line"):
-        node = find_node_in_module_by_position(
-            module,
-            metadata.start_line,
-            metadata.start_col,
-            metadata.end_line,
-            metadata.end_col,
-        )
+        if metadata.type in FINE_GRAINED_REPLACE_NODE_TYPES:
+            node = find_leaf_node_in_module_by_position(
+                module,
+                metadata.start_line,
+                metadata.start_col,
+                metadata.end_line,
+                metadata.end_col,
+            )
+        if node is None:
+            node = find_node_in_module_by_position(
+                module,
+                metadata.start_line,
+                metadata.start_col,
+                metadata.end_line,
+                metadata.end_col,
+            )
     if node is None:
         node = tree.node_map.get(node_id)
     if not node:
@@ -46,11 +63,17 @@ def replace_node(
             f"Available nodes (first 5): {available}"
         )
 
-    # Parse new code (supports multi-line)
-    new_statements = parse_code_snippet(new_code)
-    if not new_statements:
-        # Empty code means delete
+    stripped = new_code.strip()
+    if not stripped:
         return delete_node(module, tree, node_id)
+
+    replacements_list: List[cst.CSTNode]
+    if isinstance(node, cst.Name):
+        replacements_list = [cst.parse_expression(stripped)]
+    elif isinstance(node, cst.Param):
+        replacements_list = [parse_param_snippet(code=new_code)]
+    else:
+        replacements_list = cast(List[cst.CSTNode], list(parse_code_snippet(new_code)))
 
     node_type = metadata.type if metadata else "unknown"
     parent_id = metadata.parent_id if metadata else None
@@ -59,9 +82,7 @@ def replace_node(
 
     # Use LibCST transformer to replace the node
     class NodeReplacer(cst.CSTTransformer):
-        def __init__(
-            self, target_node: cst.CSTNode, replacements: list[cst.BaseStatement]
-        ):
+        def __init__(self, target_node: cst.CSTNode, replacements: list[cst.CSTNode]):
             self.target_node = target_node
             self.replacements = replacements
             self.replaced = False
@@ -70,12 +91,10 @@ def replace_node(
         def on_leave(  # type: ignore[override]
             self, original_node: cst.CSTNode, updated_node: cst.CSTNode
         ) -> cst.CSTNode | cst.RemovalSentinel | cst.FlattenSentinel:
-            # Single statement replacement handled here
             if original_node is self.target_node:
                 if len(self.replacements) == 1:
                     self.replaced = True
                     return self.replacements[0]
-                # Multiple statements handled in leave_Module/leave_IndentedBlock
             return updated_node
 
         def leave_Module(
@@ -88,7 +107,9 @@ def replace_node(
                 new_body: list[cst.BaseStatement] = []
                 for stmt in original_node.body:
                     if stmt is self.target_node:
-                        new_body.extend(self.replacements)
+                        new_body.extend(
+                            cast(List[cst.BaseStatement], self.replacements)
+                        )
                         self.replaced = True
                     else:
                         new_body.append(stmt)
@@ -108,7 +129,9 @@ def replace_node(
                 new_body: list[cst.BaseStatement] = []
                 for stmt in body_to_check:
                     if stmt is self.target_node:
-                        new_body.extend(self.replacements)
+                        new_body.extend(
+                            cast(List[cst.BaseStatement], self.replacements)
+                        )
                         self.replaced = True
                     else:
                         new_body.append(stmt)
@@ -130,7 +153,7 @@ def replace_node(
                 return updated_node
             return updated_node
 
-    replacer = NodeReplacer(node, new_statements)
+    replacer = NodeReplacer(node, replacements_list)
     result = module.visit(replacer)
     if not replacer.replaced:
         # Provide detailed error message with context (node type, parent, line range, hint)
@@ -142,7 +165,7 @@ def replace_node(
             else "line range unknown"
         )
         suggestion = ""
-        if node_type == "SimpleStatementLine" and len(new_statements) > 1:
+        if node_type == "SimpleStatementLine" and len(replacements_list) > 1:
             suggestion = (
                 " Hint: Replacing SimpleStatementLine with multiple statements requires "
                 "the node to be in a Module or IndentedBlock body. "

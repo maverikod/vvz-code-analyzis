@@ -20,6 +20,7 @@ This document defines where files and directories must be placed in the project.
 - **Purpose:** All documentation.
 - **Contents:** README files, documentation files (.md), API documentation, migration guides, analysis reports.
 - **Example:** `README.md`, `COMMANDS_GUIDE.md`, `COMMANDS_INDEX.md`.
+- **Layout:** Use the subdirectories below (`reports`, `plans`, `standards`, `commands`, `agents`). Keep `docs/reports/` and `docs/plans/` in the repository even when they contain no documents yet (e.g. track an empty tree with `.gitkeep`) so new analyses and plans are not dropped into the `docs/` root.
 
 ### 📁 docs/reports/
 

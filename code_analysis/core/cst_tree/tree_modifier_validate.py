@@ -9,9 +9,15 @@ from __future__ import annotations
 
 from typing import Optional
 
+import libcst as cst
+
 from .models import CSTTree, ROOT_NODE_ID_SENTINEL, TreeOperation, TreeOperationType
 from .tree_metadata import _resolve_node_id as resolve_parent_id
-from .tree_modifier_ops import parse_code_snippet
+from .tree_modifier_ops import (
+    FINE_GRAINED_REPLACE_NODE_TYPES,
+    parse_code_snippet,
+    parse_param_snippet,
+)
 
 
 def _validate_operation(tree: CSTTree, operation: TreeOperation) -> None:
@@ -32,8 +38,22 @@ def _validate_operation(tree: CSTTree, operation: TreeOperation) -> None:
             )
         if not operation.code and not operation.code_lines:
             raise ValueError("code or code_lines required for replace operation")
+        meta = tree.metadata_map.get(operation.node_id)
         try:
-            parse_code_snippet(code=operation.code, code_lines=operation.code_lines)
+            if meta and meta.type in FINE_GRAINED_REPLACE_NODE_TYPES:
+                if meta.type == "Name":
+                    text = (
+                        "\n".join(operation.code_lines)
+                        if operation.code_lines
+                        else (operation.code or "")
+                    )
+                    cst.parse_expression(text.strip())
+                else:
+                    parse_param_snippet(
+                        code=operation.code, code_lines=operation.code_lines
+                    )
+            else:
+                parse_code_snippet(code=operation.code, code_lines=operation.code_lines)
         except Exception as e:
             raise ValueError(f"Invalid code syntax for replace: {e}") from e
     elif operation.action == TreeOperationType.REPLACE_RANGE:

@@ -13,8 +13,19 @@ def build_batch_summary(
     files_analyzed: int,
     files_skipped: int,
     files_total: int,
+    *,
+    files_skipped_up_to_date: int = 0,
+    files_skipped_unreadable_or_missing: int = 0,
 ) -> Dict[str, Any]:
-    """Build summary_data dict from aggregated results and counts."""
+    """Build summary_data dict from aggregated results and counts.
+
+    Trust counters: ``files_skipped`` remains the legacy key (mtime / up-to-date gate only).
+    ``files_skipped_up_to_date`` matches that semantics. ``files_skipped_unreadable_or_missing``
+    counts rows skipped before analysis (missing path, not a file, stat/read errors).
+
+    For a full scan with one pass per DB row:
+    ``files_analyzed + files_skipped + files_skipped_unreadable_or_missing == files_total``.
+    """
     return {
         "total_placeholders": len(results["placeholders"]),
         "total_stubs": len(results["stubs"]),
@@ -53,4 +64,6 @@ def build_batch_summary(
         "files_analyzed": files_analyzed,
         "files_skipped": files_skipped,
         "files_total": files_total,
+        "files_skipped_up_to_date": files_skipped_up_to_date,
+        "files_skipped_unreadable_or_missing": files_skipped_unreadable_or_missing,
     }

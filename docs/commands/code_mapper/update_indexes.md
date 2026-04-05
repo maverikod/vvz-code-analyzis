@@ -18,7 +18,7 @@ Operation flow:
 1. Resolves project root_path from shared database by project_id
 2. Validates root_path exists and is a directory
 3. Checks database integrity (if corrupted, enters safe mode)
-4. Scans root_path for Python files (excludes .git, __pycache__, node_modules, data, logs)
+4. Scans root_path for Python files (excludes .git, __pycache__, node_modules, data, logs). The project virtualenv (``.venv`` / ``venv``) is excluded by default. Optional server config ``code_analysis.venv_site_packages_index_allowlisted_distributions`` lists **pip distribution names** (PEP 503–normalized matching); for those distributions only, ``.py`` files declared in each wheel/sdist ``*.dist-info/RECORD`` under ``site-packages`` are included in the scan. Anything else under the venv remains skipped.
 5. For each Python file:
    - Reads file content and parses AST
    - Saves AST tree to database
@@ -57,6 +57,7 @@ Use cases:
 - Rebuilding database indexes
 
 Important notes:
+- Server commands must not write into the project ``.venv`` / ``venv`` (see ``PROJECT_VENV_WRITE_FORBIDDEN``); use project pip commands to change installed packages.
 - This is a long-running command (use_queue=True)
 - Progress is tracked and can be monitored via queue_get_job_status
 - Skips files with syntax errors (continues with other files)

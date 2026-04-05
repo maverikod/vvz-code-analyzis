@@ -10,7 +10,7 @@ email: vasilyvz@gmail.com
 from __future__ import annotations
 
 import logging
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 from code_analysis.core.database_client.protocol import (
     DataResult,
@@ -18,6 +18,8 @@ from code_analysis.core.database_client.protocol import (
     SuccessResult,
     ErrorCode,
 )
+
+from .rpc_handlers_base import parse_logical_write_batches_param
 
 logger = logging.getLogger(__name__)
 
@@ -227,5 +229,63 @@ class _RPCHandlersSchemaMixin:
             logger.error(f"Error in handle_sync_schema: {e}", exc_info=True)
             return ErrorResult(
                 error_code=ErrorCode.SCHEMA_ERROR,
+                description=str(e),
+            )
+
+    def handle_execute_logical_write_operation(
+        self, params: Dict[str, Any]
+    ) -> SuccessResult | ErrorResult:
+        """Run multiple execute_batch steps in one transaction (one RPC)."""
+        err, batches = parse_logical_write_batches_param(params)
+        if err is not None:
+            return err
+        assert batches is not None
+        logger.info(
+            "method=execute_logical_write_operation n_batches=%s",
+            len(batches),
+        )
+        transaction_id: Optional[str] = None
+        try:
+            transaction_id = self.driver.begin_transaction()
+            tid_short = (
+                (transaction_id[:8] + "…")
+                if transaction_id and len(transaction_id) > 8
+                else transaction_id
+            )
+            logger.info(
+                "[CHAIN] handler handle_execute_logical_write_operation tid=%s",
+                tid_short,
+            )
+            if params.get("defer_constraints"):
+                self.driver.execute(
+                    "PRAGMA defer_foreign_keys=ON", None, transaction_id
+                )
+            batch_results: list[dict[str, Any]] = []
+            for batch_ops in batches:
+                results = self.driver.execute_batch(batch_ops, transaction_id)
+                batch_results.append({"results": results})
+            self.driver.commit_transaction(transaction_id)
+            return SuccessResult(
+                data={
+                    "batch_results": batch_results,
+                    "transaction_id": transaction_id,
+                }
+            )
+        except Exception as e:
+            logger.error(
+                f"Error in handle_execute_logical_write_operation: {e}",
+                exc_info=True,
+            )
+            if transaction_id is not None:
+                try:
+                    self.driver.rollback_transaction(transaction_id)
+                except Exception as rb_err:
+                    logger.warning(
+                        "rollback after logical write failure: %s",
+                        rb_err,
+                        exc_info=True,
+                    )
+            return ErrorResult(
+                error_code=ErrorCode.DATABASE_ERROR,
                 description=str(e),
             )

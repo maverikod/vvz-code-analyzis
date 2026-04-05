@@ -14,10 +14,14 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List
 
-import libcst as cst
 from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 
 from .base_mcp_command import BaseMCPCommand
+from .project_text_file_guard import reject_if_write_under_project_venv
+from .line_command_cst_gate import (
+    LINE_CMD_DISALLOWED_MSG,
+    healthy_parse_blocks_line_ops,
+)
 from ..core.backup_manager import BackupManager
 from ..core.file_lock import file_lock
 from ..core.exceptions import ValidationError
@@ -27,13 +31,6 @@ from ..core.database_client.objects.file import File
 from ..core.path_normalization import normalize_path_simple
 
 logger = logging.getLogger(__name__)
-
-# Error message when file is healthy and line commands are disallowed
-_LINE_CMD_DISALLOWED_MSG = (
-    "This file parses successfully. Use CST commands instead: "
-    "cst_load_file (load tree), cst_modify_tree (edit by node), compose_cst_module (patch by selector). "
-    "Set code_analysis.allow_line_commands_on_healthy_files=true to allow get_file_lines/replace_file_lines on healthy files."
-)
 
 
 class ReplaceFileLinesCommand(BaseMCPCommand):
@@ -100,6 +97,7 @@ class ReplaceFileLinesCommand(BaseMCPCommand):
         end_line: int,
         new_lines: List[str],
         backup: bool = True,
+        allow_healthy_line_ops: bool = False,
         **kwargs: Any,
     ) -> SuccessResult:
         try:
@@ -129,6 +127,10 @@ class ReplaceFileLinesCommand(BaseMCPCommand):
                 )
             root_dir = Path(project.root_path)
 
+            blocked_venv = reject_if_write_under_project_venv(absolute_path, root_dir)
+            if blocked_venv is not None:
+                return blocked_venv
+
             if not absolute_path.exists():
                 return ErrorResult(
                     message=f"File not found: {absolute_path}",
@@ -144,24 +146,23 @@ class ReplaceFileLinesCommand(BaseMCPCommand):
             allow_on_healthy = config_data.get("code_analysis", {}).get(
                 "allow_line_commands_on_healthy_files", False
             )
-            if not allow_on_healthy:
-                try:
-                    cst.parse_module(text)
-                except cst.ParserSyntaxError:
-                    pass
-                else:
-                    return ErrorResult(
-                        message=_LINE_CMD_DISALLOWED_MSG,
-                        code="USE_CST_COMMANDS",
-                        details={
-                            "file_path": file_path,
-                            "cst_commands": [
-                                "cst_load_file",
-                                "cst_modify_tree",
-                                "compose_cst_module",
-                            ],
-                        },
-                    )
+            if healthy_parse_blocks_line_ops(
+                text,
+                allow_healthy_line_ops=allow_healthy_line_ops,
+                allow_line_commands_on_healthy_files=bool(allow_on_healthy),
+            ):
+                return ErrorResult(
+                    message=LINE_CMD_DISALLOWED_MSG,
+                    code="USE_CST_COMMANDS",
+                    details={
+                        "file_path": file_path,
+                        "cst_commands": [
+                            "cst_load_file",
+                            "cst_modify_tree",
+                            "compose_cst_module",
+                        ],
+                    },
+                )
             all_lines = text.splitlines(keepends=False)
             total = len(all_lines)
             if total == 0:

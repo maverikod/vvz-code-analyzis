@@ -18,6 +18,7 @@ from typing import Any, Dict, List, Optional
 from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 
 from .base_mcp_command import BaseMCPCommand
+from .project_text_file_guard import reject_if_write_under_project_venv
 from .cst_modify_tree_schema import get_cst_modify_tree_schema
 from .cst_modify_tree_helpers import (
     InvalidNodeIdError,
@@ -213,6 +214,12 @@ class CSTModifyTreeCommand(BaseMCPCommand):
                             details={"project_id": project_id},
                         )
                     project_root = Path(project.root_path)
+                    blocked_venv = reject_if_write_under_project_venv(
+                        absolute_file_path, project_root
+                    )
+                    if blocked_venv is not None:
+                        rollback_tree_to_code(tree_id, original_code)
+                        return blocked_venv
                     try:
                         save_result = await asyncio.to_thread(
                             save_tree_to_file,

@@ -71,7 +71,7 @@ class PermanentlyDeleteFromTrashMCPCommand(BaseMCPCommand):
                 resolve_storage_paths,
                 get_faiss_index_path,
             )
-            from ...core.trash_utils import get_project_id_from_trash_folder
+            from ...core.trash_utils import resolve_trash_entry_project_id
             from ..clear_project_data_impl import _clear_project_data_impl
             from ..trash_commands import PermanentlyDeleteFromTrashCommand
 
@@ -85,7 +85,7 @@ class PermanentlyDeleteFromTrashMCPCommand(BaseMCPCommand):
             trash_dir_path = Path(trash_dir)
 
             # 1. Clear project from DB in one batch (then delete folder)
-            project_id = get_project_id_from_trash_folder(
+            project_id = resolve_trash_entry_project_id(
                 trash_dir_path, trash_folder_name
             )
             if project_id:

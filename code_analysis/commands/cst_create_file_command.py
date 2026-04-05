@@ -17,6 +17,7 @@ from typing import Any, Dict
 from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 
 from .base_mcp_command import BaseMCPCommand
+from .project_text_file_guard import reject_if_write_under_project_venv
 from ..core.cst_tree.tree_builder import create_tree_from_code
 from ..core.cst_tree.tree_saver import save_tree_to_file
 from ..core.git_integration import commit_after_write
@@ -154,6 +155,12 @@ class CSTCreateFileCommand(BaseMCPCommand):
                 # Form absolute path: watch_dir_path / project_name / relative_file_path
                 target = Path(watch_dir_path) / project.name / file_path
                 target = target.resolve()
+
+                blocked_venv = reject_if_write_under_project_venv(
+                    target, Path(project.root_path)
+                )
+                if blocked_venv is not None:
+                    return blocked_venv
 
                 if target.suffix != ".py":
                     return ErrorResult(

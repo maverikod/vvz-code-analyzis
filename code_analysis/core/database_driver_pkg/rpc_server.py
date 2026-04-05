@@ -351,6 +351,14 @@ class RPCServer:
                     time.sleep(RPC_PROCESSING_LOOP_INTERVAL)
                     continue
 
+                wait_ms = (time.time() - queued_request.created_at) * 1000.0
+                logger.info(
+                    "[SAVE_PATH] rpc_server dequeue request_id=%s wait_ms=%.1f method=%s",
+                    _short_request_id(queued_request.request_id),
+                    wait_ms,
+                    queued_request.request.method,
+                )
+
                 if self._use_serial_sqlite:
                     try:
                         response = self._process_request(queued_request.request)
@@ -498,6 +506,9 @@ class RPCServer:
                     "drop_table": self.handlers.handle_drop_table,
                     "execute": self.handlers.handle_execute,
                     "execute_batch": self.handlers.handle_execute_batch,
+                    "execute_logical_write_operation": (
+                        self.handlers.handle_execute_logical_write_operation
+                    ),
                     "begin_transaction": self.handlers.handle_begin_transaction,
                     "commit_transaction": self.handlers.handle_commit_transaction,
                     "rollback_transaction": self.handlers.handle_rollback_transaction,

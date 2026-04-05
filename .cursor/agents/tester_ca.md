@@ -69,11 +69,31 @@ You **combine** test authorship and validation **only** through server commands 
 
 ## Required-agent / server availability (critical)
 
-If **code-analysis-server** is unreachable or **`call_server`** fails repeatedly after reasonable retry:
+If **any error of the analysis server itself** is encountered, **stop immediately** and hand control back with exact context.
 
-1. Report clearly (error, command, params redacted if needed).
-2. Do **not** silently switch to direct file tools on **`test_data/`**.
-3. Suggest starting the server from project root with **`VENV_DIR`** active (see **`.cursor/rules/Server-managing.mdc`** / project docs), then retry.
+This includes, but is not limited to:
+
+- **`SERVER_UNAVAILABLE`**, **`SERVER_NOT_FOUND`**
+- connection refused / reset / TLS / proxy / transport failures
+- repeated timeouts attributable to server commands
+- server crashes, malformed server responses, missing expected fields
+- wrong behavior of server commands (bad result shape, incorrect edits, failed saves, broken command semantics)
+
+When such a server-side error happens:
+
+1. **Stop the current `test_data` workflow immediately.**
+2. **Do not continue fixing `vast_srv` code past that point.**
+3. Treat it as a **product/server bug** in this repository, not as an application bug in `vast_srv`.
+4. Return a precise handoff that includes:
+   - the exact server command name
+   - the exact params used
+   - the current scenario / breakpoint where it happened
+   - the last successful server command before the failure
+   - the exact error text / code / malformed result observed
+5. **Do not silently switch** to direct file tools on **`test_data/`**.
+6. If the issue is only that the server process is down or unreachable, say so explicitly so the orchestrator can restart/fix it, then resume from the breakpoint after recovery.
+
+If the failure is instead a **`vast_srv` application/runtime/code error**, keep going: diagnose it, fix it through the server, validate, and continue until the next blocker.
 
 ---
 

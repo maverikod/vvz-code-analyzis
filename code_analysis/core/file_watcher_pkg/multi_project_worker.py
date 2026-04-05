@@ -18,6 +18,7 @@ import os
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence
 
+from ..venv_path_policy import allowed_venv_py_files_for_watch_dir
 from .multi_project_worker_cycle import run_scan_cycle
 from .multi_project_worker_init import initialize_watch_dirs
 from .multi_project_worker_specs import WatchDirSpec, build_watch_dir_specs
@@ -305,10 +306,12 @@ class MultiProjectFileWatcherWorker:
             try:
                 # Use scan_directory with same parameters as _scan_watch_dir (global + per-dir ignore)
                 merged_ignore = list(self.ignore_patterns) + list(spec.ignore_patterns)
+                allowed_venv = allowed_venv_py_files_for_watch_dir(watch_dir)
                 scanned_files = scan_directory(
                     root_dir=watch_dir,
                     watch_dirs=[spec.watch_dir],
                     ignore_patterns=merged_ignore,
+                    allowed_venv_py_files=allowed_venv or None,
                 )
                 total_files += len(scanned_files)
             except Exception as e:

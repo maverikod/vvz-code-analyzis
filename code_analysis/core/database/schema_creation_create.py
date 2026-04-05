@@ -51,6 +51,7 @@ def run_create_schema(db: Any) -> None:
                 name TEXT,
                 comment TEXT,
                 watch_dir_id TEXT,
+                deleted BOOLEAN DEFAULT 0,
                 created_at REAL DEFAULT (julianday('now')),
                 updated_at REAL DEFAULT (julianday('now')),
                 FOREIGN KEY (watch_dir_id) REFERENCES watch_dirs(id) ON DELETE SET NULL
@@ -522,6 +523,7 @@ def run_create_schema(db: Any) -> None:
     # Create indexes
     indexes = [
         "CREATE INDEX IF NOT EXISTS idx_projects_root_path ON projects(root_path)",
+        "CREATE INDEX IF NOT EXISTS idx_projects_deleted ON projects(deleted) WHERE deleted = 1",
         "CREATE INDEX IF NOT EXISTS idx_files_project ON files(project_id)",
         "CREATE INDEX IF NOT EXISTS idx_files_path ON files(path)",
         "CREATE INDEX IF NOT EXISTS idx_indexing_errors_project_path ON indexing_errors(project_id, file_path)",

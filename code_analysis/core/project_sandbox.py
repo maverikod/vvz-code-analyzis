@@ -11,12 +11,17 @@ email: vasilyvz@gmail.com
 
 import logging
 import os
+import signal
 import subprocess
+import threading
 from dataclasses import dataclass
 from pathlib import Path
-from typing import List, Optional
+from typing import List, Mapping, Optional, Tuple
 
 logger = logging.getLogger(__name__)
+
+# Defense against runaway child output exhausting the analysis-server process.
+MAX_CAPTURE_BYTES_PER_STREAM = 2 * 1024 * 1024
 
 
 class VenvNotFoundError(Exception):
@@ -38,6 +43,153 @@ class SandboxRunResult:
     stderr: str
     returncode: Optional[int]
     timed_out: bool
+
+
+def _read_pipe_limited_bytes(pipe, max_bytes: int) -> Tuple[str, bool]:
+    """Read up to max_bytes from a binary pipe, then drain and discard the rest."""
+    chunks: List[bytes] = []
+    total = 0
+    chunk_size = 65536
+    truncated = False
+    while total < max_bytes:
+        to_read = min(chunk_size, max_bytes - total)
+        data = pipe.read(to_read)
+        if not data:
+            break
+        chunks.append(data)
+        total += len(data)
+    while True:
+        data = pipe.read(chunk_size)
+        if not data:
+            break
+        truncated = True
+    text = b"".join(chunks).decode("utf-8", errors="replace")
+    if truncated:
+        text += "\n[... output truncated ...]\n"
+    return text, truncated
+
+
+def _terminate_sandbox_process(proc: subprocess.Popen) -> None:
+    """On POSIX, kill the whole process group so grandchildren cannot outlive timeout."""
+    if os.name == "posix":
+        try:
+            os.killpg(proc.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        except PermissionError:
+            try:
+                proc.kill()
+            except ProcessLookupError:
+                pass
+    else:
+        proc.kill()
+    try:
+        proc.wait(timeout=30)
+    except subprocess.TimeoutExpired:
+        if os.name == "posix":
+            try:
+                os.killpg(proc.pid, signal.SIGKILL)
+            except (ProcessLookupError, PermissionError):
+                try:
+                    proc.kill()
+                except ProcessLookupError:
+                    pass
+        else:
+            proc.kill()
+        proc.wait()
+
+
+def _run_sandbox_subprocess(
+    cmd: List[str],
+    cwd: Path,
+    env: Mapping[str, str],
+    timeout_seconds: Optional[int],
+    max_stdout_bytes: Optional[int] = None,
+    max_stderr_bytes: Optional[int] = None,
+) -> SandboxRunResult:
+    """Run cmd with bounded capture, optional timeout, POSIX session for group kill."""
+    cap_out = (
+        max_stdout_bytes
+        if max_stdout_bytes is not None
+        else MAX_CAPTURE_BYTES_PER_STREAM
+    )
+    cap_err = (
+        max_stderr_bytes
+        if max_stderr_bytes is not None
+        else MAX_CAPTURE_BYTES_PER_STREAM
+    )
+    if os.name == "posix":
+        proc = subprocess.Popen(
+            cmd,
+            cwd=str(cwd),
+            env=dict(env),
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            start_new_session=True,
+        )
+    else:
+        proc = subprocess.Popen(
+            cmd,
+            cwd=str(cwd),
+            env=dict(env),
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+
+    if proc.stdout is None or proc.stderr is None:
+        raise RuntimeError("Popen pipes missing despite stdout=PIPE, stderr=PIPE")
+
+    stdout_pipe = proc.stdout
+    stderr_pipe = proc.stderr
+
+    out_holder: List[Tuple[str, bool]] = [("", False)]
+    err_holder: List[Tuple[str, bool]] = [("", False)]
+
+    def read_stdout() -> None:
+        try:
+            out_holder[0] = _read_pipe_limited_bytes(stdout_pipe, cap_out)
+        finally:
+            try:
+                stdout_pipe.close()
+            except Exception:
+                pass
+
+    def read_stderr() -> None:
+        try:
+            err_holder[0] = _read_pipe_limited_bytes(stderr_pipe, cap_err)
+        finally:
+            try:
+                stderr_pipe.close()
+            except Exception:
+                pass
+
+    t_out = threading.Thread(target=read_stdout, name="sandbox-stdout", daemon=True)
+    t_err = threading.Thread(target=read_stderr, name="sandbox-stderr", daemon=True)
+    t_out.start()
+    t_err.start()
+
+    timed_out = False
+    returncode: Optional[int] = None
+    try:
+        returncode = proc.wait(timeout=timeout_seconds)
+    except subprocess.TimeoutExpired:
+        timed_out = True
+        _terminate_sandbox_process(proc)
+        returncode = None
+    finally:
+        t_out.join()
+        t_err.join()
+
+    out_text, _ = out_holder[0]
+    err_text, _ = err_holder[0]
+    return SandboxRunResult(
+        stdout=out_text,
+        stderr=err_text,
+        returncode=returncode,
+        timed_out=timed_out,
+    )
 
 
 def run_in_project_sandbox(
@@ -131,36 +283,7 @@ def run_in_project_sandbox(
         env["PYTHONPATH"],
         cmd,
     )
-    try:
-        result = subprocess.run(
-            cmd,
-            cwd=str(root_resolved),
-            env=env,
-            capture_output=True,
-            text=True,
-            timeout=timeout_seconds,
-        )
-        return SandboxRunResult(
-            stdout=result.stdout or "",
-            stderr=result.stderr or "",
-            returncode=result.returncode,
-            timed_out=False,
-        )
-    except subprocess.TimeoutExpired as e:
-        out = getattr(e, "output", None) or getattr(e, "stdout", None)
-        err = getattr(e, "stderr", None)
-        stdout_str = (
-            out.decode(errors="replace") if isinstance(out, bytes) else (out or "")
-        )
-        stderr_str = (
-            err.decode(errors="replace") if isinstance(err, bytes) else (err or "")
-        )
-        return SandboxRunResult(
-            stdout=stdout_str,
-            stderr=stderr_str,
-            returncode=None,
-            timed_out=True,
-        )
+    return _run_sandbox_subprocess(cmd, root_resolved, env, timeout_seconds)
 
 
 def run_module_in_project_sandbox(
@@ -236,33 +359,31 @@ def run_module_in_project_sandbox(
         root_resolved,
         cmd,
     )
-    try:
-        result = subprocess.run(
-            cmd,
-            cwd=str(root_resolved),
-            env=env,
-            capture_output=True,
-            text=True,
-            timeout=timeout_seconds,
-        )
-        return SandboxRunResult(
-            stdout=result.stdout or "",
-            stderr=result.stderr or "",
-            returncode=result.returncode,
-            timed_out=False,
-        )
-    except subprocess.TimeoutExpired as e:
-        out = getattr(e, "output", None) or getattr(e, "stdout", None)
-        err = getattr(e, "stderr", None)
-        stdout_str = (
-            out.decode(errors="replace") if isinstance(out, bytes) else (out or "")
-        )
-        stderr_str = (
-            err.decode(errors="replace") if isinstance(err, bytes) else (err or "")
-        )
-        return SandboxRunResult(
-            stdout=stdout_str,
-            stderr=stderr_str,
-            returncode=None,
-            timed_out=True,
-        )
+    return _run_sandbox_subprocess(cmd, root_resolved, env, timeout_seconds)
+
+
+def run_pip_in_project_sandbox(
+    root_path: Path,
+    pip_args: Optional[List[str]] = None,
+    timeout_seconds: Optional[int] = None,
+) -> SandboxRunResult:
+    """
+    Run ``python -m pip`` with arguments in the project sandbox.
+
+    Uses the same interpreter, cwd, PYTHONPATH, and venv as
+    :func:`run_module_in_project_sandbox` (i.e. ``python -m pip ...``).
+
+    Args:
+        root_path: Absolute path to the project root (must exist).
+        pip_args: Arguments after ``pip`` (e.g. ``["list", "--format=json"]``).
+        timeout_seconds: Optional timeout in seconds.
+
+    Returns:
+        SandboxRunResult with stdout, stderr, returncode, and timed_out flag.
+
+    Raises:
+        ValueError: If root_path is not a directory.
+        VenvNotFoundError: If neither .venv nor venv exists under root_path.
+    """
+    args = list(pip_args) if pip_args else []
+    return run_module_in_project_sandbox(root_path, "pip", args, timeout_seconds)

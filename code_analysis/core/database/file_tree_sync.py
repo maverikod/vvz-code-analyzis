@@ -2,7 +2,7 @@
 Unified file-level sync service: one coordinated DB write per file.
 
 Writes all file-level structures (snapshot, root, nodes, AST, CST, entities)
-in a single transaction. Used by tree-save and background-indexing flows.
+via one logical write RPC. Used by tree-save and background-indexing flows.
 
 Author: Vasiliy Zdanovskiy
 email: vasilyvz@gmail.com
@@ -11,7 +11,10 @@ email: vasilyvz@gmail.com
 from __future__ import annotations
 
 import logging
+import time
 from typing import Any, Dict, List, Optional, Tuple
+
+from ..database_client.file_data_batch import build_file_data_atomic_batches
 
 logger = logging.getLogger(__name__)
 
@@ -32,8 +35,8 @@ def sync_file_to_db_atomic(
     fails (no partial success). Used by both tree-save and background-indexing callers.
 
     Args:
-        database: CodeDatabase-like instance with get_file_by_path, execute_batch,
-            begin_transaction, commit_transaction, rollback_transaction.
+        database: CodeDatabase-like instance with get_file_by_path and
+            execute_logical_write_operation (one composite RPC on SQLite client).
         project_id: Project ID.
         absolute_path: Absolute normalized file path.
         source_code: Full source code of the file.
@@ -64,131 +67,131 @@ def sync_file_to_db_atomic(
         "error": None,
     }
 
-    if file_id is None:
-        file_record = database.get_file_by_path(absolute_path, project_id)
-        if not file_record:
-            result["error"] = f"File not found in database: {absolute_path}"
+    t0 = time.perf_counter()
+    logger.info(
+        "[SAVE_PATH] sync_file_to_db_atomic enter project_id=%s file_id=%s path=%s",
+        project_id,
+        file_id,
+        absolute_path,
+    )
+
+    def _sync() -> Dict[str, Any]:
+        nonlocal file_id
+        if file_id is None:
+            file_record = database.get_file_by_path(absolute_path, project_id)
+            if not file_record:
+                result["error"] = f"File not found in database: {absolute_path}"
+                return result
+            file_id = file_record["id"]
+        result["file_id"] = file_id
+
+        try:
+            from ..cst_tree.tree_builder import create_tree_from_code
+        except Exception as e:
+            logger.exception("Failed to import create_tree_from_code")
+            result["error"] = f"Failed to build CST: {e}"
             return result
-        file_id = file_record["id"]
-    result["file_id"] = file_id
 
-    try:
-        from ..cst_tree.tree_builder import create_tree_from_code
-    except Exception as e:
-        logger.exception("Failed to import create_tree_from_code")
-        result["error"] = f"Failed to build CST: {e}"
-        return result
+        try:
+            tree = create_tree_from_code(absolute_path, source_code)
+        except Exception as e:
+            logger.warning("CST build failed for %s: %s", absolute_path, e)
+            result["error"] = f"Failed to build CST: {e}"
+            return result
 
-    try:
-        tree = create_tree_from_code(absolute_path, source_code)
-    except Exception as e:
-        logger.warning("CST build failed for %s: %s", absolute_path, e)
-        result["error"] = f"Failed to build CST: {e}"
-        return result
+        fd_batches, meta = build_file_data_atomic_batches(
+            file_id,
+            project_id,
+            source_code,
+            absolute_path,
+            file_mtime,
+        )
+        if meta.get("success") is False:
+            result["error"] = meta.get("error", "AST parse failed")
+            return result
 
-    transaction_id: Optional[str] = None
-    try:
-        transaction_id = database.begin_transaction()
-    except RuntimeError as e:
-        result["error"] = str(e)
-        return result
+        root_node_id = tree.root_node_id
+        if not root_node_id:
+            result["error"] = "CST tree has no root node"
+            return result
 
-    try:
-        # Clear existing snapshot data for this file (CASCADE removes roots and nodes).
-        database.execute_batch(
+        node_rows = _build_snapshot_node_rows(tree, 0)
+
+        s_batches: list[list[Tuple[str, Any]]] = [
             [
                 (
                     "DELETE FROM file_tree_snapshots WHERE file_id = ?",
                     (file_id,),
                 )
             ],
-            transaction_id,
-        )
-
-        # Insert snapshot and get snapshot_id.
-        ins_snapshot_sql = (
-            "INSERT INTO file_tree_snapshots "
-            "(file_id, project_id, source_payload, file_mtime) VALUES (?, ?, ?, ?)"
-        )
-        ins_snapshot_params = (file_id, project_id, source_code, file_mtime)
-        snapshot_results = database.execute_batch(
-            [(ins_snapshot_sql, ins_snapshot_params)],
-            transaction_id,
-        )
-        if not snapshot_results:
-            result["error"] = "Snapshot insert returned no result"
-            database.rollback_transaction(transaction_id)
-            return result
-        snapshot_id = snapshot_results[0].get("lastrowid")
-        if snapshot_id is None:
-            result["error"] = "Snapshot insert did not return lastrowid"
-            database.rollback_transaction(transaction_id)
-            return result
-        snapshot_id = int(snapshot_id)
-        result["snapshot"] = 1
-
-        root_node_id = tree.root_node_id
-        if not root_node_id:
-            result["error"] = "CST tree has no root node"
-            database.rollback_transaction(transaction_id)
-            return result
-
-        database.execute_batch(
             [
                 (
-                    "INSERT INTO file_tree_snapshot_roots (snapshot_id, root_node_id) VALUES (?, ?)",
-                    (snapshot_id, root_node_id),
+                    "INSERT INTO file_tree_snapshots "
+                    "(file_id, project_id, source_payload, file_mtime) "
+                    "VALUES (?, ?, ?, ?)",
+                    (file_id, project_id, source_code, file_mtime),
                 )
             ],
-            transaction_id,
-        )
-        result["roots"] = 1
+            [
+                (
+                    "INSERT INTO file_tree_snapshot_roots (snapshot_id, root_node_id) "
+                    "VALUES ("
+                    "(SELECT id FROM file_tree_snapshots WHERE file_id = ? "
+                    "ORDER BY id DESC LIMIT 1), ?)",
+                    (file_id, root_node_id),
+                )
+            ],
+        ]
 
-        node_rows = _build_snapshot_node_rows(tree, snapshot_id)
         if node_rows:
-            node_ops: List[Tuple[str, Tuple[Any, ...]]] = [
+            node_ops: List[Tuple[str, Any]] = [
                 (
                     "INSERT INTO file_tree_snapshot_nodes "
-                    "(snapshot_id, node_id, parent_node_id, child_index) VALUES (?, ?, ?, ?)",
-                    (snapshot_id, nid, pid, cidx),
+                    "(snapshot_id, node_id, parent_node_id, child_index) VALUES ("
+                    "(SELECT id FROM file_tree_snapshots WHERE file_id = ? "
+                    "ORDER BY id DESC LIMIT 1), ?, ?, ?)",
+                    (file_id, nid, pid, cidx),
                 )
                 for (nid, pid, cidx) in node_rows
             ]
-            database.execute_batch(node_ops, transaction_id)
-        result["nodes"] = len(node_rows)
+            s_batches.append(node_ops)
 
-        from ..database_client.file_data_batch import update_file_data_atomic_batch
-
-        batch_result = update_file_data_atomic_batch(
-            database,
-            file_id,
-            project_id,
-            source_code,
-            absolute_path,
-            file_mtime,
-            transaction_id=transaction_id,
-        )
-        if not batch_result.get("success"):
-            result["error"] = batch_result.get("error", "Batch update failed")
-            database.rollback_transaction(transaction_id)
+        all_batches = s_batches + fd_batches
+        if not all_batches:
+            result["error"] = "No SQL batches to execute"
             return result
 
-        result["ast_updated"] = batch_result.get("ast_updated", False)
-        result["cst_updated"] = batch_result.get("cst_updated", False)
-        result["entities_updated"] = batch_result.get("entities_updated", 0)
-        database.commit_transaction(transaction_id)
+        try:
+            raw = database.execute_logical_write_operation({"batches": all_batches})
+        except Exception as e:
+            logger.exception("sync_file_to_db_atomic failed for %s", absolute_path)
+            result["error"] = str(e)
+            return result
+
+        if not (isinstance(raw, dict) and raw.get("success")):
+            result["error"] = "Logical write did not report success"
+            return result
+
         result["success"] = True
+        result["snapshot"] = 1
+        result["roots"] = 1
+        result["nodes"] = len(node_rows)
+        result["ast_updated"] = meta.get("ast_updated", False)
+        result["cst_updated"] = meta.get("cst_updated", False)
+        result["entities_updated"] = meta.get("entities_updated", 0)
         return result
 
-    except Exception as e:
-        logger.exception("sync_file_to_db_atomic failed for %s", absolute_path)
-        result["error"] = str(e)
-        if transaction_id is not None:
-            try:
-                database.rollback_transaction(transaction_id)
-            except Exception:
-                pass
-        return result
+    try:
+        return _sync()
+    finally:
+        elapsed_ms = (time.perf_counter() - t0) * 1000.0
+        logger.info(
+            "[SAVE_PATH] sync_file_to_db_atomic exit project_id=%s file_id=%s elapsed_ms=%.1f success=%s",
+            project_id,
+            result.get("file_id"),
+            elapsed_ms,
+            result.get("success"),
+        )
 
 
 def _build_snapshot_node_rows(
@@ -199,9 +202,10 @@ def _build_snapshot_node_rows(
     Build (node_id, parent_node_id, child_index) for all nodes in the tree.
 
     Root has parent_node_id=None and child_index=0. Other nodes use their
-    parent's children_ids order for child_index. snapshot_id is not used in
-    the tuple; caller binds it when inserting.
+    parent's children_ids order for child_index. snapshot_id is unused;
+    caller binds snapshot via SQL subquery.
     """
+    _ = snapshot_id
     rows: List[Tuple[str, Optional[str], int]] = []
     metadata_map = getattr(tree, "metadata_map", {})
     parent_map = getattr(tree, "parent_map", {})

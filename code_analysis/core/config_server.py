@@ -191,6 +191,25 @@ class ServerConfig(BaseModel):
         ),
         description="Retention in seconds for batch output files; 0 means no automatic cleanup.",
     )
+    read_project_text_json_structured_max_bytes: Optional[int] = Field(
+        default=None,
+        description=(
+            "Optional max .json file size in bytes (st_size) for read_project_text_file to "
+            "return structured JSON (same as json_load_file). Above this threshold, the "
+            "command returns raw text lines. If omitted, DEFAULT_READ_PROJECT_TEXT_JSON_STRUCTURED_MAX_BYTES "
+            "from code_analysis.core.constants is used."
+        ),
+    )
+    venv_site_packages_index_allowlisted_distributions: List[str] = Field(
+        default_factory=list,
+        description=(
+            "Optional list of pip distribution names (PEP 503–normalized matching). When "
+            "non-empty, ``.py`` files under those distributions inside the project ``.venv``/``venv`` "
+            "``site-packages`` trees may be indexed and vectorized; all other paths under "
+            "``.venv``/``venv`` remain skipped. When empty, the entire project venv is excluded "
+            "from indexing (default)."
+        ),
+    )
 
     @field_validator("port")
     @classmethod
@@ -294,3 +313,34 @@ class ServerConfig(BaseModel):
         if v < 0:
             raise ValueError("batch_output_retention_seconds must be >= 0")
         return v
+
+    @field_validator("read_project_text_json_structured_max_bytes")
+    @classmethod
+    def validate_read_project_text_json_structured_max_bytes(
+        cls, v: Optional[int]
+    ) -> Optional[int]:
+        """When set, must be positive (bytes threshold for structured .json read)."""
+        if v is not None and v <= 0:
+            raise ValueError(
+                "read_project_text_json_structured_max_bytes must be positive when set"
+            )
+        return v
+
+    @field_validator("venv_site_packages_index_allowlisted_distributions")
+    @classmethod
+    def validate_venv_site_packages_index_allowlisted_distributions(
+        cls,
+        v: List[str],
+    ) -> List[str]:
+        """Allowlist entries must be non-empty strings (distribution names)."""
+        if not v:
+            return []
+        out: List[str] = []
+        for item in v:
+            if not isinstance(item, str) or not item.strip():
+                raise ValueError(
+                    "venv_site_packages_index_allowlisted_distributions entries must be "
+                    "non-empty strings"
+                )
+            out.append(item.strip())
+        return out

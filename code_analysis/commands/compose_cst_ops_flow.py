@@ -24,6 +24,7 @@ from ..core.cst_tree.tree_builder import get_tree
 from ..core.exceptions import CSTModulePatchError
 from ..core.git_integration import commit_after_write
 from .base_mcp_command import BaseMCPCommand
+from .project_text_file_guard import reject_if_write_under_project_venv
 from .compose_cst_db import backup_file_data
 from .compose_cst_writer import apply_changes as writer_apply_changes
 from .compose_cst_writer import validate_and_write_temp
@@ -58,6 +59,11 @@ async def run_ops_mode(
             code="INVALID_FILE",
             details={"file_path": str(target_path)},
         )
+
+    if apply:
+        blocked = reject_if_write_under_project_venv(target_path, root_path)
+        if blocked is not None:
+            return blocked
 
     try:
         replace_ops = command._ops_from_params(ops)

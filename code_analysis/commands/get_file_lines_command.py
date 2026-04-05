@@ -12,20 +12,16 @@ from __future__ import annotations
 import logging
 from typing import Any, Dict
 
-import libcst as cst
 from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 
 from .base_mcp_command import BaseMCPCommand
+from .line_command_cst_gate import (
+    LINE_CMD_DISALLOWED_MSG,
+    healthy_parse_blocks_line_ops,
+)
 from ..core.exceptions import ValidationError
 
 logger = logging.getLogger(__name__)
-
-# Error message when file is healthy and line commands are disallowed
-_LINE_CMD_DISALLOWED_MSG = (
-    "This file parses successfully. Use CST commands instead: "
-    "cst_load_file (load tree), cst_modify_tree (edit by node), compose_cst_module (patch by selector). "
-    "Set code_analysis.allow_line_commands_on_healthy_files=true to allow get_file_lines/replace_file_lines on healthy files."
-)
 
 
 class GetFileLinesCommand(BaseMCPCommand):
@@ -71,6 +67,7 @@ class GetFileLinesCommand(BaseMCPCommand):
         file_path: str,
         start_line: int,
         end_line: int,
+        allow_healthy_line_ops: bool = False,
         **kwargs: Any,
     ) -> SuccessResult:
         try:
@@ -118,24 +115,23 @@ class GetFileLinesCommand(BaseMCPCommand):
             allow_on_healthy = config_data.get("code_analysis", {}).get(
                 "allow_line_commands_on_healthy_files", False
             )
-            if not allow_on_healthy:
-                try:
-                    cst.parse_module(text)
-                except cst.ParserSyntaxError:
-                    pass
-                else:
-                    return ErrorResult(
-                        message=_LINE_CMD_DISALLOWED_MSG,
-                        code="USE_CST_COMMANDS",
-                        details={
-                            "file_path": file_path,
-                            "cst_commands": [
-                                "cst_load_file",
-                                "cst_modify_tree",
-                                "compose_cst_module",
-                            ],
-                        },
-                    )
+            if healthy_parse_blocks_line_ops(
+                text,
+                allow_healthy_line_ops=allow_healthy_line_ops,
+                allow_line_commands_on_healthy_files=bool(allow_on_healthy),
+            ):
+                return ErrorResult(
+                    message=LINE_CMD_DISALLOWED_MSG,
+                    code="USE_CST_COMMANDS",
+                    details={
+                        "file_path": file_path,
+                        "cst_commands": [
+                            "cst_load_file",
+                            "cst_modify_tree",
+                            "compose_cst_module",
+                        ],
+                    },
+                )
             all_lines = text.splitlines(keepends=False)
             total_lines = len(all_lines)
 

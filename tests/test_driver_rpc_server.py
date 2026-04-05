@@ -312,6 +312,70 @@ class TestDriverRPCServer:
             driver.disconnect()
             time.sleep(0.1)
 
+    def test_execute_logical_write_operation_handler_batch_results_length(
+        self, tmp_path
+    ):
+        """execute_logical_write_operation returns batch_results with one entry per inner batch."""
+        db_path = tmp_path / "test.db"
+        socket_path = str(tmp_path / "test.sock")
+
+        driver = create_driver("sqlite", {"path": str(db_path)})
+        schema = {
+            "name": "test_table",
+            "columns": [
+                {"name": "id", "type": "INTEGER", "primary_key": True},
+                {"name": "name", "type": "TEXT"},
+                {"name": "age", "type": "INTEGER"},
+            ],
+        }
+        driver.create_table(schema)
+        driver.disconnect()
+
+        request_queue = RequestQueue()
+        driver = create_driver("sqlite", {"path": str(db_path)})
+        server = RPCServer(driver, request_queue, socket_path)
+
+        server_thread = threading.Thread(target=server.start, daemon=True)
+        server_thread.start()
+        time.sleep(0.2)
+
+        try:
+            request = {
+                "jsonrpc": "2.0",
+                "method": "execute_logical_write_operation",
+                "params": {
+                    "batches": [
+                        [
+                            {
+                                "sql": (
+                                    "INSERT INTO test_table (name, age) VALUES (?, ?)"
+                                ),
+                                "params": ["lw_one", 1],
+                            }
+                        ],
+                        [
+                            {
+                                "sql": (
+                                    "INSERT INTO test_table (name, age) VALUES (?, ?)"
+                                ),
+                                "params": ["lw_two", 2],
+                            }
+                        ],
+                    ]
+                },
+                "id": "test_logical_write",
+            }
+            response = self._send_rpc_request(socket_path, request)
+            assert response["jsonrpc"] == "2.0"
+            assert "result" in response
+            assert response["result"]["success"] is True
+            data = response["result"]["data"]
+            assert len(data["batch_results"]) == 2
+        finally:
+            server.stop()
+            driver.disconnect()
+            time.sleep(0.1)
+
     def test_all_rpc_methods(self, tmp_path):
         """Test all RPC methods work correctly."""
         db_path = tmp_path / "test.db"

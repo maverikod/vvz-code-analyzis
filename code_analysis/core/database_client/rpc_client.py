@@ -208,10 +208,18 @@ class RPCClient:
         last_error: Optional[Exception] = None
         for attempt in range(effective_retries):
             try:
+                t_rpc = time.perf_counter()
                 out = self._send_request(
                     request=request,
                     request_timeout=effective_timeout,
                     pool_wait_timeout=pool_wait,
+                )
+                elapsed_ms = (time.perf_counter() - t_rpc) * 1000.0
+                logger.info(
+                    "[SAVE_PATH] rpc_client method=%s request_id=%s elapsed_ms=%.1f",
+                    method,
+                    _short_request_id(request_id),
+                    elapsed_ms,
                 )
                 logger.info("[CHAIN] rpc_client call method=%s success", method)
                 return out

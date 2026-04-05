@@ -91,7 +91,10 @@ def test_tree_save_flow_calls_unified_sync(
         updated = type("File", (), {"id": 1})()
         test_db.update_file = lambda *a, **k: updated
         test_db.select = lambda *a, **k: []
-        test_db.execute_batch = lambda *a, **k: [{"lastrowid": 1}]
+        test_db.execute_logical_write_operation = lambda *a, **k: {
+            "success": True,
+            "data": {"batch_results": []},
+        }
         result = save_tree_to_file(
             tree_id=tree.tree_id,
             file_path="a.py",
@@ -256,7 +259,10 @@ def test_rerun_after_failure_restores_full_file_state(
     test_db.create_file = lambda *a, **k: created
     updated = type("File", (), {"id": 1})()
     test_db.select = lambda *a, **k: []
-    test_db.execute_batch = lambda *a, **k: [{"lastrowid": 1}]
+    test_db.execute_logical_write_operation = lambda *a, **k: {
+        "success": True,
+        "data": {"batch_results": []},
+    }
     call_count = [0]
 
     def fail_once_then_ok(*args, **kwargs):

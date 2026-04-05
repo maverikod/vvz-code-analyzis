@@ -26,17 +26,32 @@ CODE_FILE_EXTENSIONS = set(settings.get("code_file_extensions"))
 DEFAULT_IGNORE_PATTERNS = set(settings.get("default_ignore_patterns"))
 
 
-def should_ignore_path(path: Path, ignore_patterns: Optional[List[str]] = None) -> bool:
+def should_ignore_path(
+    path: Path,
+    ignore_patterns: Optional[List[str]] = None,
+    *,
+    allowed_venv_py_files: Optional[Set[Path]] = None,
+) -> bool:
     """
     Check if path should be ignored.
 
     Args:
         path: Path to check
         ignore_patterns: Additional ignore patterns from config (optional)
+        allowed_venv_py_files: Optional set of resolved paths under project ``.venv``/``venv``
+            ``site-packages`` that are allowlisted for indexing (see config). If a file
+            path resolves to a member, it is not ignored.
 
     Returns:
         True if path should be ignored, False otherwise
     """
+    if allowed_venv_py_files and path.is_file():
+        try:
+            if path.resolve() in allowed_venv_py_files:
+                return False
+        except OSError:
+            pass
+
     # Combine default and config patterns
     all_patterns = set(DEFAULT_IGNORE_PATTERNS)
     if ignore_patterns:
@@ -112,6 +127,8 @@ def scan_directory(
     root_dir: Path,
     watch_dirs: List[Path],
     ignore_patterns: Optional[List[str]] = None,
+    *,
+    allowed_venv_py_files: Optional[Set[Path]] = None,
 ) -> Dict[str, Dict]:
     """
     Scan directory recursively for code files and discover projects.
@@ -123,6 +140,8 @@ def scan_directory(
         root_dir: Root directory to scan
         watch_dirs: List of watched directories for project discovery (REQUIRED)
         ignore_patterns: Glob patterns to ignore
+        allowed_venv_py_files: Optional set of resolved ``.py`` paths under venv
+            ``site-packages`` that are allowlisted for discovery (see config).
 
     Returns:
         Dictionary mapping absolute file paths to file info:
@@ -149,7 +168,9 @@ def scan_directory(
 
     try:
         for item in root_dir.rglob("*"):
-            if should_ignore_path(item, ignore_patterns):
+            if should_ignore_path(
+                item, ignore_patterns, allowed_venv_py_files=allowed_venv_py_files
+            ):
                 continue
 
             if item.is_file():

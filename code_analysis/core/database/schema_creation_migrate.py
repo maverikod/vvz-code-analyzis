@@ -147,8 +147,30 @@ def run_migrate_schema(db: Any) -> None:
         except Exception as e:
             logger.warning(f"Could not add version_dir column to files: {e}")
 
-    # Deletion mark is only in files table; projects are considered trashed when
-    # all their files have deleted=1 (checked via EXISTS on files).
+    # Project-level soft delete (empty projects and explicit tombstone).
+    try:
+        projects_table_info = db._get_table_info("projects")
+        projects_columns = {col["name"]: col["type"] for col in projects_table_info}
+    except Exception as e:
+        projects_columns = {}
+        logger.debug(f"Could not inspect projects table: {e}")
+    if "deleted" not in projects_columns:
+        try:
+            logger.info("Migrating projects table: adding deleted column")
+            db._execute("ALTER TABLE projects ADD COLUMN deleted BOOLEAN DEFAULT 0")
+            db._commit()
+        except Exception as e:
+            logger.warning(f"Could not add deleted column to projects: {e}")
+    try:
+        db._execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_projects_deleted
+            ON projects(deleted) WHERE deleted = 1
+            """
+        )
+        db._commit()
+    except Exception as e:
+        logger.warning(f"Could not create index idx_projects_deleted: {e}")
 
     if "needs_chunking" not in files_columns:
         try:

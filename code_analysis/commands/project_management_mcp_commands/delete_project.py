@@ -19,15 +19,14 @@ from ._shared import (
 
 class DeleteProjectMCPCommand(BaseMCPCommand):
     """
-    Delete a project and all its data.
+    Delete or soft-delete a project.
 
-    This command completely removes a project from the database:
-    - All files and their associated data
-    - All chunks and vector indexes
-    - All duplicates
-    - The project record itself
+    Soft-delete stage (always): marks the project in the database and moves the
+    project root to the configured trash directory.
 
-    Use with caution - this operation cannot be undone.
+    With ``delete_from_disk=False`` (default), also permanently removes all project
+    data from the database and the FAISS index file after the soft-delete stage.
+    With ``delete_from_disk=True``, database rows are kept until trash cleanup.
 
     Attributes:
         name: MCP command name.
@@ -42,8 +41,9 @@ class DeleteProjectMCPCommand(BaseMCPCommand):
     name = "delete_project"
     version = "1.0.0"
     descr = (
-        "Delete a project and all its data from the database. "
-        "This operation cannot be undone."
+        "Delete a project: soft-delete (move root to trash, mark in DB) and/or "
+        "permanently remove all DB data. Default permanent path runs soft-delete first, "
+        "then clears the database."
     )
     category = "project_management"
     author = "Vasiliy Zdanovskiy"
@@ -92,8 +92,10 @@ class DeleteProjectMCPCommand(BaseMCPCommand):
                 "delete_from_disk": {
                     "type": "boolean",
                     "description": (
-                        "If True, move project root directory to trash (recycle bin) and delete version directory. "
-                        "If False, only delete from database. Default: False."
+                        "If True: soft-delete only — mark project/files in DB, move project root to trash, "
+                        "remove version dir; database rows remain until trash is emptied. "
+                        "If False (default): soft-delete first, then permanently remove all project data "
+                        "from the database and delete the FAISS index file."
                     ),
                     "default": False,
                 },
@@ -168,20 +170,16 @@ class DeleteProjectMCPCommand(BaseMCPCommand):
                         "delete_project",
                     )
 
-                # Get version_dir and trash_dir from config if delete_from_disk is True
-                version_dir = None
-                trash_dir = None
-                if delete_from_disk:
-                    file_watcher_config = config_data.get("code_analysis", {}).get(
-                        "file_watcher", {}
-                    )
-                    version_dir = file_watcher_config.get("version_dir")
-                    if not version_dir:
-                        config_dir_path = Path(config_path).parent
-                        version_dir = str(config_dir_path / "data" / "versions")
-                    trash_dir = str(storage.trash_dir)
+                # Version / trash dirs: required for soft-delete stage (all modes).
+                file_watcher_config = config_data.get("code_analysis", {}).get(
+                    "file_watcher", {}
+                )
+                version_dir = file_watcher_config.get("version_dir")
+                if not version_dir:
+                    config_dir_path = Path(config_path).parent
+                    version_dir = str(config_dir_path / "data" / "versions")
+                trash_dir = str(storage.trash_dir)
 
-                # Import and execute command
                 from ..project_deletion import DeleteProjectCommand
 
                 cmd = DeleteProjectCommand(
@@ -245,22 +243,17 @@ class DeleteProjectMCPCommand(BaseMCPCommand):
                 "3. Validates project_id exists in database and retrieves project information\n"
                 "4. Retrieves project information and statistics\n"
                 "5. If dry_run=True:\n"
-                "   - Returns statistics about what would be deleted\n"
-                "   - Shows what would be deleted from disk (if delete_from_disk=True)\n"
+                "   - Returns statistics and whether a soft-delete / permanent DB clear would run\n"
                 "   - Does not perform actual deletion\n"
                 "6. If dry_run=False:\n"
-                "   a. Deletes all project data from database first (while project dir still exists)\n"
-                "   b. If delete_from_disk=True:\n"
-                "      * Moves project root directory to trash (recycle bin); does NOT permanently delete\n"
-                "      * Permanently deletes version directory for this project ({version_dir}/{project_id}/)\n"
-                "      * Continues even if move/delete fails (errors are logged)\n"
-                "   c. Database deletion:\n"
-                "      * All files and their associated data (classes, functions, methods, imports, usages)\n"
-                "      * All chunks and removes from FAISS vector index\n"
-                "      * All duplicates\n"
-                "      * All AST trees\n"
-                "      * All CST trees\n"
-                "      * The project record itself\n"
+                "   a. Soft-delete stage (always): marks project and files in the database (including "
+                "empty projects via projects.deleted), moves project root to trash, removes per-project "
+                "version directory under version_dir.\n"
+                "   b. If delete_from_disk=True: stops after soft-delete (DB rows kept for recovery "
+                "until permanently_delete_from_trash / clear_trash).\n"
+                "   c. If delete_from_disk=False: after soft-delete, permanently removes all project data "
+                "from the database and deletes the on-disk FAISS index file for this project.\n"
+                "   Disk errors during move/delete are logged; soft-delete DB markers still apply.\n"
                 "7. Returns deletion summary\n\n"
                 "Deleted Data (Database):\n"
                 "- Files: All file records and metadata\n"
@@ -271,10 +264,12 @@ class DeleteProjectMCPCommand(BaseMCPCommand):
                 "- Duplicates: All duplicate records\n"
                 "- AST/CST: All AST and CST trees\n"
                 "- Project record: The project itself\n\n"
-                "Disk (if delete_from_disk=True):\n"
-                "- Project root directory: Moved to trash (recycle bin), not permanently deleted. Use list_trashed_projects / permanently_delete_from_trash / clear_trash to manage.\n"
-                "- Version directory: Permanently removed ({version_dir}/{project_id}/)\n"
-                "  Trash directory is typically 'data/trash' (config: code_analysis.storage.trash_dir)\n\n"
+                "Disk (soft-delete stage; runs for both modes):\n"
+                "- Project root directory: moved under trash_dir with a timestamped folder name.\n"
+                "- Version directory: per-project folder under version_dir removed.\n"
+                "- With delete_from_disk=True only, trashed tree stays on disk until "
+                "list_trashed_projects / permanently_delete_from_trash / clear_trash.\n"
+                "- With delete_from_disk=False, trash folder remains after DB clear unless removed separately.\n\n"
                 "Use cases:\n"
                 "- Remove projects that are no longer needed (database only)\n"
                 "- Completely remove projects including files from disk\n"
@@ -284,8 +279,8 @@ class DeleteProjectMCPCommand(BaseMCPCommand):
                 "Important notes:\n"
                 "- This operation is PERMANENT and cannot be undone\n"
                 "- Always use dry_run=True first to preview what will be deleted\n"
-                "- By default (delete_from_disk=False), only database records are deleted\n"
-                "- If delete_from_disk=True, project files and version directory are also deleted\n"
+                "- delete_from_disk=False (default): soft-delete to trash, then full database clear + FAISS file\n"
+                "- delete_from_disk=True: soft-delete only; database rows remain until trash cleanup commands\n"
                 "- Disk deletion errors are logged but do not stop database deletion\n"
                 "- All related data is cascaded and removed from database\n"
                 "- Use with extreme caution, especially with delete_from_disk=True"
@@ -317,9 +312,8 @@ class DeleteProjectMCPCommand(BaseMCPCommand):
                 },
                 "delete_from_disk": {
                     "description": (
-                        "If True, moves project root directory to trash (recycle bin) and deletes version directory. "
-                        "If False (default), only deletes from database. "
-                        "Trashed projects can be listed with list_trashed_projects and permanently removed with permanently_delete_from_trash or clear_trash."
+                        "If True, soft-delete only (DB rows kept; use trash cleanup to purge). "
+                        "If False (default), soft-delete then permanent database removal and FAISS file deletion."
                     ),
                     "type": "boolean",
                     "required": False,
@@ -344,9 +338,9 @@ class DeleteProjectMCPCommand(BaseMCPCommand):
                         "project_id": "928bcf10-db1c-47a3-8341-f60a6d997fe7",
                     },
                     "explanation": (
-                        "Permanently deletes project and all its data from database. "
-                        "Project files on disk are NOT deleted. "
-                        "WARNING: This is permanent and cannot be undone."
+                        "Soft-deletes to trash (move root, version dir), then removes all project data "
+                        "from the database and the FAISS index file. Project source is under trash, not at "
+                        "the original root path."
                     ),
                 },
                 {
@@ -445,7 +439,7 @@ class DeleteProjectMCPCommand(BaseMCPCommand):
                 "Verify project_id is correct before deletion - use list_projects to get project IDs",
                 "Backup database before deleting important projects",
                 "This operation is permanent - double-check before proceeding",
-                "By default, project files on disk are NOT deleted, only database records",
+                "Default delete_from_disk=False moves the project root to trash then clears DB data",
                 "Use list_projects to verify project exists and get correct project_id before deletion",
                 "Database path is automatically resolved from server configuration, no root_dir needed",
             ],

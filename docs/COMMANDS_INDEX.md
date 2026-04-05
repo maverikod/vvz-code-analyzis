@@ -121,6 +121,8 @@ email: vasilyvz@gmail.com
 | restore_deleted_files| RestoreDeletedFilesMCPCommand| (same)                                |
 | collapse_versions    | CollapseVersionsMCPCommand  | (same)                                 |
 | repair_database      | RepairDatabaseMCPCommand   | (same)                                 |
+| read_project_text_file | ReadProjectTextFileCommand | `commands/read_project_text_file_command.py` |
+| write_project_text_lines | WriteProjectTextLinesCommand | `commands/write_project_text_lines_command.py` |
 
 ---
 
@@ -151,6 +153,16 @@ email: vasilyvz@gmail.com
 | permanently_delete_from_trash | PermanentlyDeleteFromTrashMCPCommand | (same)                         |
 | restore_project_from_trash    | RestoreProjectFromTrashMCPCommand    | (same)                         |
 | clear_trash             | ClearTrashMCPCommand         | (same)                                    |
+| run_project_script      | RunProjectScriptCommand      | commands/run_project_script_command.py     |
+| run_project_module      | RunProjectModuleCommand      | commands/run_project_module_command.py     |
+| project_pip_install     | ProjectPipInstallCommand     | commands/project_pip_commands.py           |
+| project_pip_list        | ProjectPipListCommand        | (same)                                    |
+| project_pip_show        | ProjectPipShowCommand        | (same)                                    |
+| project_pip_uninstall   | ProjectPipUninstallCommand   | (same)                                    |
+| project_pip_check       | ProjectPipCheckCommand       | (same)                                    |
+| project_pip_search      | ProjectPipSearchCommand      | (same)                                    |
+
+All `project_pip_*` commands **require** `project_id` (registered project); pip uses only that project’s `.venv` / `venv`. **`project_pip_install`** always runs via the job queue (`use_queue=True`); use `queue_get_job_status` with the returned `job_id`. **`project_pip_check`** also requires **`packages`**. List / show / uninstall / check / search are not queued.
 
 ---
 

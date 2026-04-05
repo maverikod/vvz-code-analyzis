@@ -12,6 +12,8 @@ from typing import Any, Dict, Optional
 
 from mcp_proxy_adapter.core.config.simple_config_generator import SimpleConfigGenerator
 
+from .constants import DEFAULT_READ_PROJECT_TEXT_JSON_STRUCTURED_MAX_BYTES
+
 
 class CodeAnalysisConfigGenerator(SimpleConfigGenerator):
     """
@@ -230,6 +232,12 @@ class CodeAnalysisConfigGenerator(SimpleConfigGenerator):
             if allow_line_commands_on_healthy_files is not None
             else ca.get("allow_line_commands_on_healthy_files", False)
         )
+        if "read_project_text_json_structured_max_bytes" not in ca:
+            ca["read_project_text_json_structured_max_bytes"] = (
+                DEFAULT_READ_PROJECT_TEXT_JSON_STRUCTURED_MAX_BYTES
+            )
+        if "venv_site_packages_index_allowlisted_distributions" not in ca:
+            ca["venv_site_packages_index_allowlisted_distributions"] = []
 
         # Indexing worker (from args or default)
         if "indexing_worker" not in ca:

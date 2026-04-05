@@ -99,6 +99,38 @@ class TestRootNodeIdSet:
         assert t.root_node_id in t.metadata_map
 
 
+class TestNodeTypesFilterRecursionConsistency:
+    """Regression: filtered index must recurse with path_indices (same as full visit)."""
+
+    def test_node_map_matches_metadata_for_every_indexed_node(
+        self, sample_tree_with_filter
+    ):
+        t = get_tree(sample_tree_with_filter)
+        assert t is not None
+        for node_id, meta in t.metadata_map.items():
+            node = t.node_map.get(node_id)
+            assert node is not None, f"missing node_map entry for {node_id}"
+            assert node.__class__.__name__ == meta.type
+
+    def test_filtered_load_finds_expected_defs(self, tmp_path):
+        path = str(tmp_path / "filtered_defs.py")
+        tree = create_tree_from_code(
+            path,
+            SAMPLE_SOURCE.strip(),
+            node_types=["FunctionDef", "ClassDef"],
+        )
+        try:
+            types_by_name = {
+                m.name: m.type
+                for m in tree.metadata_map.values()
+                if m.name and m.type in ("FunctionDef", "ClassDef")
+            }
+            assert types_by_name.get("main") == "FunctionDef"
+            assert types_by_name.get("Helper") == "ClassDef"
+        finally:
+            remove_tree(tree.tree_id)
+
+
 # --- tree_metadata: __root__ resolution ---
 
 

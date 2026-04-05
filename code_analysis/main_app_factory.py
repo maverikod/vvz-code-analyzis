@@ -14,6 +14,7 @@ from typing import Any
 from mcp_proxy_adapter.api.core.app_factory import AppFactory
 
 from code_analysis.main_app_events import register_startup_shutdown_events
+from code_analysis.openapi_mcp_proxy_compat import patch_app_openapi_for_mcp_proxy
 
 
 def create_app_with_events(
@@ -48,6 +49,7 @@ def create_app_with_events(
 
     register_startup_shutdown_events(app, app_config, worker_manager)
     app.state.worker_manager = worker_manager
+    patch_app_openapi_for_mcp_proxy(app)
 
     return app
 

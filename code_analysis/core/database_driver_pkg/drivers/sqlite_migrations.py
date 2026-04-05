@@ -9,9 +9,46 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import Any, List
+from typing import Any, Dict, List, Optional, cast
 
 logger = logging.getLogger(__name__)
+
+
+class _SqliteConnMigrateAdapter:
+    """Minimal db-like surface for schema_creation_migrate.run_migrate_schema (driver process)."""
+
+    def __init__(self, conn: Any, schema_manager: Any) -> None:
+        self._conn = conn
+        self._schema_manager = schema_manager
+
+    def _get_table_info(self, table_name: str) -> List[Dict[str, Any]]:
+        return cast(
+            List[Dict[str, Any]], self._schema_manager.get_table_info(table_name)
+        )
+
+    def _execute(self, sql: str, params: Any = None) -> None:
+        if params is not None and params != ():
+            self._conn.execute(sql, params)
+        else:
+            self._conn.execute(sql)
+
+    def _fetchone(self, sql: str, params: Any = None) -> Optional[Dict[str, Any]]:
+        cur = self._conn.cursor()
+        try:
+            if params is not None and params != ():
+                cur.execute(sql, params)
+            else:
+                cur.execute(sql)
+            row = cur.fetchone()
+            if row is None:
+                return None
+            return dict(row)
+        finally:
+            cur.close()
+
+    def _commit(self) -> None:
+        self._conn.commit()
+
 
 INDEXING_WORKER_STATS_TABLE = "indexing_worker_stats"
 INDEXING_WORKER_STATS_COLUMNS: List[tuple] = [
@@ -196,6 +233,11 @@ def ensure_files_table_migrations(conn: Any, schema_manager: Any) -> None:
 
 def run_all_ensure(conn: Any, schema_manager: Any, db_path: Path) -> None:
     """Run all connection-time migrations in order."""
+    # Align with CodeDatabase / run_create_schema: apply schema_creation_migrate so
+    # existing DBs gain columns (e.g. files.deleted, projects.deleted) before RPC SQL.
+    from code_analysis.core.database.schema_creation_migrate import run_migrate_schema
+
+    run_migrate_schema(_SqliteConnMigrateAdapter(conn, schema_manager))
     ensure_files_table_migrations(conn, schema_manager)
     ensure_code_chunks_migrations(conn, schema_manager)
     ensure_indexing_worker_stats_table(conn, schema_manager)

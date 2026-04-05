@@ -136,9 +136,19 @@ Indexes are updated automatically when saving via `cst_save_tree` or `compose_cs
 - ❌ Use **scripts** (e.g. Python scripts that write files) to create or edit code in `test_data`.
 - ❌ Use **other MCP servers** to create, edit, or delete code in `test_data`.
 
-**Critical — on error in this project's server:** If an error is discovered while using this project's server commands (bug, crash, wrong response), **immediately proceed to fix it** (fix the code of this project, not in `test_data`). After the fix, **return to the breakpoint** and resume the original task from where it stopped. Do not only report and wait: fix first, then continue.
+**Critical — on any error in this project's server:** If **any server-side error** is discovered while using this project's server commands (bug, crash, wrong response, malformed result, timeout, unavailable server, transport/proxy failure, broken save/edit semantics), **stop immediately at that breakpoint and switch to fixing the server/product code of this repository**. After the fix, **return to the exact breakpoint** and resume the original task from where it stopped.
 
-If the server is unavailable or a command fails and the cause is unclear, **report the error to the user** and ask how to proceed (e.g. retry, fix server, or temporary exception). Do not silently switch to direct file editing in `test_data`.
+When reporting/escalating a server-side error, always include:
+
+- the exact server command
+- the exact params used
+- the current scenario / breakpoint
+- the last successful command before the failure
+- the exact error text / code / malformed result
+
+If the failure is a **`vast_srv` / `test_data` application error**, keep working through the server and fix that project. Do **not** confuse application bugs with server bugs.
+
+Do not silently switch to direct file editing in `test_data`.
 
 **If the server is not found or unreachable:** start it from the **project root** (this repository root) with the project’s virtual environment activated:
 

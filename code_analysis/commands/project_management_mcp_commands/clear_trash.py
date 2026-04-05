@@ -10,6 +10,7 @@ from ._shared import (
     BaseMCPCommand,
     Dict,
     ErrorResult,
+    List,
     Optional,
     Path,
     SuccessResult,
@@ -17,16 +18,36 @@ from ._shared import (
 )
 
 
+def _soft_deleted_project_ids(database: Any) -> List[str]:
+    """Return project ids with projects.deleted = 1 (soft-deleted / trashed in DB)."""
+    result = database.execute("SELECT id FROM projects WHERE deleted = 1", ())
+    rows = result.get("data") or []
+    out: List[str] = []
+    for row in rows:
+        rid = row.get("id")
+        if rid is not None:
+            out.append(str(rid))
+    return out
+
+
 class ClearTrashMCPCommand(BaseMCPCommand):
     """
     Permanently delete all contents of the trash directory.
 
-    Optionally dry_run to only report what would be removed.
+    Clears database and FAISS data for projects found in trash (resolvable ids), then
+    removes trash contents on disk. Also removes **DB-only orphan** soft-deleted
+    projects (marked deleted in the database but with no corresponding resolvable
+    trash folder), so DB and disk stay consistent.
+
+    Optionally dry_run to only report what would be removed (no DB or disk changes).
     """
 
     name = "clear_trash"
     version = "1.0.0"
-    descr = "Permanently delete all projects from trash (recycle bin); optional dry_run"
+    descr = (
+        "Empty trash on disk and clear DB/FAISS for trashed projects; also clears "
+        "soft-deleted projects missing from trash (orphan DB rows). Optional dry_run."
+    )
     category = "project_management"
     author = "Vasiliy Zdanovskiy"
     email = "vasilyvz@gmail.com"
@@ -36,7 +57,10 @@ class ClearTrashMCPCommand(BaseMCPCommand):
     def get_schema(cls: type["ClearTrashMCPCommand"]) -> Dict[str, Any]:
         return {
             "type": "object",
-            "description": "Clear all contents of trash (recycle bin)",
+            "description": (
+                "Clear all contents of trash (recycle bin). Also clears database rows "
+                "for soft-deleted projects that no longer have a folder in trash."
+            ),
             "properties": {
                 "dry_run": {
                     "type": "boolean",
@@ -70,7 +94,7 @@ class ClearTrashMCPCommand(BaseMCPCommand):
                 resolve_storage_paths,
                 get_faiss_index_path,
             )
-            from ...core.trash_utils import get_project_id_from_trash_folder
+            from ...core.trash_utils import merge_project_ids_for_clear_trash_db_phase
             from ..clear_project_data_impl import _clear_project_data_impl
             from ..trash_commands import ClearTrashCommand
 
@@ -83,19 +107,16 @@ class ClearTrashMCPCommand(BaseMCPCommand):
                 trash_dir = str(storage.trash_dir)
             trash_dir_path = Path(trash_dir)
 
-            # Clear DB (and FAISS) for each trashed project before deleting folders
-            if not dry_run and trash_dir_path.exists():
-                project_ids = []
-                for child in trash_dir_path.iterdir():
-                    if child.is_dir():
-                        pid = get_project_id_from_trash_folder(
-                            trash_dir_path, child.name
-                        )
-                        if pid:
-                            project_ids.append(pid)
-                if project_ids:
-                    database = self._open_database_from_config(auto_analyze=False)
-                    try:
+            # Clear DB (and FAISS) for resolvable trash + DB-only soft-delete orphans,
+            # then delete paths on disk (DB always before disk for any trash on disk).
+            if not dry_run:
+                database = self._open_database_from_config(auto_analyze=False)
+                try:
+                    soft_deleted = _soft_deleted_project_ids(database)
+                    project_ids = merge_project_ids_for_clear_trash_db_phase(
+                        trash_dir_path, soft_deleted
+                    )
+                    if project_ids:
                         for project_id in project_ids:
                             await _clear_project_data_impl(database, project_id)
                             faiss_index_path = get_faiss_index_path(
@@ -103,8 +124,8 @@ class ClearTrashMCPCommand(BaseMCPCommand):
                             )
                             if faiss_index_path.exists():
                                 faiss_index_path.unlink()
-                    finally:
-                        database.disconnect()
+                finally:
+                    database.disconnect()
 
             cmd = ClearTrashCommand(trash_dir=trash_dir, dry_run=dry_run)
             result = cmd.execute()

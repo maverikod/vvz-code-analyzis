@@ -286,6 +286,45 @@ class TestDatabaseClient:
         finally:
             client.disconnect()
 
+    def test_execute_logical_write_operation_two_batches_inserts_two_rows(
+        self, rpc_server
+    ):
+        """Logical write runs two inner batches in one RPC; both rows persist."""
+        _, socket_path, _ = rpc_server
+
+        client = DatabaseClient(socket_path)
+        client.connect()
+
+        try:
+            program = {
+                "batches": [
+                    [
+                        (
+                            "INSERT INTO test_table (name, age) VALUES (?, ?)",
+                            ("logical_a", 11),
+                        )
+                    ],
+                    [
+                        (
+                            "INSERT INTO test_table (name, age) VALUES (?, ?)",
+                            ("logical_b", 22),
+                        )
+                    ],
+                ]
+            }
+            result = client.execute_logical_write_operation(program)
+            assert isinstance(result, dict)
+            assert result.get("success") is True
+            rows = client.select("test_table")
+            names = {r.get("name") for r in rows}
+            assert "logical_a" in names
+            assert "logical_b" in names
+            assert (
+                sum(1 for r in rows if r.get("name") in ("logical_a", "logical_b")) == 2
+            )
+        finally:
+            client.disconnect()
+
     def test_transactions(self, rpc_server):
         """Test transaction methods."""
         _, socket_path, _ = rpc_server

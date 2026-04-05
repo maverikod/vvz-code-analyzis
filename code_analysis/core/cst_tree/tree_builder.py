@@ -172,8 +172,8 @@ def _build_tree_index(
         node_type = node.__class__.__name__
         if node_types_set and node_type.lower() not in node_types_set:
             if depth > 0:
-                for child in node.children:
-                    visit(child, depth + 1)
+                for child_index, child in enumerate(node.children):
+                    visit(child, depth + 1, path_indices + (child_index,))
                 return
             # depth == 0: fall through to index root for ROOT_NODE_ID_SENTINEL
 

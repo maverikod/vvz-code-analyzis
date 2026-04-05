@@ -46,6 +46,8 @@ VALIDATION_GROUPS = {
         "delete_unwatched_projects",
         "run_project_module",
         "run_project_script",
+        "project_pip_check",
+        "project_pip_search",
     },
     "cst": {
         "cst_load_file",
@@ -113,6 +115,9 @@ VALIDATION_GROUPS = {
         "cleanup_deleted_files",
         "repair_database",
         "collapse_versions",
+        # Non-Python text I/O (paths .py/.pyi/.pyw rejected; use CST for Python)
+        "read_project_text_file",
+        "write_project_text_lines",
     },
 }
 
@@ -127,6 +132,7 @@ QUEUED_COMMANDS = {
     "clear_trash",
     "permanently_delete_from_trash",
     "delete_unwatched_projects",
+    "project_pip_install",
 }
 
 # Non-existent UUID for negative value tests
@@ -381,6 +387,14 @@ def _build_valid_params(
             params[r] = "API validation pipeline"
         elif r == "new_project_id":
             params[r] = "11111111-1111-1111-1111-111111111111"
+        elif r == "start_line":
+            params[r] = 1
+        elif r == "end_line":
+            params[r] = 1
+        elif r == "new_lines":
+            params[r] = []
+        elif r == "packages":
+            params[r] = ["pip"]
         else:
             params[r] = "dummy"
     return params

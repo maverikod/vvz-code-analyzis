@@ -10,7 +10,9 @@ email: vasilyvz@gmail.com
 from __future__ import annotations
 
 import logging
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, Dict, List, Optional, Tuple, Union, cast, cast
+
+from code_analysis.core.database.logical_write_program import LogicalWriteProgramV1
 
 from .client_base import _DatabaseClientBase
 from .protocol import (
@@ -241,6 +243,36 @@ class _ClientOperationsMixin(_DatabaseClientBase):
                 if isinstance(results, list):
                     return results
         return []
+
+    def execute_logical_write_operation(
+        self, program: LogicalWriteProgramV1
+    ) -> dict[str, Any]:
+        """Run one logical write program in a single RPC (full server-side transaction)."""
+        batches = program.get("batches")
+        if batches is None or not isinstance(batches, list) or len(batches) == 0:
+            raise ValueError(
+                "LogicalWriteProgramV1 requires non-empty batches",
+            )
+        rpc_batches: list[list[dict[str, Any]]] = []
+        for inner in batches:
+            inner_ops: list[dict[str, Any]] = []
+            for sql, params in inner:
+                inner_ops.append(
+                    {
+                        "sql": sql,
+                        "params": list(params) if params is not None else None,
+                    }
+                )
+            rpc_batches.append(inner_ops)
+        rpc_params: Dict[str, Any] = {"batches": rpc_batches}
+        if program.get("defer_constraints") is True:
+            rpc_params["defer_constraints"] = True
+        logger.info(
+            "[CHAIN] client execute_logical_write_operation n_batches=%s",
+            len(rpc_batches),
+        )
+        response = self.rpc_client.call("execute_logical_write_operation", rpc_params)
+        return cast(dict[str, Any], self._extract_result_data(response))
 
     def add_code_chunk(
         self,

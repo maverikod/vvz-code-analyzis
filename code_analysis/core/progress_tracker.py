@@ -9,9 +9,60 @@ email: vasilyvz@gmail.com
 """
 
 import logging
-from typing import Optional, Callable
+from typing import Any, Callable, Optional
 
 logger = logging.getLogger(__name__)
+
+
+class _DelegatingProgressTracker:
+    """
+    Wraps queue-injected trackers that lack set_status (e.g. mcp_proxy_adapter's
+    _JobProgressTracker). Delegates set_status to the underlying job when available.
+    """
+
+    __slots__ = ("_inner", "_job")
+
+    def __init__(self, inner: Any, job: Any) -> None:
+        self._inner = inner
+        self._job = job
+
+    def set_progress(self, progress: int) -> None:
+        self._inner.set_progress(progress)
+
+    def set_description(self, description: str) -> None:
+        self._inner.set_description(description)
+
+    def set_status(self, status: str) -> None:
+        if self._job is not None:
+            set_status_fn = getattr(self._job, "set_status", None)
+            if callable(set_status_fn):
+                try:
+                    set_status_fn(status)
+                except Exception as e:
+                    logger.warning(f"Failed to set status: {e}")
+
+    def log(self, message: str) -> None:
+        log_fn = getattr(self._inner, "log", None)
+        if callable(log_fn):
+            log_fn(message)
+        else:
+            logger.info(message)
+
+    def is_enabled(self) -> bool:
+        fn = getattr(self._inner, "is_enabled", None)
+        if callable(fn):
+            return bool(fn())
+        return True
+
+
+def _wrap_progress_tracker_if_needed(tracker: Optional[Any]) -> Optional[Any]:
+    """Ensure set_status exists; wrap mcp_proxy_adapter _JobProgressTracker when needed."""
+    if tracker is None:
+        return None
+    if callable(getattr(tracker, "set_status", None)):
+        return tracker
+    job = getattr(tracker, "_job", None)
+    return _DelegatingProgressTracker(tracker, job)
 
 
 class ProgressTracker:
@@ -118,16 +169,17 @@ class ProgressTracker:
         return self._enabled
 
 
-def get_progress_tracker_from_context(context: dict) -> Optional[ProgressTracker]:
+def get_progress_tracker_from_context(context: dict) -> Optional[Any]:
     """
-    Get ProgressTracker from context.
+    Get ProgressTracker (or compatible wrapper) from context.
 
     Args:
         context: Command context dictionary
 
     Returns:
-        ProgressTracker instance or None if not available
+        ProgressTracker or a wrapper with set_progress/set_description/set_status,
+        or None if not available
     """
     if not context:
         return None
-    return context.get("progress_tracker")
+    return _wrap_progress_tracker_if_needed(context.get("progress_tracker"))

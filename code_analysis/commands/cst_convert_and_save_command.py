@@ -19,6 +19,7 @@ from typing import Any, Dict
 from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 
 from .base_mcp_command import BaseMCPCommand
+from .project_text_file_guard import reject_if_write_under_project_venv
 from ..core.ast_utils import parse_with_comments
 from ..core.backup_manager import BackupManager
 from ..core.cst_tree.tree_builder import create_tree_from_code
@@ -187,6 +188,11 @@ class CSTConvertAndSaveCommand(BaseMCPCommand):
 
                 # Save code to file if requested (mandatory backup before overwrite)
                 if save_to_file:
+                    blocked_venv = reject_if_write_under_project_venv(
+                        abs_path, Path(project.root_path)
+                    )
+                    if blocked_venv is not None:
+                        return blocked_venv
                     abs_path.parent.mkdir(parents=True, exist_ok=True)
                     backup_root = Path(watch_dir_path) / project.name
                     if abs_path.exists():

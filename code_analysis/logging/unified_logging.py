@@ -36,16 +36,18 @@ def _set_importance_if_missing(record: logging.LogRecord) -> None:
 
 def install_unified_record_factory() -> None:
     """
-    Install a LogRecord factory that sets 'importance' on every record.
-    Use when the process should emit unified format; importance is taken from
-    record.extra['importance'] or derived from level.
+    Chain the LogRecord factory so callers can keep installing hooks.
+
+    Do not set ``importance`` here: ``Logger.makeRecord`` merges ``extra`` after
+    the factory runs; pre-setting ``record.importance`` would make
+    ``logger.info(..., extra={"importance": N})`` raise KeyError. Importance is
+    filled by :class:`UnifiedFormatter` via :func:`_set_importance_if_missing`,
+    or supplied via ``extra`` on the logging call.
     """
     old_factory = logging.getLogRecordFactory()
 
     def _factory(*args: Any, **kwargs: Any) -> logging.LogRecord:
-        record = old_factory(*args, **kwargs)
-        _set_importance_if_missing(record)
-        return record
+        return old_factory(*args, **kwargs)
 
     logging.setLogRecordFactory(_factory)
 

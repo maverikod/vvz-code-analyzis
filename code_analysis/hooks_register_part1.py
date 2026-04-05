@@ -64,6 +64,25 @@ def register_commands_part1(reg: registry) -> None:
         pass
 
     try:
+        from .commands.read_project_text_file_command import ReadProjectTextFileCommand
+        from .commands.write_project_text_lines_command import (
+            WriteProjectTextLinesCommand,
+        )
+
+        reg.register(ReadProjectTextFileCommand, "custom")
+        reg.register(WriteProjectTextLinesCommand, "custom")
+        logger.info(
+            "✅ Registered file_management text commands: "
+            "read_project_text_file, write_project_text_lines"
+        )
+    except ImportError as e:
+        logger.warning("Failed to import project text file commands: %s", e)
+    except Exception as e:
+        logger.error(
+            "Failed to register project text file commands: %s", e, exc_info=True
+        )
+
+    try:
         from .commands.cst_load_file_command import CSTLoadFileCommand
         from .commands.cst_modify_tree_command import CSTModifyTreeCommand
         from .commands.cst_save_tree_command import CSTSaveTreeCommand
@@ -88,8 +107,30 @@ def register_commands_part1(reg: registry) -> None:
         logger.info("✅ Registered CST tree commands")
     except ImportError as e:
         logger.warning("Failed to import CST tree commands: %s", e)
+
+    try:
+        from .commands.json_find_node_command import JsonFindNodeCommand
+        from .commands.json_get_node_info_command import JsonGetNodeInfoCommand
+        from .commands.json_load_file_command import JsonLoadFileCommand
+        from .commands.json_modify_tree_command import JsonModifyTreeCommand
+        from .commands.json_reload_tree_command import JsonReloadTreeCommand
+        from .commands.json_save_tree_command import JsonSaveTreeCommand
+        from .commands.list_json_blocks_command import ListJsonBlocksCommand
+
+        reg.register(JsonLoadFileCommand, "custom")
+        reg.register(JsonGetNodeInfoCommand, "custom")
+        reg.register(JsonFindNodeCommand, "custom")
+        reg.register(JsonModifyTreeCommand, "custom")
+        reg.register(JsonSaveTreeCommand, "custom")
+        reg.register(JsonReloadTreeCommand, "custom")
+        reg.register(ListJsonBlocksCommand, "custom")
+        logger.info("✅ Registered JSON tree commands")
+    except ImportError as e:
+        logger.warning("Failed to import JSON tree commands: %s", e)
     except Exception as e:
-        logger.error("Failed to register CST tree commands: %s", e, exc_info=True)
+        logger.error("Failed to register JSON tree commands: %s", e, exc_info=True)
+    except Exception as e:
+        logger.error("Failed to register JSON tree commands: %s", e, exc_info=True)
 
     try:
         from .commands.ast_mcp_commands import (

@@ -14,6 +14,7 @@ import os
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from ..venv_path_policy import allowed_venv_py_files_for_watch_dir
 from .lock_manager import LockManager
 from .processor import FileChangeProcessor
 from .scanner import scan_directory
@@ -196,10 +197,12 @@ class FileWatcherWorker:
                     f"[SCAN START] Directory: {root_dir} | "
                     f"time: {scan_start.strftime('%Y-%m-%d %H:%M:%S')}"
                 )
+                allowed_venv = allowed_venv_py_files_for_watch_dir(root_dir)
                 scanned_files = scan_directory(
                     root_dir=root_dir,
                     watch_dirs=self.watch_dirs,
                     ignore_patterns=self.ignore_patterns,
+                    allowed_venv_py_files=allowed_venv or None,
                 )
 
                 # Compute delta (scan phase - no DB writes)

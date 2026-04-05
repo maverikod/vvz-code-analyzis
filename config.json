@@ -1,6 +1,6 @@
 {
   "server": {
-    "host": "172.28.0.1",
+    "host": "0.0.0.0",
     "port": 15000,
     "protocol": "mtls",
     "servername": "code-analysis-server",
@@ -32,8 +32,8 @@
   "registration": {
     "enabled": true,
     "protocol": "mtls",
-    "register_url": "https://172.28.0.2:3004/register",
-    "unregister_url": "https://172.28.0.2:3004/unregister",
+    "register_url": "https://127.0.0.1:3004/register",
+    "unregister_url": "https://127.0.0.1:3004/unregister",
     "heartbeat_interval": 30,
     "server_id": "code-analysis-server",
     "server_name": "Code Analysis Server",
@@ -49,7 +49,7 @@
       "check_hostname": false
     },
     "heartbeat": {
-      "url": "https://172.28.0.2:3004/proxy/heartbeat",
+      "url": "https://127.0.0.1:3004/proxy/heartbeat",
       "interval": 30
     }
   },

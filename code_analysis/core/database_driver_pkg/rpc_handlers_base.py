@@ -10,7 +10,7 @@ email: vasilyvz@gmail.com
 from __future__ import annotations
 
 import logging
-from typing import Any, Dict
+from typing import Any, Dict, Optional, Tuple
 
 from code_analysis.core.database_client.protocol import (
     DeleteRequest,
@@ -260,3 +260,93 @@ class _RPCHandlersBaseMixin:
                 error_code=ErrorCode.DATABASE_ERROR,
                 description=str(e),
             )
+
+
+def parse_logical_write_batches_param(
+    params: Dict[str, Any],
+) -> Tuple[
+    Optional[ErrorResult],
+    Optional[list[list[tuple[str, Optional[tuple[Any, ...]]]]]],
+]:
+    """Validate RPC params for execute_logical_write_operation; return batches or ErrorResult."""
+    if not isinstance(params, dict):
+        return (
+            ErrorResult(
+                error_code=ErrorCode.VALIDATION_ERROR,
+                description="params must be a dict",
+            ),
+            None,
+        )
+    batches_raw = params.get("batches")
+    if batches_raw is None or not isinstance(batches_raw, list):
+        return (
+            ErrorResult(
+                error_code=ErrorCode.VALIDATION_ERROR,
+                description="batches (non-empty list) is required",
+            ),
+            None,
+        )
+    if len(batches_raw) == 0:
+        return (
+            ErrorResult(
+                error_code=ErrorCode.VALIDATION_ERROR,
+                description="batches must be non-empty",
+            ),
+            None,
+        )
+    out_batches: list[list[tuple[str, Optional[tuple[Any, ...]]]]] = []
+    for i, batch in enumerate(batches_raw):
+        if not isinstance(batch, list):
+            return (
+                ErrorResult(
+                    error_code=ErrorCode.VALIDATION_ERROR,
+                    description=f"batches[{i}] must be a list",
+                ),
+                None,
+            )
+        if len(batch) == 0:
+            return (
+                ErrorResult(
+                    error_code=ErrorCode.VALIDATION_ERROR,
+                    description=f"batches[{i}] must be non-empty",
+                ),
+                None,
+            )
+        operations: list[tuple[str, Optional[tuple[Any, ...]]]] = []
+        for j, item in enumerate(batch):
+            if not isinstance(item, dict):
+                return (
+                    ErrorResult(
+                        error_code=ErrorCode.VALIDATION_ERROR,
+                        description=f"batches[{i}][{j}] must be {{sql, params}}",
+                    ),
+                    None,
+                )
+            sql = item.get("sql")
+            if not sql or (isinstance(sql, str) and not sql.strip()):
+                return (
+                    ErrorResult(
+                        error_code=ErrorCode.VALIDATION_ERROR,
+                        description="Each operation must have 'sql'",
+                    ),
+                    None,
+                )
+            p = item.get("params")
+            if p is None:
+                bind_params: Optional[tuple[Any, ...]] = None
+            elif isinstance(p, (list, tuple)):
+                bind_params = tuple(p)
+            else:
+                return (
+                    ErrorResult(
+                        error_code=ErrorCode.VALIDATION_ERROR,
+                        description=(
+                            f"Each operation 'params' must be list, tuple, or null; "
+                            f"got {type(p).__name__}"
+                        ),
+                    ),
+                    None,
+                )
+            operations.append((sql, bind_params))
+        out_batches.append(operations)
+    return (None, out_batches)

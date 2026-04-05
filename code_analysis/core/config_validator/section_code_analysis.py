@@ -31,6 +31,18 @@ def validate_code_analysis_section_impl(
                 )
             )
 
+    rptj = code_analysis.get("read_project_text_json_structured_max_bytes")
+    if rptj is not None and rptj < 1:
+        results.append(
+            ValidationResult(
+                level="error",
+                message="code_analysis.read_project_text_json_structured_max_bytes must be >= 1 when set",
+                section="code_analysis",
+                key="read_project_text_json_structured_max_bytes",
+                suggestion="Set to a positive byte threshold or omit to use the default constant",
+            )
+        )
+
     worker = code_analysis.get("worker")
     if worker and isinstance(worker, dict):
         poll_interval = worker.get("poll_interval")

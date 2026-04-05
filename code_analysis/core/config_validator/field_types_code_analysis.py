@@ -82,6 +82,37 @@ def validate_field_types_code_analysis_impl(
         code_analysis.get("allow_line_commands_on_healthy_files"),
         bool,
     )
+    validate_field_type(
+        results,
+        "code_analysis",
+        "read_project_text_json_structured_max_bytes",
+        code_analysis.get("read_project_text_json_structured_max_bytes"),
+        (int, type(None)),
+    )
+    venv_allow = code_analysis.get("venv_site_packages_index_allowlisted_distributions")
+    if venv_allow is not None:
+        validate_field_type(
+            results,
+            "code_analysis",
+            "venv_site_packages_index_allowlisted_distributions",
+            venv_allow,
+            list,
+        )
+        if isinstance(venv_allow, list):
+            for idx, item in enumerate(venv_allow):
+                if not isinstance(item, str):
+                    results.append(
+                        ValidationResult(
+                            level="error",
+                            message=(
+                                "code_analysis.venv_site_packages_index_allowlisted_distributions "
+                                f"must be a list of strings (invalid item at index {idx})"
+                            ),
+                            section="code_analysis",
+                            key="venv_site_packages_index_allowlisted_distributions",
+                            suggestion='Use pip distribution names as strings, e.g. ["requests", "pydantic"]',
+                        )
+                    )
 
     chunker = code_analysis.get("chunker", {})
     if chunker and isinstance(chunker, dict):

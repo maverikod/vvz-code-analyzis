@@ -32,24 +32,18 @@ logger = logging.getLogger(__name__)
 
 class DeleteProjectCommand:
     """
-    Command to delete a project and all its data.
+    Delete or soft-delete a project.
 
-    This command completely removes a project from the database:
-    - All files and their associated data (classes, functions, methods, etc.)
-    - All chunks and vector indexes
-    - All duplicates
-    - The project record itself
+    **Soft delete** (``delete_from_disk=True``): marks the project and files in the
+    database (including empty projects via ``projects.deleted``), moves the project
+    root into ``trash_dir``, and removes the per-project version directory. Database
+    rows remain until ``permanently_delete_from_trash`` / ``clear_trash``.
 
-    Optionally can also "delete from disk": when delete_from_disk=True, the project
-    root directory is moved to trash (recycle bin) instead of being permanently
-    removed. Version directory for this project is permanently deleted.
+    **Full / permanent delete** (``delete_from_disk=False``): runs the same soft-delete
+    stage first (DB markers + move to trash + version dir removal), then clears all
+    project data from the database and removes the FAISS index file.
 
-    When marking a project for deletion (delete_from_disk=True), all its files are
-    moved into a trash subfolder. Current implementation: project root is moved to
-    trash_dir/ProjectName_timestamp (FILE_TRASH_SPEC step 9). File-level trash
-    uses trash_dir/{project_id}/... for individual deleted files.
-
-    Use with caution - database removal cannot be undone.
+    File-level trash uses ``trash_dir/{project_id}/...`` for individual deleted files.
     """
 
     def __init__(
@@ -69,8 +63,9 @@ class DeleteProjectCommand:
             database: DatabaseClient instance
             project_id: Project ID to delete
             dry_run: If True, only show what would be deleted
-            delete_from_disk: If True, move project root to trash and delete version dir
-            version_dir: Version directory path (if None, will try to get from config)
+            delete_from_disk: If True, soft-delete only (DB rows kept). If False, soft-delete
+                then full clear from DB and FAISS index file.
+            version_dir: Version directory path (if None, inferred from DB path or defaults)
             trash_dir: Trash directory path (if None, will try to get from config when config_path set)
             config_path: Optional path to config.json to resolve trash_dir when trash_dir is None
         """
@@ -81,6 +76,62 @@ class DeleteProjectCommand:
         self.version_dir = version_dir
         self.trash_dir = trash_dir
         self.config_path = config_path
+
+    async def _soft_delete_project_stage(
+        self,
+        project_name: str,
+        root_path: str,
+        trash_dir_path: Optional[Path],
+        version_dir_path: Optional[Path],
+    ) -> list[str]:
+        """
+        Mark project/files soft-deleted in DB, move project root to trash, delete
+        version directory. Returns disk error messages (non-fatal).
+        """
+        await mark_project_deleted_impl(self.database, self.project_id)
+        disk_deletion_errors: list[str] = []
+
+        if trash_dir_path:
+            root_path_obj = Path(root_path)
+            if root_path_obj.exists():
+                try:
+                    trash_dir_path.mkdir(parents=True, exist_ok=True)
+                    deleted_at_utc = datetime.now(timezone.utc)
+                    trash_folder_name = build_trash_folder_name(
+                        project_name, self.project_id, deleted_at_utc
+                    )
+                    dest = ensure_unique_trash_path(trash_dir_path, trash_folder_name)
+                    shutil.move(str(root_path_obj), str(dest))
+                    logger.info(
+                        "Moved project root to trash: %s -> %s",
+                        root_path_obj,
+                        dest,
+                    )
+                except Exception as e:
+                    error_msg = (
+                        f"Failed to move project root to trash {root_path_obj}: {e}"
+                    )
+                    logger.error(error_msg, exc_info=True)
+                    disk_deletion_errors.append(error_msg)
+
+        if version_dir_path:
+            project_version_dir = version_dir_path / self.project_id
+            if project_version_dir.exists():
+                try:
+                    shutil.rmtree(project_version_dir)
+                    logger.info(
+                        "Deleted version directory for project %s: %s",
+                        self.project_id,
+                        project_version_dir,
+                    )
+                except Exception as e:
+                    error_msg = (
+                        f"Failed to delete version directory {project_version_dir}: {e}"
+                    )
+                    logger.error(error_msg, exc_info=True)
+                    disk_deletion_errors.append(error_msg)
+
+        return disk_deletion_errors
 
     async def execute(self) -> Dict[str, Any]:
         """
@@ -124,45 +175,36 @@ class DeleteProjectCommand:
             data = []
         chunk_count = data[0]["count"] if data and len(data) > 0 else 0
 
-        # Get version directory if needed
-        version_dir_path = None
-        if self.delete_from_disk:
-            if self.version_dir:
-                version_dir_path = Path(self.version_dir).resolve()
-            else:
-                # Try to get from database config or use default
-                # Default: data/versions relative to database location
-                db_path = getattr(self.database, "_db_path", None)
-                if db_path:
-                    db_path_obj = Path(db_path)
-                    if db_path_obj.parent.name == "data":
-                        version_dir_path = db_path_obj.parent / "versions"
-                    else:
-                        version_dir_path = db_path_obj.parent / "data" / "versions"
+        # Version / trash paths (soft-delete stage uses these for both modes).
+        version_dir_path: Optional[Path] = None
+        if self.version_dir:
+            version_dir_path = Path(self.version_dir).resolve()
+        else:
+            db_path = getattr(self.database, "_db_path", None)
+            if db_path:
+                db_path_obj = Path(db_path)
+                if db_path_obj.parent.name == "data":
+                    version_dir_path = db_path_obj.parent / "versions"
                 else:
-                    # Fallback to default
-                    version_dir_path = Path("data/versions").resolve()
+                    version_dir_path = db_path_obj.parent / "data" / "versions"
+            else:
+                version_dir_path = Path("data/versions").resolve()
 
-        # Resolve trash_dir if delete_from_disk (from param or config per plan)
-        trash_dir_path = None
-        if self.delete_from_disk:
-            if self.trash_dir:
-                trash_dir_path = Path(self.trash_dir).resolve()
-            elif self.config_path and Path(self.config_path).exists():
-                try:
-                    from ..core.storage_paths import (
-                        load_raw_config,
-                        resolve_storage_paths,
-                    )
+        trash_dir_path: Optional[Path] = None
+        if self.trash_dir:
+            trash_dir_path = Path(self.trash_dir).resolve()
+        elif self.config_path and Path(self.config_path).exists():
+            try:
+                from ..core.storage_paths import load_raw_config, resolve_storage_paths
 
-                    config_data = load_raw_config(Path(self.config_path))
-                    storage = resolve_storage_paths(
-                        config_data=config_data,
-                        config_path=Path(self.config_path),
-                    )
-                    trash_dir_path = storage.trash_dir
-                except Exception as e:
-                    logger.warning("Could not resolve trash_dir from config: %s", e)
+                config_data = load_raw_config(Path(self.config_path))
+                storage = resolve_storage_paths(
+                    config_data=config_data,
+                    config_path=Path(self.config_path),
+                )
+                trash_dir_path = storage.trash_dir
+            except Exception as e:
+                logger.warning("Could not resolve trash_dir from config: %s", e)
 
         if self.dry_run:
             result = {
@@ -174,53 +216,59 @@ class DeleteProjectCommand:
                 "files_count": file_count,
                 "chunks_count": chunk_count,
                 "delete_from_disk": self.delete_from_disk,
-                "message": f"Would delete project {project_name} ({self.project_id})",
+                "would_soft_delete": True,
+                "would_permanent_db_clear": not self.delete_from_disk,
+                "message": (
+                    f"Would soft-delete project {project_name} ({self.project_id})"
+                    + (
+                        ", then remove all data from the database"
+                        if not self.delete_from_disk
+                        else " (soft-delete only; database rows kept)"
+                    )
+                ),
             }
-            if self.delete_from_disk:
-                result["version_dir"] = (
-                    str(version_dir_path) if version_dir_path else None
-                )
-                result["trash_dir"] = str(trash_dir_path) if trash_dir_path else None
-                root_path_obj = Path(root_path)
-                result["would_move_to_trash"] = root_path_obj.exists()
-                if version_dir_path:
-                    project_version_dir = version_dir_path / self.project_id
-                    result["would_delete_version_dir"] = project_version_dir.exists()
+            result["version_dir"] = str(version_dir_path) if version_dir_path else None
+            result["trash_dir"] = str(trash_dir_path) if trash_dir_path else None
+            root_path_obj = Path(root_path)
+            result["would_move_to_trash"] = bool(
+                trash_dir_path and root_path_obj.exists()
+            )
+            if version_dir_path:
+                project_version_dir = version_dir_path / self.project_id
+                result["would_delete_version_dir"] = project_version_dir.exists()
             return result
 
-        # Perform deletion: if delete_from_disk -> mark in DB (batch) then move to trash;
-        # else -> full delete from DB (batch) only.
         deletion_start_time = time.time()
         logger.info(f"[DELETE_PROJECT] Starting deletion of project {self.project_id}")
 
         try:
-            disk_deletion_errors = []
+            logger.info(
+                "[DELETE_PROJECT] Soft-delete stage for %s (delete_from_disk=%s)",
+                self.project_id,
+                self.delete_from_disk,
+            )
+            disk_deletion_errors = await self._soft_delete_project_stage(
+                project_name=project_name,
+                root_path=root_path,
+                trash_dir_path=trash_dir_path,
+                version_dir_path=version_dir_path,
+            )
 
-            if self.delete_from_disk:
-                # 1a. Mark project and files as deleted in one batch, then move to trash
+            if not self.delete_from_disk:
                 db_start = time.time()
                 logger.info(
-                    f"[DELETE_PROJECT] Marking project {self.project_id} as deleted (batch)"
-                )
-                await mark_project_deleted_impl(self.database, self.project_id)
-                logger.info(
-                    f"[DELETE_PROJECT] Marked project in {time.time() - db_start:.3f}s"
-                )
-            else:
-                # 1b. Full delete from database (one batch)
-                db_start = time.time()
-                logger.info(
-                    f"[DELETE_PROJECT] Starting database deletion for {self.project_id}"
+                    "[DELETE_PROJECT] Permanent DB clear for %s", self.project_id
                 )
                 await _clear_project_data_impl(self.database, self.project_id)
                 logger.info(
-                    f"[DELETE_PROJECT] Completed database deletion in {time.time() - db_start:.3f}s. "
-                    f"Deleted project {self.project_id} ({project_name}) from database: "
-                    f"{file_count} files, {chunk_count} chunks"
+                    "[DELETE_PROJECT] Completed database deletion in %.3fs for %s "
+                    "(%s files, %s chunks)",
+                    time.time() - db_start,
+                    self.project_id,
+                    file_count,
+                    chunk_count,
                 )
 
-            # 1c. Delete FAISS index file for this project when fully deleting from DB
-            if not self.delete_from_disk:
                 try:
                     config_path = Path(self.config_path) if self.config_path else None
                     if not config_path or not config_path.exists():
@@ -244,50 +292,15 @@ class DeleteProjectCommand:
                         if faiss_index_path.exists():
                             faiss_index_path.unlink()
                             logger.info(
-                                f"[DELETE_PROJECT] Deleted FAISS index {faiss_index_path}"
+                                "[DELETE_PROJECT] Deleted FAISS index %s",
+                                faiss_index_path,
                             )
                 except Exception as e:
                     logger.warning(
-                        f"[DELETE_PROJECT] Could not delete FAISS index for {self.project_id}: {e}"
+                        "[DELETE_PROJECT] Could not delete FAISS index for %s: %s",
+                        self.project_id,
+                        e,
                     )
-
-            # 2. If delete_from_disk: move project root to trash, then delete version dir
-            if self.delete_from_disk and trash_dir_path:
-                root_path_obj = Path(root_path)
-                if root_path_obj.exists():
-                    try:
-                        trash_dir_path.mkdir(parents=True, exist_ok=True)
-                        deleted_at_utc = datetime.now(timezone.utc)
-                        trash_folder_name = build_trash_folder_name(
-                            project_name, self.project_id, deleted_at_utc
-                        )
-                        dest = ensure_unique_trash_path(
-                            trash_dir_path, trash_folder_name
-                        )
-                        shutil.move(str(root_path_obj), str(dest))
-                        logger.info(
-                            f"Moved project root to trash: {root_path_obj} -> {dest}"
-                        )
-                    except Exception as e:
-                        error_msg = (
-                            f"Failed to move project root to trash {root_path_obj}: {e}"
-                        )
-                        logger.error(error_msg, exc_info=True)
-                        disk_deletion_errors.append(error_msg)
-
-                # Delete version directory for this project (permanent)
-                if version_dir_path:
-                    project_version_dir = version_dir_path / self.project_id
-                    if project_version_dir.exists():
-                        try:
-                            shutil.rmtree(project_version_dir)
-                            logger.info(
-                                f"Deleted version directory for project {self.project_id}: {project_version_dir}"
-                            )
-                        except Exception as e:
-                            error_msg = f"Failed to delete version directory {project_version_dir}: {e}"
-                            logger.error(error_msg, exc_info=True)
-                            disk_deletion_errors.append(error_msg)
 
             result = {
                 "success": True,
@@ -298,25 +311,30 @@ class DeleteProjectCommand:
                 "files_count": file_count,
                 "chunks_count": chunk_count,
                 "delete_from_disk": self.delete_from_disk,
-                "message": f"Deleted project {project_name} ({self.project_id})",
+                "message": (
+                    f"Soft-deleted project {project_name} ({self.project_id})"
+                    if self.delete_from_disk
+                    else (
+                        f"Permanently removed project {project_name} "
+                        f"({self.project_id}) from the database"
+                    )
+                ),
             }
 
             total_time = time.time() - deletion_start_time
             logger.info(
-                f"[DELETE_PROJECT] Total deletion time for {self.project_id}: {total_time:.3f}s"
+                "[DELETE_PROJECT] Total deletion time for %s: %.3fs",
+                self.project_id,
+                total_time,
             )
             result["deletion_time_seconds"] = total_time
-
-            if self.delete_from_disk:
-                result["version_dir"] = (
-                    str(version_dir_path) if version_dir_path else None
-                )
-                result["trash_dir"] = str(trash_dir_path) if trash_dir_path else None
-                if disk_deletion_errors:
-                    result["disk_deletion_errors"] = disk_deletion_errors
-                    result[
-                        "message"
-                    ] += f" (with {len(disk_deletion_errors)} disk error(s))"
+            result["version_dir"] = str(version_dir_path) if version_dir_path else None
+            result["trash_dir"] = str(trash_dir_path) if trash_dir_path else None
+            if disk_deletion_errors:
+                result["disk_deletion_errors"] = disk_deletion_errors
+                result[
+                    "message"
+                ] += f" (with {len(disk_deletion_errors)} disk error(s))"
 
             return result
         except Exception as e:

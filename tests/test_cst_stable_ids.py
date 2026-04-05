@@ -29,17 +29,14 @@ from code_analysis.core.cst_tree.tree_saver import save_tree_to_file
 
 
 def _make_db_mock_for_sync() -> MagicMock:
-    """Mock DB for sync_file_to_db_atomic: file record, transaction, execute_batch."""
+    """Mock DB for sync_file_to_db_atomic: one logical write RPC."""
     db = MagicMock()
     db.get_file_by_path = MagicMock(return_value={"id": 1})
-    db.begin_transaction = MagicMock(return_value="tid")
-    db.commit_transaction = MagicMock()
-    db.rollback_transaction = MagicMock()
-    batch_results: List[Dict[str, Any]] = []
-    for _ in range(120):
-        batch_results.append({"affected_rows": 1, "lastrowid": len(batch_results) + 1})
-    db.execute_batch = MagicMock(
-        side_effect=lambda ops, tid=None: batch_results[: len(ops)]
+    db.execute_logical_write_operation = MagicMock(
+        return_value={
+            "success": True,
+            "data": {"batch_results": [], "transaction_id": "tid"},
+        }
     )
     return db
 
@@ -51,11 +48,11 @@ def _make_db_mock() -> MagicMock:
     created.id = 1
     db.create_file = MagicMock(return_value=created)
     db.update_file = MagicMock(return_value=created)
-    db.execute_batch = MagicMock(
-        return_value=[
-            {"affected_rows": 1, "lastrowid": index + 1, "data": None}
-            for index in range(100)
-        ]
+    db.execute_logical_write_operation = MagicMock(
+        return_value={
+            "success": True,
+            "data": {"batch_results": [], "transaction_id": "tid"},
+        }
     )
     return db
 
@@ -187,13 +184,17 @@ def test_sync_with_marked_source_writes_same_root_node_id() -> None:
     db = _make_db_mock_for_sync()
     root_captured: list = []
 
-    def capture_batch(ops: list, tid=None):  # noqa: ARG001
-        for sql, params in ops:
-            if "file_tree_snapshot_roots" in sql and "INSERT" in sql:
-                root_captured.append(params)
-        return [{"lastrowid": i + 1} for i in range(len(ops))]
+    def capture_lw(program: dict) -> dict[str, Any]:
+        for batch in program.get("batches") or []:
+            for sql, params in batch:
+                if "file_tree_snapshot_roots" in sql and "INSERT" in sql:
+                    root_captured.append(params)
+        return {
+            "success": True,
+            "data": {"batch_results": [], "transaction_id": "tid"},
+        }
 
-    db.execute_batch = MagicMock(side_effect=capture_batch)
+    db.execute_logical_write_operation = MagicMock(side_effect=capture_lw)
     sync_file_to_db_atomic(
         database=db,
         project_id="test-project",

@@ -2,7 +2,7 @@
 Build and run batch SQL for updating file data (AST, CST, entities).
 
 Replaces per-row save_ast/save_cst/create_class/create_method/create_function/
-create_import with execute_batch to minimize DB round-trips.
+create_import with one execute_logical_write_operation to minimize DB round-trips.
 
 Author: Vasiliy Zdanovskiy
 email: vasilyvz@gmail.com
@@ -34,41 +34,60 @@ def _row_to_insert_sql(table: str, row: Dict[str, Any]) -> Tuple[str, tuple]:
     return (sql, vals)
 
 
-def update_file_data_atomic_batch(
-    database: Any,
+def _method_insert_sql_with_class_id_subquery(
+    row: Dict[str, Any],
+    file_id: int,
+    class_idx: int,
+) -> Tuple[str, Tuple[Any, ...]]:
+    """INSERT method row binding class_id via correlated subquery (no extra SELECT batch)."""
+    data = {k: v for k, v in row.items() if k not in ("id", "class_id")}
+    if not data:
+        raise ValueError("Empty method row")
+    cols = ["class_id"] + list(data.keys())
+    subq = "(SELECT id FROM classes WHERE file_id = ? ORDER BY id ASC LIMIT 1 OFFSET ?)"
+    placeholders = [subq] + ["?"] * len(data)
+    sql = f"INSERT INTO methods ({', '.join(cols)}) VALUES ({', '.join(placeholders)})"
+    params = (file_id, class_idx) + tuple(data.values())
+    return (sql, params)
+
+
+def build_file_data_atomic_batches(
     file_id: int,
     project_id: str,
     source_code: str,
     file_path: str,
     file_mtime: float,
-    transaction_id: Optional[str] = None,
-) -> Dict[str, Any]:
+) -> Tuple[list[list[Tuple[str, Any]]], dict[str, Any]]:
     """
-    Update all file data (AST, CST, classes, methods, functions, imports) via batch.
+    Build ordered batches for file data update and metadata for the result dict.
 
-    Runs clear+ast+cst, insert classes, resolve class ids (SELECT), then insert
-    methods + functions + imports. Class ids are resolved by query after insert
-    so method.class_id is correct regardless of execute_batch/executemany
-    lastrowid behavior. Order preserved; minimizes write commands.
+    Returns:
+        (batches, meta). On syntax error, ([], {success: False, ...}).
     """
     try:
         tree = ast.parse(source_code, filename=file_path)
     except SyntaxError as e:
         logger.warning("Syntax error in %s: %s", file_path, e)
-        return {
-            "success": False,
-            "error": f"Syntax error: {e}",
-            "file_path": file_path,
-            "file_id": file_id,
-        }
+        return (
+            [],
+            {
+                "success": False,
+                "error": f"Syntax error: {e}",
+                "file_path": file_path,
+                "file_id": file_id,
+            },
+        )
     except Exception as e:
         logger.error("Error parsing AST for %s: %s", file_path, e, exc_info=True)
-        return {
-            "success": False,
-            "error": f"Failed to parse AST: {e}",
-            "file_path": file_path,
-            "file_id": file_id,
-        }
+        return (
+            [],
+            {
+                "success": False,
+                "error": f"Failed to parse AST: {e}",
+                "file_path": file_path,
+                "file_id": file_id,
+            },
+        )
 
     ast_dump = ast.dump(tree)
     ast_data = ast_dump if isinstance(ast_dump, dict) else {"ast": ast_dump}
@@ -76,7 +95,6 @@ def update_file_data_atomic_batch(
     ast_hash = hashlib.sha256(ast_json.encode()).hexdigest()
     cst_hash = hashlib.sha256(source_code.encode()).hexdigest()
 
-    # Batch 1: clear file's entities + insert ast + insert cst
     ops1: List[Tuple[str, Optional[tuple]]] = [
         (
             "DELETE FROM methods WHERE class_id IN (SELECT id FROM classes WHERE file_id = ?)",
@@ -96,18 +114,9 @@ def update_file_data_atomic_batch(
             (file_id, project_id, source_code, cst_hash, file_mtime),
         ),
     ]
-    results1 = database.execute_batch(ops1, transaction_id)
-    if len(results1) < 8:
-        return {
-            "success": False,
-            "error": f"execute_batch (clear+ast+cst) returned {len(results1)} results",
-            "file_path": file_path,
-            "file_id": file_id,
-        }
 
-    # Extract classes and methods (with class index for later class_id mapping)
     class_rows: List[Dict[str, Any]] = []
-    method_specs: List[Tuple[int, Dict[str, Any]]] = []  # (class_index, row)
+    method_specs: List[Tuple[int, Dict[str, Any]]] = []
     function_rows: List[Dict[str, Any]] = []
     import_rows: List[Dict[str, Any]] = []
 
@@ -158,11 +167,11 @@ def update_file_data_atomic_batch(
                         docstring=method_docstring,
                         args=method_args,
                     )
-                    row = method_obj.to_db_row()
-                    row.pop("id", None)
-                    row.pop("created_at", None)
-                    row.setdefault("cst_node_id", "")
-                    method_specs.append((idx, row))
+                    row_m = method_obj.to_db_row()
+                    row_m.pop("id", None)
+                    row_m.pop("created_at", None)
+                    row_m.setdefault("cst_node_id", "")
+                    method_specs.append((idx, row_m))
 
     for node in ast.walk(tree):
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
@@ -231,52 +240,27 @@ def update_file_data_atomic_batch(
                 row.pop("created_at", None)
                 import_rows.append(row)
 
-    # Batch 2: insert classes
-    # Do not rely on execute_batch lastrowid: with executemany only the last row
-    # gets lastrowid, so method class_id would get wrong/zero and trigger FK failure.
-    # After insert, resolve class ids by querying in deterministic order.
-    class_lastrowids: List[int] = []
+    batches: list[list[Tuple[str, Any]]] = [ops1]
+
     if class_rows:
         ops2 = [_row_to_insert_sql("classes", r) for r in class_rows]
-        database.execute_batch(ops2, transaction_id)
-        # Resolve real class ids: same transaction, so only our inserts exist for
-        # this file_id. ORDER BY id matches insert order (SQLite AUTOINCREMENT).
-        select_ops: List[Tuple[str, Optional[tuple]]] = [
-            (
-                "SELECT id FROM classes WHERE file_id = ? ORDER BY id",
-                (file_id,),
-            )
-        ]
-        select_results = database.execute_batch(select_ops, transaction_id)
-        if select_results and select_results[0].get("data"):
-            class_lastrowids = [int(row["id"]) for row in select_results[0]["data"]]
-        if len(class_lastrowids) != len(class_rows):
-            return {
-                "success": False,
-                "error": (
-                    f"class insert count mismatch: inserted {len(class_rows)}, "
-                    f"resolved {len(class_lastrowids)}"
-                ),
-                "file_path": file_path,
-                "file_id": file_id,
-            }
+        batches.append(ops2)
 
-    # Batch 3: insert methods (with class_id from resolved ids) + functions + imports
-    ops3: List[Tuple[str, tuple]] = []
+    ops3: List[Tuple[str, Any]] = []
     for class_idx, row in method_specs:
-        row = dict(row)
-        if class_idx < len(class_lastrowids):
-            row["class_id"] = class_lastrowids[class_idx]
-        ops3.append(_row_to_insert_sql("methods", row))
+        row_d = dict(row)
+        ops3.append(
+            _method_insert_sql_with_class_id_subquery(row_d, file_id, class_idx)
+        )
     for row in function_rows:
         ops3.append(_row_to_insert_sql("functions", row))
     for row in import_rows:
         ops3.append(_row_to_insert_sql("imports", row))
 
     if ops3:
-        database.execute_batch(ops3, transaction_id)
+        batches.append(ops3)
 
-    return {
+    meta: dict[str, Any] = {
         "success": True,
         "file_id": file_id,
         "file_path": file_path,
@@ -290,4 +274,54 @@ def update_file_data_atomic_batch(
         "functions": len(function_rows),
         "methods": len(method_specs),
         "imports": len(import_rows),
+    }
+    return (batches, meta)
+
+
+def update_file_data_atomic_batch(
+    database: Any,
+    file_id: int,
+    project_id: str,
+    source_code: str,
+    file_path: str,
+    file_mtime: float,
+    transaction_id: Optional[str] = None,
+) -> Dict[str, Any]:
+    """
+    Update all file data (AST, CST, classes, methods, functions, imports) in one RPC.
+
+    Uses execute_logical_write_operation (single transaction on the server).
+    ``transaction_id`` is accepted for API compatibility and ignored.
+    """
+    _ = transaction_id
+    logger.info(
+        "update_file_data_atomic_batch file_id=%s (logical write)",
+        file_id,
+    )
+    batches, meta = build_file_data_atomic_batches(
+        file_id, project_id, source_code, file_path, file_mtime
+    )
+    if meta.get("success") is False:
+        return meta
+    if not batches:
+        raise RuntimeError(
+            "build_file_data_atomic_batches returned empty batches with success=True",
+        )
+    try:
+        raw = database.execute_logical_write_operation({"batches": batches})
+    except Exception as e:
+        logger.exception("execute_logical_write_operation failed for %s", file_path)
+        return {
+            "success": False,
+            "error": str(e),
+            "file_path": file_path,
+            "file_id": file_id,
+        }
+    if isinstance(raw, dict) and raw.get("success"):
+        return {**meta, "success": True}
+    return {
+        "success": False,
+        "error": "Logical write did not report success",
+        "file_path": file_path,
+        "file_id": file_id,
     }

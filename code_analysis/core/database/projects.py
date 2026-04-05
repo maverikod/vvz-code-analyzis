@@ -75,16 +75,15 @@ def get_project(self, project_id: str) -> Optional[Dict[str, Any]]:
 
 def get_all_projects(self) -> List[Dict[str, Any]]:
     """
-    Get all projects from database. Excludes trashed projects by checking the files table:
-    a project is considered active if it has no files or has at least one file with
-    (deleted = 0 OR deleted IS NULL). Workers use the same files.deleted to decide
-    whether to index/vectorize.
+    Get all active (non-soft-deleted) projects. Excludes rows with projects.deleted=1
+    and projects whose files are all soft-deleted (files.deleted=1).
     """
     rows = self._fetchall(
         "SELECT p.id, p.root_path, p.name, p.comment, p.updated_at FROM projects p "
-        "WHERE NOT EXISTS (SELECT 1 FROM files f WHERE f.project_id = p.id) "
+        "WHERE (p.deleted = 0 OR p.deleted IS NULL) "
+        "AND (NOT EXISTS (SELECT 1 FROM files f WHERE f.project_id = p.id) "
         "   OR EXISTS (SELECT 1 FROM files f WHERE f.project_id = p.id "
-        "              AND (f.deleted = 0 OR f.deleted IS NULL)) "
+        "              AND (f.deleted = 0 OR f.deleted IS NULL))) "
         "ORDER BY p.name, p.root_path"
     )
     return rows if rows else []
@@ -148,6 +147,8 @@ async def clear_project_data(self, project_id: str) -> None:
         )
 
     if not file_ids:
+        # Project-scoped issues (e.g. file_id NULL) must go before projects row
+        self._execute("DELETE FROM issues WHERE project_id = ?", (project_id,))
         # Delete vector_index even if no files
         self._execute("DELETE FROM vector_index WHERE project_id = ?", (project_id,))
         self._execute("DELETE FROM projects WHERE id = ?", (project_id,))
@@ -203,7 +204,8 @@ async def clear_project_data(self, project_id: str) -> None:
         )
     if file_ids:
         self._execute(
-            f"DELETE FROM issues WHERE file_id IN ({placeholders})", tuple(file_ids)
+            f"DELETE FROM issues WHERE project_id = ? OR file_id IN ({placeholders})",
+            (project_id,) + tuple(file_ids),
         )
     if file_ids:
         self._execute(
@@ -296,7 +298,8 @@ def get_projects_with_vectorization_count(self) -> List[Dict[str, Any]]:
                    AND cc.vector_id IS NULL)
             ) AS pending_count
         FROM projects p
-        WHERE (
+        WHERE (p.deleted = 0 OR p.deleted IS NULL)
+        AND (
             -- Count files needing chunking
             (SELECT COUNT(DISTINCT f.id)
              FROM files f

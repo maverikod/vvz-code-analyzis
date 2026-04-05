@@ -25,6 +25,7 @@ from ..core.cst_tree.tree_modifier import modify_tree
 from ..core.git_integration import commit_after_write
 from ..core.uuid_validation import is_valid_uuid4
 from .base_mcp_command import BaseMCPCommand
+from .project_text_file_guard import reject_if_write_under_project_venv
 from .compose_cst_db import backup_file_data
 from .compose_cst_writer import apply_changes, validate_and_write_temp
 
@@ -60,6 +61,10 @@ def run_tree_id_flow(
     """
     root_path = command._resolve_project_root(project_id)
     target_path = (root_path / file_path).resolve()
+
+    blocked = reject_if_write_under_project_venv(target_path, root_path)
+    if blocked is not None:
+        return blocked
 
     tree = get_tree(tree_id)
     if not tree:

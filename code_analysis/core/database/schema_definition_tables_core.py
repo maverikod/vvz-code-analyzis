@@ -114,6 +114,12 @@ def get_tables_core() -> Dict[str, Any]:
                     "not_null": False,
                     "default": "julianday('now')",
                 },
+                {
+                    "name": "deleted",
+                    "type": "BOOLEAN",
+                    "not_null": False,
+                    "default": "0",
+                },
             ],
             "foreign_keys": [
                 {

@@ -137,6 +137,10 @@ DEFAULT_QUEUE_MAX_SIZE: int = 1000
 # Maximum RPC request size in bytes (10 MB)
 RPC_MAX_REQUEST_SIZE: int = 10485760
 
+# Max .json file size (bytes on disk) for read_project_text_file to use structured JSON load
+# (same session shape as json_load_file). Above this, the command returns plain text lines.
+DEFAULT_READ_PROJECT_TEXT_JSON_STRUCTURED_MAX_BYTES: int = 1048576
+
 
 # ============================================================================
 # Timeouts and Intervals

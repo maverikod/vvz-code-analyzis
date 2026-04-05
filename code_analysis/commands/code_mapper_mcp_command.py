@@ -7,17 +7,15 @@ email: vasilyvz@gmail.com
 
 import asyncio
 import logging
-import os
 from pathlib import Path
 from typing import Any, Callable, Dict, Optional
 
 from mcp_proxy_adapter.commands.result import SuccessResult, ErrorResult
 
-from ..core.constants import (
-    DATA_DIR_NAME,
-    DEFAULT_IGNORE_PATTERNS,
-    DEFAULT_MAX_FILE_LINES,
-    LOGS_DIR_NAME,
+from ..core.constants import DEFAULT_MAX_FILE_LINES
+from ..core.venv_path_policy import (
+    collect_python_files_for_indexing,
+    load_venv_site_packages_index_allowlist_from_config,
 )
 from .base_mcp_command import BaseMCPCommand
 from .update_indexes_analyzer import analyze_file
@@ -160,18 +158,8 @@ class UpdateIndexesMCPCommand(BaseMCPCommand):
                     progress_tracker.set_description("Scanning for Python files...")
                     progress_tracker.set_progress(0)
 
-                python_files: list[Path] = []
-                # Build ignore set from constants
-                ignore_dirs = DEFAULT_IGNORE_PATTERNS | {DATA_DIR_NAME, LOGS_DIR_NAME}
-                for walk_root, dirs, files in os.walk(root_path):
-                    dirs[:] = [
-                        d
-                        for d in dirs
-                        if not d.startswith(".") and d not in ignore_dirs
-                    ]
-                    for file in files:
-                        if file.endswith(".py"):
-                            python_files.append(Path(walk_root) / file)
+                allowlist = load_venv_site_packages_index_allowlist_from_config()
+                python_files = collect_python_files_for_indexing(root_path, allowlist)
 
                 files_total = len(python_files)
                 trigger = kwargs.get("trigger") or "manual"

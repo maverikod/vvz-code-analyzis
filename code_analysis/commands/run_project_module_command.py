@@ -9,6 +9,7 @@ Author: Vasiliy Zdanovskiy
 email: vasilyvz@gmail.com
 """
 
+import asyncio
 import logging
 from typing import Any, Dict, List, Optional
 
@@ -34,7 +35,9 @@ class RunProjectModuleCommand(BaseMCPCommand):
         category: Command category.
         author: Command author.
         email: Author email.
-        use_queue: Whether to run in the background queue.
+        use_queue: False — sandbox runs on the asyncio handler with asyncio.to_thread (not
+            the bounded job queue). Queued jobs apply a max runtime and kill the worker,
+            which would terminate long-lived server processes (e.g. python -m app).
     """
 
     name = "run_project_module"
@@ -123,6 +126,12 @@ class RunProjectModuleCommand(BaseMCPCommand):
                 },
             ],
         }
+
+    def validate_params(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        """Validate params and reject unknown project_id before queuing."""
+        params = super().validate_params(params)
+        BaseMCPCommand._validate_project_id_exists(params["project_id"])
+        return params
 
     @classmethod
     def metadata(cls: type["RunProjectModuleCommand"]) -> Dict[str, Any]:
@@ -362,11 +371,12 @@ class RunProjectModuleCommand(BaseMCPCommand):
                     message="module must be a non-empty string",
                 )
             try:
-                result = run_module_in_project_sandbox(
-                    root_path=root_path,
-                    module=module_clean,
-                    args=args,
-                    timeout_seconds=timeout_seconds,
+                result = await asyncio.to_thread(
+                    run_module_in_project_sandbox,
+                    root_path,
+                    module_clean,
+                    args,
+                    timeout_seconds,
                 )
             except ValueError as e:
                 return ErrorResult(

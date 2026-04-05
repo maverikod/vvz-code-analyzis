@@ -8,6 +8,7 @@ Author: Vasiliy Zdanovskiy
 email: vasilyvz@gmail.com
 """
 
+import asyncio
 import logging
 from typing import Any, Dict, List, Optional
 
@@ -33,7 +34,8 @@ class RunProjectScriptCommand(BaseMCPCommand):
         category: Command category.
         author: Command author.
         email: Author email.
-        use_queue: Whether to run in the background queue.
+        use_queue: False — same rationale as run_project_module (queue job timeout kills
+            the sandbox child; use asyncio.to_thread for blocking subprocess work).
     """
 
     name = "run_project_script"
@@ -124,6 +126,12 @@ class RunProjectScriptCommand(BaseMCPCommand):
                 },
             ],
         }
+
+    def validate_params(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        """Validate params and reject unknown project_id before queuing."""
+        params = super().validate_params(params)
+        BaseMCPCommand._validate_project_id_exists(params["project_id"])
+        return params
 
     @classmethod
     def metadata(cls: type["RunProjectScriptCommand"]) -> Dict[str, Any]:
@@ -377,11 +385,12 @@ class RunProjectScriptCommand(BaseMCPCommand):
                     message="file_path must be a non-empty path relative to project root",
                 )
             try:
-                result = run_in_project_sandbox(
-                    root_path=root_path,
-                    script_relative_path=rel,
-                    args=args,
-                    timeout_seconds=timeout_seconds,
+                result = await asyncio.to_thread(
+                    run_in_project_sandbox,
+                    root_path,
+                    rel,
+                    args,
+                    timeout_seconds,
                 )
             except ValueError as e:
                 return ErrorResult(

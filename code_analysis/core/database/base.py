@@ -483,6 +483,40 @@ class CodeDatabase:
             )
         return results
 
+    def execute_logical_write_operation(
+        self, program: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """
+        Run all batches in program under one transaction (in-process SQLite).
+
+        Mirrors DatabaseClient.execute_logical_write_operation result shape.
+        """
+        batches = program.get("batches")
+        if not batches or not isinstance(batches, list):
+            raise ValueError("LogicalWriteProgramV1 requires non-empty batches")
+        tid = self.begin_transaction()
+        try:
+            if program.get("defer_constraints"):
+                self._execute("PRAGMA defer_foreign_keys=ON", None)
+            batch_results: list[dict[str, Any]] = []
+            for batch_ops in batches:
+                results = self.execute_batch(batch_ops, tid)
+                batch_results.append({"results": results})
+            self.commit_transaction(tid)
+            return {
+                "success": True,
+                "data": {
+                    "batch_results": batch_results,
+                    "transaction_id": tid,
+                },
+            }
+        except Exception:
+            try:
+                self.rollback_transaction(tid)
+            except Exception:
+                pass
+            raise
+
     def _in_transaction(self) -> bool:
         """
         Check if transaction is currently active.

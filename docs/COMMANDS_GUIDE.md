@@ -127,6 +127,8 @@ Before any command modifies existing code, the file is placed in **versions** (b
 | restore_deleted_files | [restore_deleted_files.md](commands/file_management/restore_deleted_files.md) | Restore file from deleted state |
 | collapse_versions | [collapse_versions.md](commands/file_management/collapse_versions.md) | Collapse file versions in DB |
 | repair_database | [repair_database.md](commands/file_management/repair_database.md) | Repair file-related DB state |
+| read_project_text_file | [read_project_text_file.md](commands/file_management/read_project_text_file.md) | Raw line read (non-code) or auto-route Python → `get_file_lines` |
+| write_project_text_lines | [write_project_text_lines.md](commands/file_management/write_project_text_lines.md) | Line replace for non-code text; Python paths rejected (`PYTHON_FILE_FORBIDDEN`) |
 
 ### Log Viewer — `docs/commands/log_viewer/`
 
@@ -153,6 +155,14 @@ Before any command modifies existing code, the file is placed in **versions** (b
 | permanently_delete_from_trash | [permanently_delete_from_trash.md](commands/project_management/permanently_delete_from_trash.md) | Permanently delete project from trash |
 | restore_project_from_trash | [restore_project_from_trash.md](commands/project_management/restore_project_from_trash.md) | Restore project from trash |
 | clear_trash | [clear_trash.md](commands/project_management/clear_trash.md) | Clear all trashed projects |
+| run_project_script | [run_project_script.md](commands/project_management/run_project_script.md) | Run a Python script in the project sandbox |
+| run_project_module | [run_project_module.md](commands/project_management/run_project_module.md) | Run `python -m <module>` in the project sandbox |
+| project_pip_install | [project_pip_install.md](commands/project_management/project_pip_install.md) | Queued `pip install` into the named project’s `.venv`/`venv` only (`project_id` required; poll `queue_get_job_status`) |
+| project_pip_list | [project_pip_list.md](commands/project_management/project_pip_list.md) | `pip list` / `pip freeze` (`project_id` required; not queued) |
+| project_pip_show | [project_pip_show.md](commands/project_management/project_pip_show.md) | `pip show` (`project_id` required; not queued) |
+| project_pip_uninstall | [project_pip_uninstall.md](commands/project_management/project_pip_uninstall.md) | `pip uninstall` (`project_id` required; not queued) |
+| project_pip_check | [project_pip_check.md](commands/project_management/project_pip_check.md) | Structured presence check via `pip list --format=json` (`project_id` + `packages` required; not queued) |
+| project_pip_search | [project_pip_search.md](commands/project_management/project_pip_search.md) | Filter/list installed packages only — no PyPI (`project_id` required; not queued) |
 
 ### Refactor — `docs/commands/refactor/`
 

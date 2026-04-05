@@ -18,6 +18,7 @@ Restore a working `code-analysis-server` runtime and MCP proxy registration thro
 5. Preserve the main campaign rule: no work on `vast_srv` may use anything except `code-analysis-server` tools.
 6. If a defect is found in `code-analysis-server`, stop the interrupted test flow, fix the defect, and resume from the last successful checkpoint.
 7. Determine whether server-only analysis coverage for `vast_srv` is complete, still catching up dynamically, or blocked by a `code-analysis-server` limitation or defect before opening the wider fix phase.
+8. Prioritize improving `code-analysis-server` itself over completing `vast_srv` fixes whenever `vast_srv` exposes server limitations, especially in precise micro-edit semantics and analysis throughput/reliability.
 
 ## Non-Goals
 
@@ -53,3 +54,4 @@ The environment must reach a state where:
 5. Tactical verification proves that any required vectorizer and chunker dependencies are reachable under the same network and mTLS assumptions, or explicitly reports them as blockers.
 6. Tactical reporting explicitly states the checkpoint from which the `vast_srv` campaign can resume.
 7. Before broad `vast_srv` fixes begin, tactical reporting must be able to distinguish between delayed analysis coverage growth and a real server-side coverage problem.
+8. When `vast_srv` exposes server limitations, the next global priority becomes server improvement first, with `vast_srv` retained as the verification harness.

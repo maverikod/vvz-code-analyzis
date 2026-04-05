@@ -159,6 +159,14 @@ def register_commands_part2(reg: registry) -> None:
         )
         from .commands.run_project_script_command import RunProjectScriptCommand
         from .commands.run_project_module_command import RunProjectModuleCommand
+        from .commands.project_pip_commands import (
+            ProjectPipCheckCommand,
+            ProjectPipInstallCommand,
+            ProjectPipListCommand,
+            ProjectPipSearchCommand,
+            ProjectPipShowCommand,
+            ProjectPipUninstallCommand,
+        )
 
         reg.register(ChangeProjectIdMCPCommand, "custom")
         reg.register(CreateProjectMCPCommand, "custom")
@@ -172,6 +180,12 @@ def register_commands_part2(reg: registry) -> None:
         reg.register(ClearTrashMCPCommand, "custom")
         reg.register(RunProjectScriptCommand, "custom")
         reg.register(RunProjectModuleCommand, "custom")
+        reg.register(ProjectPipInstallCommand, "custom")
+        reg.register(ProjectPipListCommand, "custom")
+        reg.register(ProjectPipShowCommand, "custom")
+        reg.register(ProjectPipUninstallCommand, "custom")
+        reg.register(ProjectPipCheckCommand, "custom")
+        reg.register(ProjectPipSearchCommand, "custom")
         logger.info("✅ Registered project management commands")
     except ImportError as e:
         logger.warning("Failed to import project management commands: %s", e)

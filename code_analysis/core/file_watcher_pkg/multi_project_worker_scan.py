@@ -9,8 +9,12 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import Any, Dict, Tuple
+from typing import Any, Dict, Set, Tuple
 
+from ..venv_path_policy import (
+    build_allowlisted_site_packages_py_files,
+    load_venv_site_packages_index_allowlist_from_config,
+)
 from .lock_manager import LockManager
 from .multi_project_worker_specs import WatchDirSpec
 from .processor import FileChangeProcessor
@@ -303,10 +307,20 @@ def scan_watch_dir(
 
         merged_ignore = list(ignore_patterns) + list(spec.ignore_patterns)
         scan_start = datetime.now()
+        allowlist = load_venv_site_packages_index_allowlist_from_config()
+        allowed_venv_py: Set[Path] = set()
+        if allowlist:
+            for project_root_obj in discovered_projects:
+                allowed_venv_py.update(
+                    build_allowlisted_site_packages_py_files(
+                        project_root_obj.root_path, allowlist
+                    )
+                )
         scanned_files = scan_directory(
             root_dir=watch_dir,
             watch_dirs=[spec.watch_dir],
             ignore_patterns=merged_ignore,
+            allowed_venv_py_files=allowed_venv_py or None,
         )
 
         delta = processor.compute_delta(watch_dir, scanned_files)

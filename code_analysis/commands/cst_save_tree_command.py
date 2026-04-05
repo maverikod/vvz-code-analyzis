@@ -18,6 +18,7 @@ from typing import Any, Dict, Optional
 from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 
 from .base_mcp_command import BaseMCPCommand
+from .project_text_file_guard import reject_if_write_under_project_venv
 from ..core.cst_tree.tree_saver import save_tree_to_file
 from ..core.cst_tree.tree_builder import reload_tree_from_file
 from ..core.git_integration import commit_after_write
@@ -113,6 +114,12 @@ class CSTSaveTreeCommand(BaseMCPCommand):
         auto_reload: bool = True,
         **kwargs,
     ) -> SuccessResult:
+        logger.info(
+            "[SAVE_PATH] cst_save_tree enter tree_id=%s project_id=%s file_path=%s",
+            tree_id,
+            project_id,
+            file_path,
+        )
         t_start = time.perf_counter()
         t_retry_start = time.perf_counter()
         last_connect_error: Optional[Exception] = None
@@ -134,6 +141,11 @@ class CSTSaveTreeCommand(BaseMCPCommand):
                             )
 
                         project_root = Path(project.root_path)
+                        blocked_venv = reject_if_write_under_project_venv(
+                            absolute_file_path, project_root
+                        )
+                        if blocked_venv is not None:
+                            return blocked_venv
                         logger.info(
                             "[TIMING] command=cst_save_tree step=resolve_path elapsed_sec=%.4f",
                             time.perf_counter() - t0,

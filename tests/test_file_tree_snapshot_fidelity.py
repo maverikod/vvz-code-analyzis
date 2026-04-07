@@ -185,6 +185,35 @@ def test_no_bypass_path_both_flows_use_same_sync(
     sync_mock2.assert_called_once()
 
 
+def test_sync_file_to_db_atomic_repeated_same_file_succeeds(
+    test_db, test_project, temp_dir, project_id
+) -> None:
+    """Repeated sync for one file must succeed (snapshot rows torn down without FK errors)."""
+    code = "x = 1\n"
+    path = temp_dir / "repeat_sync.py"
+    path.write_text(code, encoding="utf-8")
+    mtime = path.stat().st_mtime
+    file_id = test_db.add_file(
+        path=str(path),
+        lines=1,
+        last_modified=mtime,
+        has_docstring=False,
+        project_id=project_id,
+    )
+    from code_analysis.core.database.file_tree_sync import sync_file_to_db_atomic
+
+    r1 = sync_file_to_db_atomic(test_db, project_id, str(path), code, mtime, file_id)
+    assert r1.get("success") is True, r1.get("error")
+    r2 = sync_file_to_db_atomic(test_db, project_id, str(path), code, mtime, file_id)
+    assert r2.get("success") is True, r2.get("error")
+    row = test_db._fetchone(
+        "SELECT COUNT(*) AS c FROM file_tree_snapshots WHERE file_id = ?",
+        (file_id,),
+    )
+    assert row is not None
+    assert int(row.get("c", 0)) == 1
+
+
 # --- TZ §10.2: File-level write unit (tests 4–6) ---
 
 

@@ -117,8 +117,19 @@ def sync_file_to_db_atomic(
 
         node_rows = _build_snapshot_node_rows(tree, 0)
 
+        # Child-first teardown: do not rely on ON DELETE CASCADE on legacy/migrated DBs.
         s_batches: list[list[Tuple[str, Any]]] = [
             [
+                (
+                    "DELETE FROM file_tree_snapshot_nodes WHERE snapshot_id IN ("
+                    "SELECT id FROM file_tree_snapshots WHERE file_id = ?)",
+                    (file_id,),
+                ),
+                (
+                    "DELETE FROM file_tree_snapshot_roots WHERE snapshot_id IN ("
+                    "SELECT id FROM file_tree_snapshots WHERE file_id = ?)",
+                    (file_id,),
+                ),
                 (
                     "DELETE FROM file_tree_snapshots WHERE file_id = ?",
                     (file_id,),

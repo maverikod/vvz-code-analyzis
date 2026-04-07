@@ -18,6 +18,52 @@ from ..database_client.file_data_batch import build_file_data_atomic_batches
 
 logger = logging.getLogger(__name__)
 
+# Multi-row INSERT chunk size for file_tree_snapshot_nodes. Each row binds four
+# placeholders (file_id for snapshot subquery, node_id, parent_node_id, child_index).
+# Stay below SQLite's SQLITE_MAX_VARIABLE_NUMBER (often 999) with margin.
+FILE_TREE_SNAPSHOT_NODES_INSERT_CHUNK_SIZE = 200
+
+
+def _build_snapshot_node_insert_ops(
+    file_id: int,
+    node_rows: List[Tuple[str, Optional[str], int]],
+    *,
+    chunk_size: Optional[int] = None,
+) -> List[Tuple[str, Any]]:
+    """
+    Build one or more INSERT statements with multiple VALUES rows each.
+
+    Replaces N single-row INSERT ops with ceil(N/chunk_size) multi-row ops to
+    shrink logical-write RPC payload (same DB effect as row-by-row inserts).
+    """
+    if not node_rows:
+        return []
+    size = (
+        chunk_size
+        if chunk_size is not None
+        else FILE_TREE_SNAPSHOT_NODES_INSERT_CHUNK_SIZE
+    )
+    if size < 1:
+        raise ValueError("chunk_size must be >= 1")
+    ops: List[Tuple[str, Any]] = []
+    row_fragment = (
+        "((SELECT id FROM file_tree_snapshots WHERE file_id = ? "
+        "ORDER BY id DESC LIMIT 1), ?, ?, ?)"
+    )
+    for i in range(0, len(node_rows), size):
+        chunk = node_rows[i : i + size]
+        values_sql = ",\n".join(row_fragment for _ in chunk)
+        sql = (
+            "INSERT INTO file_tree_snapshot_nodes "
+            "(snapshot_id, node_id, parent_node_id, child_index) VALUES\n" + values_sql
+        )
+        params: List[Any] = []
+        for nid, pid, cidx in chunk:
+            params.extend((file_id, nid, pid, cidx))
+        ops.append((sql, tuple(params)))
+    return ops
+
+
 
 def sync_file_to_db_atomic(
     database: Any,
@@ -155,16 +201,7 @@ def sync_file_to_db_atomic(
         ]
 
         if node_rows:
-            node_ops: List[Tuple[str, Any]] = [
-                (
-                    "INSERT INTO file_tree_snapshot_nodes "
-                    "(snapshot_id, node_id, parent_node_id, child_index) VALUES ("
-                    "(SELECT id FROM file_tree_snapshots WHERE file_id = ? "
-                    "ORDER BY id DESC LIMIT 1), ?, ?, ?)",
-                    (file_id, nid, pid, cidx),
-                )
-                for (nid, pid, cidx) in node_rows
-            ]
+            node_ops = _build_snapshot_node_insert_ops(file_id, node_rows)
             s_batches.append(node_ops)
 
         all_batches = s_batches + fd_batches

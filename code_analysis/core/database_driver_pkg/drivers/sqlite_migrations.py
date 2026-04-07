@@ -230,6 +230,29 @@ def ensure_files_table_migrations(conn: Any, schema_manager: Any) -> None:
         except Exception:
             pass
 
+    # sync_schema only CREATE TABLE IF NOT EXISTS; existing DBs never gained inline
+    # UNIQUE(project_id, path). File watcher / processor_queue upserts use
+    # ON CONFLICT(project_id, path), which requires a matching unique index.
+    try:
+        info = schema_manager.get_table_info("files")
+        columns = {row["name"] for row in info}
+        if "project_id" in columns and "path" in columns:
+            conn.execute(
+                "CREATE UNIQUE INDEX IF NOT EXISTS idx_files_unique_project_path "
+                "ON files(project_id, path)"
+            )
+            conn.commit()
+    except Exception as e:
+        logger.warning(
+            "Could not ensure idx_files_unique_project_path on files "
+            "(required for ON CONFLICT upserts; duplicate rows?): %s",
+            e,
+        )
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+
 
 def run_all_ensure(conn: Any, schema_manager: Any, db_path: Path) -> None:
     """Run all connection-time migrations in order."""

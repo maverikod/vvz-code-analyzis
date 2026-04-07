@@ -376,10 +376,13 @@ class TestWriteProjectTextLines:
         mock_proj = MagicMock()
         mock_proj.root_path = str(tmp_path)
         mock_db.get_project.return_value = mock_proj
-        mock_db.begin_transaction.return_value = "tx1"
         mock_db.select.return_value = [{"id": 99}]
-        mock_db.commit_transaction = MagicMock()
-        mock_db.rollback_transaction = MagicMock()
+
+        batch_calls: list[dict] = []
+
+        def _capture_batch(*args: object, **kwargs: object) -> dict:
+            batch_calls.append(dict(kwargs))
+            return {"success": True}
 
         with patch.object(
             BaseMCPCommand,
@@ -391,7 +394,7 @@ class TestWriteProjectTextLines:
             return_value=cfg,
         ), patch(
             "code_analysis.commands.write_project_text_lines_command.update_file_data_atomic_batch",
-            return_value={"success": True},
+            side_effect=_capture_batch,
         ), patch(
             "code_analysis.commands.write_project_text_lines_command.BackupManager"
         ) as bm_cls:
@@ -410,7 +413,56 @@ class TestWriteProjectTextLines:
         # join() does not add a trailing newline after the last line (same as replace_file_lines)
         assert cfg.read_text(encoding="utf-8") == "a\nX\nc"
         mock_db.update_file.assert_called_once()
-        mock_db.commit_transaction.assert_called_once_with("tx1")
+        assert len(batch_calls) == 1
+        assert batch_calls[0].get("transaction_id") is None
+        mock_db.begin_transaction.assert_not_called()
+        mock_db.commit_transaction.assert_not_called()
+        mock_db.rollback_transaction.assert_not_called()
+
+    async def test_update_batch_failure_restores_file_when_backup(
+        self, tmp_path: Path
+    ) -> None:
+        cfg = tmp_path / "notes.txt"
+        original = "line1\nline2\n"
+        cfg.write_text(original, encoding="utf-8")
+        mock_db = MagicMock()
+        mock_proj = MagicMock()
+        mock_proj.root_path = str(tmp_path)
+        mock_db.get_project.return_value = mock_proj
+        mock_db.select.return_value = [{"id": 42}]
+
+        with patch.object(
+            BaseMCPCommand,
+            "_open_database_from_config",
+            return_value=mock_db,
+        ), patch.object(
+            BaseMCPCommand,
+            "_resolve_file_path_from_project",
+            return_value=cfg,
+        ), patch(
+            "code_analysis.commands.write_project_text_lines_command.update_file_data_atomic_batch",
+            return_value={"success": False, "error": "db failed"},
+        ), patch(
+            "code_analysis.commands.write_project_text_lines_command.BackupManager"
+        ) as bm_cls:
+            bm_cls.return_value.create_backup.return_value = "bu-restore"
+            bm_inst = bm_cls.return_value
+            cmd = WriteProjectTextLinesCommand()
+            result = await cmd.execute(
+                project_id=_PID,
+                file_path="notes.txt",
+                start_line=1,
+                end_line=1,
+                new_lines=["new"],
+                backup=True,
+            )
+
+        assert isinstance(result, ErrorResult)
+        assert result.code == "UPDATE_FILE_DATA_ERROR"
+        bm_inst.restore_file.assert_called_once_with(
+            "notes.txt",
+            "bu-restore",
+        )
 
     async def test_rejects_python_paths_before_resolve(self) -> None:
         cmd = WriteProjectTextLinesCommand()

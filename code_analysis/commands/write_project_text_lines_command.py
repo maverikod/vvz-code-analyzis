@@ -316,7 +316,16 @@ class WriteProjectTextLinesCommand(BaseMCPCommand):
 
                 absolute_path.write_text(source_code, encoding="utf-8")
 
-                transaction_id = database.begin_transaction()
+                def _restore_file_from_backup() -> None:
+                    if not backup_uuid or not absolute_path.exists():
+                        return
+                    backup_manager = BackupManager(root_dir)
+                    try:
+                        rel = str(absolute_path.relative_to(root_dir))
+                    except ValueError:
+                        rel = str(absolute_path)
+                    backup_manager.restore_file(rel, backup_uuid)
+
                 try:
                     normalized_path = normalize_path_simple(str(absolute_path))
                     existing = database.select(
@@ -359,6 +368,8 @@ class WriteProjectTextLinesCommand(BaseMCPCommand):
                         file_id = created.id
 
                     file_mtime = BaseObject._to_timestamp(last_modified) or 0.0
+                    # Single logical-write RPC (transaction_id=None); avoid a long-lived outer
+                    # transaction with multiple execute_batch calls — reduces DB lock / driver churn.
                     update_result = update_file_data_atomic_batch(
                         database=database,
                         file_id=file_id,
@@ -366,11 +377,10 @@ class WriteProjectTextLinesCommand(BaseMCPCommand):
                         source_code=source_code,
                         file_path=str(absolute_path),
                         file_mtime=file_mtime,
-                        transaction_id=transaction_id,
                     )
-                    database.commit_transaction(transaction_id)
 
                     if not update_result.get("success"):
+                        _restore_file_from_backup()
                         return ErrorResult(
                             message="Failed to update file data: "
                             + update_result.get("error", "unknown"),
@@ -392,14 +402,7 @@ class WriteProjectTextLinesCommand(BaseMCPCommand):
                         }
                     )
                 except Exception:
-                    database.rollback_transaction(transaction_id)
-                    if backup_uuid and absolute_path.exists():
-                        backup_manager = BackupManager(root_dir)
-                        try:
-                            rel = str(absolute_path.relative_to(root_dir))
-                        except ValueError:
-                            rel = str(absolute_path)
-                        backup_manager.restore_file(rel, backup_uuid)
+                    _restore_file_from_backup()
                     raise
 
         except ValidationError as e:

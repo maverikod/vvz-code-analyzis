@@ -115,57 +115,66 @@ class CSTModifyTreeCommand(BaseMCPCommand):
                 time.perf_counter() - t_start,
             )
 
-            # If preview mode, return changes without applying
+            # If preview mode, return changes without persisting edits to the in-memory tree.
+            # modify_tree mutates the live tree; without rollback, a later call with the same
+            # ops (preview=false) would apply twice (e.g. duplicate module-level inserts).
             if preview:
                 from difflib import unified_diff
 
-                diff_lines = list(
-                    unified_diff(
-                        original_code.splitlines(keepends=True),
-                        modified_code.splitlines(keepends=True),
-                        fromfile="original",
-                        tofile="modified",
-                        lineterm="",
-                    )
-                )
-                diff = "".join(diff_lines)
-
-                # Validate modified code
-                validation_result: Dict[str, Any] = {
-                    "syntax_valid": True,
-                    "compiles": True,
-                    "error": None,
-                }
                 try:
-                    compile(modified_code, "<string>", "exec")
-                except SyntaxError as e:
-                    validation_result = {
-                        "syntax_valid": False,
-                        "compiles": False,
-                        "error": str(e),
-                        "line": e.lineno if e.lineno is not None else None,
-                        "offset": e.offset if e.offset is not None else None,
+                    diff_lines = list(
+                        unified_diff(
+                            original_code.splitlines(keepends=True),
+                            modified_code.splitlines(keepends=True),
+                            fromfile="original",
+                            tofile="modified",
+                            lineterm="",
+                        )
+                    )
+                    diff = "".join(diff_lines)
+
+                    # Validate modified code
+                    validation_result: Dict[str, Any] = {
+                        "syntax_valid": True,
+                        "compiles": True,
+                        "error": None,
+                    }
+                    try:
+                        compile(modified_code, "<string>", "exec")
+                    except SyntaxError as e:
+                        validation_result = {
+                            "syntax_valid": False,
+                            "compiles": False,
+                            "error": str(e),
+                            "line": e.lineno if e.lineno is not None else None,
+                            "offset": e.offset if e.offset is not None else None,
+                        }
+
+                    data: Dict[str, Any] = {
+                        "success": True,
+                        "preview": True,
+                        "tree_id": tree_id,  # Return original tree_id in preview
+                        "operations_count": len(operations),
+                        "changes": [
+                            {
+                                "operation": op_dict.get("action"),
+                                "node_id": op_dict.get("node_id")
+                                or op_dict.get("start_node_id"),
+                                "description": f"{op_dict.get('action')} operation",
+                            }
+                            for op_dict in operations
+                        ],
+                        "diff": diff,
+                        "validation": validation_result,
                     }
 
-                data: Dict[str, Any] = {
-                    "success": True,
-                    "preview": True,
-                    "tree_id": tree_id,  # Return original tree_id in preview
-                    "operations_count": len(operations),
-                    "changes": [
-                        {
-                            "operation": op_dict.get("action"),
-                            "node_id": op_dict.get("node_id")
-                            or op_dict.get("start_node_id"),
-                            "description": f"{op_dict.get('action')} operation",
-                        }
-                        for op_dict in operations
-                    ],
-                    "diff": diff,
-                    "validation": validation_result,
-                }
-
-                return SuccessResult(data=data)
+                    return SuccessResult(data=data)
+                finally:
+                    if not rollback_tree_to_code(tree_id, original_code):
+                        logger.error(
+                            "cst_modify_tree preview: failed to restore in-memory tree %s",
+                            tree_id,
+                        )
 
             # Build modified_nodes for verification (when multiple nodes affected)
             modified_nodes: List[Dict[str, Any]] = []

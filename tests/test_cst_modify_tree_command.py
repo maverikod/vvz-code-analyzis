@@ -1106,3 +1106,45 @@ class TestBatchedTwoAnnotationReplacesEquivalence:
         code_batch = tree_batch.module.code
 
         assert code_batch == code_seq
+
+
+SOURCE_PREVIEW_INSERT = '''"""Doc."""
+x = 1
+'''
+
+
+class TestPreviewDoesNotLeaveMutatedTree:
+    """preview=true must restore the in-memory tree so a later apply is not duplicated."""
+
+    @pytest.mark.asyncio
+    async def test_preview_then_apply_module_insert_once(self, tmp_path):
+        path = str(tmp_path / "preview_insert.py")
+        tree = create_tree_from_code(path, SOURCE_PREVIEW_INSERT.strip())
+        tree_id = tree.tree_id
+        baseline = tree.module.code
+        marker = "# cst_preview_marker_line"
+        ops = [
+            {
+                "action": "insert",
+                "parent_node_id": "__root__",
+                "position": "last",
+                "code_lines": [marker],
+            },
+        ]
+        try:
+            cmd = CSTModifyTreeCommand()
+            r1 = await cmd.execute(tree_id=tree_id, operations=ops, preview=True)
+            assert isinstance(r1, SuccessResult)
+            assert r1.data.get("preview") is True
+            t_after_preview = get_tree(tree_id)
+            assert t_after_preview is not None
+            assert t_after_preview.module.code == baseline
+
+            r2 = await cmd.execute(tree_id=tree_id, operations=ops, preview=False)
+            assert isinstance(r2, SuccessResult)
+            assert r2.data.get("preview") is False
+            final = get_tree(tree_id)
+            assert final is not None
+            assert final.module.code.count(marker) == 1
+        finally:
+            remove_tree(tree_id)

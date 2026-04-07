@@ -6,12 +6,17 @@ email: vasilyvz@gmail.com
 """
 
 import logging
+from datetime import datetime
 from typing import Any, Dict, Optional
 
 from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 
 from ..base_mcp_command import BaseMCPCommand
 from ...core.backup_manager import BackupManager
+from ...core.database_client.file_data_batch import update_file_data_atomic_batch
+from ...core.database_client.objects.base import BaseObject
+from ...core.file_lock import file_lock
+from ...core.path_normalization import normalize_path_simple
 
 logger = logging.getLogger(__name__)
 
@@ -72,10 +77,104 @@ class RestoreBackupFileMCPCommand(BaseMCPCommand):
 
             success, message = manager.restore_file(file_path, backup_uuid)
 
-            if success:
-                return SuccessResult(data={"message": message, "file_path": file_path})
-            else:
+            if not success:
                 return ErrorResult(message=message, code="RESTORE_BACKUP_ERROR")
+
+            # Keep DB entities / AST / CST in sync with restored on-disk content (same as
+            # replace_file_lines / cst_save_tree). Restore only copied bytes; without this,
+            # list_code_entities and get_code_entity_info stay stale while cst_load_file reads disk.
+            database = self._open_database_from_config(auto_analyze=False)
+            absolute_path = (root_path / file_path).resolve()
+            if not absolute_path.is_file():
+                logger.warning(
+                    "restore_backup_file: restored path is not a file, skipping index sync: %s",
+                    absolute_path,
+                )
+                return SuccessResult(data={"message": message, "file_path": file_path})
+
+            with file_lock(absolute_path):
+                source_code = absolute_path.read_text(
+                    encoding="utf-8", errors="replace"
+                )
+                normalized_path = normalize_path_simple(str(absolute_path))
+                file_record = database.get_file_by_path(str(absolute_path), project_id)
+                if not file_record:
+                    logger.info(
+                        "restore_backup_file: file not in database, skipping index sync: %s",
+                        file_path,
+                    )
+                    return SuccessResult(
+                        data={"message": message, "file_path": file_path}
+                    )
+
+                file_id = file_record["id"]
+                lines_count = len(source_code.splitlines())
+                stripped = source_code.lstrip()
+                has_docstring = stripped.startswith('"""') or stripped.startswith("'''")
+                last_modified = datetime.fromtimestamp(absolute_path.stat().st_mtime)
+                file_mtime = BaseObject._to_timestamp(last_modified) or 0.0
+                # Same order as replace_file_lines: outer transaction, then files row, then batch.
+                transaction_id = database.begin_transaction()
+                try:
+                    update_params = (
+                        lines_count,
+                        absolute_path.stat().st_mtime,
+                        1 if has_docstring else 0,
+                        normalized_path,
+                        file_id,
+                        project_id,
+                    )
+                    update_sql = """
+                        UPDATE files SET lines = ?, last_modified = ?, has_docstring = ?, path = ?,
+                            updated_at = julianday('now')
+                        WHERE id = ? AND project_id = ?
+                        """
+                    try:
+                        database.execute(
+                            update_sql,
+                            update_params,
+                            transaction_id=transaction_id,
+                        )
+                    except TypeError:
+                        # CodeDatabase.execute has no transaction_id; in-process SQLite only.
+                        database.execute(
+                            update_sql,
+                            update_params,
+                        )
+                    update_result = update_file_data_atomic_batch(
+                        database=database,
+                        file_id=file_id,
+                        project_id=project_id,
+                        source_code=source_code,
+                        file_path=str(absolute_path),
+                        file_mtime=file_mtime,
+                        transaction_id=transaction_id,
+                    )
+                    database.commit_transaction(transaction_id)
+                except Exception:
+                    database.rollback_transaction(transaction_id)
+                    raise
+
+                if not update_result.get("success"):
+                    return ErrorResult(
+                        message=(
+                            "File restored from backup, but failed to refresh code indexes: "
+                            + str(update_result.get("error", "unknown"))
+                        ),
+                        code="RESTORE_INDEX_SYNC_ERROR",
+                        details={
+                            "restore_message": message,
+                            "update_result": update_result,
+                        },
+                    )
+
+            return SuccessResult(
+                data={
+                    "message": message,
+                    "file_path": file_path,
+                    "index_sync": update_result,
+                }
+            )
         except Exception as e:
             return self._handle_error(e, "RESTORE_BACKUP_ERROR", "restore_backup_file")
 

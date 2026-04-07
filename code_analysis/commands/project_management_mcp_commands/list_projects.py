@@ -317,7 +317,8 @@ class ListProjectsMCPCommand(BaseMCPCommand):
                 # watch_dir path in one round-trip to reduce lock time and avoid H5 peak.
                 _list_sql = (
                     "SELECT p.id, p.root_path, p.name, p.comment, p.watch_dir_id, "
-                    "p.created_at, p.updated_at, w.absolute_path AS watch_dir_path "
+                    "p.processing_paused, p.created_at, p.updated_at, "
+                    "w.absolute_path AS watch_dir_path "
                     "FROM ("
                     "  SELECT p.* FROM projects p "
                     "  INNER JOIN ("
@@ -345,6 +346,7 @@ class ListProjectsMCPCommand(BaseMCPCommand):
                     updated_at = row.get("updated_at")
                     if updated_at is not None and hasattr(updated_at, "isoformat"):
                         updated_at = updated_at.isoformat()
+                    processing_paused = row.get("processing_paused")
                     projects.append(
                         {
                             "id": row.get("id"),
@@ -353,6 +355,11 @@ class ListProjectsMCPCommand(BaseMCPCommand):
                             "root_path": row.get("root_path"),
                             "comment": row.get("comment"),
                             "watch_dir_id": row.get("watch_dir_id"),
+                            "processing_paused": (
+                                bool(processing_paused)
+                                if processing_paused is not None
+                                else False
+                            ),
                             "updated_at": updated_at,
                         }
                     )
@@ -382,14 +389,14 @@ class ListProjectsMCPCommand(BaseMCPCommand):
                     projects = [
                         p
                         for p in projects
-                        if (p.get("name") or "").lower().find(needle) >= 0
+                        if str(p.get("name") or "").lower().find(needle) >= 0
                     ]
                 if comment_contains is not None:
                     needle = comment_contains.lower()
                     projects = [
                         p
                         for p in projects
-                        if (p.get("comment") or "").lower().find(needle) >= 0
+                        if str(p.get("comment") or "").lower().find(needle) >= 0
                     ]
 
                 parts = []

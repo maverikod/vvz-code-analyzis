@@ -17,6 +17,7 @@ from .list_trashed_projects import ListTrashedProjectsMCPCommand
 from .list_watch_dirs import ListWatchDirsMCPCommand
 from .permanently_delete_from_trash import PermanentlyDeleteFromTrashMCPCommand
 from .restore_project_from_trash import RestoreProjectFromTrashMCPCommand
+from .set_project_processing_paused import SetProjectProcessingPausedMCPCommand
 
 __all__ = [
     "ChangeProjectIdMCPCommand",
@@ -29,4 +30,5 @@ __all__ = [
     "ListWatchDirsMCPCommand",
     "PermanentlyDeleteFromTrashMCPCommand",
     "RestoreProjectFromTrashMCPCommand",
+    "SetProjectProcessingPausedMCPCommand",
 ]

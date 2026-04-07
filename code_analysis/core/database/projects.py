@@ -299,6 +299,7 @@ def get_projects_with_vectorization_count(self) -> List[Dict[str, Any]]:
             ) AS pending_count
         FROM projects p
         WHERE (p.deleted = 0 OR p.deleted IS NULL)
+        AND (p.processing_paused = 0 OR p.processing_paused IS NULL)
         AND (
             -- Count files needing chunking
             (SELECT COUNT(DISTINCT f.id)

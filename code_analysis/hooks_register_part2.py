@@ -156,6 +156,7 @@ def register_commands_part2(reg: registry) -> None:
             ListWatchDirsMCPCommand,
             PermanentlyDeleteFromTrashMCPCommand,
             RestoreProjectFromTrashMCPCommand,
+            SetProjectProcessingPausedMCPCommand,
         )
         from .commands.run_project_script_command import RunProjectScriptCommand
         from .commands.run_project_module_command import RunProjectModuleCommand
@@ -177,6 +178,7 @@ def register_commands_part2(reg: registry) -> None:
         reg.register(ListTrashedProjectsMCPCommand, "custom")
         reg.register(PermanentlyDeleteFromTrashMCPCommand, "custom")
         reg.register(RestoreProjectFromTrashMCPCommand, "custom")
+        reg.register(SetProjectProcessingPausedMCPCommand, "custom")
         reg.register(ClearTrashMCPCommand, "custom")
         reg.register(RunProjectScriptCommand, "custom")
         reg.register(RunProjectModuleCommand, "custom")

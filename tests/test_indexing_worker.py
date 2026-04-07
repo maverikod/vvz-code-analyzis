@@ -37,7 +37,7 @@ def _make_mock_database(
                 len(files_per_project.get(p["project_id"], [])) for p in projects
             )
             return {"data": [{"count": total}]}
-        if "distinct project_id" in sql_lower:
+        if "inner join projects" in sql_lower and "distinct" in sql_lower:
             return {"data": projects}
         if "select id, path, project_id" in sql_lower and params:
             project_id = str(params[0]) if params and params[0] is not None else ""

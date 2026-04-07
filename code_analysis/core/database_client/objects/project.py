@@ -24,6 +24,7 @@ class Project(BaseObject):
         name: Project directory name
         comment: Optional project description
         watch_dir_id: Watch directory identifier (optional)
+        processing_paused: When True, indexing and vectorization workers skip this project.
         created_at: Creation timestamp
         updated_at: Last update timestamp
     """
@@ -33,6 +34,7 @@ class Project(BaseObject):
     name: Optional[str] = None
     comment: Optional[str] = None
     watch_dir_id: Optional[str] = None
+    processing_paused: bool = False
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
 
@@ -60,6 +62,7 @@ class Project(BaseObject):
             name=data.get("name"),
             comment=data.get("comment"),
             watch_dir_id=data.get("watch_dir_id"),
+            processing_paused=bool(data.get("processing_paused")),
             created_at=cls._parse_timestamp(data.get("created_at")),
             updated_at=cls._parse_timestamp(data.get("updated_at")),
         )
@@ -95,6 +98,7 @@ class Project(BaseObject):
             result["comment"] = self.comment
         if self.watch_dir_id is not None:
             result["watch_dir_id"] = self.watch_dir_id
+        result["processing_paused"] = 1 if self.processing_paused else 0
         if self.created_at is not None:
             result["created_at"] = self._to_timestamp(self.created_at)
         if self.updated_at is not None:

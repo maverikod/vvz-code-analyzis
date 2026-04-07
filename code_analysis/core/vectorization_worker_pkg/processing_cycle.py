@@ -79,7 +79,8 @@ SELECT
            AND (cc.vectorization_skipped IS NULL OR cc.vectorization_skipped = 0))
     ) AS pending_count
 FROM projects p
-WHERE (
+WHERE (p.processing_paused = 0 OR p.processing_paused IS NULL)
+AND (
     (SELECT COUNT(DISTINCT f.id)
      FROM files f
      WHERE f.project_id = p.id
@@ -313,10 +314,17 @@ async def run_one_cycle(
                 "root_path": p.root_path,
                 "name": p.name,
                 "comment": p.comment,
+                "processing_paused": getattr(p, "processing_paused", False),
             }
             for p in all_projects_list
         ]
         for project in all_projects:
+            if project.get("processing_paused"):
+                logger.info(
+                    "Skipping FAISS rebuild for project %s (processing_paused)",
+                    project.get("id"),
+                )
+                continue
             project_id = project["id"]
             project_path = project.get("root_path", "unknown")
             write_worker_status(

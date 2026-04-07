@@ -187,6 +187,16 @@ def run_migrate_schema(db: Any) -> None:
             )
             db._execute("ALTER TABLE files DROP COLUMN dataset_id")
             db._commit()
+    if "processing_paused" not in projects_columns:
+        try:
+            logger.info("Migrating projects table: adding processing_paused column")
+            db._execute(
+                "ALTER TABLE projects ADD COLUMN processing_paused BOOLEAN DEFAULT 0"
+            )
+            db._commit()
+        except Exception as e:
+            logger.warning(f"Could not add processing_paused column to projects: {e}")
+
         except Exception as e:
             logger.warning(
                 f"Could not drop dataset_id from files (SQLite 3.35+ required): {e}"

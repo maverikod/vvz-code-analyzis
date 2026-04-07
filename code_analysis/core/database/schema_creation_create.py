@@ -52,6 +52,7 @@ def run_create_schema(db: Any) -> None:
                 comment TEXT,
                 watch_dir_id TEXT,
                 deleted BOOLEAN DEFAULT 0,
+                processing_paused BOOLEAN DEFAULT 0,
                 created_at REAL DEFAULT (julianday('now')),
                 updated_at REAL DEFAULT (julianday('now')),
                 FOREIGN KEY (watch_dir_id) REFERENCES watch_dirs(id) ON DELETE SET NULL

@@ -27,12 +27,20 @@ from ..vectorization_worker_pkg.timing_log import log_operation_timing
 
 logger = logging.getLogger(__name__)
 
+# Projects with files needing indexing, excluding processing_paused projects.
+INDEXING_PROJECT_DISCOVERY_SQL = (
+    "SELECT DISTINCT f.project_id FROM files f "
+    "INNER JOIN projects p ON p.id = f.project_id "
+    "WHERE (f.deleted = 0 OR f.deleted IS NULL) AND f.needs_chunking = 1 "
+    "AND (p.processing_paused = 0 OR p.processing_paused IS NULL)"
+)
+
 
 async def process_cycle(self: Any, poll_interval: int = 30) -> Dict[str, Any]:
     """Run indexing cycles until stop: query projects with needs_chunking=1, index batch per project.
 
-    Discovery: SELECT DISTINCT project_id FROM files WHERE (deleted=0 OR deleted IS NULL)
-    AND needs_chunking=1. Per project: SELECT id, path, project_id FROM files
+    Discovery: DISTINCT project_id from files joined to projects where processing is not paused
+    and (deleted=0 OR deleted IS NULL) AND needs_chunking=1. Per project: SELECT id, path, project_id FROM files
     WHERE project_id=? AND (deleted=0 OR deleted IS NULL) AND needs_chunking=1
     ORDER BY updated_at ASC LIMIT ?. For each file call database.index_file(path, project_id).
     Driver clears needs_chunking after success. Backoff 1–60s when DB unavailable.
@@ -187,8 +195,7 @@ async def process_cycle(self: Any, poll_interval: int = 30) -> Dict[str, Any]:
 
                 try:
                     projects_result = database.execute(
-                        "SELECT DISTINCT project_id FROM files "
-                        "WHERE (deleted = 0 OR deleted IS NULL) AND needs_chunking = 1",
+                        INDEXING_PROJECT_DISCOVERY_SQL,
                         None,
                     )
                     projects_data = (

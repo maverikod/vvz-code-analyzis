@@ -125,6 +125,7 @@ VALIDATION_GROUPS = {
 QUEUED_COMMANDS = {
     "update_indexes",
     "comprehensive_analysis",
+    "export_graph",
     "delete_project",
     "split_class",
     "extract_superclass",
@@ -133,6 +134,7 @@ QUEUED_COMMANDS = {
     "permanently_delete_from_trash",
     "delete_unwatched_projects",
     "project_pip_install",
+    "run_project_script",
 }
 
 # Non-existent UUID for negative value tests

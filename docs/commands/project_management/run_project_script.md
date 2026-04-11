@@ -20,8 +20,11 @@ Operation flow:
 3. Validates that the resolved script path lies strictly inside the project root
 4. Requires project venv: .venv or venv under project root (fails with VENV_NOT_FOUND if missing)
 5. Runs the script in a subprocess with cwd=project root, PYTHONPATH=project root, and project venv
-6. Optionally enforces timeout_seconds (process killed if exceeded)
-7. Returns stdout, stderr, returncode, and timed_out flag
+6. Optionally enforces timeout_seconds (subprocess interrupted if exceeded; stdout/stderr reflect output captured before termination)
+7. Optionally waits `post_run_delay_seconds` after the subprocess exits (same captured stdout/stderr)
+8. Returns stdout, stderr, returncode, timed_out, and post_run_delay_seconds_applied
+
+**Execution mode:** By default this command uses the **job queue** (`use_queue=True`). Submit the command, then use `queue_get_job_status` (and related queue commands) until the job completes; the finished result includes **stdout** and **stderr** for the model. Inline execution is not the default.
 
 Sandbox behavior:
 - cwd: Set to the project root directory
@@ -51,7 +54,8 @@ Important notes:
 | `project_id` | string | **Yes** | Project UUID (from projectid file or list_projects). Project must be registered in the database. Root path is resolved from the projects table. |
 | `file_path` | string | **Yes** | Path to the Python script relative to project root. Must not be empty. Leading slashes and backslashes are normalized. Resolved path must lie strictly inside the project root (path traversal is reject |
 | `args` | array | No | Optional list of arguments passed to the script as argv[1:]. If omitted, the script receives no additional arguments. |
-| `timeout_seconds` | integer | No | Optional timeout in seconds. If the script runs longer, the process is killed and the result has timed_out=True and returncode=None. |
+| `timeout_seconds` | integer | No | Optional timeout in seconds. If the script runs longer, the subprocess is interrupted and the result has timed_out=True and returncode=None. |
+| `post_run_delay_seconds` | integer | No | Optional non-negative seconds to wait after the subprocess exits before returning (stdout/stderr unchanged). For short settle time after the script finishes. |
 
 **Schema:** `additionalProperties: false` — only the parameters above are accepted.
 
@@ -68,6 +72,7 @@ All MCP commands return either a **success** result (with `data`) or an **error*
 - `stderr`: Standard error of the script
 - `returncode`: Process exit code (None if timed out)
 - `timed_out`: True if process was killed due to timeout
+- `post_run_delay_seconds_applied`: Seconds waited after subprocess exit (from `post_run_delay_seconds`, or 0)
 - `script`: Normalized script path relative to project root
 - `project_id`: Project UUID used
 

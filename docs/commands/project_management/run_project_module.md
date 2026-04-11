@@ -14,6 +14,8 @@ email: vasilyvz@gmail.com
 
 The run_project_module command runs a Python module in a registered project as python -m <module> [args] inside the same sandbox used by run_project_script: working directory and PYTHONPATH are set to the project root, and the project's virtual environment (.venv or venv) is used for the interpreter.
 
+**Execution mode:** This command runs **inline** (not via the job queue: `use_queue=False`). Sandbox work is still offloaded with `asyncio.to_thread`, but there is no `queue_get_job_status` step. By contrast, **`run_project_script` is queued by default** so clients poll the queue for completion. `run_project_module` stays inline because the bounded job queue applies a maximum runtime and may kill the worker, which would wrongly terminate long-lived `python -m` processes (for example application servers). To run a file with the default queued path, use `run_project_script`.
+
 Operation flow:
 1. Resolves project root from database by project_id (project must be registered)
 2. Validates module is non-empty (after stripping whitespace)

@@ -14,6 +14,7 @@ import os
 import signal
 import subprocess
 import threading
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import List, Mapping, Optional, Tuple
@@ -37,12 +38,15 @@ class SandboxRunResult:
         stderr: Standard error (text).
         returncode: Process return code (None if timed out).
         timed_out: True if the process was killed due to timeout.
+        post_run_delay_seconds_applied: Seconds slept after the subprocess exited
+            (only set by :func:`run_in_project_sandbox` when requested).
     """
 
     stdout: str
     stderr: str
     returncode: Optional[int]
     timed_out: bool
+    post_run_delay_seconds_applied: float = 0.0
 
 
 def _read_pipe_limited_bytes(pipe, max_bytes: int) -> Tuple[str, bool]:
@@ -189,6 +193,7 @@ def _run_sandbox_subprocess(
         stderr=err_text,
         returncode=returncode,
         timed_out=timed_out,
+        post_run_delay_seconds_applied=0.0,
     )
 
 
@@ -197,6 +202,7 @@ def run_in_project_sandbox(
     script_relative_path: str,
     args: Optional[List[str]] = None,
     timeout_seconds: Optional[int] = None,
+    post_run_delay_seconds: Optional[float] = None,
 ) -> SandboxRunResult:
     """
     Run a Python script under the project sandbox.
@@ -214,9 +220,13 @@ def run_in_project_sandbox(
             Must not escape the project (e.g. no ".." outside root).
         args: Optional list of arguments passed to the script (argv[1:]).
         timeout_seconds: Optional timeout in seconds; process is killed if exceeded.
+        post_run_delay_seconds: Optional extra seconds to sleep after the subprocess
+            exits (after stdout/stderr are captured). Use for startup/settling without a
+            helper script. Must be non-negative.
 
     Returns:
-        SandboxRunResult with stdout, stderr, returncode, and timed_out flag.
+        SandboxRunResult with stdout, stderr, returncode, timed_out flag, and
+        post_run_delay_seconds_applied.
 
     Raises:
         ValueError: If root_path does not exist, or script path is outside project.
@@ -283,7 +293,21 @@ def run_in_project_sandbox(
         env["PYTHONPATH"],
         cmd,
     )
-    return _run_sandbox_subprocess(cmd, root_resolved, env, timeout_seconds)
+    result = _run_sandbox_subprocess(cmd, root_resolved, env, timeout_seconds)
+    delay = 0.0
+    if post_run_delay_seconds is not None:
+        delay = float(post_run_delay_seconds)
+        if delay < 0:
+            raise ValueError("post_run_delay_seconds must be non-negative")
+    if delay > 0:
+        time.sleep(delay)
+    return SandboxRunResult(
+        stdout=result.stdout,
+        stderr=result.stderr,
+        returncode=result.returncode,
+        timed_out=result.timed_out,
+        post_run_delay_seconds_applied=delay,
+    )
 
 
 def run_module_in_project_sandbox(

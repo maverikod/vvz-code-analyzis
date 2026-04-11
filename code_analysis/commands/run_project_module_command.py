@@ -42,7 +42,10 @@ class RunProjectModuleCommand(BaseMCPCommand):
 
     name = "run_project_module"
     version = "1.0.0"
-    descr = "Run a Python module in a registered project as python -m <module> [args] (sandbox)"
+    descr = (
+        "Run a Python module in a registered project as python -m <module> [args] "
+        "(sandbox; inline, not queued — unlike run_project_script)"
+    )
     category = "project_management"
     author = "Vasiliy Zdanovskiy"
     email = "vasilyvz@gmail.com"
@@ -70,7 +73,10 @@ class RunProjectModuleCommand(BaseMCPCommand):
                 "Run a Python module in a registered project as python -m <module> [args] "
                 "inside the project sandbox. Uses project root as cwd and project's venv "
                 "( .venv or venv ). Use to verify or start the project application without "
-                "using the console, in line with test_data rules (all interaction via server)."
+                "using the console, in line with test_data rules (all interaction via server). "
+                "Runs inline (use_queue=False): not the default queued path used by "
+                "run_project_script, because the job queue may enforce a max runtime and kill "
+                "long-lived python -m processes."
             ),
             "properties": {
                 "project_id": {
@@ -128,7 +134,7 @@ class RunProjectModuleCommand(BaseMCPCommand):
         }
 
     def validate_params(self, params: Dict[str, Any]) -> Dict[str, Any]:
-        """Validate params and reject unknown project_id before queuing."""
+        """Validate params and reject unknown project_id before execution."""
         params = super().validate_params(params)
         BaseMCPCommand._validate_project_id_exists(params["project_id"])
         return params
@@ -167,6 +173,11 @@ class RunProjectModuleCommand(BaseMCPCommand):
                 "4. Runs python -m <module> [args] in a subprocess with cwd=project root, PYTHONPATH=project root, and project venv\n"
                 "5. Optionally enforces timeout_seconds (process killed if exceeded)\n"
                 "6. Returns stdout, stderr, returncode, and timed_out flag\n\n"
+                "Execution mode:\n"
+                "- Inline (use_queue=False), not the job queue: no queue_get_job_status. "
+                "run_project_script is queued by default; this command stays inline because "
+                "queued jobs can enforce a max runtime and kill the worker, which would "
+                "terminate long-lived python -m runs (e.g. servers).\n\n"
                 "Sandbox behavior (same as run_project_script):\n"
                 "- cwd: Set to the project root directory\n"
                 "- PYTHONPATH: Set only to the project root\n"
@@ -339,6 +350,7 @@ class RunProjectModuleCommand(BaseMCPCommand):
                 "Set timeout_seconds for long-running modules (e.g. pytest, server startup) to avoid hanging",
                 "Check returncode and timed_out in the response to detect failures and timeouts",
                 "For running a script file instead of a module, use run_project_script with file_path",
+                "For default queued execution of a script file, use run_project_script and poll queue status",
             ],
         }
 

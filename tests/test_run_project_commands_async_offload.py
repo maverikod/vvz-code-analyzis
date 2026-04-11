@@ -98,13 +98,13 @@ async def test_run_project_module_uses_asyncio_to_thread_for_sandbox(
     assert result.data["stdout"] == "help"
 
 
-def test_run_project_commands_do_not_use_bounded_job_queue() -> None:
-    """Queued runs are subject to adapter job timeout and kill the sandbox child.
+def test_run_project_script_uses_queue_run_project_module_inline() -> None:
+    """run_project_script defaults to the job queue; run_project_module stays inline.
 
-    Long-lived project processes (e.g. servers started via python -m) must not be
-    tied to that queue; blocking work is offloaded with asyncio.to_thread instead.
+    Sandbox subprocess work is still offloaded with asyncio.to_thread so the event
+    loop is not blocked. Long-lived module runs (e.g. servers) remain inline-only.
     """
-    assert RunProjectScriptCommand.use_queue is False
+    assert RunProjectScriptCommand.use_queue is True
     assert RunProjectModuleCommand.use_queue is False
 
 

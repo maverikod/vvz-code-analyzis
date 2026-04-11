@@ -34,19 +34,20 @@ class RunProjectScriptCommand(BaseMCPCommand):
         category: Command category.
         author: Command author.
         email: Author email.
-        use_queue: False — same rationale as run_project_module (queue job timeout kills
-            the sandbox child; use asyncio.to_thread for blocking subprocess work).
+        use_queue: True — runs via the job queue by default so the HTTP handler stays
+            responsive; subprocess work uses asyncio.to_thread. Success payload includes
+            stdout and stderr for the model.
     """
 
     name = "run_project_script"
-    version = "1.0.0"
+    version = "1.1.0"
     descr = (
         "Run a Python script from a registered project in a sandbox (only project code)"
     )
     category = "project_management"
     author = "Vasiliy Zdanovskiy"
     email = "vasilyvz@gmail.com"
-    use_queue = False
+    use_queue = True
 
     @classmethod
     def get_schema(
@@ -105,10 +106,22 @@ class RunProjectScriptCommand(BaseMCPCommand):
                     "type": "integer",
                     "description": (
                         "Optional timeout in seconds. If the script runs longer, "
-                        "the process is killed and the result has timed_out=True and returncode=None."
+                        "the subprocess is interrupted (POSIX: process group SIGKILL) and "
+                        "the result has timed_out=True and returncode=None. stdout/stderr "
+                        "contain output captured before termination."
                     ),
                     "minimum": 1,
                     "examples": [30, 60, 300],
+                },
+                "post_run_delay_seconds": {
+                    "type": "integer",
+                    "description": (
+                        "Optional seconds to wait after the subprocess exits (after stdout/stderr "
+                        "are captured). Use to allow services or filesystem state to settle without "
+                        "a separate sleep script. Must be non-negative. Omitted means no extra delay."
+                    ),
+                    "minimum": 0,
+                    "examples": [0, 2, 5],
                 },
             },
             "required": ["project_id", "file_path"],
@@ -123,6 +136,7 @@ class RunProjectScriptCommand(BaseMCPCommand):
                     "file_path": "scripts/run.py",
                     "args": ["--verbose"],
                     "timeout_seconds": 30,
+                    "post_run_delay_seconds": 2,
                 },
             ],
         }
@@ -166,8 +180,9 @@ class RunProjectScriptCommand(BaseMCPCommand):
                 "3. Validates that the resolved script path lies strictly inside the project root\n"
                 "4. Requires project venv: .venv or venv under project root (fails with VENV_NOT_FOUND if missing)\n"
                 "5. Runs the script in a subprocess with cwd=project root, PYTHONPATH=project root, and project venv\n"
-                "6. Optionally enforces timeout_seconds (process killed if exceeded)\n"
-                "7. Returns stdout, stderr, returncode, and timed_out flag\n\n"
+                "6. Optionally enforces timeout_seconds (subprocess interrupted if exceeded)\n"
+                "7. Optionally waits post_run_delay_seconds after the subprocess exits (captured I/O unchanged)\n"
+                "8. Returns stdout, stderr, returncode, timed_out, and post_run_delay_seconds_applied\n\n"
                 "Sandbox behavior:\n"
                 "- cwd: Set to the project root directory\n"
                 "- PYTHONPATH: Set only to the project root (no parent paths or system paths)\n"
@@ -183,6 +198,7 @@ class RunProjectScriptCommand(BaseMCPCommand):
                 "- Project must be registered (use list_projects or create_project)\n"
                 "- file_path is always relative to the project root; absolute paths are not accepted for the script\n"
                 "- On timeout, returncode is None and timed_out is True; stdout/stderr contain output before kill\n"
+                "- By default the command runs via the job queue (use_queue=True); poll queue_get_job_status for completion\n"
                 "- Script runs in a separate process; it cannot access the server process or other projects"
             ),
             "parameters": {
@@ -231,14 +247,25 @@ class RunProjectScriptCommand(BaseMCPCommand):
                 "timeout_seconds": {
                     "description": (
                         "Optional timeout in seconds. If the script runs longer than this, "
-                        "the process is killed. On timeout, returncode is None and timed_out is True; "
-                        "stdout and stderr contain output captured before the kill. "
+                        "the subprocess is interrupted. On timeout, returncode is None and timed_out is True; "
+                        "stdout and stderr contain output captured before termination. "
                         "If omitted, no timeout is applied."
                     ),
                     "type": "integer",
                     "required": False,
                     "minimum": 1,
                     "examples": [30, 60, 300],
+                },
+                "post_run_delay_seconds": {
+                    "description": (
+                        "Optional non-negative delay in seconds after the subprocess exits, "
+                        "before returning the result. Does not change captured stdout/stderr. "
+                        "Useful when a short settle period is needed after the script finishes."
+                    ),
+                    "type": "integer",
+                    "required": False,
+                    "minimum": 0,
+                    "examples": [0, 2, 5],
                 },
             },
             "usage_examples": [
@@ -323,6 +350,9 @@ class RunProjectScriptCommand(BaseMCPCommand):
                         "stderr": "Standard error of the script",
                         "returncode": "Process exit code (None if timed out)",
                         "timed_out": "True if process was killed due to timeout",
+                        "post_run_delay_seconds_applied": (
+                            "Seconds waited after subprocess exit (from post_run_delay_seconds)"
+                        ),
                         "script": "Normalized script path relative to project root",
                         "project_id": "Project UUID used",
                     },
@@ -331,6 +361,7 @@ class RunProjectScriptCommand(BaseMCPCommand):
                         "stderr": "",
                         "returncode": 0,
                         "timed_out": False,
+                        "post_run_delay_seconds_applied": 0,
                         "script": "main.py",
                         "project_id": "550e8400-e29b-41d4-a716-446655440000",
                     },
@@ -360,6 +391,7 @@ class RunProjectScriptCommand(BaseMCPCommand):
         file_path: str,
         args: Optional[List[str]] = None,
         timeout_seconds: Optional[int] = None,
+        post_run_delay_seconds: Optional[int] = None,
         **kwargs: Any,
     ) -> SuccessResult | ErrorResult:
         """Run the script in the project sandbox.
@@ -370,10 +402,12 @@ class RunProjectScriptCommand(BaseMCPCommand):
             file_path: Script path relative to project root.
             args: Optional list of script arguments.
             timeout_seconds: Optional timeout in seconds.
+            post_run_delay_seconds: Optional seconds to sleep after subprocess exits.
             **kwargs: Extra args (unused).
 
         Returns:
-            SuccessResult with stdout, stderr, returncode, timed_out; or ErrorResult.
+            SuccessResult with stdout, stderr, returncode, timed_out,
+            post_run_delay_seconds_applied; or ErrorResult.
         """
         try:
             root_path = BaseMCPCommand._resolve_project_root(project_id)
@@ -384,6 +418,11 @@ class RunProjectScriptCommand(BaseMCPCommand):
                     code="INVALID_FILE_PATH",
                     message="file_path must be a non-empty path relative to project root",
                 )
+            if post_run_delay_seconds is not None and post_run_delay_seconds < 0:
+                return ErrorResult(
+                    code="VALIDATION_ERROR",
+                    message="post_run_delay_seconds must be non-negative",
+                )
             try:
                 result = await asyncio.to_thread(
                     run_in_project_sandbox,
@@ -391,6 +430,11 @@ class RunProjectScriptCommand(BaseMCPCommand):
                     rel,
                     args,
                     timeout_seconds,
+                    (
+                        float(post_run_delay_seconds)
+                        if post_run_delay_seconds is not None
+                        else None
+                    ),
                 )
             except ValueError as e:
                 return ErrorResult(
@@ -413,6 +457,7 @@ class RunProjectScriptCommand(BaseMCPCommand):
                     "stderr": result.stderr,
                     "returncode": result.returncode,
                     "timed_out": result.timed_out,
+                    "post_run_delay_seconds_applied": result.post_run_delay_seconds_applied,
                     "script": rel,
                     "project_id": project_id,
                 },

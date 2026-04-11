@@ -48,7 +48,7 @@ Before any command modifies existing code, the file is placed in **versions** (b
 | get_ast | [get_ast.md](commands/ast/get_ast.md) | Retrieve stored AST for a Python file |
 | search_ast_nodes | [search_ast_nodes.md](commands/ast/search_ast_nodes.md) | Search AST by node type/pattern |
 | ast_statistics | [ast_statistics.md](commands/ast/ast_statistics.md) | AST statistics for project/file |
-| list_project_files | [list_project_files.md](commands/ast/list_project_files.md) | List project files from DB |
+| list_project_files | [list_project_files.md](commands/ast/list_project_files.md) | List `.py` files on disk first; DB metadata when indexed; skip `.venv`/`venv` unless `show_venv` (allowlisted venv paths only) |
 | get_code_entity_info | [get_code_entity_info.md](commands/ast/get_code_entity_info.md) | Info for a single code entity |
 | list_code_entities | [list_code_entities.md](commands/ast/list_code_entities.md) | List entities (classes, functions, etc.) |
 | get_imports | [get_imports.md](commands/ast/get_imports.md) | Imports for file/project |

@@ -682,7 +682,7 @@ result = mcp_MCP-Proxy-2_call_server(
 - `get_ast` - Get AST for file
 - `search_ast_nodes` - Search AST nodes
 - `ast_statistics` - Get AST statistics
-- `list_project_files` - List project files
+- `list_project_files` - List `.py` files on disk, merge DB rows when indexed; skip `.venv`/`venv` by default (`show_venv` for allowlisted venv paths only)
 
 ### 6.4 Refactoring Commands
 

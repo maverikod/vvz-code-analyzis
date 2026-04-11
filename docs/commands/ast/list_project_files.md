@@ -12,41 +12,25 @@ email: vasilyvz@gmail.com
 
 ## Purpose (Предназначение)
 
-The list_project_files command lists all files in a project with metadata and statistics. It provides information about files including their paths, statistics (classes, functions, chunks, AST), and other metadata stored in the database.
+The `list_project_files` command enumerates **Python (`.py`) source files** under the project root by **walking the filesystem first**, then **joining database rows** when a non-deleted indexed file matches the same normalized relative path. This gives an on-disk catalog with optional index metadata (ids, line counts, timestamps, etc.).
 
 Operation flow:
-1. Validates root_dir exists and is a directory
-2. Opens database connection
-3. Resolves project_id (from parameter or inferred from root_dir)
-4. Retrieves all project files from database (excluding deleted files)
-5. If file_pattern provided, filters files using fnmatch pattern matching
-6. Applies pagination: offset and limit
-7. Returns list of files with metadata and statistics
 
-File Metadata:
-Each file entry includes:
-- path: File path (relative to project root)
-- id: Database file ID
-- Statistics: classes count, functions count, chunks count, AST status
-- Other metadata fields from database
-
-Pattern Matching:
-- Uses fnmatch pattern matching (shell-style wildcards)
-- Examples: '*.py', 'src/*', 'tests/test_*.py'
-- Case-sensitive matching
-
-Use cases:
-- Get catalog of all files in project
-- Filter files by pattern (e.g., all Python files)
-- Get file statistics and metadata
-- Discover project structure
-- Check which files have been analyzed
+1. Resolves project root from `project_id` (via the database).
+2. Opens the database connection.
+3. Loads non-deleted `files` rows for the project (for metadata lookup).
+4. Enumerates `.py` files on disk:
+   - By default, uses the same discovery as indexing: project tree **excluding** project-local `.venv` and `venv` directories (and other ignore rules shared with indexing).
+   - With `show_venv: true`, **additionally** includes only **config-allowlisted** virtualenv `site-packages` `.py` files resolved from pip **RECORD** entries (see `venv_site_packages_index_allowlisted_distributions` in server config). The **entire** virtualenv is never listed.
+5. If `file_pattern` is set, filters relative paths with `fnmatch`.
+6. Sorts paths stably (by relative path string), then applies `offset` / `limit`.
+7. For each filesystem path, if a DB row matches, returns the usual DB-backed fields; otherwise returns a minimal row (`project_id`, `path`, `relative_path`, `deleted: false`).
 
 Important notes:
-- Excludes deleted files from results
-- Supports pagination with limit and offset
-- Pattern matching uses fnmatch (shell wildcards)
-- Returns total count before pagination
+
+- **Filesystem-first:** Rows that exist only in the database but not on disk are **omitted**.
+- By default, **no** files under project-local `.venv` / `venv` are enumerated (except what `show_venv` adds as allowlisted RECORD paths).
+- Response shape is unchanged: `success`, `files`, `count`, `total`, `offset`.
 
 ---
 
@@ -54,10 +38,11 @@ Important notes:
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `project_id` | string | **Yes** | Project UUID (from create_project or list_projects). |
-| `file_pattern` | string | No | Optional pattern to filter files (e.g., '*.py', 'core/*') |
-| `limit` | integer | No | Optional limit on number of results |
-| `offset` | integer | No | Offset for pagination Default: `0`. |
+| `project_id` | string | **Yes** | Project UUID (from `create_project` or `list_projects`). |
+| `file_pattern` | string | No | Optional `fnmatch` pattern on **relative** paths (e.g. `*.py`, `src/*`). |
+| `limit` | integer | No | Max number of results after sort (pagination). |
+| `offset` | integer | No | Skip N results after sort. Default: `0`. |
+| `show_venv` | boolean | No | Default `false`. When `true`, include only allowlisted venv `site-packages` `.py` files (RECORD-based), in addition to normal project sources; never the full venv. If the allowlist is empty, no venv files are added. |
 
 **Schema:** `additionalProperties: false` — only the parameters above are accepted.
 
@@ -70,20 +55,16 @@ All MCP commands return either a **success** result (with `data`) or an **error*
 ### Success
 
 - **Shape:** `SuccessResult` with `data` object.
-- `success`: Always true on success
-- `files`: List of file dictionaries from database. Each contains:
-- id: Database file ID
-- path: File path (relative to project root)
-- Statistics: classes count, functions count, chunks count, AST status
-- Other metadata fields from database (created_at, updated_at, etc.)
-- `count`: Number of files in current page (after pagination)
-- `total`: Total number of files matching criteria (before pagination)
-- `offset`: Offset used for pagination
+- `success`: Always true on success.
+- `files`: List of dicts. Indexed files include fields from the database (e.g. `id`, `path`, `relative_path`, `lines`, timestamps). Files present on disk but not indexed include at least `project_id`, `path`, `relative_path`, and `deleted`.
+- `count`: Number of files in the current page (after pagination).
+- `total`: Total matching files before pagination.
+- `offset`: Offset used.
 
 ### Error
 
 - **Shape:** `ErrorResult` with `code` and `message`.
-- **Possible codes:** PROJECT_NOT_FOUND, LIST_FILES_ERROR (and others).
+- **Possible codes:** `PROJECT_NOT_FOUND`, `LIST_FILES_ERROR` (and others).
 
 ---
 
@@ -91,66 +72,60 @@ All MCP commands return either a **success** result (with `data`) or an **error*
 
 ### Correct usage
 
-**List all files in project**
+**List all project `.py` files on disk (default — venv trees skipped)**
+
 ```json
 {
-  "root_dir": "/home/user/projects/my_project"
+  "project_id": "550e8400-e29b-41d4-a716-446655440000"
 }
 ```
 
-Returns list of all files in the project with their metadata and statistics.
+**Filter by pattern**
 
-**List only Python files**
 ```json
 {
-  "root_dir": "/home/user/projects/my_project",
-  "file_pattern": "*.py"
+  "project_id": "550e8400-e29b-41d4-a716-446655440000",
+  "file_pattern": "src/*.py"
 }
 ```
 
-Returns only files matching *.py pattern (all Python files).
+**Include allowlisted venv site-packages files**
 
-**List files in specific directory**
 ```json
 {
-  "root_dir": "/home/user/projects/my_project",
-  "file_pattern": "src/*"
+  "project_id": "550e8400-e29b-41d4-a716-446655440000",
+  "show_venv": true
 }
 ```
 
-Returns only files in src/ directory.
+**Pagination**
 
-**List files with pagination**
 ```json
 {
-  "root_dir": "/home/user/projects/my_project",
-  "file_pattern": "*.py",
+  "project_id": "550e8400-e29b-41d4-a716-446655440000",
   "limit": 100,
   "offset": 0
 }
 ```
 
-Returns first 100 Python files. Use offset for next page.
-
 ### Incorrect usage
 
-- **PROJECT_NOT_FOUND**: root_dir='/path' but project not registered. Ensure project is registered. Run update_indexes first.
+- **`PROJECT_NOT_FOUND`:** Unknown or invalid `project_id` — use `list_projects` or the `projectid` file in the project root.
 
-- **LIST_FILES_ERROR**: Database error, invalid parameters, or corrupted data. Check database integrity, verify parameters, ensure project has been analyzed.
+- **`LIST_FILES_ERROR`:** Database or filesystem error — check project root exists and configuration.
 
 ## Error codes summary
 
 | Code | Description | Action |
 |------|-------------|--------|
-| `PROJECT_NOT_FOUND` | Project not found in database | Ensure project is registered. Run update_indexes f |
-| `LIST_FILES_ERROR` | General error during file listing | Check database integrity, verify parameters, ensur |
+| `PROJECT_NOT_FOUND` | Project not in database | Register project; verify `project_id`. |
+| `LIST_FILES_ERROR` | General listing error | Check logs, DB, and project root path. |
 
 ## Best practices
 
-- Use file_pattern to filter files by type or location
-- Use limit and offset for pagination with large projects
-- Check total field to see total count before pagination
-- Use this command to discover project structure
-- Check file statistics to understand code distribution
+- Use `file_pattern` to narrow large trees.
+- Use `limit` / `offset` after checking `total`.
+- Use `show_venv` only when specific distributions are allowlisted in config and you need those RECORD-listed `.py` paths.
+- Compare results with `update_indexes` / indexing expectations: unindexed files appear with minimal metadata only.
 
 ---

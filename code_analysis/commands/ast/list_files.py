@@ -5,20 +5,107 @@ Author: Vasiliy Zdanovskiy
 email: vasilyvz@gmail.com
 """
 
-from typing import Any, Dict, Optional
+from __future__ import annotations
+
+import fnmatch
+from pathlib import Path
+from typing import Any, Dict, List, Optional, cast
 
 from mcp_proxy_adapter.commands.result import SuccessResult
 
+from ...core.venv_path_policy import (
+    build_allowlisted_site_packages_py_files,
+    iter_project_python_files_excluding_venv,
+    load_venv_site_packages_index_allowlist_from_config,
+)
 from ..base_mcp_command import BaseMCPCommand
 
 
+def _canonical_relative_path(project_root: Path, absolute_path: Path) -> str:
+    """Stable posix relative path from project root for FS/DB joins."""
+    return absolute_path.resolve().relative_to(project_root.resolve()).as_posix()
+
+
+def _relative_key_for_db_file(project_root: Path, file_obj: Any) -> str:
+    """Normalize DB file row path to the same key as :func:`_canonical_relative_path`."""
+    rel = getattr(file_obj, "relative_path", None)
+    if rel:
+        return Path(str(rel)).as_posix()
+    raw = getattr(file_obj, "path", None) or ""
+    p = Path(str(raw))
+    root = project_root.resolve()
+    try:
+        if p.is_absolute():
+            return p.resolve().relative_to(root).as_posix()
+    except ValueError:
+        pass
+    try:
+        return (root / p).resolve().relative_to(root).as_posix()
+    except ValueError:
+        return Path(str(raw)).as_posix()
+
+
+def _build_db_map_by_rel_key(project_root: Path, files: List[Any]) -> Dict[str, Any]:
+    """Map canonical relative path -> file object (first wins)."""
+    out: Dict[str, Any] = {}
+    for f in files:
+        key = _relative_key_for_db_file(project_root, f)
+        if key not in out:
+            out[key] = f
+    return out
+
+
+def _enumerate_project_py_paths(project_root: Path, show_venv: bool) -> List[Path]:
+    """
+    Filesystem-first list of ``.py`` paths under the project.
+
+    By default excludes project-local ``.venv`` / ``venv`` trees (same as indexing).
+    With ``show_venv``, adds only config-allowlisted site-packages ``.py`` files
+    (RECORD-derived), never the whole virtualenv.
+    """
+    root = project_root.resolve()
+    found: List[Path] = list(iter_project_python_files_excluding_venv(root))
+    if show_venv:
+        allowlist = load_venv_site_packages_index_allowlist_from_config()
+        found.extend(build_allowlisted_site_packages_py_files(root, allowlist))
+    # Stable sort before pagination
+    uniq = {p.resolve() for p in found}
+    return sorted(uniq, key=lambda p: _canonical_relative_path(root, p))
+
+
+def _file_obj_to_dict(f: Any) -> Dict[str, Any]:
+    if hasattr(f, "to_db_row"):
+        d = cast(Dict[str, Any], f.to_db_row())
+        d["deleted"] = bool(f.deleted)
+        return d
+    if isinstance(f, dict):
+        return dict(f)
+    return {}
+
+
+def _fs_only_file_dict(
+    project_id: str, project_root: Path, absolute_path: Path
+) -> Dict[str, Any]:
+    """Minimal row compatible with DB-backed entries when the file is not indexed yet."""
+    abs_r = absolute_path.resolve()
+    rel = _canonical_relative_path(project_root, abs_r)
+    return {
+        "project_id": project_id,
+        "path": str(abs_r),
+        "relative_path": rel,
+        "deleted": False,
+    }
+
+
 class ListProjectFilesMCPCommand(BaseMCPCommand):
-    """List all files in a project with metadata."""
+    """Filesystem-first list of project ``.py`` files with optional DB metadata."""
 
     name = "list_project_files"
     version = "1.0.0"
     descr = (
-        "List all files in a project with statistics (classes, functions, chunks, AST)"
+        "List project .py files from disk first; merge DB metadata when indexed. "
+        "Skips project-local .venv/venv by default; show_venv adds only "
+        "config-allowlisted venv site-packages .py files (RECORD-based)."
     )
     category = "ast"
     author = "Vasiliy Zdanovskiy"
@@ -36,7 +123,10 @@ class ListProjectFilesMCPCommand(BaseMCPCommand):
                 },
                 "file_pattern": {
                     "type": "string",
-                    "description": "Optional pattern to filter files (e.g., '*.py', 'core/*')",
+                    "description": (
+                        "Optional fnmatch pattern on relative paths (e.g. '*.py', 'src/*', "
+                        "'tests/test_*.py'). Not pathlib-style ``**`` recursion."
+                    ),
                 },
                 "limit": {
                     "type": "integer",
@@ -46,6 +136,16 @@ class ListProjectFilesMCPCommand(BaseMCPCommand):
                     "type": "integer",
                     "description": "Offset for pagination",
                     "default": 0,
+                },
+                "show_venv": {
+                    "type": "boolean",
+                    "description": (
+                        "When true, include only config-allowlisted virtualenv "
+                        "site-packages .py files (RECORD-based), in addition to project "
+                        "sources; never lists the whole venv. Default false skips all "
+                        "project-local .venv/venv trees."
+                    ),
+                    "default": False,
                 },
             },
             "required": ["project_id"],
@@ -58,46 +158,42 @@ class ListProjectFilesMCPCommand(BaseMCPCommand):
         file_pattern: Optional[str] = None,
         limit: Optional[int] = None,
         offset: int = 0,
+        show_venv: bool = False,
         **kwargs,
     ) -> SuccessResult:
         try:
-            self._resolve_project_root(project_id)
+            project_root = self._resolve_project_root(project_id).resolve()
             db = self._open_database_from_config(auto_analyze=False)
 
-            files = db.get_project_files(project_id, include_deleted=False)
+            db_files = db.get_project_files(project_id, include_deleted=False)
+            db_by_rel = _build_db_map_by_rel_key(project_root, db_files)
 
-            # Apply file_pattern filter if provided (items may be File objects or dicts)
+            fs_paths = _enumerate_project_py_paths(project_root, show_venv=show_venv)
+
+            def _rel_for_match(abs_p: Path) -> str:
+                return _canonical_relative_path(project_root, abs_p)
+
             if file_pattern:
-                import fnmatch
-
-                def _path_for_match(f):
-                    return (
-                        getattr(f, "relative_path", None)
-                        or getattr(f, "path", None)
-                        or (f.get("relative_path") if isinstance(f, dict) else None)
-                        or (f.get("path") if isinstance(f, dict) else "")
-                    )
-
-                files = [
-                    f
-                    for f in files
-                    if fnmatch.fnmatch(_path_for_match(f) or "", file_pattern)
+                fs_paths = [
+                    p
+                    for p in fs_paths
+                    if fnmatch.fnmatch(_rel_for_match(p), file_pattern)
                 ]
 
-            # Apply pagination
-            total = len(files)
-            if offset > 0 or limit:
-                files = files[offset : offset + (limit or len(files))]
+            total = len(fs_paths)
+            if offset > 0 or limit is not None:
+                fs_paths = fs_paths[offset : offset + (limit or len(fs_paths))]
 
-            # Serialize to list of dicts (DatabaseClient returns File objects)
-            def _file_to_dict(f):
-                if hasattr(f, "to_db_row"):
-                    d = f.to_db_row()
-                    d["deleted"] = bool(f.deleted)
-                    return d
-                return dict(f) if isinstance(f, dict) else f
-
-            files_data = [_file_to_dict(f) for f in files]
+            files_data: List[Dict[str, Any]] = []
+            for abs_path in fs_paths:
+                key = _canonical_relative_path(project_root, abs_path)
+                row = db_by_rel.get(key)
+                if row is not None:
+                    files_data.append(_file_obj_to_dict(row))
+                else:
+                    files_data.append(
+                        _fs_only_file_dict(project_id, project_root, abs_path)
+                    )
 
             db.disconnect()
 
@@ -136,53 +232,58 @@ class ListProjectFilesMCPCommand(BaseMCPCommand):
             "author": cls.author,
             "email": cls.email,
             "detailed_description": (
-                "The list_project_files command lists all files in a project with metadata and statistics. "
-                "It provides information about files including their paths, statistics (classes, functions, "
-                "chunks, AST), and other metadata stored in the database.\n\n"
+                "The list_project_files command lists Python source files under the project "
+                "root by walking the filesystem first, then attaching database metadata when "
+                "a matching indexed row exists. Project-local ``.venv`` and ``venv`` "
+                "directories are skipped by default (same as indexing). Set ``show_venv`` "
+                "to true to additionally include only config-allowlisted site-packages ``.py`` "
+                "files (from pip RECORD entries), never the entire virtualenv.\n\n"
                 "Operation flow:\n"
-                "1. Validates root_dir exists and is a directory\n"
+                "1. Resolves project root from ``project_id``\n"
                 "2. Opens database connection\n"
-                "3. Resolves project_id (from parameter or inferred from root_dir)\n"
-                "4. Retrieves all project files from database (excluding deleted files)\n"
-                "5. If file_pattern provided, filters files using fnmatch pattern matching\n"
-                "6. Applies pagination: offset and limit\n"
-                "7. Returns list of files with metadata and statistics\n\n"
+                "3. Loads non-deleted file rows for the project (for metadata join)\n"
+                "4. Enumerates ``.py`` files on disk (excluding venv unless ``show_venv`` "
+                "adds allowlisted venv paths)\n"
+                "5. If ``file_pattern`` is provided, filters by fnmatch on relative paths\n"
+                "6. Sorts paths stably, then applies pagination (offset/limit)\n"
+                "7. For each filesystem file, merges DB row when relative path matches; "
+                "otherwise returns a minimal row (path / relative_path / project_id)\n\n"
                 "File Metadata:\n"
                 "Each file entry includes:\n"
-                "- path: File path (relative to project root)\n"
-                "- id: Database file ID\n"
-                "- Statistics: classes count, functions count, chunks count, AST status\n"
-                "- Other metadata fields from database\n\n"
+                "- path: Absolute file path (when indexed, as stored in DB)\n"
+                "- relative_path: Relative path from project root (posix)\n"
+                "- id and statistics: present when the file is indexed in the database\n"
+                "- Files on disk without a DB row include path metadata only\n\n"
                 "Pattern Matching:\n"
-                "- Uses fnmatch pattern matching (shell-style wildcards)\n"
-                "- Examples: '*.py', 'src/*', 'tests/test_*.py'\n"
+                "- Uses fnmatch on relative paths (shell-style wildcards; not ``rglob``-style ``**``)\n"
+                "- Examples: '*.py', 'src/*', 'tests/test_*.py', 'code_analysis/*/*.py'\n"
                 "- Case-sensitive matching\n\n"
                 "Use cases:\n"
-                "- Get catalog of all files in project\n"
-                "- Filter files by pattern (e.g., all Python files)\n"
-                "- Get file statistics and metadata\n"
-                "- Discover project structure\n"
-                "- Check which files have been analyzed\n\n"
+                "- Catalog of Python sources as they exist on disk\n"
+                "- Filter files by pattern (e.g., all Python files under src/)\n"
+                "- See which files are indexed vs present only on disk\n"
+                "- Optionally surface allowlisted third-party sources under venv\n\n"
                 "Important notes:\n"
-                "- Excludes deleted files from results\n"
+                "- Filesystem-first: DB-only rows not backed by an on-disk file are omitted\n"
                 "- Supports pagination with limit and offset\n"
                 "- Pattern matching uses fnmatch (shell wildcards)\n"
                 "- Returns total count before pagination"
             ),
             "parameters": {
-                "root_dir": {
+                "project_id": {
                     "description": (
-                        "Project root directory path. Can be absolute or relative. "
-                        "Must contain data/code_analysis.db file."
+                        "Project UUID (from create_project or list_projects). "
+                        "Required; project root is resolved from the database."
                     ),
                     "type": "string",
                     "required": True,
                 },
                 "file_pattern": {
                     "description": (
-                        "Optional pattern to filter files. Uses fnmatch pattern matching "
-                        "(shell-style wildcards). Examples: '*.py', 'src/*', 'tests/test_*.py'. "
-                        "If not provided, returns all files."
+                        "Optional pattern to filter files. Uses fnmatch on relative paths "
+                        "(shell-style wildcards; not pathlib ``**`` recursion). Examples: "
+                        "'*.py', 'src/*', 'tests/test_*.py', 'code_analysis/*/*.py'. "
+                        "If not provided, returns all enumerated files."
                     ),
                     "type": "string",
                     "required": False,
@@ -190,7 +291,7 @@ class ListProjectFilesMCPCommand(BaseMCPCommand):
                         "*.py",
                         "src/*",
                         "tests/test_*.py",
-                        "code_analysis/**",
+                        "code_analysis/*/*.py",
                     ],
                 },
                 "limit": {
@@ -209,66 +310,73 @@ class ListProjectFilesMCPCommand(BaseMCPCommand):
                     "required": False,
                     "default": 0,
                 },
-                "project_id": {
+                "show_venv": {
                     "description": (
-                        "Optional project UUID. If omitted, inferred from root_dir."
+                        "When true, include only ``.py`` files under site-packages that belong "
+                        "to pip distributions allowlisted in server config "
+                        "(venv_site_packages_index_allowlisted_distributions), resolved via "
+                        "dist-info RECORD. Does not list the whole venv. When false (default), "
+                        "no files under project-local ``.venv``/``venv`` are enumerated."
                     ),
-                    "type": "string",
+                    "type": "boolean",
                     "required": False,
+                    "default": False,
                 },
             },
             "usage_examples": [
                 {
-                    "description": "List all files in project",
+                    "description": "List all Python source files on disk",
                     "command": {
-                        "root_dir": "/home/user/projects/my_project",
+                        "project_id": "550e8400-e29b-41d4-a716-446655440000",
                     },
                     "explanation": (
-                        "Returns list of all files in the project with their metadata and statistics."
+                        "Returns project ``.py`` files with DB metadata when indexed."
                     ),
                 },
                 {
                     "description": "List only Python files",
                     "command": {
-                        "root_dir": "/home/user/projects/my_project",
+                        "project_id": "550e8400-e29b-41d4-a716-446655440000",
                         "file_pattern": "*.py",
                     },
                     "explanation": (
-                        "Returns only files matching *.py pattern (all Python files)."
+                        "Returns only entries whose relative path matches *.py."
                     ),
                 },
                 {
-                    "description": "List files in specific directory",
+                    "description": "Include allowlisted venv site-packages files",
                     "command": {
-                        "root_dir": "/home/user/projects/my_project",
-                        "file_pattern": "src/*",
+                        "project_id": "550e8400-e29b-41d4-a716-446655440000",
+                        "show_venv": True,
                     },
-                    "explanation": ("Returns only files in src/ directory."),
+                    "explanation": (
+                        "Adds RECORD-derived .py paths for allowlisted distributions only."
+                    ),
                 },
                 {
                     "description": "List files with pagination",
                     "command": {
-                        "root_dir": "/home/user/projects/my_project",
+                        "project_id": "550e8400-e29b-41d4-a716-446655440000",
                         "file_pattern": "*.py",
                         "limit": 100,
                         "offset": 0,
                     },
                     "explanation": (
-                        "Returns first 100 Python files. Use offset for next page."
+                        "Returns first 100 matching paths. Use offset for next page."
                     ),
                 },
             ],
             "error_cases": {
                 "PROJECT_NOT_FOUND": {
                     "description": "Project not found in database",
-                    "example": "root_dir='/path' but project not registered",
-                    "solution": "Ensure project is registered. Run update_indexes first.",
+                    "example": "Unknown project_id",
+                    "solution": "Ensure project is registered. Use list_projects.",
                 },
                 "LIST_FILES_ERROR": {
                     "description": "General error during file listing",
                     "example": "Database error, invalid parameters, or corrupted data",
                     "solution": (
-                        "Check database integrity, verify parameters, ensure project has been analyzed."
+                        "Check database integrity, verify parameters, ensure project root exists."
                     ),
                 },
             },
@@ -278,11 +386,8 @@ class ListProjectFilesMCPCommand(BaseMCPCommand):
                     "data": {
                         "success": "Always true on success",
                         "files": (
-                            "List of file dictionaries from database. Each contains:\n"
-                            "- id: Database file ID\n"
-                            "- path: File path (relative to project root)\n"
-                            "- Statistics: classes count, functions count, chunks count, AST status\n"
-                            "- Other metadata fields from database (created_at, updated_at, etc.)"
+                            "List of file dictionaries. Indexed files include full DB fields; "
+                            "unindexed on-disk files include path, relative_path, and project_id."
                         ),
                         "count": "Number of files in current page (after pagination)",
                         "total": "Total number of files matching criteria (before pagination)",
@@ -293,19 +398,17 @@ class ListProjectFilesMCPCommand(BaseMCPCommand):
                         "files": [
                             {
                                 "id": 1,
-                                "path": "src/main.py",
+                                "path": "/home/proj/src/main.py",
+                                "relative_path": "src/main.py",
                                 "classes_count": 2,
                                 "functions_count": 5,
                                 "chunks_count": 10,
                                 "has_ast": True,
                             },
                             {
-                                "id": 2,
-                                "path": "src/utils.py",
-                                "classes_count": 0,
-                                "functions_count": 3,
-                                "chunks_count": 5,
-                                "has_ast": True,
+                                "path": "/home/proj/src/new.py",
+                                "relative_path": "src/new.py",
+                                "project_id": "uuid",
                             },
                         ],
                         "count": 2,
@@ -323,7 +426,7 @@ class ListProjectFilesMCPCommand(BaseMCPCommand):
                 "Use file_pattern to filter files by type or location",
                 "Use limit and offset for pagination with large projects",
                 "Check total field to see total count before pagination",
-                "Use this command to discover project structure",
-                "Check file statistics to understand code distribution",
+                "Use show_venv only when config allowlists specific distributions",
+                "Compare listed paths to DB-backed rows to find unindexed files",
             ],
         }

@@ -16,6 +16,70 @@ import pytest
 from code_analysis.cli import server_manager_cli
 
 
+@pytest.mark.skipif(
+    sys.platform == "win32", reason="chmod +x not used for venv layout test"
+)
+def test_python_executable_for_daemon_prefers_dot_venv(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cfg = tmp_path / "config.json"
+    cfg.write_text("{}", encoding="utf-8")
+    venv_py = tmp_path / ".venv" / "bin" / "python"
+    venv_py.parent.mkdir(parents=True)
+    venv_py.write_bytes(b"#!/bin/sh\nexec true\n")
+    os.chmod(venv_py, 0o755)
+    monkeypatch.delenv(server_manager_cli._ENV_DAEMON_PYTHON, raising=False)
+
+    got = server_manager_cli._python_executable_for_daemon(str(cfg))
+    assert got == str(venv_py.resolve())
+
+
+def test_spawn_daemon_sets_cwd_to_config_parent(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cfg = tmp_path / "config.json"
+    cfg.write_text("{}", encoding="utf-8")
+    pidfile = tmp_path / "x.pid"
+    captured: dict[str, str] = {}
+
+    class _Proc:
+        pid = 99999
+
+    def fake_popen(_a: object, **kwargs: object) -> _Proc:
+        captured["cwd"] = str(kwargs.get("cwd", ""))
+        assert kwargs.get("env") is not None
+        return _Proc()
+
+    monkeypatch.setattr(server_manager_cli.subprocess, "Popen", fake_popen)
+    monkeypatch.setattr(
+        server_manager_cli,
+        "_python_executable_for_daemon",
+        lambda _c: sys.executable,
+    )
+
+    pid = server_manager_cli._spawn_daemon(str(cfg), pidfile)
+    assert pid == 99999
+    assert captured["cwd"] == str(tmp_path.resolve())
+
+
+def test_wait_until_daemon_stable_or_dead_false_when_exits_immediately(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(server_manager_cli, "_is_alive", lambda _pid: False)
+    assert not server_manager_cli._wait_until_daemon_stable_or_dead(
+        1, stable_seconds=0.2, max_wait_seconds=1.0
+    )
+
+
+def test_wait_until_daemon_stable_or_dead_true_when_stays_alive(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(server_manager_cli, "_is_alive", lambda _pid: True)
+    assert server_manager_cli._wait_until_daemon_stable_or_dead(
+        1, stable_seconds=0.15, max_wait_seconds=1.0
+    )
+
+
 @pytest.mark.skipif(sys.platform != "linux", reason="/proc/<pid>/cwd is Linux-specific")
 def test_resolved_config_path_relative_uses_proc_cwd(tmp_path: Path) -> None:
     cfg = tmp_path / "config.json"

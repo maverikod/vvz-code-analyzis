@@ -44,6 +44,11 @@ def test_start_spawns_when_no_pidfile(
 
     monkeypatch.setattr(server_manager_cli, "_spawn_daemon", fake_spawn)
     monkeypatch.setattr(server_manager_cli, "_is_alive", lambda pid: pid == 4242)
+    monkeypatch.setattr(
+        server_manager_cli,
+        "_wait_until_daemon_stable_or_dead",
+        lambda *_a, **_kw: True,
+    )
 
     rc = server_manager_cli._cmd_start(str(config_path))
 

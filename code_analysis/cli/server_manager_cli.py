@@ -24,6 +24,68 @@ _StderrDest = Union[int, io.TextIOWrapper]
 
 DEFAULT_SHUTDOWN_GRACE_SECONDS = 10.0
 
+# Override for tests or exotic layouts (must be an existing executable).
+_ENV_DAEMON_PYTHON = "CODE_ANALYSIS_DAEMON_PYTHON"
+
+
+def _find_venv_python_near_config(config_path: str) -> Optional[str]:
+    """
+    Locate a project virtualenv interpreter next to the config file.
+
+    Walks from ``config.json``'s directory upward (parents), looking for
+    ``.venv/bin/python`` or ``venv/bin/python`` (``Scripts/python.exe`` on
+    Windows). Prefer this over ``sys.executable`` so ``start`` works even when
+    the CLI was invoked with system Python.
+
+    Returns:
+        Path to the interpreter, or None if not found.
+    """
+
+    cfg = Path(config_path).resolve()
+    base: Path = cfg.parent
+    while True:
+        for venv_name in (".venv", "venv"):
+            if sys.platform == "win32":
+                py = base / venv_name / "Scripts" / "python.exe"
+            else:
+                py = base / venv_name / "bin" / "python"
+            try:
+                if py.is_file() and os.access(py, os.X_OK):
+                    return str(py.resolve())
+            except OSError:
+                continue
+        if base == base.parent:
+            break
+        base = base.parent
+    return None
+
+
+def _project_root_dir(config_path: str) -> Path:
+    """Directory containing the config file (project root for ``cwd``)."""
+
+    return Path(config_path).resolve().parent
+
+
+def _python_executable_for_daemon(config_path: str) -> str:
+    """
+    Python binary used to spawn ``code_analysis.main --daemon``.
+
+    Order:
+    1. ``CODE_ANALYSIS_DAEMON_PYTHON`` if set and executable.
+    2. ``.venv`` / ``venv`` found walking up from the config path.
+    3. ``sys.executable`` (CLI interpreter).
+    """
+
+    override = os.environ.get(_ENV_DAEMON_PYTHON, "").strip()
+    if override:
+        p = Path(override)
+        if p.is_file() and os.access(p, os.X_OK):
+            return str(p.resolve())
+    found = _find_venv_python_near_config(config_path)
+    if found is not None:
+        return found
+    return sys.executable
+
 
 def _default_pidfile_path(config_path: str) -> Path:
     """
@@ -115,6 +177,33 @@ def _resolved_config_path_for_daemon_pid(pid: int, cfg_argv: str) -> Optional[st
         return str((cwd_link.resolve() / p).resolve())
     except Exception:
         return None
+
+
+def _wait_until_daemon_stable_or_dead(
+    pid: int,
+    *,
+    stable_seconds: float = 1.25,
+    max_wait_seconds: float = 20.0,
+) -> bool:
+    """
+    Wait until the process has stayed alive for ``stable_seconds`` or exits.
+
+    Catches immediate crashes (wrong interpreter, import errors) while allowing
+    a short startup window; does not wait for HTTP listen (that can take longer).
+
+    Returns:
+        True if PID is still alive after ``stable_seconds`` (within max wait).
+        False if the process disappears before stabilizing.
+    """
+
+    t0 = time.time()
+    while time.time() - t0 < max_wait_seconds:
+        if not _is_alive(pid):
+            return False
+        if time.time() - t0 >= stable_seconds:
+            return True
+        time.sleep(0.1)
+    return _is_alive(pid)
 
 
 def _is_alive(pid: int) -> bool:
@@ -318,6 +407,9 @@ def _spawn_daemon(config_path: str, pidfile: Path) -> int:
     Always passes an **absolute** ``--config`` path so ``ps``/``_find_daemon_pids``
     matches regardless of the caller's current working directory.
 
+    Sets ``cwd`` to the config file's directory (project root) so ``python -m
+    code_analysis`` resolves the package when running from a source tree.
+
     Args:
         config_path: Path to config JSON.
         pidfile: Path to pidfile to write.
@@ -326,7 +418,8 @@ def _spawn_daemon(config_path: str, pidfile: Path) -> int:
         PID of spawned process.
     """
     cfg_abs = str(Path(config_path).resolve())
-    python = sys.executable
+    project_root = str(_project_root_dir(config_path))
+    python = _python_executable_for_daemon(config_path)
     args = [python, "-m", "code_analysis.main", "--config", cfg_abs, "--daemon"]
 
     stderr_dest: _StderrDest = subprocess.DEVNULL
@@ -337,9 +430,14 @@ def _spawn_daemon(config_path: str, pidfile: Path) -> int:
         except OSError:
             stderr_dest = subprocess.DEVNULL
 
+    child_env = os.environ.copy()
+    child_env.setdefault("PYTHONUNBUFFERED", "1")
+
     try:
         proc = subprocess.Popen(
             args,
+            cwd=project_root,
+            env=child_env,
             stdin=subprocess.DEVNULL,
             stdout=subprocess.DEVNULL,
             stderr=stderr_dest,
@@ -460,10 +558,13 @@ def _cmd_start(config_path: str) -> int:
     except Exception:
         pass
 
+    py_exe = _python_executable_for_daemon(config_path)
+    root = _project_root_dir(config_path)
+    print(f"daemon: python={py_exe} cwd={root}", file=sys.stderr)
+
     new_pid = _spawn_daemon(config_path, pidfile)
     print(f"started pid={new_pid}")
-    time.sleep(0.25)
-    if not _is_alive(new_pid):
+    if not _wait_until_daemon_stable_or_dead(new_pid):
         log_hint = _daemon_log_file(str(Path(config_path).resolve()))
         where = (
             str(log_hint)
@@ -471,7 +572,7 @@ def _cmd_start(config_path: str) -> int:
             else "server log (see config server.log_dir)"
         )
         print(
-            f"error: daemon pid={new_pid} exited immediately; check {where}",
+            f"error: daemon pid={new_pid} exited during startup; check {where}",
             file=sys.stderr,
         )
         try:

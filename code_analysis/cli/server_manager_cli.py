@@ -88,6 +88,35 @@ def _read_pid(pidfile: Path) -> Optional[int]:
         return None
 
 
+def _resolved_config_path_for_daemon_pid(pid: int, cfg_argv: str) -> Optional[str]:
+    """
+    Resolve the on-disk config path for a daemon given its ``--config`` argv.
+
+    Relative paths are resolved using the process working directory (Linux:
+    ``/proc/<pid>/cwd``). On non-Linux or if resolution fails, returns None.
+
+    Args:
+        pid: OS process id of the daemon.
+        cfg_argv: Value after ``--config`` in the process argv.
+
+    Returns:
+        Absolute resolved config path, or None.
+    """
+
+    try:
+        p = Path(cfg_argv)
+        if p.is_absolute():
+            return str(p.resolve())
+        if sys.platform != "linux":
+            return None
+        cwd_link = Path(f"/proc/{pid}/cwd")
+        if not cwd_link.exists():
+            return None
+        return str((cwd_link.resolve() / p).resolve())
+    except Exception:
+        return None
+
+
 def _is_alive(pid: int) -> bool:
     """
     Check if a PID exists.
@@ -171,7 +200,6 @@ def _find_daemon_pids(config_path: str) -> list[int]:
     #
     # Use `ps` output and parse argv as a robust fallback.
     cfg_resolved = str(Path(config_path).resolve())
-    cfg_basename = Path(config_path).name
 
     try:
         out = subprocess.check_output(["ps", "-eo", "pid=,args="], text=True)
@@ -207,10 +235,9 @@ def _find_daemon_pids(config_path: str) -> list[int]:
             pids.append(pid)
             continue
 
-        # Accept basename match as a last resort (common case: `config.json`)
-        if Path(cfg_val).name == cfg_basename:
+        resolved = _resolved_config_path_for_daemon_pid(pid, cfg_val)
+        if resolved == cfg_resolved:
             pids.append(pid)
-            continue
 
     return sorted(set(pids))
 

@@ -69,6 +69,19 @@ def test_find_daemon_pids_matches_via_resolved_relative(
     assert server_manager_cli._find_daemon_pids(cfg_res) == [5000]
 
 
+def test_root_daemon_pids_only_drops_fork_children_with_same_cmdline(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Children keep parent's argv until exec; only session roots must count."""
+
+    def ppid_of(pid: int) -> str | None:
+        return {100: 1, 101: 100, 102: 100}.get(pid)
+
+    monkeypatch.setattr(server_manager_cli, "_read_ppid", ppid_of)
+
+    assert server_manager_cli._root_daemon_pids_only([100, 101, 102]) == [100]
+
+
 def test_find_daemon_pids_does_not_match_other_basename_only(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

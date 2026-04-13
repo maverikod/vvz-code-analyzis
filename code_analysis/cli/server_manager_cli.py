@@ -239,7 +239,48 @@ def _find_daemon_pids(config_path: str) -> list[int]:
         if resolved == cfg_resolved:
             pids.append(pid)
 
-    return sorted(set(pids))
+    return _root_daemon_pids_only(sorted(set(pids)))
+
+
+def _read_ppid(pid: int) -> Optional[int]:
+    """Return parent PID from ``/proc`` (Linux only)."""
+
+    if sys.platform != "linux":
+        return None
+    try:
+        status = Path(f"/proc/{pid}/status").read_text(encoding="utf-8")
+    except OSError:
+        return None
+    for line in status.splitlines():
+        if line.startswith("PPid:"):
+            try:
+                return int(line.split()[1])
+            except (IndexError, ValueError):
+                return None
+    return None
+
+
+def _root_daemon_pids_only(pids: list[int]) -> list[int]:
+    """
+    Keep only top-level PIDs when several processes share the same argv.
+
+    Forked children inherit ``code_analysis.main --config … --daemon`` in
+    ``/proc/pid/cmdline`` until exec; they must not be counted as separate
+    daemons for status/stop.
+    """
+
+    if not pids:
+        return []
+    if sys.platform != "linux":
+        return sorted(pids)
+
+    s = set(pids)
+    roots: list[int] = []
+    for pid in sorted(s):
+        ppid = _read_ppid(pid)
+        if ppid is None or ppid not in s:
+            roots.append(pid)
+    return roots
 
 
 def _daemon_log_file(config_path: str) -> Path | None:
@@ -312,6 +353,11 @@ def _cmd_status(config_path: str) -> int:
     """
     Print daemon status.
 
+    Uses the same process discovery as ``stop`` (``_find_daemon_pids``), not only
+    the pidfile. Otherwise ``status`` could report *stopped* while a daemon for
+    this config is running (e.g. pidfile deleted, or started via ``main`` without
+    going through ``start``).
+
     Args:
         config_path: Path to server config JSON.
 
@@ -320,14 +366,32 @@ def _cmd_status(config_path: str) -> int:
     """
 
     pidfile = _default_pidfile_path(config_path)
-    pid = _read_pid(pidfile)
-    if pid is None:
+    pf_pid = _read_pid(pidfile)
+    daemons = _find_daemon_pids(config_path)
+
+    if daemons:
+        if len(daemons) == 1:
+            d = daemons[0]
+            if pf_pid == d:
+                print(f"running pid={d}")
+            elif pf_pid is None:
+                print(f"running pid={d} (pidfile missing)")
+            else:
+                print(f"running pid={d} (pidfile pid={pf_pid} does not match)")
+        else:
+            print(f"running multiple pids={','.join(str(p) for p in daemons)}")
+        return 0
+
+    if pf_pid is None:
         print("stopped")
         return 0
-    if _is_alive(pid):
-        print(f"running pid={pid}")
+    if not _is_alive(pf_pid):
+        print("stopped (stale pidfile)")
         return 0
-    print("stopped (stale pidfile)")
+    print(
+        f"stopped (pidfile pid={pf_pid} alive but no daemon for this config; "
+        "pidfile likely stale)"
+    )
     return 0
 
 

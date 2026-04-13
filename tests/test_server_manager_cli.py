@@ -95,23 +95,60 @@ def test_stop_kills_pidfile_and_matching_find_daemon_pids(
 
 def test_status_stopped_no_pidfile(
     config_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
+    monkeypatch.setattr(server_manager_cli, "_find_daemon_pids", lambda _cfg: [])
+
     rc = server_manager_cli._cmd_status(str(config_path))
+
     assert rc == 0
     assert capsys.readouterr().out.strip() == "stopped"
 
 
-def test_status_running(
+def test_status_running_matches_find_daemon_pids(
     config_path: Path,
     pidfile: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     pidfile.write_text("55", encoding="utf-8")
-    monkeypatch.setattr(server_manager_cli, "_is_alive", lambda _pid: True)
+    monkeypatch.setattr(server_manager_cli, "_find_daemon_pids", lambda _cfg: [55])
 
     rc = server_manager_cli._cmd_status(str(config_path))
 
     assert rc == 0
     assert capsys.readouterr().out.strip() == "running pid=55"
+
+
+def test_status_running_daemon_without_pidfile(
+    config_path: Path,
+    pidfile: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    assert not pidfile.exists()
+    monkeypatch.setattr(server_manager_cli, "_find_daemon_pids", lambda _cfg: [42])
+
+    rc = server_manager_cli._cmd_status(str(config_path))
+
+    assert rc == 0
+    assert capsys.readouterr().out.strip() == "running pid=42 (pidfile missing)"
+
+
+def test_status_pidfile_alive_but_not_our_daemon(
+    config_path: Path,
+    pidfile: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    pidfile.write_text("88", encoding="utf-8")
+    monkeypatch.setattr(server_manager_cli, "_find_daemon_pids", lambda _cfg: [])
+    monkeypatch.setattr(server_manager_cli, "_is_alive", lambda _pid: True)
+
+    rc = server_manager_cli._cmd_status(str(config_path))
+
+    assert rc == 0
+    out = capsys.readouterr().out.strip()
+    assert out.startswith("stopped (pidfile pid=88 alive")
+    assert "pidfile likely stale" in out

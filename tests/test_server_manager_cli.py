@@ -38,6 +38,8 @@ def test_start_spawns_when_no_pidfile(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
+    monkeypatch.setattr(server_manager_cli, "_find_daemon_pids", lambda _cfg: [])
+
     def fake_spawn(_config_path: str, pf: Path) -> int:
         pf.write_text("4242", encoding="utf-8")
         return 4242
@@ -57,24 +59,44 @@ def test_start_spawns_when_no_pidfile(
     assert "started pid=4242" in capsys.readouterr().out
 
 
-def test_start_already_running_when_pidfile_alive(
+def test_start_already_running_when_single_daemon_discovered(
     config_path: Path,
     pidfile: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    pidfile.write_text("777", encoding="utf-8")
-    monkeypatch.setattr(server_manager_cli, "_is_alive", lambda _pid: True)
+    monkeypatch.setattr(server_manager_cli, "_find_daemon_pids", lambda _cfg: [777])
 
     def fail_spawn(_cp: str, _pf: Path) -> int:
-        raise AssertionError("must not spawn when pidfile process is alive")
+        raise AssertionError("must not spawn when a daemon is already running")
 
     monkeypatch.setattr(server_manager_cli, "_spawn_daemon", fail_spawn)
 
     rc = server_manager_cli._cmd_start(str(config_path))
 
     assert rc == 0
+    assert pidfile.read_text(encoding="utf-8").strip() == "777"
     assert "already running pid=777" in capsys.readouterr().out
+
+
+def test_start_errors_when_multiple_daemons_discovered(
+    config_path: Path,
+    pidfile: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setattr(server_manager_cli, "_find_daemon_pids", lambda _cfg: [1, 2])
+
+    def fail_spawn(_cp: str, _pf: Path) -> int:
+        raise AssertionError("must not spawn")
+
+    monkeypatch.setattr(server_manager_cli, "_spawn_daemon", fail_spawn)
+
+    rc = server_manager_cli._cmd_start(str(config_path))
+
+    assert rc == 1
+    err = capsys.readouterr().err
+    assert "multiple daemons" in err
 
 
 def test_stop_kills_pidfile_and_matching_find_daemon_pids(

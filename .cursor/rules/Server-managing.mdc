@@ -2,4 +2,12 @@
 alwaysApply: true
 ---
 
-python -m code_analysis.cli.server_manager_cli --config config.json restart/stop/start
+## Code Analysis Server (daemon)
+
+CLI: `python -m code_analysis.cli.server_manager_cli --config <path/to/config.json> <command>`
+
+Commands: `start` | `stop` | `restart` | `status`
+
+- The manager resolves **`.venv/bin/python`** (or `venv`) walking up from the config file and uses that for the daemon when present, plus **`cwd`** = config directory — so it works even if `python` in PATH is system Python.
+- Override interpreter: **`CODE_ANALYSIS_DAEMON_PYTHON=/abs/path/to/python`**
+- `start` / `status` / `stop` use the same process discovery (not pidfile alone). If `start` reports multiple daemons, run **`stop`** once, then **`start`** again.

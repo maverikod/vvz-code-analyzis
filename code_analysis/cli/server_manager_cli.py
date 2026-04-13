@@ -540,6 +540,10 @@ def _cmd_start(config_path: str) -> int:
     """
     Start daemon process (if not already running).
 
+    Uses the same discovery as ``status``/``stop`` (``_find_daemon_pids``), not
+    only the pidfile, so we do not start a second server when a daemon is already
+    running but the pidfile is missing or stale.
+
     Args:
         config_path: Path to server config JSON.
 
@@ -548,11 +552,25 @@ def _cmd_start(config_path: str) -> int:
     """
 
     pidfile = _default_pidfile_path(config_path)
-    pid = _read_pid(pidfile)
-    if pid is not None and _is_alive(pid):
-        print(f"already running pid={pid}")
+    daemons = _find_daemon_pids(config_path)
+
+    if len(daemons) > 1:
+        print(
+            f"error: multiple daemons for this config (pids={','.join(str(p) for p in daemons)}); "
+            "run stop first",
+            file=sys.stderr,
+        )
+        return 1
+
+    if len(daemons) == 1:
+        try:
+            pidfile.write_text(str(daemons[0]), encoding="utf-8")
+        except OSError as e:
+            print(f"error: cannot write pidfile: {e}", file=sys.stderr)
+            return 1
+        print(f"already running pid={daemons[0]}")
         return 0
-    # stale pidfile
+
     try:
         pidfile.unlink(missing_ok=True)
     except Exception:

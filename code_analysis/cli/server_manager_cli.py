@@ -51,7 +51,11 @@ def _find_venv_python_near_config(config_path: str) -> Optional[str]:
                 py = base / venv_name / "bin" / "python"
             try:
                 if py.is_file() and os.access(py, os.X_OK):
-                    return str(py.resolve())
+                    # Do not use Path.resolve() here: it follows the symlink to the
+                    # system interpreter, so the child would run *without* venv
+                    # site-packages (argv[0] must stay under .venv). absolute() only
+                    # normalizes to a full path.
+                    return str(py.absolute())
             except OSError:
                 continue
         if base == base.parent:
@@ -78,9 +82,9 @@ def _python_executable_for_daemon(config_path: str) -> str:
 
     override = os.environ.get(_ENV_DAEMON_PYTHON, "").strip()
     if override:
-        p = Path(override)
+        p = Path(override).expanduser()
         if p.is_file() and os.access(p, os.X_OK):
-            return str(p.resolve())
+            return str(p.absolute())
     found = _find_venv_python_near_config(config_path)
     if found is not None:
         return found

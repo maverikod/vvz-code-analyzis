@@ -16,6 +16,25 @@ import pytest
 from code_analysis.cli import server_manager_cli
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="symlink venv layout")
+def test_find_venv_keeps_symlink_path_not_system_target(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Regression: Path.resolve() collapsed .venv/bin/python to /usr/bin/... ."""
+
+    cfg = tmp_path / "config.json"
+    cfg.write_text("{}", encoding="utf-8")
+    venv_py = tmp_path / ".venv" / "bin" / "python"
+    venv_py.parent.mkdir(parents=True)
+    venv_py.symlink_to("/usr/bin/python3")
+    monkeypatch.delenv(server_manager_cli._ENV_DAEMON_PYTHON, raising=False)
+
+    got = server_manager_cli._find_venv_python_near_config(str(cfg))
+    assert got == str(venv_py.absolute())
+    assert ".venv" in got
+
+
 @pytest.mark.skipif(
     sys.platform == "win32", reason="chmod +x not used for venv layout test"
 )
@@ -31,7 +50,7 @@ def test_python_executable_for_daemon_prefers_dot_venv(
     monkeypatch.delenv(server_manager_cli._ENV_DAEMON_PYTHON, raising=False)
 
     got = server_manager_cli._python_executable_for_daemon(str(cfg))
-    assert got == str(venv_py.resolve())
+    assert got == str(venv_py.absolute())
 
 
 def test_spawn_daemon_sets_cwd_to_config_parent(

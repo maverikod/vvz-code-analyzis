@@ -42,11 +42,18 @@ pip install code-analysis-tool
 
 ### From source
 
+Dependencies and metadata live in **`pyproject.toml`** (distribution name `code-analysis`). Runtime install:
+
 ```bash
 git clone https://github.com/vasilyvz/code-analysis-tool.git
 cd code-analysis-tool
+python -m venv .venv && source .venv/bin/activate   # Windows: .venv\Scripts\activate
 pip install -e .
+# optional — pytest, black, flake8, mypy:
+pip install -e ".[dev]"
 ```
+
+Or: `pip install -r requirements.txt` (editable install from this repo).
 
 ## Usage
 

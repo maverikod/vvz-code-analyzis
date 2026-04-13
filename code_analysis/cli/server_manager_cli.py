@@ -315,6 +315,9 @@ def _spawn_daemon(config_path: str, pidfile: Path) -> int:
     stderr is redirected to server log file (from config server.log_dir)
     so that crash tracebacks and errors are visible in logs.
 
+    Always passes an **absolute** ``--config`` path so ``ps``/``_find_daemon_pids``
+    matches regardless of the caller's current working directory.
+
     Args:
         config_path: Path to config JSON.
         pidfile: Path to pidfile to write.
@@ -322,11 +325,12 @@ def _spawn_daemon(config_path: str, pidfile: Path) -> int:
     Returns:
         PID of spawned process.
     """
+    cfg_abs = str(Path(config_path).resolve())
     python = sys.executable
-    args = [python, "-m", "code_analysis.main", "--config", config_path, "--daemon"]
+    args = [python, "-m", "code_analysis.main", "--config", cfg_abs, "--daemon"]
 
     stderr_dest: _StderrDest = subprocess.DEVNULL
-    log_file_path = _daemon_log_file(config_path)
+    log_file_path = _daemon_log_file(cfg_abs)
     if log_file_path is not None:
         try:
             stderr_dest = open(log_file_path, "a", encoding="utf-8")
@@ -387,6 +391,10 @@ def _cmd_status(config_path: str) -> int:
         return 0
     if not _is_alive(pf_pid):
         print("stopped (stale pidfile)")
+        try:
+            pidfile.unlink(missing_ok=True)
+        except OSError:
+            pass
         return 0
     print(
         f"stopped (pidfile pid={pf_pid} alive but no daemon for this config; "
@@ -454,6 +462,23 @@ def _cmd_start(config_path: str) -> int:
 
     new_pid = _spawn_daemon(config_path, pidfile)
     print(f"started pid={new_pid}")
+    time.sleep(0.25)
+    if not _is_alive(new_pid):
+        log_hint = _daemon_log_file(str(Path(config_path).resolve()))
+        where = (
+            str(log_hint)
+            if log_hint is not None
+            else "server log (see config server.log_dir)"
+        )
+        print(
+            f"error: daemon pid={new_pid} exited immediately; check {where}",
+            file=sys.stderr,
+        )
+        try:
+            pidfile.unlink(missing_ok=True)
+        except OSError:
+            pass
+        return 1
     return 0
 
 

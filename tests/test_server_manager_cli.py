@@ -43,6 +43,7 @@ def test_start_spawns_when_no_pidfile(
         return 4242
 
     monkeypatch.setattr(server_manager_cli, "_spawn_daemon", fake_spawn)
+    monkeypatch.setattr(server_manager_cli, "_is_alive", lambda pid: pid == 4242)
 
     rc = server_manager_cli._cmd_start(str(config_path))
 
@@ -134,6 +135,23 @@ def test_status_running_daemon_without_pidfile(
 
     assert rc == 0
     assert capsys.readouterr().out.strip() == "running pid=42 (pidfile missing)"
+
+
+def test_status_removes_stale_pidfile(
+    config_path: Path,
+    pidfile: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    pidfile.write_text("999999", encoding="utf-8")
+    monkeypatch.setattr(server_manager_cli, "_find_daemon_pids", lambda _cfg: [])
+    monkeypatch.setattr(server_manager_cli, "_is_alive", lambda _pid: False)
+
+    rc = server_manager_cli._cmd_status(str(config_path))
+
+    assert rc == 0
+    assert "stale pidfile" in capsys.readouterr().out
+    assert not pidfile.exists()
 
 
 def test_status_pidfile_alive_but_not_our_daemon(

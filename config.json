@@ -155,6 +155,14 @@
     "vectorization_retry_attempts": 3,
     "vectorization_retry_delay": 10.0,
     "log_vectorization_chunker_trace": true,
+    "ignore_exceptions": [
+      ".venv/lib/**/site-packages/mcp/**/*.py",
+      ".venv/lib/**/site-packages/mcp_proxy_adapter/**/*.py",
+      ".venv/lib/**/site-packages/embed_client/**/*.py",
+      ".venv/lib/**/site-packages/svo_client/**/*.py",
+      ".venv/lib/**/site-packages/mcp_security_framework/**/*.py",
+      ".venv/lib/**/site-packages/queuemgr/**/*.py"
+    ],
     "worker": {
       "enabled": true,
       "poll_interval": 30,

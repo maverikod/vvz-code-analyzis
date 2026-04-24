@@ -1,8 +1,9 @@
 """
 Pre-scan ignore purge: remove DB rows for paths excluded by watcher ignore rules.
 
-DB-only (no disk deletes). Uses the same ``should_ignore_path`` inputs as
-``scan_directory``, then one logical write with FK-safe DELETE order aligned to
+DB-only (no disk deletes). Uses the same traversal pruning (``should_skip_dir``)
+and ``should_ignore_path`` rules as ``scan_directory``, then one logical write
+with FK-safe DELETE order aligned to
 ``build_delete_project_full_clear_batch`` (scoped to a temp table of file ids).
 
 Author: Vasiliy Zdanovskiy
@@ -21,6 +22,8 @@ from code_analysis.core.sql_portable import (
     WHERE_FILES_ACTIVE,
     database_has_sqlite_code_content_fts,
 )
+
+from .scanner import is_traversable_venv_root, should_ignore_path, should_skip_dir
 
 logger = logging.getLogger(__name__)
 
@@ -88,18 +91,16 @@ def list_non_ignored_code_files_under_root(
     ignore_exception_files: Optional[Set[Path]] = None,
 ) -> Tuple[Path, ...]:
     """
-    Walk ``project_root`` with directory pruning using ``should_ignore_path``.
+    Walk ``project_root`` with directory pruning (``should_skip_dir`` + ``should_ignore_path``).
 
     Returns file paths that are **not** ignored (pruned tree, same rules as
     ``scan_directory``). Used for tests and diagnostics; purge selection uses
     ``collect_file_ids_to_purge_for_ignore_policy`` on DB rows.
     """
-    from code_analysis.core.file_watcher_pkg.scanner import should_ignore_path
-
     patterns = list(ignore_patterns)
     root = project_root.resolve()
     yielded: List[Path] = []
-    for dirpath, dirnames, filenames in os.walk(root, topdown=True):
+    for dirpath, dirnames, filenames in os.walk(root, topdown=True, followlinks=False):
         dir_path = Path(dirpath)
         if should_ignore_path(
             dir_path,
@@ -109,18 +110,20 @@ def list_non_ignored_code_files_under_root(
         ):
             dirnames[:] = []
             continue
-        pruned: List[str] = []
-        for name in dirnames:
+        pruned_dirs: List[str] = []
+        for name in sorted(dirnames):
             child = dir_path / name
+            if should_skip_dir(child, walk_root=root):
+                continue
             if should_ignore_path(
                 child,
                 patterns,
                 allowed_venv_py_files=allowed_venv_py_files,
                 ignore_exception_files=ignore_exception_files,
-            ):
+            ) and not is_traversable_venv_root(child):
                 continue
-            pruned.append(name)
-        dirnames[:] = pruned
+            pruned_dirs.append(name)
+        dirnames[:] = pruned_dirs
         for name in filenames:
             fp = dir_path / name
             if should_ignore_path(

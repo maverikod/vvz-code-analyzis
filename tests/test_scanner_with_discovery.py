@@ -12,7 +12,7 @@ from pathlib import Path
 
 import pytest
 
-from code_analysis.core.file_watcher_pkg.scanner import scan_directory
+from code_analysis.core.file_watcher_pkg.scanner import scan_directory, should_skip_dir
 
 
 @pytest.fixture
@@ -198,3 +198,41 @@ class TestScannerWithDiscovery:
         assert file_info["project_root"] == project_root.resolve()
         assert file_info["size"] > 0
         assert file_info["mtime"] > 0
+
+    def test_scan_directory_skips_nested_test_data_mirror(self, temp_dir, project_id):
+        """Nested ``project/test_data/...`` must not be traversed (no stray .py)."""
+        project_root = temp_dir / "proj"
+        project_root.mkdir()
+        create_projectid_file(project_root, project_id)
+        create_file(project_root, "ok.py", "x=1")
+        nested = project_root / "test_data" / "mirror"
+        nested.mkdir(parents=True)
+        create_file(nested, "bad.py", "x=2")
+
+        files = scan_directory(temp_dir, [temp_dir])
+        assert len(files) == 1
+        assert any("ok.py" in k for k in files)
+        assert not any("bad.py" in k for k in files)
+
+    def test_scan_directory_skips_data_trash_subtree(self, temp_dir, project_id):
+        """``data/trash`` must not be descended into."""
+        project_root = temp_dir / "proj"
+        project_root.mkdir()
+        create_projectid_file(project_root, project_id)
+        create_file(project_root, "ok.py", "x=1")
+        trash_py = (
+            project_root / "data" / "trash" / "snap" / "gone.py"
+        )
+        trash_py.parent.mkdir(parents=True)
+        trash_py.write_text("x=3", encoding="utf-8")
+
+        files = scan_directory(temp_dir, [temp_dir])
+        assert len(files) == 1
+        assert not any("gone.py" in k for k in files)
+
+    def test_should_skip_dir_nested_test_data(self, temp_dir):
+        root = temp_dir.resolve()
+        inner = temp_dir / "a" / "test_data"
+        assert should_skip_dir(inner, walk_root=root) is True
+        top = temp_dir / "test_data"
+        assert should_skip_dir(top, walk_root=root) is False

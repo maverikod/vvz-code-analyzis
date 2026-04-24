@@ -1,7 +1,11 @@
 """
 Directory scanner for file watcher worker.
 
-Scans configured directories for code files and detects changes.
+Scans configured directories for code files and discovers projects.
+
+Directory pruning (``should_skip_dir``) avoids descending into nested ``test_data``
+mirrors, ``data/trash``, caches, and noisy venv subtrees while still allowing
+``.venv``/``venv`` → ``lib``/``python*``/``site-packages`` for allowlisted indexing.
 
 Author: Vasiliy Zdanovskiy
 email: vasilyvz@gmail.com
@@ -9,6 +13,7 @@ email: vasilyvz@gmail.com
 
 import fnmatch
 import logging
+import os
 from pathlib import Path
 from typing import Dict, List, Optional, Set
 
@@ -24,6 +29,113 @@ CODE_FILE_EXTENSIONS = set(settings.get("code_file_extensions"))
 
 # Default patterns to ignore (from settings)
 DEFAULT_IGNORE_PATTERNS = set(settings.get("default_ignore_patterns"))
+
+# Basenames to prune at traversal time (filesystem-only; no DB).
+_SKIP_DIR_BASENAMES = frozenset(
+    {
+        "__pycache__",
+        ".git",
+        "node_modules",
+        "build",
+        "dist",
+        ".pytest_cache",
+        ".mypy_cache",
+        ".ruff_cache",
+        "eggs",
+        ".eggs",
+        "wheels",
+        ".tox",
+        "htmlcov",
+        ".cache",
+        "ENV",
+        "env",
+        "env.bak",
+        "venv.bak",
+    }
+)
+
+
+def _path_has_adjacent_parts(parts: tuple[str, ...], a: str, b: str) -> bool:
+    for i in range(len(parts) - 1):
+        if parts[i] == a and parts[i + 1] == b:
+            return True
+    return False
+
+
+def _nested_test_data_mirror(dir_path: Path, walk_root: Path) -> bool:
+    """
+    True if this directory is a nested ``test_data`` copy under ``walk_root``.
+
+    Allows a single top-level ``<walk_root>/test_data`` segment (watch root layout
+    or a project folder named ``test_data``); prunes deeper ``.../test_data/...``.
+    """
+    if dir_path.name != "test_data":
+        return False
+    try:
+        rel = dir_path.resolve().relative_to(walk_root.resolve())
+    except (OSError, ValueError):
+        return True
+    return len(rel.parts) >= 2
+
+
+def should_skip_dir(dir_path: Path, *, walk_root: Path) -> bool:
+    """
+    Return True if the file watcher must not descend into this directory.
+
+    Prunes nested test mirrors, application trash/trees, caches, and venv noise
+    (``bin``/``include``/… under ``.venv``) while keeping the ``site-packages`` chain.
+
+    Args:
+        dir_path: Candidate subdirectory (typically ``parent / name`` from ``os.walk``).
+        walk_root: Root of the current ``os.walk`` (scan root or project root).
+
+    Returns:
+        True to skip traversal into ``dir_path``.
+    """
+    try:
+        resolved = dir_path.resolve()
+        wr = walk_root.resolve()
+    except OSError:
+        resolved = dir_path
+        wr = walk_root
+    if resolved == wr:
+        return False
+    parts = resolved.parts
+    if _nested_test_data_mirror(dir_path, walk_root):
+        return True
+    if _path_has_adjacent_parts(parts, "data", "trash"):
+        return True
+    if _path_has_adjacent_parts(parts, "data", "versions"):
+        return True
+    name = resolved.name
+    if name in _SKIP_DIR_BASENAMES:
+        return True
+    parent = resolved.parent
+    pn, cn = parent.name, name
+    if pn in (".venv", "venv") and cn in (
+        "bin",
+        "include",
+        "share",
+        "etc",
+        "Scripts",
+    ):
+        return True
+    gpp = parent.parent
+    if gpp.name in (".venv", "venv") and pn == "lib" and not cn.startswith("python"):
+        return True
+    if (
+        pn.startswith("python")
+        and gpp.name == "lib"
+        and gpp.parent.name in (".venv", "venv")
+        and cn != "site-packages"
+    ):
+        return True
+    return False
+
+
+def is_traversable_venv_root(path: Path) -> bool:
+    """Allow descending into project-local ``.venv`` / ``venv`` roots."""
+    return path.is_dir() and path.name in (".venv", "venv")
 
 
 def should_ignore_path(
@@ -181,19 +293,44 @@ def scan_directory(
     watch_dirs_resolved = [Path(wd).resolve() for wd in watch_dirs]
 
     try:
-        for item in root_dir.rglob("*"):
-            if should_ignore_path(
-                item,
-                ignore_patterns,
-                allowed_venv_py_files=allowed_venv_py_files,
-                ignore_exception_files=ignore_exception_files,
-            ):
-                continue
+        walk_root = root_dir.resolve()
+    except OSError:
+        walk_root = root_dir
 
-            if item.is_file():
+    try:
+        for dirpath, dirnames, filenames in os.walk(
+            walk_root, topdown=True, followlinks=False
+        ):
+            dir_path = Path(dirpath)
+            # Prune before visiting children: traversal exclusions + ignore patterns.
+            pruned: List[str] = []
+            for d in sorted(dirnames):
+                child_dir = dir_path / d
+                if should_skip_dir(child_dir, walk_root=walk_root):
+                    continue
+                if should_ignore_path(
+                    child_dir,
+                    ignore_patterns,
+                    allowed_venv_py_files=allowed_venv_py_files,
+                    ignore_exception_files=ignore_exception_files,
+                ) and not is_traversable_venv_root(child_dir):
+                    continue
+                pruned.append(d)
+            dirnames[:] = pruned
+
+            for name in filenames:
+                item = dir_path / name
+                if should_ignore_path(
+                    item,
+                    ignore_patterns,
+                    allowed_venv_py_files=allowed_venv_py_files,
+                    ignore_exception_files=ignore_exception_files,
+                ):
+                    continue
+                if not item.is_file():
+                    continue
                 try:
                     stat = item.stat()
-                    # Use unified path normalization method
                     try:
                         normalized = normalize_file_path(
                             item, watch_dirs=watch_dirs_resolved

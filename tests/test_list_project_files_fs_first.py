@@ -183,6 +183,42 @@ async def test_show_venv_adds_only_allowlisted_record_files(tmp_path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_ignore_exceptions_paths_listed_without_show_venv(tmp_path) -> None:
+    """ignore_exceptions must appear in listing (parity with watcher / indexing)."""
+    root = tmp_path / "proj"
+    root.mkdir()
+    (root / "main.py").write_text("#\n")
+    vdir = root / ".venv"
+    vdir.mkdir()
+    (vdir / "forced.py").write_text("x = 1\n", encoding="utf-8")
+
+    mock_db = MagicMock()
+    mock_db.get_project_files.return_value = []
+    mock_db.disconnect = MagicMock()
+
+    with patch.object(
+        ListProjectFilesMCPCommand, "_resolve_project_root", return_value=root
+    ), patch.object(
+        ListProjectFilesMCPCommand,
+        "_open_database_from_config",
+        return_value=mock_db,
+    ), patch(
+        "code_analysis.commands.ast.list_files.load_ignore_exceptions_from_config",
+        return_value=[".venv/forced.py"],
+    ):
+        cmd = ListProjectFilesMCPCommand()
+        result = await cmd.execute(
+            project_id="00000000-0000-0000-0000-000000000099",
+            show_venv=False,
+        )
+
+    assert result.data is not None
+    rels = [f["relative_path"] for f in result.data["files"]]
+    assert "main.py" in rels
+    assert ".venv/forced.py" in rels
+
+
+@pytest.mark.asyncio
 async def test_show_venv_empty_allowlist_adds_no_venv_files(tmp_path) -> None:
     root = tmp_path / "proj"
     root.mkdir()

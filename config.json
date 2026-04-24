@@ -168,7 +168,9 @@
       "chunk_metadata_adapter",
       "embed-client",
       "mcp-proxy-adapter",
-      "mcp-security-framework"
+      "mcp-security-framework",
+      "queuemgr",
+      "svo-client"
     ],
     "worker": {
       "enabled": true,

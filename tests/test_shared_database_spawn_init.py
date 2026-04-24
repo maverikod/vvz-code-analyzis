@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import importlib
 import sys
+from pathlib import Path
 from typing import Any, cast
 
 import pytest
@@ -58,10 +59,30 @@ def test_get_shared_database_rejects_other_process(
 
 def test_spawn_init_reopens_shared_database_for_child_process(
     monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
 ) -> None:
     """Spawn init must replace inherited DB client with a process-local one."""
+    from code_analysis.commands import base_mcp_command as bcm
     from code_analysis.core import shared_database as shared_database
     import code_analysis.commands.base_mcp_command_open_db as open_db_module
+
+    # Module import runs ensure_shared_database only when driver socket path exists.
+    fake_sock = tmp_path / "present_driver.sock"
+    fake_sock.write_bytes(b"")
+
+    class _FakeStorage:
+        db_path = tmp_path / "dummy.sqlite"
+
+    monkeypatch.setattr(
+        bcm.BaseMCPCommand,
+        "_get_shared_storage",
+        staticmethod(lambda: _FakeStorage()),
+    )
+    monkeypatch.setattr(
+        bcm,
+        "_get_socket_path_from_db_path",
+        lambda _db_path: str(fake_sock),
+    )
 
     parent_client = _DummyClient("parent")
     child_client = _DummyClient("child")

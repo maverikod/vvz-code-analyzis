@@ -15,7 +15,9 @@ from mcp_proxy_adapter.commands.result import SuccessResult
 
 from ...core.venv_path_policy import (
     build_allowlisted_site_packages_py_files,
+    expand_ignore_exception_py_files,
     iter_project_python_files_excluding_venv,
+    load_ignore_exceptions_from_config,
     load_venv_site_packages_index_allowlist_from_config,
 )
 from ..base_mcp_command import BaseMCPCommand
@@ -57,18 +59,21 @@ def _build_db_map_by_rel_key(project_root: Path, files: List[Any]) -> Dict[str, 
 
 def _enumerate_project_py_paths(project_root: Path, show_venv: bool) -> List[Path]:
     """
-    Filesystem-first list of ``.py`` paths under the project.
+    File system list aligned with indexing / watcher discovery.
 
-    By default excludes project-local ``.venv`` / ``venv`` trees (same as indexing).
-    With ``show_venv``, adds only config-allowlisted site-packages ``.py`` files
-    (RECORD-derived), never the whole virtualenv.
+    Includes project sources (excluding venv trees), ``.py`` paths from
+    ``code_analysis.ignore_exceptions`` (glob, project-relative), and — when
+    ``show_venv`` — allowlisted site-packages files from RECORD (same as
+    :func:`code_analysis.core.venv_path_policy.collect_python_files_for_indexing`).
     """
     root = project_root.resolve()
     found: List[Path] = list(iter_project_python_files_excluding_venv(root))
     if show_venv:
         allowlist = load_venv_site_packages_index_allowlist_from_config()
         found.extend(build_allowlisted_site_packages_py_files(root, allowlist))
-    # Stable sort before pagination
+    exc_patterns = load_ignore_exceptions_from_config()
+    if exc_patterns:
+        found.extend(expand_ignore_exception_py_files(root, exc_patterns))
     uniq = {p.resolve() for p in found}
     return sorted(uniq, key=lambda p: _canonical_relative_path(root, p))
 
@@ -104,8 +109,9 @@ class ListProjectFilesMCPCommand(BaseMCPCommand):
     version = "1.0.0"
     descr = (
         "List project .py files from disk first; merge DB metadata when indexed. "
-        "Skips project-local .venv/venv by default; show_venv adds only "
-        "config-allowlisted venv site-packages .py files (RECORD-based)."
+        "Skips project-local .venv/venv except paths matched by "
+        "code_analysis.ignore_exceptions and (when show_venv) RECORD-allowlisted "
+        "site-packages distributions."
     )
     category = "ast"
     author = "Vasiliy Zdanovskiy"
@@ -140,10 +146,11 @@ class ListProjectFilesMCPCommand(BaseMCPCommand):
                 "show_venv": {
                     "type": "boolean",
                     "description": (
-                        "When true, include only config-allowlisted virtualenv "
-                        "site-packages .py files (RECORD-based), in addition to project "
-                        "sources; never lists the whole venv. Default false skips all "
-                        "project-local .venv/venv trees."
+                        "When true, add config-allowlisted virtualenv site-packages "
+                        "``.py`` files (RECORD-based) on top of project sources and "
+                        "``code_analysis.ignore_exceptions`` matches. When false, "
+                        "``.venv``/``venv`` are still skipped except for paths matched by "
+                        "``ignore_exceptions`` (same as indexing)."
                     ),
                     "default": False,
                 },
@@ -235,15 +242,17 @@ class ListProjectFilesMCPCommand(BaseMCPCommand):
                 "The list_project_files command lists Python source files under the project "
                 "root by walking the filesystem first, then attaching database metadata when "
                 "a matching indexed row exists. Project-local ``.venv`` and ``venv`` "
-                "directories are skipped by default (same as indexing). Set ``show_venv`` "
-                "to true to additionally include only config-allowlisted site-packages ``.py`` "
-                "files (from pip RECORD entries), never the entire virtualenv.\n\n"
+                "trees are skipped except for ``.py`` paths matched by "
+                "``code_analysis.ignore_exceptions`` (same as the file watcher and indexing). "
+                "Set ``show_venv`` to true to additionally include RECORD-derived ``.py`` "
+                "files for pip distributions in "
+                "``venv_site_packages_index_allowlisted_distributions``.\n\n"
                 "Operation flow:\n"
                 "1. Resolves project root from ``project_id``\n"
                 "2. Opens database connection\n"
                 "3. Loads non-deleted file rows for the project (for metadata join)\n"
-                "4. Enumerates ``.py`` files on disk (excluding venv unless ``show_venv`` "
-                "adds allowlisted venv paths)\n"
+                "4. Enumerates ``.py`` files on disk (project sources + ignore_exceptions + "
+                "optional allowlisted venv RECORD paths)\n"
                 "5. If ``file_pattern`` is provided, filters by fnmatch on relative paths\n"
                 "6. Sorts paths stably, then applies pagination (offset/limit)\n"
                 "7. For each filesystem file, merges DB row when relative path matches; "
@@ -312,11 +321,11 @@ class ListProjectFilesMCPCommand(BaseMCPCommand):
                 },
                 "show_venv": {
                     "description": (
-                        "When true, include only ``.py`` files under site-packages that belong "
-                        "to pip distributions allowlisted in server config "
-                        "(venv_site_packages_index_allowlisted_distributions), resolved via "
-                        "dist-info RECORD. Does not list the whole venv. When false (default), "
-                        "no files under project-local ``.venv``/``venv`` are enumerated."
+                        "When true, add ``.py`` files under site-packages for pip distributions "
+                        "allowlisted in ``venv_site_packages_index_allowlisted_distributions`` "
+                        "(dist-info RECORD). ``ignore_exceptions`` paths are always included "
+                        "when false or true; this flag only adds the extra allowlisted venv "
+                        "RECORD set."
                     ),
                     "type": "boolean",
                     "required": False,

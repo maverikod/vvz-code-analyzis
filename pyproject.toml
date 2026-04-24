@@ -21,7 +21,7 @@ dependencies = [
     "lark>=1.1.0",
     "libcst>=1.1.0",
     "embed-client>=3.1.7.24",
-    "mcp-proxy-adapter>=6.10.1",
+    "mcp-proxy-adapter>=8.10.4",
     "psycopg[binary]>=3.1",
 ]
 

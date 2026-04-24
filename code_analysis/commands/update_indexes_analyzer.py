@@ -14,13 +14,16 @@ import sys
 from pathlib import Path
 from typing import Any, Callable, Dict, Optional
 
+from ..core.constants import FILE_MODIFICATION_TOLERANCE
 from ..core.database.file_tree_sync import sync_file_to_db_atomic
+from ..core.database.files.helpers import _last_modified_to_unix
 from .update_indexes_entities import _extract_docstring
 
 logger = logging.getLogger(__name__)
 
 # Short phase labels for progress heartbeat (bounded size)
 PHASE_READ = "read"
+PHASE_SKIPPED = "skipped"
 PHASE_PARSE = "parse"
 PHASE_AST = "AST"
 PHASE_CST = "CST"
@@ -48,10 +51,12 @@ def analyze_file(
         project_id: Project identifier.
         root_path: Root path to compute relative file paths.
         progress_callback: Optional callback(phase) for progress heartbeat.
-        force: If True, force file record update even when mtime matches.
+        force: If True, force full re-analysis even when disk mtime matches ``files.last_modified``.
 
     Returns:
         Per-file result dictionary with status and extracted counts.
+        Status ``skipped`` means disk mtime matches DB within :data:`FILE_MODIFICATION_TOLERANCE`
+        and no work was done (no file read, no parse).
     """
 
     def _heartbeat(phase: str) -> None:
@@ -91,6 +96,27 @@ def analyze_file(
                 "error_type": type(e).__name__,
             }
 
+        abs_file_path = str(file_path.resolve())
+        tol = FILE_MODIFICATION_TOLERANCE
+        file_record = database.get_file_by_path(abs_file_path, project_id)
+        if file_record and not force:
+            db_lm = _last_modified_to_unix(file_record.get("last_modified"))
+            if db_lm is not None and abs(db_lm - file_mtime) <= tol:
+                _heartbeat(PHASE_SKIPPED)
+                logger.debug(
+                    "Skipping unchanged file %s (db_mtime=%s disk_mtime=%s)",
+                    rel_path,
+                    db_lm,
+                    file_mtime,
+                )
+                return {
+                    "file": rel_path,
+                    "status": "skipped",
+                    "reason": "mtime_unchanged",
+                    "db_mtime": db_lm,
+                    "disk_mtime": file_mtime,
+                }
+
         _heartbeat(PHASE_READ)
         try:
             file_content = file_path.read_text(encoding="utf-8")
@@ -110,14 +136,12 @@ def analyze_file(
             }
 
         lines = len(file_content.splitlines())
-        abs_file_path = str(file_path.resolve())
 
-        file_record = database.get_file_by_path(abs_file_path, project_id)
         if file_record:
             file_id = file_record["id"]
-            last_modified = file_record.get("last_modified", 0)
-            epsilon = 0.01
-            if force or abs(last_modified - file_mtime) > epsilon:
+            db_lm = _last_modified_to_unix(file_record.get("last_modified"))
+            need_row_update = force or db_lm is None or abs(db_lm - file_mtime) > tol
+            if need_row_update:
                 try:
                     has_docstring = bool(_extract_docstring(ast.parse(file_content)))
                 except SyntaxError:

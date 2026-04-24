@@ -16,6 +16,7 @@ import time
 from typing import Any, List, TYPE_CHECKING
 
 from ..core.database.logical_write_program import LogicalWriteProgramV1, SqlParamPair
+from ..core.sql_portable import database_has_sqlite_code_content_fts
 
 if TYPE_CHECKING:
     from ..core.database_client.client import DatabaseClient
@@ -28,8 +29,13 @@ _FILES_OF = "SELECT id FROM files WHERE project_id = ?"
 _CLASSES_OF = f"SELECT id FROM classes WHERE file_id IN ({_FILES_OF})"
 
 
-def build_delete_project_full_clear_batch(project_id: str) -> List[SqlParamPair]:
-    """Build one batch of (sql, params) DELETEs in FK-safe order; params use project_id only."""
+def build_delete_project_full_clear_batch(
+    project_id: str, *, include_code_content_fts: bool = True
+) -> List[SqlParamPair]:
+    """Build one batch of (sql, params) DELETEs in FK-safe order; params use project_id only.
+
+    ``include_code_content_fts``: set False for PostgreSQL (no FTS5 virtual table).
+    """
     pid = project_id
     ops: List[SqlParamPair] = []
 
@@ -43,14 +49,15 @@ def build_delete_project_full_clear_batch(project_id: str) -> List[SqlParamPair]
     )
     ops.append(("DELETE FROM code_duplicates WHERE project_id = ?", (pid,)))
 
-    # FTS rows for project content
-    ops.append(
-        (
-            "DELETE FROM code_content_fts WHERE rowid IN ("
-            "SELECT id FROM code_content WHERE file_id IN (" + _FILES_OF + "))",
-            (pid,),
+    # FTS rows for project content (SQLite / sqlite_proxy only)
+    if include_code_content_fts:
+        ops.append(
+            (
+                "DELETE FROM code_content_fts WHERE rowid IN ("
+                "SELECT id FROM code_content WHERE file_id IN (" + _FILES_OF + "))",
+                (pid,),
+            )
         )
-    )
 
     # code_chunks (depends on files / classes / functions / methods)
     ops.append(
@@ -273,7 +280,10 @@ async def _clear_project_data_impl(database: DatabaseClient, project_id: str) ->
     clear_start = time.time()
     logger.info(f"[CLEAR_PROJECT_DATA] Starting clear for project {project_id}")
 
-    batch = build_delete_project_full_clear_batch(project_id)
+    batch = build_delete_project_full_clear_batch(
+        project_id,
+        include_code_content_fts=database_has_sqlite_code_content_fts(database),
+    )
     program: LogicalWriteProgramV1 = {"batches": [batch]}
     try:
         database.execute_logical_write_operation(program)

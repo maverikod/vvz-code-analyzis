@@ -78,6 +78,7 @@ This includes, but is not limited to:
 - repeated timeouts attributable to server commands
 - server crashes, malformed server responses, missing expected fields
 - wrong behavior of server commands (bad result shape, incorrect edits, failed saves, broken command semantics)
+- **command-level failures that indicate a product bug** — e.g. `fulltext_search` / `SEARCH_ERROR` with SQLite or FTS5 messages (`no such column`, `fts5: syntax error`, etc.). **Do not** silently switch to `semantic_search` or another command as a workaround **without** reporting this as a server-side defect and the exact query/params that triggered it.
 
 When such a server-side error happens:
 

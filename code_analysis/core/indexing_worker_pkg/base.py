@@ -26,26 +26,23 @@ class IndexingWorker:
     def __init__(
         self,
         db_path: Path,
-        socket_path: Optional[str] = None,
+        config_path: str,
         batch_size: int = 5,
         poll_interval: int = 30,
         status_file_path: Optional[Path] = None,
-        config_path: Optional[str] = None,
         log_timing: bool = False,
     ):
         """Initialize indexing worker.
 
         Args:
             db_path: Path to database file
-            socket_path: Path to database driver socket (for DatabaseClient)
             batch_size: Max files per project per cycle (default 5)
             poll_interval: Seconds between cycles (default 30)
             status_file_path: Optional path to write current_operation/current_file for monitoring
-            config_path: Optional path to config file; when set, vectorize file after each successful index
+            config_path: Absolute path to server ``config.json`` (required for DB client factory).
             log_timing: When True, log [TIMING] lines for bottleneck analysis (log_all_operations_timing).
         """
         self.db_path = db_path
-        self.socket_path = socket_path
         self.batch_size = batch_size
         self.poll_interval = poll_interval
         self.status_file_path = Path(status_file_path) if status_file_path else None

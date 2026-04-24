@@ -72,6 +72,7 @@ class RestoreProjectFromTrashMCPCommand(BaseMCPCommand):
         try:
             import shutil
 
+            from ...core.sql_portable import WHERE_FILES_ACTIVE
             from ...core.storage_paths import load_raw_config, resolve_storage_paths
             from ...core.trash_utils import get_project_id_from_trash_folder
             from ..clear_project_data_impl import unmark_project_deleted_impl
@@ -132,7 +133,7 @@ class RestoreProjectFromTrashMCPCommand(BaseMCPCommand):
                 # Trashed state is determined by files table only: all files must be deleted
                 active_result = database.execute(
                     "SELECT COUNT(*) as active FROM files WHERE project_id = ? "
-                    "AND (deleted = 0 OR deleted IS NULL)",
+                    "AND " + WHERE_FILES_ACTIVE,
                     (project_id,),
                 )
                 data = (

@@ -7,6 +7,7 @@ email: vasilyvz@gmail.com
 
 import asyncio
 
+from ...core.sql_portable import WHERE_FILES_ACTIVE, WHERE_PROJECTS_ACTIVE_P
 from ._shared import (
     Any,
     BaseMCPCommand,
@@ -44,7 +45,10 @@ class ListProjectsMCPCommand(BaseMCPCommand):
 
     name = "list_projects"
     version = "1.0.0"
-    descr = "List all projects in the database with their UUID and metadata"
+    descr = (
+        "List active (non–soft-deleted) projects with UUID and metadata; "
+        "set include_deleted to include trashed project rows."
+    )
     category = "project_management"
     author = "Vasiliy Zdanovskiy"
     email = "vasilyvz@gmail.com"
@@ -66,11 +70,21 @@ class ListProjectsMCPCommand(BaseMCPCommand):
         return {
             "type": "object",
             "description": (
-                "List all projects in the database with their UUID and metadata. "
-                "Optional filters: watched_dir_id, name_contains, comment_contains. "
+                "List projects with UUID and metadata. By default excludes rows "
+                "soft-deleted to trash (projects.deleted). Optional filters: "
+                "watched_dir_id, name_contains, comment_contains, include_deleted. "
                 "Database path is resolved from server configuration."
             ),
             "properties": {
+                "include_deleted": {
+                    "type": "boolean",
+                    "description": (
+                "If true, return all rows from ``projects`` (active and soft-deleted), "
+                "including projects that only have trashed file rows. "
+                "Default false — only operational projects (active files or empty)."
+                    ),
+                    "default": False,
+                },
                 "watched_dir_id": {
                     "type": "string",
                     "description": (
@@ -102,6 +116,7 @@ class ListProjectsMCPCommand(BaseMCPCommand):
             "additionalProperties": False,
             "examples": [
                 {},
+                {"include_deleted": True},
                 {"watched_dir_id": "550e8400-e29b-41d4-a716-446655440000"},
                 {"name_contains": "vast_srv"},
                 {"comment_contains": "pipeline"},
@@ -141,9 +156,15 @@ class ListProjectsMCPCommand(BaseMCPCommand):
             "author": cls.author,
             "email": cls.email,
             "detailed_description": (
-                "The list_projects command retrieves all projects from the database "
-                "and returns for each project: project id, watch_dir (observed directory path), "
-                "name, comment (description), root_path, watch_dir_id, updated_at.\n\n"
+                "The list_projects command returns projects from the database with: "
+                "project id, watch_dir (observed directory path), name, comment (description), "
+                "root_path, watch_dir_id, updated_at.\n\n"
+                "**By default** rows with ``projects.deleted`` set (soft-deleted / in trash) "
+                "are **excluded**, so the list matches operational “active” projects. "
+                "Pass ``include_deleted: true`` to list **every** ``projects`` row (active "
+                "and soft-deleted), including projects whose files are all in trash — same "
+                "lifecycle as ``list_trashed_projects`` / ``project_set_mark_del``. Each item "
+                "includes a boolean ``deleted`` field.\n\n"
                 "Optional filters: watched_dir_id (UUID), name_contains (substring in name), "
                 "comment_contains (substring in comment/description). All filters are case-insensitive.\n\n"
                 "Operation flow:\n"
@@ -152,7 +173,8 @@ class ListProjectsMCPCommand(BaseMCPCommand):
                 "3. Applies watched_dir_id filter if provided\n"
                 "4. Applies name_contains and comment_contains substring filters if provided\n"
                 "5. Resolves watch_dir path from watch_dir_paths table\n"
-                "6. Returns list with id, watch_dir, name, comment, root_path, watch_dir_id, updated_at\n\n"
+                "6. Returns list with id, watch_dir, name, comment, root_path, watch_dir_id, "
+                "processing_paused, deleted, updated_at\n\n"
                 "Use cases:\n"
                 "- Discover all projects and get project_id (UUID) for other commands\n"
                 "- Find projects by name or description: use name_contains or comment_contains\n"
@@ -160,6 +182,15 @@ class ListProjectsMCPCommand(BaseMCPCommand):
                 "Important: project_id in other commands must be the UUID (id), not the name."
             ),
             "parameters": {
+                "include_deleted": {
+                    "description": (
+                        "When false (default), omit soft-deleted projects (``projects.deleted``). "
+                        "When true, include them alongside active projects."
+                    ),
+                    "type": "boolean",
+                    "required": False,
+                    "default": False,
+                },
                 "watched_dir_id": {
                     "description": "Optional watched directory identifier (UUID4). Filter by watch_dir.",
                     "type": "string",
@@ -304,6 +335,7 @@ class ListProjectsMCPCommand(BaseMCPCommand):
         watched_dir_id: Optional[str] = None,
         name_contains: Optional[str] = None,
         comment_contains: Optional[str] = None,
+        include_deleted: bool = False,
     ) -> SuccessResult | ErrorResult:
         """Run blocking DB work for list_projects (called from executor).
 
@@ -313,25 +345,39 @@ class ListProjectsMCPCommand(BaseMCPCommand):
         try:
             database = self._open_database_from_config(auto_analyze=False)
             try:
-                # Single query: active projects (same semantics as list_projects) plus
-                # watch_dir path in one round-trip to reduce lock time and avoid H5 peak.
-                _list_sql = (
-                    "SELECT p.id, p.root_path, p.name, p.comment, p.watch_dir_id, "
-                    "p.processing_paused, p.created_at, p.updated_at, "
-                    "w.absolute_path AS watch_dir_path "
-                    "FROM ("
-                    "  SELECT p.* FROM projects p "
-                    "  INNER JOIN ("
-                    "    SELECT project_id FROM files "
-                    "    WHERE (deleted = 0 OR deleted IS NULL) GROUP BY project_id"
-                    "  ) a ON p.id = a.project_id "
-                    "  UNION "
-                    "  SELECT p.* FROM projects p "
-                    "  WHERE p.id NOT IN (SELECT project_id FROM files)"
-                    ") p "
-                    "LEFT JOIN watch_dir_paths w ON w.watch_dir_id = p.watch_dir_id "
-                    "ORDER BY p.created_at"
-                )
+                # When include_deleted: all rows from ``projects`` (soft-deleted projects
+                # often have only trashed file rows — they must not be dropped by the
+                # active-files INNER JOIN used for the default list).
+                if include_deleted:
+                    _list_sql = (
+                        "SELECT p.id, p.root_path, p.name, p.comment, p.watch_dir_id, "
+                        "p.processing_paused, p.created_at, p.updated_at, p.deleted, "
+                        "w.absolute_path AS watch_dir_path "
+                        "FROM projects p "
+                        "LEFT JOIN watch_dir_paths w ON w.watch_dir_id = p.watch_dir_id "
+                        "ORDER BY p.created_at"
+                    )
+                else:
+                    _proj_del = f" AND {WHERE_PROJECTS_ACTIVE_P}"
+                    _list_sql = (
+                        "SELECT p.id, p.root_path, p.name, p.comment, p.watch_dir_id, "
+                        "p.processing_paused, p.created_at, p.updated_at, p.deleted, "
+                        "w.absolute_path AS watch_dir_path "
+                        "FROM ("
+                        "  SELECT p.* FROM projects p "
+                        "  INNER JOIN ("
+                        "    SELECT project_id FROM files "
+                        "    WHERE " + WHERE_FILES_ACTIVE + " GROUP BY project_id"
+                        "  ) a ON p.id = a.project_id"
+                        + _proj_del
+                        + "  UNION "
+                        "  SELECT p.* FROM projects p "
+                        "  WHERE p.id NOT IN (SELECT project_id FROM files)"
+                        + _proj_del
+                        + ") p "
+                        "LEFT JOIN watch_dir_paths w ON w.watch_dir_id = p.watch_dir_id "
+                        "ORDER BY p.created_at"
+                    )
                 result = database.execute(_list_sql, ())
                 raw_rows = (
                     result.get("data", [])
@@ -347,6 +393,12 @@ class ListProjectsMCPCommand(BaseMCPCommand):
                     if updated_at is not None and hasattr(updated_at, "isoformat"):
                         updated_at = updated_at.isoformat()
                     processing_paused = row.get("processing_paused")
+                    deleted_raw = row.get("deleted")
+                    deleted_flag = (
+                        bool(deleted_raw)
+                        if deleted_raw is not None
+                        else False
+                    )
                     projects.append(
                         {
                             "id": row.get("id"),
@@ -360,6 +412,7 @@ class ListProjectsMCPCommand(BaseMCPCommand):
                                 if processing_paused is not None
                                 else False
                             ),
+                            "deleted": deleted_flag,
                             "updated_at": updated_at,
                         }
                     )
@@ -406,6 +459,8 @@ class ListProjectsMCPCommand(BaseMCPCommand):
                     parts.append(f"name_contains: {name_contains!r}")
                 if comment_contains is not None:
                     parts.append(f"comment_contains: {comment_contains!r}")
+                if include_deleted:
+                    parts.append("include_deleted: true")
                 filter_msg = (
                     (" (filtered by " + ", ".join(parts) + ")") if parts else ""
                 )
@@ -427,6 +482,7 @@ class ListProjectsMCPCommand(BaseMCPCommand):
         watched_dir_id: Optional[str] = None,
         name_contains: Optional[str] = None,
         comment_contains: Optional[str] = None,
+        include_deleted: Optional[bool] = None,
         **kwargs: Any,
     ) -> SuccessResult | ErrorResult:
         """
@@ -437,6 +493,7 @@ class ListProjectsMCPCommand(BaseMCPCommand):
             watched_dir_id: Optional watched directory identifier (UUID4) to filter projects.
             name_contains: Optional substring to filter by project name (case-insensitive).
             comment_contains: Optional substring to filter by project comment (case-insensitive).
+            include_deleted: If true, include soft-deleted (trashed) project rows.
             **kwargs: Extra args; validated and rejected if not in schema.
 
         Returns:
@@ -446,8 +503,13 @@ class ListProjectsMCPCommand(BaseMCPCommand):
             "watched_dir_id": watched_dir_id,
             "name_contains": name_contains,
             "comment_contains": comment_contains,
+            "include_deleted": include_deleted,
         }
         params.update(kwargs)
+        if params.get("include_deleted") is None:
+            include_deleted_effective = False
+        else:
+            include_deleted_effective = bool(params["include_deleted"])
         schema_props = set((self.get_schema().get("properties") or {}).keys())
         params_present = {
             k: v for k, v in params.items() if v is not None and k in schema_props
@@ -461,10 +523,12 @@ class ListProjectsMCPCommand(BaseMCPCommand):
             result = await asyncio.wait_for(
                 asyncio.get_event_loop().run_in_executor(
                     None,
-                    self._run_list_projects_sync,
-                    watched_dir_id,
-                    name_contains,
-                    comment_contains,
+                    lambda: self._run_list_projects_sync(
+                        watched_dir_id,
+                        name_contains,
+                        comment_contains,
+                        include_deleted_effective,
+                    ),
                 ),
                 timeout=_LIST_PROJECTS_DB_TIMEOUT,
             )

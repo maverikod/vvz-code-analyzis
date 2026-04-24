@@ -9,7 +9,9 @@ import logging
 from pathlib import Path
 from typing import Any, Callable, Dict
 
+from ..core.config import get_driver_config
 from ..core.constants import DEFAULT_REQUEST_TIMEOUT
+from ..core.database_client.factory import create_database_client_from_config_path
 from ..core.database_client.client import DatabaseClient
 from ..core.exceptions import DatabaseError
 from ..core.storage_paths import (
@@ -19,6 +21,16 @@ from ..core.storage_paths import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _sqlite_master_has_table(db: Any, table_name: str) -> bool:
+    """Return True if SQLite ``sqlite_master`` lists ``table_name`` (via RPC ``execute``)."""
+    r = db.execute(
+        "SELECT 1 AS ok FROM sqlite_master WHERE type='table' AND name=? LIMIT 1",
+        (table_name,),
+    )
+    data = r.get("data") if isinstance(r, dict) else []
+    return bool(data)
 
 
 def ensure_database_integrity(db_path: Path) -> Dict[str, Any]:
@@ -148,63 +160,80 @@ def open_database_once_for_shared(
         ensure_storage_dirs(storage)
         db_path = storage.db_path
 
-        driver_type = (config_data.get("code_analysis") or {}).get("database") or {}
-        if isinstance(driver_type, dict):
-            driver_type = (driver_type.get("driver") or {}).get("type")
-        else:
-            driver_type = None
+        dc = get_driver_config(config_data)
+        driver_type = (dc or {}).get("type") if isinstance(dc, dict) else None
         if not isinstance(driver_type, str):
             driver_type = "unknown"
-        logger.info(
-            "DB entrypoint: universal chain -> specific(%s) -> RPC client -> isolated process",
-            driver_type,
-        )
 
-        integrity = ensure_database_integrity(db_path)
-        if integrity.get("ok") is False:
-            try:
-                from ..core.worker_manager import get_worker_manager
-
-                stop_result = get_worker_manager().stop_all_workers(timeout=10.0)
-                logger.warning(
-                    "🛑 Stopped all workers due to corrupted database. %s",
-                    stop_result.get("message"),
-                )
-            except Exception as e:
-                logger.error(
-                    "Failed to stop workers after corruption detection: %s",
-                    e,
-                    exc_info=True,
-                )
-
-            raise DatabaseError(
-                "Database is corrupted and project is in safe mode. "
-                "Only backup/restore/repair commands are allowed.",
-                operation="database_corrupted",
-                details={
-                    "db_path": str(db_path),
-                    "marker_path": integrity.get("marker_path"),
-                    "backup_paths": integrity.get("backup_paths"),
-                    "integrity_message": integrity.get("message"),
-                    "allowed_commands": [
-                        "get_database_corruption_status",
-                        "backup_database",
-                        "repair_sqlite_database",
-                        "restore_database",
-                        "list_backup_files",
-                        "list_backup_versions",
-                        "restore_backup_file",
-                        "delete_backup",
-                        "clear_all_backups",
-                    ],
-                },
+        if driver_type == "postgres":
+            logger.info(
+                "DB entrypoint: driver=%s -> in-process RPCHandlers + PostgreSQL (no Unix RPC)",
+                driver_type,
+            )
+        else:
+            logger.info(
+                "DB entrypoint: driver=%s -> Unix RPC client -> database driver subprocess",
+                driver_type,
             )
 
-        socket_path = get_socket_path_fn(db_path)
+        if driver_type != "postgres":
+            integrity = ensure_database_integrity(db_path)
+            if integrity.get("ok") is False:
+                try:
+                    from ..core.worker_manager import get_worker_manager
+
+                    stop_result = get_worker_manager().stop_all_workers(timeout=10.0)
+                    logger.warning(
+                        "🛑 Stopped all workers due to corrupted database. %s",
+                        stop_result.get("message"),
+                    )
+                except Exception as e:
+                    logger.error(
+                        "Failed to stop workers after corruption detection: %s",
+                        e,
+                        exc_info=True,
+                    )
+
+                raise DatabaseError(
+                    "Database is corrupted and project is in safe mode. "
+                    "Only backup/restore/repair commands are allowed.",
+                    operation="database_corrupted",
+                    details={
+                        "db_path": str(db_path),
+                        "marker_path": integrity.get("marker_path"),
+                        "backup_paths": integrity.get("backup_paths"),
+                        "integrity_message": integrity.get("message"),
+                        "allowed_commands": [
+                            "get_database_corruption_status",
+                            "backup_database",
+                            "repair_sqlite_database",
+                            "restore_database",
+                            "list_backup_files",
+                            "list_backup_versions",
+                            "restore_backup_file",
+                            "delete_backup",
+                            "clear_all_backups",
+                        ],
+                    },
+                )
+
+        _ = get_socket_path_fn  # API compatibility; factory derives transport from config
         # Interactive MCP paths (e.g. repeat cst_save_tree) may wait on
         # sync_file_to_db_atomic or queue backlog; match DEFAULT_REQUEST_TIMEOUT.
-        db = DatabaseClient(socket_path=socket_path, timeout=DEFAULT_REQUEST_TIMEOUT)
+        db = create_database_client_from_config_path(
+            config_path, timeout=DEFAULT_REQUEST_TIMEOUT
+        )
         db.connect()
+
+        if driver_type == "postgres":
+            try:
+                db.execute("SELECT 1", None)
+            except Exception as e:
+                raise DatabaseError(
+                    f"PostgreSQL connection probe failed: {e}",
+                    operation="open_database",
+                    details={"error": str(e)},
+                ) from e
 
         from ..core.database.base import get_schema_definition
 
@@ -248,24 +277,25 @@ def open_database_once_for_shared(
             else:
                 raise
 
-        try:
-            db.select("code_content_fts", columns=["rowid"], limit=1)
-        except Exception as e:
-            err_msg = str(e).lower()
-            cause_msg = str(getattr(e, "__cause__", "") or "").lower()
-            if "no such table" in err_msg or "no such table" in cause_msg:
-                logger.info(
-                    "code_content_fts missing, running sync_schema for virtual tables"
-                )
-                try:
-                    _ensure_schema()
-                    logger.info("Virtual tables synced successfully")
-                except Exception as sync_err:
-                    logger.warning(
-                        "Failed to sync virtual tables: %s",
-                        sync_err,
-                        exc_info=True,
+        if driver_type != "postgres":
+            try:
+                db.select("code_content_fts", columns=["rowid"], limit=1)
+            except Exception as e:
+                err_msg = str(e).lower()
+                cause_msg = str(getattr(e, "__cause__", "") or "").lower()
+                if "no such table" in err_msg or "no such table" in cause_msg:
+                    logger.info(
+                        "code_content_fts missing, running sync_schema for virtual tables"
                     )
+                    try:
+                        _ensure_schema()
+                        logger.info("Virtual tables synced successfully")
+                    except Exception as sync_err:
+                        logger.warning(
+                            "Failed to sync virtual tables: %s",
+                            sync_err,
+                            exc_info=True,
+                        )
 
         return db
     except DatabaseError:

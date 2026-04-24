@@ -14,7 +14,8 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from typing import Any, Dict
+from pathlib import Path
+from typing import Any, Dict, Optional
 
 from ..worker_status_file import (
     STATUS_OPERATION_IDLE,
@@ -53,20 +54,26 @@ async def process_chunks(self, poll_interval: int = 30) -> Dict[str, Any]:
         logger.warning("SVO client manager not available, skipping vectorization")
         return {"processed": 0, "errors": 0}
 
-    # Get socket path for database driver
-    if not self.socket_path:
-        from ..constants import DEFAULT_DB_DRIVER_SOCKET_DIR
-        from pathlib import Path
+    cfg_raw = getattr(self, "config_path", None)
+    if not cfg_raw:
+        logger.error(
+            "VectorizationWorker requires config_path (server config.json) "
+            "for the universal database driver."
+        )
+        return {"processed": 0, "errors": 0}
+    cfg_path = Path(cfg_raw)
+    try:
+        from ..config import get_driver_config
+        from ..storage_paths import load_raw_config
 
-        db_name = Path(self.db_path).stem
-        socket_dir = Path(DEFAULT_DB_DRIVER_SOCKET_DIR)
-        socket_dir.mkdir(parents=True, exist_ok=True)
-        socket_path = str(socket_dir / f"{db_name}_driver.sock")
-    else:
-        socket_path = self.socket_path
+        drv = get_driver_config(load_raw_config(cfg_path)) or {}
+        drv_type = drv.get("type", "unknown")
+    except Exception:
+        drv_type = "unknown"
     logger.info(
-        "[VECTORIZATION] Database socket_path=%s (db_path=%s)",
-        socket_path,
+        "[VECTORIZATION] Database driver from config: type=%s (config_path=%s, db_path=%s)",
+        drv_type,
+        cfg_path,
         getattr(self, "db_path", None),
     )
 
@@ -92,7 +99,7 @@ async def process_chunks(self, poll_interval: int = 30) -> Dict[str, Any]:
             (database, db_available, backoff, db_status_logged) = (
                 await ensure_database_connection(
                     self,
-                    socket_path,
+                    cfg_path,
                     db_available=db_available,
                     db_status_logged=db_status_logged,
                     backoff=backoff,

@@ -11,6 +11,7 @@ email: vasilyvz@gmail.com
 from __future__ import annotations
 
 import logging
+from pathlib import Path
 from typing import Any, Optional, TypeAlias
 
 logger = logging.getLogger(__name__)
@@ -20,7 +21,7 @@ EnsureDatabaseConnectionResult: TypeAlias = tuple[Optional[Any], bool, float, bo
 
 async def ensure_database_connection(
     worker: Any,
-    socket_path: str,
+    config_path: Path,
     db_available: bool = False,
     db_status_logged: bool = False,
     backoff: float = 1.0,
@@ -35,7 +36,8 @@ async def ensure_database_connection(
 
     Args:
         worker: Vectorization worker instance (for logging context; unused).
-        socket_path: Path to database driver socket.
+        config_path: Server ``config.json`` path; client is built via
+            :func:`~code_analysis.core.database_client.factory.create_worker_database_client`.
         db_available: Previous availability state (for status-change logging).
         db_status_logged: Whether current unavailability was already logged.
         backoff: Current backoff seconds (returned on failure for sleep).
@@ -52,15 +54,17 @@ async def ensure_database_connection(
         Success path returns (database, True, 1.0, new_logged_flag).
         Failure path returns (None, False, backoff, logged_flag).
     """
-    from ..database_client.client import DatabaseClient
+    from ..database_client.factory import create_worker_database_client
 
     database: Optional[Any] = None
     try:
         logger.debug(
-            "[VECTORIZATION] Creating DatabaseClient(socket_path=%s)",
-            socket_path,
+            "[VECTORIZATION] Creating database client (config_path=%s)",
+            config_path,
         )
-        database = DatabaseClient(socket_path=socket_path)
+        database = create_worker_database_client(
+            config_path=config_path,
+        )
         database.connect()
         try:
             logger.debug("[VECTORIZATION] Testing connection with list_projects()")

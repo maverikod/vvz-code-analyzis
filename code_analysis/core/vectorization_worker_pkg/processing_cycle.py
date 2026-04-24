@@ -20,12 +20,18 @@ from ..worker_status_file import (
     STATUS_OPERATION_IDLE,
     write_worker_status,
 )
+from code_analysis.core.sql_portable import (
+    WHERE_FILES_ACTIVE,
+    WHERE_FILES_ACTIVE_F,
+    WHERE_HAS_DOCSTRING_F,
+    WHERE_PROCESSING_ACTIVE_P,
+)
 from .processing_cycle_projects import process_projects_in_cycle
 
 logger = logging.getLogger(__name__)
 
 # SQL to get projects with pending items (same as in processing.py)
-PROJECTS_PENDING_SQL = """
+PROJECTS_PENDING_SQL = f"""
 SELECT
     p.id AS project_id,
     p.root_path,
@@ -33,9 +39,9 @@ SELECT
         (SELECT COUNT(DISTINCT f.id)
          FROM files f
          WHERE f.project_id = p.id
-           AND (f.deleted = 0 OR f.deleted IS NULL)
+           AND {WHERE_FILES_ACTIVE_F}
            AND (
-               f.has_docstring = 1
+               {WHERE_HAS_DOCSTRING_F}
                OR EXISTS (
                    SELECT 1 FROM classes c
                    WHERE c.file_id = f.id
@@ -65,7 +71,7 @@ SELECT
          FROM code_chunks cc
          INNER JOIN files f ON cc.file_id = f.id
          WHERE cc.project_id = p.id
-           AND (f.deleted = 0 OR f.deleted IS NULL)
+           AND {WHERE_FILES_ACTIVE_F}
            AND cc.embedding_vector IS NOT NULL
            AND cc.vector_id IS NULL)
         +
@@ -73,20 +79,20 @@ SELECT
          FROM code_chunks cc
          INNER JOIN files f ON cc.file_id = f.id
          WHERE cc.project_id = p.id
-           AND (f.deleted = 0 OR f.deleted IS NULL)
+           AND {WHERE_FILES_ACTIVE_F}
            AND cc.vector_id IS NULL
            AND (cc.embedding_vector IS NULL OR cc.embedding_model IS NULL)
            AND (cc.vectorization_skipped IS NULL OR cc.vectorization_skipped = 0))
     ) AS pending_count
 FROM projects p
-WHERE (p.processing_paused = 0 OR p.processing_paused IS NULL)
+WHERE {WHERE_PROCESSING_ACTIVE_P}
 AND (
     (SELECT COUNT(DISTINCT f.id)
      FROM files f
      WHERE f.project_id = p.id
-       AND (f.deleted = 0 OR f.deleted IS NULL)
+       AND {WHERE_FILES_ACTIVE_F}
        AND (
-           f.has_docstring = 1
+           {WHERE_HAS_DOCSTRING_F}
            OR EXISTS (
                SELECT 1 FROM classes c
                WHERE c.file_id = f.id
@@ -116,7 +122,7 @@ AND (
      FROM code_chunks cc
      INNER JOIN files f ON cc.file_id = f.id
      WHERE cc.project_id = p.id
-       AND (f.deleted = 0 OR f.deleted IS NULL)
+       AND {WHERE_FILES_ACTIVE_F}
        AND cc.embedding_vector IS NOT NULL
        AND cc.vector_id IS NULL)
     +
@@ -124,7 +130,7 @@ AND (
      FROM code_chunks cc
      INNER JOIN files f ON cc.file_id = f.id
      WHERE cc.project_id = p.id
-       AND (f.deleted = 0 OR f.deleted IS NULL)
+       AND {WHERE_FILES_ACTIVE_F}
        AND cc.vector_id IS NULL
        AND (cc.embedding_vector IS NULL OR cc.embedding_model IS NULL)
        AND (cc.vectorization_skipped IS NULL OR cc.vectorization_skipped = 0))
@@ -181,18 +187,18 @@ async def run_one_cycle(
     chunks_total_at_start = chunks_data[0].get("count", 0) if chunks_data else 0
 
     files_result = database.execute(
-        "SELECT COUNT(*) as count FROM files WHERE (deleted = 0 OR deleted IS NULL)",
+        f"SELECT COUNT(*) as count FROM files WHERE {WHERE_FILES_ACTIVE}",
         None,
     )
     files_data = files_result.get("data", []) if isinstance(files_result, dict) else []
     files_total_at_start = files_data[0].get("count", 0) if files_data else 0
 
     vectorized_result = database.execute(
-        """
+        f"""
         SELECT COUNT(DISTINCT f.id) as count
         FROM files f
         INNER JOIN code_chunks cc ON f.id = cc.file_id
-        WHERE (f.deleted = 0 OR f.deleted IS NULL)
+        WHERE {WHERE_FILES_ACTIVE_F}
         AND cc.vector_id IS NOT NULL
         """,
         None,

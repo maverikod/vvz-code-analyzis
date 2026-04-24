@@ -16,9 +16,13 @@ import logging
 import multiprocessing
 import os
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Sequence
+from typing import Any, Dict, List, Optional, Sequence, Set
 
-from ..venv_path_policy import allowed_venv_py_files_for_watch_dir
+from ..venv_path_policy import (
+    allowed_venv_py_files_for_watch_dir,
+    expand_ignore_exception_py_files,
+    load_ignore_exceptions_from_config,
+)
 from .multi_project_worker_cycle import run_scan_cycle
 from .multi_project_worker_init import initialize_watch_dirs
 from .multi_project_worker_specs import WatchDirSpec, build_watch_dir_specs
@@ -35,7 +39,8 @@ class MultiProjectFileWatcherWorker:
     Single-process file watcher that iterates over multiple projects.
 
     Responsibilities:
-    - Establish a DB connection via sqlite_proxy (never spawns DB worker).
+    - Establish a DB connection from config (``create_worker_database_client``):
+      PostgreSQL in-process or SQLite RPC to an already running driver (never spawns DB worker).
     - For each scan cycle, iterate through all configured projects and scan their
       root directories, then mark changed files for chunking.
     - Use lock files per root watched directory to avoid concurrent scans.
@@ -50,6 +55,7 @@ class MultiProjectFileWatcherWorker:
         version_dir: Optional[str] = None,
         ignore_patterns: Optional[List[str]] = None,
         status_file_path: Optional[Path] = None,
+        config_path: Optional[str] = None,
     ) -> None:
         """
         Initialize multi-project file watcher.
@@ -70,6 +76,7 @@ class MultiProjectFileWatcherWorker:
         self.version_dir = version_dir
         self.ignore_patterns = ignore_patterns or []
         self.status_file_path = Path(status_file_path) if status_file_path else None
+        self.config_path = config_path
 
         self._stop_event = multiprocessing.Event()
         self._pid = os.getpid()
@@ -106,14 +113,19 @@ class MultiProjectFileWatcherWorker:
             f"scan_interval={self.scan_interval}s"
         )
 
-        from ..database_client.client import DatabaseClient
-        from ..constants import DEFAULT_DB_DRIVER_SOCKET_DIR
+        from ..database_client.factory import create_worker_database_client
 
-        # Get socket path for database driver
-        db_name = Path(self.db_path).stem
-        socket_dir = Path(DEFAULT_DB_DRIVER_SOCKET_DIR)
-        socket_dir.mkdir(parents=True, exist_ok=True)
-        socket_path = str(socket_dir / f"{db_name}_driver.sock")
+        _cfg_raw = getattr(self, "config_path", None)
+        cfg_path = Path(_cfg_raw) if _cfg_raw else None
+        if cfg_path is None:
+            logger.error(
+                "Multi-project file watcher requires config_path (server config.json) "
+                "so the database is opened via code_analysis.database.driver."
+            )
+            return {
+                **total_stats,
+                "errors": max(1, total_stats.get("errors", 0)),
+            }
 
         database: Any = None
         # Processors are created dynamically per discovered project
@@ -132,7 +144,9 @@ class MultiProjectFileWatcherWorker:
             while not self._stop_event.is_set():
                 if database is None:
                     try:
-                        database = DatabaseClient(socket_path=socket_path)
+                        database = create_worker_database_client(
+                            config_path=cfg_path,
+                        )
                         database.connect()
                         # Test connection with a simple query
                         try:
@@ -160,7 +174,11 @@ class MultiProjectFileWatcherWorker:
                                         f"Failed to initialize watch_dirs: {init_e}",
                                         exc_info=True,
                                     )
-                                    # Continue anyway - will retry on next cycle
+                                    # Avoid tight CPU loop if the next scan fails fast;
+                                    # init retries only after DB reconnect.
+                                    pause = min(5.0, float(self.scan_interval or 60))
+                                    await asyncio.sleep(pause)
+                                    # Continue anyway - will retry on next reconnect
                             else:
                                 db_status_logged = False  # Already logged as available
                         except Exception as conn_e:
@@ -307,11 +325,36 @@ class MultiProjectFileWatcherWorker:
                 # Use scan_directory with same parameters as _scan_watch_dir (global + per-dir ignore)
                 merged_ignore = list(self.ignore_patterns) + list(spec.ignore_patterns)
                 allowed_venv = allowed_venv_py_files_for_watch_dir(watch_dir)
+                ign_ex: Set[Path] = set()
+                exc_patterns = load_ignore_exceptions_from_config()
+                if exc_patterns:
+                    from ..project_discovery import (
+                        DuplicateProjectIdError,
+                        NestedProjectError,
+                        discover_projects_in_directory,
+                    )
+
+                    try:
+                        discovered = discover_projects_in_directory(watch_dir)
+                    except (
+                        NestedProjectError,
+                        DuplicateProjectIdError,
+                        OSError,
+                        ValueError,
+                    ):
+                        discovered = []
+                    for proj in discovered:
+                        ign_ex.update(
+                            expand_ignore_exception_py_files(
+                                proj.root_path, exc_patterns
+                            )
+                        )
                 scanned_files = scan_directory(
                     root_dir=watch_dir,
                     watch_dirs=[spec.watch_dir],
                     ignore_patterns=merged_ignore,
                     allowed_venv_py_files=allowed_venv or None,
+                    ignore_exception_files=ign_ex or None,
                 )
                 total_files += len(scanned_files)
             except Exception as e:

@@ -135,13 +135,15 @@ class Method(BaseObject):
         Returns:
             Dictionary suitable for database insertion/update
         """
+        # Use native bool for BOOLEAN columns: PostgreSQL rejects 0/1 (smallint);
+        # SQLite accepts bool and stores as 0/1.
         result = {
             "class_id": self.class_id,
             "name": self.name,
             "line": self.line,
-            "is_abstract": 1 if self.is_abstract else 0,
-            "has_pass": 1 if self.has_pass else 0,
-            "has_not_implemented": 1 if self.has_not_implemented else 0,
+            "is_abstract": bool(self.is_abstract),
+            "has_pass": bool(self.has_pass),
+            "has_not_implemented": bool(self.has_not_implemented),
         }
         if self.id is not None:
             result["id"] = self.id

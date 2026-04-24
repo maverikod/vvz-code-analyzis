@@ -105,9 +105,14 @@ class GetCodeEntityInfoMCPCommand(BaseMCPCommand):
                 params = [entity_name, proj_id]
                 if file_path:
                     file_record = db.get_file_by_path(file_path, proj_id)
-                    if file_record:
-                        query += " AND c.file_id = ?"
-                        params.append(file_record["id"])
+                    if not file_record:
+                        db.disconnect()
+                        return ErrorResult(
+                            message=f"File not found in project: {file_path}",
+                            code="FILE_NOT_FOUND",
+                        )
+                    query += " AND c.file_id = ?"
+                    params.append(file_record["id"])
                 if line:
                     query += " AND c.line = ?"
                     params.append(line)
@@ -116,9 +121,14 @@ class GetCodeEntityInfoMCPCommand(BaseMCPCommand):
                 params = [entity_name, proj_id]
                 if file_path:
                     file_record = db.get_file_by_path(file_path, proj_id)
-                    if file_record:
-                        query += " AND func.file_id = ?"
-                        params.append(file_record["id"])
+                    if not file_record:
+                        db.disconnect()
+                        return ErrorResult(
+                            message=f"File not found in project: {file_path}",
+                            code="FILE_NOT_FOUND",
+                        )
+                    query += " AND func.file_id = ?"
+                    params.append(file_record["id"])
                 if line:
                     query += " AND func.line = ?"
                     params.append(line)
@@ -127,9 +137,14 @@ class GetCodeEntityInfoMCPCommand(BaseMCPCommand):
                 params = [entity_name, proj_id]
                 if file_path:
                     file_record = db.get_file_by_path(file_path, proj_id)
-                    if file_record:
-                        query += " AND c.file_id = ?"
-                        params.append(file_record["id"])
+                    if not file_record:
+                        db.disconnect()
+                        return ErrorResult(
+                            message=f"File not found in project: {file_path}",
+                            code="FILE_NOT_FOUND",
+                        )
+                    query += " AND c.file_id = ?"
+                    params.append(file_record["id"])
                 if line:
                     query += " AND m.line = ?"
                     params.append(line)

@@ -158,6 +158,7 @@ class StartWorkerMCPCommand(BaseMCPCommand):
                 res = worker_manager.start_file_watcher_worker(
                     db_path=str(db_path),
                     watch_dirs=watch_dirs_config,
+                    config_path=str(config_path),
                     scan_interval=scan_interval,
                     version_dir=str(
                         (storage.config_dir / "data" / "versions").resolve()
@@ -196,6 +197,7 @@ class StartWorkerMCPCommand(BaseMCPCommand):
                 res = worker_manager.start_vectorization_worker(
                     db_path=str(db_path),
                     faiss_dir=str(faiss_dir),
+                    config_path=str(config_path),
                     vector_dim=vector_dim,
                     svo_config=svo_config,
                     batch_size=batch_size,
@@ -216,11 +218,11 @@ class StartWorkerMCPCommand(BaseMCPCommand):
                 worker_manager = get_worker_manager()
                 res = worker_manager.start_indexing_worker(
                     db_path=str(db_path),
+                    config_path=str(config_path),
                     poll_interval=poll_interval,
                     batch_size=batch_size,
                     worker_log_path=log_path,
                     worker_logs_dir=worker_logs_dir,
-                    config_path=str(config_path) if config_path else None,
                     log_timing=log_timing,
                 )
                 return SuccessResult(data=res.__dict__)

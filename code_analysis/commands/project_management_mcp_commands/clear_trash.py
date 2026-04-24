@@ -5,6 +5,7 @@ Author: Vasiliy Zdanovskiy
 email: vasilyvz@gmail.com
 """
 
+from ...core.sql_portable import WHERE_PROJECTS_TRASHED
 from ._shared import (
     Any,
     BaseMCPCommand,
@@ -19,8 +20,10 @@ from ._shared import (
 
 
 def _soft_deleted_project_ids(database: Any) -> List[str]:
-    """Return project ids with projects.deleted = 1 (soft-deleted / trashed in DB)."""
-    result = database.execute("SELECT id FROM projects WHERE deleted = 1", ())
+    """Return project ids with projects soft-deleted (trashed in DB)."""
+    result = database.execute(
+        "SELECT id FROM projects WHERE " + WHERE_PROJECTS_TRASHED, ()
+    )
     rows = result.get("data") or []
     out: List[str] = []
     for row in rows:

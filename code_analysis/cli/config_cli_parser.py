@@ -172,6 +172,31 @@ def build_parser(
         help="Database path for driver config (default: same as --code-analysis-db-path)",
     )
     gen_parser.add_argument(
+        "--code-analysis-pg-host",
+        type=str,
+        help="PostgreSQL host (with --code-analysis-driver-type postgres)",
+    )
+    gen_parser.add_argument(
+        "--code-analysis-pg-port",
+        type=int,
+        help="PostgreSQL port (default: 5432)",
+    )
+    gen_parser.add_argument(
+        "--code-analysis-pg-dbname",
+        type=str,
+        help="PostgreSQL database name (default: code_analysis)",
+    )
+    gen_parser.add_argument(
+        "--code-analysis-pg-user",
+        type=str,
+        help="PostgreSQL user name",
+    )
+    gen_parser.add_argument(
+        "--code-analysis-pg-password-env",
+        type=str,
+        help="Environment variable for DB password, read from .env (default: CODE_ANALYSIS_POSTGRES_PASSWORD)",
+    )
+    gen_parser.add_argument(
         "--code-analysis-log",
         type=str,
         help="Code analysis log file path (default: logs/code_analysis.log)",

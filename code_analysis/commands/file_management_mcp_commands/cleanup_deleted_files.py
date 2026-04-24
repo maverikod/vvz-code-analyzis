@@ -17,11 +17,21 @@ logger = logging.getLogger(__name__)
 
 
 class CleanupDeletedFilesMCPCommand(BaseMCPCommand):
-    """Clean up deleted files from database."""
+    """
+    Purge **file** trash: soft-deleted file rows (already moved under ``trash_dir``).
+
+    This is not the same as ``delete_file`` (which **moves** into trash). With
+    ``hard_delete=True``, permanently removes trashed file bytes and DB rows — i.e.
+    **empty the recycle bin** for those files. Project-level trash uses ``clear_trash`` /
+    ``permanently_delete_from_trash`` instead.
+    """
 
     name = "cleanup_deleted_files"
     version = "1.0.0"
-    descr = "Clean up deleted files from database (soft or hard delete)"
+    descr = (
+        "Purge soft-deleted **files**: list trashed file rows; with hard_delete=True, "
+        "permanently remove bytes + DB (empty file recycle bin). Not for whole-project trash."
+    )
     category = "file_management"
     author = "Vasiliy Zdanovskiy"
     email = "vasilyvz@gmail.com"
@@ -32,6 +42,13 @@ class CleanupDeletedFilesMCPCommand(BaseMCPCommand):
         """Get JSON schema for command parameters."""
         return {
             "type": "object",
+            "description": (
+                "Targets rows already soft-deleted (``delete_file`` / file watcher). "
+                "``dry_run`` lists candidates; ``hard_delete=True`` performs **permanent** "
+                "removal (disk under trash + DB) — the usual “empty trash” step for files. "
+                "Project directories in ``trash_dir`` are handled by ``clear_trash`` / "
+                "``permanently_delete_from_trash``, not this command."
+            ),
             "properties": {
                 "project_id": {
                     "type": "string",

@@ -123,6 +123,70 @@ def validate_database_driver_section_impl(
                         )
                     )
 
+        if isinstance(driver_type, str) and driver_type == "postgres":
+            dsn_val = driver_config.get("dsn")
+            use_dsn = isinstance(dsn_val, str) and bool(str(dsn_val).strip())
+            if not use_dsn:
+                pw_inline = driver_config.get("password")
+                if pw_inline is not None and str(pw_inline).strip():
+                    results.append(
+                        ValidationResult(
+                            level="error",
+                            message="code_analysis.database.driver.config.password must not be set; use password_env and a .env file",
+                            section="code_analysis",
+                            key="database.driver.config.password",
+                            suggestion="Remove 'password' from config; set password_env (e.g. CODE_ANALYSIS_POSTGRES_PASSWORD) and put the secret in .env",
+                        )
+                    )
+                for key, label in (
+                    ("host", "host"),
+                    ("user", "user"),
+                    ("password_env", "password_env"),
+                ):
+                    v = driver_config.get(key)
+                    if v is None or (isinstance(v, str) and not str(v).strip()):
+                        results.append(
+                            ValidationResult(
+                                level="error",
+                                message=f"code_analysis.database.driver.config.{key} is required for postgres driver (or use non-empty dsn)",
+                                section="code_analysis",
+                                key=f"database.driver.config.{key}",
+                                suggestion=f"Set database.driver.config.{key} ({label})",
+                            )
+                        )
+                dbn = driver_config.get("dbname") or driver_config.get("database")
+                if dbn is None or not isinstance(dbn, str) or not str(dbn).strip():
+                    results.append(
+                        ValidationResult(
+                            level="error",
+                            message="code_analysis.database.driver.config.dbname (or database) is required for postgres driver",
+                            section="code_analysis",
+                            key="database.driver.config.dbname",
+                            suggestion="Set dbname to the PostgreSQL database name",
+                        )
+                    )
+                port_v = driver_config.get("port")
+                if port_v is None:
+                    results.append(
+                        ValidationResult(
+                            level="error",
+                            message="code_analysis.database.driver.config.port is required for postgres driver",
+                            section="code_analysis",
+                            key="database.driver.config.port",
+                            suggestion="Set port (e.g. 5432)",
+                        )
+                    )
+                elif not isinstance(port_v, int):
+                    results.append(
+                        ValidationResult(
+                            level="error",
+                            message="code_analysis.database.driver.config.port must be an integer",
+                            section="code_analysis",
+                            key="database.driver.config.port",
+                            suggestion="Set port to an integer (e.g. 5432)",
+                        )
+                    )
+
         if driver_type == "sqlite_proxy":
             worker_config = driver_config.get("worker_config")
             if worker_config and isinstance(worker_config, dict):

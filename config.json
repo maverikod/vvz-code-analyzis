@@ -2,9 +2,9 @@
   "server": {
     "host": "0.0.0.0",
     "port": 15000,
-    "protocol": "mtls",
+    "protocol": "https",
     "servername": "code-analysis-server",
-    "advertised_host": "172.28.0.1",
+    "advertised_host": "172.18.0.1",
     "debug": false,
     "log_level": "INFO",
     "ssl": {
@@ -19,7 +19,7 @@
   },
   "client": {
     "enabled": false,
-    "protocol": "mtls",
+    "protocol": "https",
     "ssl": {
       "cert": "mtls_certificates/mtls_certificates/client/code-analysis.crt",
       "key": "mtls_certificates/mtls_certificates/client/code-analysis.key",
@@ -31,9 +31,9 @@
   },
   "registration": {
     "enabled": true,
-    "protocol": "mtls",
-    "register_url": "https://172.28.0.2:3004/register",
-    "unregister_url": "https://172.28.0.2:3004/unregister",
+    "protocol": "https",
+    "register_url": "https://127.0.0.1:3004/register",
+    "unregister_url": "https://127.0.0.1:3004/unregister",
     "heartbeat_interval": 30,
     "server_id": "code-analysis-server",
     "server_name": "Code Analysis Server",
@@ -49,7 +49,7 @@
       "check_hostname": false
     },
     "heartbeat": {
-      "url": "https://172.28.0.2:3004/proxy/heartbeat",
+      "url": "https://127.0.0.1:3004/proxy/heartbeat",
       "interval": 30
     }
   },
@@ -100,7 +100,7 @@
   },
   "code_analysis": {
     "git_commit_on_write": true,
-    "host": "172.28.0.1",
+    "host": "127.0.0.1",
     "port": 15000,
     "log": "logs/code_analysis.log",
     "db_path": "data/code_analysis.db",
@@ -121,7 +121,7 @@
     },
     "embedding": {
       "enabled": true,
-      "host": "localhost",
+      "host": "embedding-service.techsup.od.ua",
       "port": 8001,
       "protocol": "mtls",
       "cert_file": "mtls_certificates/mtls_certificates/client/code-analysis.crt",
@@ -135,13 +135,13 @@
     },
     "database": {
       "driver": {
-        "type": "sqlite_proxy",
+        "type": "postgres",
         "config": {
-          "path": "data/code_analysis.db",
-          "worker_config": {
-            "command_timeout": 300.0,
-            "poll_interval": 0.01
-          }
+          "host": "172.31.0.2",
+          "port": 5432,
+          "dbname": "code_analysis",
+          "user": "code_analysis",
+          "password_env": "CODE_ANALYSIS_POSTGRES_PASSWORD"
         }
       },
       "rpc": {
@@ -161,7 +161,14 @@
       ".venv/lib/**/site-packages/embed_client/**/*.py",
       ".venv/lib/**/site-packages/svo_client/**/*.py",
       ".venv/lib/**/site-packages/mcp_security_framework/**/*.py",
-      ".venv/lib/**/site-packages/queuemgr/**/*.py"
+      ".venv/lib/**/site-packages/queuemgr/**/*.py",
+      ".venv/lib/**/site-packages/chunk_metadata_adapter/**/*.py"
+    ],
+    "venv_site_packages_index_allowlisted_distributions": [
+      "chunk_metadata_adapter",
+      "embed-client",
+      "mcp-proxy-adapter",
+      "mcp-security-framework"
     ],
     "worker": {
       "enabled": true,
@@ -195,7 +202,8 @@
             "**/.cache/**",
             "**/htmlcov/**",
             "**/.coverage",
-            "**/node_modules/**"
+            "**/node_modules/**",
+            "**/test_data/**"
           ]
         }
       ],

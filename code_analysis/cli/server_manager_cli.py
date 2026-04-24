@@ -27,6 +27,67 @@ DEFAULT_SHUTDOWN_GRACE_SECONDS = 10.0
 # Override for tests or exotic layouts (must be an existing executable).
 _ENV_DAEMON_PYTHON = "CODE_ANALYSIS_DAEMON_PYTHON"
 
+# Config discovery for ``casmgr`` (see ``_resolve_config_path``).
+_ENV_CASMGR_CONFIG = "CASMGR_CONFIG"
+_SYSTEM_DEFAULT_CONFIG = Path("/etc/casmgr/config.json")
+_CWD_CONFIG_NAME = "config.json"
+
+
+def _resolve_config_path(cli_config: Optional[str]) -> Optional[str]:
+    """
+    Resolve ``config.json`` path by priority:
+
+    1. ``--config`` from the CLI (must exist).
+    2. ``CASMGR_CONFIG`` (must exist if set).
+    3. ``/etc/casmgr/config.json`` if present.
+    4. ``./config.json`` under the current working directory if present.
+
+    Returns:
+        Absolute path to an existing config file, or ``None`` if none found
+        (caller should print the error already emitted here).
+    """
+
+    if cli_config is not None and str(cli_config).strip() != "":
+        p = Path(cli_config).expanduser()
+        if not p.is_absolute():
+            p = (Path.cwd() / p).resolve()
+        else:
+            p = p.resolve()
+        if not p.is_file():
+            print(f"error: config file not found: {p}", file=sys.stderr)
+            return None
+        return str(p)
+
+    env_val = os.environ.get(_ENV_CASMGR_CONFIG, "").strip()
+    if env_val:
+        p = Path(env_val).expanduser()
+        if not p.is_absolute():
+            p = (Path.cwd() / p).resolve()
+        else:
+            p = p.resolve()
+        if not p.is_file():
+            print(
+                f"error: {_ENV_CASMGR_CONFIG} points to missing file: {p}",
+                file=sys.stderr,
+            )
+            return None
+        return str(p)
+
+    if _SYSTEM_DEFAULT_CONFIG.is_file():
+        return str(_SYSTEM_DEFAULT_CONFIG.resolve())
+
+    cwd_cfg = (Path.cwd() / _CWD_CONFIG_NAME).resolve()
+    if cwd_cfg.is_file():
+        return str(cwd_cfg)
+
+    print(
+        "error: no config found; pass --config, set "
+        f"{_ENV_CASMGR_CONFIG}, install {_SYSTEM_DEFAULT_CONFIG}, "
+        f"or run from a directory containing {_CWD_CONFIG_NAME}.",
+        file=sys.stderr,
+    )
+    return None
+
 
 def _find_venv_python_near_config(config_path: str) -> Optional[str]:
     """
@@ -622,7 +683,7 @@ def _cmd_restart(config_path: str) -> int:
 
 def server(argv: Optional[list[str]] = None) -> int:
     """
-    Console entrypoint for `code-analysis-server`.
+    Console entrypoint for the daemon manager (installed script: ``casmgr``).
 
     Args:
         argv: Optional argv override.
@@ -631,8 +692,17 @@ def server(argv: Optional[list[str]] = None) -> int:
         Exit code.
     """
 
-    parser = argparse.ArgumentParser(prog="code-analysis-server")
-    parser.add_argument("--config", required=True, help="Path to config.json")
+    parser = argparse.ArgumentParser(prog="casmgr")
+    parser.add_argument(
+        "--config",
+        metavar="PATH",
+        default=None,
+        help=(
+            "Path to config.json (optional). If omitted: "
+            f"{_ENV_CASMGR_CONFIG}, then {_SYSTEM_DEFAULT_CONFIG}, "
+            f"then ./{_CWD_CONFIG_NAME} in the current directory."
+        ),
+    )
     sub = parser.add_subparsers(dest="cmd", required=True)
     sub.add_parser("start")
     sub.add_parser("stop")
@@ -640,14 +710,18 @@ def server(argv: Optional[list[str]] = None) -> int:
     sub.add_parser("status")
     ns = parser.parse_args(argv)
 
+    config_path = _resolve_config_path(ns.config)
+    if config_path is None:
+        return 2
+
     if ns.cmd == "start":
-        return _cmd_start(ns.config)
+        return _cmd_start(config_path)
     if ns.cmd == "stop":
-        return _cmd_stop(ns.config)
+        return _cmd_stop(config_path)
     if ns.cmd == "restart":
-        return _cmd_restart(ns.config)
+        return _cmd_restart(config_path)
     if ns.cmd == "status":
-        return _cmd_status(ns.config)
+        return _cmd_status(config_path)
 
     raise RuntimeError(f"Unknown command: {ns.cmd}")
 

@@ -22,7 +22,7 @@ class GetWorkerStatusMCPCommand(BaseMCPCommand):
 
     name = "get_worker_status"
     version = "1.0.0"
-    descr = "Get worker process status, resource usage, and recent activity"
+    descr = "Get worker status (requires params.worker_type: file_watcher | vectorization | indexing)"
     category = "monitoring"
     author = "Vasiliy Zdanovskiy"
     email = "vasilyvz@gmail.com"
@@ -33,11 +33,19 @@ class GetWorkerStatusMCPCommand(BaseMCPCommand):
         """Get JSON schema for command parameters."""
         return {
             "type": "object",
+            "description": (
+                "Always pass worker_type. Calling with params {} or without worker_type is invalid "
+                "and returns a validation error."
+            ),
             "properties": {
                 "worker_type": {
                     "type": "string",
                     "enum": ["file_watcher", "vectorization", "indexing"],
-                    "description": "Type of worker to check",
+                    "description": (
+                        "REQUIRED. Which background worker to inspect: "
+                        "`file_watcher` (filesystem watcher), `vectorization` (chunk embeddings / FAISS), "
+                        "or `indexing` (AST/CST/fulltext for files with needs_chunking)."
+                    ),
                 },
                 "log_path": {
                     "type": "string",
@@ -50,6 +58,11 @@ class GetWorkerStatusMCPCommand(BaseMCPCommand):
             },
             "required": ["worker_type"],
             "additionalProperties": False,
+            "examples": [
+                {"worker_type": "vectorization"},
+                {"worker_type": "file_watcher"},
+                {"worker_type": "indexing"},
+            ],
         }
 
     async def execute(

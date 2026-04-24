@@ -1,5 +1,5 @@
 """
-MCP command: delete_project.
+MCP command: project_set_mark_del (project removal / soft-delete).
 
 Author: Vasiliy Zdanovskiy
 email: vasilyvz@gmail.com
@@ -19,17 +19,18 @@ from ._shared import (
 
 class DeleteProjectMCPCommand(BaseMCPCommand):
     """
-    Delete or soft-delete a project.
+    Delete or soft-delete a project (always through trash first).
 
-    Soft-delete stage (always): marks the project in the database and moves the
-    project root to the configured trash directory.
+    **Soft-delete stage (always):** marks project/files in the DB, moves the project
+    root into ``trash_dir`` (recycle bin), and removes the per-project version folder.
 
-    With ``delete_from_disk=False`` (default), also permanently removes all project
-    data from the database and the FAISS index file after the soft-delete stage.
-    With ``delete_from_disk=True``, database rows are kept until trash cleanup.
+    **Then:** ``delete_from_disk=False`` (default) additionally clears all project rows
+    from the database and removes the FAISS index file; sources remain under trash until
+    ``clear_trash`` / ``permanently_delete_from_trash``. ``delete_from_disk=True`` keeps DB
+    rows for recovery and skips that permanent DB clear (trash cleanup later).
 
     Attributes:
-        name: MCP command name.
+        name: MCP command name (``project_set_mark_del``).
         version: Command version.
         descr: Short description.
         category: Command category.
@@ -38,12 +39,12 @@ class DeleteProjectMCPCommand(BaseMCPCommand):
         use_queue: Whether to run in the background queue.
     """
 
-    name = "delete_project"
+    name = "project_set_mark_del"
     version = "1.0.0"
     descr = (
-        "Delete a project: soft-delete (move root to trash, mark in DB) and/or "
-        "permanently remove all DB data. Default permanent path runs soft-delete first, "
-        "then clears the database."
+        "Trash-first project removal: always moves project root into the trash "
+        "(recycle bin) and marks it in the DB; then optionally clears DB/FAISS. "
+        "Default: trash + full DB clear (sources stay under trash until purged)."
     )
     category = "project_management"
     author = "Vasiliy Zdanovskiy"
@@ -66,8 +67,12 @@ class DeleteProjectMCPCommand(BaseMCPCommand):
         return {
             "type": "object",
             "description": (
-                "Delete a project and all its data from the database. "
-                "This operation cannot be undone."
+                "Soft-delete to trash first: the project directory is moved under the "
+                "configured trash_dir (recycle bin) and the project is marked deleted in the "
+                "database. Depending on delete_from_disk, database rows may then be cleared "
+                "or kept until trash cleanup. This is destructive for DB data when the "
+                "permanent-clear path runs; on-disk sources under trash can be restored until "
+                "permanently_delete_from_trash / clear_trash."
             ),
             "properties": {
                 "project_id": {
@@ -92,10 +97,10 @@ class DeleteProjectMCPCommand(BaseMCPCommand):
                 "delete_from_disk": {
                     "type": "boolean",
                     "description": (
-                        "If True: soft-delete only — mark project/files in DB, move project root to trash, "
-                        "remove version dir; database rows remain until trash is emptied. "
-                        "If False (default): soft-delete first, then permanently remove all project data "
-                        "from the database and delete the FAISS index file."
+                        "If True: soft-delete to trash only — move project root to trash, remove version "
+                        "dir; **database rows stay** until clear_trash / permanently_delete_from_trash. "
+                        "If False (default): same trash step, then **permanently remove** all project data "
+                        "from the database and delete the FAISS index file (sources still under trash until purged)."
                     ),
                     "default": False,
                 },
@@ -135,7 +140,8 @@ class DeleteProjectMCPCommand(BaseMCPCommand):
             self: Command instance.
             project_id: Project ID (UUID v4) to delete.
             dry_run: If True, only show what would be deleted.
-            delete_from_disk: If True, also delete from disk and version directory.
+            delete_from_disk: If True, soft-delete to trash only (keep DB rows). If False
+                (default), trash step then full DB clear + remove FAISS index file.
             **kwargs: Extra args (unused).
 
         Returns:
@@ -167,7 +173,7 @@ class DeleteProjectMCPCommand(BaseMCPCommand):
                             details={"project_id": project_id},
                         ),
                         "PROJECT_NOT_FOUND",
-                        "delete_project",
+                        "project_set_mark_del",
                     )
 
                 # Version / trash dirs: required for soft-delete stage (all modes).
@@ -199,7 +205,7 @@ class DeleteProjectMCPCommand(BaseMCPCommand):
                             result.get("message", "Failed to delete project")
                         ),
                         result.get("error", "DELETION_ERROR"),
-                        "delete_project",
+                        "project_set_mark_del",
                     )
 
                 return SuccessResult(
@@ -209,7 +215,7 @@ class DeleteProjectMCPCommand(BaseMCPCommand):
             finally:
                 database.disconnect()
         except Exception as e:
-            return self._handle_error(e, "DELETE_PROJECT_ERROR", "delete_project")
+            return self._handle_error(e, "DELETE_PROJECT_ERROR", "project_set_mark_del")
 
     @classmethod
     def metadata(cls: type["DeleteProjectMCPCommand"]) -> Dict[str, Any]:
@@ -234,9 +240,16 @@ class DeleteProjectMCPCommand(BaseMCPCommand):
             "author": cls.author,
             "email": cls.email,
             "detailed_description": (
-                "The delete_project command completely removes a project and all its data from the database. "
-                "Optionally, it can also delete the project directory and version files from disk. "
-                "This is a destructive operation that cannot be undone.\n\n"
+                "**Trash / recycle bin (primary):** every run starts by moving the project "
+                "root into `trash_dir` (timestamped folder) and marking the project/files in "
+                "the database — i.e. removal goes **through the trash**, not by silently "
+                "unlinking the tree in place.\n\n"
+                "**After the trash step:** with `delete_from_disk=False` (default), the "
+                "command then clears project rows from the database and removes the FAISS "
+                "slice for the project; the tree remains on disk under trash until you use "
+                "`permanently_delete_from_trash` / `clear_trash` or delete that folder. "
+                "With `delete_from_disk=True`, DB rows stay for recovery until trash cleanup; "
+                "the version directory under `version_dir` is still removed during soft-delete.\n\n"
                 "Operation flow:\n"
                 "1. Resolves database path from server configuration (config.json)\n"
                 "2. Opens database connection\n"
@@ -271,19 +284,20 @@ class DeleteProjectMCPCommand(BaseMCPCommand):
                 "list_trashed_projects / permanently_delete_from_trash / clear_trash.\n"
                 "- With delete_from_disk=False, trash folder remains after DB clear unless removed separately.\n\n"
                 "Use cases:\n"
-                "- Remove projects that are no longer needed (database only)\n"
-                "- Completely remove projects including files from disk\n"
+                "- Move a project out of the active tree into trash, then drop DB/index data\n"
+                "- Keep DB rows but park sources in trash (delete_from_disk=True path)\n"
                 "- Clean up test projects\n"
-                "- Free up database and disk space\n"
+                "- Free up database and disk space after trash purge\n"
                 "- Remove orphaned projects\n\n"
                 "Important notes:\n"
-                "- This operation is PERMANENT and cannot be undone\n"
+                "- On disk, the project root always lands in trash first (recycle bin), not an instant shred\n"
+                "- Database + FAISS clear (default path) cannot be undone; trashed files persist until purge\n"
                 "- Always use dry_run=True first to preview what will be deleted\n"
                 "- delete_from_disk=False (default): soft-delete to trash, then full database clear + FAISS file\n"
-                "- delete_from_disk=True: soft-delete only; database rows remain until trash cleanup commands\n"
+                "- delete_from_disk=True: soft-delete to trash only; database rows remain until trash cleanup commands\n"
                 "- Disk deletion errors are logged but do not stop database deletion\n"
-                "- All related data is cascaded and removed from database\n"
-                "- Use with extreme caution, especially with delete_from_disk=True"
+                "- All related data is cascaded and removed from database when the permanent-clear path runs\n"
+                "- Use with extreme caution on the default path (DB + index cleared); True is softer on DB only"
             ),
             "parameters": {
                 "project_id": {
@@ -333,26 +347,32 @@ class DeleteProjectMCPCommand(BaseMCPCommand):
                     ),
                 },
                 {
-                    "description": "Delete project from database only",
+                    "description": (
+                        "Default: move project to trash, then clear DB and FAISS (sources stay in trash)"
+                    ),
                     "command": {
                         "project_id": "928bcf10-db1c-47a3-8341-f60a6d997fe7",
                     },
                     "explanation": (
-                        "Soft-deletes to trash (move root, version dir), then removes all project data "
-                        "from the database and the FAISS index file. Project source is under trash, not at "
-                        "the original root path."
+                        "``delete_from_disk`` omitted (False): soft-delete moves the project tree into "
+                        "``trash_dir``, then **all project rows are removed from the database** and the "
+                        "FAISS slice is deleted. On-disk sources remain under trash until "
+                        "``clear_trash`` / ``permanently_delete_from_trash``."
                     ),
                 },
                 {
-                    "description": "Delete project from database and move to trash",
+                    "description": (
+                        "Trash-only: move project to trash and **keep database rows** until trash cleanup"
+                    ),
                     "command": {
                         "project_id": "928bcf10-db1c-47a3-8341-f60a6d997fe7",
                         "delete_from_disk": True,
                     },
                     "explanation": (
-                        "Deletes project from database and moves project directory to trash (recycle bin). "
-                        "Version directory is permanently deleted. Use list_trashed_projects to see trashed items; "
-                        "permanently_delete_from_trash or clear_trash to remove from disk permanently."
+                        "``delete_from_disk=True``: same soft-delete (move root to trash, remove version dir), "
+                        "but **no** permanent DB/FAISS clear — rows stay for recovery. Use "
+                        "``list_trashed_projects``, then ``permanently_delete_from_trash`` or ``clear_trash`` "
+                        "to purge disk and DB later."
                     ),
                 },
             ],
@@ -435,10 +455,11 @@ class DeleteProjectMCPCommand(BaseMCPCommand):
                 },
             },
             "best_practices": [
+                "Remember the project tree always goes to trash first (recycle bin), not silent unlink",
                 "ALWAYS use dry_run=True first to preview what will be deleted",
                 "Verify project_id is correct before deletion - use list_projects to get project IDs",
                 "Backup database before deleting important projects",
-                "This operation is permanent - double-check before proceeding",
+                "DB-clear path is irreversible for rows; trashed folders remain until trash purge",
                 "Default delete_from_disk=False moves the project root to trash then clears DB data",
                 "Use list_projects to verify project exists and get correct project_id before deletion",
                 "Database path is automatically resolved from server configuration, no root_dir needed",

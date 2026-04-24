@@ -258,7 +258,7 @@ COMMAND_MAP = [
         "project_management",
     ),
     (
-        "delete_project",
+        "project_set_mark_del",
         "code_analysis.commands.project_management_mcp_commands",
         "DeleteProjectMCPCommand",
         "project_management",

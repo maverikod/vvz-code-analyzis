@@ -12,7 +12,58 @@ Author: Vasiliy Zdanovskiy
 email: vasilyvz@gmail.com
 """
 
-from typing import Any, Callable, Dict, List, Set
+from typing import Any, Callable, Dict, List, Optional, Set, Tuple
+
+
+def resolve_usage_target_cst_node_id(
+    db: Any,
+    project_id: str,
+    file_id: int,
+    entity_type: str,
+    name: str,
+    class_name: Optional[str],
+    is_valid_uuid4: Callable[[Any], bool],
+) -> Optional[Tuple[str, str]]:
+    """
+    Resolve (cst_node_id, file_path) for a usage target scoped to one file row.
+
+    Used by call_graph export to disambiguate same-named symbols in different files.
+    """
+    row: Any = None
+    et = (entity_type or "").strip().lower()
+    if et == "class":
+        row = db._fetchone(
+            "SELECT c.cst_node_id AS cst_node_id, f.path AS path FROM classes c "
+            "JOIN files f ON f.id = c.file_id "
+            "WHERE f.project_id = ? AND c.file_id = ? AND c.name = ?",
+            (project_id, file_id, name),
+        )
+    elif et == "function":
+        row = db._fetchone(
+            "SELECT fn.cst_node_id AS cst_node_id, f.path AS path FROM functions fn "
+            "JOIN files f ON f.id = fn.file_id "
+            "WHERE f.project_id = ? AND fn.file_id = ? AND fn.name = ?",
+            (project_id, file_id, name),
+        )
+    elif et == "method" and class_name:
+        row = db._fetchone(
+            "SELECT m.cst_node_id AS cst_node_id, f.path AS path FROM methods m "
+            "JOIN classes c ON c.id = m.class_id "
+            "JOIN files f ON f.id = c.file_id "
+            "WHERE f.project_id = ? AND c.file_id = ? AND c.name = ? AND m.name = ?",
+            (project_id, file_id, class_name, name),
+        )
+    else:
+        return None
+    if not row:
+        return None
+    cid = row["cst_node_id"] if isinstance(row, dict) else getattr(row, "cst_node_id", None)
+    path = row["path"] if isinstance(row, dict) else getattr(row, "path", None)
+    if cid is None or path is None:
+        return None
+    if not is_valid_uuid4(cid):
+        return None
+    return (str(cid).strip(), str(path))
 
 
 def build_entity_nodes_hierarchy(

@@ -10,6 +10,7 @@ from typing import Dict, List, Any, Optional
 
 from ..core.constants import DEFAULT_MAX_FILE_LINES
 from ..core.database_client.client import DatabaseClient
+from ..core.sql_portable import WHERE_FILES_ACTIVE
 
 logger = logging.getLogger(__name__)
 
@@ -52,12 +53,12 @@ class ListLongFilesCommand:
         try:
             # Get files exceeding line limit
             result = self.database.execute(
-                """
+                f"""
                 SELECT id, path, lines, last_modified, has_docstring
                 FROM files
                 WHERE project_id = ? 
                   AND lines > ?
-                  AND (deleted = 0 OR deleted IS NULL)
+                  AND {WHERE_FILES_ACTIVE}
                 ORDER BY lines DESC
                 """,
                 (self.project_id, self.max_lines),

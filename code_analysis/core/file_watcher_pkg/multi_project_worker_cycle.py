@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import time
 import uuid
+from pathlib import Path
 from typing import Any, Dict
 
 import logging
@@ -85,6 +86,9 @@ async def run_scan_cycle(worker: Any, database: Any, processors: Any) -> Dict[st
         version_dir=worker.version_dir,
     )
 
+    cfg_raw = getattr(worker, "config_path", None)
+    scan_config_path = Path(cfg_raw) if cfg_raw else None
+
     progress_done = 0.0
 
     for spec in worker.watch_dirs:
@@ -105,6 +109,7 @@ async def run_scan_cycle(worker: Any, database: Any, processors: Any) -> Dict[st
             tuple(worker.ignore_patterns),
             worker.locks_dir,
             worker._pid,
+            config_path=scan_config_path,
         )
         watch_dir_duration = time.time() - watch_dir_start
 

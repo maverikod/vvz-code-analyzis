@@ -59,7 +59,6 @@ def _make_mock_database(
 @pytest.mark.asyncio
 async def test_process_cycle_calls_index_file_for_files_with_needs_chunking(tmp_path):
     """Process cycle discovers projects with needs_chunking=1 and calls index_file per file."""
-    socket_path = str(tmp_path / "test.sock")
     batch_size = 5
     projects = [{"project_id": "proj-a"}]
     files = [
@@ -71,14 +70,14 @@ async def test_process_cycle_calls_index_file_for_files_with_needs_chunking(tmp_
     mock_db = _make_mock_database(projects, files_per_project, batch_size)
     worker = IndexingWorker(
         db_path=tmp_path / "test.db",
-        socket_path=socket_path,
+        config_path=str(tmp_path / "config.json"),
         batch_size=batch_size,
         poll_interval=0,
     )
     worker._stop_event = multiprocessing.Event()
 
     with patch(
-        "code_analysis.core.database_client.client.DatabaseClient",
+        "code_analysis.core.database_client.factory.create_worker_database_client",
         return_value=mock_db,
     ):
 
@@ -103,7 +102,6 @@ async def test_process_cycle_calls_index_file_for_files_with_needs_chunking(tmp_
 @pytest.mark.asyncio
 async def test_process_cycle_respects_batch_size(tmp_path):
     """Process cycle requests at most batch_size files per project per cycle."""
-    socket_path = str(tmp_path / "test.sock")
     batch_size = 2
     projects = [{"project_id": "p1"}]
     # 3 files available; batch_size=2 so only first 2 should be requested
@@ -117,14 +115,14 @@ async def test_process_cycle_respects_batch_size(tmp_path):
     mock_db = _make_mock_database(projects, files_per_project, batch_size)
     worker = IndexingWorker(
         db_path=tmp_path / "test.db",
-        socket_path=socket_path,
+        config_path=str(tmp_path / "config.json"),
         batch_size=batch_size,
         poll_interval=0,
     )
     worker._stop_event = multiprocessing.Event()
 
     with patch(
-        "code_analysis.core.database_client.client.DatabaseClient",
+        "code_analysis.core.database_client.factory.create_worker_database_client",
         return_value=mock_db,
     ):
 
@@ -146,7 +144,6 @@ async def test_process_cycle_respects_batch_size(tmp_path):
 @pytest.mark.asyncio
 async def test_process_cycle_respects_project_order(tmp_path):
     """Process cycle processes projects in discovery order (DISTINCT project_id)."""
-    socket_path = str(tmp_path / "test.sock")
     batch_size = 1
     # Two projects; order of processing should follow list order
     projects = [
@@ -161,14 +158,14 @@ async def test_process_cycle_respects_project_order(tmp_path):
     mock_db = _make_mock_database(projects, files_per_project, batch_size)
     worker = IndexingWorker(
         db_path=tmp_path / "test.db",
-        socket_path=socket_path,
+        config_path=str(tmp_path / "config.json"),
         batch_size=batch_size,
         poll_interval=0,
     )
     worker._stop_event = multiprocessing.Event()
 
     with patch(
-        "code_analysis.core.database_client.client.DatabaseClient",
+        "code_analysis.core.database_client.factory.create_worker_database_client",
         return_value=mock_db,
     ):
 
@@ -277,7 +274,7 @@ async def test_indexing_worker_one_cycle_integration(tmp_path):
         try:
             worker = IndexingWorker(
                 db_path=db_path,
-                socket_path=socket_path,
+                config_path=str(tmp_path / "config.json"),
                 batch_size=5,
                 poll_interval=0,
             )
@@ -289,7 +286,11 @@ async def test_indexing_worker_one_cycle_integration(tmp_path):
                 worker._stop_event.set()
 
             stop_task = asyncio.create_task(stop_after_one_cycle())
-            result = await process_cycle(worker, poll_interval=1)
+            with patch(
+                "code_analysis.core.database_client.factory.create_worker_database_client",
+                return_value=client,
+            ):
+                result = await process_cycle(worker, poll_interval=1)
             await stop_task
 
             assert (

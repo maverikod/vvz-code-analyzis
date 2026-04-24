@@ -32,6 +32,10 @@ from .schema_definition import (
 
 logger = logging.getLogger(__name__)
 
+# Passed to database_driver_pkg execute/execute_batch so run_* skips per-statement commit
+# (same idea as SQLite named transactions); CodeDatabase then calls driver.commit().
+LOCAL_DRIVER_TRANSACTION_ID = "local"
+
 
 def create_driver_config_for_worker(
     db_path: Path, driver_type: str = "sqlite_proxy", backup_dir: Optional[Path] = None
@@ -206,20 +210,38 @@ class CodeDatabase:
         Returns:
             CodeDatabase instance using the given driver. Do not call sync_schema on it.
         """
+        from code_analysis.core.database_driver_pkg.drivers.postgres import (
+            PostgreSQLDriver,
+        )
+        from code_analysis.core.database_driver_pkg.drivers.sqlite import (
+            SQLiteDriver as RpcSQLiteDriver,
+        )
+
         db_path = getattr(driver, "db_path", None)
-        if driver_config is None and db_path is not None:
-            driver_config = {
-                "type": "sqlite",
-                "config": {"path": str(Path(db_path).resolve())},
-            }
-        elif driver_config is None:
-            driver_config = {"type": "sqlite", "config": {}}
+        if driver_config is None:
+            if isinstance(driver, PostgreSQLDriver):
+                driver_config = {"type": "postgres", "config": {}}
+            elif db_path is not None:
+                driver_config = {
+                    "type": "sqlite",
+                    "config": {"path": str(Path(db_path).resolve())},
+                }
+            else:
+                driver_config = {"type": "sqlite", "config": {}}
+
+        if isinstance(driver, PostgreSQLDriver):
+            resolved_driver_type = "postgres"
+        elif isinstance(driver, RpcSQLiteDriver) or db_path is not None:
+            resolved_driver_type = "sqlite"
+        else:
+            resolved_driver_type = str(driver_config.get("type") or "sqlite")
+
         logger.debug(
             "CodeDatabase.from_existing_driver: reusing driver (no connect, no sync_schema)"
         )
         obj = object.__new__(cls)
         obj.driver = driver
-        obj._driver_type = "sqlite"
+        obj._driver_type = resolved_driver_type
         obj._lock = None
         obj._transaction_active = False
         obj.driver_config = driver_config
@@ -260,14 +282,37 @@ class CodeDatabase:
             return getattr(self, "_do_sync_schema")
         raise AttributeError(name)
 
+    def _driver_transaction_id(self) -> Optional[str]:
+        """transaction_id for RPC drivers: set while CodeDatabase transaction is active.
+
+        sqlite_proxy keeps transaction id on the driver; other drivers use
+        :data:`LOCAL_DRIVER_TRANSACTION_ID` so sqlite_run/postgres_run skip commit
+        until :meth:`driver.commit`.
+        """
+        if not getattr(self, "_transaction_active", False):
+            return None
+        if self._driver_type == "sqlite_proxy":
+            return None
+        return LOCAL_DRIVER_TRANSACTION_ID
+
+    def _invoke_driver_execute(
+        self, sql: str, params: Optional[tuple], tid: Optional[str]
+    ) -> Any:
+        """Call driver.execute; older db_driver modules omit transaction_id."""
+        try:
+            return self.driver.execute(sql, params, tid)
+        except TypeError:
+            return self.driver.execute(sql, params)
+
     def _execute(self, sql: str, params: Optional[tuple] = None) -> None:
         """Execute SQL statement with optional locking."""
+        tid = self._driver_transaction_id()
         result = None
         if self._lock:
             with self._lock:
-                result = self.driver.execute(sql, params)
+                result = self._invoke_driver_execute(sql, params, tid)
         else:
-            result = self.driver.execute(sql, params)
+            result = self._invoke_driver_execute(sql, params, tid)
         if isinstance(result, dict):
             setattr(self, "_last_execute_result", result)
 
@@ -297,11 +342,12 @@ class CodeDatabase:
     ) -> Optional[Dict[str, Any]]:
         """Fetch one row with optional locking."""
         # Prefer execute() returning {"data": [...]} (database_driver_pkg has no fetchone)
+        tid = self._driver_transaction_id()
         if self._lock:
             with self._lock:
-                result = self.driver.execute(sql, params)
+                result = self._invoke_driver_execute(sql, params, tid)
         else:
-            result = self.driver.execute(sql, params)
+            result = self._invoke_driver_execute(sql, params, tid)
         if isinstance(result, dict) and "data" in result:
             data = result.get("data", [])
             return data[0] if data else None
@@ -318,11 +364,12 @@ class CodeDatabase:
     ) -> List[Dict[str, Any]]:
         """Fetch all rows with optional locking."""
         # Prefer execute() returning {"data": [...]} (database_driver_pkg has no fetchall)
+        tid = self._driver_transaction_id()
         if self._lock:
             with self._lock:
-                result = self.driver.execute(sql, params)
+                result = self._invoke_driver_execute(sql, params, tid)
         else:
-            result = self.driver.execute(sql, params)
+            result = self._invoke_driver_execute(sql, params, tid)
         if isinstance(result, dict) and "data" in result:
             data = result.get("data", [])
             return list(data) if data else []
@@ -378,8 +425,9 @@ class CodeDatabase:
                 "begin_transaction", transaction_id=transaction_id
             )
         else:
-            # For direct SQLite driver, use standard BEGIN TRANSACTION
-            transaction_id = "local"
+            # database_driver_pkg SQLite/Postgres: defer commit in run_* until driver.commit()
+            transaction_id = LOCAL_DRIVER_TRANSACTION_ID
+            self._transaction_active = True
             self._execute("BEGIN TRANSACTION")
 
         self._transaction_active = True
@@ -456,6 +504,21 @@ class CodeDatabase:
         Returns:
             List of dicts with keys affected_rows, lastrowid, data (one per operation).
         """
+        effective_tid = transaction_id
+        if effective_tid is None:
+            effective_tid = self._driver_transaction_id()
+        if hasattr(self.driver, "execute_batch"):
+            try:
+                if self._lock:
+                    with self._lock:
+                        return self.driver.execute_batch(operations, effective_tid)
+                return self.driver.execute_batch(operations, effective_tid)
+            except TypeError:
+                if self._lock:
+                    with self._lock:
+                        return self.driver.execute_batch(operations)
+                return self.driver.execute_batch(operations)
+
         results: List[Dict[str, Any]] = []
         for sql, params in operations:
             self._execute(sql, tuple(params) if params else None)

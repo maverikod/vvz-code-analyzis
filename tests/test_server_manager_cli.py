@@ -181,6 +181,101 @@ def test_status_removes_stale_pidfile(
     assert not pidfile.exists()
 
 
+def test_resolve_config_cli_over_env(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    a = tmp_path / "a.json"
+    a.write_text("{}", encoding="utf-8")
+    b = tmp_path / "b.json"
+    b.write_text("{}", encoding="utf-8")
+    monkeypatch.setenv("CASMGR_CONFIG", str(b))
+    got = server_manager_cli._resolve_config_path(str(a))
+    assert got == str(a.resolve())
+
+
+def test_resolve_config_env_over_system_and_cwd(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    env_cfg = tmp_path / "from_env.json"
+    env_cfg.write_text("{}", encoding="utf-8")
+    monkeypatch.setenv("CASMGR_CONFIG", str(env_cfg))
+    sys_cfg = tmp_path / "sys.json"
+    sys_cfg.write_text("{}", encoding="utf-8")
+    monkeypatch.setattr(server_manager_cli, "_SYSTEM_DEFAULT_CONFIG", sys_cfg)
+    cwd_cfg = tmp_path / "config.json"
+    cwd_cfg.write_text("{}", encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+    got = server_manager_cli._resolve_config_path(None)
+    assert got == str(env_cfg.resolve())
+
+
+def test_resolve_config_system_over_cwd(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("CASMGR_CONFIG", raising=False)
+    sys_cfg = tmp_path / "sys.json"
+    sys_cfg.write_text("{}", encoding="utf-8")
+    monkeypatch.setattr(server_manager_cli, "_SYSTEM_DEFAULT_CONFIG", sys_cfg)
+    cwd_cfg = tmp_path / "config.json"
+    cwd_cfg.write_text("{}", encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+    got = server_manager_cli._resolve_config_path(None)
+    assert got == str(sys_cfg.resolve())
+
+
+def test_resolve_config_cwd_fallback(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("CASMGR_CONFIG", raising=False)
+    missing = tmp_path / "nope.json"
+    monkeypatch.setattr(server_manager_cli, "_SYSTEM_DEFAULT_CONFIG", missing)
+    cwd_cfg = tmp_path / "config.json"
+    cwd_cfg.write_text("{}", encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+    got = server_manager_cli._resolve_config_path(None)
+    assert got == str(cwd_cfg.resolve())
+
+
+def test_resolve_config_none_when_missing(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.delenv("CASMGR_CONFIG", raising=False)
+    monkeypatch.setattr(
+        server_manager_cli,
+        "_SYSTEM_DEFAULT_CONFIG",
+        tmp_path / "missing_system.json",
+    )
+    monkeypatch.chdir(tmp_path)
+    assert server_manager_cli._resolve_config_path(None) is None
+    err = capsys.readouterr().err
+    assert "no config found" in err
+
+
+def test_server_status_uses_cwd_config_without_flag(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    (tmp_path / "config.json").write_text("{}", encoding="utf-8")
+    monkeypatch.delenv("CASMGR_CONFIG", raising=False)
+    monkeypatch.setattr(
+        server_manager_cli,
+        "_SYSTEM_DEFAULT_CONFIG",
+        tmp_path / "no_system.json",
+    )
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(server_manager_cli, "_find_daemon_pids", lambda _cfg: [])
+    rc = server_manager_cli.server(["status"])
+    assert rc == 0
+    assert capsys.readouterr().out.strip() == "stopped"
+
+
 def test_status_pidfile_alive_but_not_our_daemon(
     config_path: Path,
     pidfile: Path,

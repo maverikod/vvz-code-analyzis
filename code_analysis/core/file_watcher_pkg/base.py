@@ -14,7 +14,10 @@ import os
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from ..venv_path_policy import allowed_venv_py_files_for_watch_dir
+from ..venv_path_policy import (
+    allowed_venv_py_files_for_watch_dir,
+    ignore_exception_files_for_watch_dir,
+)
 from .lock_manager import LockManager
 from .processor import FileChangeProcessor
 from .scanner import scan_directory
@@ -44,6 +47,7 @@ class FileWatcherWorker:
         scan_interval: int = 60,
         version_dir: Optional[str] = None,
         ignore_patterns: Optional[List[str]] = None,
+        config_path: str = "",
     ):
         """
         Initialize file watcher worker.
@@ -58,12 +62,15 @@ class FileWatcherWorker:
             scan_interval: Interval in seconds between scans (default: 60)
             version_dir: Version directory for deleted files (optional)
             ignore_patterns: List of glob patterns to ignore (from config, optional)
+            config_path: Absolute path to server ``config.json`` (required for
+                :func:`~code_analysis.core.database_client.factory.create_worker_database_client`).
         """
         self.db_path = db_path
         self.watch_dirs = [Path(d) for d in watch_dirs]
         self.scan_interval = scan_interval
         self.version_dir = version_dir
         self.ignore_patterns = ignore_patterns or []
+        self.config_path = config_path
 
         # Use first watch_dir as lock key
         lock_key = str(self.watch_dirs[0].resolve()) if self.watch_dirs else "default"
@@ -100,16 +107,16 @@ class FileWatcherWorker:
         )
 
         try:
-            from ..database_client.client import DatabaseClient
-            from ..constants import DEFAULT_DB_DRIVER_SOCKET_DIR
+            from ..database_client.factory import create_worker_database_client
 
-            # Get socket path for database driver
-            db_name = Path(self.db_path).stem
-            socket_dir = Path(DEFAULT_DB_DRIVER_SOCKET_DIR)
-            socket_dir.mkdir(parents=True, exist_ok=True)
-            socket_path = str(socket_dir / f"{db_name}_driver.sock")
-
-            database = DatabaseClient(socket_path=socket_path)
+            if not self.config_path:
+                raise ValueError(
+                    "FileWatcherWorker requires config_path (server config.json) "
+                    "for the universal database driver."
+                )
+            database = create_worker_database_client(
+                config_path=Path(self.config_path),
+            )
             database.connect()
             processor = FileChangeProcessor(
                 database=database,
@@ -198,11 +205,13 @@ class FileWatcherWorker:
                     f"time: {scan_start.strftime('%Y-%m-%d %H:%M:%S')}"
                 )
                 allowed_venv = allowed_venv_py_files_for_watch_dir(root_dir)
+                ign_ex = ignore_exception_files_for_watch_dir(root_dir)
                 scanned_files = scan_directory(
                     root_dir=root_dir,
                     watch_dirs=self.watch_dirs,
                     ignore_patterns=self.ignore_patterns,
                     allowed_venv_py_files=allowed_venv or None,
+                    ignore_exception_files=ign_ex or None,
                 )
 
                 # Compute delta (scan phase - no DB writes)

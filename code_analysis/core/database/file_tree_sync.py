@@ -64,7 +64,6 @@ def _build_snapshot_node_insert_ops(
     return ops
 
 
-
 def sync_file_to_db_atomic(
     database: Any,
     project_id: str,
@@ -179,7 +178,7 @@ def sync_file_to_db_atomic(
                 (
                     "DELETE FROM file_tree_snapshots WHERE file_id = ?",
                     (file_id,),
-                )
+                ),
             ],
             [
                 (

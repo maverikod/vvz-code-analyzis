@@ -103,8 +103,11 @@ def validate_file_existence_impl(
         if database:
             driver = database.get("driver", {})
             if driver and isinstance(driver, dict):
+                driver_type = driver.get("type")
+                if driver_type not in ("sqlite", "sqlite_proxy"):
+                    driver_type = None
                 driver_config = driver.get("config", {})
-                if driver_config and isinstance(driver_config, dict):
+                if driver_type and driver_config and isinstance(driver_config, dict):
                     db_path = driver_config.get("path")
                     if db_path and isinstance(db_path, str):
                         file_path = Path(db_path)

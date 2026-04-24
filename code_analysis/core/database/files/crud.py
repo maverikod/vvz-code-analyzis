@@ -9,6 +9,8 @@ import logging
 from pathlib import Path
 from typing import Any, Dict, List, Optional, cast
 
+from code_analysis.core.sql_portable import WHERE_FILES_ACTIVE
+
 logger = logging.getLogger(__name__)
 
 
@@ -49,7 +51,8 @@ def get_file_by_path(
         )
     else:
         row = self._fetchone(
-            "SELECT * FROM files WHERE path = ? AND project_id = ? AND (deleted = 0 OR deleted IS NULL)",
+            "SELECT * FROM files WHERE path = ? AND project_id = ? AND "
+            + WHERE_FILES_ACTIVE,
             (abs_path, project_id),
         )
     if not isinstance(row, dict):
@@ -127,11 +130,11 @@ def add_file(
 
     # Check if file exists in a different project (by relative_path or path)
     existing_file = self._fetchone(
-        """
+        f"""
         SELECT id, project_id FROM files 
         WHERE (relative_path = ? OR path = ?) 
         AND project_id != ? 
-        AND (deleted = 0 OR deleted IS NULL) 
+        AND {WHERE_FILES_ACTIVE}
         LIMIT 1
         """,
         (str(relative_path), abs_path, project_id),
@@ -270,7 +273,8 @@ def get_file_id(
         )
     else:
         row = self._fetchone(
-            "SELECT id FROM files WHERE path = ? AND project_id = ? AND (deleted = 0 OR deleted IS NULL)",
+            "SELECT id FROM files WHERE path = ? AND project_id = ? AND "
+            + WHERE_FILES_ACTIVE,
             (abs_path, project_id),
         )
     return row["id"] if row else None

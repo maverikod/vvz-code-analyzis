@@ -85,6 +85,31 @@ def cmd_generate(args: argparse.Namespace) -> int:
                 if hasattr(args, "code_analysis_driver_path")
                 else None
             ),
+            code_analysis_pg_host=(
+                args.code_analysis_pg_host
+                if hasattr(args, "code_analysis_pg_host")
+                else None
+            ),
+            code_analysis_pg_port=(
+                args.code_analysis_pg_port
+                if hasattr(args, "code_analysis_pg_port")
+                else None
+            ),
+            code_analysis_pg_dbname=(
+                args.code_analysis_pg_dbname
+                if hasattr(args, "code_analysis_pg_dbname")
+                else None
+            ),
+            code_analysis_pg_user=(
+                args.code_analysis_pg_user
+                if hasattr(args, "code_analysis_pg_user")
+                else None
+            ),
+            code_analysis_pg_password_env=(
+                args.code_analysis_pg_password_env
+                if hasattr(args, "code_analysis_pg_password_env")
+                else None
+            ),
             code_analysis_log=(
                 args.code_analysis_log if hasattr(args, "code_analysis_log") else None
             ),

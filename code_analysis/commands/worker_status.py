@@ -12,6 +12,12 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from ..core.sql_portable import (
+    WHERE_FILES_ACTIVE,
+    WHERE_FILES_ACTIVE_F,
+    WHERE_FILES_TRASHED,
+    WHERE_HAS_DOCSTRING,
+)
 from ..core.worker_status_file import read_worker_status
 
 logger = logging.getLogger(__name__)
@@ -393,15 +399,22 @@ class DatabaseStatusCommand:
                     ("SELECT COUNT(*) as count FROM projects", None),
                     ("SELECT id, name FROM projects LIMIT 10", None),
                     ("SELECT COUNT(*) as count FROM files", None),
-                    ("SELECT COUNT(*) as count FROM files WHERE deleted = 1", None),
                     (
-                        "SELECT COUNT(*) as count FROM files WHERE has_docstring = 1",
+                        "SELECT COUNT(*) as count FROM files WHERE "
+                        + WHERE_FILES_TRASHED,
+                        None,
+                    ),
+                    (
+                        "SELECT COUNT(*) as count FROM files WHERE "
+                        + WHERE_HAS_DOCSTRING,
                         None,
                     ),
                     (
                         """
                     SELECT COUNT(*) as count FROM files 
-                    WHERE (deleted = 0 OR deleted IS NULL)
+                    WHERE """
+                        + WHERE_FILES_ACTIVE
+                        + """
                     AND NOT EXISTS (SELECT 1 FROM code_chunks WHERE code_chunks.file_id = files.id)
                     """,
                         None,
@@ -433,7 +446,9 @@ class DatabaseStatusCommand:
                         """
                     SELECT f.id, f.path, f.has_docstring, f.last_modified
                     FROM files f
-                    WHERE (f.deleted = 0 OR f.deleted IS NULL)
+                    WHERE """
+                        + WHERE_FILES_ACTIVE_F
+                        + """
                     AND NOT EXISTS (SELECT 1 FROM code_chunks WHERE code_chunks.file_id = f.id)
                     ORDER BY f.updated_at DESC
                     LIMIT 10

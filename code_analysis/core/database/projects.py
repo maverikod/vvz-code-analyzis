@@ -10,6 +10,15 @@ import uuid
 from pathlib import Path
 from typing import Dict, List, Any, Optional
 
+from code_analysis.core.sql_portable import (
+    WHERE_FILES_ACTIVE,
+    WHERE_FILES_ACTIVE_F,
+    WHERE_FILES_ACTIVE_P,
+    WHERE_HAS_DOCSTRING_F,
+    WHERE_PROCESSING_ACTIVE_P,
+    database_has_sqlite_code_content_fts,
+)
+
 logger = logging.getLogger(__name__)
 
 
@@ -80,10 +89,10 @@ def get_all_projects(self) -> List[Dict[str, Any]]:
     """
     rows = self._fetchall(
         "SELECT p.id, p.root_path, p.name, p.comment, p.updated_at FROM projects p "
-        "WHERE (p.deleted = 0 OR p.deleted IS NULL) "
+        "WHERE " + WHERE_FILES_ACTIVE_P + " "
         "AND (NOT EXISTS (SELECT 1 FROM files f WHERE f.project_id = p.id) "
         "   OR EXISTS (SELECT 1 FROM files f WHERE f.project_id = p.id "
-        "              AND (f.deleted = 0 OR f.deleted IS NULL))) "
+        "              AND " + WHERE_FILES_ACTIVE_F + ")) "
         "ORDER BY p.name, p.root_path"
     )
     return rows if rows else []
@@ -168,7 +177,7 @@ async def clear_project_data(self, project_id: str) -> None:
     content_ids = [row["id"] for row in content_rows]
     # Delete FTS entries in batches to avoid database corruption
     # If FTS is corrupted, skip it and continue with other deletions
-    if content_ids:
+    if content_ids and database_has_sqlite_code_content_fts(self):
         batch_size = 1000
         for i in range(0, len(content_ids), batch_size):
             batch = content_ids[i : i + batch_size]
@@ -251,7 +260,7 @@ def get_projects_with_vectorization_count(self) -> List[Dict[str, Any]]:
         Sorted by pending_count ASC (smallest first)
     """
     rows = self._fetchall(
-        """
+        f"""
         SELECT 
             p.id AS project_id,
             p.root_path,
@@ -260,9 +269,9 @@ def get_projects_with_vectorization_count(self) -> List[Dict[str, Any]]:
                 (SELECT COUNT(DISTINCT f.id)
                  FROM files f
                  WHERE f.project_id = p.id
-                   AND (f.deleted = 0 OR f.deleted IS NULL)
+                   AND {WHERE_FILES_ACTIVE_F}
                    AND (
-                       f.has_docstring = 1 
+                       {WHERE_HAS_DOCSTRING_F}
                        OR EXISTS (
                            SELECT 1 FROM classes c 
                            WHERE c.file_id = f.id 
@@ -293,21 +302,21 @@ def get_projects_with_vectorization_count(self) -> List[Dict[str, Any]]:
                  FROM code_chunks cc
                  INNER JOIN files f ON cc.file_id = f.id
                  WHERE cc.project_id = p.id
-                   AND (f.deleted = 0 OR f.deleted IS NULL)
+                   AND {WHERE_FILES_ACTIVE_F}
                    AND cc.embedding_vector IS NOT NULL
                    AND cc.vector_id IS NULL)
             ) AS pending_count
         FROM projects p
-        WHERE (p.deleted = 0 OR p.deleted IS NULL)
-        AND (p.processing_paused = 0 OR p.processing_paused IS NULL)
+        WHERE {WHERE_FILES_ACTIVE_P}
+        AND {WHERE_PROCESSING_ACTIVE_P}
         AND (
             -- Count files needing chunking
             (SELECT COUNT(DISTINCT f.id)
              FROM files f
              WHERE f.project_id = p.id
-               AND (f.deleted = 0 OR f.deleted IS NULL)
+               AND {WHERE_FILES_ACTIVE_F}
                AND (
-                   f.has_docstring = 1 
+                   {WHERE_HAS_DOCSTRING_F}
                    OR EXISTS (
                        SELECT 1 FROM classes c 
                        WHERE c.file_id = f.id 
@@ -338,7 +347,7 @@ def get_projects_with_vectorization_count(self) -> List[Dict[str, Any]]:
              FROM code_chunks cc
              INNER JOIN files f ON cc.file_id = f.id
              WHERE cc.project_id = p.id
-               AND (f.deleted = 0 OR f.deleted IS NULL)
+               AND {WHERE_FILES_ACTIVE_F}
                AND cc.embedding_vector IS NOT NULL
                AND cc.vector_id IS NULL)
         ) > 0
@@ -369,7 +378,8 @@ def get_project_files(
         )
     else:
         rows = self._fetchall(
-            "SELECT id, path, lines, last_modified, has_docstring, deleted FROM files WHERE project_id = ? AND (deleted = 0 OR deleted IS NULL)",
+            "SELECT id, path, lines, last_modified, has_docstring, deleted FROM files WHERE project_id = ? AND "
+            + WHERE_FILES_ACTIVE,
             (project_id,),
         )
     result = []

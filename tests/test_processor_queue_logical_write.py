@@ -1,4 +1,4 @@
-"""ProcessorQueueOps uses one logical write when the DB supports it."""
+"""ProcessorQueueOps DB batch helpers delegate to the database."""
 
 from __future__ import annotations
 
@@ -7,14 +7,11 @@ from unittest.mock import Mock
 from code_analysis.core.file_watcher_pkg.processor_queue import ProcessorQueueOps
 
 
-def test_db_submit_logical_write_prefers_execute_logical() -> None:
+def test_db_execute_batch_uses_database_execute_batch_when_available() -> None:
     db = Mock()
-    db.execute_logical_write_operation = Mock(
-        return_value={"success": True, "data": {"batch_results": []}}
-    )
+    db.execute_batch = Mock(return_value=[{"affected_rows": 1, "lastrowid": None}])
     q = ProcessorQueueOps(db, watch_dirs_resolved=[])
-    b1 = [("INSERT INTO files VALUES (?)", ("a",))]
-    b2 = [("UPDATE files SET x=1 WHERE path=?", ("a",))]
-    q._db_submit_logical_write([b1, b2])
-    db.execute_logical_write_operation.assert_called_once()
-    assert db.execute_logical_write_operation.call_args[0][0]["batches"] == [b1, b2]
+    ops = [("INSERT INTO files VALUES (?)", ("a",))]
+    out = q._db_execute_batch(ops)
+    db.execute_batch.assert_called_once_with(ops)
+    assert len(out) == 1

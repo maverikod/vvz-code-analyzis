@@ -4,11 +4,18 @@ Patch for CommandExecutionJob to support progress tracking.
 This module patches CommandExecutionJob to create and pass ProgressTracker
 through context, allowing commands to update progress and logs.
 
+Also reconciles queue terminal status with MCP ``CommandResult``: if the command
+returns ``success: false`` (e.g. ``ErrorResult``), the job must not stay
+``completed`` — ``mcp_proxy_adapter`` otherwise always records ``completed``.
+
 Author: Vasiliy Zdanovskiy
 email: vasilyvz@gmail.com
 """
 
+from __future__ import annotations
+
 import logging
+from typing import Any, Dict, Optional
 
 from .shared_database_spawn_init import ensure_shared_database_for_current_process
 
@@ -17,6 +24,86 @@ logger = logging.getLogger(__name__)
 
 # Flag to track if patch has been applied
 _patch_applied = False
+
+
+def _mcp_failure_message(payload: Dict[str, Any], cmd_result: Optional[Dict[str, Any]]) -> str:
+    for block in (cmd_result, payload):
+        if not isinstance(block, dict):
+            continue
+        err = block.get("error")
+        if isinstance(err, dict) and err.get("message"):
+            return str(err["message"])
+        if block.get("message"):
+            return str(block["message"])
+    return "Command failed"
+
+
+def reconcile_command_execution_job_status_after_mcp_result(job: Any) -> None:
+    """
+    If the stored MCP payload reports failure, set queue job status to ``failed``.
+
+    ``CommandExecutionJob`` always wraps the command dict in
+    ``{job_id, command, result: <to_dict()>, status: "completed"}``; this fixes
+    ``queue_get_job_status`` when the inner command returned ``ErrorResult``.
+    """
+    try:
+        from mcp_proxy_adapter.commands.queue.jobs import CommandExecutionJob
+    except ImportError:
+        return
+    if not isinstance(job, CommandExecutionJob):
+        return
+    try:
+        state = job.get_status()
+    except Exception:
+        logger.debug("reconcile: get_status failed for job %s", getattr(job, "job_id", "?"))
+        return
+    if not isinstance(state, dict):
+        return
+    payload = state.get("result")
+    if not isinstance(payload, dict):
+        return
+
+    cmd_result = payload.get("result")
+    failed = False
+    if payload.get("success") is False:
+        failed = True
+    elif isinstance(cmd_result, dict) and cmd_result.get("success") is False:
+        failed = True
+    if not failed:
+        return
+
+    desc = _mcp_failure_message(payload, cmd_result if isinstance(cmd_result, dict) else None)
+    job_id = getattr(job, "job_id", "?")
+    cmd_name = payload.get("command")
+    detail = cmd_result if isinstance(cmd_result, dict) else payload
+    job_log = getattr(job, "logger", None) or logger
+    job_log.error(
+        "[QUEUE_JOB_FAILED] job_id=%s command=%s: %s",
+        job_id,
+        cmd_name,
+        desc,
+    )
+    job_log.error("[QUEUE_JOB_FAILED] job_id=%s mcp_result=%s", job_id, detail)
+
+    out = {
+        "job_id": getattr(job, "job_id", "") or job_id,
+        "command": cmd_name,
+        "result": cmd_result if isinstance(cmd_result, dict) else payload,
+        "status": "failed",
+    }
+    try:
+        job.set_mcp_result(out, "failed")
+    except Exception as e:
+        logger.warning(
+            "reconcile: set_mcp_result(failed) failed for job %s: %s",
+            getattr(job, "job_id", "?"),
+            e,
+        )
+        return
+    try:
+        job.set_description(desc[:2000])
+    except Exception:
+        pass
 
 
 def patch_command_execution_job():
@@ -73,6 +160,7 @@ def patch_command_execution_job():
             # Call original run (adapter no longer overwrites progress/description
             # before await, so command-driven progress is visible in queue_get_job_status)
             original_run(self)
+            reconcile_command_execution_job_status_after_mcp_result(self)
 
         # Mark as patched
         patched_run._progress_tracker_patched = True

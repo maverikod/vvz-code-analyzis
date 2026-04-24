@@ -337,6 +337,12 @@ def get_tables_mid() -> Dict[str, Any]:
                     "not_null": False,
                     "default": "julianday('now')",
                 },
+                {
+                    "name": "vectorization_skipped",
+                    "type": "INTEGER",
+                    "not_null": False,
+                    "default": "0",
+                },
             ],
             "foreign_keys": [
                 {

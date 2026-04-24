@@ -12,7 +12,6 @@ from pathlib import Path
 
 import pytest
 
-from code_analysis.core.exceptions import InvalidProjectIdFormatError
 from code_analysis.core.project_discovery import (
     DuplicateProjectIdError,
     NestedProjectError,
@@ -130,33 +129,27 @@ class TestFindProjectRoot:
         assert result is None
 
     def test_find_project_root_nested_projects_error(self, temp_dir, project_id):
-        """Test that nested projects raise NestedProjectError."""
-        # Create parent project
+        """Deeper projectid is not a separate project; file resolves to immediate child root."""
+        # Create parent project (only valid project root: watch_dir/parent/)
         parent_project = temp_dir / "parent"
         parent_project.mkdir()
         parent_id = str(uuid.uuid4())
         create_projectid_file(parent_project, parent_id)
 
-        # Create child project inside parent
+        # Stray projectid deeper under parent — ignored for discovery
         child_project = parent_project / "child"
         child_project.mkdir()
         create_projectid_file(child_project, project_id)
 
-        # Create file in child project
         file_path = create_file(child_project, "file.py", "print('hello')")
 
-        # Find project root (should raise NestedProjectError)
-        with pytest.raises(NestedProjectError) as exc_info:
-            find_project_root(file_path, [temp_dir])
-
-        err = exc_info.value
-        assert err.child_project is not None and err.parent_project is not None
-        assert Path(err.child_project).resolve() == child_project.resolve()
-        assert Path(err.parent_project).resolve() == parent_project.resolve()
+        result = find_project_root(file_path, [temp_dir])
+        assert result is not None
+        assert result.project_id == parent_id
+        assert result.root_path == parent_project.resolve()
 
     def test_find_project_root_invalid_projectid(self, temp_dir):
-        """Test that invalid projectid file (invalid UUID in JSON) raises InvalidProjectIdFormatError."""
-        # Create project with invalid projectid (valid JSON but invalid UUID)
+        """Invalid UUID in projectid at project root is skipped; no ProjectRoot is found."""
         project_root = temp_dir / "project1"
         project_root.mkdir()
         projectid_path = project_root / "projectid"
@@ -164,12 +157,9 @@ class TestFindProjectRoot:
             json.dumps({"id": "not-a-valid-uuid"}), encoding="utf-8"
         )
 
-        # Create file
         file_path = create_file(project_root, "file.py", "print('hello')")
 
-        # Find project root raises when projectid has invalid UUID
-        with pytest.raises(InvalidProjectIdFormatError):
-            find_project_root(file_path, [temp_dir])
+        assert find_project_root(file_path, [temp_dir]) is None
 
     def test_find_project_root_multiple_watch_dirs(self, temp_dir, project_id):
         """Test finding project root with multiple watch directories."""
@@ -252,22 +242,36 @@ class TestDiscoverProjectsInDirectory:
         assert discovered_ids == {project_id1, project_id2}
 
     def test_discover_projects_nested_error(self, temp_dir):
-        """Nested project (child under parent) causes parent to be skipped via validate_no_nested_projects."""
-        # Create parent project at depth 1
+        """projectid under parent/child/ is not a separate project; parent stays discovered."""
         parent_project = temp_dir / "parent"
         parent_project.mkdir()
         parent_id = str(uuid.uuid4())
         create_projectid_file(parent_project, parent_id)
 
-        # Create child project inside parent (depth 2)
         child_project = parent_project / "child"
         child_project.mkdir()
         create_projectid_file(child_project, str(uuid.uuid4()))
 
-        # Discover finds parent's projectid; validate_no_nested_projects finds child's projectid
-        # and raises, so parent is skipped -> 0 projects returned
         projects = discover_projects_in_directory(temp_dir)
-        assert len(projects) == 0
+        assert len(projects) == 1
+        assert projects[0].project_id == parent_id
+        assert projects[0].root_path == parent_project.resolve()
+
+    def test_discover_ignores_projectid_at_watch_root(self, temp_dir, project_id):
+        """watch_dir/projectid does not register the watch directory as a project."""
+        (temp_dir / "projectid").write_text(
+            json.dumps({"id": project_id}, ensure_ascii=False), encoding="utf-8"
+        )
+        projects = discover_projects_in_directory(temp_dir)
+        assert projects == []
+
+    def test_find_project_root_file_in_watch_root_no_project(self, temp_dir, project_id):
+        """Files directly under watch_dir (not under watch_dir/<prj>/) have no project."""
+        prj = temp_dir / "prj"
+        prj.mkdir()
+        create_projectid_file(prj, project_id)
+        file_path = create_file(temp_dir, "top.py", "x=1")
+        assert find_project_root(file_path, [temp_dir]) is None
 
     def test_discover_projects_duplicate_id_error(self, temp_dir):
         """Test that duplicate project_id raises DuplicateProjectIdError."""
@@ -295,25 +299,23 @@ class TestDiscoverProjectsInDirectory:
         assert existing != duplicate
 
     def test_discover_projects_invalid_projectid_skipped(self, temp_dir, project_id):
-        """Invalid projectid (invalid UUID) raises when discovered; valid-only dir returns one."""
-        # Create only valid project (no invalid in same watch_dir to avoid raise)
+        """Invalid projectid (invalid UUID) is skipped; valid sibling projects are still discovered."""
         valid_project = temp_dir / "valid"
         valid_project.mkdir()
         create_projectid_file(valid_project, project_id)
 
-        # Discover projects finds the valid one
         projects = discover_projects_in_directory(temp_dir)
         assert len(projects) == 1
         assert projects[0].project_id == project_id
 
-        # Adding invalid projectid causes discover to raise when it processes that dir
         invalid_project = temp_dir / "invalid"
         invalid_project.mkdir()
         (invalid_project / "projectid").write_text(
             json.dumps({"id": "not-a-uuid"}), encoding="utf-8"
         )
-        with pytest.raises(InvalidProjectIdFormatError):
-            discover_projects_in_directory(temp_dir)
+        projects = discover_projects_in_directory(temp_dir)
+        assert len(projects) == 1
+        assert projects[0].project_id == project_id
 
     def test_discover_projects_empty_directory(self, temp_dir):
         """Test discovering projects in empty directory."""
@@ -347,20 +349,17 @@ class TestValidateNoNestedProjects:
         validate_no_nested_projects(project_root, temp_dir)
 
     def test_validate_no_nested_projects_nested_error(self, temp_dir):
-        """Test validation raises error when nested projects exist."""
-        # Create parent project
+        """Child path with its own projectid under a valid sibling root still raises."""
         parent_project = temp_dir / "parent"
         parent_project.mkdir()
         parent_id = str(uuid.uuid4())
         create_projectid_file(parent_project, parent_id)
 
-        # Create child project
         child_project = parent_project / "child"
         child_project.mkdir()
         child_id = str(uuid.uuid4())
         create_projectid_file(child_project, child_id)
 
-        # Should raise NestedProjectError
         with pytest.raises(NestedProjectError) as exc_info:
             validate_no_nested_projects(child_project, temp_dir)
 
@@ -368,6 +367,18 @@ class TestValidateNoNestedProjects:
         assert err.child_project is not None and err.parent_project is not None
         assert Path(err.child_project).resolve() == child_project.resolve()
         assert Path(err.parent_project).resolve() == parent_project.resolve()
+
+    def test_validate_no_nested_projects_deep_projectid_warns_only(self, temp_dir, project_id):
+        """projectid only under subdirs of a valid root does not fail validation."""
+        parent_project = temp_dir / "parent"
+        parent_project.mkdir()
+        create_projectid_file(parent_project, project_id)
+
+        child_project = parent_project / "child"
+        child_project.mkdir()
+        create_projectid_file(child_project, str(uuid.uuid4()))
+
+        validate_no_nested_projects(parent_project, temp_dir)
 
     def test_validate_no_nested_projects_no_parent(self, temp_dir, project_id):
         """Test validation when project is at watch_dir level."""

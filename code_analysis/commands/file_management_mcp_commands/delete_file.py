@@ -21,7 +21,10 @@ class DeleteFileMCPCommand(BaseMCPCommand):
 
     name = "delete_file"
     version = "1.0.0"
-    descr = "Mark file as deleted and move to file trash (soft delete)"
+    descr = (
+        "Move file to trash (recycle bin): soft-delete — mark in DB and store under "
+        "trash_dir; original path is not kept in the project tree."
+    )
     category = "file_management"
     author = "Vasiliy Zdanovskiy"
     email = "vasilyvz@gmail.com"
@@ -32,6 +35,11 @@ class DeleteFileMCPCommand(BaseMCPCommand):
         """Get JSON schema for command parameters."""
         return {
             "type": "object",
+            "description": (
+                "Soft-delete to file trash: the file is moved under the configured "
+                "trash_dir (recycle bin) and marked deleted in the DB — not shredded in "
+                "place. Restore with unmark_deleted_file when possible."
+            ),
             "properties": {
                 "project_id": {
                     "type": "string",
@@ -39,11 +47,61 @@ class DeleteFileMCPCommand(BaseMCPCommand):
                 },
                 "file_path": {
                     "type": "string",
-                    "description": "File path relative to project root (e.g. ai_admin/commands/foo.py).",
+                    "description": (
+                        "File path relative to project root (e.g. ai_admin/commands/foo.py). "
+                        "Content is relocated into trash_dir for this project."
+                    ),
                 },
             },
             "required": ["project_id", "file_path"],
             "additionalProperties": False,
+        }
+
+    @classmethod
+    def metadata(cls: type["DeleteFileMCPCommand"]) -> Dict[str, Any]:
+        """Rich metadata emphasizing trash / recycle-bin semantics."""
+        return {
+            "name": cls.name,
+            "version": cls.version,
+            "description": cls.descr,
+            "category": cls.category,
+            "author": cls.author,
+            "email": cls.email,
+            "detailed_description": (
+                "**Trash / recycle bin:** `delete_file` does **not** erase bytes in the "
+                "project tree immediately. It runs a **soft delete**: the file is recorded "
+                "as deleted in the database and its contents are moved under "
+                "`code_analysis.storage.trash_dir` (per-project layout), analogous to a "
+                "recycle bin.\n\n"
+                "**Recovery:** use `unmark_deleted_file` to move the file back from the "
+                "version/trash flow when supported. Permanent removal from disk is a "
+                "separate trash-maintenance concern (see file trash docs / related "
+                "commands).\n\n"
+                "**Requirements:** `trash_dir` must be configured; otherwise the command "
+                "returns DELETE_FILE_CONFIG_ERROR.\n\n"
+                "**Permanent removal:** this command only **moves** to trash. To purge those "
+                "file rows and bytes afterward, use ``cleanup_deleted_files`` with "
+                "``hard_delete=True`` (and optionally ``older_than_days``)."
+            ),
+            "parameters": {
+                "project_id": {
+                    "description": "Project UUID the file belongs to.",
+                    "type": "string",
+                    "required": True,
+                },
+                "file_path": {
+                    "description": "Path relative to project root; file ends up under trash.",
+                    "type": "string",
+                    "required": True,
+                },
+            },
+            "best_practices": [
+                "Treat this as “move to trash”, not “secure wipe”.",
+                "Use unmark_deleted_file to undo when the trashed copy still exists.",
+            ],
+            "usage_examples": [],
+            "error_cases": {},
+            "return_value": {},
         }
 
     async def execute(

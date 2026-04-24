@@ -204,8 +204,22 @@ class SQLiteOperations:
                     sql += f" LIMIT -1 OFFSET {offset}"
 
                 cursor = self.conn.cursor()
-                cursor.execute(sql, where_values)
-                rows = cursor.fetchall()
-                return [dict(row) for row in rows]
+                try:
+                    cursor.execute(sql, where_values)
+                    rows = cursor.fetchall()
+                    out = [dict(row) for row in rows]
+                finally:
+                    cursor.close()
+                # Align with PostgreSQL driver: end implicit transaction after SELECT so
+                # long gaps between RPCs do not leave the connection in an open txn.
+                try:
+                    self.conn.commit()
+                except Exception:
+                    pass
+                return out
             except Exception as e:
+                try:
+                    self.conn.rollback()
+                except Exception:
+                    pass
                 raise DriverOperationError(f"Failed to select rows: {e}") from e

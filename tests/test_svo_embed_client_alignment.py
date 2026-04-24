@@ -19,6 +19,7 @@ from code_analysis.core.svo_client_manager_chunker import (
     get_chunks_batch,
 )
 from code_analysis.core.svo_client_manager_embedding import (
+    _normalize_embed_cmd_response,
     _unwrap_embed_execute_payload,
     get_embeddings,
 )
@@ -60,6 +61,26 @@ def test_unwrap_embed_execute_payload_promotes_result_data_result_data_results()
     assert data["model"] == "queued-model"
     assert data["job_id"] == "job-1"
     assert data["status"] == "job_completed"
+
+
+def test_normalize_embed_cmd_response_job_envelope_without_success_wrapper() -> None:
+    """embed_client may return job completion at ``result`` without ``success``/``data``."""
+    payload = {
+        "result": {
+            "job_id": "job-1",
+            "command": "embed",
+            "status": "job_completed",
+            "result": {
+                "data": {
+                    "model": "m1",
+                    "results": [{"embedding": [0.1, 0.2], "body": "a"}],
+                }
+            },
+        }
+    }
+    out = _normalize_embed_cmd_response(payload)
+    assert out["model"] == "m1"
+    assert out["results"][0]["embedding"] == [0.1, 0.2]
 
 
 def test_chunk_rpc_kwargs_maps_type_to_chunk_type() -> None:

@@ -11,7 +11,7 @@ email: vasilyvz@gmail.com
 import logging
 from dataclasses import dataclass
 from pathlib import Path
-from typing import List, Optional
+from typing import List, Optional, Tuple, Union
 
 from .exceptions import ProjectNotFoundError
 from .project_resolution import find_project_root_for_path
@@ -163,6 +163,36 @@ def normalize_file_path(
         project_id=resolved_info.project_id,
         relative_path=str(relative_path),
     )
+
+
+def file_lookup_paths_for_project(
+    file_path: Union[str, Path],
+    project_root: Union[str, Path],
+) -> Tuple[List[str], List[str]]:
+    """
+    Keys for matching DB ``files.path`` / relative columns when resolving a user path.
+
+    Returns:
+        (absolute_path_keys, relative_path_keys) — use either set for lookups.
+    """
+    root = Path(project_root).resolve()
+    p = Path(file_path)
+    if p.is_absolute():
+        resolved = p.resolve()
+        try:
+            rel = resolved.relative_to(root)
+        except ValueError:
+            rel = Path(file_path)
+    else:
+        resolved = (root / p).resolve()
+        rel = p
+    abs_keys = [str(resolved)]
+    rel_norm = str(rel).replace("\\", "/")
+    rel_keys: List[str] = [rel_norm]
+    alt = str(rel)
+    if alt not in rel_keys:
+        rel_keys.append(alt)
+    return abs_keys, rel_keys
 
 
 def normalize_path_simple(path: str | Path) -> str:

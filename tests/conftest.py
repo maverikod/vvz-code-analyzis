@@ -51,6 +51,7 @@ def rpc_server_with_schema(tmp_path):
             name TEXT,
             comment TEXT,
             watch_dir_id TEXT,
+            deleted BOOLEAN DEFAULT 0,
             processing_paused BOOLEAN DEFAULT 0,
             created_at REAL DEFAULT (julianday('now')),
             updated_at REAL DEFAULT (julianday('now'))

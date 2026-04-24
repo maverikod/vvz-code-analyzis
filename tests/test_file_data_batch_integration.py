@@ -107,7 +107,8 @@ def test_update_file_data_atomic_batch_writes_expected_db_contents(
     file_path = root_dir / "batch_test.py"
     file_mtime = 0.0
 
-    transaction_id = temp_db.begin_transaction()
+    # execute_logical_write_operation (used inside update_file_data_atomic_batch)
+    # opens and commits its own transaction; do not wrap with begin_transaction here.
     result = update_file_data_atomic_batch(
         database=temp_db,
         file_id=file_id,
@@ -115,9 +116,7 @@ def test_update_file_data_atomic_batch_writes_expected_db_contents(
         source_code=BATCH_TEST_SOURCE,
         file_path=str(file_path),
         file_mtime=file_mtime,
-        transaction_id=transaction_id,
     )
-    temp_db.commit_transaction(transaction_id)
 
     assert result.get("success") is True
     assert result.get("classes") == 1

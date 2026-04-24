@@ -46,6 +46,7 @@ class GetDatabaseStatusMCPCommand(BaseMCPCommand):
             SuccessResult with database status or ErrorResult on failure
         """
         try:
+            from ...core.config import get_driver_config
             from ...core.storage_paths import (
                 load_raw_config,
                 resolve_storage_paths,
@@ -60,9 +61,16 @@ class GetDatabaseStatusMCPCommand(BaseMCPCommand):
             ensure_storage_dirs(storage)
             db_path = storage.db_path
 
+            dc = get_driver_config(config_data)
+            driver_type = (dc or {}).get("type") if isinstance(dc, dict) else None
+            if not isinstance(driver_type, str):
+                driver_type = "sqlite_proxy"
+
             db = self._open_database_from_config(auto_analyze=False)
             try:
-                result = build_database_status_result(db, db_path)
+                result = build_database_status_result(
+                    db, db_path, driver_type=driver_type
+                )
                 return SuccessResult(data=result)
             finally:
                 db.disconnect()

@@ -31,14 +31,6 @@ from ..constants import (
 )
 
 from code_analysis.core.database_client.protocol import (
-    DeleteRequest,
-    InsertRequest,
-    SelectRequest,
-    UpdateRequest,
-    BaseResult,
-    DataResult,
-    ErrorResult,
-    SuccessResult,
     ErrorCode,
     RPCError,
     RPCRequest,
@@ -48,6 +40,7 @@ from .drivers.base import BaseDatabaseDriver
 from .drivers.sqlite import SQLiteDriver
 from .exceptions import RPCServerError
 from .request_queue import RequestPriority, RequestQueue
+from .rpc_dispatch import process_rpc_request
 from .rpc_handlers import RPCHandlers
 from .serialization import serialize_response
 
@@ -445,142 +438,7 @@ class RPCServer:
         Returns:
             RPC response
         """
-        try:
-            method = request.method
-            params = request.params
-            tid = params.get("transaction_id") if isinstance(params, dict) else None
-            logger.info(
-                "[CHAIN] rpc_server _process_request method=%s tid=%s",
-                method,
-                (str(tid)[:8] + "…") if tid and len(str(tid)) > 8 else tid,
-            )
-
-            # Variable to hold result (can be SuccessResult, DataResult, or ErrorResult)
-            result: SuccessResult | DataResult | ErrorResult
-
-            # Convert params to Request classes for methods that use them
-            if method == "insert":
-                try:
-                    insert_request = InsertRequest.from_dict(params)
-                    result = self.handlers.handle_insert(insert_request)
-                except Exception as e:
-                    logger.error(f"Error creating InsertRequest: {e}", exc_info=True)
-                    result = ErrorResult(
-                        error_code=ErrorCode.VALIDATION_ERROR,
-                        description=f"Invalid insert request: {e}",
-                    )
-            elif method == "update":
-                try:
-                    update_request = UpdateRequest.from_dict(params)
-                    result = self.handlers.handle_update(update_request)
-                except Exception as e:
-                    logger.error(f"Error creating UpdateRequest: {e}", exc_info=True)
-                    result = ErrorResult(
-                        error_code=ErrorCode.VALIDATION_ERROR,
-                        description=f"Invalid update request: {e}",
-                    )
-            elif method == "delete":
-                try:
-                    delete_request = DeleteRequest.from_dict(params)
-                    result = self.handlers.handle_delete(delete_request)
-                except Exception as e:
-                    logger.error(f"Error creating DeleteRequest: {e}", exc_info=True)
-                    result = ErrorResult(
-                        error_code=ErrorCode.VALIDATION_ERROR,
-                        description=f"Invalid delete request: {e}",
-                    )
-            elif method == "select":
-                try:
-                    select_request = SelectRequest.from_dict(params)
-                    result = self.handlers.handle_select(select_request)
-                except Exception as e:
-                    logger.error(f"Error creating SelectRequest: {e}", exc_info=True)
-                    result = ErrorResult(
-                        error_code=ErrorCode.VALIDATION_ERROR,
-                        description=f"Invalid select request: {e}",
-                    )
-            else:
-                # Route to appropriate handler for methods that don't use Request classes
-                handler_map = {
-                    "create_table": self.handlers.handle_create_table,
-                    "drop_table": self.handlers.handle_drop_table,
-                    "execute": self.handlers.handle_execute,
-                    "execute_batch": self.handlers.handle_execute_batch,
-                    "execute_logical_write_operation": (
-                        self.handlers.handle_execute_logical_write_operation
-                    ),
-                    "begin_transaction": self.handlers.handle_begin_transaction,
-                    "commit_transaction": self.handlers.handle_commit_transaction,
-                    "rollback_transaction": self.handlers.handle_rollback_transaction,
-                    "get_table_info": self.handlers.handle_get_table_info,
-                    "sync_schema": self.handlers.handle_sync_schema,
-                    "query_ast": self.handlers.handle_query_ast,
-                    "query_cst": self.handlers.handle_query_cst,
-                    "modify_ast": self.handlers.handle_modify_ast,
-                    "modify_cst": self.handlers.handle_modify_cst,
-                    "index_file": self.handlers.handle_index_file,
-                    "mark_file_deleted": self.handlers.handle_mark_file_deleted,
-                    "unmark_file_deleted": self.handlers.handle_unmark_file_deleted,
-                    "hard_delete_file": self.handlers.handle_hard_delete_file,
-                    "get_deleted_files": self.handlers.handle_get_deleted_files,
-                }
-
-                handler = handler_map.get(method)
-                if not handler:
-                    return RPCResponse(
-                        error=RPCError(
-                            code=ErrorCode.INVALID_REQUEST,
-                            message=f"Unknown method: {method}",
-                        ),
-                        request_id=request.request_id,
-                    )
-
-                result = handler(params)
-
-            # Convert BaseResult to dictionary for RPC response
-            if isinstance(result, BaseResult):
-                if result.is_error() and isinstance(result, ErrorResult):
-                    # Convert ErrorResult to RPCError
-                    rpc_error = result.to_rpc_error()
-                    logger.warning(
-                        "[CHAIN] rpc_server _process_request method=%s handler_error=%s",
-                        method,
-                        getattr(rpc_error, "message", rpc_error),
-                    )
-                    return RPCResponse(
-                        error=rpc_error,
-                        request_id=request.request_id,
-                    )
-                else:
-                    # Convert SuccessResult or DataResult to result dict
-                    result_dict = result.to_dict()
-                    return RPCResponse(
-                        result=result_dict, request_id=request.request_id
-                    )
-            else:
-                # Fallback for unexpected result type
-                logger.error(f"Unexpected result type: {type(result)}")
-                return RPCResponse(
-                    error=RPCError(
-                        code=ErrorCode.INTERNAL_ERROR,
-                        message="Unexpected result type from handler",
-                    ),
-                    request_id=request.request_id,
-                )
-        except Exception as e:
-            logger.error(
-                "[CHAIN] rpc_server _process_request method=%s exception: %s",
-                method,
-                e,
-                exc_info=True,
-            )
-            return RPCResponse(
-                error=RPCError(
-                    code=ErrorCode.INTERNAL_ERROR,
-                    message=str(e),
-                ),
-                request_id=request.request_id,
-            )
+        return process_rpc_request(self.handlers, request)
 
     def _receive_data(self, sock: socket.socket) -> Optional[bytes]:
         """Receive data from socket.

@@ -82,14 +82,14 @@ def _setup_worker_logging(
 
 def run_indexing_worker(
     db_path: str,
+    *,
+    config_path: str,
     poll_interval: int = 30,
     batch_size: int = 5,
     worker_log_path: Optional[str] = None,
     pid_file_path: Optional[str] = None,
-    socket_path: Optional[str] = None,
     log_max_bytes: int = 10485760,
     log_backup_count: int = 5,
-    config_path: Optional[str] = None,
     log_timing: bool = False,
 ) -> Dict[str, Any]:
     """Run indexing worker: logging, PID cleanup, create client and worker, loop until stop.
@@ -100,17 +100,14 @@ def run_indexing_worker(
         batch_size: Max files per project per cycle (default 5)
         worker_log_path: Path to worker log file (optional)
         pid_file_path: Path to PID file (optional); removed on exit only if PID matches
-        socket_path: Database driver socket path (optional; derived from db_path if not set)
         log_max_bytes: Max log file size before rotation (default 10 MB)
         log_backup_count: Number of rotated logs to keep (default 5)
-        config_path: Optional path to config; when set, vectorize file after each successful index
+        config_path: Absolute path to server ``config.json`` (required for DB client factory).
         log_timing: When True, log [TIMING] lines for analyze_timing_bottlenecks (from worker config).
 
     Returns:
         Stats dict when stopped: indexed, errors, cycles.
     """
-    from ..constants import DEFAULT_DB_DRIVER_SOCKET_DIR
-
     _setup_worker_logging(worker_log_path, log_max_bytes, log_backup_count)
 
     logger.info(
@@ -121,12 +118,6 @@ def run_indexing_worker(
 
     db_path_obj = Path(db_path)
     db_path_obj.parent.mkdir(parents=True, exist_ok=True)
-
-    if not socket_path:
-        db_name = db_path_obj.stem
-        socket_dir = Path(DEFAULT_DB_DRIVER_SOCKET_DIR)
-        socket_dir.mkdir(parents=True, exist_ok=True)
-        socket_path = str(socket_dir / f"{db_name}_driver.sock")
 
     if not db_path_obj.exists():
         logger.info(
@@ -139,11 +130,10 @@ def run_indexing_worker(
     )
     worker = IndexingWorker(
         db_path=db_path_obj,
-        socket_path=socket_path,
+        config_path=config_path,
         batch_size=batch_size,
         poll_interval=poll_interval,
         status_file_path=status_file_path,
-        config_path=config_path,
         log_timing=log_timing,
     )
 

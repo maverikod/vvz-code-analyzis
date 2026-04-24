@@ -27,6 +27,7 @@ class VectorizationWorker:
         db_path: Path,
         faiss_dir: Path,
         vector_dim: int,
+        config_path: str,
         svo_client_manager: Optional["SVOClientManager"] = None,
         batch_size: int = 10,
         retry_attempts: int = 3,
@@ -35,7 +36,6 @@ class VectorizationWorker:
         max_empty_iterations: int = 3,
         empty_delay: float = 5.0,
         max_files_per_pass: int = 30,
-        socket_path: Optional[str] = None,
         status_file_path: Optional[Path] = None,
         log_timing: bool = False,
     ):
@@ -50,6 +50,7 @@ class VectorizationWorker:
             db_path: Path to database file
             faiss_dir: Base directory for FAISS index files (project-scoped indexes: {faiss_dir}/{project_id}.bin)
             vector_dim: Vector dimension
+            config_path: Absolute path to server ``config.json`` (required for DB client factory).
             svo_client_manager: SVO client manager for embeddings
             batch_size: Number of chunks to process in one batch
             retry_attempts: Number of retry attempts for vectorization (default: 3)
@@ -58,7 +59,6 @@ class VectorizationWorker:
             max_empty_iterations: Max consecutive empty iterations before adding delay (default: 3)
             empty_delay: Delay in seconds when no chunks available (default: 5.0)
             max_files_per_pass: Max files to process in one pass (from config; includes re-embed and new files)
-            socket_path: Path to database driver socket (for DatabaseClient)
             status_file_path: Optional path to write current_operation/current_file for monitoring
             log_timing: When True, log every operation with duration for bottleneck analysis
         """
@@ -73,7 +73,7 @@ class VectorizationWorker:
         self.max_empty_iterations = max_empty_iterations
         self.empty_delay = empty_delay
         self.max_files_per_pass = max_files_per_pass
-        self.socket_path = socket_path
+        self.config_path = config_path
         self.status_file_path = Path(status_file_path) if status_file_path else None
         self.log_timing = log_timing
         self._stop_event = multiprocessing.Event()

@@ -10,6 +10,8 @@ import time
 import uuid
 from typing import Any, Dict, Optional
 
+from code_analysis.core.sql_portable import WHERE_FILES_ACTIVE
+
 logger = logging.getLogger(__name__)
 
 
@@ -45,9 +47,9 @@ def start_indexing_cycle(
 
     if files_total_at_start is None:
         result = self._fetchone(
-            """
+            f"""
             SELECT COUNT(*) as count FROM files
-            WHERE (deleted = 0 OR deleted IS NULL) AND needs_chunking = 1
+            WHERE {WHERE_FILES_ACTIVE} AND needs_chunking = 1
             """
         )
         files_total_at_start = result["count"] if result else 0

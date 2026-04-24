@@ -8,6 +8,8 @@ email: vasilyvz@gmail.com
 import logging
 from typing import Any, Dict, List, Optional, cast
 
+from code_analysis.core.sql_portable import WHERE_FILES_ACTIVE_F, WHERE_HAS_DOCSTRING_F
+
 logger = logging.getLogger(__name__)
 
 
@@ -66,7 +68,34 @@ def get_files_needing_chunking(
     return cast(
         List[Dict[str, Any]],
         self._fetchall(
-            "\n                SELECT DISTINCT f.id, f.project_id, f.path, f.has_docstring\n                FROM files f\n                WHERE f.project_id = ?\n                AND (f.deleted = 0 OR f.deleted IS NULL)\n                AND (\n                    f.has_docstring = 1\n                    OR EXISTS (\n                        SELECT 1 FROM classes c\n                        WHERE c.file_id = f.id AND c.docstring IS NOT NULL AND c.docstring != ''\n                    )\n                    OR EXISTS (\n                        SELECT 1 FROM functions fn\n                        WHERE fn.file_id = f.id AND fn.docstring IS NOT NULL AND fn.docstring != ''\n                    )\n                    OR EXISTS (\n                        SELECT 1 FROM methods m\n                        JOIN classes c ON m.class_id = c.id\n                        WHERE c.file_id = f.id AND m.docstring IS NOT NULL AND m.docstring != ''\n                    )\n                )\n                AND (f.needs_chunking = 1 OR NOT EXISTS (\n                    SELECT 1 FROM code_chunks cc\n                    WHERE cc.file_id = f.id\n                ))\n                ORDER BY f.updated_at DESC\n                LIMIT ?\n                ",
+            f"""
+                SELECT DISTINCT f.id, f.project_id, f.path, f.has_docstring
+                FROM files f
+                WHERE f.project_id = ?
+                AND {WHERE_FILES_ACTIVE_F}
+                AND (
+                    {WHERE_HAS_DOCSTRING_F}
+                    OR EXISTS (
+                        SELECT 1 FROM classes c
+                        WHERE c.file_id = f.id AND c.docstring IS NOT NULL AND c.docstring != ''
+                    )
+                    OR EXISTS (
+                        SELECT 1 FROM functions fn
+                        WHERE fn.file_id = f.id AND fn.docstring IS NOT NULL AND fn.docstring != ''
+                    )
+                    OR EXISTS (
+                        SELECT 1 FROM methods m
+                        JOIN classes c ON m.class_id = c.id
+                        WHERE c.file_id = f.id AND m.docstring IS NOT NULL AND m.docstring != ''
+                    )
+                )
+                AND (f.needs_chunking = 1 OR NOT EXISTS (
+                    SELECT 1 FROM code_chunks cc
+                    WHERE cc.file_id = f.id
+                ))
+                ORDER BY f.updated_at DESC
+                LIMIT ?
+                """,
             (project_id, limit),
         ),
     )

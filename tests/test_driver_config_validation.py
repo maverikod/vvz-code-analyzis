@@ -7,6 +7,7 @@ email: vasilyvz@gmail.com
 
 from code_analysis.core.config_validator import CodeAnalysisConfigValidator
 
+
 class TestDriverConfigValidation:
     """Test driver configuration validation."""
 
@@ -232,6 +233,74 @@ class TestDriverConfigValidation:
         assert len(errors) > 0
         assert any("poll_interval" in r.key for r in errors)
 
+    def test_valid_postgres_driver_config(self):
+        """Test validation with postgres driver (dbname, user, password_env)."""
+        config = {
+            "server": {
+                "host": "localhost",
+                "port": 15000,
+                "protocol": "mtls",
+                "ssl": {"cert": "server.crt", "key": "server.key", "ca": "ca.crt"},
+            },
+            "queue_manager": {"enabled": True},
+            "code_analysis": {
+                "database": {
+                    "driver": {
+                        "type": "postgres",
+                        "config": {
+                            "host": "127.0.0.1",
+                            "port": 5432,
+                            "dbname": "code_analysis",
+                            "user": "postgres",
+                            "password_env": "CODE_ANALYSIS_POSTGRES_PASSWORD",
+                        },
+                    }
+                }
+            },
+        }
+
+        validator = CodeAnalysisConfigValidator()
+        results = validator.validate_config(config)
+        summary = validator.get_validation_summary()
+
+        assert summary["is_valid"] is True
+        errors = [r for r in results if r.level == "error"]
+        assert len(errors) == 0
+
+    def test_postgres_rejects_inline_password(self):
+        """Inline password in config must be rejected for postgres."""
+        config = {
+            "server": {
+                "host": "localhost",
+                "port": 15000,
+                "protocol": "mtls",
+                "ssl": {"cert": "server.crt", "key": "server.key", "ca": "ca.crt"},
+            },
+            "queue_manager": {"enabled": True},
+            "code_analysis": {
+                "database": {
+                    "driver": {
+                        "type": "postgres",
+                        "config": {
+                            "host": "127.0.0.1",
+                            "port": 5432,
+                            "dbname": "code_analysis",
+                            "user": "postgres",
+                            "password_env": "CODE_ANALYSIS_POSTGRES_PASSWORD",
+                            "password": "secret",
+                        },
+                    }
+                }
+            },
+        }
+
+        validator = CodeAnalysisConfigValidator()
+        results = validator.validate_config(config)
+        summary = validator.get_validation_summary()
+
+        assert summary["is_valid"] is False
+        assert any("password must not be set" in r.message for r in results)
+
     def test_valid_sqlite_driver(self):
         """Test validation with valid sqlite driver (not proxy)."""
         config = {
@@ -261,4 +330,3 @@ class TestDriverConfigValidation:
         assert summary["is_valid"] is True
         errors = [r for r in results if r.level == "error"]
         assert len(errors) == 0
-

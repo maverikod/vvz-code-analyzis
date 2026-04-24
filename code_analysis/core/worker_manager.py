@@ -239,6 +239,7 @@ class WorkerManager:
         db_path: str,
         watch_dirs: List[Dict[str, str]],
         locks_dir: str,
+        config_path: str,
         scan_interval: int = 60,
         version_dir: Optional[str] = None,
         worker_log_path: Optional[str] = None,
@@ -257,6 +258,7 @@ class WorkerManager:
             worker_log_path: Log path for worker process.
             worker_logs_dir: Absolute directory for worker log and PID file (optional).
             ignore_patterns: Optional ignore patterns.
+            config_path: Server config path for database client factory (PostgreSQL in-process).
 
         Returns:
             WorkerStartResult.
@@ -265,6 +267,7 @@ class WorkerManager:
             db_path=db_path,
             watch_dirs=watch_dirs,
             locks_dir=locks_dir,
+            config_path=config_path,
             scan_interval=scan_interval,
             version_dir=version_dir,
             worker_log_path=worker_log_path,
@@ -277,6 +280,7 @@ class WorkerManager:
         *,
         db_path: str,
         faiss_dir: str,
+        config_path: str,
         vector_dim: int = 384,
         svo_config: Optional[Dict[str, Any]] = None,
         batch_size: int = 10,
@@ -296,6 +300,7 @@ class WorkerManager:
             poll_interval: Poll interval seconds.
             worker_log_path: Log path for worker process.
             worker_logs_dir: Absolute directory for worker log and PID file (optional).
+            config_path: Server config path for database client factory (PostgreSQL in-process).
 
         Returns:
             WorkerStartResult.
@@ -303,6 +308,7 @@ class WorkerManager:
         return self._lifecycle.start_vectorization_worker(
             db_path=db_path,
             faiss_dir=faiss_dir,
+            config_path=config_path,
             vector_dim=vector_dim,
             svo_config=svo_config,
             batch_size=batch_size,
@@ -315,11 +321,11 @@ class WorkerManager:
         self,
         *,
         db_path: str,
+        config_path: str,
         poll_interval: int = 30,
         batch_size: int = 5,
         worker_log_path: Optional[str] = None,
         worker_logs_dir: Optional[str] = None,
-        config_path: Optional[str] = None,
         log_timing: bool = False,
     ) -> WorkerStartResult:
         """
@@ -339,11 +345,11 @@ class WorkerManager:
         """
         return self._lifecycle.start_indexing_worker(
             db_path=db_path,
+            config_path=config_path,
             poll_interval=poll_interval,
             batch_size=batch_size,
             worker_log_path=worker_log_path,
             worker_logs_dir=worker_logs_dir,
-            config_path=config_path,
             log_timing=log_timing,
         )
 

@@ -11,6 +11,7 @@ email: vasilyvz@gmail.com
 from .cleanup_deleted_files import CleanupDeletedFilesCommand
 from .collapse_versions import CollapseVersionsCommand
 from .mark_file_deleted import MarkFileDeletedCommand
+from .mark_files_deleted_by_mask import MarkFilesDeletedByMaskCommand
 from .repair_database import RepairDatabaseCommand
 from .restore_deleted_files import RestoreDeletedFilesCommand
 from .unmark_deleted_file import UnmarkDeletedFileCommand
@@ -19,6 +20,7 @@ __all__ = [
     "CleanupDeletedFilesCommand",
     "CollapseVersionsCommand",
     "MarkFileDeletedCommand",
+    "MarkFilesDeletedByMaskCommand",
     "RepairDatabaseCommand",
     "RestoreDeletedFilesCommand",
     "UnmarkDeletedFileCommand",

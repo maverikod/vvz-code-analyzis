@@ -218,10 +218,18 @@ class ProcessorQueueOps:
 
         # Batch INSERT and UPDATE for collected rows
         if batch_rows:
+            # UPSERT in place: INSERT OR REPLACE deletes the row on conflict, which breaks FKs when
+            # child tables (ast_trees, etc.) reference files(id) without ON DELETE CASCADE in DB.
             insert_sql = (
-                "INSERT OR REPLACE INTO files "
+                "INSERT INTO files "
                 "(path, lines, last_modified, has_docstring, project_id, created_at, updated_at) "
-                "VALUES (?, ?, ?, ?, ?, julianday('now'), julianday('now'))"
+                "VALUES (?, ?, ?, ?, ?, julianday('now'), julianday('now')) "
+                "ON CONFLICT (project_id, path) DO UPDATE SET "
+                "lines = excluded.lines, "
+                "last_modified = excluded.last_modified, "
+                "has_docstring = excluded.has_docstring, "
+                "deleted = FALSE, "
+                "updated_at = julianday('now')"
             )
             update_sql = (
                 "UPDATE files SET needs_chunking = 1 WHERE path = ? AND project_id = ?"
@@ -253,7 +261,7 @@ class ProcessorQueueOps:
         # Batch soft-delete for removed files
         if delta.deleted_files:
             delete_sql = (
-                "UPDATE files SET deleted = 1, updated_at = julianday('now') "
+                "UPDATE files SET deleted = TRUE, updated_at = julianday('now') "
                 "WHERE path = ? AND project_id = ?"
             )
             delete_ops: List[Tuple[str, Optional[tuple]]] = [
@@ -399,8 +407,14 @@ class ProcessorQueueOps:
             try:
                 self._db_execute(
                     """
-                    INSERT OR REPLACE INTO files (path, lines, last_modified, has_docstring, project_id, created_at, updated_at)
+                    INSERT INTO files (path, lines, last_modified, has_docstring, project_id, created_at, updated_at)
                     VALUES (?, ?, ?, ?, ?, julianday('now'), julianday('now'))
+                    ON CONFLICT (project_id, path) DO UPDATE SET
+                    lines = excluded.lines,
+                    last_modified = excluded.last_modified,
+                    has_docstring = excluded.has_docstring,
+                    deleted = FALSE,
+                    updated_at = julianday('now')
                     """,
                     (
                         abs_file_path,

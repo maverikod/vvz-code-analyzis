@@ -8,6 +8,7 @@ email: vasilyvz@gmail.com
 """
 
 from .base import BaseDatabaseDriver
+from .postgres import PostgreSQLDriver
 from .sqlite import SQLiteDriver
 
-__all__ = ["BaseDatabaseDriver", "SQLiteDriver"]
+__all__ = ["BaseDatabaseDriver", "PostgreSQLDriver", "SQLiteDriver"]

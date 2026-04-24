@@ -13,6 +13,8 @@ import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict, List
 
+from code_analysis.core.sql_portable import WHERE_FILES_ACTIVE, WHERE_FILES_ACTIVE_F
+
 if TYPE_CHECKING:
     from ..database_client.client import DatabaseClient
 
@@ -70,7 +72,8 @@ async def _request_chunking_for_files(
             # Check that file and project still exist in DB and file is not marked deleted
             try:
                 check_result = database.execute(
-                    "SELECT 1 FROM files WHERE id = ? AND project_id = ? AND (deleted = 0 OR deleted IS NULL)",
+                    "SELECT 1 FROM files WHERE id = ? AND project_id = ? AND "
+                    + WHERE_FILES_ACTIVE,
                     (file_id, project_id),
                 )
                 check_data = (
@@ -205,13 +208,13 @@ def _log_missing_docstring_files(
     """
     try:
         rows_result = database.execute(
-            """
+            f"""
             SELECT f.path
             FROM files f
             LEFT JOIN code_chunks c
               ON f.id = c.file_id AND c.source_type LIKE '%docstring%'
             WHERE f.project_id = ?
-            AND (f.deleted = 0 OR f.deleted IS NULL)
+            AND {WHERE_FILES_ACTIVE_F}
             GROUP BY f.id, f.path
             HAVING COUNT(c.id) = 0
             LIMIT ?

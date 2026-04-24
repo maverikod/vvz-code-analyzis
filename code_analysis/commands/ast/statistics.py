@@ -9,6 +9,7 @@ from typing import Any, Dict, Optional
 
 from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 
+from ...core.sql_portable import WHERE_FILES_ACTIVE
 from ..base_mcp_command import BaseMCPCommand
 
 
@@ -74,26 +75,25 @@ class ASTStatisticsMCPCommand(BaseMCPCommand):
                     }
                 )
             else:
-                # Project-wide stats: one execute_batch for two independent SELECTs
-                proj_params = (proj_id,)
-                batch_results = db.execute_batch(
-                    [
-                        (
-                            "SELECT COUNT(*) as count FROM ast_trees WHERE project_id = ?",
-                            proj_params,
-                        ),
-                        (
-                            "SELECT COUNT(*) as count FROM files WHERE project_id = ? AND (deleted = 0 OR deleted IS NULL)",
-                            proj_params,
-                        ),
-                    ]
+                # Project-wide stats: one statement with two scalar subqueries.
+                # Two separate round-trips could deadlock on PostgreSQL under concurrent
+                # indexing (different lock order on ast_trees vs files).
+                sql = (
+                    "SELECT "
+                    "(SELECT COUNT(*) FROM ast_trees WHERE project_id = ?) AS ast_count, "
+                    "(SELECT COUNT(*) FROM files WHERE project_id = ? AND "
+                    + WHERE_FILES_ACTIVE
+                    + ") AS file_count"
                 )
-                ast_data = batch_results[0].get("data", []) if batch_results else []
-                file_data = (
-                    batch_results[1].get("data", []) if len(batch_results) > 1 else []
-                )
-                ast_count = ast_data[0]["count"] if ast_data else 0
-                file_count = file_data[0]["count"] if file_data else 0
+                combined = db.execute(sql, (proj_id, proj_id))
+                rows = combined.get("data", []) if combined else []
+                if rows:
+                    row0 = rows[0]
+                    ast_count = int(row0.get("ast_count", 0) or 0)
+                    file_count = int(row0.get("file_count", 0) or 0)
+                else:
+                    ast_count = 0
+                    file_count = 0
                 db.disconnect()
                 return SuccessResult(
                     data={

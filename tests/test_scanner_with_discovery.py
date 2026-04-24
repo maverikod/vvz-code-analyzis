@@ -130,32 +130,25 @@ class TestScannerWithDiscovery:
         assert str(file_no_project.resolve()) not in files
 
     def test_scan_directory_nested_projects_skipped(self, temp_dir):
-        """Test that nested projects are skipped with error."""
-        # Create parent project
+        """Deeper projectid is ignored; subtree files belong to the immediate-child root."""
         parent_project = temp_dir / "parent"
         parent_project.mkdir()
         parent_id = str(uuid.uuid4())
         create_projectid_file(parent_project, parent_id)
 
-        # Create child project inside parent
         child_project = parent_project / "child"
         child_project.mkdir()
-        child_id = str(uuid.uuid4())
-        create_projectid_file(child_project, child_id)
+        create_projectid_file(child_project, str(uuid.uuid4()))
 
-        # Create files
         parent_file = create_file(parent_project, "parent.py", "print('parent')")
         child_file = create_file(child_project, "child.py", "print('child')")
 
-        # Scan directory - nested project should cause error, files skipped
         files = scan_directory(temp_dir, [temp_dir])
 
-        # Files in nested project should be skipped
-        # Only parent project files might be included (if no error during scan)
-        # The behavior depends on when the error is detected
-        # In current implementation, nested project error is raised during find_project_root
-        # So child file should be skipped
-        assert str(child_file.resolve()) not in files
+        assert str(parent_file.resolve()) in files
+        assert str(child_file.resolve()) in files
+        assert files[str(child_file.resolve())]["project_root"] == parent_project.resolve()
+        assert files[str(child_file.resolve())]["project_id"] == parent_id
 
     def test_scan_directory_ignores_patterns(self, temp_dir, project_id):
         """Test that ignore patterns work correctly."""

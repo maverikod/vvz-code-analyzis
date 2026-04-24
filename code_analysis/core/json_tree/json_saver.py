@@ -127,7 +127,9 @@ def save_json_tree_to_file(
                     file_id = created.id
 
                 if file_id is None:
-                    raise RuntimeError("file_id missing after create/update file record")
+                    raise RuntimeError(
+                        "file_id missing after create/update file record"
+                    )
                 assert isinstance(file_id, int)
 
                 file_mtime = BaseObject._to_timestamp(last_modified) or 0.0

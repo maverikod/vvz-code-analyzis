@@ -18,8 +18,11 @@ def get_metadata(cls: Type[Any]) -> Dict[str, Any]:
         "author": cls.author,
         "email": cls.email,
         "detailed_description": (
+            "**CRITICAL — required parameter:** You MUST pass `worker_type` in `params` "
+            '(e.g. `{"worker_type": "vectorization"}`). '
+            "`params: {}` is invalid and will fail with \"required parameter 'worker_type' is missing\".\n\n"
             "The get_worker_status command monitors worker process status, resource usage, "
-            "and recent activity. It supports two types of workers: file_watcher and vectorization. "
+            "and recent activity. It supports workers: file_watcher, vectorization, and indexing. "
             "The command provides comprehensive information about worker processes including "
             "CPU/memory usage, uptime, lock file status, and log activity.\n\n"
             "Operation flow:\n"
@@ -71,8 +74,8 @@ def get_metadata(cls: Type[Any]) -> Dict[str, Any]:
         "parameters": {
             "worker_type": {
                 "description": (
-                    "Type of worker to check. Must be one of: 'file_watcher', 'vectorization', or 'indexing'. "
-                    "Determines which worker processes to monitor."
+                    "**REQUIRED (not optional).** Must be exactly one of: `file_watcher`, "
+                    "`vectorization`, or `indexing`. Omitting this field causes command failure."
                 ),
                 "type": "string",
                 "required": True,

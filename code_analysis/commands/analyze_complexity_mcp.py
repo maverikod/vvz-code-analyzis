@@ -11,6 +11,7 @@ from typing import Any, Dict, List, Optional
 from mcp_proxy_adapter.commands.result import SuccessResult
 
 from ..core.complexity_analyzer import analyze_file_complexity
+from ..core.sql_portable import WHERE_FILES_ACTIVE
 from .base_mcp_command import BaseMCPCommand
 
 
@@ -143,7 +144,8 @@ class AnalyzeComplexityMCPCommand(BaseMCPCommand):
             else:
                 # Analyze all files in project
                 result = db.execute(
-                    "SELECT id, path FROM files WHERE project_id = ? AND deleted = 0",
+                    "SELECT id, path FROM files WHERE project_id = ? AND "
+                    + WHERE_FILES_ACTIVE,
                     (proj_id,),
                 )
                 files = result.get("data", [])

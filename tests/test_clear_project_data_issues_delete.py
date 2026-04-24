@@ -10,6 +10,25 @@ from code_analysis.commands.clear_project_data_impl import (
     _clear_project_data_impl,
     mark_project_deleted_impl,
 )
+from code_analysis.core.sql_portable import database_has_sqlite_code_content_fts
+
+
+def test_database_has_sqlite_code_content_fts_by_driver() -> None:
+    pg = MagicMock()
+    pg._driver_type = "postgres"
+    assert database_has_sqlite_code_content_fts(pg) is False
+    sl = MagicMock()
+    sl._driver_type = "sqlite_proxy"
+    assert database_has_sqlite_code_content_fts(sl) is True
+    bare = MagicMock()
+    assert database_has_sqlite_code_content_fts(bare) is True
+
+
+def test_full_clear_batch_skips_fts_when_disabled() -> None:
+    ops = build_delete_project_full_clear_batch(
+        "proj-no-fts", include_code_content_fts=False
+    )
+    assert not any("code_content_fts" in sql for sql, _ in ops)
 
 
 def test_full_clear_batch_issues_delete_uses_project_id_subqueries() -> None:
@@ -51,10 +70,13 @@ def test_clear_project_data_uses_single_logical_write_rpc() -> None:
 
     async def _run() -> None:
         db = MagicMock()
+        db._driver_type = "postgres"
         await _clear_project_data_impl(db, "proj-1")
         db.execute_logical_write_operation.assert_called_once()
         prog = db.execute_logical_write_operation.call_args[0][0]
         assert prog["batches"] and len(prog["batches"]) == 1
+        stmts = [pair[0] for pair in prog["batches"][0]]
+        assert not any("code_content_fts" in s for s in stmts)
 
     asyncio.run(_run())
 

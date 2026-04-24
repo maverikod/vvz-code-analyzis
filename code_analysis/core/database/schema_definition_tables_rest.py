@@ -9,7 +9,7 @@ from typing import Any, Dict
 
 
 def get_tables_rest() -> Dict[str, Any]:
-    """Return rest tables dict: code_duplicates, duplicate_occurrences, comprehensive_analysis_results, file_watcher_stats, vectorization_stats, indexing_worker_stats, file_tree_snapshots, file_tree_snapshot_roots, file_tree_snapshot_nodes."""
+    """Return rest tables dict: code_duplicates, duplicate_occurrences, comprehensive_analysis_results, file_watcher_stats, vectorization_stats, indexing_errors, indexing_worker_stats, file_tree_snapshots, file_tree_snapshot_roots, file_tree_snapshot_nodes."""
     return {
         "code_duplicates": {
             "columns": [
@@ -277,6 +277,37 @@ def get_tables_rest() -> Dict[str, Any]:
             ],
             "foreign_keys": [],
             "unique_constraints": [],
+            "check_constraints": [],
+        },
+        "indexing_errors": {
+            "columns": [
+                {
+                    "name": "id",
+                    "type": "INTEGER",
+                    "not_null": True,
+                    "primary_key": True,
+                    "autoincrement": True,
+                },
+                {"name": "project_id", "type": "TEXT", "not_null": True},
+                {"name": "file_path", "type": "TEXT", "not_null": True},
+                {"name": "error_type", "type": "TEXT", "not_null": False},
+                {"name": "error_message", "type": "TEXT", "not_null": False},
+                {
+                    "name": "created_at",
+                    "type": "REAL",
+                    "not_null": False,
+                    "default": "julianday('now')",
+                },
+            ],
+            "foreign_keys": [
+                {
+                    "columns": ["project_id"],
+                    "references_table": "projects",
+                    "references_columns": ["id"],
+                    "on_delete": "CASCADE",
+                }
+            ],
+            "unique_constraints": [{"columns": ["project_id", "file_path"]}],
             "check_constraints": [],
         },
         "indexing_worker_stats": {

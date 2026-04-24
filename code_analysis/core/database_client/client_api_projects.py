@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from typing import List, Optional
 
+from ..sql_portable import WHERE_FILES_ACTIVE, WHERE_PROJECTS_ACTIVE_P
 from .client_base import _DatabaseClientBase
 from .objects.mappers import (
     db_row_to_object,
@@ -115,11 +116,19 @@ class _ClientAPIProjectsMixin(_DatabaseClientBase):
         affected_rows = self.delete("projects", where={"id": project_id})
         return affected_rows > 0
 
-    def list_projects(self) -> List[Project]:
-        """List all projects in database. Excludes trashed by checking the files table:
-        project is active if it has no files or has at least one file with
-        (deleted = 0 OR deleted IS NULL).
-        Uses one row per project (GROUP BY) and INNER JOIN + UNION for speed.
+    def list_projects(self, *, include_deleted: bool = False) -> List[Project]:
+        """List projects in database.
+
+        By default excludes rows with ``projects.deleted`` set (soft-deleted / trash),
+        matching MCP ``list_projects``. A project is also listed if it has no file rows
+        or has at least one non-deleted file (``WHERE_FILES_ACTIVE`` on ``files``).
+
+        When ``include_deleted`` is true, returns **all** rows from ``projects`` (active
+        and soft-deleted), including projects whose files are all trashed — required for
+        trash lifecycle after ``project_set_mark_del(delete_from_disk=True)``.
+
+        Args:
+            include_deleted: When true, include soft-deleted project rows.
 
         Returns:
             List of Project objects
@@ -128,19 +137,25 @@ class _ClientAPIProjectsMixin(_DatabaseClientBase):
             RPCClientError: If RPC call fails
             RPCResponseError: If response contains error
         """
-        result = self.execute(
-            "SELECT p.* FROM projects p "
-            "INNER JOIN ("
-            "  SELECT project_id FROM files "
-            "  WHERE (deleted = 0 OR deleted IS NULL) "
-            "  GROUP BY project_id"
-            ") a ON p.id = a.project_id "
-            "UNION "
-            "SELECT p.* FROM projects p "
-            "WHERE p.id NOT IN (SELECT project_id FROM files) "
-            "ORDER BY created_at",
-            (),
-        )
+        if include_deleted:
+            sql = "SELECT p.* FROM projects p ORDER BY p.created_at"
+        else:
+            _proj_del = f" AND {WHERE_PROJECTS_ACTIVE_P}"
+            sql = (
+                "SELECT p.* FROM projects p "
+                "INNER JOIN ("
+                "  SELECT project_id FROM files "
+                f"  WHERE {WHERE_FILES_ACTIVE} "
+                "  GROUP BY project_id"
+                ") a ON p.id = a.project_id"
+                + _proj_del
+                + " UNION "
+                "SELECT p.* FROM projects p "
+                "WHERE p.id NOT IN (SELECT project_id FROM files)"
+                + _proj_del
+                + " ORDER BY created_at"
+            )
+        result = self.execute(sql, ())
         rows = (
             result.get("data", [])
             if isinstance(result, dict)

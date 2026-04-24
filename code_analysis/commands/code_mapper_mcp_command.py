@@ -7,6 +7,7 @@ email: vasilyvz@gmail.com
 
 import asyncio
 import logging
+import time
 from pathlib import Path
 from typing import Any, Callable, Dict, Optional
 
@@ -212,6 +213,7 @@ class UpdateIndexesMCPCommand(BaseMCPCommand):
                     results: list[Dict[str, Any]] = []
                     error_samples: list[Dict[str, str]] = []
                     last_percent = -1
+                    batch_t0 = time.perf_counter()
 
                     for idx, file_path in enumerate(python_files):
 
@@ -265,6 +267,23 @@ class UpdateIndexesMCPCommand(BaseMCPCommand):
                                 f"  {sample['file']}: {sample['error_type']} - {sample['error']}"
                             )
 
+                    elapsed = time.perf_counter() - batch_t0
+                    n_ok = sum(1 for r in results if r.get("status") == "success")
+                    n_skip = sum(1 for r in results if r.get("status") == "skipped")
+                    n_err = sum(1 for r in results if r.get("status") == "error")
+                    n_syn = sum(1 for r in results if r.get("status") == "syntax_error")
+                    logger.info(
+                        "[update_indexes TIMING] project_id=%s files=%s elapsed_sec=%.3f "
+                        "success=%s skipped=%s error=%s syntax_error=%s",
+                        project_id,
+                        len(results),
+                        elapsed,
+                        n_ok,
+                        n_skip,
+                        n_err,
+                        n_syn,
+                    )
+
                     return results
 
                 loop = asyncio.get_event_loop()
@@ -272,6 +291,7 @@ class UpdateIndexesMCPCommand(BaseMCPCommand):
 
                 total = len(results)
                 successful = sum(1 for r in results if r.get("status") == "success")
+                skipped = sum(1 for r in results if r.get("status") == "skipped")
                 errors = sum(1 for r in results if r.get("status") == "error")
                 syntax_errors = sum(
                     1 for r in results if r.get("status") == "syntax_error"
@@ -298,9 +318,11 @@ class UpdateIndexesMCPCommand(BaseMCPCommand):
 
                 # Log update_indexes end for correlation with status snapshots
                 logger.info(
-                    "[update_indexes END] project_id=%s files_processed=%s files_total=%s errors=%s trigger=%s",
+                    "[update_indexes END] project_id=%s files_success=%s files_skipped=%s "
+                    "files_total=%s errors=%s trigger=%s",
                     project_id,
                     successful,
+                    skipped,
                     total,
                     errors,
                     trigger,
@@ -310,6 +332,7 @@ class UpdateIndexesMCPCommand(BaseMCPCommand):
                     "project_id": project_id,
                     "root_path": str(root_path),
                     "files_processed": successful,
+                    "files_skipped": skipped,
                     "files_total": total,
                     "files_discovered": files_total,
                     "errors": errors,
@@ -322,8 +345,8 @@ class UpdateIndexesMCPCommand(BaseMCPCommand):
                     "db_backup_paths": [],
                     "workers_restarted": {},
                     "message": (
-                        f"Indexes updated: {successful}/{total} files processed, "
-                        f"{errors} errors, {syntax_errors} syntax errors"
+                        f"Indexes updated: {successful} analyzed, {skipped} skipped (mtime), "
+                        f"{total} files total, {errors} errors, {syntax_errors} syntax errors"
                     ),
                 }
                 if error_details:

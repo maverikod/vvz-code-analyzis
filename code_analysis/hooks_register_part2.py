@@ -33,6 +33,7 @@ def register_commands_part2(reg: registry) -> None:
             CleanupDeletedFilesMCPCommand,
             CollapseVersionsMCPCommand,
             DeleteFileMCPCommand,
+            DeleteFilesByMaskMCPCommand,
             ListDeletedFilesMCPCommand,
             RepairDatabaseMCPCommand,
             RestoreDeletedFilesMCPCommand,
@@ -41,6 +42,7 @@ def register_commands_part2(reg: registry) -> None:
 
         reg.register(CleanupDeletedFilesMCPCommand, "custom")
         reg.register(DeleteFileMCPCommand, "custom")
+        reg.register(DeleteFilesByMaskMCPCommand, "custom")
         reg.register(ListDeletedFilesMCPCommand, "custom")
         reg.register(UnmarkDeletedFileMCPCommand, "custom")
         reg.register(RestoreDeletedFilesMCPCommand, "custom")

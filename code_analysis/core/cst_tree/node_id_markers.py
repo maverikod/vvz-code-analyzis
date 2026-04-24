@@ -11,6 +11,7 @@ email: vasilyvz@gmail.com
 
 from __future__ import annotations
 
+import json
 import re
 from typing import Dict, Tuple
 from uuid import UUID
@@ -23,8 +24,10 @@ PersistedNodeIds = Dict[str, str]
 
 MARKERS_BEGIN = "# cst-node-ids: begin"
 MARKERS_VERSION = "# cst-node-ids: version=1"
+MARKERS_VERSION_V2 = "# cst-node-ids: version=2"
 MARKERS_END = "# cst-node-ids: end"
 MARKER_PREFIX = "# cst-node-id "
+_V2_DATA_PREFIX = "# cst-node-ids: data="
 
 _MARKER_RE = re.compile(
     r"^# cst-node-id "
@@ -107,20 +110,40 @@ def append_persisted_node_ids(
     return f"{normalized_source}\n\n{marker_block}"
 
 
+def _flatten_path_to_uuid(
+    metadata_map: Dict[str, TreeNodeMetadata],
+    root_node_id: str | None,
+) -> Dict[str, str]:
+    """Build path-string -> node UUID for compact v2 marker payload."""
+    out: Dict[str, str] = {}
+
+    def walk(node_id: str, path_indices: tuple[int, ...]) -> None:
+        meta = metadata_map.get(node_id)
+        if meta is None:
+            return
+        path_key = build_marker_path(path_indices)
+        out[path_key] = str(meta.node_id)
+        for index, child_id in enumerate(meta.children_ids):
+            walk(child_id, path_indices + (index,))
+
+    if root_node_id and root_node_id in metadata_map:
+        walk(root_node_id, (0,))
+    return out
+
+
 def render_marker_block(
     metadata_map: Dict[str, TreeNodeMetadata],
     root_node_id: str | None,
 ) -> str:
-    """Render the marker block stored after the logical code."""
-    rows = [MARKERS_BEGIN, MARKERS_VERSION]
-    if root_node_id and root_node_id in metadata_map:
-        _append_marker_rows(
-            rows=rows,
-            metadata_map=metadata_map,
-            node_id=root_node_id,
-            path_indices=(0,),
-        )
-    rows.append(MARKERS_END)
+    """Render the marker block stored after the logical code (compact v2 JSON)."""
+    flat = _flatten_path_to_uuid(metadata_map, root_node_id)
+    payload = json.dumps(flat, sort_keys=True, separators=(",", ":"))
+    rows = [
+        MARKERS_BEGIN,
+        MARKERS_VERSION_V2,
+        f"{_V2_DATA_PREFIX}{payload}",
+        MARKERS_END,
+    ]
     return "\n".join(rows) + "\n"
 
 
@@ -139,10 +162,37 @@ def _find_marker_begin(lines: list[str], end_idx: int) -> int | None:
 
 
 def _parse_marker_lines(lines: list[str]) -> PersistedNodeIds:
+    if lines:
+        first = lines[0].strip()
+        if first == MARKERS_VERSION_V2:
+            if len(lines) < 2:
+                return {}
+            data_line = lines[1].strip()
+            if not data_line.startswith(_V2_DATA_PREFIX):
+                return {}
+            try:
+                raw = json.loads(data_line[len(_V2_DATA_PREFIX) :])
+            except json.JSONDecodeError:
+                return {}
+            if not isinstance(raw, dict):
+                return {}
+            persisted_v2: PersistedNodeIds = {}
+            for k, v in raw.items():
+                if not isinstance(v, str):
+                    continue
+                try:
+                    parsed = UUID(v.strip())
+                except ValueError:
+                    continue
+                if parsed.version != 4:
+                    continue
+                persisted_v2[str(k)] = str(parsed)
+            return persisted_v2
+
     persisted: PersistedNodeIds = {}
     for line in lines:
         stripped = line.strip()
-        if not stripped or stripped == MARKERS_VERSION:
+        if not stripped or stripped == MARKERS_VERSION or stripped == MARKERS_VERSION_V2:
             continue
         match = _MARKER_RE.match(stripped)
         if match is None:
@@ -157,23 +207,3 @@ def _parse_marker_lines(lines: list[str]) -> PersistedNodeIds:
         persisted[match.group("path")] = str(parsed)
     return persisted
 
-
-def _append_marker_rows(
-    rows: list[str],
-    metadata_map: Dict[str, TreeNodeMetadata],
-    node_id: str,
-    path_indices: tuple[int, ...],
-) -> None:
-    metadata = metadata_map.get(node_id)
-    if metadata is None:
-        return
-    rows.append(
-        f"{MARKER_PREFIX}{build_marker_path(path_indices)} {metadata.type} {metadata.node_id}"
-    )
-    for index, child_id in enumerate(metadata.children_ids):
-        _append_marker_rows(
-            rows=rows,
-            metadata_map=metadata_map,
-            node_id=child_id,
-            path_indices=path_indices + (index,),
-        )

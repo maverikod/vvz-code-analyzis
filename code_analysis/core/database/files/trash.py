@@ -7,6 +7,8 @@ email: vasilyvz@gmail.com
 
 import logging
 from pathlib import Path
+
+from code_analysis.core.sql_portable import WHERE_FILES_TRASHED
 from typing import Any, Dict, List, Optional, cast
 
 logger = logging.getLogger(__name__)
@@ -35,7 +37,8 @@ def mark_file_deleted(
     project_id+original_path is already in trash, the old file is removed before move.
 
     Path resolution: project root is taken from the projects table (get_project(project_id));
-    relative file_path is resolved against that root.
+    a **relative** ``file_path`` is always resolved against that root (logical cwd = project
+    root), never the process current working directory.
 
     Args:
         file_path: Original file path (relative to project root or absolute; normalized and moved)
@@ -113,12 +116,23 @@ def mark_file_deleted(
             logger.debug(f"Path normalization failed, using simple normalization: {e}")
             from ...path_normalization import normalize_path_simple
 
-            abs_path = normalize_path_simple(file_path)
+            if Path(file_path).is_absolute():
+                abs_path = normalize_path_simple(file_path)
+            elif project_root:
+                abs_path = normalize_path_simple(project_root / file_path)
+            else:
+                abs_path = normalize_path_simple(file_path)
     else:
-        # Fallback to simple normalization
+        # project_root missing on disk or branch skipped: still anchor relative paths to DB root
         from ...path_normalization import normalize_path_simple
 
-        abs_path = normalize_path_simple(file_path)
+        if project_root:
+            if Path(file_path).is_absolute():
+                abs_path = normalize_path_simple(file_path)
+            else:
+                abs_path = normalize_path_simple(project_root / file_path)
+        else:
+            abs_path = normalize_path_simple(file_path)
 
     row = self._fetchone(
         "SELECT id FROM files WHERE project_id = ? AND path = ?",
@@ -177,9 +191,9 @@ def mark_file_deleted(
             target_path.unlink()
             logger.debug(f"Replaced existing file at {target_path}")
         existing = self._fetchone(
-            """
+            f"""
             SELECT id, path FROM files
-            WHERE project_id = ? AND original_path = ? AND deleted = 1 AND id != ?
+            WHERE project_id = ? AND original_path = ? AND {WHERE_FILES_TRASHED} AND id != ?
             """,
             (project_id, str(original_path), file_id),
         )
@@ -338,9 +352,9 @@ def get_deleted_files(self, project_id: str) -> List[Dict[str, Any]]:
     return cast(
         List[Dict[str, Any]],
         self._fetchall(
-            """
+            f"""
         SELECT * FROM files 
-        WHERE project_id = ? AND deleted = 1
+        WHERE project_id = ? AND {WHERE_FILES_TRASHED}
         ORDER BY updated_at DESC
         """,
             (project_id,),

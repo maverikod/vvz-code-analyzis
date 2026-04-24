@@ -24,6 +24,7 @@ from .batch_processor import (
     process_embedding_ready_chunks,
 )
 from .timing_log import log_operation_timing
+from code_analysis.core.sql_portable import WHERE_FILES_ACTIVE_F, WHERE_HAS_DOCSTRING_F
 
 logger = logging.getLogger(__name__)
 
@@ -177,13 +178,13 @@ async def process_projects_in_cycle(
                         try:
                             t0_step1 = time.time()
                             files_result = database.execute(
-                                """
+                                f"""
                                 SELECT f.id, f.path, f.project_id
                                 FROM files f
                                 WHERE f.project_id = ?
-                                  AND (f.deleted = 0 OR f.deleted IS NULL)
+                                  AND {WHERE_FILES_ACTIVE_F}
                                   AND (
-                                      f.has_docstring = 1
+                                      {WHERE_HAS_DOCSTRING_F}
                                       OR EXISTS (
                                           SELECT 1 FROM classes c
                                           WHERE c.file_id = f.id

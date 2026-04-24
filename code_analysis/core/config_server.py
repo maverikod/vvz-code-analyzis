@@ -210,6 +210,15 @@ class ServerConfig(BaseModel):
             "from indexing (default)."
         ),
     )
+    ignore_exceptions: List[str] = Field(
+        default_factory=list,
+        description=(
+            "Glob patterns relative to each project root. Matching ``.py`` files are included in "
+            "indexing and file-watcher scans even when they would normally be excluded (e.g. under "
+            "``.venv``/``venv``). Does not override default write restrictions for CST/text edits "
+            "under the project venv."
+        ),
+    )
 
     @field_validator("port")
     @classmethod
@@ -342,5 +351,18 @@ class ServerConfig(BaseModel):
                     "venv_site_packages_index_allowlisted_distributions entries must be "
                     "non-empty strings"
                 )
+            out.append(item.strip())
+        return out
+
+    @field_validator("ignore_exceptions")
+    @classmethod
+    def validate_ignore_exceptions(cls, v: List[str]) -> List[str]:
+        """Ignore-exception glob patterns must be non-empty strings when present."""
+        if not v:
+            return []
+        out: List[str] = []
+        for item in v:
+            if not isinstance(item, str) or not item.strip():
+                raise ValueError("ignore_exceptions entries must be non-empty strings")
             out.append(item.strip())
         return out

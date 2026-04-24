@@ -73,16 +73,18 @@ class DeleteUnwatchedProjectsCommand:
             Dictionary with deletion results
         """
         from ..core.project_discovery import (
-            discover_projects_in_directory,
-            NestedProjectError,
             DuplicateProjectIdError,
+            NestedProjectError,
+            discover_projects_in_directory,
+            is_immediate_child_project_dir,
         )
 
         from .clear_project_data_impl import _clear_project_data_impl
 
         # Step 1: Discover all projects in watched directories
         discovered_project_ids: Set[str] = set()
-        discovery_errors = []
+        discovery_warnings: List[str] = []
+        discovery_errors: List[str] = []
 
         for watched_dir in self.watched_dirs:
             try:
@@ -92,11 +94,11 @@ class DeleteUnwatchedProjectsCommand:
                     f"Discovered {len(discovered_projects)} project(s) in {watched_dir}"
                 )
             except NestedProjectError as e:
-                logger.error(f"Nested project error in {watched_dir}: {e}")
-                discovery_errors.append(f"Nested project in {watched_dir}: {e}")
+                logger.warning(f"Nested project issue in {watched_dir}: {e}")
+                discovery_warnings.append(f"Nested project in {watched_dir}: {e}")
             except DuplicateProjectIdError as e:
-                logger.error(f"Duplicate project_id error in {watched_dir}: {e}")
-                discovery_errors.append(f"Duplicate project_id in {watched_dir}: {e}")
+                logger.warning(f"Duplicate project_id in {watched_dir}: {e}")
+                discovery_warnings.append(f"Duplicate project_id in {watched_dir}: {e}")
             except Exception as e:
                 logger.error(f"Error discovering projects in {watched_dir}: {e}")
                 discovery_errors.append(f"Error in {watched_dir}: {e}")
@@ -161,28 +163,28 @@ class DeleteUnwatchedProjectsCommand:
                 )
                 continue
 
-            # Check if project is in discovered projects (in watched directories)
+            # Watched coverage: discovery can miss IDs (invalid sibling projectid files,
+            # duplicate-ID abort, partial scan). DB root under watch_dir/<subdir>/ must
+            # not be treated as "outside watch_dirs".
             if project_id in discovered_project_ids:
-                projects_to_keep.append(
-                    {
-                        "project_id": project_id,
-                        "root_path": root_path,
-                        "name": project_name,
-                        "reason": "discovered_in_watch_dirs",
-                    }
-                )
+                keep_reason = "discovered_in_watch_dirs"
+            elif any(
+                is_immediate_child_project_dir(project_path, wd)
+                for wd in self.watched_dirs
+            ):
+                keep_reason = "under_watch_dir_project_root"
             else:
-                # Project exists on disk but is not in watched directories — keep it.
-                # File-operating commands work only within watched dirs; we do not
-                # delete projects outside watch_dirs (only orphaned DB records).
-                projects_to_keep.append(
-                    {
-                        "project_id": project_id,
-                        "root_path": root_path,
-                        "name": project_name,
-                        "reason": "exists_on_disk_but_not_in_watch_dirs",
-                    }
-                )
+                # Exists on disk but root is not an immediate child of any watch_dir.
+                keep_reason = "exists_on_disk_but_not_in_watch_dirs"
+
+            projects_to_keep.append(
+                {
+                    "project_id": project_id,
+                    "root_path": root_path,
+                    "name": project_name,
+                    "reason": keep_reason,
+                }
+            )
 
         if not projects_to_delete:
             return {
@@ -192,6 +194,8 @@ class DeleteUnwatchedProjectsCommand:
                 "kept_count": len(projects_to_keep),
                 "projects_deleted": [],
                 "projects_kept": projects_to_keep,
+                "discovery_warnings": discovery_warnings if discovery_warnings else None,
+                "discovery_errors": discovery_errors if discovery_errors else None,
                 "message": "No unwatched projects found",
             }
 
@@ -226,12 +230,13 @@ class DeleteUnwatchedProjectsCommand:
                     )
 
         return {
-            "success": len(errors) == 0 and len(discovery_errors) == 0,
+            "success": len(errors) == 0,
             "dry_run": self.dry_run,
             "deleted_count": len(deleted_projects),
             "kept_count": len(projects_to_keep),
             "projects_deleted": deleted_projects,
             "projects_kept": projects_to_keep,
+            "discovery_warnings": discovery_warnings if discovery_warnings else None,
             "discovery_errors": discovery_errors if discovery_errors else None,
             "errors": errors if errors else None,
             "message": (

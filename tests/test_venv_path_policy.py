@@ -10,9 +10,12 @@ from __future__ import annotations
 from pathlib import Path
 
 from code_analysis.core.file_watcher_pkg.scanner import should_ignore_path
+from unittest.mock import patch
+
 from code_analysis.core.venv_path_policy import (
     build_allowlisted_site_packages_py_files,
     collect_python_files_for_indexing,
+    expand_ignore_exception_py_files,
     format_project_venv_write_forbidden_message,
     normalize_pep503_distribution_name,
     path_is_under_project_local_venv,
@@ -74,6 +77,35 @@ def test_collect_python_files_for_indexing_merges(tmp_path: Path) -> None:
     assert (pkg_dir / "x.py").resolve() in merged
 
 
+def test_expand_ignore_exception_py_files_under_venv(tmp_path: Path) -> None:
+    root = tmp_path / "proj"
+    vpy = root / ".venv" / "lib" / "python3.12" / "site-packages" / "pkg" / "keep.py"
+    vpy.parent.mkdir(parents=True)
+    vpy.write_text("x = 1\n")
+    found = expand_ignore_exception_py_files(
+        root, [".venv/lib/**/site-packages/pkg/**/*.py"]
+    )
+    assert vpy.resolve() in found
+
+
+def test_collect_python_files_for_indexing_merges_ignore_exceptions(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "proj"
+    (root / "src").mkdir(parents=True)
+    (root / "src" / "app.py").write_text("a = 1\n")
+    vpy = root / ".venv" / "extra" / "forced.py"
+    vpy.parent.mkdir(parents=True)
+    vpy.write_text("FORCED = 1\n")
+    with patch(
+        "code_analysis.core.venv_path_policy.load_ignore_exceptions_from_config",
+        return_value=[".venv/extra/*.py"],
+    ):
+        files = collect_python_files_for_indexing(root, [])
+    assert (root / "src" / "app.py") in files
+    assert vpy.resolve() in files
+
+
 def test_should_ignore_path_respects_allowlisted_venv_file(tmp_path: Path) -> None:
     root = tmp_path / "p"
     vpy = root / ".venv" / "lib" / "python3.12" / "site-packages" / "pkg" / "a.py"
@@ -82,6 +114,7 @@ def test_should_ignore_path_respects_allowlisted_venv_file(tmp_path: Path) -> No
     resolved = {vpy.resolve()}
     assert should_ignore_path(vpy, allowed_venv_py_files=resolved) is False
     assert should_ignore_path(vpy, allowed_venv_py_files=None) is True
+    assert should_ignore_path(vpy, ignore_exception_files={vpy.resolve()}) is False
 
 
 def test_format_message_non_empty() -> None:

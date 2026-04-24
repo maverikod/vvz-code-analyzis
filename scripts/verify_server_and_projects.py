@@ -1,7 +1,7 @@
 """
 Verify server connectivity, workers, and project cleanup/recreate via server commands.
 
-Uses the same command classes as the server (list_projects, delete_project, create_project).
+Uses the same command classes as the server (list_projects, project_set_mark_del, create_project).
 Does NOT create or edit .py code in test_data (per project rules: only via server via MCP).
 Console app creation/editing in test_data must be done via MCP Proxy once server is registered.
 
@@ -94,7 +94,7 @@ async def main() -> int:
         )
         del_result = await delete_cmd.execute(project_id=pid, delete_files=False)
         if hasattr(del_result, "error") and del_result.error:
-            logger.warning("delete_project %s failed: %s", pid, del_result.error)
+            logger.warning("project_set_mark_del %s failed: %s", pid, del_result.error)
         else:
             logger.info("Deleted project %s", pid)
 

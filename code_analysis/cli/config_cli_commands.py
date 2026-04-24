@@ -13,6 +13,7 @@ from pathlib import Path
 
 from ..core.config_validator import CodeAnalysisConfigValidator
 from ..core.database import CodeDatabase
+from ..core.env_loader import load_dotenv_near_config
 
 from .config_cli_helpers import (
     _db_open_by_other_processes,
@@ -78,6 +79,8 @@ def cmd_validate(args: argparse.Namespace) -> int:
         if not config_path.exists():
             print(f"❌ Configuration file not found: {config_path}", file=sys.stderr)
             return 1
+
+        load_dotenv_near_config(config_path)
 
         validator = CodeAnalysisConfigValidator(str(config_path))
         validator.load_config()

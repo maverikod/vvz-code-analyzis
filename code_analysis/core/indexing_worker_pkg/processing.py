@@ -15,7 +15,8 @@ import asyncio
 import logging
 import time
 import uuid
-from typing import Any, Dict
+from pathlib import Path
+from typing import Any, Dict, Optional
 
 from ..worker_status_file import (
     STATUS_OPERATION_IDLE,
@@ -24,6 +25,11 @@ from ..worker_status_file import (
     write_worker_status,
 )
 from ..vectorization_worker_pkg.timing_log import log_operation_timing
+from code_analysis.core.sql_portable import (
+    WHERE_FILES_ACTIVE,
+    WHERE_FILES_ACTIVE_F,
+    WHERE_PROCESSING_ACTIVE_P,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -31,8 +37,10 @@ logger = logging.getLogger(__name__)
 INDEXING_PROJECT_DISCOVERY_SQL = (
     "SELECT DISTINCT f.project_id FROM files f "
     "INNER JOIN projects p ON p.id = f.project_id "
-    "WHERE (f.deleted = 0 OR f.deleted IS NULL) AND f.needs_chunking = 1 "
-    "AND (p.processing_paused = 0 OR p.processing_paused IS NULL)"
+    "WHERE "
+    + WHERE_FILES_ACTIVE_F
+    + " AND f.needs_chunking = 1 AND "
+    + WHERE_PROCESSING_ACTIVE_P
 )
 
 
@@ -51,18 +59,20 @@ async def process_cycle(self: Any, poll_interval: int = 30) -> Dict[str, Any]:
     Returns:
         Stats dict when stopped: indexed, errors, cycles.
     """
-    from ..database_client.client import DatabaseClient
-    from ..constants import DEFAULT_DB_DRIVER_SOCKET_DIR
+    from ..database_client.factory import create_worker_database_client
 
-    if not self.socket_path:
-        db_name = self.db_path.stem if hasattr(self.db_path, "stem") else "db"
-        from pathlib import Path
-
-        socket_dir = Path(DEFAULT_DB_DRIVER_SOCKET_DIR)
-        socket_dir.mkdir(parents=True, exist_ok=True)
-        socket_path = str(socket_dir / f"{db_name}_driver.sock")
-    else:
-        socket_path = self.socket_path
+    cfg_raw = getattr(self, "config_path", None)
+    if not cfg_raw:
+        logger.error(
+            "IndexingWorker requires config_path (server config.json) "
+            "for the universal database driver."
+        )
+        return {
+            "indexed": 0,
+            "errors": 1,
+            "cycles": 0,
+        }
+    cfg_path = Path(cfg_raw)
 
     db_available = False
     db_status_logged = False
@@ -85,7 +95,9 @@ async def process_cycle(self: Any, poll_interval: int = 30) -> Dict[str, Any]:
 
             if database is None or not db_available:
                 try:
-                    database = DatabaseClient(socket_path=socket_path)
+                    database = create_worker_database_client(
+                        config_path=cfg_path,
+                    )
                     database.connect()
                     try:
                         database.execute(
@@ -166,7 +178,9 @@ async def process_cycle(self: Any, poll_interval: int = 30) -> Dict[str, Any]:
                 files_total_result = database.execute(
                     """
                     SELECT COUNT(*) as count FROM files
-                    WHERE (deleted = 0 OR deleted IS NULL) AND needs_chunking = 1
+                    WHERE """
+                    + WHERE_FILES_ACTIVE
+                    + """ AND needs_chunking = 1
                     """,
                     None,
                 )
@@ -240,7 +254,7 @@ async def process_cycle(self: Any, poll_interval: int = 30) -> Dict[str, Any]:
                         for project_id in project_ids:
                             files_result = database.execute(
                                 "SELECT id, path, project_id FROM files "
-                                "WHERE project_id = ? AND (deleted = 0 OR deleted IS NULL) "
+                                "WHERE project_id = ? AND " + WHERE_FILES_ACTIVE + " "
                                 "AND needs_chunking = 1 ORDER BY updated_at ASC LIMIT ?",
                                 (project_id, self.batch_size),
                             )

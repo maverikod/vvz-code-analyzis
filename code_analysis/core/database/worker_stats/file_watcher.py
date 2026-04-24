@@ -10,6 +10,8 @@ import time
 import uuid
 from typing import Any, Dict, List, Optional, Union
 
+from code_analysis.core.sql_portable import WHERE_FILES_ACTIVE
+
 logger = logging.getLogger(__name__)
 
 
@@ -35,7 +37,7 @@ def start_file_watcher_cycle(
 
     if files_total_at_start is None:
         result = self._fetchone(
-            "SELECT COUNT(*) as count FROM files WHERE (deleted = 0 OR deleted IS NULL)"
+            f"SELECT COUNT(*) as count FROM files WHERE {WHERE_FILES_ACTIVE}"
         )
         files_total_at_start = result["count"] if result else 0
 

@@ -83,6 +83,31 @@ def _build_single_file_config(config_file: Path) -> Optional[Path]:
         return Path(temp_file.name)
 
 
+def resolve_mypy_config_for_single_file(
+    file_path: Path,
+    *,
+    explicit_config: Optional[Path] = None,
+) -> Optional[Path]:
+    """
+    Resolve pyproject.toml to use for a single-file mypy run.
+
+    If ``explicit_config`` is set, returns it. Otherwise walks parents of
+    ``file_path`` for ``pyproject.toml``, skipping a directory that looks like
+    this repository root (contains a ``code_analysis`` package dir).
+    """
+    if explicit_config is not None:
+        return explicit_config.resolve()
+    cur = file_path.resolve()
+    for d in [cur.parent, *cur.parents]:
+        candidate = d / "pyproject.toml"
+        if not candidate.is_file():
+            continue
+        if (d / "code_analysis").is_dir():
+            continue
+        return candidate.resolve()
+    return None
+
+
 def _filter_mypy_errors_to_target(
     target_path: Path, raw_lines: List[str], cwd: Optional[str]
 ) -> List[str]:

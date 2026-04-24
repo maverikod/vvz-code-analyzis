@@ -12,9 +12,10 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import sys
 import time
 from pathlib import Path
-from typing import Any, List
+from typing import Any, List, cast
 
 from .svo_client_manager_logging import (
     TRACE_PREVIEW_LEN as _TRACE_PREVIEW_LEN,
@@ -24,24 +25,52 @@ from .svo_client_manager_logging import (
 
 logger = logging.getLogger(__name__)
 
-try:
-    from svo_client import ChunkerClient
 
-    CHUNKER_CLIENT_AVAILABLE = True
-except ImportError:
-    ChunkerClient = None
-    CHUNKER_CLIENT_AVAILABLE = False
+def _chunker_protocol_for_client(cfg: str) -> str:
+    """Map config ``code_analysis.chunker.protocol`` to ``SvoChunkerClient`` protocol."""
+    p = (cfg or "http").lower()
+    if p in ("http", "https", "mtls"):
+        return p
+    return "https"
+
+
+def _chunk_rpc_kwargs(raw: dict[str, Any]) -> dict[str, Any]:
+    """Map legacy kwargs (e.g. ``type``) to svo-client 3.x ``chunk`` / ``chunk_batch`` params."""
+    out: dict[str, Any] = {}
+    for k, v in raw.items():
+        if k == "timeout":
+            continue
+        if k == "type":
+            out["chunk_type"] = v
+        else:
+            out[k] = v
+    return out
+
+
+try:
+    from svo_client import SvoChunkerClient
+except ImportError as exc:
+    _msg = (
+        "FATAL: required package `svo_client` (PyPI name: svo-client) is missing. "
+        "Install project dependencies, e.g. `pip install -e .`"
+    )
+    try:
+        logging.basicConfig(level=logging.CRITICAL, force=True)
+    except TypeError:
+        logging.basicConfig(level=logging.CRITICAL)
+    logger.critical("%s ImportError: %s", _msg, exc)
+    print(_msg, file=sys.stderr)
+    print(f"ImportError: {exc}", file=sys.stderr)
+    raise SystemExit(1) from exc
 
 
 async def init_chunker(manager: Any) -> None:
-    """Create and attach ChunkerClient to manager. Raises on failure if enabled."""
-    if not manager.chunker_enabled or not CHUNKER_CLIENT_AVAILABLE:
-        if manager.chunker_enabled and not CHUNKER_CLIENT_AVAILABLE:
-            raise RuntimeError(
-                "svo_client library is not available. Install it to use chunker service."
-            )
+    """Create and attach ``SvoChunkerClient``. Raises on failure if enabled."""
+    if not manager.chunker_enabled:
         return
+    proto = _chunker_protocol_for_client(manager._chunker_protocol)
     chunker_kwargs: dict[str, Any] = {
+        "protocol": proto,
         "host": manager._chunker_url,
         "port": manager._chunker_port,
         "check_hostname": manager._chunker_check_hostname,
@@ -64,7 +93,7 @@ async def init_chunker(manager: Any) -> None:
             if not p.is_absolute() and root:
                 p = root / p
             chunker_kwargs["ca"] = str(p.resolve())
-    manager._chunker_client = ChunkerClient(**chunker_kwargs)
+    manager._chunker_client = SvoChunkerClient(**chunker_kwargs)
     await manager._chunker_client.__aenter__()
     await fetch_chunk_limits(manager)
     logger.info(
@@ -114,12 +143,9 @@ async def get_chunks(manager: Any, text: str, **kwargs: Any) -> List[Any]:
         kwargs,
     )
     try:
-        chunk_timeout = kwargs.get("timeout") or manager._chunker_timeout or 0.0
         chunk_kwargs = {k: v for k, v in kwargs.items() if k != "timeout"}
-        batch = await manager._chunker_client.chunk(
-            texts=[text], timeout=float(chunk_timeout), **chunk_kwargs
-        )
-        chunks = batch[0] if batch else []
+        rpc = _chunk_rpc_kwargs(chunk_kwargs)
+        chunks = await manager._chunker_client.chunk(text=text, **rpc)
         request_duration = time.time() - request_start_time
         chunks_count = len(chunks) if chunks else 0
         has_embeddings = False
@@ -149,7 +175,7 @@ async def get_chunks(manager: Any, text: str, **kwargs: Any) -> List[Any]:
             asyncio.create_task(fetch_chunk_limits(manager))
         else:
             manager._chunker_status_logged = False
-        return chunks
+        return cast(List[Any], chunks)
     except Exception as e:
         request_duration = time.time() - request_start_time
         chunker_log.error(
@@ -219,11 +245,9 @@ async def get_chunks_batch(
         "BATCH REQUEST | texts_count=%d | kwargs=%s", len(valid_texts), kwargs
     )
     try:
-        chunk_timeout = kwargs.get("timeout") or manager._chunker_timeout or 0.0
         chunk_kwargs = {k: v for k, v in kwargs.items() if k != "timeout"}
-        batch = await manager._chunker_client.chunk(
-            texts=valid_texts, timeout=float(chunk_timeout), **chunk_kwargs
-        )
+        rpc = _chunk_rpc_kwargs(chunk_kwargs)
+        batch = await manager._chunker_client.chunk_batch(texts=valid_texts, **rpc)
         request_duration = time.time() - request_start_time
         for k, idx in enumerate(valid_indices):
             if k < len(batch):

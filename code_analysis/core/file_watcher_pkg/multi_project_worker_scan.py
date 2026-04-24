@@ -9,10 +9,12 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import Any, Dict, Set, Tuple
+from typing import Any, Dict, Optional, Set, Tuple
 
 from ..venv_path_policy import (
     build_allowlisted_site_packages_py_files,
+    expand_ignore_exception_py_files,
+    load_ignore_exceptions_from_config,
     load_venv_site_packages_index_allowlist_from_config,
 )
 from .lock_manager import LockManager
@@ -30,6 +32,8 @@ def scan_watch_dir(
     ignore_patterns: Tuple[str, ...],
     locks_dir: Path,
     pid: int,
+    *,
+    config_path: Optional[Path] = None,
 ) -> Dict[str, Any]:
     """
     Scan a watched directory and process all discovered projects.
@@ -44,6 +48,7 @@ def scan_watch_dir(
         ignore_patterns: Global ignore patterns (merged with spec.ignore_patterns).
         locks_dir: Directory for lock files.
         pid: Process ID for lock acquisition.
+        config_path: Optional server ``config.json`` for FAISS index invalidation.
 
     Returns:
         Per-watch-dir scan stats.
@@ -316,11 +321,50 @@ def scan_watch_dir(
                         project_root_obj.root_path, allowlist
                     )
                 )
+        ign_ex: Set[Path] = set()
+        exc_patterns = load_ignore_exceptions_from_config()
+        if exc_patterns:
+            for project_root_obj in discovered_projects:
+                ign_ex.update(
+                    expand_ignore_exception_py_files(
+                        project_root_obj.root_path, exc_patterns
+                    )
+                )
+
+        from .ignore_pre_scan_purge import run_pre_scan_ignore_purge_for_project
+
+        for project_root_obj in discovered_projects:
+            try:
+                n = run_pre_scan_ignore_purge_for_project(
+                    database,
+                    project_root_obj.project_id,
+                    merged_ignore,
+                    allowed_venv_py_files=allowed_venv_py or None,
+                    ignore_exception_files=ign_ex or None,
+                    config_path=config_path,
+                )
+                if n:
+                    logger.info(
+                        "[IGNORE_PURGE] Removed %d DB file row(s) for project %s "
+                        "before scan (ignore policy)",
+                        n,
+                        project_root_obj.project_id,
+                    )
+            except Exception as e:
+                logger.error(
+                    "[IGNORE_PURGE] Failed for project %s: %s",
+                    project_root_obj.project_id,
+                    e,
+                    exc_info=True,
+                )
+                stats["errors"] += 1
+
         scanned_files = scan_directory(
             root_dir=watch_dir,
             watch_dirs=[spec.watch_dir],
             ignore_patterns=merged_ignore,
             allowed_venv_py_files=allowed_venv_py or None,
+            ignore_exception_files=ign_ex or None,
         )
 
         delta = processor.compute_delta(watch_dir, scanned_files)

@@ -9,6 +9,8 @@ import logging
 from pathlib import Path
 from typing import Any, Dict, List, TYPE_CHECKING
 
+from ...core.sql_portable import WHERE_FILES_TRASHED
+
 if TYPE_CHECKING:
     from ...core.database_client.client import DatabaseClient
 else:
@@ -70,10 +72,10 @@ class RestoreDeletedFilesCommand:
             resolved: List[Dict[str, Any]] = []
             for file_path in self.file_paths:
                 row_result = self.database.execute(
-                    """
+                    f"""
                     SELECT id, path, original_path
                     FROM files
-                    WHERE project_id = ? AND (path = ? OR original_path = ?) AND deleted = 1
+                    WHERE project_id = ? AND (path = ? OR original_path = ?) AND {WHERE_FILES_TRASHED}
                     ORDER BY last_modified DESC
                     LIMIT 1
                     """,

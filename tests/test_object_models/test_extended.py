@@ -511,9 +511,9 @@ class TestMethodExtended:
         )
         row = method.to_db_row()
         assert row["id"] == 1
-        assert row["is_abstract"] == 1
-        assert row["has_not_implemented"] == 1
-        assert row["has_pass"] == 0
+        assert row["is_abstract"] is True
+        assert row["has_not_implemented"] is True
+        assert row["has_pass"] is False
 
 
 class TestImportExtended:

@@ -16,7 +16,7 @@ import logging
 import os
 import re
 from pathlib import Path
-from typing import Collection, FrozenSet, List, Optional, Set
+from typing import Collection, FrozenSet, List, Optional, Sequence, Set
 
 logger = logging.getLogger(__name__)
 
@@ -46,6 +46,106 @@ def _resolve_config_path() -> Path:
     except Exception:
         pass
     return (Path.cwd() / "config.json").resolve()
+
+
+def load_ignore_exceptions_from_config() -> List[str]:
+    """
+    Return ``code_analysis.ignore_exceptions`` from config.
+
+    Patterns are glob paths relative to each project root (forward slashes).
+    Missing or invalid config yields an empty list.
+    """
+    try:
+        from .storage_paths import load_raw_config
+
+        raw = load_raw_config(_resolve_config_path())
+        ca = raw.get("code_analysis") or {}
+        val = ca.get("ignore_exceptions")
+        if val is None:
+            return []
+        if not isinstance(val, list):
+            logger.warning("ignore_exceptions must be a list; ignoring")
+            return []
+        out: List[str] = []
+        for item in val:
+            if isinstance(item, str) and item.strip():
+                out.append(item.strip())
+        return out
+    except Exception as e:
+        logger.debug("Could not load ignore_exceptions from config: %s", e)
+        return []
+
+
+def expand_ignore_exception_py_files(
+    project_root: Path, patterns: Collection[str]
+) -> Set[Path]:
+    """
+    Resolve glob patterns under ``project_root``; return existing ``.py`` file paths (resolved).
+
+    Uses :meth:`Path.glob` per pattern (supports ``**``). Non-matching or unreadable paths are
+    skipped quietly.
+    """
+    if not patterns:
+        return set()
+    root = project_root.resolve()
+    out: Set[Path] = set()
+    for raw in patterns:
+        pat = str(raw).strip()
+        if not pat:
+            continue
+        if Path(pat).is_absolute():
+            logger.warning(
+                "ignore_exceptions pattern must be relative to project root; skipping: %s",
+                pat,
+            )
+            continue
+        try:
+            for p in root.glob(pat):
+                if p.is_file() and p.suffix == ".py":
+                    try:
+                        out.add(p.resolve())
+                    except OSError:
+                        pass
+        except OSError as e:
+            logger.debug("ignore_exceptions glob failed for %s: %s", pat, e)
+    return out
+
+
+def build_ignore_exception_files_for_projects(
+    project_roots: Sequence[Path], patterns: List[str]
+) -> Set[Path]:
+    """Union of :func:`expand_ignore_exception_py_files` over each project root."""
+    merged: Set[Path] = set()
+    for pr in project_roots:
+        merged |= expand_ignore_exception_py_files(Path(pr), patterns)
+    return merged
+
+
+def ignore_exception_files_for_watch_dir(watch_dir: Path) -> Set[Path]:
+    """
+    Resolved ``.py`` paths matching ``ignore_exceptions`` for all projects under ``watch_dir``.
+
+    Used when a scan has no pre-discovered project list (legacy single-process watcher).
+    """
+    patterns = load_ignore_exceptions_from_config()
+    if not patterns:
+        return set()
+    try:
+        from .project_discovery import (
+            DuplicateProjectIdError,
+            NestedProjectError,
+            discover_projects_in_directory,
+        )
+
+        discovered = discover_projects_in_directory(watch_dir)
+    except (NestedProjectError, DuplicateProjectIdError, OSError, ValueError) as e:
+        logger.debug("ignore_exception_files_for_watch_dir: %s", e)
+        return set()
+    except Exception as e:
+        logger.debug("ignore_exception_files_for_watch_dir: %s", e)
+        return set()
+    roots = [p.root_path for p in discovered]
+    return build_ignore_exception_files_for_projects(roots, patterns)
 
 
 def load_venv_site_packages_index_allowlist_from_config() -> List[str]:
@@ -244,7 +344,7 @@ def allowed_venv_py_files_for_watch_dir(watch_dir: Path) -> Set[Path]:
     if not allowlist:
         return set()
     try:
-        from ..project_discovery import (
+        from .project_discovery import (
             DuplicateProjectIdError,
             NestedProjectError,
             discover_projects_in_directory,
@@ -269,13 +369,18 @@ def collect_python_files_for_indexing(
     """
     Project sources (excluding venv) plus allowlisted site-packages ``.py`` files.
 
-    Ordering: os.walk order for project files, then sorted allowlisted venv paths.
+    Also merges ``.py`` paths matching ``code_analysis.ignore_exceptions`` (glob, project-relative).
+
+    Ordering: sorted merged set.
     """
     base = iter_project_python_files_excluding_venv(project_root)
     extra = build_allowlisted_site_packages_py_files(
         project_root, distribution_allowlist
     )
-    merged: Set[Path] = set(base) | set(extra)
+    ign_ex = expand_ignore_exception_py_files(
+        project_root, load_ignore_exceptions_from_config()
+    )
+    merged: Set[Path] = set(base) | set(extra) | ign_ex
     return sorted(merged)
 
 

@@ -30,3 +30,19 @@ def test_plain_query_preserves_word_tokens():
 
 def test_plain_query_unicode_word_tokens():
     assert plain_query_to_fts5_match("тест код") == "тест код"
+
+
+def test_plain_query_bogus_fts_column_colon_becomes_tokens():
+    """FTS5 treats 'name:term' as column filter; unknown columns raise 'no such column'."""
+    assert plain_query_to_fts5_match("proxy:adapter") == "proxy adapter"
+    assert plain_query_to_fts5_match("mcp:proxy") == "mcp proxy"
+
+
+def test_plain_query_allowed_fts_columns_preserved():
+    assert plain_query_to_fts5_match("content:foo") == "content:foo"
+    assert plain_query_to_fts5_match("entity_name:bar") == "entity_name:bar"
+
+
+def test_plain_query_hyphenated_package_name_splits_tokens():
+    """Regression: mcp-proxy-adapter must not hit FTS5 bogus column errors."""
+    assert plain_query_to_fts5_match("mcp-proxy-adapter") == "mcp proxy adapter"

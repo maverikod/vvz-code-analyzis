@@ -7,6 +7,8 @@ email: vasilyvz@gmail.com
 
 from typing import Any, Dict, List, Optional, cast
 
+from code_analysis.core.sql_portable import WHERE_FILES_ACTIVE_F
+
 
 def get_all_chunks_for_faiss_rebuild(
     db: Any, project_id: Optional[str] = None
@@ -105,7 +107,7 @@ def get_non_vectorized_chunks(
     return cast(
         List[Dict[str, Any]],
         db._fetchall(
-            """
+            f"""
         SELECT 
             cc.id,
             cc.file_id,
@@ -126,7 +128,7 @@ def get_non_vectorized_chunks(
         FROM code_chunks cc
         INNER JOIN files f ON cc.file_id = f.id
         WHERE cc.project_id = ?
-          AND (f.deleted = 0 OR f.deleted IS NULL)
+          AND {WHERE_FILES_ACTIVE_F}
           AND cc.embedding_vector IS NOT NULL
           AND cc.vector_id IS NULL
         ORDER BY cc.id

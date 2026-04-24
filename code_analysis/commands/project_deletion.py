@@ -207,6 +207,11 @@ class DeleteProjectCommand:
                 logger.warning("Could not resolve trash_dir from config: %s", e)
 
         if self.dry_run:
+            # ``delete_from_disk`` naming follows MCP: True = trash-only (keep DB rows);
+            # False (default) = trash then full DB + FAISS clear. Legacy keys would_soft_delete /
+            # would_permanent_db_clear refer to *phases*, not plain English "soft vs hard".
+            keep_db = bool(self.delete_from_disk)
+            clear_db_after = not keep_db
             result = {
                 "success": True,
                 "dry_run": True,
@@ -216,13 +221,38 @@ class DeleteProjectCommand:
                 "files_count": file_count,
                 "chunks_count": chunk_count,
                 "delete_from_disk": self.delete_from_disk,
+                "keep_database_rows_after_operation": keep_db,
+                "would_clear_database_and_faiss_after_trash": clear_db_after,
+                "would_run_soft_delete_to_trash_phase": True,
+                "planned_steps": [
+                    "Mark project and files soft-deleted in DB; move project root under "
+                    "trash_dir (if configured); remove per-project folder under version_dir",
+                ]
+                + (
+                    [
+                        "Then: delete all project rows from the database and remove this "
+                        "project's FAISS index file (sources remain under trash until "
+                        "clear_trash / permanently_delete_from_trash)",
+                    ]
+                    if clear_db_after
+                    else [
+                        "Then: keep all database rows for recovery until clear_trash / "
+                        "permanently_delete_from_trash",
+                    ]
+                ),
+                "parameter_note": (
+                    "delete_from_disk=True means soft-delete to trash only (DB kept). "
+                    "delete_from_disk=False (default) means the same trash step, then "
+                    "permanent removal of project data from the database and FAISS file."
+                ),
+                # Legacy aliases (same semantics as before this clarification):
                 "would_soft_delete": True,
-                "would_permanent_db_clear": not self.delete_from_disk,
+                "would_permanent_db_clear": clear_db_after,
                 "message": (
                     f"Would soft-delete project {project_name} ({self.project_id})"
                     + (
                         ", then remove all data from the database"
-                        if not self.delete_from_disk
+                        if clear_db_after
                         else " (soft-delete only; database rows kept)"
                     )
                 ),

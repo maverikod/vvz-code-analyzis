@@ -38,6 +38,9 @@ def _make_db_mock() -> MagicMock:
             {"affected_rows": 1, "lastrowid": i + 1, "data": None} for i in range(100)
         ]
     )
+    db.execute_logical_write_operation = MagicMock(
+        return_value={"success": True, "data": {"batch_results": []}}
+    )
     return db
 
 

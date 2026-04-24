@@ -6,7 +6,7 @@ email: vasilyvz@gmail.com
 """
 
 import uuid
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 from mcp_proxy_adapter.commands.result import SuccessResult
 
@@ -85,23 +85,35 @@ class ListCodeEntitiesMCPCommand(BaseMCPCommand):
             # List entities from database
             entities = []
 
+            resolved_file_id: Optional[int] = None
+            if file_path:
+                file_record = db.get_file_by_path(file_path, proj_id)
+                if not file_record:
+                    db.disconnect()
+                    return SuccessResult(
+                        data={
+                            "success": True,
+                            "entities": [],
+                            "count": 0,
+                        }
+                    )
+                resolved_file_id = int(file_record["id"])
+
             if not entity_type or entity_type == "class":
                 query = (
                     "SELECT c.*, f.path as file_path FROM classes c JOIN files f ON c.file_id = f.id "
                     "WHERE f.project_id = ? AND c.cst_node_id IS NOT NULL AND c.cst_node_id != ''"
                 )
-                params = [proj_id]
-                if file_path:
-                    file_record = db.get_file_by_path(file_path, proj_id)
-                    if file_record:
-                        query += " AND c.file_id = ?"
-                        params.append(file_record["id"])
+                class_params: List[Any] = [proj_id]
+                if resolved_file_id is not None:
+                    query += " AND c.file_id = ?"
+                    class_params.append(resolved_file_id)
                 query += " ORDER BY f.path, c.line"
                 if limit:
                     query += f" LIMIT {limit}"
                 if offset:
                     query += f" OFFSET {offset}"
-                result = db.execute(query, tuple(params))
+                result = db.execute(query, tuple(class_params))
                 rows = result.get("data", [])
                 for row in rows:
                     if not _is_valid_uuid4(row.get("cst_node_id")) or not row.get(
@@ -115,18 +127,16 @@ class ListCodeEntitiesMCPCommand(BaseMCPCommand):
                     "SELECT func.*, f.path as file_path FROM functions func JOIN files f ON func.file_id = f.id "
                     "WHERE f.project_id = ? AND func.cst_node_id IS NOT NULL AND func.cst_node_id != ''"
                 )
-                params = [proj_id]
-                if file_path:
-                    file_record = db.get_file_by_path(file_path, proj_id)
-                    if file_record:
-                        query += " AND func.file_id = ?"
-                        params.append(file_record["id"])
+                func_params: List[Any] = [proj_id]
+                if resolved_file_id is not None:
+                    query += " AND func.file_id = ?"
+                    func_params.append(resolved_file_id)
                 query += " ORDER BY f.path, func.line"
                 if limit:
                     query += f" LIMIT {limit}"
                 if offset:
                     query += f" OFFSET {offset}"
-                result = db.execute(query, tuple(params))
+                result = db.execute(query, tuple(func_params))
                 rows = result.get("data", [])
                 for row in rows:
                     if not _is_valid_uuid4(row.get("cst_node_id")) or not row.get(
@@ -141,18 +151,16 @@ class ListCodeEntitiesMCPCommand(BaseMCPCommand):
                     "JOIN classes c ON m.class_id = c.id JOIN files f ON c.file_id = f.id "
                     "WHERE f.project_id = ? AND m.cst_node_id IS NOT NULL AND m.cst_node_id != ''"
                 )
-                params = [proj_id]
-                if file_path:
-                    file_record = db.get_file_by_path(file_path, proj_id)
-                    if file_record:
-                        query += " AND c.file_id = ?"
-                        params.append(file_record["id"])
+                method_params: List[Any] = [proj_id]
+                if resolved_file_id is not None:
+                    query += " AND c.file_id = ?"
+                    method_params.append(resolved_file_id)
                 query += " ORDER BY f.path, m.line"
                 if limit:
                     query += f" LIMIT {limit}"
                 if offset:
                     query += f" OFFSET {offset}"
-                result = db.execute(query, tuple(params))
+                result = db.execute(query, tuple(method_params))
                 rows = result.get("data", [])
                 for row in rows:
                     if not _is_valid_uuid4(row.get("cst_node_id")) or not row.get(

@@ -307,6 +307,7 @@ class WorkerLifecycleManager:
         db_path: str,
         watch_dirs: List[Dict[str, str]],
         locks_dir: str,
+        config_path: str,
         scan_interval: int = 60,
         version_dir: Optional[str] = None,
         worker_log_path: Optional[str] = None,
@@ -356,18 +357,19 @@ class WorkerLifecycleManager:
                 message="File watcher worker already running",
             )
 
-        # Create process (NOT thread, NOT async task)
+        fw_kwargs: Dict[str, Any] = {
+            "locks_dir": locks_dir,
+            "config_path": config_path,
+            "scan_interval": int(scan_interval),
+            "version_dir": version_dir,
+            "worker_log_path": worker_log_path,
+            "pid_file_path": str(pid_file_path),
+            "ignore_patterns": ignore_patterns or [],
+        }
         process = multiprocessing.Process(
             target=run_file_watcher_worker,
             args=(db_path, watch_dirs),
-            kwargs={
-                "locks_dir": locks_dir,
-                "scan_interval": int(scan_interval),
-                "version_dir": version_dir,
-                "worker_log_path": worker_log_path,
-                "pid_file_path": str(pid_file_path),
-                "ignore_patterns": ignore_patterns or [],
-            },
+            kwargs=fw_kwargs,
             daemon=True,  # Daemon process for background workers
         )
         process.start()
@@ -404,6 +406,7 @@ class WorkerLifecycleManager:
         *,
         db_path: str,
         faiss_dir: str,
+        config_path: str,
         vector_dim: int = 384,
         svo_config: Optional[Dict[str, Any]] = None,
         batch_size: int = 10,
@@ -455,16 +458,18 @@ class WorkerLifecycleManager:
             )
 
         # Create process (NOT thread, NOT async task)
+        vk: Dict[str, Any] = {
+            "config_path": config_path,
+            "svo_config": svo_config,
+            "batch_size": int(batch_size),
+            "poll_interval": int(poll_interval),
+            "worker_log_path": worker_log_path,
+            "pid_file_path": str(pid_file_path),
+        }
         process = multiprocessing.Process(
             target=run_vectorization_worker,
             args=(db_path, faiss_dir, int(vector_dim)),
-            kwargs={
-                "svo_config": svo_config,
-                "batch_size": int(batch_size),
-                "poll_interval": int(poll_interval),
-                "worker_log_path": worker_log_path,
-                "pid_file_path": str(pid_file_path),
-            },
+            kwargs=vk,
             daemon=True,  # Daemon process for background workers
         )
         process.start()
@@ -492,11 +497,11 @@ class WorkerLifecycleManager:
         self,
         *,
         db_path: str,
+        config_path: str,
         poll_interval: int = 30,
         batch_size: int = 5,
         worker_log_path: Optional[str] = None,
         worker_logs_dir: Optional[str] = None,
-        config_path: Optional[str] = None,
         log_timing: bool = False,
     ) -> WorkerStartResult:
         """
@@ -539,14 +544,13 @@ class WorkerLifecycleManager:
             )
 
         kwargs = {
+            "config_path": config_path,
             "poll_interval": int(poll_interval),
             "batch_size": int(batch_size),
             "worker_log_path": worker_log_path,
             "pid_file_path": str(pid_file_path),
             "log_timing": bool(log_timing),
         }
-        if config_path is not None:
-            kwargs["config_path"] = config_path
 
         process = multiprocessing.Process(
             target=run_indexing_worker,

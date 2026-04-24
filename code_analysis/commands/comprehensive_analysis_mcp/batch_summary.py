@@ -5,7 +5,45 @@ Author: Vasiliy Zdanovskiy
 email: vasilyvz@gmail.com
 """
 
-from typing import Any, Dict
+from typing import Any, Dict, List, Tuple
+
+__all__ = [
+    "build_batch_summary",
+    "build_single_file_summary",
+    "mypy_diagnostic_counts",
+]
+
+
+def mypy_diagnostic_counts(
+    rows: List[Dict[str, Any]],
+) -> Tuple[int, int]:
+    """Return (total_error_lines, files_with_positive_error_count) for mypy result rows."""
+    total = 0
+    files_with = 0
+    for row in rows:
+        ec = int(row.get("error_count") or 0)
+        if ec > 0:
+            total += ec
+            files_with += 1
+    return total, files_with
+
+
+def build_single_file_summary(
+    results: Dict[str, Any],
+    files_analyzed: int,
+    files_skipped: int,
+    files_total: int,
+) -> Dict[str, Any]:
+    """Summary for a single analyzed file (same mypy keys as batch, scoped to one pass)."""
+    mypy_rows = results.get("mypy_errors") or []
+    total_mypy, files_mypy = mypy_diagnostic_counts(mypy_rows)
+    return {
+        "total_mypy_errors": total_mypy,
+        "files_with_mypy_errors": files_mypy,
+        "files_analyzed": files_analyzed,
+        "files_skipped": files_skipped,
+        "files_total": files_total,
+    }
 
 
 def build_batch_summary(
@@ -26,6 +64,8 @@ def build_batch_summary(
     For a full scan with one pass per DB row:
     ``files_analyzed + files_skipped + files_skipped_unreadable_or_missing == files_total``.
     """
+    mypy_rows = results.get("mypy_errors") or []
+    total_mypy, files_mypy = mypy_diagnostic_counts(mypy_rows)
     return {
         "total_placeholders": len(results["placeholders"]),
         "total_stubs": len(results["stubs"]),
@@ -40,10 +80,8 @@ def build_batch_summary(
             e.get("error_count", 0) for e in results["flake8_errors"]
         ),
         "files_with_flake8_errors": len(results["flake8_errors"]),
-        "total_mypy_errors": sum(
-            e.get("error_count", 0) for e in results["mypy_errors"]
-        ),
-        "files_with_mypy_errors": len(results["mypy_errors"]),
+        "total_mypy_errors": total_mypy,
+        "files_with_mypy_errors": files_mypy,
         "total_missing_docstrings": len(results["missing_docstrings"]),
         "files_without_docstrings": len(
             set(

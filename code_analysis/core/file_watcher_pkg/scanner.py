@@ -31,6 +31,7 @@ def should_ignore_path(
     ignore_patterns: Optional[List[str]] = None,
     *,
     allowed_venv_py_files: Optional[Set[Path]] = None,
+    ignore_exception_files: Optional[Set[Path]] = None,
 ) -> bool:
     """
     Check if path should be ignored.
@@ -41,10 +42,19 @@ def should_ignore_path(
         allowed_venv_py_files: Optional set of resolved paths under project ``.venv``/``venv``
             ``site-packages`` that are allowlisted for indexing (see config). If a file
             path resolves to a member, it is not ignored.
+        ignore_exception_files: Optional set of resolved ``.py`` paths that must not be ignored
+            (``code_analysis.ignore_exceptions``), evaluated before default ignores.
 
     Returns:
         True if path should be ignored, False otherwise
     """
+    if ignore_exception_files and path.is_file():
+        try:
+            if path.resolve() in ignore_exception_files:
+                return False
+        except OSError:
+            pass
+
     if allowed_venv_py_files and path.is_file():
         try:
             if path.resolve() in allowed_venv_py_files:
@@ -129,12 +139,14 @@ def scan_directory(
     ignore_patterns: Optional[List[str]] = None,
     *,
     allowed_venv_py_files: Optional[Set[Path]] = None,
+    ignore_exception_files: Optional[Set[Path]] = None,
 ) -> Dict[str, Dict]:
     """
     Scan directory recursively for code files and discover projects.
 
-    Implements project discovery: for each file, finds the nearest project root
-    by walking up the directory tree and looking for projectid files.
+    Implements project discovery: for each file, finds the project root as the
+    directory ``watch_dir/<one_segment>/`` that contains a valid ``projectid``
+    (only immediate children of each watch_dir; see ``project_discovery.find_project_root``).
 
     Args:
         root_dir: Root directory to scan
@@ -142,6 +154,8 @@ def scan_directory(
         ignore_patterns: Glob patterns to ignore
         allowed_venv_py_files: Optional set of resolved ``.py`` paths under venv
             ``site-packages`` that are allowlisted for discovery (see config).
+        ignore_exception_files: Optional set of resolved paths matching
+            ``code_analysis.ignore_exceptions`` (force include).
 
     Returns:
         Dictionary mapping absolute file paths to file info:
@@ -169,7 +183,10 @@ def scan_directory(
     try:
         for item in root_dir.rglob("*"):
             if should_ignore_path(
-                item, ignore_patterns, allowed_venv_py_files=allowed_venv_py_files
+                item,
+                ignore_patterns,
+                allowed_venv_py_files=allowed_venv_py_files,
+                ignore_exception_files=ignore_exception_files,
             ):
                 continue
 

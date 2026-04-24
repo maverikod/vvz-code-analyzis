@@ -66,6 +66,16 @@ def startup_database_driver() -> None:
         driver_type = driver_config.get("type")
         logger.info(f"🔍 Driver config found: type={driver_type}")
 
+        if driver_type == "postgres":
+            logger.info(
+                "ℹ️  PostgreSQL driver runs in-process; skipping database driver subprocess"
+            )
+            print(
+                "ℹ️  PostgreSQL: in-process database driver (no subprocess)",
+                flush=True,
+            )
+            return
+
         # Resolve storage paths for log file
         config_path = BaseMCPCommand._resolve_config_path()
         config_data = load_raw_config(config_path)
@@ -79,15 +89,14 @@ def startup_database_driver() -> None:
         )
         ensure_storage_dirs(storage)
 
-        # Force driver to use the same absolute DB path as storage (avoids cwd-dependent
-        # resolution: driver process may have different cwd and would open wrong DB otherwise)
+        # SQLite: force same absolute DB path as storage (avoids cwd-dependent resolution).
         config_dict: dict = dict(driver_config.get("config", {}) or {})
         driver_config_resolved = {
             "type": driver_config.get("type"),
             "config": config_dict,
         }
-        config_dict["path"] = str(storage.db_path.resolve())
-        # Query journal for inspection and recovery (default: logs/database_queries.jsonl)
+        if driver_type in ("sqlite", "sqlite_proxy"):
+            config_dict["path"] = str(storage.db_path.resolve())
         if "query_log_path" not in config_dict:
             config_dict["query_log_path"] = str(
                 storage.config_dir / "logs" / "database_queries.jsonl"
@@ -173,11 +182,11 @@ def startup_indexing_worker() -> None:
         worker_manager = get_worker_manager()
         result = worker_manager.start_indexing_worker(
             db_path=str(db_path),
+            config_path=str(config_path),
             poll_interval=int(poll_interval),
             batch_size=int(batch_size),
             worker_log_path=worker_log_path,
             worker_logs_dir=worker_logs_dir,
-            config_path=str(config_path) if config_path else None,
             log_timing=log_timing,
         )
         if result.success:
@@ -358,6 +367,7 @@ def startup_vectorization_worker() -> None:
         result = worker_manager.start_vectorization_worker(
             db_path=str(db_path),
             faiss_dir=str(faiss_dir),
+            config_path=str(config_path),
             vector_dim=vector_dim,
             svo_config=svo_config,
             batch_size=batch_size,
@@ -529,6 +539,7 @@ def startup_file_watcher_worker() -> None:
             worker_log_path=worker_log_path,
             worker_logs_dir=worker_logs_dir,
             ignore_patterns=ignore_patterns,
+            config_path=str(config_path),
         )
 
         if result.success:

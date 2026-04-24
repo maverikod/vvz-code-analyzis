@@ -115,6 +115,7 @@ class TestVectorizationIntegrationRealData:
             db_path=Path(db_path) if db_path else Path(),
             faiss_dir=tmp_path / "faiss",
             vector_dim=384,
+            config_path=str(tmp_path / "config.json"),
             svo_client_manager=mock_svo_client_manager,
         )
         worker.faiss_manager = mock_faiss_manager  # for _request_chunking_for_files
@@ -314,6 +315,7 @@ class TestVectorizationIntegrationRealData:
                 db_path=Path(db_path) if db_path else Path(),
                 faiss_dir=Path(tmpdir) / "faiss",
                 vector_dim=384,
+                config_path=str(Path(tmpdir) / "config.json"),
                 svo_client_manager=mock_svo_client_manager,
             )
             worker.faiss_manager = mock_faiss_manager

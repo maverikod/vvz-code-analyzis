@@ -7,7 +7,9 @@ email: vasilyvz@gmail.com
 
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Tuple
+
+from code_analysis.core.sql_portable import WHERE_FILES_ACTIVE, WHERE_FILES_ACTIVE_F
 
 # Batch indices: 0=project_count, 1=projects_with_stats, 2=total_files, 3=deleted_files,
 # 4=files_with_docstring, 5=files_needing_chunking, 6=files_with_chunks, 7=files_indexed,
@@ -15,85 +17,135 @@ from typing import Any, Dict, List
 # 12=files_updated_24h, 13=chunks_updated_24h, 14=needing_indexing_sample,
 # 15=needing_chunking_sample, 16=chunks_needing_vectorization
 
-STATUS_OPS: List[tuple] = [
-    ("SELECT COUNT(*) as count FROM projects", None),
-    (
-        """
+
+def _julian_day_threshold_sql(driver_type: str) -> str:
+    """Threshold for \"last 24h\" filters; schema stores Julian day as REAL (SQLite) / DOUBLE (PG)."""
+    if driver_type == "postgres":
+        return "EXTRACT(JULIAN FROM (CURRENT_TIMESTAMP - INTERVAL '1 day'))"
+    return "julianday('now', '-1 day')"
+
+
+def build_status_ops(driver_type: str) -> List[Tuple[str, Any]]:
+    """SQL batch for get_database_status; SQLite uses julianday(), PostgreSQL uses EXTRACT(JULIAN ...)."""
+    j = _julian_day_threshold_sql(driver_type)
+    return [
+        ("SELECT COUNT(*) as count FROM projects", None),
+        (
+            """
         SELECT
             p.id,
             p.name,
-            (SELECT COUNT(*) FROM files WHERE project_id = p.id AND (deleted = 0 OR deleted IS NULL)) as file_count,
-            (SELECT COUNT(*) FROM files WHERE project_id = p.id AND (deleted = 0 OR deleted IS NULL) AND (needs_chunking = 0 OR needs_chunking IS NULL)) as files_indexed,
-            (SELECT COUNT(DISTINCT f.id) FROM files f WHERE f.project_id = p.id AND (f.deleted = 0 OR f.deleted IS NULL) AND EXISTS (SELECT 1 FROM code_chunks WHERE code_chunks.file_id = f.id)) as chunked_files,
+            (SELECT COUNT(*) FROM files WHERE project_id = p.id AND """
+            + WHERE_FILES_ACTIVE
+            + """) as file_count,
+            (SELECT COUNT(*) FROM files WHERE project_id = p.id AND """
+            + WHERE_FILES_ACTIVE
+            + """ AND (needs_chunking = 0 OR needs_chunking IS NULL)) as files_indexed,
+            (SELECT COUNT(DISTINCT f.id) FROM files f WHERE f.project_id = p.id AND """
+            + WHERE_FILES_ACTIVE_F
+            + """ AND EXISTS (SELECT 1 FROM code_chunks WHERE code_chunks.file_id = f.id)) as chunked_files,
             (SELECT COUNT(*) FROM code_chunks WHERE project_id = p.id) as chunk_count,
             (SELECT COUNT(*) FROM code_chunks WHERE project_id = p.id AND vector_id IS NOT NULL) as vectorized_chunks,
-            (SELECT COUNT(DISTINCT f.id) FROM files f INNER JOIN code_chunks cc ON f.id = cc.file_id WHERE f.project_id = p.id AND (f.deleted = 0 OR f.deleted IS NULL) AND cc.vector_id IS NOT NULL) as files_vectorized
+            (SELECT COUNT(DISTINCT f.id) FROM files f INNER JOIN code_chunks cc ON f.id = cc.file_id WHERE f.project_id = p.id AND """
+            + WHERE_FILES_ACTIVE_F
+            + """ AND cc.vector_id IS NOT NULL) as files_vectorized
         FROM projects p
         ORDER BY p.name
         LIMIT 10
         """,
-        None,
-    ),
-    ("SELECT COUNT(*) as count FROM files", None),
-    ("SELECT COUNT(*) as count FROM files WHERE deleted = 1", None),
-    ("SELECT COUNT(*) as count FROM files WHERE has_docstring = 1", None),
-    (
-        "SELECT COUNT(*) as count FROM files WHERE (deleted = 0 OR deleted IS NULL) AND NOT EXISTS (SELECT 1 FROM code_chunks WHERE code_chunks.file_id = files.id)",
-        None,
-    ),
-    (
-        "SELECT COUNT(DISTINCT f.id) as count FROM files f WHERE (f.deleted = 0 OR f.deleted IS NULL) AND EXISTS (SELECT 1 FROM code_chunks WHERE code_chunks.file_id = f.id)",
-        None,
-    ),
-    (
-        "SELECT COUNT(*) as count FROM files WHERE (deleted = 0 OR deleted IS NULL) AND (needs_chunking = 0 OR needs_chunking IS NULL)",
-        None,
-    ),
-    (
-        "SELECT COUNT(*) as count FROM files WHERE (deleted = 0 OR deleted IS NULL) AND needs_chunking = 1",
-        None,
-    ),
-    ("SELECT COUNT(*) as count FROM code_chunks", None),
-    ("SELECT COUNT(*) as count FROM code_chunks WHERE vector_id IS NOT NULL", None),
-    (
-        "SELECT COUNT(*) as count FROM code_chunks WHERE vector_id IS NULL AND (vectorization_skipped IS NULL OR vectorization_skipped = 0)",
-        None,
-    ),
-    (
-        "SELECT COUNT(*) as count FROM files WHERE updated_at > julianday('now', '-1 day')",
-        None,
-    ),
-    (
-        "SELECT COUNT(*) as count FROM code_chunks WHERE created_at > julianday('now', '-1 day')",
-        None,
-    ),
-    (
-        "SELECT f.id, f.path, f.has_docstring, f.last_modified FROM files f WHERE (f.deleted = 0 OR f.deleted IS NULL) AND f.needs_chunking = 1 ORDER BY f.updated_at ASC LIMIT 10",
-        None,
-    ),
-    (
-        "SELECT f.id, f.path, f.has_docstring, f.last_modified FROM files f WHERE (f.deleted = 0 OR f.deleted IS NULL) AND NOT EXISTS (SELECT 1 FROM code_chunks WHERE code_chunks.file_id = f.id) ORDER BY f.updated_at DESC LIMIT 10",
-        None,
-    ),
-    (
-        "SELECT id, file_id, chunk_text, created_at FROM code_chunks WHERE vector_id IS NULL AND (vectorization_skipped IS NULL OR vectorization_skipped = 0) ORDER BY id DESC LIMIT 10",
-        None,
-    ),
-]
+            None,
+        ),
+        ("SELECT COUNT(*) as count FROM files", None),
+        ("SELECT COUNT(*) as count FROM files WHERE deleted IS TRUE", None),
+        ("SELECT COUNT(*) as count FROM files WHERE has_docstring IS TRUE", None),
+        (
+            "SELECT COUNT(*) as count FROM files WHERE "
+            + WHERE_FILES_ACTIVE
+            + " AND NOT EXISTS (SELECT 1 FROM code_chunks WHERE code_chunks.file_id = files.id)",
+            None,
+        ),
+        (
+            "SELECT COUNT(DISTINCT f.id) as count FROM files f WHERE "
+            + WHERE_FILES_ACTIVE_F
+            + " AND EXISTS (SELECT 1 FROM code_chunks WHERE code_chunks.file_id = f.id)",
+            None,
+        ),
+        (
+            "SELECT COUNT(*) as count FROM files WHERE "
+            + WHERE_FILES_ACTIVE
+            + " AND (needs_chunking = 0 OR needs_chunking IS NULL)",
+            None,
+        ),
+        (
+            "SELECT COUNT(*) as count FROM files WHERE "
+            + WHERE_FILES_ACTIVE
+            + " AND needs_chunking = 1",
+            None,
+        ),
+        ("SELECT COUNT(*) as count FROM code_chunks", None),
+        ("SELECT COUNT(*) as count FROM code_chunks WHERE vector_id IS NOT NULL", None),
+        (
+            "SELECT COUNT(*) as count FROM code_chunks WHERE vector_id IS NULL AND (vectorization_skipped IS NULL OR vectorization_skipped = 0)",
+            None,
+        ),
+        (
+            f"SELECT COUNT(*) as count FROM files WHERE updated_at > {j}",
+            None,
+        ),
+        (
+            f"SELECT COUNT(*) as count FROM code_chunks WHERE created_at > {j}",
+            None,
+        ),
+        (
+            "SELECT f.id, f.path, f.has_docstring, f.last_modified FROM files f WHERE "
+            + WHERE_FILES_ACTIVE_F
+            + " AND f.needs_chunking = 1 ORDER BY f.updated_at ASC LIMIT 10",
+            None,
+        ),
+        (
+            "SELECT f.id, f.path, f.has_docstring, f.last_modified FROM files f WHERE "
+            + WHERE_FILES_ACTIVE_F
+            + " AND NOT EXISTS (SELECT 1 FROM code_chunks WHERE code_chunks.file_id = f.id) ORDER BY f.updated_at DESC LIMIT 10",
+            None,
+        ),
+        (
+            "SELECT id, file_id, chunk_text, created_at FROM code_chunks WHERE vector_id IS NULL AND (vectorization_skipped IS NULL OR vectorization_skipped = 0) ORDER BY id DESC LIMIT 10",
+            None,
+        ),
+    ]
 
 
-def build_database_status_result(db: Any, db_path: Path) -> Dict[str, Any]:
+# Default batch for SQLite-style servers (tests, scripts).
+STATUS_OPS: List[tuple] = build_status_ops("sqlite_proxy")
+
+
+def build_database_status_result(
+    db: Any,
+    db_path: Path,
+    *,
+    driver_type: str = "sqlite_proxy",
+) -> Dict[str, Any]:
     """
     Run status queries and build the full result dict.
 
     Caller must pass an open db client and the resolved db_path.
+    ``driver_type`` must match ``code_analysis.database.driver.type`` so
+    \"last 24h\" queries use valid SQL (SQLite ``julianday`` vs PostgreSQL ``EXTRACT``).
     """
+    is_pg = driver_type == "postgres"
     result: Dict[str, Any] = {
         "db_path": str(db_path),
+        "database_driver": driver_type,
         "timestamp": datetime.now().isoformat(),
-        "exists": db_path.exists() if db_path else False,
+        "exists": True if is_pg else (db_path.exists() if db_path else False),
         "file_size_mb": (
-            db_path.stat().st_size / 1024 / 1024 if db_path and db_path.exists() else 0
+            0.0
+            if is_pg
+            else (
+                db_path.stat().st_size / 1024 / 1024
+                if db_path and db_path.exists()
+                else 0
+            )
         ),
         "projects": {},
         "files": {},
@@ -102,7 +154,7 @@ def build_database_status_result(db: Any, db_path: Path) -> Dict[str, Any]:
         "worker_stats": {},
     }
 
-    batch_results = db.execute_batch(STATUS_OPS)
+    batch_results = db.execute_batch(build_status_ops(driver_type))
 
     def _row0(idx: int) -> int:
         d = batch_results[idx].get("data", []) if idx < len(batch_results) else []

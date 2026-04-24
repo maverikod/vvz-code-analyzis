@@ -17,6 +17,7 @@ from typing import Any, Dict, List
 from mcp_proxy_adapter.commands.result import SuccessResult
 
 from ..base_mcp_command import BaseMCPCommand
+from ...core.sql_portable import WHERE_FILES_ACTIVE
 from .batch_one_file import analyze_one_file_in_batch
 from .batch_summary import build_batch_summary
 
@@ -67,12 +68,13 @@ async def run_batch(
     if limit is None:
         if proj_id:
             count_result = db.execute(
-                "SELECT COUNT(*) as c FROM files WHERE project_id = ? AND deleted = 0",
+                "SELECT COUNT(*) as c FROM files WHERE project_id = ? AND "
+                + WHERE_FILES_ACTIVE,
                 (proj_id,),
             )
         else:
             count_result = db.execute(
-                "SELECT COUNT(*) as c FROM files WHERE deleted = 0"
+                "SELECT COUNT(*) as c FROM files WHERE " + WHERE_FILES_ACTIVE
             )
         files_total = (
             (count_result.get("data") or [{}])[0].get("c", 0)

@@ -107,6 +107,8 @@ def run_vectorization_worker(
     db_path: str,
     faiss_dir: str,
     vector_dim: int,
+    *,
+    config_path: str,
     svo_config: Optional[Dict[str, Any]] = None,
     batch_size: int = 10,
     poll_interval: int = 30,
@@ -130,6 +132,7 @@ def run_vectorization_worker(
     Args:
         db_path: Path to database file
         faiss_dir: Base directory for FAISS index files (project-scoped indexes: {faiss_dir}/{project_id}.bin)
+        config_path: Absolute path to server ``config.json`` (required).
         vector_dim: Vector dimension
         svo_config: SVO client configuration (optional)
         batch_size: Batch size for processing
@@ -154,26 +157,32 @@ def run_vectorization_worker(
         f"FAISS directory: {faiss_dir}"
     )
 
-    # Database auto-creation (if database doesn't exist, create it)
-    from ..database_client.client import DatabaseClient
-    from ..constants import DEFAULT_DB_DRIVER_SOCKET_DIR
+    from ..database_client.factory import create_worker_database_client
 
     db_path_obj = Path(db_path)
 
     # Ensure parent directory exists
     db_path_obj.parent.mkdir(parents=True, exist_ok=True)
 
-    # Get socket path for database driver
-    db_name = db_path_obj.stem
-    socket_dir = Path(DEFAULT_DB_DRIVER_SOCKET_DIR)
-    socket_dir.mkdir(parents=True, exist_ok=True)
-    socket_path = str(socket_dir / f"{db_name}_driver.sock")
+    cfg_path_resolved = Path(config_path)
 
-    # Check if database exists, create if not
-    if not db_path_obj.exists():
+    from ..config import get_driver_config
+    from ..storage_paths import load_raw_config
+
+    try:
+        is_postgres = (get_driver_config(load_raw_config(cfg_path_resolved)) or {}).get(
+            "type"
+        ) == "postgres"
+    except Exception:
+        is_postgres = False
+
+    # Check if database exists, create if not (SQLite file chain only; not PostgreSQL)
+    if not is_postgres and not db_path_obj.exists():
         logger.info(f"Database file not found, creating new database at {db_path}")
         try:
-            init_database = DatabaseClient(socket_path=socket_path)
+            init_database = create_worker_database_client(
+                config_path=cfg_path_resolved,
+            )
             init_database.connect()
             init_database.disconnect()
             logger.info(f"Created new database at {db_path}")
@@ -211,7 +220,10 @@ def run_vectorization_worker(
             "Checking FAISS index synchronization with database for all projects..."
         )
         try:
-            sync_database = DatabaseClient(socket_path=socket_path, timeout=30.0)
+            sync_database = create_worker_database_client(
+                config_path=cfg_path_resolved,
+                timeout=30.0,
+            )
             sync_database.connect()
             # Get all projects from database
             all_projects = sync_database.list_projects()
@@ -359,11 +371,11 @@ def run_vectorization_worker(
     )
 
     # Create and run worker (universal mode - no project_id, no faiss_manager at init)
-    # Pass socket_path to worker for DatabaseClient initialization
     worker = VectorizationWorker(
         db_path=Path(db_path),
         faiss_dir=Path(faiss_dir),
         vector_dim=vector_dim,
+        config_path=config_path,
         svo_client_manager=svo_client_manager,
         batch_size=batch_size,
         retry_attempts=retry_attempts,
@@ -372,7 +384,6 @@ def run_vectorization_worker(
         max_empty_iterations=max_empty_iterations,
         empty_delay=empty_delay,
         max_files_per_pass=max_files_per_pass,
-        socket_path=socket_path,  # Pass socket_path for DatabaseClient
         status_file_path=status_file_path,
         log_timing=log_timing,
     )

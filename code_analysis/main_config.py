@@ -37,6 +37,10 @@ def load_config_and_validate(
         )
         sys.exit(1)
 
+    from code_analysis.core.env_loader import load_dotenv_near_config
+
+    load_dotenv_near_config(config_path)
+
     try:
         with open(config_path, "r", encoding="utf-8") as f:
             full_config = json.load(f)

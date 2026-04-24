@@ -13,6 +13,7 @@ from typing import Any, Dict, List, Optional
 from mcp_proxy_adapter.commands.result import SuccessResult
 
 from ..core.duplicate_detector import DuplicateDetector
+from ..core.sql_portable import WHERE_FILES_ACTIVE
 from ..core.svo_client_manager import SVOClientManager
 from .base_mcp_command import BaseMCPCommand
 
@@ -225,7 +226,8 @@ class FindDuplicatesMCPCommand(BaseMCPCommand):
             else:
                 # Analyze all files in project
                 result = db.execute(
-                    "SELECT id, path FROM files WHERE project_id = ? AND deleted = 0",
+                    "SELECT id, path FROM files WHERE project_id = ? AND "
+                    + WHERE_FILES_ACTIVE,
                     (proj_id,),
                 )
                 files = result.get("data", [])

@@ -20,7 +20,7 @@ from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 from .base_mcp_command import BaseMCPCommand
 from .project_text_file_guard import reject_if_write_under_project_venv
 from ..core.json_tree.json_saver import save_json_tree_to_file
-from ..core.json_tree.tree_builder import reload_tree_from_file
+from ..core.json_tree.tree_builder import get_tree, reload_tree_from_file
 
 logger = logging.getLogger(__name__)
 
@@ -52,6 +52,13 @@ class JsonSaveTreeCommand(BaseMCPCommand):
                     "default": True,
                     "description": "Reload session from disk after save (keeps tree_id)",
                 },
+                "dry_run": {
+                    "type": "boolean",
+                    "default": False,
+                    "description": (
+                        "If true, validate tree_id and path only; no disk write or DB file update"
+                    ),
+                },
             },
             "required": ["tree_id", "project_id", "file_path"],
             "additionalProperties": False,
@@ -70,6 +77,7 @@ class JsonSaveTreeCommand(BaseMCPCommand):
         backup: bool = True,
         commit_message: Optional[str] = None,
         auto_reload: bool = True,
+        dry_run: bool = False,
         **kwargs: Any,
     ) -> SuccessResult:
         t_start = time.perf_counter()
@@ -94,9 +102,37 @@ class JsonSaveTreeCommand(BaseMCPCommand):
                     )
                 root_dir = Path(project.root_path)
 
-                blocked_venv = reject_if_write_under_project_venv(absolute_path, root_dir)
+                blocked_venv = reject_if_write_under_project_venv(
+                    absolute_path, root_dir
+                )
                 if blocked_venv is not None:
                     return blocked_venv
+
+                if dry_run:
+                    tree = get_tree(tree_id)
+                    if not tree:
+                        return ErrorResult(
+                            message=f"Tree not found: {tree_id}",
+                            code="TREE_NOT_FOUND",
+                            details={"tree_id": tree_id},
+                        )
+                    try:
+                        rel = str(absolute_path.relative_to(root_dir))
+                    except ValueError:
+                        rel = str(absolute_path)
+                    payload = {
+                        "success": True,
+                        "dry_run": True,
+                        "tree_id": tree_id,
+                        "project_id": project_id,
+                        "file_path": rel,
+                        "resolved_path": str(absolute_path),
+                    }
+                    logger.info(
+                        "[TIMING] command=json_save_tree dry_run elapsed_sec=%.4f",
+                        time.perf_counter() - t_start,
+                    )
+                    return SuccessResult(data=payload)
 
                 result = await asyncio.to_thread(
                     save_json_tree_to_file,

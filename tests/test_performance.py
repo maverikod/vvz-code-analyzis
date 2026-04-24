@@ -167,11 +167,9 @@ class TestPerformanceProjectScanning:
         if not VAST_SRV_DIR.exists():
             pytest.skip("test_data/vast_srv/ not found")
 
-        watch_dirs = [TEST_DATA_DIR]
-
-        # Measure time
+        # Discover immediate child projects under test_data (e.g. vast_srv/)
         start_time = time.time()
-        projects = discover_projects_in_directory(VAST_SRV_DIR)
+        projects = discover_projects_in_directory(TEST_DATA_DIR)
         elapsed = time.time() - start_time
 
         # Should complete in reasonable time (< 30s on CI/slower envs)

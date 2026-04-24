@@ -114,6 +114,31 @@ def validate_field_types_code_analysis_impl(
                         )
                     )
 
+    ign_ex = code_analysis.get("ignore_exceptions")
+    if ign_ex is not None:
+        validate_field_type(
+            results,
+            "code_analysis",
+            "ignore_exceptions",
+            ign_ex,
+            list,
+        )
+        if isinstance(ign_ex, list):
+            for idx, item in enumerate(ign_ex):
+                if not isinstance(item, str):
+                    results.append(
+                        ValidationResult(
+                            level="error",
+                            message=(
+                                "code_analysis.ignore_exceptions must be a list of glob "
+                                f"strings (invalid item at index {idx})"
+                            ),
+                            section="code_analysis",
+                            key="ignore_exceptions",
+                            suggestion='Use project-relative globs, e.g. [".venv/lib/**/site-packages/mypkg/**/*.py"]',
+                        )
+                    )
+
     chunker = code_analysis.get("chunker", {})
     if chunker and isinstance(chunker, dict):
         validate_field_type(
@@ -389,6 +414,48 @@ def validate_field_types_code_analysis_impl(
                     "database.driver.config.path",
                     driver_config.get("path"),
                     (str, type(None)),
+                )
+                validate_field_type(
+                    results,
+                    "code_analysis",
+                    "database.driver.config.host",
+                    driver_config.get("host"),
+                    (str, type(None)),
+                )
+                validate_field_type(
+                    results,
+                    "code_analysis",
+                    "database.driver.config.dbname",
+                    driver_config.get("dbname"),
+                    (str, type(None)),
+                )
+                validate_field_type(
+                    results,
+                    "code_analysis",
+                    "database.driver.config.user",
+                    driver_config.get("user"),
+                    (str, type(None)),
+                )
+                validate_field_type(
+                    results,
+                    "code_analysis",
+                    "database.driver.config.password_env",
+                    driver_config.get("password_env"),
+                    (str, type(None)),
+                )
+                validate_field_type(
+                    results,
+                    "code_analysis",
+                    "database.driver.config.dsn",
+                    driver_config.get("dsn"),
+                    (str, type(None)),
+                )
+                validate_field_type(
+                    results,
+                    "code_analysis",
+                    "database.driver.config.port",
+                    driver_config.get("port"),
+                    (int, type(None)),
                 )
                 validate_field_type(
                     results,

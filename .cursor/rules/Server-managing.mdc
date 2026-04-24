@@ -4,7 +4,13 @@ alwaysApply: true
 
 ## Code Analysis Server (daemon)
 
-CLI: `python -m code_analysis.cli.server_manager_cli --config <path/to/config.json> <command>`
+After `pip install -e .` and `source .venv/bin/activate`, use:
+
+`casmgr <command>` (config is resolved automatically) or `casmgr --config <path/to/config.json> <command>`
+
+Config path priority: CLI `--config` → `CASMGR_CONFIG` → `/etc/casmgr/config.json` → `./config.json` in the current working directory.
+
+Equivalent: `python -m code_analysis.cli.server_manager_cli ... <command>`
 
 Commands: `start` | `stop` | `restart` | `status`
 

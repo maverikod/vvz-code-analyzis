@@ -82,14 +82,15 @@ class SetProjectProcessingPausedMCPCommand(BaseMCPCommand):
         try:
             database = self._open_database_from_config(auto_analyze=False)
             try:
-                paused_int = 1 if processing_paused else 0
+                # PostgreSQL column is BOOLEAN; bind Python bool (not 0/1) for psycopg.
+                bind_paused = bool(processing_paused)
                 database.execute(
                     """
                     UPDATE projects
                     SET processing_paused = ?, updated_at = julianday('now')
                     WHERE id = ?
                     """,
-                    (paused_int, project_id),
+                    (bind_paused, project_id),
                 )
                 rows = database.select("projects", where={"id": project_id}, limit=1)
                 if not rows:
@@ -103,8 +104,8 @@ class SetProjectProcessingPausedMCPCommand(BaseMCPCommand):
                         self.name,
                     )
                 row = rows[0]
-                paused_val = row.get("processing_paused")
-                paused_bool = bool(paused_val) if paused_val is not None else False
+                stored = row.get("processing_paused")
+                paused_bool = bool(stored) if stored is not None else False
                 return SuccessResult(
                     data={
                         "project_id": project_id,

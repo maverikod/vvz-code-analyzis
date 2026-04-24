@@ -14,6 +14,20 @@ from typing import Any, Dict, List, Optional, cast
 logger = logging.getLogger(__name__)
 
 
+def _sqlite_table_exists(conn: Any, table_name: str) -> bool:
+    """Return True if ``table_name`` exists in ``sqlite_master``."""
+    if not conn:
+        return False
+    cur = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name=? LIMIT 1",
+        (table_name,),
+    )
+    try:
+        return cur.fetchone() is not None
+    finally:
+        cur.close()
+
+
 class _SqliteConnMigrateAdapter:
     """Minimal db-like surface for schema_creation_migrate.run_migrate_schema (driver process)."""
 

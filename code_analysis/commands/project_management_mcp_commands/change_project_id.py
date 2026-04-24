@@ -11,6 +11,7 @@ from ._shared import (
     Dict,
     ErrorResult,
     Optional,
+    Path,
     SuccessResult,
     ValidationError,
     ProjectIdError,
@@ -19,8 +20,40 @@ from ._shared import (
     logger,
     uuid,
 )
+from ...core.exceptions import CodeAnalysisError
 from .change_project_id_schema import get_metadata as _get_metadata
 from .change_project_id_schema import get_schema as _get_schema
+
+
+def _rollback_projectid_file(projectid_path: Path, prior: Optional[bytes]) -> None:
+    """Restore previous projectid file contents after a failed database update."""
+    try:
+        if prior is None:
+            if projectid_path.exists():
+                projectid_path.unlink()
+        else:
+            projectid_path.write_bytes(prior)
+    except OSError as exc:
+        logger.error(
+            "Could not rollback projectid file after database error: %s",
+            exc,
+            exc_info=True,
+        )
+
+
+def _db_row_root_matches_project_root(project_root: Path, row_root: str) -> bool:
+    """True if DB root_path refers to the same directory as ``project_root``."""
+    from ...core.path_normalization import normalize_path_simple
+
+    try:
+        return normalize_path_simple(str(row_root)) == normalize_path_simple(
+            str(project_root)
+        )
+    except Exception:
+        return (
+            Path(row_root).expanduser().resolve()
+            == Path(project_root).expanduser().resolve()
+        )
 
 
 class ChangeProjectIdMCPCommand(BaseMCPCommand):
@@ -43,7 +76,7 @@ class ChangeProjectIdMCPCommand(BaseMCPCommand):
     """
 
     name = "change_project_id"
-    version = "1.1.0"
+    version = "1.2.0"
     descr = (
         "Change project identifier and/or description: update projectid file and database record. "
         "New project_id must be a valid UUID v4. Description is optional."
@@ -220,10 +253,38 @@ class ChangeProjectIdMCPCommand(BaseMCPCommand):
                 description if description is not None else current_description
             )
 
-            # Step 6: Update projectid file in JSON format
-            try:
-                import json
+            # Step 5b: Before any filesystem or DB mutation, reject duplicate new id
+            if str(new_project_id).lower() != str(project_id).lower():
+                pre_db = self._open_database_from_config(auto_analyze=False)
+                try:
+                    existing_new = pre_db.get_project(new_project_id)
+                    if existing_new is not None and not _db_row_root_matches_project_root(
+                        root_path, str(existing_new.root_path)
+                    ):
+                        return self._handle_error(
+                            CodeAnalysisError(
+                                "new_project_id is already registered for a different "
+                                "project root in the database",
+                                code="DUPLICATE_PROJECT_ID",
+                                details={
+                                    "new_project_id": new_project_id,
+                                    "existing_root_path": str(existing_new.root_path),
+                                    "this_root_path": str(root_path),
+                                },
+                            ),
+                            "DUPLICATE_PROJECT_ID",
+                            "change_project_id",
+                        )
+                finally:
+                    pre_db.disconnect()
 
+            # Step 6: Update projectid file in JSON format (backup for DB rollback)
+            import json
+
+            projectid_prior: Optional[bytes] = (
+                projectid_path.read_bytes() if projectid_path.exists() else None
+            )
+            try:
                 project_data = {
                     "id": new_project_id,
                     "description": new_description,
@@ -251,12 +312,11 @@ class ChangeProjectIdMCPCommand(BaseMCPCommand):
                     "change_project_id",
                 )
 
-            # Step 7: Update database if requested
+            # Step 7: Update database if requested (on failure rollback projectid file)
             database_updated = False
             database_project_id = None
             if update_database:
                 try:
-                    # Resolve database path from config
                     config_path = self._resolve_config_path()
                     from ...core.storage_paths import (
                         load_raw_config,
@@ -389,11 +449,12 @@ class ChangeProjectIdMCPCommand(BaseMCPCommand):
                     finally:
                         database.disconnect()
                 except Exception as e:
-                    logger.warning(
-                        f"Failed to update database (file was updated): {str(e)}",
-                        exc_info=True,
+                    _rollback_projectid_file(projectid_path, projectid_prior)
+                    return self._handle_error(
+                        e,
+                        "CHANGE_PROJECT_ID_DB_ERROR",
+                        "change_project_id",
                     )
-                    # Don't fail the command if database update fails - file was already updated
 
             # Build result message
             message_parts = []

@@ -10,6 +10,8 @@ email: vasilyvz@gmail.com
 
 from __future__ import annotations
 
+from typing import Any, Optional
+
 from .client_api_ast_cst import _ClientAPIASTCSTMixin
 from .client_api_attributes import _ClientAPIAttributesMixin
 from .client_api_classes_functions import _ClientAPIClassesFunctionsMixin
@@ -53,28 +55,42 @@ class DatabaseClient(
 
     def __init__(
         self,
-        socket_path: str,
+        socket_path: Optional[str] = None,
+        *,
+        rpc_client: Optional[Any] = None,
         timeout: float = 30.0,
         max_retries: int = 3,
         retry_delay: float = 0.1,
         pool_size: int = 5,
+        driver_type: Optional[str] = None,
     ):
         """Initialize database client.
 
         Args:
-            socket_path: Path to Unix socket file
+            socket_path: Path to Unix socket file (mutually exclusive with ``rpc_client``).
+            rpc_client: Pluggable transport with the same contract as :class:`RPCClient`
+                (e.g. :class:`~code_analysis.core.database_client.in_process_rpc_client.InProcessRpcClient`).
             timeout: Request timeout in seconds (default: 30.0)
             max_retries: Maximum number of retry attempts (default: 3)
             retry_delay: Delay between retries in seconds (default: 0.1)
             pool_size: Connection pool size (default: 5)
+            driver_type: Value from ``code_analysis.database.driver.type`` (e.g. ``postgres``,
+                ``sqlite_proxy``). Used for portable SQL such as full-text search; if omitted,
+                SQLite-style paths are assumed.
         """
-        self.rpc_client = RPCClient(
-            socket_path=socket_path,
-            timeout=timeout,
-            max_retries=max_retries,
-            retry_delay=retry_delay,
-            pool_size=pool_size,
-        )
+        if (socket_path is not None) == (rpc_client is not None):
+            raise ValueError("Provide exactly one of socket_path or rpc_client")
+        self._driver_type = driver_type
+        if rpc_client is not None:
+            self.rpc_client = rpc_client
+        else:
+            self.rpc_client = RPCClient(
+                socket_path=socket_path,  # type: ignore[arg-type]
+                timeout=timeout,
+                max_retries=max_retries,
+                retry_delay=retry_delay,
+                pool_size=pool_size,
+            )
 
     def connect(self) -> None:
         """Connect to database driver via RPC."""

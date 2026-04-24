@@ -13,12 +13,14 @@ from __future__ import annotations
 from typing import Any, Dict
 
 from .drivers.base import BaseDatabaseDriver
+from .drivers.postgres import PostgreSQLDriver
 from .drivers.sqlite import SQLiteDriver
 from .exceptions import DriverNotFoundError
 
 # Supported driver types: explicit map only. No hidden fallbacks.
 _SUPPORTED_DRIVERS: Dict[str, type[BaseDatabaseDriver]] = {
     "sqlite": SQLiteDriver,
+    "postgres": PostgreSQLDriver,
 }
 
 
@@ -36,7 +38,7 @@ def create_driver(driver_type: str, config: Dict[str, Any]) -> BaseDatabaseDrive
     ambiguous values raise DriverNotFoundError. No implicit default driver.
 
     Args:
-        driver_type: Driver type ('sqlite' supported; others raise).
+        driver_type: Driver type ('sqlite', 'postgres' supported).
         config: Driver-specific configuration dictionary.
 
     Returns:

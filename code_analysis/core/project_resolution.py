@@ -222,9 +222,11 @@ def find_project_root_for_path(
     """
     Find project root for a file path and return full project information.
 
-    Uses project discovery to find the nearest project root containing
-    the file by walking up the directory tree and looking for projectid files.
-    Checks for multiple projectid files in the path and raises error if found.
+    Uses project discovery: only ``projectid`` under ``watch_dir/<one_segment>/``
+    counts when walking from the file up toward ``watch_dir`` (see
+    ``is_immediate_child_project_dir``). Deeper ``projectid`` files are not
+    separate projects. Raises if more than one such eligible ``projectid`` lies
+    on the same upward path.
 
     Args:
         file_path: Path to file
@@ -237,7 +239,7 @@ def find_project_root_for_path(
         MultipleProjectIdError: If multiple projectid files found in path
         NestedProjectError: If nested projects detected
     """
-    from .project_discovery import find_project_root
+    from .project_discovery import find_project_root, is_immediate_child_project_dir
 
     file_path_resolved = Path(file_path).resolve()
     watch_dirs_resolved = [Path(wd).resolve() for wd in watch_dirs]
@@ -265,7 +267,8 @@ def find_project_root_for_path(
 
             projectid_path = search_path / "projectid"
             if projectid_path.exists() and projectid_path.is_file():
-                projectid_files.append(projectid_path)
+                if is_immediate_child_project_dir(search_path, watch_dir):
+                    projectid_files.append(projectid_path)
 
             parent = search_path.parent
             if parent == search_path:

@@ -11,6 +11,7 @@ from typing import Any, Dict, Optional
 
 from ...constants import FILE_MODIFICATION_TOLERANCE, LAST_MODIFIED_EPSILON
 from ...exceptions import ProjectIdMismatchError
+from code_analysis.core.sql_portable import WHERE_FILES_ACTIVE
 
 from .helpers import _last_modified_to_unix
 
@@ -122,7 +123,8 @@ def update_file_data(
             # Try to find by filename only (last resort)
             filename = Path(abs_path).name
             all_files = self._fetchall(
-                "SELECT id, path FROM files WHERE project_id = ? AND path LIKE ? AND (deleted = 0 OR deleted IS NULL)",
+                "SELECT id, path FROM files WHERE project_id = ? AND path LIKE ? AND "
+                + WHERE_FILES_ACTIVE,
                 (project_id, f"%{filename}"),
             )
             if all_files:

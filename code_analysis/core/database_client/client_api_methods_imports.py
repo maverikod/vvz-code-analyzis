@@ -132,7 +132,7 @@ class _ClientAPIMethodsImportsMixin(_DatabaseClientBase):
             params.append(f"%{name}%")
             if is_abstract is not None:
                 sql += " AND is_abstract = ?"
-                params.append(1 if is_abstract else 0)
+                params.append(bool(is_abstract))
             sql += " ORDER BY line"
             result = self.execute(sql, tuple(params))
             rows = result.get("data", [])
@@ -141,7 +141,7 @@ class _ClientAPIMethodsImportsMixin(_DatabaseClientBase):
             if class_id:
                 where["class_id"] = class_id
             if is_abstract is not None:
-                where["is_abstract"] = 1 if is_abstract else 0
+                where["is_abstract"] = bool(is_abstract)
             rows = self.select("methods", where=where, order_by=["line"])
 
         return db_rows_to_objects(rows, Method)

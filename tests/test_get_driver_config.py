@@ -7,6 +7,7 @@ email: vasilyvz@gmail.com
 
 from code_analysis.core.config import get_driver_config
 
+
 class TestGetDriverConfig:
     """Test get_driver_config helper function."""
 
@@ -165,7 +166,9 @@ class TestGetDriverConfig:
                         "config": {
                             "host": "localhost",
                             "port": 5432,
-                            "database": "test",
+                            "dbname": "test",
+                            "user": "postgres",
+                            "password_env": "CODE_ANALYSIS_POSTGRES_PASSWORD",
                         },
                     }
                 }
@@ -177,6 +180,9 @@ class TestGetDriverConfig:
         assert driver_config is not None
         assert driver_config["type"] == "postgres"
         assert driver_config["config"]["host"] == "localhost"
+        assert driver_config["config"]["password_env"] == (
+            "CODE_ANALYSIS_POSTGRES_PASSWORD"
+        )
 
     def test_get_driver_config_with_mysql(self):
         """Test get_driver_config with mysql driver."""
@@ -200,5 +206,3 @@ class TestGetDriverConfig:
         assert driver_config is not None
         assert driver_config["type"] == "mysql"
         assert driver_config["config"]["host"] == "localhost"
-
-

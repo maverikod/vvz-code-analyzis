@@ -10,6 +10,8 @@ import time
 import uuid
 from typing import Any, Dict, Optional
 
+from code_analysis.core.sql_portable import WHERE_FILES_ACTIVE, WHERE_FILES_ACTIVE_F
+
 logger = logging.getLogger(__name__)
 
 
@@ -50,17 +52,17 @@ def start_vectorization_cycle(self: Any, cycle_id: Optional[str] = None) -> str:
 
     # Get total files count at start (active files in all projects)
     files_result = self._fetchone(
-        "SELECT COUNT(*) as count FROM files WHERE (deleted = 0 OR deleted IS NULL)"
+        f"SELECT COUNT(*) as count FROM files WHERE {WHERE_FILES_ACTIVE}"
     )
     files_total_at_start = files_result["count"] if files_result else 0
 
     # Get vectorized files count (files with at least one chunk that has vector_id)
     vectorized_files_result = self._fetchone(
-        """
+        f"""
         SELECT COUNT(DISTINCT f.id) as count
         FROM files f
         INNER JOIN code_chunks cc ON f.id = cc.file_id
-        WHERE (f.deleted = 0 OR f.deleted IS NULL)
+        WHERE {WHERE_FILES_ACTIVE_F}
         AND cc.vector_id IS NOT NULL
         """
     )
@@ -154,11 +156,11 @@ def update_vectorization_stats(
 
     # Update files_vectorized count (recalculate from database)
     vectorized_files_result = self._fetchone(
-        """
+        f"""
         SELECT COUNT(DISTINCT f.id) as count
         FROM files f
         INNER JOIN code_chunks cc ON f.id = cc.file_id
-        WHERE (f.deleted = 0 OR f.deleted IS NULL)
+        WHERE {WHERE_FILES_ACTIVE_F}
         AND cc.vector_id IS NOT NULL
         """
     )

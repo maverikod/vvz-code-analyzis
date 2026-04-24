@@ -123,8 +123,8 @@ class TestMethod:
             class_id=1, name="test_method", line=30, is_abstract=True, has_pass=True
         )
         row = method.to_db_row()
-        assert row["is_abstract"] == 1
-        assert row["has_pass"] == 1
+        assert row["is_abstract"] is True
+        assert row["has_pass"] is True
 
 
 class TestImport:

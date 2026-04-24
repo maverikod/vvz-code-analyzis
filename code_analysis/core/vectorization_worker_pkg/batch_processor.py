@@ -21,6 +21,8 @@ from typing import Any, List, Optional, Tuple
 
 import numpy as np
 
+from code_analysis.core.sql_portable import WHERE_FILES_ACTIVE_F
+
 from .file_batch_packing import pack_files_into_packets
 from .timing_log import log_operation_timing
 
@@ -212,12 +214,12 @@ async def process_chunks_missing_embedding_params(
         scope_desc,
     )
     file_counts_result = database.execute(
-        """
+        f"""
         SELECT f.id AS file_id, f.path AS file_path, COUNT(cc.id) AS cnt
         FROM files f
         INNER JOIN code_chunks cc ON cc.file_id = f.id
         WHERE cc.project_id = ?
-          AND (f.deleted = 0 OR f.deleted IS NULL)
+          AND {WHERE_FILES_ACTIVE_F}
           AND cc.vector_id IS NULL
           AND (cc.embedding_model IS NULL OR cc.embedding_vector IS NULL)
           AND (cc.vectorization_skipped IS NULL OR cc.vectorization_skipped = 0)
@@ -258,13 +260,13 @@ async def process_chunks_missing_embedding_params(
         len(packets),
     )
 
-    chunk_select_sql = """
+    chunk_select_sql = f"""
         SELECT cc.id, cc.chunk_text, cc.file_id, f.path AS file_path
         FROM code_chunks cc
         INNER JOIN files f ON cc.file_id = f.id
         WHERE cc.project_id = ?
           AND cc.file_id = ?
-          AND (f.deleted = 0 OR f.deleted IS NULL)
+          AND {WHERE_FILES_ACTIVE_F}
           AND cc.vector_id IS NULL
           AND (cc.embedding_model IS NULL OR cc.embedding_vector IS NULL)
           AND (cc.vectorization_skipped IS NULL OR cc.vectorization_skipped = 0)
@@ -395,13 +397,13 @@ async def process_embedding_ready_chunks(
         f"[TIMING] Getting non-vectorized chunks from DB ({scope_desc}), limit={self.batch_size}"
     )
     chunks_result = database.execute(
-        """
+        f"""
         SELECT cc.id, cc.chunk_text, cc.class_id, cc.function_id, cc.method_id,
                cc.line, cc.ast_node_type, cc.embedding_vector, cc.embedding_model
         FROM code_chunks cc
         INNER JOIN files f ON cc.file_id = f.id
         WHERE cc.project_id = ?
-          AND (f.deleted = 0 OR f.deleted IS NULL)
+          AND {WHERE_FILES_ACTIVE_F}
           AND cc.embedding_vector IS NOT NULL
           AND cc.vector_id IS NULL
         LIMIT ?

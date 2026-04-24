@@ -27,6 +27,7 @@ class Project(BaseObject):
         processing_paused: When True, indexing and vectorization workers skip this project.
         created_at: Creation timestamp
         updated_at: Last update timestamp
+        deleted: When True, project is soft-deleted (trash / recovery path).
     """
 
     id: str
@@ -35,6 +36,7 @@ class Project(BaseObject):
     comment: Optional[str] = None
     watch_dir_id: Optional[str] = None
     processing_paused: bool = False
+    deleted: bool = False
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
 
@@ -56,6 +58,8 @@ class Project(BaseObject):
         if "root_path" not in data:
             raise ValueError("Project root_path is required")
 
+        del_raw = data.get("deleted")
+        deleted_flag = bool(del_raw) if del_raw is not None else False
         return cls(
             id=data["id"],
             root_path=data["root_path"],
@@ -63,6 +67,7 @@ class Project(BaseObject):
             comment=data.get("comment"),
             watch_dir_id=data.get("watch_dir_id"),
             processing_paused=bool(data.get("processing_paused")),
+            deleted=deleted_flag,
             created_at=cls._parse_timestamp(data.get("created_at")),
             updated_at=cls._parse_timestamp(data.get("updated_at")),
         )

@@ -1,9 +1,16 @@
 """
 Project discovery module for automatic project detection.
 
-This module implements automatic project discovery by finding `projectid` files
-in the directory tree. Projects are identified by the presence of a `projectid`
-file containing a UUID4 identifier.
+Invariant (watch boundary): a ``projectid`` file is recognized **only** under
+``<watch_dir>/<single_subdirectory>/projectid`` — i.e. the project root must be
+an **immediate child** of a watched directory. There is no separate project for
+``watch_dir/projectid`` (watch root is never a project) nor for
+``watch_dir/a/b/.../projectid`` when ``b`` is deeper than one segment under
+``watch_dir``; such deeper files are ignored for discovery (see
+``validate_no_nested_projects`` logging). Files anywhere under a valid project
+root still resolve to that root via ``find_project_root``.
+
+Projects are identified by a ``projectid`` file containing a UUID4 identifier.
 
 Author: Vasiliy Zdanovskiy
 email: vasilyvz@gmail.com
@@ -18,11 +25,28 @@ from typing import List, Optional
 
 from .exceptions import (
     DuplicateProjectIdError,
+    InvalidProjectIdFormatError,
     NestedProjectError,
     ProjectIdError,
 )
 
 logger = logging.getLogger(__name__)
+
+
+def is_immediate_child_project_dir(dir_path: Path, watch_dir: Path) -> bool:
+    """
+    True if dir_path is exactly one directory level below watch_dir.
+
+    Project roots are only recognized here: watch_dir/<subdir>/projectid,
+    not watch_dir/projectid and not deeper paths.
+    """
+    d = Path(dir_path).resolve()
+    w = Path(watch_dir).resolve()
+    try:
+        rel = d.relative_to(w)
+    except ValueError:
+        return False
+    return len(rel.parts) == 1
 
 
 @dataclass(frozen=True, slots=True)
@@ -50,22 +74,23 @@ def find_project_root(file_path: Path, watch_dirs: List[Path]) -> Optional[Proje
     Algorithm:
     1. Start from file_path's parent directory
     2. Walk up the directory tree towards watch_dir
-    3. For each directory:
-       a. Check if it's within any watch_dir
-       b. If depth <= 1 (watch_dir or direct children), check for projectid file
-       c. If depth > 1, skip projectid check but continue walking up
-       d. If projectid found, validate no nested projects
-       e. Return ProjectRoot if valid
+    3. For each directory on the path:
+       a. Ensure it is still inside containing_watch_dir
+       b. **Only** when relative depth under watch_dir is exactly **1**, check for
+          ``projectid`` (that directory is the only level that may host a project root)
+       c. At deeper relative depths, do not treat ``projectid`` as a root; keep walking up
+       d. If a valid ``projectid`` is found at depth 1, validate via
+          ``validate_no_nested_projects`` then return ``ProjectRoot``
     4. Stop when reaching watch_dir boundary or filesystem root
 
-    Rule: projectid can be ONLY in watch_dir or direct children (max depth 1).
-    - watch_dir/projectid - allowed (depth 0)
-    - watch_dir/dirA/projectid - allowed (depth 1)
-    - watch_dir/dirA/dirB/projectid - NOT allowed (depth 2 - too deep, ignored)
+    Rule: a project root is ONLY ``watch_dir/<one_segment>/`` with a valid
+    ``projectid`` file (immediate child of the watched directory).
+    - watch_dir/prj/projectid — allowed
+    - watch_dir/projectid — not a project root (watch root itself is never a project)
+    - watch_dir/prj/sub/projectid — ignored as a separate project; files under
+      ``prj/`` still resolve to ``watch_dir/prj`` if that directory has ``projectid``
 
-    Note: Files can be at ANY depth within a project. Only projectid location
-    is restricted to depth 0-1. This function walks up from the file location
-    to find the nearest valid projectid.
+    Files may live at any depth under such a project directory.
 
     Args:
         file_path: Path to file
@@ -102,9 +127,8 @@ def find_project_root(file_path: Path, watch_dirs: List[Path]) -> Optional[Proje
         logger.debug(f"File {file_path} is not within any watched directory, skipping")
         return None
 
-    # Walk up from file's parent to watch_dir
-    # Rule: projectid can be ONLY at watch_dir (depth 0) or direct children (depth 1)
-    # We scan ALL files recursively, but only check for projectid at depth 0-1
+    # Walk up from file's parent to watch_dir; only immediate children of
+    # containing_watch_dir may host projectid (exactly one path segment).
     search_path = current_dir
 
     while True:
@@ -118,13 +142,10 @@ def find_project_root(file_path: Path, watch_dirs: List[Path]) -> Optional[Proje
             )
             return None
 
-        # Check depth: projectid can be ONLY at watch_dir (depth 0) or direct children (depth 1)
-        # relative_path.parts is empty for watch_dir itself, length 1 for direct children
         depth = len(relative_path.parts)
 
-        # Only check for projectid if we're at depth 0 or 1
-        # If depth > 1, skip projectid check but continue walking up
-        if depth <= 1:
+        # Only watch_dir/<subdir>/ may contain projectid (depth must be exactly 1)
+        if depth == 1:
             # Check if this directory contains projectid file
             projectid_path = search_path / "projectid"
             if projectid_path.exists() and projectid_path.is_file():
@@ -142,7 +163,7 @@ def find_project_root(file_path: Path, watch_dirs: List[Path]) -> Optional[Proje
                         description=project_info.description,
                         watch_dir=containing_watch_dir,
                     )
-                except ProjectIdError as e:
+                except (ProjectIdError, InvalidProjectIdFormatError) as e:
                     logger.warning(
                         f"Invalid projectid file at {projectid_path}: {e}, skipping"
                     )
@@ -193,10 +214,14 @@ def validate_no_nested_projects(project_root: Path, watch_dir: Path) -> None:
             # We've gone beyond watch_dir, no nested project in parent
             break
 
-        # Check if this directory contains projectid file
+        # Enclosing project: only if parent dir is a valid project root
+        # (immediate child of watch_dir with projectid), not watch_dir itself.
         projectid_path = current / "projectid"
-        if projectid_path.exists() and projectid_path.is_file():
-            # Found nested project in parent directory
+        if (
+            projectid_path.exists()
+            and projectid_path.is_file()
+            and is_immediate_child_project_dir(current, watch_dir)
+        ):
             raise NestedProjectError(
                 message=f"Nested projects detected: {project_root} is inside {current}",
                 child_project=str(project_root),
@@ -210,23 +235,19 @@ def validate_no_nested_projects(project_root: Path, watch_dir: Path) -> None:
             break
         current = parent
 
-    # 2. Check subdirectories (scan DOWN from project_root for nested projectid files)
+    # 2. Deeper projectid files are not separate projects; log only (do not fail).
     try:
         for item in project_root.rglob("projectid"):
             if item.is_file() and item != main_projectid_path:
-                # Found nested projectid in subdirectory
                 nested_project_root = item.parent.resolve()
-                raise NestedProjectError(
-                    message=(
-                        f"Nested project detected: {nested_project_root} contains projectid "
-                        f"inside project {project_root}"
-                    ),
-                    child_project=str(nested_project_root),
-                    parent_project=str(project_root),
+                logger.warning(
+                    "Ignoring projectid below project root (not a separate project): %s "
+                    "(project root %s)",
+                    nested_project_root,
+                    project_root,
                 )
     except OSError as e:
         logger.warning(f"Error scanning for nested projects in {project_root}: {e}")
-        # Don't fail on scan errors, but log warning
 
 
 def validate_no_duplicate_project_ids(
@@ -266,9 +287,8 @@ def discover_projects_in_directory(watch_dir: Path) -> List[ProjectRoot]:
     Discover all projects within a watched directory.
 
     Algorithm:
-    1. Scan watch_dir for projectid files ONLY at:
-       - watch_dir/projectid (level 0)
-       - watch_dir/dirA/projectid (level 1 - direct children only)
+    1. Scan watch_dir for projectid files ONLY under immediate subdirectories:
+       ``watch_dir/<subdir>/projectid`` (not ``watch_dir/projectid``).
     2. For each projectid found:
        a. Load project_id from projectid file
        b. Validate no nested projects
@@ -276,11 +296,11 @@ def discover_projects_in_directory(watch_dir: Path) -> List[ProjectRoot]:
     3. Validate no duplicate project_ids
     4. Return list of discovered projects
 
-    Rule: projectid can be ONLY in watch_dir or direct children (max depth 1).
-    - watch_dir/projectid - allowed (level 0)
-    - watch_dir/dirA/projectid - allowed (level 1)
-    - watch_dir/dirA/dirB/projectid - NOT allowed (level 2 - too deep)
-    - Directory without projectid is NOT a project
+    Rule: projectid must be only in immediate children of watch_dir.
+    - watch_dir/dirA/projectid — allowed
+    - watch_dir/projectid — ignored (watch root is not a project)
+    - watch_dir/dirA/dirB/projectid — not discovered as a project
+    - Directory without valid projectid is NOT a project
 
     Args:
         watch_dir: Watched directory to scan
@@ -301,18 +321,8 @@ def discover_projects_in_directory(watch_dir: Path) -> List[ProjectRoot]:
     discovered_projects: List[ProjectRoot] = []
     projectid_files: List[Path] = []
 
-    # Scan for projectid files ONLY in watch_dir and direct children (max depth 1)
-    # Rule: projectid can be at:
-    #   - watch_dir/projectid (level 0)
-    #   - watch_dir/dirA/projectid (level 1)
-    #   - NOT watch_dir/dirA/dirB/projectid (level 2 - too deep)
+    # Only watch_dir/<subdir>/projectid (immediate children of watch_dir)
     try:
-        # Check watch_dir itself (level 0)
-        watch_dir_projectid = watch_dir / "projectid"
-        if watch_dir_projectid.exists() and watch_dir_projectid.is_file():
-            projectid_files.append(watch_dir_projectid)
-
-        # Check direct children only (level 1)
         for item in watch_dir.iterdir():
             if item.is_dir():
                 child_projectid = item / "projectid"
@@ -376,7 +386,7 @@ def discover_projects_in_directory(watch_dir: Path) -> List[ProjectRoot]:
             logger.debug(
                 f"Discovered project: {project.project_id} at {project.root_path}"
             )
-        except ProjectIdError as e:
+        except (ProjectIdError, InvalidProjectIdFormatError) as e:
             logger.warning(f"Invalid projectid file at {projectid_path}: {e}, skipping")
             continue
         except NestedProjectError as e:

@@ -12,10 +12,7 @@ from code_analysis.core.path_normalization import (
     normalize_path_simple,
     NormalizedPath,
 )
-from code_analysis.core.exceptions import (
-    ProjectNotFoundError,
-    MultipleProjectIdError,
-)
+from code_analysis.core.exceptions import ProjectNotFoundError
 
 
 # Get test data directory
@@ -238,7 +235,8 @@ class TestPathNormalizationEdgeCases:
                 if not resolved_path.exists():
                     pytest.skip("Cannot create valid .. path for test")
 
-        watch_dirs = [VAST_SRV_DIR]
+        # Project roots are immediate children of the watched directory (e.g. test_data/vast_srv/)
+        watch_dirs = [VAST_SRV_DIR.parent]
 
         normalized = normalize_file_path(path_with_dot_dot, watch_dirs=watch_dirs)
 
@@ -300,18 +298,23 @@ class TestPathNormalizationEdgeCases:
             temp_file.unlink()
 
     def test_normalize_path_with_multiple_projectid(self, tmp_path):
-        """Test normalizing path with multiple projectid files."""
-        # Create nested structure with multiple projectid files
+        """Only immediate child of watch may be a project root; deeper projectid is ignored."""
+        import json
+        import uuid
+
         root_dir = tmp_path / "root"
         root_dir.mkdir()
         (root_dir / "projectid").write_text(
-            '{"id": "00000000-0000-0000-0000-000000000001", "description": "Root"}'
+            json.dumps({"id": str(uuid.uuid4()), "description": "Root"}),
+            encoding="utf-8",
         )
 
         nested_dir = root_dir / "nested"
         nested_dir.mkdir()
+        id_nested = str(uuid.uuid4())
         (nested_dir / "projectid").write_text(
-            '{"id": "00000000-0000-0000-0000-000000000002", "description": "Nested"}'
+            json.dumps({"id": id_nested, "description": "Nested"}),
+            encoding="utf-8",
         )
 
         test_file = nested_dir / "test.py"
@@ -319,8 +322,9 @@ class TestPathNormalizationEdgeCases:
 
         watch_dirs = [root_dir]
 
-        with pytest.raises(MultipleProjectIdError):
-            normalize_file_path(test_file, watch_dirs=watch_dirs)
+        normalized = normalize_file_path(test_file, watch_dirs=watch_dirs)
+        assert normalized.project_id == id_nested
+        assert Path(normalized.project_root) == nested_dir.resolve()
 
 
 class TestPathNormalizationRelativePath:

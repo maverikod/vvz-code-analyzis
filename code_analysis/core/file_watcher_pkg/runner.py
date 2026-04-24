@@ -107,6 +107,8 @@ def run_file_watcher_worker(
     db_path: str,
     watch_dirs: List[Dict[str, str]],
     locks_dir: str,
+    *,
+    config_path: str,
     scan_interval: int = 60,
     version_dir: Optional[str] = None,
     ignore_patterns: Optional[List[str]] = None,
@@ -119,16 +121,19 @@ def run_file_watcher_worker(
 
     Worker policy:
         This worker must NOT start other processes (including DB worker).
-        It connects to an already running DB worker via sqlite_proxy.
+        The database client is built only from ``config_path`` via
+        ``code_analysis.database.driver`` (PostgreSQL in-process or SQLite RPC
+        to an already running driver subprocess).
 
     Projects are discovered automatically within each watch_dir by finding
     projectid files. Multiple projects can exist in one watch_dir.
 
     Args:
-        db_path: Path to database file.
+        db_path: Path to database file (storage; used for logging/context).
         watch_dirs: List of watch directory configs with 'id' and 'path' keys.
                     Format: [{'id': 'uuid4', 'path': '/absolute/path'}]
         locks_dir: Service state directory for lock files (from StoragePaths).
+        config_path: Absolute path to server ``config.json`` (required).
         scan_interval: Scan interval seconds.
         version_dir: Version directory for deleted files.
         ignore_patterns: Optional ignore patterns.
@@ -163,6 +168,7 @@ def run_file_watcher_worker(
         version_dir=version_dir,
         ignore_patterns=ignore_patterns or [],
         status_file_path=status_file_path,
+        config_path=config_path,
     )
 
     try:

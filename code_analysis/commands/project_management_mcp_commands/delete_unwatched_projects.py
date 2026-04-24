@@ -303,7 +303,10 @@ class DeleteUnwatchedProjectsMCPCommand(BaseMCPCommand):
                 "success": {
                     "description": "Command executed successfully",
                     "data": {
-                        "success": "Whether operation was successful (True if no errors)",
+                        "success": (
+                            "True if no per-project deletion failures; discovery issues "
+                            "use discovery_warnings / discovery_errors and do not flip success alone"
+                        ),
                         "dry_run": "Whether this was a dry run",
                         "deleted_count": "Number of projects deleted (or would be deleted)",
                         "kept_count": "Number of projects kept",
@@ -319,9 +322,14 @@ class DeleteUnwatchedProjectsMCPCommand(BaseMCPCommand):
                             "- project_id: Project UUID\n"
                             "- root_path: Project root path\n"
                             "- name: Project name\n"
-                            "- reason: Reason for keeping (discovered_in_watch_dirs, server_root_protected)"
+                            "- reason: Reason for keeping (discovered_in_watch_dirs, "
+                            "under_watch_dir_project_root, exists_on_disk_but_not_in_watch_dirs, "
+                            "server_root_protected)"
                         ),
-                        "discovery_errors": "List of errors during project discovery (if any)",
+                        "discovery_warnings": (
+                            "Non-fatal discovery issues (e.g. duplicate project_id in a watch_dir)"
+                        ),
+                        "discovery_errors": "Unexpected failures while scanning a watch_dir (if any)",
                         "errors": "List of errors during deletion (if any)",
                         "message": "Status message",
                     },
@@ -346,6 +354,7 @@ class DeleteUnwatchedProjectsMCPCommand(BaseMCPCommand):
                                 "reason": "discovered_in_watch_dirs",
                             },
                         ],
+                        "discovery_warnings": None,
                         "discovery_errors": None,
                         "errors": None,
                         "message": "Deleted 2 unwatched project(s), kept 3 watched project(s)",
@@ -364,6 +373,6 @@ class DeleteUnwatchedProjectsMCPCommand(BaseMCPCommand):
                 "This operation is permanent - double-check before proceeding",
                 "Server root directory is automatically protected",
                 "Review projects_kept and projects_deleted lists carefully",
-                "Check discovery_errors to identify project discovery issues",
+                "Check discovery_warnings and discovery_errors for discovery issues",
             ],
         }

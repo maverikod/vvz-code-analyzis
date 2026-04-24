@@ -43,6 +43,7 @@ class TestClientAPI:
                 comment TEXT,
                 watch_dir_id TEXT,
                 processing_paused BOOLEAN DEFAULT 0,
+                deleted INTEGER DEFAULT 0,
                 created_at REAL DEFAULT (julianday('now')),
                 updated_at REAL DEFAULT (julianday('now'))
             )
@@ -290,6 +291,92 @@ class TestClientAPI:
             assert "test-project-list-0" in project_ids
             assert "test-project-list-1" in project_ids
             assert "test-project-list-2" in project_ids
+        finally:
+            client.disconnect()
+
+    def test_list_projects_hides_soft_deleted_by_default(self, rpc_server_with_schema):
+        """Soft-deleted projects (projects.deleted) are omitted unless include_deleted."""
+        _, socket_path, _ = rpc_server_with_schema
+
+        client = DatabaseClient(socket_path)
+        client.connect()
+
+        try:
+            pid = "test-project-soft-del-1"
+            client.insert(
+                "projects",
+                {
+                    "id": pid,
+                    "root_path": "/tmp/test_project_soft_del_1",
+                    "name": "SoftDel1",
+                    "deleted": 0,
+                },
+            )
+            client.insert(
+                "files",
+                {
+                    "project_id": pid,
+                    "path": "/tmp/test_project_soft_del_1/main.py",
+                    "lines": 1,
+                    "deleted": 0,
+                },
+            )
+            active = client.list_projects()
+            assert any(p.id == pid for p in active)
+
+            client.execute(
+                "UPDATE projects SET deleted = 1 WHERE id = ?",
+                (pid,),
+            )
+            after_mark = client.list_projects()
+            assert not any(p.id == pid for p in after_mark)
+
+            with_deleted = client.list_projects(include_deleted=True)
+            assert any(p.id == pid for p in with_deleted)
+        finally:
+            client.disconnect()
+
+    def test_list_projects_include_deleted_when_all_files_trashed(
+        self, rpc_server_with_schema
+    ):
+        """Soft-deleted project with only trashed file rows must appear when include_deleted."""
+        _, socket_path, _ = rpc_server_with_schema
+
+        client = DatabaseClient(socket_path)
+        client.connect()
+
+        try:
+            pid = "test-project-soft-del-all-files"
+            client.insert(
+                "projects",
+                {
+                    "id": pid,
+                    "root_path": "/tmp/test_project_soft_del_all",
+                    "name": "SoftDelAllFiles",
+                    "deleted": 0,
+                },
+            )
+            client.insert(
+                "files",
+                {
+                    "project_id": pid,
+                    "path": "/tmp/test_project_soft_del_all/main.py",
+                    "lines": 1,
+                    "deleted": 1,
+                },
+            )
+            assert not any(p.id == pid for p in client.list_projects())
+
+            client.execute(
+                "UPDATE projects SET deleted = 1 WHERE id = ?",
+                (pid,),
+            )
+            assert not any(p.id == pid for p in client.list_projects())
+
+            with_deleted = client.list_projects(include_deleted=True)
+            row = next((p for p in with_deleted if p.id == pid), None)
+            assert row is not None
+            assert row.deleted is True
         finally:
             client.disconnect()
 

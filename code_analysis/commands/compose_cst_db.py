@@ -218,9 +218,9 @@ def _restore_entities(database: Any, backup_data: Dict[str, Any]) -> None:
                 row.get("end_line"),
                 args_val,
                 row.get("docstring"),
-                row.get("is_abstract", 0),
-                row.get("has_pass", 0),
-                row.get("has_not_implemented", 0),
+                bool(row.get("is_abstract", False)),
+                bool(row.get("has_pass", False)),
+                bool(row.get("has_not_implemented", False)),
                 row.get("complexity"),
             ),
         )

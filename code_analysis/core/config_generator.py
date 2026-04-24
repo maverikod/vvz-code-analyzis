@@ -58,6 +58,11 @@ class CodeAnalysisConfigGenerator(SimpleConfigGenerator):
         code_analysis_db_path: Optional[str] = None,
         code_analysis_driver_type: Optional[str] = None,
         code_analysis_driver_path: Optional[str] = None,
+        code_analysis_pg_host: Optional[str] = None,
+        code_analysis_pg_port: Optional[int] = None,
+        code_analysis_pg_dbname: Optional[str] = None,
+        code_analysis_pg_user: Optional[str] = None,
+        code_analysis_pg_password_env: Optional[str] = None,
         code_analysis_log: Optional[str] = None,
         code_analysis_faiss_index_path: Optional[str] = None,
         code_analysis_vector_dim: Optional[int] = None,
@@ -106,7 +111,12 @@ class CodeAnalysisConfigGenerator(SimpleConfigGenerator):
             queue_retention_seconds: Completed job retention in seconds
             code_analysis_db_path: Database path for code_analysis section
             code_analysis_driver_type: Driver type (sqlite, sqlite_proxy, etc.)
-            code_analysis_driver_path: Driver database path
+            code_analysis_driver_path: Driver database path (sqlite only)
+            code_analysis_pg_host: PostgreSQL host (when driver is postgres)
+            code_analysis_pg_port: PostgreSQL port
+            code_analysis_pg_dbname: PostgreSQL database name
+            code_analysis_pg_user: PostgreSQL user
+            code_analysis_pg_password_env: Environment variable name for the DB password (.env)
             code_analysis_log: Code analysis log file path
             code_analysis_faiss_index_path: FAISS index file path
             code_analysis_vector_dim: Vector dimension for embeddings
@@ -165,24 +175,41 @@ class CodeAnalysisConfigGenerator(SimpleConfigGenerator):
 
         # Add database.driver section if driver type is specified
         driver_type = code_analysis_driver_type or "sqlite_proxy"
-        driver_path = code_analysis_driver_path or db_path
 
         if "database" not in config["code_analysis"]:
             config["code_analysis"]["database"] = {}
 
-        config["code_analysis"]["database"]["driver"] = {
-            "type": driver_type,
-            "config": {
-                "path": driver_path,
-            },
-        }
-
-        # Add worker_config for sqlite_proxy
-        if driver_type == "sqlite_proxy":
-            config["code_analysis"]["database"]["driver"]["config"]["worker_config"] = {
-                "command_timeout": 30.0,
-                "poll_interval": 0.01,
+        if driver_type == "postgres":
+            config["code_analysis"]["database"]["driver"] = {
+                "type": "postgres",
+                "config": {
+                    "host": code_analysis_pg_host or "127.0.0.1",
+                    "port": (
+                        int(code_analysis_pg_port)
+                        if code_analysis_pg_port is not None
+                        else 5432
+                    ),
+                    "dbname": code_analysis_pg_dbname or "code_analysis",
+                    "user": code_analysis_pg_user or "postgres",
+                    "password_env": code_analysis_pg_password_env
+                    or "CODE_ANALYSIS_POSTGRES_PASSWORD",
+                },
             }
+        else:
+            driver_path = code_analysis_driver_path or db_path
+            config["code_analysis"]["database"]["driver"] = {
+                "type": driver_type,
+                "config": {
+                    "path": driver_path,
+                },
+            }
+            if driver_type == "sqlite_proxy":
+                config["code_analysis"]["database"]["driver"]["config"][
+                    "worker_config"
+                ] = {
+                    "command_timeout": 30.0,
+                    "poll_interval": 0.01,
+                }
 
         # Add database.rpc section (shm threshold for large payloads)
         if "rpc" not in config["code_analysis"]["database"]:

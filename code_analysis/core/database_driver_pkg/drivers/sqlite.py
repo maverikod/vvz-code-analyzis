@@ -136,6 +136,16 @@ class SQLiteDriver(BaseDatabaseDriver):
         except Exception as e:
             raise DriverConnectionError(f"Failed to connect to database: {e}") from e
 
+    def commit(self) -> None:
+        """Commit the main connection (used with transaction_id=LOCAL in CodeDatabase)."""
+        if self.conn:
+            self.conn.commit()
+
+    def rollback(self) -> None:
+        """Rollback the main connection."""
+        if self.conn:
+            self.conn.rollback()
+
     def disconnect(self) -> None:
         """Close SQLite connection.
 
@@ -223,7 +233,7 @@ class SQLiteDriver(BaseDatabaseDriver):
         """Execute multiple SQL statements with batch recognition and executemany."""
         if not operations:
             return []
-        if transaction_id:
+        if transaction_id and transaction_id != "local":
             if not self._transaction_manager:
                 raise DriverOperationError("Transaction manager not initialized")
             if transaction_id not in self._transaction_manager._transactions:
@@ -247,7 +257,7 @@ class SQLiteDriver(BaseDatabaseDriver):
         transaction_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Execute SQL: one or more statements in one text; return only last result."""
-        if transaction_id:
+        if transaction_id and transaction_id != "local":
             if not self._transaction_manager:
                 raise DriverOperationError("Transaction manager not initialized")
             if transaction_id not in self._transaction_manager._transactions:

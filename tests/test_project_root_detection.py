@@ -5,6 +5,9 @@ Author: Vasiliy Zdanovskiy
 email: vasilyvz@gmail.com
 """
 
+import json
+import uuid
+
 import pytest
 from pathlib import Path
 from code_analysis.core.project_resolution import (
@@ -14,8 +17,6 @@ from code_analysis.core.project_resolution import (
 )
 from code_analysis.core.project_discovery import find_project_root, ProjectRoot
 from code_analysis.core.exceptions import (
-    MultipleProjectIdError,
-    NestedProjectError,
     InvalidProjectIdFormatError,
     ProjectIdError,
 )
@@ -198,18 +199,22 @@ class TestProjectRootDetectionEdgeCases:
             pass
 
     def test_find_project_root_with_multiple_projectid(self, tmp_path):
-        """Test finding project root with multiple projectid files in path."""
-        # Create nested structure with multiple projectid files
+        """Only immediate child of watch may host projectid; deeper file is not a second root."""
         root_dir = tmp_path / "root"
         root_dir.mkdir()
         (root_dir / "projectid").write_text(
-            '{"id": "00000000-0000-0000-0000-000000000001", "description": "Root"}'
+            json.dumps(
+                {"id": str(uuid.uuid4()), "description": "Root"},
+            ),
+            encoding="utf-8",
         )
 
         nested_dir = root_dir / "nested"
         nested_dir.mkdir()
+        id_nested = str(uuid.uuid4())
         (nested_dir / "projectid").write_text(
-            '{"id": "00000000-0000-0000-0000-000000000002", "description": "Nested"}'
+            json.dumps({"id": id_nested, "description": "Nested"}),
+            encoding="utf-8",
         )
 
         test_file = nested_dir / "test.py"
@@ -217,10 +222,10 @@ class TestProjectRootDetectionEdgeCases:
 
         watch_dirs = [root_dir]
 
-        with pytest.raises(MultipleProjectIdError) as exc_info:
-            find_project_root_for_path(test_file, [str(w) for w in watch_dirs])
-
-        assert len(exc_info.value.projectid_paths) >= 2
+        project_info = find_project_root_for_path(test_file, [str(w) for w in watch_dirs])
+        assert project_info is not None
+        assert project_info.root_path == nested_dir.resolve()
+        assert project_info.project_id == id_nested
 
     def test_find_project_root_invalid_projectid_format(self, tmp_path):
         """Test finding project root with invalid projectid format."""

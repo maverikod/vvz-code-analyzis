@@ -7,7 +7,8 @@ an **immediate child** of a watched directory. There is no separate project for
 ``watch_dir/projectid`` (watch root is never a project) nor for
 ``watch_dir/a/b/.../projectid`` when ``b`` is deeper than one segment under
 ``watch_dir``; such deeper files are ignored for discovery (see
-``validate_no_nested_projects`` logging). Files anywhere under a valid project
+``validate_no_nested_projects`` logging; nested scan uses watcher directory
+pruning, not blind ``rglob``). Files anywhere under a valid project
 root still resolve to that root via ``find_project_root``.
 
 Projects are identified by a ``projectid`` file containing a UUID4 identifier.
@@ -19,6 +20,7 @@ email: vasilyvz@gmail.com
 from __future__ import annotations
 
 import logging
+import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import List, Optional
@@ -236,10 +238,30 @@ def validate_no_nested_projects(project_root: Path, watch_dir: Path) -> None:
         current = parent
 
     # 2. Deeper projectid files are not separate projects; log only (do not fail).
+    # Use the same directory pruning as the file watcher (no rglob into test_data/trash).
+    from .file_watcher_pkg.scanner import should_skip_dir
+
     try:
-        for item in project_root.rglob("projectid"):
+        walk_root = project_root.resolve()
+    except OSError:
+        walk_root = project_root
+    try:
+        for dirpath, dirnames, filenames in os.walk(
+            walk_root, topdown=True, followlinks=False
+        ):
+            dpath = Path(dirpath)
+            pruned: List[str] = []
+            for d in sorted(dirnames):
+                child_dir = dpath / d
+                if should_skip_dir(child_dir, walk_root=walk_root):
+                    continue
+                pruned.append(d)
+            dirnames[:] = pruned
+            if "projectid" not in filenames:
+                continue
+            item = dpath / "projectid"
             if item.is_file() and item != main_projectid_path:
-                nested_project_root = item.parent.resolve()
+                nested_project_root = dpath.resolve()
                 logger.warning(
                     "Ignoring projectid below project root (not a separate project): %s "
                     "(project root %s)",

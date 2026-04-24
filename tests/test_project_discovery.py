@@ -6,6 +6,7 @@ email: vasilyvz@gmail.com
 """
 
 import json
+import logging
 import tempfile
 import uuid
 from pathlib import Path
@@ -379,6 +380,20 @@ class TestValidateNoNestedProjects:
         create_projectid_file(child_project, str(uuid.uuid4()))
 
         validate_no_nested_projects(parent_project, temp_dir)
+
+    def test_validate_no_nested_projects_does_not_warn_inside_test_data(
+        self, temp_dir, project_id, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Nested projectid under pruned test_data must not trigger rglob-style warnings."""
+        parent_project = temp_dir / "parent"
+        parent_project.mkdir()
+        create_projectid_file(parent_project, project_id)
+        nested = parent_project / "test_data" / "mirror"
+        nested.mkdir(parents=True)
+        create_projectid_file(nested, str(uuid.uuid4()))
+        caplog.set_level(logging.WARNING)
+        validate_no_nested_projects(parent_project, temp_dir)
+        assert "Ignoring projectid below project root" not in caplog.text
 
     def test_validate_no_nested_projects_no_parent(self, temp_dir, project_id):
         """Test validation when project is at watch_dir level."""

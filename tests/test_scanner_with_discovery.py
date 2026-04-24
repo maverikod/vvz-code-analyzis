@@ -235,4 +235,12 @@ class TestScannerWithDiscovery:
         inner = temp_dir / "a" / "test_data"
         assert should_skip_dir(inner, walk_root=root) is True
         top = temp_dir / "test_data"
-        assert should_skip_dir(top, walk_root=root) is False
+        assert should_skip_dir(top, walk_root=root) is True
+
+    def test_should_skip_dir_respects_immediate_project_roots_named_test_data(
+        self, temp_dir
+    ):
+        root = temp_dir.resolve()
+        proj = temp_dir / "test_data"
+        roots = {proj.resolve()}
+        assert should_skip_dir(proj, walk_root=root, immediate_project_roots=roots) is False

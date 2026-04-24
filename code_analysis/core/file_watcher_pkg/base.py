@@ -206,12 +206,32 @@ class FileWatcherWorker:
                 )
                 allowed_venv = allowed_venv_py_files_for_watch_dir(root_dir)
                 ign_ex = ignore_exception_files_for_watch_dir(root_dir)
+                immediate_roots = None
+                try:
+                    from ..project_discovery import (
+                        DuplicateProjectIdError,
+                        NestedProjectError,
+                        discover_projects_in_directory,
+                    )
+
+                    discovered = discover_projects_in_directory(root_dir)
+                    immediate_roots = {
+                        Path(p.root_path).resolve() for p in discovered
+                    }
+                except (
+                    NestedProjectError,
+                    DuplicateProjectIdError,
+                    OSError,
+                    ValueError,
+                ):
+                    immediate_roots = None
                 scanned_files = scan_directory(
                     root_dir=root_dir,
                     watch_dirs=self.watch_dirs,
                     ignore_patterns=self.ignore_patterns,
                     allowed_venv_py_files=allowed_venv or None,
                     ignore_exception_files=ign_ex or None,
+                    immediate_project_roots=immediate_roots,
                 )
 
                 # Compute delta (scan phase - no DB writes)

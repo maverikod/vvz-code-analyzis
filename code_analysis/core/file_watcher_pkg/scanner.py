@@ -3,9 +3,11 @@ Directory scanner for file watcher worker.
 
 Scans configured directories for code files and discovers projects.
 
-Directory pruning (``should_skip_dir``) avoids descending into nested ``test_data``
-mirrors, ``data/trash``, caches, and noisy venv subtrees while still allowing
-``.venv``/``venv`` → ``lib``/``python*``/``site-packages`` for allowlisted indexing.
+Traversal pruning (``should_skip_dir``) runs **before** ``should_ignore_path`` on
+directory children: excluded trees (``test_data``, ``data/trash``, etc.) are never
+entered. ``should_ignore_path`` remains file-level and secondary for dirs.
+``.venv``/``venv`` roots stay traversable; noisy subtrees under them are pruned for
+allowlisted ``site-packages`` indexing.
 
 Author: Vasiliy Zdanovskiy
 email: vasilyvz@gmail.com
@@ -15,7 +17,7 @@ import fnmatch
 import logging
 import os
 from pathlib import Path
-from typing import Dict, List, Optional, Set
+from typing import AbstractSet, Dict, List, Optional, Set
 
 from ..settings_manager import get_settings
 
@@ -62,48 +64,58 @@ def _path_has_adjacent_parts(parts: tuple[str, ...], a: str, b: str) -> bool:
     return False
 
 
-def _nested_test_data_mirror(dir_path: Path, walk_root: Path) -> bool:
-    """
-    True if this directory is a nested ``test_data`` copy under ``walk_root``.
-
-    Allows a single top-level ``<walk_root>/test_data`` segment (watch root layout
-    or a project folder named ``test_data``); prunes deeper ``.../test_data/...``.
-    """
-    if dir_path.name != "test_data":
-        return False
-    try:
-        rel = dir_path.resolve().relative_to(walk_root.resolve())
-    except (OSError, ValueError):
+def _under_data_trash(parts: tuple[str, ...], posix_path: str) -> bool:
+    """True if path is under an application ``data/trash`` tree (name + full path)."""
+    if _path_has_adjacent_parts(parts, "data", "trash"):
         return True
-    return len(rel.parts) >= 2
+    norm = posix_path if posix_path.endswith("/") else posix_path + "/"
+    return "/data/trash/" in norm
 
 
-def should_skip_dir(dir_path: Path, *, walk_root: Path) -> bool:
+def should_skip_dir(
+    dir_path: Path,
+    walk_root: Path | None = None,
+    *,
+    immediate_project_roots: Optional[AbstractSet[Path]] = None,
+) -> bool:
     """
     Return True if the file watcher must not descend into this directory.
 
-    Prunes nested test mirrors, application trash/trees, caches, and venv noise
-    (``bin``/``include``/… under ``.venv``) while keeping the ``site-packages`` chain.
+    Filesystem-only traversal control (not ``should_ignore_path``). Skips any
+    directory named ``test_data`` (except resolved roots listed in
+    ``immediate_project_roots``), paths under ``data/trash`` (by path segments and
+    ``/data/trash/`` in the full path), ``data/versions``, common build/cache dirs,
+    and non-indexable subtrees under ``.venv``/``venv`` while keeping the
+    ``site-packages`` chain for optional allowlists.
 
     Args:
         dir_path: Candidate subdirectory (typically ``parent / name`` from ``os.walk``).
-        walk_root: Root of the current ``os.walk`` (scan root or project root).
+        walk_root: Root of the current ``os.walk`` (``scan_directory`` ``root_dir``).
+            When omitted, only path-shape rules apply (no ``dir_path == walk_root`` exemption).
+        immediate_project_roots: Resolved project roots that may not be pruned solely
+            for being named ``test_data``.
 
     Returns:
         True to skip traversal into ``dir_path``.
     """
     try:
         resolved = dir_path.resolve()
-        wr = walk_root.resolve()
     except OSError:
         resolved = dir_path
-        wr = walk_root
-    if resolved == wr:
-        return False
+    if walk_root is not None:
+        try:
+            wr = walk_root.resolve()
+        except OSError:
+            wr = walk_root
+        if resolved == wr:
+            return False
     parts = resolved.parts
-    if _nested_test_data_mirror(dir_path, walk_root):
+    posix_path = resolved.as_posix()
+    if _under_data_trash(parts, posix_path):
         return True
-    if _path_has_adjacent_parts(parts, "data", "trash"):
+    if resolved.name == "test_data":
+        if immediate_project_roots and resolved in immediate_project_roots:
+            return False
         return True
     if _path_has_adjacent_parts(parts, "data", "versions"):
         return True
@@ -252,6 +264,7 @@ def scan_directory(
     *,
     allowed_venv_py_files: Optional[Set[Path]] = None,
     ignore_exception_files: Optional[Set[Path]] = None,
+    immediate_project_roots: Optional[AbstractSet[Path]] = None,
 ) -> Dict[str, Dict]:
     """
     Scan directory recursively for code files and discover projects.
@@ -268,6 +281,8 @@ def scan_directory(
             ``site-packages`` that are allowlisted for discovery (see config).
         ignore_exception_files: Optional set of resolved paths matching
             ``code_analysis.ignore_exceptions`` (force include).
+        immediate_project_roots: Resolved ``watch_dir/<project>/`` roots from
+            discovery; keeps a project folder named ``test_data`` traversable.
 
     Returns:
         Dictionary mapping absolute file paths to file info:
@@ -297,26 +312,44 @@ def scan_directory(
     except OSError:
         walk_root = root_dir
 
+    resolved_project_roots: Optional[AbstractSet[Path]] = None
+    if immediate_project_roots:
+        resolved_project_roots = set()
+        for pr in immediate_project_roots:
+            try:
+                resolved_project_roots.add(Path(pr).resolve())
+            except OSError:
+                resolved_project_roots.add(Path(pr))
+
     try:
         for dirpath, dirnames, filenames in os.walk(
             walk_root, topdown=True, followlinks=False
         ):
             dir_path = Path(dirpath)
-            # Prune before visiting children: traversal exclusions + ignore patterns.
-            pruned: List[str] = []
-            for d in sorted(dirnames):
-                child_dir = dir_path / d
-                if should_skip_dir(child_dir, walk_root=walk_root):
-                    continue
-                if should_ignore_path(
-                    child_dir,
-                    ignore_patterns,
-                    allowed_venv_py_files=allowed_venv_py_files,
-                    ignore_exception_files=ignore_exception_files,
-                ) and not is_traversable_venv_root(child_dir):
-                    continue
-                pruned.append(d)
-            dirnames[:] = pruned
+            # Pre-traversal: prune excluded directory trees before any ignore-pattern logic.
+            dirnames[:] = [
+                d
+                for d in sorted(dirnames)
+                if not should_skip_dir(
+                    dir_path / d,
+                    walk_root,
+                    immediate_project_roots=resolved_project_roots,
+                )
+            ]
+            # Secondary: pattern-based directory filtering (file-level rules); keep venv roots.
+            dirnames[:] = [
+                d
+                for d in sorted(dirnames)
+                if not (
+                    should_ignore_path(
+                        dir_path / d,
+                        ignore_patterns,
+                        allowed_venv_py_files=allowed_venv_py_files,
+                        ignore_exception_files=ignore_exception_files,
+                    )
+                    and not is_traversable_venv_root(dir_path / d)
+                )
+            ]
 
             for name in filenames:
                 item = dir_path / name

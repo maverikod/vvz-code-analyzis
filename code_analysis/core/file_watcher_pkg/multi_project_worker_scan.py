@@ -359,12 +359,16 @@ def scan_watch_dir(
                 )
                 stats["errors"] += 1
 
+        immediate_roots = {
+            Path(p.root_path).resolve() for p in discovered_projects
+        }
         scanned_files = scan_directory(
             root_dir=watch_dir,
             watch_dirs=[spec.watch_dir],
             ignore_patterns=merged_ignore,
             allowed_venv_py_files=allowed_venv_py or None,
             ignore_exception_files=ign_ex or None,
+            immediate_project_roots=immediate_roots,
         )
 
         delta = processor.compute_delta(watch_dir, scanned_files)

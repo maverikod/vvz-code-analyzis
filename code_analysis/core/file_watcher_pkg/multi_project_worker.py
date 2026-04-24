@@ -327,22 +327,25 @@ class MultiProjectFileWatcherWorker:
                 allowed_venv = allowed_venv_py_files_for_watch_dir(watch_dir)
                 ign_ex: Set[Path] = set()
                 exc_patterns = load_ignore_exceptions_from_config()
-                if exc_patterns:
-                    from ..project_discovery import (
-                        DuplicateProjectIdError,
-                        NestedProjectError,
-                        discover_projects_in_directory,
-                    )
+                from ..project_discovery import (
+                    DuplicateProjectIdError,
+                    NestedProjectError,
+                    discover_projects_in_directory,
+                )
 
-                    try:
-                        discovered = discover_projects_in_directory(watch_dir)
-                    except (
-                        NestedProjectError,
-                        DuplicateProjectIdError,
-                        OSError,
-                        ValueError,
-                    ):
-                        discovered = []
+                try:
+                    discovered = discover_projects_in_directory(watch_dir)
+                except (
+                    NestedProjectError,
+                    DuplicateProjectIdError,
+                    OSError,
+                    ValueError,
+                ):
+                    discovered = []
+                immediate_roots = {
+                    Path(p.root_path).resolve() for p in discovered
+                }
+                if exc_patterns:
                     for proj in discovered:
                         ign_ex.update(
                             expand_ignore_exception_py_files(
@@ -355,6 +358,7 @@ class MultiProjectFileWatcherWorker:
                     ignore_patterns=merged_ignore,
                     allowed_venv_py_files=allowed_venv or None,
                     ignore_exception_files=ign_ex or None,
+                    immediate_project_roots=immediate_roots,
                 )
                 total_files += len(scanned_files)
             except Exception as e:

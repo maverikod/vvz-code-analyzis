@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import logging
 from collections import defaultdict
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -46,6 +46,9 @@ class FileDelta:
     new_files: List[tuple[str, float, int]]
     changed_files: List[tuple[str, float, int]]
     deleted_files: List[str]
+    # DB rows that match the ignore policy (on disk but excluded from the scan) —
+    # full purge with dependencies, not soft-delete.
+    ignore_purge_paths: List[str] = field(default_factory=list)
 
 
 def compute_delta(
@@ -146,7 +149,7 @@ def compute_delta(
                 f"Error computing delta for project {project_id} in {root_dir}: {e}"
             )
             deltas[project_id] = FileDelta(
-                new_files=[], changed_files=[], deleted_files=[]
+                new_files=[], changed_files=[], deleted_files=[], ignore_purge_paths=[]
             )
 
     try:

@@ -18,10 +18,12 @@ def register_commands_part1(reg: registry) -> None:
         from .commands.health_command import HealthCommand
         from .commands.queue_health_command import QueueHealthCommand
         from .commands.qa_sleep_command import QASleepCommand
+        from .commands.qa_mcp_plan_hooks_command import QAMcpPlanHooksCommand
 
         reg.register(HealthCommand, "custom")
         reg.register(QueueHealthCommand, "custom")
         reg.register(QASleepCommand, "custom")
+        reg.register(QAMcpPlanHooksCommand, "custom")
     except ImportError:
         pass
 

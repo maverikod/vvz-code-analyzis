@@ -15,7 +15,9 @@ from mcp_proxy_adapter.commands.result import SuccessResult
 
 from ...core.venv_path_policy import (
     build_allowlisted_site_packages_py_files,
+    expand_ignore_exception_all_files,
     expand_ignore_exception_py_files,
+    iter_project_files_excluding_venv,
     iter_project_python_files_excluding_venv,
     load_ignore_exceptions_from_config,
     load_venv_site_packages_index_allowlist_from_config,
@@ -57,23 +59,47 @@ def _build_db_map_by_rel_key(project_root: Path, files: List[Any]) -> Dict[str, 
     return out
 
 
-def _enumerate_project_py_paths(project_root: Path, show_venv: bool) -> List[Path]:
+def _relative_path_matches_pattern(relative_posix: str, file_pattern: str) -> bool:
     """
-    File system list aligned with indexing / watcher discovery.
+    Match ``file_pattern`` against a project-relative POSIX path.
 
-    Includes project sources (excluding venv trees), ``.py`` paths from
-    ``code_analysis.ignore_exceptions`` (glob, project-relative), and — when
-    ``show_venv`` — allowlisted site-packages files from RECORD (same as
-    :func:`code_analysis.core.venv_path_policy.collect_python_files_for_indexing`).
+    Uses :func:`fnmatch.fnmatch` (POSIX shell-style). On POSIX, ``*`` matches across
+    ``/``, so patterns such as ``code_analysis/commands/*`` include nested paths
+    (same as before this command listed non-``.py`` files). A ``**`` sequence is
+    not special-cased beyond adjacent ``*`` wildcards matching path segments.
+    Matching is case-sensitive.
+    """
+    return fnmatch.fnmatch(relative_posix, file_pattern)
+
+
+def _enumerate_project_paths(
+    project_root: Path, show_venv: bool, *, python_only: bool
+) -> List[Path]:
+    """
+    Filesystem paths for ``list_project_files``.
+
+    When ``python_only`` is false (default), walks all non-skipped ordinary files under
+    the project (see :func:`code_analysis.core.venv_path_policy.iter_project_files_excluding_venv`),
+    merges ``ignore_exceptions`` for any matched file type, and optionally appends
+    RECORD-derived ``.py`` from allowlisted venv distributions when ``show_venv``.
+
+    When ``python_only`` is true, uses the legacy Python-only walk plus ``.py``-only
+    ignore_exceptions (parity with indexing).
     """
     root = project_root.resolve()
-    found: List[Path] = list(iter_project_python_files_excluding_venv(root))
+    found: List[Path]
+    if python_only:
+        found = list(iter_project_python_files_excluding_venv(root))
+        exc_expand = expand_ignore_exception_py_files
+    else:
+        found = list(iter_project_files_excluding_venv(root))
+        exc_expand = expand_ignore_exception_all_files
     if show_venv:
         allowlist = load_venv_site_packages_index_allowlist_from_config()
         found.extend(build_allowlisted_site_packages_py_files(root, allowlist))
     exc_patterns = load_ignore_exceptions_from_config()
     if exc_patterns:
-        found.extend(expand_ignore_exception_py_files(root, exc_patterns))
+        found.extend(exc_expand(root, exc_patterns))
     uniq = {p.resolve() for p in found}
     return sorted(uniq, key=lambda p: _canonical_relative_path(root, p))
 
@@ -103,15 +129,15 @@ def _fs_only_file_dict(
 
 
 class ListProjectFilesMCPCommand(BaseMCPCommand):
-    """Filesystem-first list of project ``.py`` files with optional DB metadata."""
+    """Filesystem-first list of project files with optional DB metadata."""
 
     name = "list_project_files"
     version = "1.0.0"
     descr = (
-        "List project .py files from disk first; merge DB metadata when indexed. "
-        "Skips project-local .venv/venv except paths matched by "
+        "List project files from disk first (text, configs, Python, etc.); merge DB metadata "
+        "when indexed. Skips project-local .venv/venv except paths matched by "
         "code_analysis.ignore_exceptions and (when show_venv) RECORD-allowlisted "
-        "site-packages distributions."
+        "site-packages .py distributions. Set python_only for legacy .py-only enumeration."
     )
     category = "ast"
     author = "Vasiliy Zdanovskiy"
@@ -130,8 +156,10 @@ class ListProjectFilesMCPCommand(BaseMCPCommand):
                 "file_pattern": {
                     "type": "string",
                     "description": (
-                        "Optional fnmatch pattern on relative paths (e.g. '*.py', 'src/*', "
-                        "'tests/test_*.py'). Not pathlib-style ``**`` recursion."
+                        "Optional fnmatch pattern on relative POSIX paths. On POSIX, ``*`` "
+                        "matches across ``/`` (e.g. ``code_analysis/commands/*`` includes "
+                        "nested files). ``**`` is ordinary adjacent ``*`` wildcards, not "
+                        "pathlib-specific recursion."
                     ),
                 },
                 "limit": {
@@ -154,6 +182,14 @@ class ListProjectFilesMCPCommand(BaseMCPCommand):
                     ),
                     "default": False,
                 },
+                "python_only": {
+                    "type": "boolean",
+                    "description": (
+                        "When true, enumerate only ``.py`` files (legacy behavior aligned with "
+                        "indexing). When false (default), all ordinary project files are listed."
+                    ),
+                    "default": False,
+                },
             },
             "required": ["project_id"],
             "additionalProperties": False,
@@ -166,6 +202,7 @@ class ListProjectFilesMCPCommand(BaseMCPCommand):
         limit: Optional[int] = None,
         offset: int = 0,
         show_venv: bool = False,
+        python_only: bool = False,
         **kwargs,
     ) -> SuccessResult:
         try:
@@ -175,16 +212,17 @@ class ListProjectFilesMCPCommand(BaseMCPCommand):
             db_files = db.get_project_files(project_id, include_deleted=False)
             db_by_rel = _build_db_map_by_rel_key(project_root, db_files)
 
-            fs_paths = _enumerate_project_py_paths(project_root, show_venv=show_venv)
-
-            def _rel_for_match(abs_p: Path) -> str:
-                return _canonical_relative_path(project_root, abs_p)
+            fs_paths = _enumerate_project_paths(
+                project_root, show_venv=show_venv, python_only=python_only
+            )
 
             if file_pattern:
                 fs_paths = [
                     p
                     for p in fs_paths
-                    if fnmatch.fnmatch(_rel_for_match(p), file_pattern)
+                    if _relative_path_matches_pattern(
+                        _canonical_relative_path(project_root, p), file_pattern
+                    )
                 ]
 
             total = len(fs_paths)
@@ -239,44 +277,40 @@ class ListProjectFilesMCPCommand(BaseMCPCommand):
             "author": cls.author,
             "email": cls.email,
             "detailed_description": (
-                "The list_project_files command lists Python source files under the project "
-                "root by walking the filesystem first, then attaching database metadata when "
-                "a matching indexed row exists. Project-local ``.venv`` and ``venv`` "
-                "trees are skipped except for ``.py`` paths matched by "
-                "``code_analysis.ignore_exceptions`` (same as the file watcher and indexing). "
-                "Set ``show_venv`` to true to additionally include RECORD-derived ``.py`` "
-                "files for pip distributions in "
-                "``venv_site_packages_index_allowlisted_distributions``.\n\n"
+                "The list_project_files command walks the project tree on disk (by default all "
+                "ordinary text and config files, not only ``.py``), then attaches database "
+                "metadata when a non-deleted indexed row matches the same normalized relative "
+                "path. Bytecode, native libraries, and similar binary suffixes are skipped; "
+                "hidden directories (names starting with ``.``) are not descended into, except "
+                "that ``code_analysis.ignore_exceptions`` can still surface matched paths under "
+                "``.venv`` / ``venv``. Project-local ``.venv`` and ``venv`` are otherwise skipped; "
+                "set ``show_venv`` to true to add RECORD-derived ``.py`` files for pip "
+                "distributions in ``venv_site_packages_index_allowlisted_distributions``. "
+                "Set ``python_only`` to true to restore the legacy enumeration of ``.py`` "
+                "files only (aligned with indexing).\n\n"
                 "Operation flow:\n"
                 "1. Resolves project root from ``project_id``\n"
                 "2. Opens database connection\n"
                 "3. Loads non-deleted file rows for the project (for metadata join)\n"
-                "4. Enumerates ``.py`` files on disk (project sources + ignore_exceptions + "
-                "optional allowlisted venv RECORD paths)\n"
-                "5. If ``file_pattern`` is provided, filters by fnmatch on relative paths\n"
-                "6. Sorts paths stably, then applies pagination (offset/limit)\n"
-                "7. For each filesystem file, merges DB row when relative path matches; "
-                "otherwise returns a minimal row (path / relative_path / project_id)\n\n"
-                "File Metadata:\n"
-                "Each file entry includes:\n"
-                "- path: Absolute file path (when indexed, as stored in DB)\n"
-                "- relative_path: Relative path from project root (posix)\n"
-                "- id and statistics: present when the file is indexed in the database\n"
-                "- Files on disk without a DB row include path metadata only\n\n"
-                "Pattern Matching:\n"
-                "- Uses fnmatch on relative paths (shell-style wildcards; not ``rglob``-style ``**``)\n"
-                "- Examples: '*.py', 'src/*', 'tests/test_*.py', 'code_analysis/*/*.py'\n"
-                "- Case-sensitive matching\n\n"
-                "Use cases:\n"
-                "- Catalog of Python sources as they exist on disk\n"
-                "- Filter files by pattern (e.g., all Python files under src/)\n"
-                "- See which files are indexed vs present only on disk\n"
-                "- Optionally surface allowlisted third-party sources under venv\n\n"
+                "4. Enumerates files on disk (project tree + ignore_exceptions matches + "
+                "optional allowlisted venv RECORD ``.py`` paths)\n"
+                "5. If ``file_pattern`` is set, keeps paths whose relative POSIX path matches "
+                "via :func:`fnmatch.fnmatch` (POSIX: ``*`` matches ``/``)\n"
+                "6. Sorts by ``relative_path``, applies ``offset`` / ``limit``\n"
+                "7. For each path, emits the DB row when present, else a minimal FS-only row "
+                "(``project_id``, ``path``, ``relative_path``, ``deleted``: false)\n\n"
+                "Pattern matching:\n"
+                "- Case-sensitive :func:`fnmatch.fnmatch` on relative paths\n"
+                "- ``*`` matches slashes, so ``docs/plans/foo/*`` lists that subtree "
+                "(including ``.md`` and ``.py``)\n"
+                "- ``code_analysis/commands/*`` includes nested modules (unchanged semantics)\n"
+                "- ``**`` is not pathlib ``rglob`` syntax; it behaves as repeated ``*`` "
+                "wildcards (e.g. ``**/*.md`` usually matches Markdown at any depth)\n\n"
                 "Important notes:\n"
-                "- Filesystem-first: DB-only rows not backed by an on-disk file are omitted\n"
-                "- Supports pagination with limit and offset\n"
-                "- Pattern matching uses fnmatch (shell wildcards)\n"
-                "- Returns total count before pagination"
+                "- Filesystem-first: DB-only rows with no on-disk file are omitted\n"
+                "- ``total`` is the count after ``file_pattern`` but before pagination; "
+                "``count`` is the number of entries returned in ``files``\n"
+                "- Pagination: ``offset`` and optional ``limit`` slice the sorted list"
             ),
             "parameters": {
                 "project_id": {
@@ -289,18 +323,17 @@ class ListProjectFilesMCPCommand(BaseMCPCommand):
                 },
                 "file_pattern": {
                     "description": (
-                        "Optional pattern to filter files. Uses fnmatch on relative paths "
-                        "(shell-style wildcards; not pathlib ``**`` recursion). Examples: "
-                        "'*.py', 'src/*', 'tests/test_*.py', 'code_analysis/*/*.py'. "
-                        "If not provided, returns all enumerated files."
+                        "Optional fnmatch pattern on relative paths (POSIX: ``*`` matches ``/``). "
+                        "Examples: ``*.py``, ``docs/plans/myplan/*``, ``code_analysis/commands/*``, "
+                        "``**/*.md``. If omitted, no pattern filter is applied."
                     ),
                     "type": "string",
                     "required": False,
                     "examples": [
                         "*.py",
-                        "src/*",
-                        "tests/test_*.py",
-                        "code_analysis/*/*.py",
+                        "docs/plans/myplan/*",
+                        "code_analysis/commands/*",
+                        "**/*.md",
                     ],
                 },
                 "limit": {
@@ -331,25 +364,46 @@ class ListProjectFilesMCPCommand(BaseMCPCommand):
                     "required": False,
                     "default": False,
                 },
+                "python_only": {
+                    "description": (
+                        "When true, enumerate only ``.py`` files (legacy indexing-aligned "
+                        "listing). When false (default), list ordinary project files of any "
+                        "included extension."
+                    ),
+                    "type": "boolean",
+                    "required": False,
+                    "default": False,
+                },
             },
             "usage_examples": [
                 {
-                    "description": "List all Python source files on disk",
+                    "description": "List all ordinary project files on disk",
                     "command": {
                         "project_id": "550e8400-e29b-41d4-a716-446655440000",
                     },
                     "explanation": (
-                        "Returns project ``.py`` files with DB metadata when indexed."
+                        "Returns non-binary project files with DB metadata when indexed."
                     ),
                 },
                 {
-                    "description": "List only Python files",
+                    "description": "List only Python files (same as legacy default)",
+                    "command": {
+                        "project_id": "550e8400-e29b-41d4-a716-446655440000",
+                        "python_only": True,
+                    },
+                    "explanation": (
+                        "Restricts the walk to ``.py`` sources plus venv RECORD/ignore rules "
+                        "for Python only."
+                    ),
+                },
+                {
+                    "description": "Filter to Python by pattern",
                     "command": {
                         "project_id": "550e8400-e29b-41d4-a716-446655440000",
                         "file_pattern": "*.py",
                     },
                     "explanation": (
-                        "Returns only entries whose relative path matches *.py."
+                        "Returns only entries whose relative path matches ``*.py``."
                     ),
                 },
                 {
@@ -432,9 +486,10 @@ class ListProjectFilesMCPCommand(BaseMCPCommand):
                 },
             },
             "best_practices": [
-                "Use file_pattern to filter files by type or location",
+                "Use file_pattern to narrow by directory or extension (fnmatch on relative paths)",
+                "Use python_only when you intentionally want the legacy .py-only catalog",
                 "Use limit and offset for pagination with large projects",
-                "Check total field to see total count before pagination",
+                "Check total vs count to page through filtered results",
                 "Use show_venv only when config allowlists specific distributions",
                 "Compare listed paths to DB-backed rows to find unindexed files",
             ],

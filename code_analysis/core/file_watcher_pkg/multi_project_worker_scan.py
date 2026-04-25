@@ -8,14 +8,20 @@ email: vasilyvz@gmail.com
 from __future__ import annotations
 
 import logging
+import uuid
 from pathlib import Path
 from typing import Any, Dict, Optional, Set, Tuple
 
 from ..venv_path_policy import (
     build_allowlisted_site_packages_py_files,
-    expand_ignore_exception_py_files,
     load_ignore_exceptions_from_config,
+    load_ignore_exceptions_from_config_path,
     load_venv_site_packages_index_allowlist_from_config,
+)
+from ..worker_project_activity import (
+    get_project_activity,
+    release_project_activity,
+    try_acquire_project_activity,
 )
 from .lock_manager import LockManager
 from .multi_project_worker_specs import WatchDirSpec
@@ -29,7 +35,7 @@ def scan_watch_dir(
     spec: WatchDirSpec,
     processor: FileChangeProcessor,
     database: Any,
-    ignore_patterns: Tuple[str, ...],
+    _ignore_patterns: Tuple[str, ...],
     locks_dir: Path,
     pid: int,
     *,
@@ -45,7 +51,7 @@ def scan_watch_dir(
         spec: Watch directory specification.
         processor: FileChangeProcessor for multi-project mode.
         database: CodeDatabase instance.
-        ignore_patterns: Global ignore patterns (merged with spec.ignore_patterns).
+        ignore_patterns: Deprecated global ignore patterns (ignored; keep for API compatibility).
         locks_dir: Directory for lock files.
         pid: Process ID for lock acquisition.
         config_path: Optional server ``config.json`` for FAISS index invalidation.
@@ -102,20 +108,48 @@ def scan_watch_dir(
             logger.debug(f"No projects found in watched directory: {watch_dir}")
             return stats
 
+        watcher_lease_ttl = 300.0
+        watcher_owner_id = f"watcher:{pid}:{uuid.uuid4()}"
+        skipped_projects: Set[str] = set()
+
         for project_root_obj in discovered_projects:
+            pid_p = project_root_obj.project_id
+            if not try_acquire_project_activity(
+                database,
+                pid_p,
+                "watcher",
+                watcher_owner_id,
+                "watcher_staging",
+                watcher_lease_ttl,
+            ):
+                row = get_project_activity(database, pid_p) or {}
+                logger.info(
+                    "[WORKER_COORD] watcher skip project_id=%s reason=watcher_staging owner_type=%s",
+                    pid_p,
+                    row.get("owner_type", "unknown"),
+                )
+                skipped_projects.add(pid_p)
+                continue
             try:
                 project_obj = database.get_project(project_root_obj.project_id)
-                project = (
-                    {
+                if not project_obj:
+                    project = None
+                elif isinstance(project_obj, dict):
+                    project = {
+                        "id": project_obj.get("id"),
+                        "root_path": project_obj.get("root_path"),
+                        "name": project_obj.get("name"),
+                        "comment": project_obj.get("comment"),
+                        "watch_dir_id": project_obj.get("watch_dir_id"),
+                    }
+                else:
+                    project = {
                         "id": project_obj.id,
                         "root_path": project_obj.root_path,
                         "name": project_obj.name,
                         "comment": project_obj.comment,
                         "watch_dir_id": getattr(project_obj, "watch_dir_id", None),
                     }
-                    if project_obj
-                    else None
-                )
                 if project:
                     if project["root_path"] != str(project_root_obj.root_path):
                         logger.error(
@@ -194,14 +228,18 @@ def scan_watch_dir(
                         existing_project_obj = database.get_project(
                             project_root_obj.project_id
                         )
-                        existing_project = (
-                            {
+                        if not existing_project_obj:
+                            existing_project = None
+                        elif isinstance(existing_project_obj, dict):
+                            existing_project = {
+                                "id": existing_project_obj.get("id"),
+                                "root_path": existing_project_obj.get("root_path"),
+                            }
+                        else:
+                            existing_project = {
                                 "id": existing_project_obj.id,
                                 "root_path": existing_project_obj.root_path,
                             }
-                            if existing_project_obj
-                            else None
-                        )
                         if existing_project:
                             logger.error(
                                 f"Project ID {project_root_obj.project_id} already exists "
@@ -235,67 +273,13 @@ def scan_watch_dir(
                             f"and watch_dir_id: {watch_dir_id}"
                         )
 
+                        # Auto-indexing runs via the normal indexer; queue maps files
+                        # with needs_chunking=1. No daemon update_indexes from watcher.
                         logger.info(
-                            "[AUTO_INDEXING] Starting update_indexes for newly created project "
-                            "project_id=%s root_path=%s (each file will get needs_chunking=1, chunks deleted)",
+                            "[WORKER_COORD] new project %s: use normal indexer path after queue "
+                            "(no watcher auto_indexing thread).",
                             project_root_obj.project_id,
-                            str(project_root_obj.root_path),
                         )
-                        try:
-                            import asyncio
-                            import threading
-
-                            from code_analysis.commands.code_mapper_mcp_command import (
-                                UpdateIndexesMCPCommand,
-                            )
-                            from code_analysis.core.constants import (
-                                DEFAULT_MAX_FILE_LINES,
-                            )
-
-                            def run_indexing() -> None:
-                                try:
-                                    loop = asyncio.new_event_loop()
-                                    asyncio.set_event_loop(loop)
-                                    try:
-                                        cmd = UpdateIndexesMCPCommand()
-                                        result = loop.run_until_complete(
-                                            cmd.execute(
-                                                project_id=project_root_obj.project_id,
-                                                max_lines=DEFAULT_MAX_FILE_LINES,
-                                                trigger="auto_indexing",
-                                            )
-                                        )
-                                        if not result.success:
-                                            logger.warning(
-                                                f"Auto-indexing for new project {project_root_obj.project_id} "
-                                                f"completed with warnings: {result.message}"
-                                            )
-                                        else:
-                                            logger.info(
-                                                f"Auto-indexing for new project {project_root_obj.project_id} "
-                                                f"completed: {result.data.get('files_processed', 0) if result.data else 0} files processed"
-                                            )
-                                    finally:
-                                        loop.close()
-                                except Exception as e:
-                                    logger.error(
-                                        f"Failed to run auto-indexing for new project "
-                                        f"{project_root_obj.project_id}: {e}",
-                                        exc_info=True,
-                                    )
-
-                            thread = threading.Thread(target=run_indexing, daemon=True)
-                            thread.start()
-                            logger.info(
-                                "[AUTO_INDEXING] Started background thread for project_id=%s "
-                                "(update_indexes running; check [update_indexes START] with trigger=auto_indexing)",
-                                project_root_obj.project_id,
-                            )
-                        except Exception as e:
-                            logger.warning(
-                                f"Failed to start auto-indexing for new project "
-                                f"{project_root_obj.project_id}: {e}"
-                            )
             except Exception as e:
                 logger.error(
                     f"Failed to get/create project {project_root_obj.project_id} "
@@ -303,6 +287,8 @@ def scan_watch_dir(
                     exc_info=True,
                 )
                 stats["errors"] += 1
+            finally:
+                release_project_activity(database, pid_p, "watcher", watcher_owner_id)
 
         logger.info(
             f"[SCAN START] Watch directory: {watch_dir} | "
@@ -310,7 +296,8 @@ def scan_watch_dir(
             f"time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
         )
 
-        merged_ignore = list(ignore_patterns) + list(spec.ignore_patterns)
+        # Ignore policy for watcher comes only from worker.watch_dirs[].ignore_patterns.
+        merged_ignore = list(spec.ignore_patterns)
         scan_start = datetime.now()
         allowlist = load_venv_site_packages_index_allowlist_from_config()
         allowed_venv_py: Set[Path] = set()
@@ -321,57 +308,38 @@ def scan_watch_dir(
                         project_root_obj.root_path, allowlist
                     )
                 )
-        ign_ex: Set[Path] = set()
-        exc_patterns = load_ignore_exceptions_from_config()
-        if exc_patterns:
-            for project_root_obj in discovered_projects:
-                ign_ex.update(
-                    expand_ignore_exception_py_files(
-                        project_root_obj.root_path, exc_patterns
-                    )
-                )
+        if config_path is not None:
+            exc_patterns = load_ignore_exceptions_from_config_path(config_path)
+        else:
+            exc_patterns = load_ignore_exceptions_from_config()
 
-        from .ignore_pre_scan_purge import run_pre_scan_ignore_purge_for_project
-
-        for project_root_obj in discovered_projects:
-            try:
-                n = run_pre_scan_ignore_purge_for_project(
-                    database,
-                    project_root_obj.project_id,
-                    merged_ignore,
-                    allowed_venv_py_files=allowed_venv_py or None,
-                    ignore_exception_files=ign_ex or None,
-                    config_path=config_path,
-                )
-                if n:
-                    logger.info(
-                        "[IGNORE_PURGE] Removed %d DB file row(s) for project %s "
-                        "before scan (ignore policy)",
-                        n,
-                        project_root_obj.project_id,
-                    )
-            except Exception as e:
-                logger.error(
-                    "[IGNORE_PURGE] Failed for project %s: %s",
-                    project_root_obj.project_id,
-                    e,
-                    exc_info=True,
-                )
-                stats["errors"] += 1
-
-        immediate_roots = {
-            Path(p.root_path).resolve() for p in discovered_projects
-        }
+        immediate_roots = {Path(p.root_path).resolve() for p in discovered_projects}
         scanned_files = scan_directory(
             root_dir=watch_dir,
             watch_dirs=[spec.watch_dir],
             ignore_patterns=merged_ignore,
             allowed_venv_py_files=allowed_venv_py or None,
-            ignore_exception_files=ign_ex or None,
+            ignore_exception_patterns=exc_patterns or None,
             immediate_project_roots=immediate_roots,
         )
 
         delta = processor.compute_delta(watch_dir, scanned_files)
+        if skipped_projects:
+            delta = {k: v for k, v in delta.items() if k not in skipped_projects}
+
+        from .ignore_pre_scan_purge import apply_ignore_purge_split_to_deltas
+
+        project_id_to_root: Dict[str, Path] = {
+            p.project_id: Path(p.root_path) for p in discovered_projects
+        }
+        apply_ignore_purge_split_to_deltas(
+            delta,
+            project_id_to_root,
+            merged_ignore,
+            allowed_venv_py_files=allowed_venv_py or None,
+            ignore_exception_patterns=exc_patterns or None,
+        )
+
         scan_end = datetime.now()
         scan_duration = (scan_end - scan_start).total_seconds()
 
@@ -393,7 +361,16 @@ def scan_watch_dir(
         )
 
         queue_start = datetime.now()
-        dir_stats = processor.queue_changes(watch_dir, delta)
+        dir_stats = processor.queue_changes(
+            watch_dir,
+            delta,
+            watcher_coord={
+                "database": database,
+                "owner_id": watcher_owner_id,
+                "lease_ttl": watcher_lease_ttl,
+                "config_path": config_path,
+            },
+        )
         queue_end = datetime.now()
         queue_duration = (queue_end - queue_start).total_seconds()
         logger.info(

@@ -9,6 +9,249 @@ from typing import Any, Dict, List
 
 from .result import ValidationResult
 
+_WRITE_RETRY_CANONICAL = (
+    "write_retry_attempts",
+    "write_retry_delay_seconds",
+    "write_retry_backoff_multiplier",
+    "write_retry_jitter_seconds",
+)
+_TIMEOUT_CANONICAL = ("lock_timeout_seconds", "statement_timeout_seconds")
+
+
+def _is_number_non_bool(value: Any) -> bool:
+    if isinstance(value, bool):
+        return False
+    return isinstance(value, (int, float))
+
+
+def _is_int_non_bool(value: Any) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool)
+
+
+def _validate_driver_retry_timeout_config(
+    driver_config: Dict[str, Any], results: List[ValidationResult]
+) -> None:
+    """Validate retry and timeout keys under code_analysis.database.driver.config."""
+    cfg_prefix = "code_analysis.database.driver.config"
+
+    if "retry_attempts" in driver_config:
+        results.append(
+            ValidationResult(
+                level="error",
+                message=f"{cfg_prefix}.retry_attempts is not supported; use {cfg_prefix}.write_retry_attempts",
+                section="code_analysis",
+                key="database.driver.config.retry_attempts",
+                suggestion="Rename retry_attempts to write_retry_attempts",
+            )
+        )
+    if "retry_delay_seconds" in driver_config:
+        results.append(
+            ValidationResult(
+                level="error",
+                message=f"{cfg_prefix}.retry_delay_seconds is not supported; use {cfg_prefix}.write_retry_delay_seconds",
+                section="code_analysis",
+                key="database.driver.config.retry_delay_seconds",
+                suggestion="Rename retry_delay_seconds to write_retry_delay_seconds",
+            )
+        )
+
+    for key in list(driver_config.keys()):
+        if key in ("retry_attempts", "retry_delay_seconds"):
+            continue
+        if key.startswith("write_retry_") and key not in _WRITE_RETRY_CANONICAL:
+            results.append(
+                ValidationResult(
+                    level="error",
+                    message=(
+                        f"{cfg_prefix}.{key} is not a recognized setting; "
+                        f"use canonical write_retry_* keys: "
+                        f"{', '.join(_WRITE_RETRY_CANONICAL)}"
+                    ),
+                    section="code_analysis",
+                    key=f"database.driver.config.{key}",
+                    suggestion=(
+                        "Use write_retry_attempts, write_retry_delay_seconds, "
+                        "write_retry_backoff_multiplier, and write_retry_jitter_seconds only"
+                    ),
+                )
+            )
+        if key.endswith("_timeout_seconds") and key not in _TIMEOUT_CANONICAL:
+            results.append(
+                ValidationResult(
+                    level="error",
+                    message=(
+                        f"{cfg_prefix}.{key} is not a recognized timeout setting; "
+                        f"use {cfg_prefix}.lock_timeout_seconds or "
+                        f"{cfg_prefix}.statement_timeout_seconds"
+                    ),
+                    section="code_analysis",
+                    key=f"database.driver.config.{key}",
+                    suggestion="Use lock_timeout_seconds or statement_timeout_seconds",
+                )
+            )
+        if key.startswith("lock_timeout") and key != "lock_timeout_seconds":
+            results.append(
+                ValidationResult(
+                    level="error",
+                    message=(
+                        f"{cfg_prefix}.{key} is not valid; "
+                        f"use {cfg_prefix}.lock_timeout_seconds"
+                    ),
+                    section="code_analysis",
+                    key=f"database.driver.config.{key}",
+                    suggestion="Rename to lock_timeout_seconds",
+                )
+            )
+        if key.startswith("statement_timeout") and key != "statement_timeout_seconds":
+            results.append(
+                ValidationResult(
+                    level="error",
+                    message=(
+                        f"{cfg_prefix}.{key} is not valid; "
+                        f"use {cfg_prefix}.statement_timeout_seconds"
+                    ),
+                    section="code_analysis",
+                    key=f"database.driver.config.{key}",
+                    suggestion="Rename to statement_timeout_seconds",
+                )
+            )
+
+    if "write_retry_attempts" in driver_config:
+        v = driver_config["write_retry_attempts"]
+        if v is not None:
+            key = "write_retry_attempts"
+            if not _is_int_non_bool(v):
+                results.append(
+                    ValidationResult(
+                        level="error",
+                        message=(
+                            f"{cfg_prefix}.{key} must be an integer (not bool, float, or string), "
+                            f"in range 1..20"
+                        ),
+                        section="code_analysis",
+                        key=f"database.driver.config.{key}",
+                        suggestion="Set write_retry_attempts to an integer from 1 to 20",
+                    )
+                )
+            elif v < 1 or v > 20:
+                results.append(
+                    ValidationResult(
+                        level="error",
+                        message=(
+                            f"{cfg_prefix}.{key} must be between 1 and 20 inclusive, got {v!r}"
+                        ),
+                        section="code_analysis",
+                        key=f"database.driver.config.{key}",
+                        suggestion="Use an integer from 1 to 20",
+                    )
+                )
+
+    for key, lo, hi in (
+        ("write_retry_delay_seconds", 0.0, 60.0),
+        ("write_retry_jitter_seconds", 0.0, 10.0),
+    ):
+        if key not in driver_config:
+            continue
+        v = driver_config[key]
+        if v is None:
+            continue
+        if not _is_number_non_bool(v):
+            results.append(
+                ValidationResult(
+                    level="error",
+                    message=(
+                        f"{cfg_prefix}.{key} must be a number (not bool, string, list, or dict), "
+                        f"in range {lo}..{hi}"
+                    ),
+                    section="code_analysis",
+                    key=f"database.driver.config.{key}",
+                    suggestion=f"Set {key} to a number from {lo} to {hi}",
+                )
+            )
+        elif float(v) < lo or float(v) > hi:
+            results.append(
+                ValidationResult(
+                    level="error",
+                    message=(
+                        f"{cfg_prefix}.{key} must be between {lo} and {hi} inclusive, got {v!r}"
+                    ),
+                    section="code_analysis",
+                    key=f"database.driver.config.{key}",
+                    suggestion=f"Use a value from {lo} to {hi}",
+                )
+            )
+
+    if "write_retry_backoff_multiplier" in driver_config:
+        v = driver_config["write_retry_backoff_multiplier"]
+        if v is not None:
+            key = "write_retry_backoff_multiplier"
+            if not _is_number_non_bool(v):
+                results.append(
+                    ValidationResult(
+                        level="error",
+                        message=(
+                            f"{cfg_prefix}.{key} must be a number (not bool, string, list, or dict), "
+                            f"in range 1.0..10.0"
+                        ),
+                        section="code_analysis",
+                        key=f"database.driver.config.{key}",
+                        suggestion="Set write_retry_backoff_multiplier to a number from 1.0 to 10.0",
+                    )
+                )
+            else:
+                fv = float(v)
+                if fv < 1.0 or fv > 10.0:
+                    results.append(
+                        ValidationResult(
+                            level="error",
+                            message=(
+                                f"{cfg_prefix}.{key} must be between 1.0 and 10.0 inclusive, "
+                                f"got {v!r}"
+                            ),
+                            section="code_analysis",
+                            key=f"database.driver.config.{key}",
+                            suggestion="Use a value from 1.0 to 10.0",
+                        )
+                    )
+
+    for key, lo, hi in (
+        ("lock_timeout_seconds", 0.0, 300.0),
+        ("statement_timeout_seconds", 0.0, 3600.0),
+    ):
+        if key not in driver_config:
+            continue
+        v = driver_config[key]
+        if v is None:
+            continue
+        if not _is_number_non_bool(v):
+            results.append(
+                ValidationResult(
+                    level="error",
+                    message=(
+                        f"{cfg_prefix}.{key} must be a number (not bool, string, list, or dict), "
+                        f"with 0 < value <= {hi}"
+                    ),
+                    section="code_analysis",
+                    key=f"database.driver.config.{key}",
+                    suggestion=f"Set {key} to a number greater than 0 and at most {hi}",
+                )
+            )
+        else:
+            fv = float(v)
+            if fv <= lo or fv > hi:
+                results.append(
+                    ValidationResult(
+                        level="error",
+                        message=(
+                            f"{cfg_prefix}.{key} must be greater than 0 and at most {hi}, "
+                            f"got {v!r}"
+                        ),
+                        section="code_analysis",
+                        key=f"database.driver.config.{key}",
+                        suggestion=f"Use a value in (0, {hi}]",
+                    )
+                )
+
 
 def validate_database_driver_section_impl(
     config_data: Dict[str, Any], results: List[ValidationResult]
@@ -235,6 +478,13 @@ def validate_database_driver_section_impl(
                                 suggestion="Set poll_interval to a positive value",
                             )
                         )
+
+        if isinstance(driver_type, str) and driver_type in (
+            "postgres",
+            "sqlite",
+            "sqlite_proxy",
+        ):
+            _validate_driver_retry_timeout_config(driver_config, results)
 
     rpc = database.get("rpc")
     if rpc is not None and isinstance(rpc, dict):

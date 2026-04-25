@@ -20,6 +20,22 @@ from code_analysis.commands.ast.get_ast import GetASTMCPCommand
 from code_analysis.commands.base_mcp_command import BaseMCPCommand
 
 
+class _ObjectWithData:
+    def __init__(self, data: Any) -> None:
+        self.data = data
+
+
+class _RowMapping:
+    def __init__(self, data: Dict[str, Any]) -> None:
+        self._data = data
+
+    def keys(self):
+        return self._data.keys()
+
+    def __getitem__(self, key: str) -> Any:
+        return self._data[key]
+
+
 class _SQLiteAdapter:
     """Minimal DB adapter exposing execute() like DatabaseClient."""
 
@@ -170,3 +186,321 @@ async def test_get_ast_existing_file_without_ast_not_indexed(tmp_path: Path) -> 
 
     assert isinstance(result, ErrorResult)
     assert result.code in {"AST_NOT_INDEXED", "AST_NOT_FOUND"}
+
+
+def test_get_ast_searchable_index_when_db_execute_returns_dict_data() -> None:
+    db = MagicMock()
+    db.execute.return_value = {
+        "data": [{"classes_count": 1, "functions_count": 0, "methods_count": 0}]
+    }
+
+    ok = GetASTMCPCommand._has_searchable_ast_index(db, project_id="p1", file_id=42)
+
+    assert ok is True
+
+
+def test_get_ast_searchable_index_when_db_execute_returns_sequence_rows() -> None:
+    db = MagicMock()
+    db.execute.return_value = [(0, 1, 0)]
+
+    ok = GetASTMCPCommand._has_searchable_ast_index(db, project_id="p1", file_id=42)
+
+    assert ok is True
+
+
+def test_get_ast_searchable_index_when_db_execute_returns_object_rows() -> None:
+    db = MagicMock()
+    db.execute.return_value = _ObjectWithData(
+        [_RowMapping({"classes_count": 0, "functions_count": 0, "methods_count": 1})]
+    )
+
+    ok = GetASTMCPCommand._has_searchable_ast_index(db, project_id="p1", file_id=42)
+
+    assert ok is True
+
+
+@pytest.mark.asyncio
+async def test_get_ast_matches_search_ast_nodes_indexed_file(tmp_path: Path) -> None:
+    project_root = tmp_path / "proj"
+    target_rel = "ai_admin/commands/base.py"
+    target_abs = project_root / target_rel
+    target_abs.parent.mkdir(parents=True)
+    target_abs.write_text("class AIAdminCommand:\n    pass\n", encoding="utf-8")
+
+    mock_db = MagicMock()
+    mock_db.execute.side_effect = [
+        {
+            "data": [
+                {
+                    "id": 42,
+                    "path": str(target_abs.resolve()),
+                    "relative_path": target_rel,
+                    "deleted": 0,
+                }
+            ]
+        },
+        {"data": [{"classes_count": 1, "functions_count": 0, "methods_count": 0}]},
+    ]
+    mock_db.get_ast.return_value = None
+    mock_db.disconnect.return_value = None
+
+    with (
+        patch.object(
+            BaseMCPCommand, "_open_database_from_config", return_value=mock_db
+        ),
+        patch.object(
+            BaseMCPCommand, "_resolve_project_root", return_value=project_root
+        ),
+    ):
+        cmd = GetASTMCPCommand()
+        result = await cmd.execute(
+            project_id="p1",
+            file_path=target_rel,
+            include_json=False,
+        )
+
+    assert isinstance(result, SuccessResult)
+    assert result.data["success"] is True
+    assert result.data["file_id"] == 42
+    assert result.data["file_path"] == target_rel
+
+
+@pytest.mark.asyncio
+async def test_get_ast_project_relative_and_absolute_path_same_result(
+    tmp_path: Path,
+) -> None:
+    project_root = tmp_path / "proj"
+    target_rel = "ai_admin/commands/base.py"
+    target_abs = project_root / target_rel
+    target_abs.parent.mkdir(parents=True)
+    target_abs.write_text("class AIAdminCommand:\n    pass\n", encoding="utf-8")
+
+    mock_db = MagicMock()
+    mock_db.execute.side_effect = [
+        {
+            "data": [
+                {
+                    "id": 55,
+                    "path": str(target_abs.resolve()),
+                    "relative_path": target_rel,
+                    "deleted": 0,
+                }
+            ]
+        },
+        {"data": [{"classes_count": 1, "functions_count": 0, "methods_count": 0}]},
+        {
+            "data": [
+                {
+                    "id": 55,
+                    "path": str(target_abs.resolve()),
+                    "relative_path": target_rel,
+                    "deleted": 0,
+                }
+            ]
+        },
+        {"data": [{"classes_count": 1, "functions_count": 0, "methods_count": 0}]},
+    ]
+    mock_db.get_ast.return_value = None
+    mock_db.disconnect.return_value = None
+
+    with (
+        patch.object(
+            BaseMCPCommand, "_open_database_from_config", return_value=mock_db
+        ),
+        patch.object(
+            BaseMCPCommand, "_resolve_project_root", return_value=project_root
+        ),
+    ):
+        cmd = GetASTMCPCommand()
+        relative_result = await cmd.execute(
+            project_id="p1",
+            file_path=target_rel,
+            include_json=False,
+        )
+        absolute_result = await cmd.execute(
+            project_id="p1",
+            file_path=str(target_abs.resolve()),
+            include_json=False,
+        )
+
+    assert relative_result.data["success"] is True
+    assert absolute_result.data["success"] is True
+    assert relative_result.data["file_id"] == absolute_result.data["file_id"]
+
+
+@pytest.mark.asyncio
+async def test_get_ast_returns_success_for_searchable_file_without_ast_tree(
+    tmp_path: Path,
+) -> None:
+    project_root = tmp_path / "proj"
+    target_rel = "ai_admin/commands/base.py"
+    target_abs = project_root / target_rel
+    target_abs.parent.mkdir(parents=True)
+    target_abs.write_text("class AIAdminCommand:\n    pass\n", encoding="utf-8")
+
+    mock_db = MagicMock()
+    mock_db.execute.side_effect = [
+        {
+            "data": [
+                {
+                    "id": 123,
+                    "path": str(target_abs.resolve()),
+                    "relative_path": target_rel,
+                    "deleted": 0,
+                }
+            ]
+        },
+        {"data": [{"classes_count": 1, "functions_count": 0, "methods_count": 0}]},
+    ]
+    mock_db.get_ast.return_value = None
+    mock_db.disconnect.return_value = None
+
+    with (
+        patch.object(
+            BaseMCPCommand, "_open_database_from_config", return_value=mock_db
+        ),
+        patch.object(
+            BaseMCPCommand, "_resolve_project_root", return_value=project_root
+        ),
+    ):
+        cmd = GetASTMCPCommand()
+        result_no_json = await cmd.execute(
+            project_id="p1",
+            file_path=target_rel,
+            include_json=False,
+        )
+
+    assert isinstance(result_no_json, SuccessResult)
+    assert result_no_json.data["success"] is True
+    assert result_no_json.data["file_id"] == 123
+    assert "ast" not in result_no_json.data
+
+
+@pytest.mark.asyncio
+async def test_get_ast_returns_success_with_json_for_searchable_file_without_ast_tree(
+    tmp_path: Path,
+) -> None:
+    project_root = tmp_path / "proj"
+    target_rel = "ai_admin/commands/base.py"
+    target_abs = project_root / target_rel
+    target_abs.parent.mkdir(parents=True)
+    target_abs.write_text("class AIAdminCommand:\n    pass\n", encoding="utf-8")
+
+    mock_db = MagicMock()
+    mock_db.execute.side_effect = [
+        {
+            "data": [
+                {
+                    "id": 123,
+                    "path": str(target_abs.resolve()),
+                    "relative_path": target_rel,
+                    "deleted": 0,
+                }
+            ]
+        },
+        {"data": [{"classes_count": 1, "functions_count": 0, "methods_count": 0}]},
+    ]
+    mock_db.get_ast.return_value = None
+    mock_db.disconnect.return_value = None
+
+    with (
+        patch.object(
+            BaseMCPCommand, "_open_database_from_config", return_value=mock_db
+        ),
+        patch.object(
+            BaseMCPCommand, "_resolve_project_root", return_value=project_root
+        ),
+    ):
+        cmd = GetASTMCPCommand()
+        result_with_json = await cmd.execute(
+            project_id="p1",
+            file_path=target_rel,
+            include_json=True,
+        )
+
+    assert isinstance(result_with_json, SuccessResult)
+    assert result_with_json.data["success"] is True
+    assert result_with_json.data["file_id"] == 123
+    assert "ast" in result_with_json.data
+    assert isinstance(result_with_json.data["ast"], str)
+
+
+def test_get_ast_source_does_not_use_coalesce_deleted_filter() -> None:
+    source_text = Path("code_analysis/commands/ast/get_ast.py").read_text(
+        encoding="utf-8"
+    )
+    assert "COALESCE(f.deleted, 0)" not in source_text
+
+
+@pytest.mark.asyncio
+async def test_get_ast_existing_file_without_any_index_returns_ast_not_indexed(
+    tmp_path: Path,
+) -> None:
+    project_root = tmp_path / "proj"
+    target_rel = "pkg/no_index.py"
+    target_abs = project_root / target_rel
+    target_abs.parent.mkdir(parents=True)
+    target_abs.write_text("x = 1\n", encoding="utf-8")
+
+    mock_db = MagicMock()
+    mock_db.execute.side_effect = [
+        {
+            "data": [
+                {
+                    "id": 99,
+                    "path": str(target_abs.resolve()),
+                    "relative_path": target_rel,
+                    "deleted": 0,
+                }
+            ]
+        },
+        {"data": [{"classes_count": 0, "functions_count": 0, "methods_count": 0}]},
+    ]
+    mock_db.get_ast.return_value = None
+    mock_db.disconnect.return_value = None
+
+    with (
+        patch.object(
+            BaseMCPCommand, "_open_database_from_config", return_value=mock_db
+        ),
+        patch.object(
+            BaseMCPCommand, "_resolve_project_root", return_value=project_root
+        ),
+    ):
+        cmd = GetASTMCPCommand()
+        result = await cmd.execute(
+            project_id="p1",
+            file_path=target_rel,
+            include_json=False,
+        )
+
+    assert isinstance(result, ErrorResult)
+    assert result.code == "AST_NOT_INDEXED"
+
+
+@pytest.mark.asyncio
+async def test_get_ast_missing_file_returns_file_not_found(tmp_path: Path) -> None:
+    project_root = tmp_path / "proj"
+    project_root.mkdir(parents=True)
+
+    mock_db = MagicMock()
+    mock_db.execute.return_value = {"data": []}
+    mock_db.disconnect.return_value = None
+
+    with (
+        patch.object(
+            BaseMCPCommand, "_open_database_from_config", return_value=mock_db
+        ),
+        patch.object(
+            BaseMCPCommand, "_resolve_project_root", return_value=project_root
+        ),
+    ):
+        cmd = GetASTMCPCommand()
+        result = await cmd.execute(
+            project_id="p1",
+            file_path="pkg/missing.py",
+            include_json=False,
+        )
+
+    assert isinstance(result, ErrorResult)
+    assert result.code == "FILE_NOT_FOUND"

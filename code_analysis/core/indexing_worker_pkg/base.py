@@ -11,6 +11,7 @@ email: vasilyvz@gmail.com
 from __future__ import annotations
 
 import multiprocessing
+import uuid
 from pathlib import Path
 from typing import Optional
 
@@ -49,6 +50,8 @@ class IndexingWorker:
         self.config_path = config_path
         self.log_timing = log_timing
         self._stop_event = multiprocessing.Event()
+        # Stable for process lifetime: project activity lease (Step 16).
+        self._project_activity_owner_id = f"indexing-worker-{uuid.uuid4()}"
 
     def stop(self) -> None:
         """Stop the worker."""

@@ -19,13 +19,31 @@ logger = logging.getLogger(__name__)
 class PostgreSQLTransactionManager:
     """One psycopg connection per open transaction (same contract as SQLite driver)."""
 
-    def __init__(self, connect_kwargs: Dict[str, Any]) -> None:
+    def __init__(
+        self,
+        connect_kwargs: Dict[str, Any],
+        lock_timeout_seconds: float | None = None,
+        statement_timeout_seconds: float | None = None,
+    ) -> None:
         self._connect_kwargs = connect_kwargs
+        self._lock_timeout_seconds = lock_timeout_seconds
+        self._statement_timeout_seconds = statement_timeout_seconds
         self._transactions: Dict[str, Any] = {}
+
+    def _apply_set_local_timeouts(self, conn: Any) -> None:
+        with conn.cursor() as cur:
+            lock = self._lock_timeout_seconds
+            if lock is not None and lock > 0:
+                ms = int(lock * 1000)
+                cur.execute("SET LOCAL lock_timeout = %s", (f"{ms}ms",))
+            stmt = self._statement_timeout_seconds
+            if stmt is not None and stmt > 0:
+                ms = int(stmt * 1000)
+                cur.execute("SET LOCAL statement_timeout = %s", (f"{ms}ms",))
 
     def begin_transaction(self) -> str:
         try:
-            import psycopg  # type: ignore[import-untyped]
+            import psycopg
         except ImportError as e:
             raise TransactionError(
                 "psycopg is required for PostgreSQL driver. "
@@ -40,8 +58,24 @@ class PostgreSQLTransactionManager:
         try:
             conn = psycopg.connect(**self._connect_kwargs)
             conn.autocommit = False
+            try:
+                self._apply_set_local_timeouts(conn)
+            except Exception as e:
+                try:
+                    conn.rollback()
+                except Exception:
+                    pass
+                try:
+                    conn.close()
+                except Exception:
+                    pass
+                raise TransactionError(
+                    f"Failed to set transaction timeouts: {e}"
+                ) from e
             self._transactions[transaction_id] = conn
             return transaction_id
+        except TransactionError:
+            raise
         except Exception as e:
             raise TransactionError(f"Failed to begin transaction: {e}") from e
 

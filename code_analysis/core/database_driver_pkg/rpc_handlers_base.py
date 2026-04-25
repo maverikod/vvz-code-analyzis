@@ -22,6 +22,10 @@ from code_analysis.core.database_client.protocol import (
     SuccessResult,
     ErrorCode,
 )
+from code_analysis.core.database_driver_pkg.exceptions import (
+    DriverOperationError,
+    TransientDatabaseError,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -197,6 +201,19 @@ class _RPCHandlersBaseMixin:
             # including affected_rows, lastrowid, and data (if present)
             # Return as SuccessResult with full result dict to preserve all fields
             return SuccessResult(data=result)
+        except TransientDatabaseError as e:
+            return ErrorResult(
+                error_code=ErrorCode.DATABASE_ERROR,
+                description=str(e),
+                details=e.to_details(attempts=e.attempts),
+            )
+        except DriverOperationError as e:
+            logger.error(f"Error in handle_execute: {e}", exc_info=True)
+            return ErrorResult(
+                error_code=ErrorCode.DATABASE_ERROR,
+                description=str(e),
+                details={"retryable": False, "error_kind": "non_retryable"},
+            )
         except Exception as e:
             logger.error(f"Error in handle_execute: {e}", exc_info=True)
             return ErrorResult(
@@ -254,6 +271,19 @@ class _RPCHandlersBaseMixin:
             )
             results = self.driver.execute_batch(operations, transaction_id)
             return SuccessResult(data={"results": results})
+        except TransientDatabaseError as e:
+            return ErrorResult(
+                error_code=ErrorCode.DATABASE_ERROR,
+                description=str(e),
+                details=e.to_details(attempts=e.attempts),
+            )
+        except DriverOperationError as e:
+            logger.error(f"Error in handle_execute_batch: {e}", exc_info=True)
+            return ErrorResult(
+                error_code=ErrorCode.DATABASE_ERROR,
+                description=str(e),
+                details={"retryable": False, "error_kind": "non_retryable"},
+            )
         except Exception as e:
             logger.error(f"Error in handle_execute_batch: {e}", exc_info=True)
             return ErrorResult(

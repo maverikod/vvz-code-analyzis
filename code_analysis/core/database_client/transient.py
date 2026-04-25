@@ -5,6 +5,13 @@ Implements approved policy from cst_save_tree RPC stability task: transient
 categories (rpc_connect_refused, sqlite_db_locked), retry budget, and delay
 curve. Used by save path and RPC call sites to retry only on transient errors.
 
+Preferred input for *new* retry decisions (especially PostgreSQL) is the structured
+``details`` dict on :class:`ErrorResult` from the database driver RPC
+(see ``rpc_handlers_base`` and related), mapping fields such as
+``retryable`` and ``commit_outcome_unknown``. Do not parse SQLSTATE or driver
+phrases in client code. String helpers such as :func:`is_sqlite_db_locked` remain
+only as a backward-compatibility path for older SQLite text-only errors.
+
 Author: Vasiliy Zdanovskiy
 email: vasilyvz@gmail.com
 """
@@ -13,6 +20,7 @@ from __future__ import annotations
 
 import errno
 import random
+from typing import Any, Mapping
 
 # --- Retry budget (fixed; no "tune later") ---
 MAX_ATTEMPTS = 4  # 1 initial + 3 retries
@@ -28,6 +36,22 @@ MAX_TOTAL_ELAPSED_SECONDS = 120.0
 # Transient category codes (for logging)
 CATEGORY_RPC_CONNECT_REFUSED = "rpc_connect_refused"
 CATEGORY_SQLITE_DB_LOCKED = "sqlite_db_locked"
+
+
+def is_structured_retryable_error(data: Mapping[str, Any] | None) -> bool:
+    """Return True if structured RPC error details warrant a safe logical retry.
+
+    Expects a mapping like ``ErrorResult.details`` from the database RPC, with
+    the same keys as the dict from ``TransientDatabaseError.to_details()``
+    (e.g. ``retryable`` / ``commit_outcome_unknown``).
+    """
+    if data is None or not isinstance(data, Mapping):
+        return False
+    if data.get("commit_outcome_unknown") is True:
+        return False
+    if data.get("retryable") is not True:
+        return False
+    return True
 
 
 def _connection_refused_in_text(text: str) -> bool:

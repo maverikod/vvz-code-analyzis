@@ -26,6 +26,7 @@ class SQLiteDriver(BaseDatabaseDriver):
         self.conn: Optional[sqlite3.Connection] = None
         self.db_path: Optional[Path] = None
         self._lastrowid: Optional[int] = None
+        self._rowcount: int = 0
 
     def connect(self, config: Dict[str, Any]) -> None:
         """
@@ -64,6 +65,7 @@ class SQLiteDriver(BaseDatabaseDriver):
             self.conn.close()
             self.conn = None
         self._lastrowid = None
+        self._rowcount = 0
 
     def execute(self, sql: str, params: Optional[Tuple[Any, ...]] = None) -> None:
         """
@@ -81,8 +83,12 @@ class SQLiteDriver(BaseDatabaseDriver):
             cursor.execute(sql, params)
         else:
             cursor.execute(sql)
-        # Store lastrowid for later retrieval
+        # Store lastrowid and rowcount for :class:`CodeDatabase` execute contract
         self._lastrowid = cursor.lastrowid
+        try:
+            self._rowcount = int(cursor.rowcount) if cursor.rowcount is not None else 0
+        except (TypeError, ValueError):
+            self._rowcount = 0
 
     def fetchone(
         self, sql: str, params: Optional[Tuple[Any, ...]] = None

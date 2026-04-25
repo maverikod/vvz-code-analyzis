@@ -62,10 +62,10 @@ class FileChangeProcessor:
         )
 
     def queue_changes(
-        self, root_dir: Path, deltas: Dict[str, FileDelta]
+        self, root_dir: Path, deltas: Dict[str, FileDelta], **kwargs: Any
     ) -> Dict[str, Any]:
         """Queue file changes for multiple projects (QUEUE PHASE - batch DB operations)."""
-        return self._queue_ops.queue_changes(root_dir, deltas)
+        return self._queue_ops.queue_changes(root_dir, deltas, **kwargs)
 
     def process_changes(
         self, root_dir: Path, scanned_files: Dict[str, Dict]

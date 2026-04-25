@@ -147,7 +147,9 @@ class TestScannerWithDiscovery:
 
         assert str(parent_file.resolve()) in files
         assert str(child_file.resolve()) in files
-        assert files[str(child_file.resolve())]["project_root"] == parent_project.resolve()
+        assert (
+            files[str(child_file.resolve())]["project_root"] == parent_project.resolve()
+        )
         assert files[str(child_file.resolve())]["project_id"] == parent_id
 
     def test_scan_directory_ignores_patterns(self, temp_dir, project_id):
@@ -220,9 +222,7 @@ class TestScannerWithDiscovery:
         project_root.mkdir()
         create_projectid_file(project_root, project_id)
         create_file(project_root, "ok.py", "x=1")
-        trash_py = (
-            project_root / "data" / "trash" / "snap" / "gone.py"
-        )
+        trash_py = project_root / "data" / "trash" / "snap" / "gone.py"
         trash_py.parent.mkdir(parents=True)
         trash_py.write_text("x=3", encoding="utf-8")
 
@@ -243,4 +243,74 @@ class TestScannerWithDiscovery:
         root = temp_dir.resolve()
         proj = temp_dir / "test_data"
         roots = {proj.resolve()}
-        assert should_skip_dir(proj, walk_root=root, immediate_project_roots=roots) is False
+        assert (
+            should_skip_dir(proj, walk_root=root, immediate_project_roots=roots)
+            is False
+        )
+
+    def test_scan_directory_keeps_exception_inside_ignored_dir(
+        self, temp_dir, project_id
+    ):
+        project_root = temp_dir / "project1"
+        project_root.mkdir()
+        create_projectid_file(project_root, project_id)
+
+        keep = create_file(project_root / "src" / "generated", "keep.py", "x=1\n")
+        blocked = create_file(project_root / "src" / "generated", "b.py", "x=2\n")
+        base = create_file(project_root / "src", "a.py", "x=3\n")
+
+        files = scan_directory(
+            temp_dir,
+            [temp_dir],
+            ignore_patterns=["**/src/generated/**"],
+            ignore_exception_files={keep.resolve()},
+        )
+
+        assert str(keep.resolve()) in files
+        assert str(base.resolve()) in files
+        assert str(blocked.resolve()) not in files
+
+    def test_scan_directory_keeps_pattern_exception_inside_ignored_dir(
+        self, temp_dir, project_id
+    ):
+        project_root = temp_dir / "project1"
+        project_root.mkdir()
+        create_projectid_file(project_root, project_id)
+
+        keep = create_file(project_root / "src" / "generated", "keep.py", "x=1\n")
+        blocked = create_file(project_root / "src" / "generated", "b.py", "x=2\n")
+        base = create_file(project_root / "src", "a.py", "x=3\n")
+
+        files = scan_directory(
+            temp_dir,
+            [temp_dir],
+            ignore_patterns=["**/src/generated/**"],
+            ignore_exception_patterns=["**/src/generated/keep.py"],
+        )
+
+        assert str(keep.resolve()) in files
+        assert str(base.resolve()) in files
+        assert str(blocked.resolve()) not in files
+
+    def test_scan_directory_uses_project_root_for_exception_glob_matching(self, temp_dir):
+        project1 = temp_dir / "project1"
+        project2 = temp_dir / "project2"
+        project1.mkdir()
+        project2.mkdir()
+        create_projectid_file(project1, str(uuid.uuid4()))
+        create_projectid_file(project2, str(uuid.uuid4()))
+
+        keep = create_file(project2 / "src" / "generated", "keep.py", "x=1\n")
+        blocked = create_file(project2 / "src" / "generated", "drop.py", "x=2\n")
+        create_file(project1 / "src" / "generated", "drop.py", "x=3\n")
+
+        files = scan_directory(
+            temp_dir,
+            [temp_dir],
+            ignore_patterns=["**/src/generated/**"],
+            ignore_exception_patterns=["**/src/generated/keep.py"],
+            immediate_project_roots={project1.resolve(), project2.resolve()},
+        )
+
+        assert str(keep.resolve()) in files
+        assert str(blocked.resolve()) not in files

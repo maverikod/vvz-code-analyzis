@@ -15,7 +15,7 @@ from __future__ import annotations
 import logging
 import os
 from pathlib import Path
-from typing import Any, List, Optional, Sequence, Set, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Set, Tuple, cast
 
 from code_analysis.core.database.logical_write_program import LogicalWriteProgramV1
 from code_analysis.core.sql_portable import (
@@ -23,7 +23,12 @@ from code_analysis.core.sql_portable import (
     database_has_sqlite_code_content_fts,
 )
 
-from .scanner import is_traversable_venv_root, should_ignore_path, should_skip_dir
+from .scanner import (
+    is_traversable_venv_root,
+    should_ignore_path,
+    should_prune_ignored_dir,
+    should_skip_dir,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -33,7 +38,9 @@ _PURGE = f"SELECT id FROM {TEMP_PURGE_TABLE}"
 _INSERT_CHUNK = 400
 
 
-def _query_file_rows(database: Any, sql: str, params: tuple[Any, ...]) -> List[dict[str, Any]]:
+def _query_file_rows(
+    database: Any, sql: str, params: tuple[Any, ...]
+) -> List[dict[str, Any]]:
     if hasattr(database, "_fetchall"):
         rows = database._fetchall(sql, params)
         return list(rows) if isinstance(rows, list) else []
@@ -44,6 +51,21 @@ def _query_file_rows(database: Any, sql: str, params: tuple[Any, ...]) -> List[d
     return list(data) if isinstance(data, list) else []
 
 
+def _project_root_for_id(database: Any, project_id: str) -> Optional[Path]:
+    rows = _query_file_rows(
+        database, "SELECT root_path FROM projects WHERE id = ? LIMIT 1", (project_id,)
+    )
+    if not rows:
+        return None
+    root = rows[0].get("root_path")
+    if not root:
+        return None
+    try:
+        return Path(str(root)).resolve()
+    except OSError:
+        return Path(str(root))
+
+
 def collect_file_ids_to_purge_for_ignore_policy(
     database: Any,
     project_id: str,
@@ -51,6 +73,7 @@ def collect_file_ids_to_purge_for_ignore_policy(
     *,
     allowed_venv_py_files: Optional[Set[Path]] = None,
     ignore_exception_files: Optional[Set[Path]] = None,
+    ignore_exception_patterns: Optional[Sequence[str]] = None,
 ) -> List[int]:
     """
     Return ``files.id`` for active rows whose path should be ignored by scanner rules.
@@ -58,14 +81,14 @@ def collect_file_ids_to_purge_for_ignore_policy(
     Matches ``scan_directory`` / ``should_ignore_path`` semantics (including
     ``ignore_exception_files`` and venv allowlist).
     """
-    from code_analysis.core.file_watcher_pkg.scanner import should_ignore_path
-
     rows = _query_file_rows(
         database,
         f"SELECT id, path FROM files WHERE project_id = ? AND {WHERE_FILES_ACTIVE}",
         (project_id,),
     )
+    project_root = _project_root_for_id(database, project_id)
     patterns = list(ignore_patterns)
+    exception_patterns = list(ignore_exception_patterns or ())
     out: List[int] = []
     for row in rows:
         fid = row.get("id")
@@ -73,11 +96,17 @@ def collect_file_ids_to_purge_for_ignore_policy(
         if fid is None or not pstr:
             continue
         path = Path(str(pstr))
+        try:
+            path_resolved = path.resolve()
+        except OSError:
+            path_resolved = path
         if should_ignore_path(
-            path,
+            path_resolved,
             patterns,
             allowed_venv_py_files=allowed_venv_py_files,
             ignore_exception_files=ignore_exception_files,
+            ignore_exception_patterns=exception_patterns or None,
+            project_root=project_root,
         ):
             out.append(int(fid))
     return out
@@ -89,6 +118,7 @@ def list_non_ignored_code_files_under_root(
     *,
     allowed_venv_py_files: Optional[Set[Path]] = None,
     ignore_exception_files: Optional[Set[Path]] = None,
+    ignore_exception_patterns: Optional[Sequence[str]] = None,
 ) -> Tuple[Path, ...]:
     """
     Walk ``project_root`` with directory pruning (``should_skip_dir`` + ``should_ignore_path``).
@@ -98,6 +128,7 @@ def list_non_ignored_code_files_under_root(
     ``collect_file_ids_to_purge_for_ignore_policy`` on DB rows.
     """
     patterns = list(ignore_patterns)
+    exception_patterns = list(ignore_exception_patterns or ())
     root = project_root.resolve()
     yielded: List[Path] = []
     for dirpath, dirnames, filenames in os.walk(root, topdown=True, followlinks=False):
@@ -107,6 +138,8 @@ def list_non_ignored_code_files_under_root(
             patterns,
             allowed_venv_py_files=allowed_venv_py_files,
             ignore_exception_files=ignore_exception_files,
+            ignore_exception_patterns=exception_patterns or None,
+            project_root=root,
         ):
             dirnames[:] = []
             continue
@@ -115,11 +148,13 @@ def list_non_ignored_code_files_under_root(
             child = dir_path / name
             if should_skip_dir(child, walk_root=root):
                 continue
-            if should_ignore_path(
+            if should_prune_ignored_dir(
                 child,
                 patterns,
                 allowed_venv_py_files=allowed_venv_py_files,
                 ignore_exception_files=ignore_exception_files,
+                ignore_exception_patterns=exception_patterns or None,
+                project_root=root,
             ) and not is_traversable_venv_root(child):
                 continue
             pruned_dirs.append(name)
@@ -131,6 +166,8 @@ def list_non_ignored_code_files_under_root(
                 patterns,
                 allowed_venv_py_files=allowed_venv_py_files,
                 ignore_exception_files=ignore_exception_files,
+                ignore_exception_patterns=exception_patterns or None,
+                project_root=root,
             ):
                 continue
             if fp.is_file():
@@ -304,12 +341,112 @@ def build_ignore_purge_logical_write_program(
     file_ids: Sequence[int],
     *,
     include_code_content_fts: bool = True,
+    operation_name: str = "watcher_ignore_purge",
 ) -> LogicalWriteProgramV1:
-    """Single-batch logical write program for ignore purge."""
+    """Single-batch logical write program for ignore purge (watcher / RPC contract)."""
     batch = build_ignore_purge_sql_batch(
         project_id, file_ids, include_code_content_fts=include_code_content_fts
     )
-    return {"batches": [batch]}
+    return {
+        "batches": [cast(List[Tuple[str, Sequence[Any]]], batch)],
+        "operation_name": operation_name,
+        "project_id": project_id,
+        "lock_scope": "project_write",
+    }
+
+
+def collect_file_ids_for_active_paths(
+    database: Any, project_id: str, path_strings: Sequence[str]
+) -> List[int]:
+    """Resolve ``files.id`` for the given active ``path`` values under ``project_id``."""
+    if not path_strings:
+        return []
+    out: List[int] = []
+    chunk: List[str] = []
+    for p in path_strings:
+        chunk.append(p)
+        if len(chunk) >= 400:
+            out.extend(
+                _collect_file_ids_for_paths_chunk(database, project_id, tuple(chunk))
+            )
+            chunk.clear()
+    if chunk:
+        out.extend(
+            _collect_file_ids_for_paths_chunk(database, project_id, tuple(chunk))
+        )
+    return out
+
+
+def _collect_file_ids_for_paths_chunk(
+    database: Any, project_id: str, abs_paths: Tuple[str, ...]
+) -> List[int]:
+    if not abs_paths:
+        return []
+    placeholders = ",".join(["?"] * len(abs_paths))
+    sql = (
+        f"SELECT id FROM files WHERE project_id = ? AND {WHERE_FILES_ACTIVE} "
+        f"AND path IN ({placeholders})"
+    )
+    params = (project_id, *abs_paths)
+    rows = _query_file_rows(database, sql, params)
+    ids: List[int] = []
+    for row in rows:
+        i = row.get("id")
+        if i is not None:
+            ids.append(int(i))
+    return ids
+
+
+def apply_ignore_purge_split_to_deltas(
+    deltas: Any,
+    project_id_to_root: Dict[str, Path],
+    ignore_patterns: Sequence[str],
+    *,
+    allowed_venv_py_files: Optional[Set[Path]] = None,
+    ignore_exception_files: Optional[Set[Path]] = None,
+    ignore_exception_patterns: Optional[Sequence[str]] = None,
+) -> None:
+    """
+    For each key in ``deltas`` (``project_id`` -> :class:`FileDelta`), move paths in
+    ``deleted_files`` that are ignored-by-policy into ``ignore_purge_paths``; keep
+    the rest in ``deleted_files`` for soft-delete.
+    """
+    from dataclasses import replace
+
+    from .processor_delta import FileDelta
+
+    for pid, d in list(deltas.items()):
+        if not isinstance(d, FileDelta):
+            continue
+        root = project_id_to_root.get(pid)
+        if not root:
+            continue
+        try:
+            root_res = root.resolve()
+        except OSError:
+            root_res = root
+        new_del: List[str] = []
+        ign: List[str] = []
+        exc_pat = list(ignore_exception_patterns or ())
+        for path_str in d.deleted_files:
+            p = Path(path_str)
+            try:
+                p_res = p.resolve()
+            except OSError:
+                p_res = p
+            if should_ignore_path(
+                p_res,
+                list(ignore_patterns),
+                allowed_venv_py_files=allowed_venv_py_files,
+                ignore_exception_files=ignore_exception_files,
+                ignore_exception_patterns=exc_pat or None,
+                project_root=root_res,
+            ):
+                ign.append(path_str)
+            else:
+                new_del.append(path_str)
+        if ign or len(new_del) != len(d.deleted_files):
+            deltas[pid] = replace(d, deleted_files=new_del, ignore_purge_paths=ign)
 
 
 def try_unlink_faiss_index_for_project(
@@ -363,6 +500,7 @@ def run_pre_scan_ignore_purge_for_project(
     *,
     allowed_venv_py_files: Optional[Set[Path]] = None,
     ignore_exception_files: Optional[Set[Path]] = None,
+    ignore_exception_patterns: Optional[Sequence[str]] = None,
     config_path: Optional[Path] = None,
 ) -> int:
     """
@@ -376,8 +514,17 @@ def run_pre_scan_ignore_purge_for_project(
         ignore_patterns,
         allowed_venv_py_files=allowed_venv_py_files,
         ignore_exception_files=ignore_exception_files,
+        ignore_exception_patterns=ignore_exception_patterns,
     )
     if not ids:
+        logger.info(
+            "[IGNORE_PURGE] project_id=%s ignore_patterns_count=%d "
+            "ignore_exceptions_count=%d purged_db_files_count=%d",
+            project_id,
+            len(ignore_patterns),
+            len(ignore_exception_patterns or ()),
+            0,
+        )
         return 0
     lw = getattr(database, "execute_logical_write_operation", None)
     if lw is None:
@@ -392,4 +539,12 @@ def run_pre_scan_ignore_purge_for_project(
     )
     lw(program)
     try_unlink_faiss_index_for_project(project_id, config_path)
+    logger.info(
+        "[IGNORE_PURGE] project_id=%s ignore_patterns_count=%d "
+        "ignore_exceptions_count=%d purged_db_files_count=%d",
+        project_id,
+        len(ignore_patterns),
+        len(ignore_exception_patterns or ()),
+        len(ids),
+    )
     return len(ids)

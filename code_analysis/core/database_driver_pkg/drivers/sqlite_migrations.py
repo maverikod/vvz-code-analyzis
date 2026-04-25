@@ -81,6 +81,23 @@ INDEXING_WORKER_STATS_INDEX = (
     f"ON {INDEXING_WORKER_STATS_TABLE}(cycle_start_time)"
 )
 
+PROJECT_ACTIVITY_LOCKS_TABLE = "project_activity_locks"
+PROJECT_ACTIVITY_LOCKS_DDL = (
+    f"CREATE TABLE IF NOT EXISTS {PROJECT_ACTIVITY_LOCKS_TABLE} ("
+    "project_id TEXT PRIMARY KEY, "
+    "owner_type TEXT NOT NULL, "
+    "owner_id TEXT NOT NULL, "
+    "activity TEXT NOT NULL, "
+    "acquired_at REAL NOT NULL, "
+    "heartbeat_at REAL NOT NULL, "
+    "lease_until REAL NOT NULL"
+    ")"
+)
+PROJECT_ACTIVITY_LOCKS_INDEX = (
+    "CREATE INDEX IF NOT EXISTS idx_project_activity_locks_lease_until "
+    f"ON {PROJECT_ACTIVITY_LOCKS_TABLE}(lease_until)"
+)
+
 
 def ensure_indexing_errors_table(conn: Any) -> None:
     """Create indexing_errors table if missing."""
@@ -268,6 +285,27 @@ def ensure_files_table_migrations(conn: Any, schema_manager: Any) -> None:
             pass
 
 
+def ensure_project_activity_locks_table(conn: Any) -> None:
+    """
+    Create project_activity_locks and its index if the DB is initialized (has projects).
+    Idempotent. Unix epoch times stored as REAL floats (application layer).
+    """
+    if not conn:
+        return
+    if not _sqlite_table_exists(conn, "projects"):
+        return
+    try:
+        conn.execute(PROJECT_ACTIVITY_LOCKS_DDL)
+        conn.execute(PROJECT_ACTIVITY_LOCKS_INDEX)
+        conn.commit()
+    except Exception as e:
+        logger.warning("Could not ensure project_activity_locks table: %s", e)
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+
+
 def run_all_ensure(conn: Any, schema_manager: Any, db_path: Path) -> None:
     """Run all connection-time migrations in order."""
     # Align with CodeDatabase / run_create_schema: apply schema_creation_migrate so
@@ -279,3 +317,4 @@ def run_all_ensure(conn: Any, schema_manager: Any, db_path: Path) -> None:
     ensure_code_chunks_migrations(conn, schema_manager)
     ensure_indexing_worker_stats_table(conn, schema_manager)
     ensure_indexing_errors_table(conn)
+    ensure_project_activity_locks_table(conn)

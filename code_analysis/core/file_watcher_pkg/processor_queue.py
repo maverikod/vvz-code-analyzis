@@ -12,9 +12,38 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
+from code_analysis.core.worker_project_activity import (
+    get_project_activity,
+    heartbeat_project_activity,
+    release_project_activity,
+    try_acquire_project_activity,
+)
+
+from .ignore_pre_scan_purge import (
+    build_ignore_purge_logical_write_program,
+    collect_file_ids_for_active_paths,
+    database_has_sqlite_code_content_fts,
+    try_unlink_faiss_index_for_project,
+)
 from .processor_delta import FileDelta
 
 logger = logging.getLogger(__name__)
+
+_WATCHER_PHASE_HB = 50
+
+
+def _watcher_heartbeat_n(
+    database: Any,
+    project_id: str,
+    owner_id: str,
+    activity: str,
+    ttl: float,
+    n_ops: int,
+) -> None:
+    if n_ops > 0 and n_ops % _WATCHER_PHASE_HB == 0:
+        heartbeat_project_activity(
+            database, project_id, "watcher", owner_id, activity, ttl
+        )
 
 
 class ProcessorQueueOps:
@@ -60,7 +89,11 @@ class ProcessorQueueOps:
         return results
 
     def queue_changes(
-        self, root_dir: Path, deltas: Dict[str, FileDelta]
+        self,
+        root_dir: Path,
+        deltas: Dict[str, FileDelta],
+        *,
+        watcher_coord: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         """Queue file changes for multiple projects. Returns aggregated statistics."""
         total_stats = {
@@ -71,6 +104,7 @@ class ProcessorQueueOps:
         }
 
         for project_id, delta in deltas.items():
+            err_extra = len(delta.ignore_purge_paths)
             try:
                 project_obj = self.database.get_project(project_id)
                 # get_project may return a dict (local DB) or a Project object (RPC client)
@@ -103,12 +137,13 @@ class ProcessorQueueOps:
                         len(delta.new_files)
                         + len(delta.changed_files)
                         + len(delta.deleted_files)
+                        + err_extra
                     )
                     continue
 
                 project_root = Path(root_path_val)
                 project_stats = self._queue_project_delta(
-                    project_id, delta, project_root
+                    project_id, delta, project_root, watcher_coord=watcher_coord
                 )
                 total_stats["new_files"] += project_stats["new_files"]
                 total_stats["changed_files"] += project_stats["changed_files"]
@@ -124,164 +159,342 @@ class ProcessorQueueOps:
                     len(delta.new_files)
                     + len(delta.changed_files)
                     + len(delta.deleted_files)
+                    + err_extra
                 )
 
         return total_stats
 
+    @staticmethod
+    def _log_watcher_skip_activity(
+        database: Any, project_id: str, reason_activity: str
+    ) -> None:
+        row = get_project_activity(database, project_id) or {}
+        owner_t = row.get("owner_type", "unknown")
+        logger.info(
+            "[WORKER_COORD] watcher skip project_id=%s reason=%s owner_type=%s",
+            project_id,
+            reason_activity,
+            owner_t,
+        )
+
     def _queue_project_delta(
-        self, project_id: str, delta: FileDelta, project_root: Path
+        self,
+        project_id: str,
+        delta: FileDelta,
+        project_root: Path,
+        *,
+        watcher_coord: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
-        """Queue file changes for a single project (batch INSERT/UPDATE where possible)."""
+        """Queue file changes for a single project (new rows first, then updates, then deletes)."""
         from ..path_normalization import normalize_file_path
         from ..exceptions import ProjectIdMismatchError
 
-        stats = {
+        stats: Dict[str, int] = {
             "new_files": 0,
             "changed_files": 0,
             "deleted_files": 0,
             "errors": 0,
         }
-        watch_dirs: List[Path] = list(self.watch_dirs_resolved)
-
-        # Collect (abs_path, lines, mtime, has_docstring, is_new) for batch when project_root is set
-        batch_rows: List[Tuple[str, int, float, bool, bool]] = []
-
-        def _collect_one(
-            file_path_str: str, mtime: float, size: int, is_new: bool
-        ) -> bool:
+        wdb: Optional[Any] = None
+        owner_id: Optional[str] = None
+        ttl: float = 120.0
+        config_path: Optional[Path] = None
+        if watcher_coord:
+            wdb = watcher_coord.get("database")
+            oi = watcher_coord.get("owner_id")
+            if isinstance(oi, str) and oi.strip():
+                owner_id = oi
+            t_raw = watcher_coord.get("lease_ttl", 120.0)
             try:
-                normalized = normalize_file_path(
-                    file_path_str,
-                    watch_dirs=watch_dirs,
-                    project_root=project_root,
+                ttl = float(t_raw) if t_raw is not None else 120.0
+            except (TypeError, ValueError):
+                ttl = 120.0
+            cp = watcher_coord.get("config_path")
+            if cp is not None and isinstance(cp, (str, Path)):
+                config_path = Path(cp) if not isinstance(cp, Path) else cp
+
+        has_work = bool(
+            delta.new_files
+            or delta.changed_files
+            or delta.deleted_files
+            or delta.ignore_purge_paths
+        )
+        acquired_lease: bool = False
+        if wdb is not None and owner_id and has_work:
+            if not try_acquire_project_activity(
+                wdb, project_id, "watcher", owner_id, "watcher_staging", ttl
+            ):
+                self._log_watcher_skip_activity(wdb, project_id, "watcher_staging")
+                stats["errors"] += (
+                    len(delta.new_files)
+                    + len(delta.changed_files)
+                    + len(delta.deleted_files)
+                    + len(delta.ignore_purge_paths)
                 )
-                if normalized.project_id != project_id:
-                    raise ProjectIdMismatchError(
-                        message=(
-                            f"Project ID mismatch: file {normalized.absolute_path}"
-                        ),
-                        file_project_id=normalized.project_id,
-                        db_project_id=project_id,
-                    )
-                abs_path = normalized.absolute_path
-                path_obj = Path(abs_path)
-                lines = 0
-                has_docstring = False
-                if path_obj.exists() and path_obj.is_file():
-                    try:
-                        text = path_obj.read_text(encoding="utf-8", errors="ignore")
-                        lines = text.count("\n") + (1 if text else 0)
-                        stripped = text.lstrip()
-                        has_docstring = stripped.startswith(
-                            '"""'
-                        ) or stripped.startswith("'''")
-                    except Exception:
-                        pass
-                batch_rows.append((abs_path, lines, mtime, has_docstring, is_new))
+                return stats
+            acquired_lease = True
+        use_lease: bool = bool(acquired_lease)
+
+        def _phase(activity: str) -> bool:
+            if not wdb or not owner_id or not use_lease:
                 return True
-            except Exception as e:
-                logger.debug(
-                    "Skip batch for %s: %s",
-                    file_path_str,
-                    e,
+            return try_acquire_project_activity(
+                wdb, project_id, "watcher", str(owner_id), activity, float(ttl)
+            )
+
+        try:
+            watch_dirs: List[Path] = list(self.watch_dirs_resolved)
+            Row = Tuple[str, int, float, bool]
+            new_rows: List[Row] = []
+            changed_rows: List[Row] = []
+
+            def _collect_one(
+                file_path_str: str,
+                mtime: float,
+                _size: int,
+                out: List[Row],
+            ) -> bool:
+                try:
+                    normalized = normalize_file_path(
+                        file_path_str,
+                        watch_dirs=watch_dirs,
+                        project_root=project_root,
+                    )
+                    if normalized.project_id != project_id:
+                        raise ProjectIdMismatchError(
+                            message=(
+                                f"Project ID mismatch: file {normalized.absolute_path}"
+                            ),
+                            file_project_id=normalized.project_id,
+                            db_project_id=project_id,
+                        )
+                    try:
+                        pr = project_root.resolve()
+                    except OSError:
+                        pr = project_root
+                    nabs = Path(normalized.absolute_path).resolve()
+                    try:
+                        nabs.relative_to(pr)
+                    except ValueError:
+                        logger.warning(
+                            "watcher: reject path outside project root "
+                            "project_id=%s path=%s",
+                            project_id,
+                            normalized.absolute_path,
+                        )
+                        return False
+                    abs_path = normalized.absolute_path
+                    path_obj = Path(abs_path)
+                    lines = 0
+                    has_docstring = False
+                    if path_obj.exists() and path_obj.is_file():
+                        try:
+                            text = path_obj.read_text(encoding="utf-8", errors="ignore")
+                            lines = text.count("\n") + (1 if text else 0)
+                            stripped = text.lstrip()
+                            has_docstring = stripped.startswith(
+                                '"""'
+                            ) or stripped.startswith("'''")
+                        except Exception:
+                            pass
+                    out.append((abs_path, lines, mtime, has_docstring))
+                    return True
+                except Exception as e:
+                    logger.debug(
+                        "Skip batch for %s: %s",
+                        file_path_str,
+                        e,
+                    )
+                    return False
+
+            for file_path_str, mtime, size in delta.new_files:
+                mtime_str = datetime.fromtimestamp(mtime).strftime("%Y-%m-%d %H:%M:%S")
+                logger.info(
+                    f"[project={project_id}] [NEW FILE] {file_path_str} | "
+                    f"mtime: {mtime_str} ({mtime}) | size: {size} bytes"
                 )
-                return False
-            return True
+                if not _collect_one(file_path_str, mtime, size, new_rows):
+                    if self._queue_file_for_processing(
+                        file_path_str, mtime, project_id, project_root
+                    ):
+                        stats["new_files"] += 1
+                    else:
+                        stats["errors"] += 1
 
-        for file_path_str, mtime, size in delta.new_files:
-            mtime_str = datetime.fromtimestamp(mtime).strftime("%Y-%m-%d %H:%M:%S")
-            logger.info(
-                f"[project={project_id}] [NEW FILE] {file_path_str} | "
-                f"mtime: {mtime_str} ({mtime}) | size: {size} bytes"
-            )
-            if not _collect_one(file_path_str, mtime, size, is_new=True):
-                if self._queue_file_for_processing(
-                    file_path_str, mtime, project_id, project_root
-                ):
-                    stats["new_files"] += 1
-                else:
-                    stats["errors"] += 1
+            for file_path_str, mtime, size in delta.changed_files:
+                mtime_str = datetime.fromtimestamp(mtime).strftime("%Y-%m-%d %H:%M:%S")
+                logger.info(
+                    f"[project={project_id}] [CHANGED FILE] {file_path_str} | "
+                    f"mtime: {mtime_str} ({mtime}) | size: {size} bytes"
+                )
+                if not _collect_one(file_path_str, mtime, size, changed_rows):
+                    if self._queue_file_for_processing(
+                        file_path_str, mtime, project_id, project_root
+                    ):
+                        stats["changed_files"] += 1
+                    else:
+                        stats["errors"] += 1
 
-        for file_path_str, mtime, size in delta.changed_files:
-            mtime_str = datetime.fromtimestamp(mtime).strftime("%Y-%m-%d %H:%M:%S")
-            logger.info(
-                f"[project={project_id}] [CHANGED FILE] {file_path_str} | "
-                f"mtime: {mtime_str} ({mtime}) | size: {size} bytes"
-            )
-            if not _collect_one(file_path_str, mtime, size, is_new=False):
-                if self._queue_file_for_processing(
-                    file_path_str, mtime, project_id, project_root
-                ):
-                    stats["changed_files"] += 1
-                else:
-                    stats["errors"] += 1
-
-        # Batch INSERT and UPDATE for collected rows
-        if batch_rows:
-            # UPSERT in place: INSERT OR REPLACE deletes the row on conflict, which breaks FKs when
-            # child tables (ast_trees, etc.) reference files(id) without ON DELETE CASCADE in DB.
-            insert_sql = (
+            if use_lease and wdb and owner_id and has_work:
+                if not _phase("watcher_inserting_new_files"):
+                    raise RuntimeError("watcher phase inserting_new_files not acquired")
+            insert_new_sql = (
                 "INSERT INTO files "
                 "(path, lines, last_modified, has_docstring, project_id, created_at, updated_at) "
                 "VALUES (?, ?, ?, ?, ?, julianday('now'), julianday('now')) "
-                "ON CONFLICT (project_id, path) DO UPDATE SET "
-                "lines = excluded.lines, "
-                "last_modified = excluded.last_modified, "
-                "has_docstring = excluded.has_docstring, "
-                "deleted = FALSE, "
-                "updated_at = julianday('now')"
+                "ON CONFLICT (project_id, path) DO NOTHING"
             )
-            update_sql = (
+            update_chunk_sql = (
                 "UPDATE files SET needs_chunking = 1 WHERE path = ? AND project_id = ?"
             )
-            insert_ops: List[Tuple[str, Optional[tuple]]] = [
-                (insert_sql, (path, lines, mtime, has_docstring, project_id))
-                for (path, lines, mtime, has_docstring, _) in batch_rows
-            ]
-            update_ops: List[Tuple[str, Optional[tuple]]] = [
-                (update_sql, (path, project_id)) for (path, _, _, _, _) in batch_rows
-            ]
-            try:
-                self._db_execute_batch(insert_ops)
-                self._db_execute_batch(update_ops)
-                for _, _, _, _, is_new in batch_rows:
-                    if is_new:
-                        stats["new_files"] += 1
-                    else:
-                        stats["changed_files"] += 1
-            except Exception as e:
-                logger.error(
-                    "Batch queue failed for project %s: %s",
-                    project_id,
-                    e,
-                    exc_info=True,
+            n_ins = 0
+            for path, lines, mtime, has_doc in new_rows:
+                n_ins += 1
+                if use_lease and wdb and owner_id and has_work:
+                    _watcher_heartbeat_n(
+                        wdb,
+                        project_id,
+                        str(owner_id),
+                        "watcher_inserting_new_files",
+                        ttl,
+                        n_ins,
+                    )
+                self._db_execute(
+                    insert_new_sql, (path, lines, mtime, has_doc, project_id)
                 )
-                stats["errors"] += len(batch_rows)
-
-        # Batch soft-delete for removed files
-        if delta.deleted_files:
-            delete_sql = (
-                "UPDATE files SET deleted = TRUE, updated_at = julianday('now') "
-                "WHERE path = ? AND project_id = ?"
+                rsel = self._db_execute(
+                    "SELECT 1 AS ok FROM files WHERE project_id = ? AND path = ?",
+                    (project_id, path),
+                )
+                if rsel and (rsel.get("data") or ()):
+                    self._db_execute(update_chunk_sql, (path, project_id))
+                stats["new_files"] += 1
+            if use_lease and wdb and owner_id and has_work:
+                if not _phase("watcher_updating_changed_files"):
+                    raise RuntimeError("watcher phase updating_changed not acquired")
+            update_changed_sql = (
+                "UPDATE files SET lines = ?, last_modified = ?, has_docstring = ?, "
+                "deleted = FALSE, updated_at = julianday('now') "
+                "WHERE project_id = ? AND path = ?"
             )
-            delete_ops: List[Tuple[str, Optional[tuple]]] = [
-                (delete_sql, (path, project_id)) for path in delta.deleted_files
-            ]
-            try:
+            n_ch = 0
+            for path, lines, mtime, has_doc in changed_rows:
+                n_ch += 1
+                if use_lease and wdb and owner_id and has_work:
+                    _watcher_heartbeat_n(
+                        wdb,
+                        project_id,
+                        str(owner_id),
+                        "watcher_updating_changed_files",
+                        ttl,
+                        n_ch,
+                    )
+                self._db_execute(
+                    update_changed_sql,
+                    (lines, mtime, has_doc, project_id, path),
+                )
+                self._db_execute(update_chunk_sql, (path, project_id))
+                stats["changed_files"] += 1
+
+            if use_lease and wdb and owner_id and has_work:
+                if not _phase("watcher_marking_deleted_files"):
+                    raise RuntimeError("watcher phase marking_deleted not acquired")
+
+            if delta.ignore_purge_paths:
+                ids_purge = collect_file_ids_for_active_paths(
+                    self.database, project_id, delta.ignore_purge_paths
+                )
+                if ids_purge:
+                    lw = getattr(self.database, "execute_logical_write_operation", None)
+                    if lw is None:
+                        logger.warning(
+                            "[QUEUE] ignore purge: no execute_logical_write_operation"
+                        )
+                        stats["errors"] += len(delta.ignore_purge_paths)
+                    else:
+                        program = build_ignore_purge_logical_write_program(
+                            project_id,
+                            ids_purge,
+                            include_code_content_fts=database_has_sqlite_code_content_fts(
+                                self.database
+                            ),
+                            operation_name="watcher_ignore_purge",
+                        )
+                        try:
+                            lw(program)
+                        except Exception as e:  # noqa: BLE001
+                            logger.error(
+                                "ignore purge failed for %s: %s",
+                                project_id,
+                                e,
+                                exc_info=True,
+                            )
+                            stats["errors"] += len(ids_purge)
+                        else:
+                            stats["deleted_files"] += len(ids_purge)
+                            try_unlink_faiss_index_for_project(project_id, config_path)
+
+            if delta.deleted_files:
+                fids = collect_file_ids_for_active_paths(
+                    self.database, project_id, delta.deleted_files
+                )
+                if fids:
+                    ph = ",".join(["?"] * len(fids))
+                    self._db_execute(
+                        f"DELETE FROM code_chunks WHERE file_id IN ({ph})",
+                        tuple(fids),
+                    )
                 for path in delta.deleted_files:
                     logger.info(
-                        f"[project={project_id}] [DELETED FILE] {path} | action: soft_delete"
+                        f"[project={project_id}] [DELETED FILE] {path} | "
+                        f"action: soft_delete"
                     )
-                self._db_execute_batch(delete_ops)
-                stats["deleted_files"] = len(delta.deleted_files)
-            except Exception as e:
-                logger.error(
-                    "Batch delete failed for project %s: %s",
-                    project_id,
-                    e,
-                    exc_info=True,
+                del_sql = (
+                    "UPDATE files SET deleted = TRUE, updated_at = julianday('now') "
+                    "WHERE path = ? AND project_id = ?"
                 )
-                stats["errors"] += len(delta.deleted_files)
+                del_ops: List[Tuple[str, Optional[tuple]]] = [
+                    (del_sql, (path, project_id)) for path in delta.deleted_files
+                ]
+                try:
+                    self._db_execute_batch(del_ops)
+                    stats["deleted_files"] += len(delta.deleted_files)
+                except Exception as e:  # noqa: BLE001
+                    logger.error(
+                        "Batch delete failed for project %s: %s",
+                        project_id,
+                        e,
+                        exc_info=True,
+                    )
+                    stats["errors"] += len(delta.deleted_files)
+
+            if use_lease and wdb and owner_id and has_work:
+                if not _phase("watcher_queueing"):
+                    raise RuntimeError("watcher queueing phase not acquired")
+        except RuntimeError as coord_err:
+            logger.error("watcher queue coordination failed: %s", coord_err)
+            stats["errors"] += (
+                len(delta.new_files)
+                + len(delta.changed_files)
+                + len(delta.deleted_files)
+                + len(delta.ignore_purge_paths)
+            )
+        except Exception as e:  # noqa: BLE001
+            logger.error(
+                "queue failed for project %s: %s",
+                project_id,
+                e,
+                exc_info=True,
+            )
+            stats["errors"] += (
+                len(delta.new_files)
+                + len(delta.changed_files)
+                + len(delta.deleted_files)
+                + len(delta.ignore_purge_paths)
+            )
+        finally:
+            if acquired_lease and wdb and owner_id:
+                release_project_activity(wdb, project_id, "watcher", str(owner_id))
 
         return stats
 

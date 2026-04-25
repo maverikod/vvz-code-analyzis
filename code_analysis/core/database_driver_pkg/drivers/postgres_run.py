@@ -9,12 +9,118 @@ from __future__ import annotations
 
 import logging
 import re
-from typing import Any, Dict, List, Optional, Tuple
+from dataclasses import replace
+from typing import Any, Dict, List, NoReturn, Optional, Tuple
 
-from ..exceptions import DriverOperationError
+from ..exceptions import (
+    DatabaseErrorInfo,
+    DriverOperationError,
+    TransientDatabaseError,
+)
 from .sqlite_batch import expand_operations, group_for_executemany, split_batch_sql
 
 logger = logging.getLogger(__name__)
+
+
+def classify_postgres_error(
+    exc: BaseException, *, for_commit: bool = False
+) -> DatabaseErrorInfo:
+    """
+    Classify a PostgreSQL error using SQLSTATE and message. No string parsing
+    of driver-specific 'deadlock detected' phrasing (SQLSTATE 40P01 is used).
+    """
+    message = str(exc) if str(exc) else type(exc).__name__
+    msg_lower = message.lower()
+    sqlstate: str | None = getattr(exc, "sqlstate", None)
+    if sqlstate is None:
+        diag = getattr(exc, "diag", None)
+        if diag is not None:
+            sqlstate = getattr(diag, "sqlstate", None)
+    if sqlstate is None:
+        return DatabaseErrorInfo(
+            sqlstate=None,
+            error_kind="non_postgres",
+            retryable=False,
+            message=message,
+            commit_outcome_unknown=False,
+        )
+    if sqlstate == "40P01":
+        base = DatabaseErrorInfo(
+            sqlstate=sqlstate,
+            error_kind="deadlock",
+            retryable=True,
+            message=message,
+            commit_outcome_unknown=False,
+        )
+    elif sqlstate == "40001":
+        base = DatabaseErrorInfo(
+            sqlstate=sqlstate,
+            error_kind="serialization_failure",
+            retryable=True,
+            message=message,
+            commit_outcome_unknown=False,
+        )
+    elif sqlstate == "55P03":
+        base = DatabaseErrorInfo(
+            sqlstate=sqlstate,
+            error_kind="lock_not_available",
+            retryable=True,
+            message=message,
+            commit_outcome_unknown=False,
+        )
+    elif sqlstate == "57014":
+        is_timeout = (
+            "lock timeout" in msg_lower
+            or "statement timeout" in msg_lower
+            or "canceling statement due to statement timeout" in msg_lower
+        )
+        base = DatabaseErrorInfo(
+            sqlstate=sqlstate,
+            error_kind="query_canceled",
+            retryable=is_timeout,
+            message=message,
+            commit_outcome_unknown=False,
+        )
+    else:
+        base = DatabaseErrorInfo(
+            sqlstate=sqlstate,
+            error_kind="postgres_error",
+            retryable=False,
+            message=message,
+            commit_outcome_unknown=False,
+        )
+
+    if (
+        for_commit
+        and base.sqlstate
+        and (
+            base.sqlstate.startswith("08")
+            or base.sqlstate in ("57P01", "57P02", "57P03")
+        )
+    ):
+        return replace(
+            base,
+            commit_outcome_unknown=True,
+            retryable=False,
+        )
+    return base
+
+
+def _raise_classified(
+    e: BaseException, *, for_commit: bool, message_prefix: str
+) -> NoReturn:
+    info = classify_postgres_error(e, for_commit=for_commit)
+    if info.retryable and not info.commit_outcome_unknown:
+        raise TransientDatabaseError(
+            f"{message_prefix}{e}",
+            sqlstate=info.sqlstate,
+            error_kind=info.error_kind,
+            retryable=True,
+            original_error=e,
+            commit_outcome_unknown=info.commit_outcome_unknown,
+        ) from e
+    raise DriverOperationError(f"{message_prefix}{e}") from e
+
 
 _INSERT_INTO_RE = re.compile(
     r"^\s*INSERT\s+INTO\s+(?:\"([^\"]+)\"|'([^']+)'|([a-zA-Z_][a-zA-Z0-9_]*))",
@@ -257,10 +363,12 @@ def run_execute(
                         "Commit skipped (no active transaction): %s", commit_err
                     )
                 else:
-                    raise DriverOperationError(
-                        f"Failed to commit: {commit_err}"
-                    ) from commit_err
+                    _raise_classified(
+                        commit_err, for_commit=True, message_prefix="Failed to commit: "
+                    )
         return last_result
+    except TransientDatabaseError:
+        raise
     except DriverOperationError:
         raise
     except Exception as e:
@@ -269,7 +377,7 @@ def run_execute(
                 conn.rollback()
             except Exception:
                 pass
-        raise DriverOperationError(f"Failed to execute SQL: {e}") from e
+        _raise_classified(e, for_commit=False, message_prefix="Failed to execute SQL: ")
 
 
 def run_execute_batch(
@@ -356,12 +464,18 @@ def run_execute_batch(
                 try:
                     try:
                         cursor.executemany(sql_pg, params_list)
+                    except TransientDatabaseError:
+                        raise
                     except Exception as ie:
                         if pg_errors and isinstance(ie, pg_errors.IntegrityError):
                             raise DriverOperationError(
                                 f"execute_batch failed: {ie}"
                             ) from ie
-                        raise
+                        _raise_classified(
+                            ie,
+                            for_commit=False,
+                            message_prefix="execute_batch failed: ",
+                        )
                     lastrowid = None
                     results.extend(
                         [
@@ -394,10 +508,12 @@ def run_execute_batch(
                         "Commit skipped (no active transaction): %s", commit_err
                     )
                 else:
-                    raise DriverOperationError(
-                        f"Failed to commit: {commit_err}"
-                    ) from commit_err
+                    _raise_classified(
+                        commit_err, for_commit=True, message_prefix="Failed to commit: "
+                    )
         return results
+    except TransientDatabaseError:
+        raise
     except DriverOperationError:
         raise
     except Exception as e:
@@ -406,4 +522,4 @@ def run_execute_batch(
                 conn.rollback()
             except Exception:
                 pass
-        raise DriverOperationError(f"execute_batch failed: {e}") from e
+        _raise_classified(e, for_commit=False, message_prefix="execute_batch failed: ")

@@ -13,6 +13,8 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from typing import Any, Dict, List, Optional, Tuple
 
+from ..exceptions import DriverOperationError
+
 
 class BaseDatabaseDriver(ABC):
     """Base class for all database drivers (DB-agnostic abstraction).
@@ -162,6 +164,14 @@ class BaseDatabaseDriver(ABC):
     ) -> Dict[str, Any]:
         """Execute raw SQL statement.
 
+        Retry boundaries: driver-level automatic retries apply only to self-managed
+        work (no external ``transaction_id``, or the literal ``"local"``), and only
+        when the operation is a write. Operations using an external ``transaction_id``
+        (client-held transaction) must not be retried by the driver. Full logical-write
+        (multi-RPC) retry is handled in the database RPC layer, not in the driver.
+        Implementations must not retry when a failed commit or equivalent leaves the
+        commit outcome unknown.
+
         Args:
             sql: SQL statement
             params: Optional tuple of parameters for parameterized query
@@ -187,6 +197,11 @@ class BaseDatabaseDriver(ABC):
         may override for DB-specific batch optimization (e.g. native batch APIs);
         this default implementation runs each (sql, params) via execute().
 
+        Same retry rules as :meth:`execute`: driver retries are only for self-managed
+        writes; external ``transaction_id`` is never retried at the driver.
+        RPC logical-write retry and unknown-commit cases follow the same contract as
+        :meth:`execute`.
+
         Args:
             operations: List of (sql, params) tuples; params may be None.
             transaction_id: Optional transaction ID; when set, same connection used.
@@ -196,9 +211,24 @@ class BaseDatabaseDriver(ABC):
         """
         return [self.execute(sql, params, transaction_id) for sql, params in operations]
 
+    def qa_set_db_retry_injections(self, remaining: int) -> Dict[str, Any]:
+        """Optional QA hook for MCP/plan verification (override in concrete drivers).
+
+        When supported, the next ``remaining`` self-managed write attempts may raise a
+        synthetic :class:`~code_analysis.core.database_driver_pkg.exceptions.TransientDatabaseError`
+        so driver-level retry and ``[DB_RETRY]`` logs can be exercised deterministically.
+        """
+        raise DriverOperationError(
+            "qa_set_db_retry_injections is not implemented for this driver type"
+        )
+
     @abstractmethod
     def begin_transaction(self) -> str:
         """Begin database transaction.
+
+        External client transactions (``transaction_id`` from this call) are not retried
+        by the driver: retry applies only to self-managed connection use without a
+        client-held id.
 
         Returns:
             Transaction ID (string)
@@ -211,6 +241,10 @@ class BaseDatabaseDriver(ABC):
     @abstractmethod
     def commit_transaction(self, transaction_id: str) -> bool:
         """Commit database transaction.
+
+        The driver does not auto-retry commits on external (client) transactions, and
+        must not retry when commit success or failure is ambiguous. Logical-write
+        recovery is an RPC concern.
 
         Args:
             transaction_id: Transaction ID returned by begin_transaction()
@@ -226,6 +260,10 @@ class BaseDatabaseDriver(ABC):
     @abstractmethod
     def rollback_transaction(self, transaction_id: str) -> bool:
         """Rollback database transaction.
+
+        Not subject to the same self-managed write retry path as
+        :meth:`execute` / :meth:`execute_batch`; the driver does not add retry loops
+        for external transaction state.
 
         Args:
             transaction_id: Transaction ID returned by begin_transaction()

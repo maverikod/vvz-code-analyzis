@@ -110,6 +110,7 @@ def process_rpc_request(handlers: RPCHandlers, request: RPCRequest) -> RPCRespon
                 "unmark_file_deleted": handlers.handle_unmark_file_deleted,
                 "hard_delete_file": handlers.handle_hard_delete_file,
                 "get_deleted_files": handlers.handle_get_deleted_files,
+                "qa_set_db_retry_injections": handlers.handle_qa_set_db_retry_injections,
             }
 
             handler = handler_map.get(method)

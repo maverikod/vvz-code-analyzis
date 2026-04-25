@@ -15,8 +15,11 @@ from unittest.mock import patch
 from code_analysis.core.venv_path_policy import (
     build_allowlisted_site_packages_py_files,
     collect_python_files_for_indexing,
+    expand_ignore_exception_all_files,
     expand_ignore_exception_py_files,
     format_project_venv_write_forbidden_message,
+    iter_project_files_excluding_venv,
+    load_ignore_exceptions_from_config_path,
     normalize_pep503_distribution_name,
     path_is_under_project_local_venv,
 )
@@ -106,6 +109,21 @@ def test_collect_python_files_for_indexing_merges_ignore_exceptions(
     assert vpy.resolve() in files
 
 
+def test_load_ignore_exceptions_from_explicit_config_path(tmp_path: Path) -> None:
+    cfg = tmp_path / "config.json"
+    cfg.write_text(
+        (
+            '{"code_analysis": {"ignore_exceptions": '
+            '["**/src/generated/keep.py", "**/pkg/special/**"]}}'
+        ),
+        encoding="utf-8",
+    )
+    assert load_ignore_exceptions_from_config_path(cfg) == [
+        "**/src/generated/keep.py",
+        "**/pkg/special/**",
+    ]
+
+
 def test_should_ignore_path_respects_allowlisted_venv_file(tmp_path: Path) -> None:
     root = tmp_path / "p"
     vpy = root / ".venv" / "lib" / "python3.12" / "site-packages" / "pkg" / "a.py"
@@ -119,3 +137,28 @@ def test_should_ignore_path_respects_allowlisted_venv_file(tmp_path: Path) -> No
 
 def test_format_message_non_empty() -> None:
     assert "read-only" in format_project_venv_write_forbidden_message().lower()
+
+
+def test_iter_project_files_excluding_venv_skips_pyc(tmp_path: Path) -> None:
+    root = tmp_path / "proj"
+    (root / "src").mkdir(parents=True)
+    (root / "src" / "app.py").write_text("a = 1\n")
+    (root / "src" / "mod.pyc").write_bytes(b"\0")
+
+    found = iter_project_files_excluding_venv(root)
+    assert (root / "src" / "app.py") in found
+    assert not any(p.name == "mod.pyc" for p in found)
+
+
+def test_expand_ignore_exception_all_files_includes_non_py(tmp_path: Path) -> None:
+    root = tmp_path / "proj"
+    root.mkdir()
+    vdir = root / ".venv"
+    vdir.mkdir()
+    (vdir / "note.md").write_text("x\n", encoding="utf-8")
+
+    py_only = expand_ignore_exception_py_files(root, [".venv/*.md"])
+    assert list(py_only) == []
+
+    all_files = expand_ignore_exception_all_files(root, [".venv/*.md"])
+    assert (vdir / "note.md").resolve() in all_files

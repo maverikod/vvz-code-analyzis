@@ -27,9 +27,11 @@ def _make_mock_database(
     """Build a mock DatabaseClient that returns given projects and file batches."""
     call_count = [0]  # mutable to share across invocations
 
-    def execute(sql: str, params):
+    def execute(sql: str, params=None, transaction_id=None):
         call_count[0] += 1
         sql_lower = sql.strip().lower()
+        if "project_activity_locks" in sql_lower:
+            return {"affected_rows": 1}
         if "select 1" in sql_lower:
             return None
         if "count(*)" in sql_lower and "files" in sql_lower:
@@ -50,6 +52,7 @@ def _make_mock_database(
 
     mock = MagicMock()
     mock.execute = execute
+    mock.select = MagicMock(return_value=[])
     mock.index_file = mock_index_file
     mock.connect = MagicMock()
     mock.disconnect = MagicMock()

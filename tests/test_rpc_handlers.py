@@ -14,10 +14,15 @@ from code_analysis.core.database_client.protocol import (
     DataResult,
     ErrorResult,
     SuccessResult,
+    ErrorCode,
     DeleteRequest,
     InsertRequest,
     SelectRequest,
     UpdateRequest,
+)
+from code_analysis.core.database_driver_pkg.exceptions import (
+    DriverOperationError,
+    TransientDatabaseError,
 )
 
 
@@ -274,3 +279,55 @@ class TestRPCHandlersExecute:
         assert isinstance(result, ErrorResult)
         assert result.is_error()
         assert "sql" in result.description.lower()
+
+    def test_handle_execute_transient_error_returns_structured_details(
+        self, handlers, mock_driver
+    ):
+        mock_driver.execute.side_effect = TransientDatabaseError(
+            "deadlock",
+            sqlstate="40P01",
+            error_kind="deadlock",
+            attempts=2,
+        )
+        result = handlers.handle_execute({"sql": "UPDATE t SET a=1"})
+        assert isinstance(result, ErrorResult)
+        assert result.error_code == ErrorCode.DATABASE_ERROR
+        d = result.details
+        assert d is not None
+        assert d.get("sqlstate") == "40P01"
+        assert d.get("error_kind") == "deadlock"
+        assert d.get("retryable") is True
+        assert d.get("attempts") == 2
+        assert d.get("commit_outcome_unknown") is False
+
+    def test_handle_execute_non_transient_driver_operation_error_minimal_data(
+        self, handlers, mock_driver
+    ):
+        mock_driver.execute.side_effect = DriverOperationError("nope")
+        result = handlers.handle_execute({"sql": "SELECT 1"})
+        assert isinstance(result, ErrorResult)
+        d = result.details
+        assert d == {"retryable": False, "error_kind": "non_retryable"}
+
+    def test_handle_execute_batch_transient_error_returns_structured_details(
+        self, handlers, mock_driver
+    ):
+        mock_driver.execute_batch.side_effect = TransientDatabaseError(
+            "serialization",
+            sqlstate="40001",
+            error_kind="serialization_failure",
+            attempts=1,
+        )
+        result = handlers.handle_execute_batch(
+            {
+                "operations": [{"sql": "INSERT INTO t (a) VALUES (1)", "params": None}],
+            }
+        )
+        assert isinstance(result, ErrorResult)
+        d = result.details
+        assert d is not None
+        assert d.get("sqlstate") == "40001"
+        assert d.get("error_kind") == "serialization_failure"
+        assert d.get("retryable") is True
+        assert d.get("attempts") == 1
+        assert d.get("commit_outcome_unknown") is False

@@ -453,6 +453,13 @@ def get_schema_indexes() -> List[Dict[str, Any]]:
             "unique": False,
             "where_clause": None,
         },
+        {
+            "name": "idx_project_activity_locks_lease_until",
+            "table": "project_activity_locks",
+            "columns": ["lease_until"],
+            "unique": False,
+            "where_clause": None,
+        },
     ]
 
 

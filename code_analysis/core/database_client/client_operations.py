@@ -10,7 +10,7 @@ email: vasilyvz@gmail.com
 from __future__ import annotations
 
 import logging
-from typing import Any, Dict, List, Optional, Tuple, Union, cast, cast
+from typing import Any, Dict, List, Optional, Set, Tuple, Union, cast
 
 from code_analysis.core.database.logical_write_program import LogicalWriteProgramV1
 
@@ -23,6 +23,12 @@ from .protocol import (
 )
 
 logger = logging.getLogger(__name__)
+
+_LOGICAL_WRITE_LOCK_SCOPES: Set[str] = {
+    "none",
+    "project_write",
+    "project_read",
+}
 
 
 class _ClientOperationsMixin(_DatabaseClientBase):
@@ -267,12 +273,48 @@ class _ClientOperationsMixin(_DatabaseClientBase):
         rpc_params: Dict[str, Any] = {"batches": rpc_batches}
         if program.get("defer_constraints") is True:
             rpc_params["defer_constraints"] = True
+        if "operation_name" in program:
+            opn = program["operation_name"]
+            if not isinstance(opn, str):
+                raise ValueError("operation_name must be a string when set")
+            rpc_params["operation_name"] = opn
+        if "project_id" in program:
+            pid = program["project_id"]
+            if not isinstance(pid, str):
+                raise ValueError("project_id must be a string when set")
+            rpc_params["project_id"] = pid
+        if "lock_scope" in program:
+            lscope = program["lock_scope"]
+            if lscope not in _LOGICAL_WRITE_LOCK_SCOPES:
+                raise ValueError(
+                    "lock_scope must be one of: none, project_write, project_read",
+                )
+            rpc_params["lock_scope"] = lscope
         logger.info(
-            "[CHAIN] client execute_logical_write_operation n_batches=%s",
+            "[CHAIN] client execute_logical_write_operation n_batches=%s operation_name=%s project_id=%s",
             len(rpc_batches),
+            program.get("operation_name"),
+            program.get("project_id"),
         )
         response = self.rpc_client.call("execute_logical_write_operation", rpc_params)
         return cast(dict[str, Any], self._extract_result_data(response))
+
+    def qa_set_db_retry_injections(self, remaining: int = 1) -> Dict[str, Any]:
+        """QA only: arm driver to raise synthetic transients on next N self-managed writes.
+
+        Requires ``CODE_ANALYSIS_ENABLE_QA_MCP_HOOKS=1`` in the database driver process.
+        """
+        response = self.rpc_client.call(
+            "qa_set_db_retry_injections",
+            {"remaining": int(remaining)},
+        )
+        result = self._extract_result_data(response)
+        if isinstance(result, dict):
+            inner = result.get("data")
+            if isinstance(inner, dict):
+                return inner
+            return result
+        return {}
 
     def add_code_chunk(
         self,

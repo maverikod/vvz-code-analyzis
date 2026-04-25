@@ -9,7 +9,7 @@ from typing import Any, Dict
 
 
 def get_tables_rest() -> Dict[str, Any]:
-    """Return rest tables dict: code_duplicates, duplicate_occurrences, comprehensive_analysis_results, file_watcher_stats, vectorization_stats, indexing_errors, indexing_worker_stats, file_tree_snapshots, file_tree_snapshot_roots, file_tree_snapshot_nodes."""
+    """Return rest tables dict: code_duplicates, duplicate_occurrences, comprehensive_analysis_results, file_watcher_stats, vectorization_stats, indexing_errors, indexing_worker_stats, file_tree_snapshots, file_tree_snapshot_roots, file_tree_snapshot_nodes, project_activity_locks."""
     return {
         "code_duplicates": {
             "columns": [
@@ -454,6 +454,25 @@ def get_tables_rest() -> Dict[str, Any]:
                 {"columns": ["snapshot_id", "node_id"]},
                 {"columns": ["snapshot_id", "parent_node_id", "child_index"]},
             ],
+            "check_constraints": [],
+        },
+        "project_activity_locks": {
+            "columns": [
+                {
+                    "name": "project_id",
+                    "type": "TEXT",
+                    "not_null": True,
+                    "primary_key": True,
+                },
+                {"name": "owner_type", "type": "TEXT", "not_null": True},
+                {"name": "owner_id", "type": "TEXT", "not_null": True},
+                {"name": "activity", "type": "TEXT", "not_null": True},
+                {"name": "acquired_at", "type": "REAL", "not_null": True},
+                {"name": "heartbeat_at", "type": "REAL", "not_null": True},
+                {"name": "lease_until", "type": "REAL", "not_null": True},
+            ],
+            "foreign_keys": [],
+            "unique_constraints": [],
             "check_constraints": [],
         },
     }

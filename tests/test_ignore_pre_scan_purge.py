@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import uuid
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
@@ -162,6 +163,7 @@ def test_build_batch_starts_with_temp_table():
 def test_build_ignore_purge_batch_skips_fts_when_disabled():
     ops = build_ignore_purge_sql_batch("proj-1", [1], include_code_content_fts=False)
     assert not any("code_content_fts" in x[0] for x in ops)
+    assert not any("rowid" in x[0] for x in ops)
 
 
 def test_list_non_ignored_prunes_explicit_subtree(tmp_path):
@@ -177,3 +179,113 @@ def test_list_non_ignored_prunes_explicit_subtree(tmp_path):
     names = {p.name for p in paths}
     assert "visible.py" in names
     assert "secret.py" not in names
+
+
+def test_list_non_ignored_keeps_exception_pattern_inside_ignored_dir(tmp_path):
+    root = tmp_path / "proj"
+    root.mkdir()
+    keep = root / "src" / "generated" / "keep.py"
+    keep.parent.mkdir(parents=True, exist_ok=True)
+    keep.write_text("x=1\n", encoding="utf-8")
+    blocked = keep.parent / "drop.py"
+    blocked.write_text("x=2\n", encoding="utf-8")
+
+    paths = list_non_ignored_code_files_under_root(
+        root,
+        ["**/src/generated/**"],
+        ignore_exception_patterns=["**/src/generated/keep.py"],
+    )
+    as_set = {p.resolve() for p in paths}
+    assert keep.resolve() in as_set
+    assert blocked.resolve() not in as_set
+
+
+def test_pre_scan_ignore_purge_respects_exception_and_keeps_file_on_disk(
+    temp_db, tmp_path
+):
+    pid = _insert_project(temp_db, tmp_path)
+    patterns = ["**/src/generated/**"]
+
+    fid_a, path_a = _insert_file_in_project(temp_db, tmp_path, pid, "src/a.py")
+    fid_b, path_b = _insert_file_in_project(
+        temp_db, tmp_path, pid, "src/generated/b.py"
+    )
+    fid_keep, path_keep = _insert_file_in_project(
+        temp_db, tmp_path, pid, "src/generated/keep.py"
+    )
+
+    n = run_pre_scan_ignore_purge_for_project(
+        temp_db,
+        pid,
+        patterns,
+        allowed_venv_py_files=None,
+        ignore_exception_files={path_keep.resolve()},
+        ignore_exception_patterns=["**/src/generated/keep.py"],
+        config_path=None,
+    )
+
+    assert n == 1
+    assert path_b.exists() is True
+    assert temp_db._fetchone("SELECT id FROM files WHERE id = ?", (fid_b,)) is None
+    assert temp_db._fetchone("SELECT id FROM files WHERE id = ?", (fid_a,)) is not None
+    assert (
+        temp_db._fetchone("SELECT id FROM files WHERE id = ?", (fid_keep,)) is not None
+    )
+
+
+def test_collect_file_ids_uses_relative_posix_pattern_policy(temp_db, tmp_path):
+    pid = _insert_project(temp_db, tmp_path)
+    fid_a, _ = _insert_file_in_project(temp_db, tmp_path, pid, "src/a.py")
+    fid_b, _ = _insert_file_in_project(temp_db, tmp_path, pid, "src/generated/b.py")
+    fid_keep, _ = _insert_file_in_project(
+        temp_db, tmp_path, pid, "src/generated/keep.py"
+    )
+    ids = collect_file_ids_to_purge_for_ignore_policy(
+        temp_db,
+        pid,
+        ["**/src/generated/**"],
+        ignore_exception_patterns=["**/src/generated/keep.py"],
+    )
+    assert fid_b in ids
+    assert fid_keep not in ids
+    assert fid_a not in ids
+
+
+def test_pre_scan_ignore_purge_rollback_on_mid_batch_error(temp_db, tmp_path):
+    pid = _insert_project(temp_db, tmp_path)
+    fid_b, _ = _insert_file_in_project(temp_db, tmp_path, pid, "src/generated/b.py")
+    temp_db._execute(
+        "INSERT INTO code_chunks (file_id, project_id, chunk_uuid, chunk_type, chunk_text, chunk_ordinal, updated_at) "
+        "VALUES (?, ?, ?, ?, ?, ?, julianday('now'))",
+        (fid_b, pid, str(uuid.uuid4()), "DocBlock", "chunk", 0),
+    )
+    temp_db._commit()
+
+    broken_program = {
+        "batches": [
+            [
+                ("DELETE FROM code_chunks WHERE file_id = ?", (fid_b,)),
+                ("THIS IS NOT SQL", ()),
+                ("DELETE FROM files WHERE id = ?", (fid_b,)),
+            ]
+        ]
+    }
+    with patch(
+        "code_analysis.core.file_watcher_pkg.ignore_pre_scan_purge.build_ignore_purge_logical_write_program",
+        return_value=broken_program,
+    ):
+        with pytest.raises(Exception):
+            run_pre_scan_ignore_purge_for_project(
+                temp_db,
+                pid,
+                ["**/src/generated/**"],
+                config_path=None,
+            )
+
+    file_row = temp_db._fetchone("SELECT id FROM files WHERE id = ?", (fid_b,))
+    chunk_row = temp_db._fetchone(
+        "SELECT COUNT(*) AS c FROM code_chunks WHERE file_id = ?",
+        (fid_b,),
+    )
+    assert file_row is not None
+    assert int(chunk_row["c"]) == 1

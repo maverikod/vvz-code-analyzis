@@ -5,6 +5,8 @@ Author: Vasiliy Zdanovskiy
 email: vasilyvz@gmail.com
 """
 
+import ast
+from pathlib import Path
 from typing import Any, Dict
 
 from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
@@ -23,6 +25,140 @@ class GetASTMCPCommand(BaseMCPCommand):
     author = "Vasiliy Zdanovskiy"
     email = "vasilyvz@gmail.com"
     use_queue = False
+
+    @staticmethod
+    def _resolve_file_system_path(
+        file_record: Dict[str, Any], project_root: Path, normalized_file_path: str
+    ) -> Path:
+        """Resolve filesystem path from DB record with safe fallbacks."""
+        db_path = file_record.get("path")
+        if isinstance(db_path, str) and db_path:
+            p = Path(db_path)
+            if p.is_absolute():
+                return p
+            return (project_root / p).resolve()
+        return (project_root / normalized_file_path).resolve()
+
+    @staticmethod
+    def _has_searchable_ast_index(db: Any, project_id: str, file_id: int) -> bool:
+        """
+        True when file is searchable via AST-related entity indexes.
+
+        search_ast_nodes uses classes/functions/methods tables, so get_ast must not
+        return AST_NOT_INDEXED if at least one of these has rows for the same file.
+        """
+        result = db.execute(
+            """
+            SELECT
+              (SELECT COUNT(*) FROM classes c
+               JOIN files f ON c.file_id = f.id
+               WHERE c.file_id = ? AND f.project_id = ?) AS classes_count,
+              (SELECT COUNT(*) FROM functions fn
+               JOIN files f ON fn.file_id = f.id
+               WHERE fn.file_id = ? AND f.project_id = ?) AS functions_count,
+              (SELECT COUNT(*) FROM methods m
+               JOIN classes c ON m.class_id = c.id
+               JOIN files f ON c.file_id = f.id
+               WHERE c.file_id = ? AND f.project_id = ?) AS methods_count
+            """,
+            (file_id, project_id, file_id, project_id, file_id, project_id),
+        )
+        rows = GetASTMCPCommand._normalize_execute_rows(result)
+        if not rows:
+            return False
+        return GetASTMCPCommand._row_has_searchable_counts(rows[0])
+
+    @staticmethod
+    def _normalize_execute_rows(result: Any) -> list[dict[str, Any]]:
+        """Normalize db.execute result into list[dict] across backends."""
+        if result is None:
+            return []
+
+        raw_rows: Any = []
+        if isinstance(result, dict):
+            raw_rows = result.get("data", [])
+        elif isinstance(result, (list, tuple)):
+            raw_rows = result
+        else:
+            data_attr = getattr(result, "data", None)
+            if data_attr is not None:
+                raw_rows = data_attr
+            else:
+                # Single row-like object returned directly.
+                raw_rows = [result]
+
+        if raw_rows is None:
+            return []
+        if isinstance(raw_rows, dict):
+            raw_rows = [raw_rows]
+        elif not isinstance(raw_rows, (list, tuple)):
+            raw_rows = [raw_rows]
+
+        normalized: list[dict[str, Any]] = []
+        for row in raw_rows:
+            mapped = GetASTMCPCommand._normalize_row_mapping(row)
+            if mapped:
+                normalized.append(mapped)
+        return normalized
+
+    @staticmethod
+    def _normalize_row_mapping(row: Any) -> dict[str, Any]:
+        """Convert one row-like object to plain dict when possible."""
+        if row is None:
+            return {}
+        if isinstance(row, dict):
+            return row
+        if hasattr(row, "keys"):
+            try:
+                return {key: row[key] for key in row.keys()}
+            except Exception:
+                pass
+        if hasattr(row, "_mapping"):
+            try:
+                return dict(row._mapping)
+            except Exception:
+                pass
+        # DB adapters may return positional rows: (classes_count, functions_count, methods_count)
+        if isinstance(row, (list, tuple)) and len(row) >= 3:
+            return {
+                "classes_count": row[0],
+                "functions_count": row[1],
+                "methods_count": row[2],
+            }
+        # Some adapters may return a single scalar count.
+        if isinstance(row, (int, float, bool)):
+            return {"classes_count": row, "functions_count": 0, "methods_count": 0}
+        return {}
+
+    @staticmethod
+    def _row_has_searchable_counts(row: dict[str, Any]) -> bool:
+        """Return True when any known AST-entity count is positive."""
+
+        def _as_int(value: Any) -> int:
+            try:
+                return int(value or 0)
+            except (TypeError, ValueError):
+                return 0
+
+        total = _as_int(row.get("classes_count"))
+        total += _as_int(row.get("functions_count"))
+        total += _as_int(row.get("methods_count"))
+        return total > 0
+
+    @staticmethod
+    def _parse_ast_from_disk(file_path: Path) -> str:
+        """Parse Python file into JSON-serializable AST payload."""
+        source = file_path.read_text(encoding="utf-8")
+        tree = ast.parse(source)
+        return ast.dump(tree, annotate_fields=True, include_attributes=True)
+
+    @staticmethod
+    def _ast_not_indexed_message(normalized_file_path: str) -> str:
+        """User-facing message when AST data is not yet available."""
+        return (
+            f"AST not indexed for file: {normalized_file_path}. "
+            "File may still be indexing; please wait and retry."
+        )
 
     @classmethod
     def get_schema(cls) -> Dict[str, Any]:
@@ -70,7 +206,7 @@ class GetASTMCPCommand(BaseMCPCommand):
                 db.disconnect()
                 if resolution["exists_on_disk"]:
                     return ErrorResult(
-                        message=f"AST not indexed for file: {normalized_file_path}",
+                        message=self._ast_not_indexed_message(normalized_file_path),
                         code="AST_NOT_INDEXED",
                     )
                 return ErrorResult(
@@ -88,7 +224,6 @@ class GetASTMCPCommand(BaseMCPCommand):
                 ast_data = db.get_ast(file_id)
             elif hasattr(db, "get_ast_tree"):
                 ast_data = db.get_ast_tree(file_id)
-            db.disconnect()
 
             if ast_data is not None:
                 result = {
@@ -103,9 +238,34 @@ class GetASTMCPCommand(BaseMCPCommand):
                         result["ast"] = json.loads(ast_data["ast_json"])
                     else:
                         result["ast"] = ast_data
+                db.disconnect()
                 return SuccessResult(data=result)
+
+            # Align get_ast behavior with search_ast_nodes/file_structure sources.
+            # If file is already searchable via entity indexes, treat it as indexed.
+            searchable_index_exists = self._has_searchable_ast_index(
+                db, project_id=project_id, file_id=file_id
+            )
+            if searchable_index_exists:
+                result = {
+                    "success": True,
+                    "file_path": normalized_file_path,
+                    "file_id": file_id,
+                }
+                if include_json:
+                    fs_path = self._resolve_file_system_path(
+                        file_record=file_record,
+                        project_root=root_path,
+                        normalized_file_path=normalized_file_path,
+                    )
+                    if fs_path.exists() and fs_path.is_file():
+                        result["ast"] = self._parse_ast_from_disk(fs_path)
+                db.disconnect()
+                return SuccessResult(data=result)
+
+            db.disconnect()
             return ErrorResult(
-                message=f"AST not indexed for file: {normalized_file_path}",
+                message=self._ast_not_indexed_message(normalized_file_path),
                 code="AST_NOT_INDEXED",
             )
         except Exception as e:

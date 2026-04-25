@@ -16,12 +16,12 @@ import logging
 import multiprocessing
 import os
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Sequence, Set
+from typing import Any, Dict, List, Optional, Sequence
 
 from ..venv_path_policy import (
     allowed_venv_py_files_for_watch_dir,
-    expand_ignore_exception_py_files,
     load_ignore_exceptions_from_config,
+    load_ignore_exceptions_from_config_path,
 )
 from .multi_project_worker_cycle import run_scan_cycle
 from .multi_project_worker_init import initialize_watch_dirs
@@ -322,11 +322,15 @@ class MultiProjectFileWatcherWorker:
                 continue
 
             try:
-                # Use scan_directory with same parameters as _scan_watch_dir (global + per-dir ignore)
-                merged_ignore = list(self.ignore_patterns) + list(spec.ignore_patterns)
+                # Ignore policy is defined per watch_dir, not from file_watcher section.
+                merged_ignore = list(spec.ignore_patterns)
                 allowed_venv = allowed_venv_py_files_for_watch_dir(watch_dir)
-                ign_ex: Set[Path] = set()
-                exc_patterns = load_ignore_exceptions_from_config()
+                if self.config_path:
+                    exc_patterns = load_ignore_exceptions_from_config_path(
+                        Path(self.config_path)
+                    )
+                else:
+                    exc_patterns = load_ignore_exceptions_from_config()
                 from ..project_discovery import (
                     DuplicateProjectIdError,
                     NestedProjectError,
@@ -342,22 +346,13 @@ class MultiProjectFileWatcherWorker:
                     ValueError,
                 ):
                     discovered = []
-                immediate_roots = {
-                    Path(p.root_path).resolve() for p in discovered
-                }
-                if exc_patterns:
-                    for proj in discovered:
-                        ign_ex.update(
-                            expand_ignore_exception_py_files(
-                                proj.root_path, exc_patterns
-                            )
-                        )
+                immediate_roots = {Path(p.root_path).resolve() for p in discovered}
                 scanned_files = scan_directory(
                     root_dir=watch_dir,
                     watch_dirs=[spec.watch_dir],
                     ignore_patterns=merged_ignore,
                     allowed_venv_py_files=allowed_venv or None,
-                    ignore_exception_files=ign_ex or None,
+                    ignore_exception_patterns=exc_patterns or None,
                     immediate_project_roots=immediate_roots,
                 )
                 total_files += len(scanned_files)

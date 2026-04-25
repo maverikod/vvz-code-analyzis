@@ -6,6 +6,7 @@ email: vasilyvz@gmail.com
 """
 
 import logging
+import re
 import threading
 import uuid
 from contextlib import contextmanager
@@ -316,7 +317,12 @@ class CodeDatabase:
         if isinstance(result, dict):
             setattr(self, "_last_execute_result", result)
 
-    def execute(self, sql: str, params: Optional[tuple] = None) -> Dict[str, Any]:
+    def execute(
+        self,
+        sql: str,
+        params: Optional[tuple] = None,
+        transaction_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
         """
         Execute SQL and return result in RPC/driver contract format.
 
@@ -326,16 +332,98 @@ class CodeDatabase:
         Args:
             sql: SQL statement.
             params: Optional parameters for the statement.
+            transaction_id: Accepted for API parity with drivers and
+                :func:`worker_project_activity` (local DB uses active CodeDatabase tx).
 
         Returns:
             Dict with at least key "data": list of rows for SELECT,
             empty list for INSERT/UPDATE/DELETE etc.
         """
+        del transaction_id  # local path uses :meth:`_driver_transaction_id` via _execute
         if sql.strip().upper().startswith("SELECT"):
             rows = self._fetchall(sql, params)
             return {"data": rows}
         self._execute(sql, params)
+        last = getattr(self, "_last_execute_result", None)
+        if isinstance(last, dict):
+            return last
+        # Legacy db_driver: execute() is void; use rowcount for DML (worker_project_activity)
+        drc = getattr(self.driver, "_rowcount", None)
+        if isinstance(drc, int) and drc >= 0:
+            return {"affected_rows": drc, "data": None}
         return {"data": []}
+
+    @staticmethod
+    def _valid_sql_ident(name: str) -> str:
+        if not re.match(r"^[A-Za-z_][A-Za-z0-9_]*$", name):
+            raise ValueError(f"invalid SQL identifier: {name!r}")
+        return name
+
+    def _select_table_via_sql(
+        self,
+        table_name: str,
+        where: Optional[Dict[str, Any]] = None,
+        columns: Optional[List[str]] = None,
+        limit: Optional[int] = None,
+        offset: Optional[int] = None,
+        order_by: Optional[List[str]] = None,
+    ) -> List[Dict[str, Any]]:
+        """``SELECT`` for :mod:`worker_project_activity` when using legacy db_driver."""
+        t = self._valid_sql_ident(table_name)
+        if columns:
+            cs = ", ".join(self._valid_sql_ident(c) for c in columns)
+        else:
+            cs = "*"
+        sql = f"SELECT {cs} FROM {t}"
+        params: List[Any] = []
+        if where:
+            parts: List[str] = []
+            for k, v in where.items():
+                parts.append(f"{self._valid_sql_ident(k)} = ?")
+                params.append(v)
+            sql += " WHERE " + " AND ".join(parts)
+        if order_by:
+            obs = ", ".join(self._valid_sql_ident(x) for x in order_by)
+            sql += f" ORDER BY {obs}"
+        if limit is not None:
+            sql += f" LIMIT {int(limit)}"
+        if offset is not None:
+            sql += f" OFFSET {int(offset)}"
+        return self._fetchall(sql, tuple(params))
+
+    def select(
+        self,
+        table_name: str,
+        where: Optional[Dict[str, Any]] = None,
+        columns: Optional[List[str]] = None,
+        limit: Optional[int] = None,
+        offset: Optional[int] = None,
+        order_by: Optional[List[str]] = None,
+    ) -> List[Dict[str, Any]]:
+        """Table read (used by :mod:`worker_project_activity` lock reads)."""
+        dselect = getattr(self.driver, "select", None)
+        if callable(dselect):
+            if self._lock:
+                with self._lock:
+                    return dselect(
+                        table_name,
+                        where=where,
+                        columns=columns,
+                        limit=limit,
+                        offset=offset,
+                        order_by=order_by,
+                    )
+            return dselect(
+                table_name,
+                where=where,
+                columns=columns,
+                limit=limit,
+                offset=offset,
+                order_by=order_by,
+            )
+        return self._select_table_via_sql(
+            table_name, where, columns, limit, offset, order_by
+        )
 
     def _fetchone(
         self, sql: str, params: Optional[tuple] = None

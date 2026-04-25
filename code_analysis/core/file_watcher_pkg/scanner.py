@@ -17,7 +17,7 @@ import fnmatch
 import logging
 import os
 from pathlib import Path
-from typing import AbstractSet, Dict, List, Optional, Set
+from typing import AbstractSet, Dict, List, Optional, Sequence, Set
 
 from ..settings_manager import get_settings
 
@@ -57,6 +57,107 @@ _SKIP_DIR_BASENAMES = frozenset(
 )
 
 
+def _path_pattern_candidates(path: Path, project_root: Optional[Path]) -> Set[str]:
+    """POSIX-style absolute/relative candidates for glob matching."""
+    out: Set[str] = set()
+    try:
+        resolved = path.resolve()
+    except OSError:
+        resolved = path
+    abs_posix = resolved.as_posix()
+    out.add(abs_posix)
+    out.add(abs_posix.lstrip("/"))
+    out.add("/" + abs_posix.lstrip("/"))
+    if project_root is not None:
+        try:
+            root_resolved = project_root.resolve()
+        except OSError:
+            root_resolved = project_root
+        try:
+            rel = resolved.relative_to(root_resolved).as_posix()
+            out.add(rel)
+            out.add("/" + rel.lstrip("/"))
+        except ValueError:
+            pass
+    return out
+
+
+def _matches_any_glob(
+    path: Path, patterns: Optional[List[str]], *, project_root: Optional[Path]
+) -> bool:
+    """Return True when any pattern matches path candidates/subpaths."""
+    if not patterns:
+        return False
+    candidates = _path_pattern_candidates(path, project_root)
+    for pattern in patterns:
+        for candidate in candidates:
+            if fnmatch.fnmatch(candidate, pattern):
+                return True
+            parts = [p for p in candidate.split("/") if p]
+            for i in range(len(parts)):
+                sub = "/".join(parts[i:])
+                if fnmatch.fnmatch(sub, pattern) or fnmatch.fnmatch("/" + sub, pattern):
+                    return True
+    return False
+
+
+def _pattern_parts_without_globs(pattern: str) -> tuple[str, ...]:
+    """Literal POSIX path segments from a glob pattern."""
+    parts: list[str] = []
+    for part in pattern.replace("\\", "/").split("/"):
+        token = part.strip()
+        if not token or token in (".", "**"):
+            continue
+        if any(ch in token for ch in "*?[]"):
+            continue
+        parts.append(token)
+    return tuple(parts)
+
+
+def may_contain_ignore_exception(
+    dir_path: Path, project_root: Path, exception_patterns: Sequence[str]
+) -> bool:
+    """
+    Conservative check for whether an ignored directory may contain exceptions.
+
+    The function keeps traversal open only when the directory path is compatible
+    with at least one exception glob pattern.
+    """
+    if not exception_patterns:
+        return False
+    try:
+        dir_resolved = dir_path.resolve()
+    except OSError:
+        dir_resolved = dir_path
+    try:
+        root_resolved = project_root.resolve()
+    except OSError:
+        root_resolved = project_root
+    try:
+        dir_rel = dir_resolved.relative_to(root_resolved).as_posix().strip("/")
+    except ValueError:
+        return True
+    if not dir_rel:
+        return True
+    dir_parts = tuple(p for p in dir_rel.split("/") if p)
+    for raw_pattern in exception_patterns:
+        pattern = str(raw_pattern).strip()
+        if not pattern:
+            continue
+        if fnmatch.fnmatch(dir_rel, pattern) or fnmatch.fnmatch("/" + dir_rel, pattern):
+            return True
+        literal_parts = _pattern_parts_without_globs(pattern)
+        if not literal_parts:
+            return True
+        max_start = len(literal_parts) - len(dir_parts)
+        if max_start < 0:
+            continue
+        for idx in range(max_start + 1):
+            if literal_parts[idx : idx + len(dir_parts)] == dir_parts:
+                return True
+    return False
+
+
 def _path_has_adjacent_parts(parts: tuple[str, ...], a: str, b: str) -> bool:
     for i in range(len(parts) - 1):
         if parts[i] == a and parts[i + 1] == b:
@@ -70,6 +171,37 @@ def _under_data_trash(parts: tuple[str, ...], posix_path: str) -> bool:
         return True
     norm = posix_path if posix_path.endswith("/") else posix_path + "/"
     return "/data/trash/" in norm
+
+
+def _best_project_root_for_path(
+    path: Path,
+    immediate_project_roots: Optional[AbstractSet[Path]],
+    fallback_root: Path,
+) -> Path:
+    """
+    Return the deepest known project root containing ``path``.
+
+    Falls back to ``fallback_root`` when project roots are not available or no
+    candidate contains the path.
+    """
+    if not immediate_project_roots:
+        return fallback_root
+    try:
+        resolved = path.resolve()
+    except OSError:
+        resolved = path
+    best: Optional[Path] = None
+    best_depth = -1
+    for candidate in immediate_project_roots:
+        try:
+            resolved.relative_to(candidate)
+        except ValueError:
+            continue
+        depth = len(candidate.parts)
+        if depth > best_depth:
+            best = candidate
+            best_depth = depth
+    return best if best is not None else fallback_root
 
 
 def should_skip_dir(
@@ -150,12 +282,64 @@ def is_traversable_venv_root(path: Path) -> bool:
     return path.is_dir() and path.name in (".venv", "venv")
 
 
+def should_prune_ignored_dir(
+    dir_path: Path,
+    ignore_patterns: Optional[List[str]] = None,
+    *,
+    allowed_venv_py_files: Optional[Set[Path]] = None,
+    ignore_exception_files: Optional[Set[Path]] = None,
+    ignore_exception_patterns: Optional[List[str]] = None,
+    project_root: Optional[Path] = None,
+) -> bool:
+    """
+    Return True when an ignored directory can be safely pruned.
+
+    If any ignore-exception file is located under ``dir_path``, we must keep
+    traversing this subtree so exception paths can be discovered.
+    """
+    if not should_ignore_path(
+        dir_path,
+        ignore_patterns,
+        allowed_venv_py_files=allowed_venv_py_files,
+        ignore_exception_files=ignore_exception_files,
+        ignore_exception_patterns=ignore_exception_patterns,
+        project_root=project_root,
+    ):
+        return False
+    if is_traversable_venv_root(dir_path):
+        return False
+    if ignore_exception_patterns:
+        root = project_root
+        if root is None:
+            # Conservative fallback: when we cannot evaluate exception globs
+            # against a reliable root, do not prune to avoid dropping exception files.
+            return False
+        if may_contain_ignore_exception(dir_path, root, ignore_exception_patterns):
+            return False
+        return True
+    if not ignore_exception_files:
+        return True
+    try:
+        dir_resolved = dir_path.resolve()
+    except OSError:
+        dir_resolved = dir_path
+    for exc_file in ignore_exception_files:
+        try:
+            Path(exc_file).resolve().relative_to(dir_resolved)
+            return False
+        except (ValueError, OSError):
+            continue
+    return True
+
+
 def should_ignore_path(
     path: Path,
     ignore_patterns: Optional[List[str]] = None,
     *,
     allowed_venv_py_files: Optional[Set[Path]] = None,
     ignore_exception_files: Optional[Set[Path]] = None,
+    ignore_exception_patterns: Optional[List[str]] = None,
+    project_root: Optional[Path] = None,
 ) -> bool:
     """
     Check if path should be ignored.
@@ -178,6 +362,8 @@ def should_ignore_path(
                 return False
         except OSError:
             pass
+    if _matches_any_glob(path, ignore_exception_patterns, project_root=project_root):
+        return False
 
     if allowed_venv_py_files and path.is_file():
         try:
@@ -192,14 +378,7 @@ def should_ignore_path(
         all_patterns.update(ignore_patterns)
 
     # Convert path to string for pattern matching
-    path_str = str(path)
-    rel_path_str = None
-    if path.is_absolute():
-        # Try to get relative path for better matching
-        try:
-            rel_path_str = str(path.relative_to(path.anchor))
-        except (ValueError, AttributeError):
-            pass
+    candidates = _path_pattern_candidates(path, project_root)
 
     # Check each part of the path
     for part in path.parts:
@@ -222,22 +401,17 @@ def should_ignore_path(
 
     # Pattern matching for full path and subpaths
     for pattern in all_patterns:
-        # Check if pattern matches full path
-        if fnmatch.fnmatch(path_str, pattern):
-            return True
-        if rel_path_str and fnmatch.fnmatch(rel_path_str, pattern):
-            return True
-
-        # Check if pattern matches any part of the path
-        if "**" in pattern or "/" in pattern:
-            # Glob pattern with ** or path separator
-            for i in range(len(path.parts)):
-                subpath = "/".join(path.parts[i:])
-                if fnmatch.fnmatch(subpath, pattern):
-                    return True
-                # Also check with leading slash
-                if fnmatch.fnmatch("/" + subpath, pattern):
-                    return True
+        for candidate in candidates:
+            if fnmatch.fnmatch(candidate, pattern):
+                return True
+            if "**" in pattern or "/" in pattern:
+                parts = [p for p in candidate.split("/") if p]
+                for i in range(len(parts)):
+                    subpath = "/".join(parts[i:])
+                    if fnmatch.fnmatch(subpath, pattern):
+                        return True
+                    if fnmatch.fnmatch("/" + subpath, pattern):
+                        return True
 
         # Simple pattern matching for each part
         for part in path.parts:
@@ -264,6 +438,7 @@ def scan_directory(
     *,
     allowed_venv_py_files: Optional[Set[Path]] = None,
     ignore_exception_files: Optional[Set[Path]] = None,
+    ignore_exception_patterns: Optional[List[str]] = None,
     immediate_project_roots: Optional[AbstractSet[Path]] = None,
 ) -> Dict[str, Dict]:
     """
@@ -326,6 +501,9 @@ def scan_directory(
             walk_root, topdown=True, followlinks=False
         ):
             dir_path = Path(dirpath)
+            current_project_root = _best_project_root_for_path(
+                dir_path, resolved_project_roots, walk_root
+            )
             # Pre-traversal: prune excluded directory trees before any ignore-pattern logic.
             dirnames[:] = [
                 d
@@ -340,24 +518,28 @@ def scan_directory(
             dirnames[:] = [
                 d
                 for d in sorted(dirnames)
-                if not (
-                    should_ignore_path(
-                        dir_path / d,
-                        ignore_patterns,
-                        allowed_venv_py_files=allowed_venv_py_files,
-                        ignore_exception_files=ignore_exception_files,
-                    )
-                    and not is_traversable_venv_root(dir_path / d)
+                if not should_prune_ignored_dir(
+                    dir_path / d,
+                    ignore_patterns,
+                    allowed_venv_py_files=allowed_venv_py_files,
+                    ignore_exception_files=ignore_exception_files,
+                    ignore_exception_patterns=ignore_exception_patterns,
+                    project_root=current_project_root,
                 )
             ]
 
             for name in filenames:
                 item = dir_path / name
+                file_project_root = _best_project_root_for_path(
+                    item, resolved_project_roots, current_project_root
+                )
                 if should_ignore_path(
                     item,
                     ignore_patterns,
                     allowed_venv_py_files=allowed_venv_py_files,
                     ignore_exception_files=ignore_exception_files,
+                    ignore_exception_patterns=ignore_exception_patterns,
+                    project_root=file_project_root,
                 ):
                     continue
                 if not item.is_file():

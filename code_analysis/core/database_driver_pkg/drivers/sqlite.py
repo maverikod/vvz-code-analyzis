@@ -12,13 +12,21 @@ from __future__ import annotations
 
 import logging
 import sqlite3
+import time
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple, TypeVar
 
-from ..exceptions import DriverConnectionError, DriverOperationError
+from code_analysis.core.retry_policy import RetryPolicy
+
+from ..exceptions import (
+    DriverConnectionError,
+    DriverOperationError,
+    TransientDatabaseError,
+)
 from ..sqlite_query_journal import SQLiteQueryJournal
 from .base import BaseDatabaseDriver
 from .sqlite_migrations import run_all_ensure
+from .sqlite_batch import expand_operations, split_batch_sql
 from .sqlite_operations import SQLiteOperations
 from .sqlite_run import run_execute, run_execute_batch
 from .sqlite_schema import SQLiteSchemaManager
@@ -26,6 +34,28 @@ from .sqlite_tables import run_create_table, run_drop_table
 from .sqlite_transactions import SQLiteTransactionManager
 
 logger = logging.getLogger(__name__)
+
+_T = TypeVar("_T")
+
+
+def _sql_implies_write(sql: str) -> bool:
+    """True if any statement in a batch is not a read-only SELECT/EXPLAIN/WITH."""
+    for stmt in split_batch_sql(sql):
+        s = stmt.strip()
+        if not s:
+            continue
+        u = s.upper()
+        if u.startswith("SELECT") or u.startswith("WITH") or u.startswith("EXPLAIN"):
+            continue
+        return True
+    return False
+
+
+def _execute_batch_implies_write(operations: List[Tuple[str, Optional[tuple]]]) -> bool:
+    for sql, _ in expand_operations(operations):
+        if _sql_implies_write(sql):
+            return True
+    return False
 
 
 class SQLiteDriver(BaseDatabaseDriver):
@@ -47,6 +77,30 @@ class SQLiteDriver(BaseDatabaseDriver):
         self._schema_manager: Optional[SQLiteSchemaManager] = None
         self._operations: Optional[SQLiteOperations] = None
         self._query_journal: Optional[SQLiteQueryJournal] = None
+        self._retry_policy: RetryPolicy = RetryPolicy()
+        self._qa_transient_injections_remaining: int = 0
+
+    def qa_set_db_retry_injections(self, remaining: int) -> Dict[str, Any]:
+        """QA only: next N self-managed execute/execute_batch attempts raise a synthetic busy."""
+        n = int(remaining)
+        if n < 0 or n > 20:
+            raise DriverOperationError("remaining must be between 0 and 20")
+        self._qa_transient_injections_remaining = n
+        return {"success": True, "remaining": self._qa_transient_injections_remaining}
+
+    def _qa_maybe_inject_transient(self) -> None:
+        if self._qa_transient_injections_remaining <= 0:
+            return
+        self._qa_transient_injections_remaining -= 1
+        raise TransientDatabaseError(
+            "qa injected transient (mcp plan hook)",
+            sqlstate="SQLITE_BUSY",
+            error_kind="busy",
+            retryable=True,
+            original_error=None,
+            attempts=None,
+            commit_outcome_unknown=False,
+        )
 
     def connect(self, config: Dict[str, Any]) -> None:
         """Establish SQLite connection.
@@ -111,6 +165,8 @@ class SQLiteDriver(BaseDatabaseDriver):
 
             run_all_ensure(self.conn, self._schema_manager, self.db_path)
 
+            self._retry_policy = RetryPolicy.from_driver_config(config)
+
             # Optional query journal for inspection and recovery (rotation at 100 MB by default)
             query_log_path = config.get("query_log_path")
             if query_log_path:
@@ -145,6 +201,49 @@ class SQLiteDriver(BaseDatabaseDriver):
         """Rollback the main connection."""
         if self.conn:
             self.conn.rollback()
+
+    def _sleep_before_retry(self, attempt_1based: int) -> None:
+        time.sleep(self._retry_policy.delay_for_attempt(attempt_1based))
+
+    def _run_self_managed_with_retry(
+        self, operation_name: str, func: Callable[[], _T]
+    ) -> _T:
+        max_a = self._retry_policy.attempts
+        for attempt in range(1, max_a + 1):
+            try:
+                return func()
+            except TransientDatabaseError as e:
+                if not (e.retryable and not e.commit_outcome_unknown):
+                    raise
+                if attempt >= max_a:
+                    raise TransientDatabaseError(
+                        e.args[0] if e.args else str(e),
+                        sqlstate=e.sqlstate,
+                        error_kind=e.error_kind,
+                        retryable=e.retryable,
+                        original_error=e.original_error,
+                        attempts=max_a,
+                        commit_outcome_unknown=e.commit_outcome_unknown,
+                    ) from e
+                if not self.conn:
+                    raise DriverOperationError("Database connection not established")
+                try:
+                    self.conn.rollback()
+                except Exception as rb:
+                    raise DriverOperationError(
+                        f"Rollback before database retry failed: {rb}"
+                    ) from rb
+                logger.info(
+                    "[DB_RETRY] backend=sqlite layer=driver operation=%s "
+                    "attempt=%s/%s sqlstate=%s error_kind=%s",
+                    operation_name,
+                    attempt + 1,
+                    max_a,
+                    e.sqlstate,
+                    e.error_kind,
+                )
+                self._sleep_before_retry(attempt)
+        raise RuntimeError("SQLite driver: retry loop exited without result")
 
     def disconnect(self) -> None:
         """Close SQLite connection.
@@ -239,16 +338,34 @@ class SQLiteDriver(BaseDatabaseDriver):
             if transaction_id not in self._transaction_manager._transactions:
                 raise DriverOperationError(f"Transaction {transaction_id} not found")
             conn = self._transaction_manager._transactions[transaction_id]
-        else:
-            if not self.conn:
-                raise DriverOperationError("Database connection not established")
-            conn = self.conn
-        return run_execute_batch(
-            conn,
-            operations,
-            transaction_id,
-            self._query_journal,
-        )
+            return run_execute_batch(
+                conn,
+                operations,
+                transaction_id,
+                self._query_journal,
+            )
+        if not self.conn:
+            raise DriverOperationError("Database connection not established")
+
+        use_retry = _execute_batch_implies_write(operations)
+        if not use_retry:
+            return run_execute_batch(
+                self.conn,
+                operations,
+                transaction_id,
+                self._query_journal,
+            )
+
+        def do_run() -> List[Dict[str, Any]]:
+            self._qa_maybe_inject_transient()
+            return run_execute_batch(
+                self.conn,
+                operations,
+                transaction_id,
+                self._query_journal,
+            )
+
+        return self._run_self_managed_with_retry("execute_batch", do_run)
 
     def execute(
         self,
@@ -263,17 +380,37 @@ class SQLiteDriver(BaseDatabaseDriver):
             if transaction_id not in self._transaction_manager._transactions:
                 raise DriverOperationError(f"Transaction {transaction_id} not found")
             conn = self._transaction_manager._transactions[transaction_id]
-        else:
-            if not self.conn:
-                raise DriverOperationError("Database connection not established")
-            conn = self.conn
-        return run_execute(
-            conn,
-            sql,
-            params,
-            transaction_id,
-            self._query_journal,
-        )
+            return run_execute(
+                conn,
+                sql,
+                params,
+                transaction_id,
+                self._query_journal,
+            )
+        if not self.conn:
+            raise DriverOperationError("Database connection not established")
+
+        use_retry = _sql_implies_write(sql)
+        if not use_retry:
+            return run_execute(
+                self.conn,
+                sql,
+                params,
+                transaction_id,
+                self._query_journal,
+            )
+
+        def do_run() -> Dict[str, Any]:
+            self._qa_maybe_inject_transient()
+            return run_execute(
+                self.conn,
+                sql,
+                params,
+                transaction_id,
+                self._query_journal,
+            )
+
+        return self._run_self_managed_with_retry("execute", do_run)
 
     def begin_transaction(self) -> str:
         """Begin database transaction.

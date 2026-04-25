@@ -183,7 +183,7 @@
       "watch_dirs": [
         {
           "id": "550e8400-e29b-41d4-a716-446655440001",
-          "path": "/home/vasilyvz/projects/tools/code_analysis/test_data",
+          "path": "/home/vasilyvz/projects/tools",
           "ignore_patterns": [
             "**/.venv/**",
             "**/venv/**",

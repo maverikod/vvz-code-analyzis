@@ -48,6 +48,46 @@ def _resolve_config_path() -> Path:
     return (Path.cwd() / "config.json").resolve()
 
 
+def _load_ignore_exceptions_from_config_path(config_path: Path) -> List[str]:
+    """Read ``code_analysis.ignore_exceptions`` from provided config path."""
+    from .storage_paths import load_raw_config
+
+    raw = load_raw_config(config_path)
+    ca = raw.get("code_analysis") or {}
+    val = ca.get("ignore_exceptions")
+    if val is None:
+        return []
+    if not isinstance(val, list):
+        logger.warning("ignore_exceptions must be a list; ignoring")
+        return []
+    out: List[str] = []
+    for item in val:
+        if isinstance(item, str) and item.strip():
+            out.append(item.strip())
+    return out
+
+
+def load_ignore_exceptions_from_config_path(config_path: Path) -> List[str]:
+    """
+    Return ``code_analysis.ignore_exceptions`` from an explicit config file path.
+
+    Patterns are glob paths relative to each project root (forward slashes).
+    Missing or invalid config yields an empty list.
+    """
+    try:
+        resolved = Path(config_path).expanduser().resolve()
+    except OSError:
+        logger.debug(
+            "Could not resolve config_path for ignore_exceptions: %s", config_path
+        )
+        return []
+    try:
+        return _load_ignore_exceptions_from_config_path(resolved)
+    except Exception as e:
+        logger.debug("Could not load ignore_exceptions from %s: %s", resolved, e)
+        return []
+
+
 def load_ignore_exceptions_from_config() -> List[str]:
     """
     Return ``code_analysis.ignore_exceptions`` from config.
@@ -56,34 +96,24 @@ def load_ignore_exceptions_from_config() -> List[str]:
     Missing or invalid config yields an empty list.
     """
     try:
-        from .storage_paths import load_raw_config
-
-        raw = load_raw_config(_resolve_config_path())
-        ca = raw.get("code_analysis") or {}
-        val = ca.get("ignore_exceptions")
-        if val is None:
-            return []
-        if not isinstance(val, list):
-            logger.warning("ignore_exceptions must be a list; ignoring")
-            return []
-        out: List[str] = []
-        for item in val:
-            if isinstance(item, str) and item.strip():
-                out.append(item.strip())
-        return out
+        return _load_ignore_exceptions_from_config_path(_resolve_config_path())
     except Exception as e:
         logger.debug("Could not load ignore_exceptions from config: %s", e)
         return []
 
 
-def expand_ignore_exception_py_files(
-    project_root: Path, patterns: Collection[str]
+def _expand_ignore_exception_paths(
+    project_root: Path,
+    patterns: Collection[str],
+    *,
+    python_only: bool,
 ) -> Set[Path]:
     """
-    Resolve glob patterns under ``project_root``; return existing ``.py`` file paths (resolved).
+    Resolve ``ignore_exceptions`` globs under ``project_root``.
 
-    Uses :meth:`Path.glob` per pattern (supports ``**``). Non-matching or unreadable paths are
-    skipped quietly.
+    When ``python_only`` is true, only existing ``.py`` files are collected (indexing parity).
+    When false, any regular file matched by the pattern is included (e.g. for
+    :class:`ListProjectFilesMCPCommand`).
     """
     if not patterns:
         return set()
@@ -101,14 +131,39 @@ def expand_ignore_exception_py_files(
             continue
         try:
             for p in root.glob(pat):
-                if p.is_file() and p.suffix == ".py":
-                    try:
-                        out.add(p.resolve())
-                    except OSError:
-                        pass
+                if not p.is_file():
+                    continue
+                if python_only and p.suffix != ".py":
+                    continue
+                try:
+                    out.add(p.resolve())
+                except OSError:
+                    pass
         except OSError as e:
             logger.debug("ignore_exceptions glob failed for %s: %s", pat, e)
     return out
+
+
+def expand_ignore_exception_py_files(
+    project_root: Path, patterns: Collection[str]
+) -> Set[Path]:
+    """
+    Resolve glob patterns under ``project_root``; return existing ``.py`` file paths (resolved).
+
+    Uses :meth:`Path.glob` per pattern (supports ``**``). Non-matching or unreadable paths are
+    skipped quietly.
+    """
+    return _expand_ignore_exception_paths(project_root, patterns, python_only=True)
+
+
+def expand_ignore_exception_all_files(
+    project_root: Path, patterns: Collection[str]
+) -> Set[Path]:
+    """
+    Same as :func:`expand_ignore_exception_py_files`, but includes every matched file path,
+    not only ``.py`` (for filesystem listings that merge non-Python project files).
+    """
+    return _expand_ignore_exception_paths(project_root, patterns, python_only=False)
 
 
 def build_ignore_exception_files_for_projects(
@@ -308,6 +363,36 @@ def build_allowlisted_site_packages_py_files(
     return frozenset(out)
 
 
+# Suffixes skipped when listing ordinary project files (binaries / bytecode / native libs).
+_LIST_PROJECT_SKIP_FILE_SUFFIXES: frozenset[str] = frozenset(
+    {
+        ".pyc",
+        ".pyo",
+        ".pyd",
+        ".so",
+        ".dll",
+        ".dylib",
+        ".exe",
+        ".bin",
+        ".o",
+        ".a",
+        ".class",
+        ".wasm",
+    }
+)
+
+
+def _iter_project_walk_prune_dirs(dirs: List[str], ignore_dirs: Set[str]) -> None:
+    """In-place prune for ``os.walk`` (shared by Python-only and all-files walkers)."""
+    dirs[:] = [
+        d
+        for d in dirs
+        if not d.startswith(".")
+        and d not in ignore_dirs
+        and d not in (".venv", "venv")
+    ]
+
+
 def iter_project_python_files_excluding_venv(project_root: Path) -> List[Path]:
     """
     Walk project tree for ``.py`` files, excluding hidden dirs and venv/data/logs.
@@ -317,20 +402,43 @@ def iter_project_python_files_excluding_venv(project_root: Path) -> List[Path]:
     """
     from .constants import DATA_DIR_NAME, DEFAULT_IGNORE_PATTERNS, LOGS_DIR_NAME
 
-    ignore_dirs = DEFAULT_IGNORE_PATTERNS | {DATA_DIR_NAME, LOGS_DIR_NAME}
+    ignore_dirs: Set[str] = set(DEFAULT_IGNORE_PATTERNS) | {DATA_DIR_NAME, LOGS_DIR_NAME}
     root_path = project_root.resolve()
     files: List[Path] = []
     for walk_root, dirs, walk_files in os.walk(root_path):
-        dirs[:] = [
-            d
-            for d in dirs
-            if not d.startswith(".")
-            and d not in ignore_dirs
-            and d not in (".venv", "venv")
-        ]
+        _iter_project_walk_prune_dirs(dirs, ignore_dirs)
         for f in walk_files:
             if f.endswith(".py"):
                 files.append(Path(walk_root) / f)
+    return files
+
+
+def iter_project_files_excluding_venv(project_root: Path) -> List[Path]:
+    """
+    Walk the project tree for regular files (not only ``.py``), excluding the same
+    directories as :func:`iter_project_python_files_excluding_venv`.
+
+    Skips bytecode, native libraries, and similar binary suffixes; does not descend into
+    ``.venv`` / ``venv`` / ``.git`` / ``__pycache__`` / configured ignore dirs.
+    """
+    from .constants import DATA_DIR_NAME, DEFAULT_IGNORE_PATTERNS, LOGS_DIR_NAME
+
+    ignore_dirs: Set[str] = set(DEFAULT_IGNORE_PATTERNS) | {DATA_DIR_NAME, LOGS_DIR_NAME}
+    root_path = project_root.resolve()
+    files: List[Path] = []
+    for walk_root, dirs, walk_files in os.walk(root_path):
+        _iter_project_walk_prune_dirs(dirs, ignore_dirs)
+        for f in walk_files:
+            p = Path(walk_root) / f
+            try:
+                if not p.is_file():
+                    continue
+            except OSError:
+                continue
+            suf = p.suffix.lower()
+            if suf in _LIST_PROJECT_SKIP_FILE_SUFFIXES:
+                continue
+            files.append(p)
     return files
 
 

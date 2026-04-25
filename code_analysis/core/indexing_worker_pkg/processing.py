@@ -25,6 +25,11 @@ from ..worker_status_file import (
     write_worker_status,
 )
 from ..vectorization_worker_pkg.timing_log import log_operation_timing
+from ..worker_project_activity import (
+    heartbeat_project_activity,
+    release_project_activity,
+    try_acquire_project_activity,
+)
 from code_analysis.core.sql_portable import (
     WHERE_FILES_ACTIVE,
     WHERE_FILES_ACTIVE_F,
@@ -42,6 +47,9 @@ INDEXING_PROJECT_DISCOVERY_SQL = (
     + " AND f.needs_chunking = 1 AND "
     + WHERE_PROCESSING_ACTIVE_P
 )
+
+# Project activity lease (Step 16): long batches may exceed TTL without heartbeat.
+_INDEXER_LEASE_TTL_S = 120.0
 
 
 async def process_cycle(self: Any, poll_interval: int = 30) -> Dict[str, Any]:
@@ -246,167 +254,218 @@ async def process_cycle(self: Any, poll_interval: int = 30) -> Dict[str, Any]:
                     else:
                         cycle_indexed = 0
                         cycle_had_activity = False
-                        errors_to_clear: list[tuple[str, str]] = []
-                        errors_to_insert: list[tuple[str, str, str, str]] = []
                         cycle_files_indexed = 0
                         cycle_files_failed = 0
                         cycle_total_time = 0.0
+                        owner_id = self._project_activity_owner_id
                         for project_id in project_ids:
-                            files_result = database.execute(
-                                "SELECT id, path, project_id FROM files "
-                                "WHERE project_id = ? AND " + WHERE_FILES_ACTIVE + " "
-                                "AND needs_chunking = 1 ORDER BY updated_at ASC LIMIT ?",
-                                (project_id, self.batch_size),
-                            )
-                            files_data = (
-                                files_result.get("data", [])
-                                if isinstance(files_result, dict)
-                                else []
-                            )
-                            logger.info(
-                                "[CYCLE #%s] project_id=%s files_batch=%s",
-                                cycle_count,
-                                project_id[:8] if project_id else None,
-                                len(files_data),
-                            )
-                            for row in files_data:
-                                path = row.get("path")
-                                if not path or not project_id:
-                                    continue
-                                # Only index Python files; skip others and clear flag so they are not retried
-                                if not (path.endswith(".py") or path.endswith(".pyi")):
-                                    try:
-                                        database.execute(
-                                            "UPDATE files SET needs_chunking = 0 WHERE id = ?",
-                                            (row.get("id"),),
+                            if not try_acquire_project_activity(
+                                database,
+                                project_id,
+                                "indexer",
+                                owner_id,
+                                "indexer_processing",
+                                _INDEXER_LEASE_TTL_S,
+                            ):
+                                logger.info(
+                                    "[WORKER_COORD] indexer skip project_id=%s "
+                                    "(lease busy; next cycle)",
+                                    project_id,
+                                )
+                                continue
+                            errors_to_clear: list[tuple[str, str]] = []
+                            errors_to_insert: list[tuple[str, str, str, str]] = []
+                            try:
+                                files_result = database.execute(
+                                    "SELECT id, path, project_id FROM files "
+                                    "WHERE project_id = ? AND "
+                                    + WHERE_FILES_ACTIVE
+                                    + " "
+                                    "AND needs_chunking = 1 ORDER BY updated_at ASC LIMIT ?",
+                                    (project_id, self.batch_size),
+                                )
+                                files_data = (
+                                    files_result.get("data", [])
+                                    if isinstance(files_result, dict)
+                                    else []
+                                )
+                                logger.info(
+                                    "[CYCLE #%s] project_id=%s files_batch=%s",
+                                    cycle_count,
+                                    project_id[:8] if project_id else None,
+                                    len(files_data),
+                                )
+                                for row in files_data:
+                                    path = row.get("path")
+                                    if not path or not project_id:
+                                        continue
+                                    # Only index Python files; skip others and clear flag
+                                    if not (
+                                        path.endswith(".py") or path.endswith(".pyi")
+                                    ):
+                                        try:
+                                            database.execute(
+                                                "UPDATE files SET needs_chunking = 0 WHERE id = ?",
+                                                (row.get("id"),),
+                                            )
+                                        except Exception:
+                                            pass
+                                        heartbeat_project_activity(
+                                            database,
+                                            project_id,
+                                            "indexer",
+                                            owner_id,
+                                            "indexer_processing",
+                                            _INDEXER_LEASE_TTL_S,
                                         )
-                                    except Exception:
-                                        pass
-                                    continue
-                                file_start = time.time()
-                                progress_pct = (
-                                    round(cycle_indexed / files_total_at_start * 100, 1)
-                                    if files_total_at_start
-                                    else None
-                                )
-                                write_worker_status(
-                                    getattr(self, "status_file_path", None),
-                                    STATUS_OPERATION_INDEXING,
-                                    current_file=path,
-                                    progress_percent=progress_pct,
-                                )
-                                try:
-                                    result = database.index_file(path, project_id)
-                                    elapsed = time.time() - file_start
-                                    log_operation_timing(
-                                        log_timing,
-                                        logger,
-                                        "index_file",
-                                        elapsed,
-                                        path=path[:80] if path else "",
-                                        success=result.get("success", False),
+                                        continue
+                                    file_start = time.time()
+                                    progress_pct = (
+                                        round(
+                                            cycle_indexed / files_total_at_start * 100,
+                                            1,
+                                        )
+                                        if files_total_at_start
+                                        else None
                                     )
-                                    if result.get("success"):
-                                        total_indexed += 1
-                                        logger.debug("Indexed %s", path)
-                                        errors_to_clear.append((project_id, path))
-                                        cycle_files_indexed += 1
-                                        cycle_total_time += elapsed
-                                    else:
-                                        total_errors += 1
-                                        err_msg = result.get("error", "unknown")
-                                        logger.warning(
-                                            "Index failed for %s: %s",
-                                            path,
-                                            err_msg,
+                                    write_worker_status(
+                                        getattr(self, "status_file_path", None),
+                                        STATUS_OPERATION_INDEXING,
+                                        current_file=path,
+                                        progress_percent=progress_pct,
+                                    )
+                                    try:
+                                        result = database.index_file(path, project_id)
+                                        elapsed = time.time() - file_start
+                                        log_operation_timing(
+                                            log_timing,
+                                            logger,
+                                            "index_file",
+                                            elapsed,
+                                            path=path[:80] if path else "",
+                                            success=result.get("success", False),
                                         )
+                                        if result.get("success"):
+                                            total_indexed += 1
+                                            logger.debug("Indexed %s", path)
+                                            errors_to_clear.append((project_id, path))
+                                            cycle_files_indexed += 1
+                                            cycle_total_time += elapsed
+                                        else:
+                                            total_errors += 1
+                                            err_msg = result.get("error", "unknown")
+                                            logger.warning(
+                                                "Index failed for %s: %s",
+                                                path,
+                                                err_msg,
+                                            )
+                                            errors_to_insert.append(
+                                                (
+                                                    project_id,
+                                                    path,
+                                                    "index_error",
+                                                    err_msg,
+                                                )
+                                            )
+                                            cycle_files_failed += 1
+                                            cycle_total_time += elapsed
+                                            if "temp_files" in (err_msg or ""):
+                                                logger.error(
+                                                    "[indexing_errors] Stored temp_files-related error (caller=index_file): %s",
+                                                    err_msg,
+                                                )
+                                        cycle_indexed += 1
+                                        cycle_had_activity = True
+                                    except Exception as e:
+                                        total_errors += 1
+                                        cycle_indexed += 1
+                                        cycle_had_activity = True
+                                        elapsed = time.time() - file_start
+                                        err_str = str(e)
                                         errors_to_insert.append(
-                                            (project_id, path, "index_error", err_msg)
+                                            (
+                                                project_id,
+                                                path,
+                                                "index_exception",
+                                                err_str,
+                                            )
                                         )
                                         cycle_files_failed += 1
                                         cycle_total_time += elapsed
-                                        if "temp_files" in (err_msg or ""):
-                                            logger.error(
-                                                "[indexing_errors] Stored temp_files-related error (caller=index_file): %s",
-                                                err_msg,
+                                        log_operation_timing(
+                                            log_timing,
+                                            logger,
+                                            "index_file",
+                                            elapsed,
+                                            path=path[:80] if path else "",
+                                            success=False,
+                                            error=err_str[:60],
+                                        )
+                                        try:
+                                            logger.warning(
+                                                "Index error for %s: %s", path, e
                                             )
-                                    cycle_indexed += 1
-                                    cycle_had_activity = True
-                                except Exception as e:
-                                    total_errors += 1
-                                    cycle_indexed += 1
-                                    cycle_had_activity = True
-                                    elapsed = time.time() - file_start
-                                    err_str = str(e)
-                                    errors_to_insert.append(
+                                        except Exception:
+                                            pass
+                                        if "temp_files" in err_str:
+                                            logger.error(
+                                                "[indexing_errors] Stored temp_files-related exception (caller=index_file): %s",
+                                                err_str,
+                                            )
+                                    heartbeat_project_activity(
+                                        database,
+                                        project_id,
+                                        "indexer",
+                                        owner_id,
+                                        "indexer_processing",
+                                        _INDEXER_LEASE_TTL_S,
+                                    )
+                                project_batch: list[
+                                    tuple[str, tuple[Any, ...] | None]
+                                ] = []
+                                for p, file_path in errors_to_clear:
+                                    project_batch.append(
                                         (
-                                            project_id,
-                                            path,
-                                            "index_exception",
-                                            err_str,
+                                            "DELETE FROM indexing_errors WHERE project_id = ? AND file_path = ?",
+                                            (p, file_path),
                                         )
                                     )
-                                    cycle_files_failed += 1
-                                    cycle_total_time += elapsed
-                                    log_operation_timing(
-                                        log_timing,
-                                        logger,
-                                        "index_file",
-                                        elapsed,
-                                        path=path[:80] if path else "",
-                                        success=False,
-                                        error=err_str[:60],
+                                for p, file_path, typ, msg in errors_to_insert:
+                                    project_batch.append(
+                                        (
+                                            "INSERT OR REPLACE INTO indexing_errors "
+                                            "(project_id, file_path, error_type, error_message, created_at) "
+                                            "VALUES (?, ?, ?, ?, julianday('now'))",
+                                            (p, file_path, typ, msg),
+                                        )
                                     )
-                                    try:
-                                        logger.warning(
-                                            "Index error for %s: %s", path, e
-                                        )
-                                    except Exception:
-                                        pass
-                                    if "temp_files" in err_str:
-                                        logger.error(
-                                            "[indexing_errors] Stored temp_files-related exception (caller=index_file): %s",
-                                            err_str,
-                                        )
-                        batch_ops: list[tuple[str, tuple[Any, ...] | None]] = []
-                        for p, file_path in errors_to_clear:
-                            batch_ops.append(
-                                (
-                                    "DELETE FROM indexing_errors WHERE project_id = ? AND file_path = ?",
-                                    (p, file_path),
+                                if project_batch:
+                                    database.execute_batch(project_batch)
+                            finally:
+                                release_project_activity(
+                                    database,
+                                    project_id,
+                                    "indexer",
+                                    owner_id,
                                 )
-                            )
-                        for p, file_path, typ, msg in errors_to_insert:
-                            batch_ops.append(
-                                (
-                                    "INSERT OR REPLACE INTO indexing_errors "
-                                    "(project_id, file_path, error_type, error_message, created_at) "
-                                    "VALUES (?, ?, ?, ?, julianday('now'))",
-                                    (p, file_path, typ, msg),
-                                )
-                            )
                         total_files = cycle_files_indexed + cycle_files_failed
                         avg_time = (
                             cycle_total_time / total_files if total_files > 0 else None
                         )
-                        batch_ops.append(
+                        database.execute(
+                            "UPDATE indexing_worker_stats SET "
+                            "files_indexed = ?, files_failed = ?, "
+                            "total_processing_time_seconds = ?, "
+                            "average_processing_time_seconds = ?, "
+                            "last_updated = julianday('now') WHERE cycle_id = ?",
                             (
-                                "UPDATE indexing_worker_stats SET "
-                                "files_indexed = ?, files_failed = ?, "
-                                "total_processing_time_seconds = ?, "
-                                "average_processing_time_seconds = ?, "
-                                "last_updated = julianday('now') WHERE cycle_id = ?",
-                                (
-                                    cycle_files_indexed,
-                                    cycle_files_failed,
-                                    cycle_total_time,
-                                    avg_time,
-                                    cycle_id,
-                                ),
-                            )
+                                cycle_files_indexed,
+                                cycle_files_failed,
+                                cycle_total_time,
+                                avg_time,
+                                cycle_id,
+                            ),
                         )
-                        if batch_ops:
-                            database.execute_batch(batch_ops)
                         write_worker_status(
                             getattr(self, "status_file_path", None),
                             STATUS_OPERATION_IDLE,

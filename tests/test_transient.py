@@ -19,6 +19,7 @@ from code_analysis.core.database_client.transient import (
     format_retry_summary_suffix,
     is_rpc_connect_refused,
     is_sqlite_db_locked,
+    is_structured_retryable_error,
 )
 
 
@@ -115,6 +116,35 @@ class TestComputeRetryDelay:
         ):
             d = compute_retry_delay(1)
         assert d >= 0.0
+
+
+class TestIsStructuredRetryableError:
+    """is_structured_retryable_error follows ErrorResult.details contract."""
+
+    def test_true_when_retryable_and_no_unknown(self) -> None:
+        assert is_structured_retryable_error(
+            {"retryable": True, "commit_outcome_unknown": False}
+        )
+        assert is_structured_retryable_error({"retryable": True}) is True
+
+    def test_false_when_commit_outcome_unknown(self) -> None:
+        assert is_structured_retryable_error(
+            {
+                "retryable": True,
+                "commit_outcome_unknown": True,
+            }
+        ) is False
+
+    def test_false_when_retryable_false(self) -> None:
+        assert is_structured_retryable_error({"retryable": False}) is False
+
+    def test_false_when_missing_or_malformed(self) -> None:
+        assert is_structured_retryable_error(None) is False
+        assert is_structured_retryable_error({}) is False
+        assert is_structured_retryable_error("not a map") is False  # type: ignore[arg-type]
+
+    def test_require_retryable_is_true(self) -> None:
+        assert is_structured_retryable_error({"retryable": 1}) is False
 
 
 class TestFormatRetrySummarySuffix:

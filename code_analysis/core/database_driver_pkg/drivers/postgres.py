@@ -8,12 +8,18 @@ email: vasilyvz@gmail.com
 from __future__ import annotations
 
 import logging
+import time
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple, TypeVar
 
 from code_analysis.core.database.schema_definition import get_schema_definition
+from code_analysis.core.retry_policy import RetryPolicy
 
-from ..exceptions import DriverConnectionError, DriverOperationError
+from ..exceptions import (
+    DriverConnectionError,
+    DriverOperationError,
+    TransientDatabaseError,
+)
 from .base import BaseDatabaseDriver
 from .postgres_migrations import ensure_postgres_schema
 from .postgres_operations import PostgreSQLOperations
@@ -23,6 +29,15 @@ from .postgres_tables import run_create_table_postgres, run_drop_table_postgres
 from .postgres_transactions import PostgreSQLTransactionManager
 
 logger = logging.getLogger(__name__)
+
+_T = TypeVar("_T")
+
+
+def _is_self_managed_transaction(transaction_id: Optional[str]) -> bool:
+    """True when transaction_id is missing, empty, or exactly 'local' (not external)."""
+    if transaction_id is None or transaction_id == "":
+        return True
+    return transaction_id == "local"
 
 
 def _is_connection_lost_error(exc: BaseException) -> bool:
@@ -90,6 +105,30 @@ class PostgreSQLDriver(BaseDatabaseDriver):
         self._schema_manager: Optional[PostgreSQLSchemaManager] = None
         self._operations: Optional[PostgreSQLOperations] = None
         self._query_journal: Any = None
+        self._retry_policy: RetryPolicy = RetryPolicy()
+        self._qa_transient_injections_remaining: int = 0
+
+    def qa_set_db_retry_injections(self, remaining: int) -> Dict[str, Any]:
+        """QA only: next N self-managed execute/execute_batch attempts raise a synthetic deadlock."""
+        n = int(remaining)
+        if n < 0 or n > 20:
+            raise DriverOperationError("remaining must be between 0 and 20")
+        self._qa_transient_injections_remaining = n
+        return {"success": True, "remaining": self._qa_transient_injections_remaining}
+
+    def _qa_maybe_inject_transient(self) -> None:
+        if self._qa_transient_injections_remaining <= 0:
+            return
+        self._qa_transient_injections_remaining -= 1
+        raise TransientDatabaseError(
+            "qa injected transient (mcp plan hook)",
+            sqlstate="40P01",
+            error_kind="deadlock",
+            retryable=True,
+            original_error=None,
+            attempts=None,
+            commit_outcome_unknown=False,
+        )
 
     def connect(self, config: Dict[str, Any]) -> None:
         try:
@@ -115,8 +154,14 @@ class PostgreSQLDriver(BaseDatabaseDriver):
 
             ensure_postgres_schema(self.conn, self._full_schema)
 
+            self._retry_policy = RetryPolicy.from_driver_config(config)
+            # Canonical database driver config keys only (Step 03).
+            lock_timeout_seconds = config.get("lock_timeout_seconds")
+            statement_timeout_seconds = config.get("statement_timeout_seconds")
             self._transaction_manager = PostgreSQLTransactionManager(
-                self._connect_kwargs
+                self._connect_kwargs,
+                lock_timeout_seconds=lock_timeout_seconds,
+                statement_timeout_seconds=statement_timeout_seconds,
             )
             self._schema_manager = PostgreSQLSchemaManager(self.conn)
             self._operations = PostgreSQLOperations(self.conn, self._schema_tables)
@@ -170,6 +215,66 @@ class PostgreSQLDriver(BaseDatabaseDriver):
         ensure_postgres_schema(self.conn, self._full_schema)
         self._schema_manager = PostgreSQLSchemaManager(self.conn)
         self._operations = PostgreSQLOperations(self.conn, self._schema_tables)
+
+    def _sleep_before_retry(self, attempt_1based: int) -> None:
+        time.sleep(self._retry_policy.delay_for_attempt(attempt_1based))
+
+    def _run_once_with_reconnect_on_lost(self, func: Callable[[], _T]) -> _T:
+        try:
+            return func()
+        except Exception as e:
+            if not _is_connection_lost_error(e):
+                raise
+            if not self.conn:
+                raise
+            try:
+                self.conn.rollback()
+            except Exception:
+                pass
+            self._reconnect_main()
+            if not self.conn:
+                raise DriverOperationError("Database connection not established")
+            return func()
+
+    def _run_self_managed_with_retry(
+        self, operation_name: str, func: Callable[[], _T]
+    ) -> _T:
+        max_a = self._retry_policy.attempts
+        for attempt in range(1, max_a + 1):
+            try:
+                return self._run_once_with_reconnect_on_lost(func)
+            except TransientDatabaseError as e:
+                if not (e.retryable and not e.commit_outcome_unknown):
+                    raise
+                if attempt >= max_a:
+                    raise TransientDatabaseError(
+                        e.args[0] if e.args else str(e),
+                        sqlstate=e.sqlstate,
+                        error_kind=e.error_kind,
+                        retryable=e.retryable,
+                        original_error=e.original_error,
+                        attempts=max_a,
+                        commit_outcome_unknown=e.commit_outcome_unknown,
+                    ) from e
+                if not self.conn:
+                    raise DriverOperationError("Database connection not established")
+                try:
+                    self.conn.rollback()
+                except Exception as rb:
+                    raise DriverOperationError(
+                        f"Rollback before database retry failed: {rb}"
+                    ) from rb
+                logger.info(
+                    "[DB_RETRY] backend=postgres layer=driver operation=%s "
+                    "attempt=%s/%s sqlstate=%s error_kind=%s",
+                    operation_name,
+                    attempt + 1,
+                    max_a,
+                    e.sqlstate,
+                    e.error_kind,
+                )
+                self._sleep_before_retry(attempt)
+        raise RuntimeError("PostgreSQL driver: retry loop exited without result")
 
     def disconnect(self) -> None:
         try:
@@ -262,17 +367,12 @@ class PostgreSQLDriver(BaseDatabaseDriver):
     ) -> List[Dict[str, Any]]:
         if not operations:
             return []
-        if transaction_id and transaction_id != "local":
+        if not _is_self_managed_transaction(transaction_id):
             if not self._transaction_manager:
                 raise DriverOperationError("Transaction manager not initialized")
             if transaction_id not in self._transaction_manager._transactions:
                 raise DriverOperationError(f"Transaction {transaction_id} not found")
             conn = self._transaction_manager._transactions[transaction_id]
-        else:
-            if not self.conn:
-                raise DriverOperationError("Database connection not established")
-            conn = self.conn
-        try:
             return run_execute_batch(
                 conn,
                 operations,
@@ -280,19 +380,20 @@ class PostgreSQLDriver(BaseDatabaseDriver):
                 self._query_journal,
                 self._schema_tables,
             )
-        except Exception as e:
-            if not transaction_id and _is_connection_lost_error(e):
-                self._reconnect_main()
-                if not self.conn:
-                    raise DriverOperationError("Database connection not established")
-                return run_execute_batch(
-                    self.conn,
-                    operations,
-                    transaction_id,
-                    self._query_journal,
-                    self._schema_tables,
-                )
-            raise
+        if not self.conn:
+            raise DriverOperationError("Database connection not established")
+
+        def do_run() -> List[Dict[str, Any]]:
+            self._qa_maybe_inject_transient()
+            return run_execute_batch(
+                self.conn,
+                operations,
+                transaction_id,
+                self._query_journal,
+                self._schema_tables,
+            )
+
+        return self._run_self_managed_with_retry("execute_batch", do_run)
 
     def execute(
         self,
@@ -300,17 +401,12 @@ class PostgreSQLDriver(BaseDatabaseDriver):
         params: Optional[tuple] = None,
         transaction_id: Optional[str] = None,
     ) -> Dict[str, Any]:
-        if transaction_id and transaction_id != "local":
+        if not _is_self_managed_transaction(transaction_id):
             if not self._transaction_manager:
                 raise DriverOperationError("Transaction manager not initialized")
             if transaction_id not in self._transaction_manager._transactions:
                 raise DriverOperationError(f"Transaction {transaction_id} not found")
             conn = self._transaction_manager._transactions[transaction_id]
-        else:
-            if not self.conn:
-                raise DriverOperationError("Database connection not established")
-            conn = self.conn
-        try:
             return run_execute(
                 conn,
                 sql,
@@ -319,20 +415,21 @@ class PostgreSQLDriver(BaseDatabaseDriver):
                 self._query_journal,
                 self._schema_tables,
             )
-        except Exception as e:
-            if not transaction_id and _is_connection_lost_error(e):
-                self._reconnect_main()
-                if not self.conn:
-                    raise DriverOperationError("Database connection not established")
-                return run_execute(
-                    self.conn,
-                    sql,
-                    params,
-                    transaction_id,
-                    self._query_journal,
-                    self._schema_tables,
-                )
-            raise
+        if not self.conn:
+            raise DriverOperationError("Database connection not established")
+
+        def do_run() -> Dict[str, Any]:
+            self._qa_maybe_inject_transient()
+            return run_execute(
+                self.conn,
+                sql,
+                params,
+                transaction_id,
+                self._query_journal,
+                self._schema_tables,
+            )
+
+        return self._run_self_managed_with_retry("execute", do_run)
 
     def begin_transaction(self) -> str:
         if not self._transaction_manager:

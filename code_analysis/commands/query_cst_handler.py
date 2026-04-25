@@ -11,6 +11,7 @@ email: vasilyvz@gmail.com
 from __future__ import annotations
 
 import logging
+import os
 import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, Union
@@ -22,6 +23,107 @@ from ..core.cst_module import ReplaceOp, Selector, apply_replace_ops, unified_di
 from ..core.exceptions import CSTModulePatchError
 
 logger = logging.getLogger(__name__)
+
+
+def _write_replace_result_atomically(
+    command: Any,
+    root_path: Path,
+    target: Path,
+    new_source: str,
+    project_id: str,
+) -> Tuple[Optional[str], Optional[ErrorResult]]:
+    """
+    Write replace result with atomic filesystem swap and rollback on DB failure.
+
+    Returns:
+        (backup_uuid, None) on success
+        (backup_uuid_or_none, ErrorResult) on failure
+    """
+    backup_manager = BackupManager(root_path)
+    backup_uuid = backup_manager.create_backup(
+        target,
+        command="query_cst_replace",
+        comment="",
+    )
+    if not backup_uuid:
+        return None, ErrorResult(
+            message="Backup to old_code is mandatory before write; create_backup failed",
+            code="CST_QUERY_BACKUP_FAILED",
+            details={"file_path": str(target)},
+        )
+
+    try:
+        compile(new_source, str(target), "exec")
+    except Exception as e:
+        return backup_uuid, ErrorResult(
+            message=f"Replacement code is not valid Python: {e}",
+            code="CST_QUERY_INVALID_REPLACEMENT_CODE",
+            details={"file_path": str(target), "backup_uuid": backup_uuid},
+        )
+
+    tmp_path = Path(str(target) + ".tmp")
+    db_error: Optional[str] = None
+    database = None
+    try:
+        tmp_path.write_text(new_source, encoding="utf-8")
+        os.replace(str(tmp_path), str(target))
+
+        saved_source = target.read_text(encoding="utf-8")
+        if saved_source != new_source:
+            raise RuntimeError("Post-write verification failed: file content mismatch")
+
+        database = command._open_database_from_config(auto_analyze=False)
+        abs_path = str(target.resolve())
+        update_result = database.index_file(
+            file_path=abs_path,
+            project_id=project_id,
+        )
+        if not (isinstance(update_result, dict) and update_result.get("success")):
+            db_error = (
+                update_result.get("error")
+                if isinstance(update_result, dict)
+                else "index_file returned non-dict result"
+            )
+            raise RuntimeError(f"Database index failed: {db_error}")
+        return backup_uuid, None
+    except Exception as e:
+        if db_error is None:
+            db_error = str(e)
+        try:
+            rel_path = str(target.relative_to(root_path))
+        except ValueError:
+            rel_path = str(target)
+        restore_success, restore_message = backup_manager.restore_file(rel_path, backup_uuid)
+        if not restore_success:
+            return backup_uuid, ErrorResult(
+                message=(
+                    "query_cst replace failed and rollback failed: "
+                    f"{e}; restore error: {restore_message}"
+                ),
+                code="CST_QUERY_ROLLBACK_FAILED",
+                details={
+                    "file_path": str(target),
+                    "backup_uuid": backup_uuid,
+                    "db_error": db_error,
+                },
+            )
+        return backup_uuid, ErrorResult(
+            message=f"query_cst replace failed; file rolled back from backup: {e}",
+            code="CST_QUERY_ERROR",
+            details={
+                "file_path": str(target),
+                "backup_uuid": backup_uuid,
+                "db_error": db_error,
+            },
+        )
+    finally:
+        if tmp_path.exists():
+            try:
+                tmp_path.unlink(missing_ok=True)
+            except Exception:
+                logger.warning("Failed to delete temporary file: %s", tmp_path)
+        if database is not None:
+            database.disconnect()
 
 
 def resolve_target_file(
@@ -279,27 +381,15 @@ def run_replace_flow(
         )
         return SuccessResult(data=replace_data)
 
-    backup_manager = BackupManager(root_path)
-    backup_uuid = backup_manager.create_backup(
-        target,
-        command="query_cst_replace",
-        comment="",
+    backup_uuid, write_error = _write_replace_result_atomically(
+        command=command,
+        root_path=root_path,
+        target=target,
+        new_source=new_source,
+        project_id=project_id,
     )
-    target.write_text(new_source, encoding="utf-8")
-    abs_path = str(target.resolve())
-    database = command._open_database_from_config(auto_analyze=False)
-    try:
-        update_result = database.index_file(
-            file_path=abs_path,
-            project_id=project_id,
-        )
-        if not update_result.get("success"):
-            logger.warning(
-                "query_cst replace: update_file_data failed: %s",
-                update_result.get("error"),
-            )
-    finally:
-        database.disconnect()
+    if write_error is not None:
+        return write_error
     logger.info(
         "[TIMING] command=query_cst total_elapsed_sec=%.4f",
         time.perf_counter() - t_start,

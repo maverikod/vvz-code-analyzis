@@ -1,0 +1,315 @@
+# PostgreSQL retry contract: integration-style checks (optional live DSN + fakes).
+#
+# ErrorResult uses ``details`` for structured fields (``wire_result.ErrorResult``),
+# not a ``data`` field on errors.
+
+from __future__ import annotations
+
+import logging
+import os
+import re
+from typing import Any, Optional
+from unittest.mock import MagicMock, patch
+
+import pytest
+
+from code_analysis.core.database_client.protocol import (
+    ErrorCode,
+    ErrorResult,
+    SuccessResult,
+)
+from code_analysis.core.database_driver_pkg.drivers import postgres as postgres_mod
+from code_analysis.core.database_driver_pkg.drivers.postgres import PostgreSQLDriver
+from code_analysis.core.database_driver_pkg.drivers.postgres_run import (
+    _raise_classified,
+    classify_postgres_error,
+)
+from code_analysis.core.database_driver_pkg.exceptions import TransientDatabaseError
+from code_analysis.core.database_driver_pkg.rpc_handlers import RPCHandlers
+from code_analysis.core.retry_policy import RetryPolicy
+
+_PG_ENV = "CODE_ANALYSIS_POSTGRES_TEST_DSN"
+# Shared skip reason: must stay explicit (used by skipif and documented by test 1).
+_PG_SKIP_REASON = (
+    f"PostgreSQL integration: {_PG_ENV} is not set or empty; "
+    "set it to a test database DSN to run live-DSN contract checks"
+)
+
+_LOG_RPC = "code_analysis.core.database_driver_pkg.rpc_handlers_schema"
+SqlBatch = list[tuple[str, Optional[tuple[Any, ...]]]]
+
+
+def _pg_dsn() -> str:
+    return (os.environ.get(_PG_ENV) or "").strip()
+
+
+def _batches_one() -> list[SqlBatch]:
+    return [
+        [("INSERT INTO t VALUES (?)", (1,))],
+    ]
+
+
+def _batches_two() -> list[SqlBatch]:
+    return [
+        [("INSERT INTO a VALUES (?)", (1,))],
+        [("INSERT INTO b VALUES (?)", (2,))],
+    ]
+
+
+class FakeLogicalWriteDriver:
+    """Simulates execute_batch / commit for logical-write RPC path."""
+
+    def __init__(self, policy: RetryPolicy | None = None) -> None:
+        self._write_retry_policy = policy
+        self.calls: list[tuple[str, ...]] = []
+        self._session = 0
+        self._batch_in_session = 0
+        self.fail_transient_on_batch2_session1: bool = False
+        self.fail_transient_on_batch1_every_attempt: bool = False
+        self.commit_outcome_unknown_once: bool = False
+        self._transient_raised: bool = False
+        self._rows = [{"affected_rows": 1, "lastrowid": None, "data": None}]
+
+    def begin_transaction(self) -> str:
+        self._session += 1
+        self._batch_in_session = 0
+        tid = f"tid{self._session}"
+        self.calls.append(("begin_transaction", tid))
+        return tid
+
+    def execute(
+        self, sql: str, params: Any, transaction_id: Optional[str]
+    ) -> dict[str, Any]:
+        self.calls.append(("execute", sql, transaction_id))
+        return {"affected_rows": 0, "lastrowid": None, "data": None}
+
+    def execute_batch(
+        self,
+        operations: list[tuple[str, Optional[tuple]]],
+        transaction_id: Optional[str],
+    ) -> list[dict[str, Any]]:
+        self._batch_in_session += 1
+        n = len(operations)
+        self.calls.append(("execute_batch", transaction_id, self._batch_in_session, n))
+        if self.fail_transient_on_batch1_every_attempt:
+            self._transient_raised = True
+            raise TransientDatabaseError(
+                "transient",
+                sqlstate="40P01",
+                error_kind="deadlock",
+                retryable=True,
+            )
+        if (
+            self.fail_transient_on_batch2_session1
+            and self._session == 1
+            and self._batch_in_session == 2
+        ):
+            self._transient_raised = True
+            raise TransientDatabaseError(
+                "deadlock on batch2",
+                sqlstate="40P01",
+                error_kind="deadlock",
+                retryable=True,
+            )
+        return list(self._rows) * n if n else []
+
+    def commit_transaction(self, transaction_id: str) -> bool:
+        self.calls.append(("commit_transaction", transaction_id))
+        if self.commit_outcome_unknown_once and self._session == 1:
+            raise TransientDatabaseError(
+                "commit unknown",
+                sqlstate="08006",
+                error_kind="connection_failure",
+                retryable=False,
+                commit_outcome_unknown=True,
+            )
+        return True
+
+    def rollback_transaction(self, transaction_id: str) -> bool:
+        self.calls.append(("rollback_transaction", transaction_id))
+        return True
+
+    def acquire_project_lock(self, *args: Any, **kwargs: Any) -> None:
+        self.calls.append(("acquire_project_lock",))
+        raise AssertionError("project activity lock must not be used in this test")
+
+
+def _run_logical_write(
+    driver: FakeLogicalWriteDriver,
+    batches: list[SqlBatch],
+    **extra: Any,
+) -> SuccessResult | ErrorResult:
+    params: dict[str, Any] = {
+        "batches": [
+            [
+                {"sql": sql, "params": list(p) if p is not None else None}
+                for sql, p in batch
+            ]
+            for batch in batches
+        ]
+    }
+    params.update(extra)
+    h = RPCHandlers(driver)  # type: ignore[arg-type]
+    return h.handle_execute_logical_write_operation(params)
+
+
+def _pg_driver() -> PostgreSQLDriver:
+    d = PostgreSQLDriver()
+    d._retry_policy = RetryPolicy(
+        attempts=3,
+        delay_seconds=0.0,
+        backoff_multiplier=1.0,
+        jitter_seconds=0.0,
+    )
+    d._schema_tables = {}
+    d._query_journal = None
+    d.conn = MagicMock()
+    d.conn.rollback = MagicMock()
+    return d
+
+
+def test_postgres_config_missing_skips_with_explicit_reason() -> None:
+    """Skip reason is explicit; mandatory Step 20 unit tests are unaffected by this file."""
+    assert _PG_ENV in _PG_SKIP_REASON
+    assert "DSN" in _PG_SKIP_REASON or "dsn" in _PG_SKIP_REASON
+    assert len(_PG_SKIP_REASON) > 40
+
+
+@pytest.mark.skipif(
+    not _pg_dsn(),
+    reason=_PG_SKIP_REASON,
+)
+def test_postgres_sqlstate_survives_to_transient_error() -> None:
+    import psycopg
+    from psycopg import errors
+
+    dsn = _pg_dsn()
+    with psycopg.connect(dsn) as conn:
+        conn.execute("SELECT 1")
+
+    exc = errors.DeadlockDetected("deadlock")
+    with pytest.raises(TransientDatabaseError) as raised:
+        _raise_classified(exc, for_commit=False, message_prefix="x: ")
+    t = raised.value
+    assert t.sqlstate == "40P01"
+    assert t.error_kind == "deadlock"
+    assert t.retryable is True
+    assert t.commit_outcome_unknown is False
+
+
+@patch("code_analysis.core.database_driver_pkg.rpc_handlers_schema.time.sleep")
+def test_postgres_rpc_error_result_has_structured_details(
+    _sleep: Any,
+) -> None:
+    d = FakeLogicalWriteDriver(
+        policy=RetryPolicy(attempts=1, delay_seconds=0.0, jitter_seconds=0.0)
+    )
+    d.fail_transient_on_batch1_every_attempt = True
+    with patch(
+        "code_analysis.core.database_driver_pkg.rpc_handlers_schema._rpc_backend_name",
+        return_value="postgres",
+    ):
+        r = _run_logical_write(d, _batches_one())
+    assert isinstance(r, ErrorResult)
+    assert r.details is not None
+    for key in (
+        "sqlstate",
+        "error_kind",
+        "retryable",
+        "attempts",
+        "commit_outcome_unknown",
+    ):
+        assert key in r.details, f"missing {key} in ErrorResult.details: {r.details!r}"
+
+
+@patch("code_analysis.core.database_driver_pkg.rpc_handlers_schema.time.sleep")
+def test_postgres_retry_log_has_required_fields(
+    _sleep: Any, caplog: pytest.LogCaptureFixture
+) -> None:
+    caplog.set_level(logging.INFO, logger=_LOG_RPC)
+    d = FakeLogicalWriteDriver(
+        policy=RetryPolicy(attempts=2, delay_seconds=0.0, jitter_seconds=0.0)
+    )
+    d.fail_transient_on_batch2_session1 = True
+    b = _batches_two()
+    with patch(
+        "code_analysis.core.database_driver_pkg.rpc_handlers_schema._rpc_backend_name",
+        return_value="postgres",
+    ):
+        r = _run_logical_write(d, b)
+    assert isinstance(r, SuccessResult)
+    found = [r for r in caplog.records if "[DB_RETRY]" in r.getMessage()]
+    assert found, "expected [DB_RETRY] log line on first transient before retry"
+    text = found[0].getMessage()
+    assert "backend=postgres" in text
+    assert "layer=rpc" in text
+    assert "operation=execute_logical_write_operation" in text
+    assert re.search(r"attempt=\d+/\d+", text)
+    assert "sqlstate=40P01" in text
+    assert "error_kind=deadlock" in text
+
+
+def test_postgres_timeout_57014_policy() -> None:
+    def _exc_57014(msg: str) -> Exception:
+        e = Exception(msg)
+        e.sqlstate = "57014"  # type: ignore[attr-defined]
+        return e
+
+    t_out = _exc_57014("canceling statement due to statement timeout")
+    info_to = classify_postgres_error(t_out)
+    assert info_to.sqlstate == "57014"
+    assert info_to.retryable is True
+
+    ext_cancel = _exc_57014("canceling statement due to user request")
+    info_c = classify_postgres_error(ext_cancel)
+    assert info_c.sqlstate == "57014"
+    assert info_c.retryable is False
+
+
+@patch.object(postgres_mod.time, "sleep", autospec=True)
+def test_postgres_external_transaction_not_retried_by_driver(
+    _sleep: MagicMock,
+) -> None:
+    d = _pg_driver()
+    d._transaction_manager = MagicMock()
+    ext = MagicMock()
+    d._transaction_manager._transactions = {"ext-tx": ext}
+    n = 0
+
+    def side(*a: object, **k: object) -> dict:
+        nonlocal n
+        n += 1
+        raise TransientDatabaseError(
+            "deadlock",
+            sqlstate="40P01",
+            error_kind="deadlock",
+        )
+
+    with patch.object(postgres_mod, "run_execute", side_effect=side):
+        with pytest.raises(TransientDatabaseError):
+            d.execute("SELECT 1", transaction_id="ext-tx")
+    assert n == 1
+    d.conn.rollback.assert_not_called()
+
+
+@patch("code_analysis.core.database_driver_pkg.rpc_handlers_schema.time.sleep")
+def test_postgres_commit_outcome_unknown_not_retried(
+    _sleep: Any,
+) -> None:
+    d = FakeLogicalWriteDriver(
+        policy=RetryPolicy(attempts=3, delay_seconds=0.0, jitter_seconds=0.0)
+    )
+    d.commit_outcome_unknown_once = True
+    b = _batches_one()
+    with patch(
+        "code_analysis.core.database_driver_pkg.rpc_handlers_schema._rpc_backend_name",
+        return_value="postgres",
+    ):
+        r = _run_logical_write(d, b)
+    assert isinstance(r, ErrorResult)
+    assert r.error_code == ErrorCode.DATABASE_ERROR
+    assert r.details is not None
+    assert r.details.get("commit_outcome_unknown") is True
+    assert r.details.get("retryable") is False
+    begins = [c for c in d.calls if c[0] == "begin_transaction"]
+    assert len(begins) == 1

@@ -16,9 +16,7 @@ from .schema_definition_tables_mid import get_tables_mid
 from .schema_definition_tables_rest import get_tables_rest
 
 # Schema version constant
-SCHEMA_VERSION = (
-    "1.5.0"  # file_tree_snapshots, file_tree_snapshot_roots, file_tree_snapshot_nodes
-)
+SCHEMA_VERSION = "1.6.0"  # project_activity_locks (worker lease; Steps 11–12)
 
 # Migration methods registry: version -> migration function
 # Each migration function receives driver instance and performs version-specific migrations

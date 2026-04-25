@@ -9,12 +9,139 @@ from __future__ import annotations
 
 import logging
 import sqlite3
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from typing import Any, Dict, List, NoReturn, Optional, Sequence, Tuple
 
-from ..exceptions import DriverOperationError
+from ..exceptions import DatabaseErrorInfo, DriverOperationError, TransientDatabaseError
 from .sqlite_batch import expand_operations, group_for_executemany, split_batch_sql
 
 logger = logging.getLogger(__name__)
+
+
+def classify_sqlite_error(
+    exc: BaseException, *, for_commit: bool = False
+) -> DatabaseErrorInfo:
+    """Classify SQLite exceptions: no PostgreSQL SQLSTATE; uses error_kind only."""
+    message = str(exc) if str(exc) else type(exc).__name__
+    message_lower = message.lower()
+
+    if isinstance(exc, sqlite3.IntegrityError):
+        return DatabaseErrorInfo(
+            sqlstate=None,
+            error_kind="sqlite_integrity",
+            retryable=False,
+            message=message,
+            commit_outcome_unknown=False,
+        )
+
+    if isinstance(exc, sqlite3.ProgrammingError):
+        return DatabaseErrorInfo(
+            sqlstate=None,
+            error_kind="sqlite_programming",
+            retryable=False,
+            message=message,
+            commit_outcome_unknown=False,
+        )
+
+    if isinstance(exc, sqlite3.OperationalError):
+        code = getattr(exc, "sqlite_errorcode", None)
+        if for_commit:
+            if any(
+                part in message_lower
+                for part in (
+                    "disk i/o",
+                    "i/o error",
+                    "database or disk is full",
+                    "unable to open database",
+                )
+            ):
+                return DatabaseErrorInfo(
+                    sqlstate=None,
+                    error_kind="sqlite_commit",
+                    retryable=False,
+                    message=message,
+                    commit_outcome_unknown=True,
+                )
+            if (
+                code in (sqlite3.SQLITE_BUSY, sqlite3.SQLITE_LOCKED)
+                or "database is busy" in message_lower
+                or "database is locked" in message_lower
+            ):
+                kind = (
+                    "sqlite_busy"
+                    if (
+                        code == sqlite3.SQLITE_BUSY
+                        or "database is busy" in message_lower
+                    )
+                    else "sqlite_locked"
+                )
+                return DatabaseErrorInfo(
+                    sqlstate=None,
+                    error_kind=kind,
+                    retryable=False,
+                    message=message,
+                    commit_outcome_unknown=True,
+                )
+        if code == sqlite3.SQLITE_BUSY or "database is busy" in message_lower:
+            return DatabaseErrorInfo(
+                sqlstate=None,
+                error_kind="sqlite_busy",
+                retryable=True,
+                message=message,
+                commit_outcome_unknown=False,
+            )
+        if (
+            code == sqlite3.SQLITE_LOCKED
+            or "database is locked" in message_lower
+        ):
+            return DatabaseErrorInfo(
+                sqlstate=None,
+                error_kind="sqlite_locked",
+                retryable=True,
+                message=message,
+                commit_outcome_unknown=False,
+            )
+        if "syntax error" in message_lower or "incomplete input" in message_lower:
+            return DatabaseErrorInfo(
+                sqlstate=None,
+                error_kind="sqlite_syntax",
+                retryable=False,
+                message=message,
+                commit_outcome_unknown=False,
+            )
+        return DatabaseErrorInfo(
+            sqlstate=None,
+            error_kind="sqlite_operational",
+            retryable=False,
+            message=message,
+            commit_outcome_unknown=False,
+        )
+
+    return DatabaseErrorInfo(
+        sqlstate=None,
+        error_kind="non_sqlite",
+        retryable=False,
+        message=message,
+        commit_outcome_unknown=False,
+    )
+
+
+def _raise_classified_sqlite(
+    e: BaseException, *, for_commit: bool, message_prefix: str
+) -> NoReturn:
+    if isinstance(e, TransientDatabaseError):
+        raise e
+    if isinstance(e, DriverOperationError):
+        raise e
+    info = classify_sqlite_error(e, for_commit=for_commit)
+    raise TransientDatabaseError(
+        f"{message_prefix}{e}",
+        sqlstate=info.sqlstate,
+        error_kind=info.error_kind,
+        retryable=info.retryable,
+        original_error=e,
+        commit_outcome_unknown=info.commit_outcome_unknown,
+    ) from e
+
 
 _SQL_PREVIEW_MAX = 160
 _PARAMS_PREVIEW_ELEM = 4
@@ -139,9 +266,11 @@ def run_execute_batch(
                             many_rows=None,
                             err=ie,
                         )
-                        raise DriverOperationError(
-                            f"execute_batch failed: {ie}"
-                        ) from ie
+                        _raise_classified_sqlite(
+                            ie,
+                            for_commit=False,
+                            message_prefix="execute_batch failed: ",
+                        )
                     res: Dict[str, Any] = {
                         "affected_rows": cursor.rowcount,
                         "lastrowid": cursor.lastrowid,
@@ -220,9 +349,11 @@ def run_execute_batch(
                                 cursor.execute(f"RELEASE SAVEPOINT {sp_name}")
                             except Exception:
                                 pass
-                        raise DriverOperationError(
-                            f"execute_batch failed: {ie}"
-                        ) from ie
+                        _raise_classified_sqlite(
+                            ie,
+                            for_commit=False,
+                            message_prefix="execute_batch failed: ",
+                        )
                     if use_sp:
                         cursor.execute(f"RELEASE SAVEPOINT {sp_name}")
                     lastrowid = cursor.lastrowid
@@ -254,9 +385,11 @@ def run_execute_batch(
                         "Commit skipped (no active transaction): %s", commit_err
                     )
                 else:
-                    raise DriverOperationError(
-                        f"Failed to commit: {commit_err}"
-                    ) from commit_err
+                    _raise_classified_sqlite(
+                        commit_err,
+                        for_commit=True,
+                        message_prefix="Failed to commit: ",
+                    )
         return results
     except DriverOperationError:
         raise
@@ -266,7 +399,9 @@ def run_execute_batch(
                 conn.rollback()
             except Exception:
                 pass
-        raise DriverOperationError(f"execute_batch failed: {e}") from e
+        _raise_classified_sqlite(
+            e, for_commit=False, message_prefix="execute_batch failed: "
+        )
 
 
 def run_execute(
@@ -341,9 +476,11 @@ def run_execute(
                         "Commit skipped (no active transaction): %s", commit_err
                     )
                 else:
-                    raise DriverOperationError(
-                        f"Failed to commit: {commit_err}"
-                    ) from commit_err
+                    _raise_classified_sqlite(
+                        commit_err,
+                        for_commit=True,
+                        message_prefix="Failed to commit: ",
+                    )
         return last_result
     except DriverOperationError:
         raise
@@ -353,4 +490,6 @@ def run_execute(
                 conn.rollback()
             except Exception:
                 pass
-        raise DriverOperationError(f"Failed to execute SQL: {e}") from e
+        _raise_classified_sqlite(
+            e, for_commit=False, message_prefix="Failed to execute SQL: "
+        )

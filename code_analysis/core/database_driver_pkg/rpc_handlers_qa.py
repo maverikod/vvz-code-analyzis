@@ -6,7 +6,6 @@ Used for deterministic MCP/plan verification of ``[DB_RETRY]`` and related paths
 
 from __future__ import annotations
 
-import os
 from typing import Any, Dict
 
 from code_analysis.core.database_client.protocol import (
@@ -14,13 +13,9 @@ from code_analysis.core.database_client.protocol import (
     ErrorResult,
     SuccessResult,
 )
+from code_analysis.core.qa_mcp_hooks_policy import qa_mcp_hooks_enabled_for_driver_rpc
 
 from .exceptions import DriverOperationError
-
-
-def _qa_mcp_hooks_enabled() -> bool:
-    v = (os.environ.get("CODE_ANALYSIS_ENABLE_QA_MCP_HOOKS") or "").strip().lower()
-    return v in ("1", "true", "yes", "on")
 
 
 class _RPCHandlersQAMixin:
@@ -32,7 +27,7 @@ class _RPCHandlersQAMixin:
         self, params: Dict[str, Any]
     ) -> SuccessResult | ErrorResult:
         """Arm the driver to raise a synthetic transient on the next N self-managed writes."""
-        if not _qa_mcp_hooks_enabled():
+        if not qa_mcp_hooks_enabled_for_driver_rpc():
             return ErrorResult(
                 error_code=ErrorCode.PERMISSION_DENIED,
                 description=(

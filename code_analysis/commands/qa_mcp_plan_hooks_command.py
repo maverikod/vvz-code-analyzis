@@ -1,27 +1,22 @@
 """
 Deterministic MCP hooks for DB retry and project_activity_locks verification.
 
-Requires CODE_ANALYSIS_ENABLE_QA_MCP_HOOKS=1 in the server environment (same
-process tree as the database driver when using the default layout).
+Enabled when ``CODE_ANALYSIS_ENABLE_QA_MCP_HOOKS=1`` **or** root
+``enable_qa_mcp_hooks: true`` in ``config.json`` (main sets the env at startup).
 """
 
 from __future__ import annotations
 
-import os
 from typing import Any, Dict, Optional
 
 from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 
+from ..core.qa_mcp_hooks_policy import qa_mcp_hooks_enabled_for_mcp_commands
 from ..core.worker_project_activity import (
     release_project_activity,
     try_acquire_project_activity,
 )
 from .base_mcp_command import BaseMCPCommand
-
-
-def _qa_mcp_hooks_enabled() -> bool:
-    v = (os.environ.get("CODE_ANALYSIS_ENABLE_QA_MCP_HOOKS") or "").strip().lower()
-    return v in ("1", "true", "yes", "on")
 
 
 class QAMcpPlanHooksCommand(BaseMCPCommand):
@@ -31,7 +26,7 @@ class QAMcpPlanHooksCommand(BaseMCPCommand):
     version = "1.0.0"
     descr = (
         "QA: deterministic db-retry injection + project activity lock contention; "
-        "requires CODE_ANALYSIS_ENABLE_QA_MCP_HOOKS=1"
+        "enable via env CODE_ANALYSIS_ENABLE_QA_MCP_HOOKS=1 or config enable_qa_mcp_hooks"
     )
     category = "monitoring"
     author = "Vasiliy Zdanovskiy"
@@ -76,11 +71,11 @@ class QAMcpPlanHooksCommand(BaseMCPCommand):
         trigger_touch_project_row: bool = True,
         **kwargs: Any,
     ) -> SuccessResult | ErrorResult:
-        if not _qa_mcp_hooks_enabled():
+        if not qa_mcp_hooks_enabled_for_mcp_commands():
             return ErrorResult(
                 message=(
                     "QA MCP hooks disabled; set CODE_ANALYSIS_ENABLE_QA_MCP_HOOKS=1 "
-                    "for the code-analysis server process"
+                    "or enable_qa_mcp_hooks in config.json and restart the server"
                 ),
                 code="QA_MCP_HOOKS_DISABLED",
             )

@@ -208,7 +208,7 @@ Recorded **job_id** values for reproduction:
 
 ## MCP QA hooks & registered-project mirror (Steps 31–32 supplement)
 
-**Env:** `CODE_ANALYSIS_ENABLE_QA_MCP_HOOKS=1` on the **code-analysis server** (and driver process if split).
+**Env / config:** `CODE_ANALYSIS_ENABLE_QA_MCP_HOOKS=1` **or** top-level **`"enable_qa_mcp_hooks": true`** in `config.json` (server sets the env during `apply_global_config` before workers start). Перезапустите процесс сервера из корня репозитория после смены флага.
 
 | Mechanism | Purpose |
 |-----------|---------|

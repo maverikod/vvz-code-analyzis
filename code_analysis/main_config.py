@@ -8,6 +8,7 @@ email: vasilyvz@gmail.com
 from __future__ import annotations
 
 import json
+import os
 import sys
 from pathlib import Path
 from typing import Any, Tuple
@@ -137,3 +138,7 @@ def apply_global_config(
     cfg.config_data = app_config
     if hasattr(cfg, "feature_manager"):
         cfg.feature_manager.config_data = cfg.config_data
+
+    if app_config.get("enable_qa_mcp_hooks") is True:
+        if not (os.environ.get("CODE_ANALYSIS_ENABLE_QA_MCP_HOOKS") or "").strip():
+            os.environ["CODE_ANALYSIS_ENABLE_QA_MCP_HOOKS"] = "1"

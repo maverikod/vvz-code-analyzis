@@ -16,6 +16,14 @@ def validate_field_types_impl(
     config_data: Dict[str, Any], results: List[ValidationResult]
 ) -> None:
     """Validate types of all configuration fields."""
+    validate_field_type(
+        results,
+        "config",
+        "enable_qa_mcp_hooks",
+        config_data.get("enable_qa_mcp_hooks"),
+        bool,
+    )
+
     server = config_data.get("server", {})
     if server:
         validate_field_type(results, "server", "host", server.get("host"), str)

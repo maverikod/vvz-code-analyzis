@@ -44,7 +44,9 @@ def resolve_project_file_record(
     abs_keys, rel_keys = file_lookup_paths_for_project(file_path, project_root)
     rel_keys = [k.replace("\\", "/") for k in rel_keys if isinstance(k, str)]
 
-    where_deleted = "" if include_deleted else " AND COALESCE(f.deleted, 0) = 0"
+    # Keep rows where deleted is NULL/false and exclude only explicit true.
+    # This is backend-safe for PostgreSQL boolean columns.
+    where_deleted = "" if include_deleted else " AND f.deleted IS NOT TRUE"
     file_record: Optional[Dict[str, Any]] = None
 
     # 1) Exact matching against both absolute and project-relative columns.

@@ -7,8 +7,8 @@ from __future__ import annotations
 from importlib import metadata
 from typing import Any, Dict
 
-MIN_MCP_PROXY_ADAPTER_VERSION = "8.10.6"
-MIN_QUEUEMGR_VERSION = "1.0.17"
+MIN_MCP_PROXY_ADAPTER_VERSION = "8.10.7"
+MIN_QUEUEMGR_VERSION = "1.0.19"
 
 
 def _parse_version(version: str) -> tuple[int, ...]:
@@ -38,13 +38,11 @@ def collect_dependency_compatibility(queue_enabled: bool) -> Dict[str, Any]:
     adapter_version = _safe_dist_version("mcp-proxy-adapter")
     queuemgr_version = _safe_dist_version("queuemgr")
 
-    adapter_ok = (
-        adapter_version != "unknown"
-        and _version_gte(adapter_version, MIN_MCP_PROXY_ADAPTER_VERSION)
+    adapter_ok = adapter_version != "unknown" and _version_gte(
+        adapter_version, MIN_MCP_PROXY_ADAPTER_VERSION
     )
-    queuemgr_ok = (
-        queuemgr_version != "unknown"
-        and _version_gte(queuemgr_version, MIN_QUEUEMGR_VERSION)
+    queuemgr_ok = queuemgr_version != "unknown" and _version_gte(
+        queuemgr_version, MIN_QUEUEMGR_VERSION
     )
 
     errors: list[str] = []

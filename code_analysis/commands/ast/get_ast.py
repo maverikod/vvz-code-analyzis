@@ -9,6 +9,7 @@ from typing import Any, Dict
 
 from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 
+from .file_resolution import resolve_project_file_record
 from ..base_mcp_command import BaseMCPCommand
 
 
@@ -54,60 +55,26 @@ class GetASTMCPCommand(BaseMCPCommand):
         **kwargs,
     ) -> SuccessResult:
         try:
-            from pathlib import Path
-
             root_path = self._resolve_project_root(project_id)
             db = self._open_database_from_config(auto_analyze=False)
-
-            file_path_obj = Path(file_path)
-            if file_path_obj.is_absolute():
-                try:
-                    normalized_path = file_path_obj.relative_to(root_path)
-                    file_path = str(normalized_path)
-                except ValueError:
-                    pass
-            else:
-                file_path = str(file_path_obj)
-
-            file_record = None
-            file_record = db.get_file_by_path(file_path, project_id)
-
-            # Try 2: if not found, try with versioned path pattern
-            if not file_record:
-                # Files in DB may be stored with versioned paths like:
-                # data/versions/{uuid}/code_analysis/main.py
-                # Try searching by path ending
-                # Search for files where path ends with the requested path
-                result = db.execute(
-                    "SELECT * FROM files WHERE project_id = ? AND path LIKE ?",
-                    (project_id, f"%{file_path}"),
-                )
-                data = result.get("data", [])
-                if data:
-                    file_record = data[0]
-
-            # Try 3: search by filename if path contains /
-            if not file_record and "/" in file_path:
-                filename = file_path.split("/")[-1]
-                result = db.execute(
-                    "SELECT * FROM files WHERE project_id = ? AND path LIKE ?",
-                    (project_id, f"%{filename}"),
-                )
-                rows = result.get("data", [])
-                # If multiple matches, prefer the one that matches the path structure
-                for row in rows:
-                    path_str = row["path"]
-                    if file_path in path_str or path_str.endswith(file_path):
-                        file_record = row
-                        break
-                # If still no match, use first result
-                if not file_record and rows:
-                    file_record = rows[0]
+            resolution = resolve_project_file_record(
+                db=db,
+                project_id=project_id,
+                project_root=root_path,
+                file_path=file_path,
+            )
+            file_record = resolution["file_record"]
+            normalized_file_path = resolution["normalized_file_path"]
 
             if not file_record:
                 db.disconnect()
+                if resolution["exists_on_disk"]:
+                    return ErrorResult(
+                        message=f"AST not indexed for file: {normalized_file_path}",
+                        code="AST_NOT_INDEXED",
+                    )
                 return ErrorResult(
-                    message=f"File not found: {file_path}",
+                    message=f"File not found: {normalized_file_path}",
                     code="FILE_NOT_FOUND",
                 )
 
@@ -126,7 +93,7 @@ class GetASTMCPCommand(BaseMCPCommand):
             if ast_data is not None:
                 result = {
                     "success": True,
-                    "file_path": file_path,
+                    "file_path": normalized_file_path,
                     "file_id": file_id,
                 }
                 if include_json:
@@ -138,8 +105,8 @@ class GetASTMCPCommand(BaseMCPCommand):
                         result["ast"] = ast_data
                 return SuccessResult(data=result)
             return ErrorResult(
-                message="AST not found for file",
-                code="AST_NOT_FOUND",
+                message=f"AST not indexed for file: {normalized_file_path}",
+                code="AST_NOT_INDEXED",
             )
         except Exception as e:
             return self._handle_error(e, "GET_AST_ERROR", "get_ast")

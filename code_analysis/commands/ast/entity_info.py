@@ -10,6 +10,7 @@ from typing import Any, Dict, List, Optional
 
 from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 
+from .file_resolution import resolve_project_file_record
 from ..base_mcp_command import BaseMCPCommand
 
 
@@ -77,6 +78,10 @@ class GetCodeEntityInfoMCPCommand(BaseMCPCommand):
                     "type": "integer",
                     "description": "Optional line number for disambiguation",
                 },
+                "target_class": {
+                    "type": "string",
+                    "description": "Optional class name filter for method lookup",
+                },
             },
             "required": ["project_id", "entity_type", "entity_name"],
             "additionalProperties": False,
@@ -89,10 +94,11 @@ class GetCodeEntityInfoMCPCommand(BaseMCPCommand):
         entity_name: str,
         file_path: Optional[str] = None,
         line: Optional[int] = None,
+        target_class: Optional[str] = None,
         **kwargs,
     ) -> SuccessResult:
         try:
-            _ = self._resolve_project_root(project_id)
+            root_path = self._resolve_project_root(project_id)
             db = self._open_database()
             proj_id = project_id
 
@@ -104,7 +110,13 @@ class GetCodeEntityInfoMCPCommand(BaseMCPCommand):
                 query = "SELECT c.*, f.path as file_path FROM classes c JOIN files f ON c.file_id = f.id WHERE c.name = ? AND f.project_id = ?"
                 params = [entity_name, proj_id]
                 if file_path:
-                    file_record = db.get_file_by_path(file_path, proj_id)
+                    resolution = resolve_project_file_record(
+                        db=db,
+                        project_id=proj_id,
+                        project_root=root_path,
+                        file_path=file_path,
+                    )
+                    file_record = resolution["file_record"]
                     if not file_record:
                         db.disconnect()
                         return ErrorResult(
@@ -120,7 +132,13 @@ class GetCodeEntityInfoMCPCommand(BaseMCPCommand):
                 query = "SELECT func.*, f.path as file_path FROM functions func JOIN files f ON func.file_id = f.id WHERE func.name = ? AND f.project_id = ?"
                 params = [entity_name, proj_id]
                 if file_path:
-                    file_record = db.get_file_by_path(file_path, proj_id)
+                    resolution = resolve_project_file_record(
+                        db=db,
+                        project_id=proj_id,
+                        project_root=root_path,
+                        file_path=file_path,
+                    )
+                    file_record = resolution["file_record"]
                     if not file_record:
                         db.disconnect()
                         return ErrorResult(
@@ -136,7 +154,13 @@ class GetCodeEntityInfoMCPCommand(BaseMCPCommand):
                 query = "SELECT m.*, c.name as class_name, f.path as file_path FROM methods m JOIN classes c ON m.class_id = c.id JOIN files f ON c.file_id = f.id WHERE m.name = ? AND f.project_id = ?"
                 params = [entity_name, proj_id]
                 if file_path:
-                    file_record = db.get_file_by_path(file_path, proj_id)
+                    resolution = resolve_project_file_record(
+                        db=db,
+                        project_id=proj_id,
+                        project_root=root_path,
+                        file_path=file_path,
+                    )
+                    file_record = resolution["file_record"]
                     if not file_record:
                         db.disconnect()
                         return ErrorResult(
@@ -145,6 +169,9 @@ class GetCodeEntityInfoMCPCommand(BaseMCPCommand):
                         )
                     query += " AND c.file_id = ?"
                     params.append(file_record["id"])
+                if target_class:
+                    query += " AND c.name = ?"
+                    params.append(target_class)
                 if line:
                     query += " AND m.line = ?"
                     params.append(line)

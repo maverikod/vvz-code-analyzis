@@ -68,9 +68,25 @@ class RestoreDeletedFilesCommand:
         }
 
         try:
+            project = self.database.get_project(self.project_id)
+            root_path = None
+            if project:
+                root_path = (
+                    project.get("root_path")
+                    if isinstance(project, dict)
+                    else getattr(project, "root_path", None)
+                )
+            project_root = Path(root_path).resolve() if root_path else None
+
             # Step 1: resolve each file_path to file record (id, original_path)
             resolved: List[Dict[str, Any]] = []
             for file_path in self.file_paths:
+                candidate = Path(file_path)
+                abs_file_path = (
+                    str((project_root / candidate).resolve())
+                    if project_root and not candidate.is_absolute()
+                    else str(candidate.resolve()) if candidate.is_absolute() else file_path
+                )
                 row_result = self.database.execute(
                     f"""
                     SELECT id, path, original_path
@@ -81,6 +97,19 @@ class RestoreDeletedFilesCommand:
                     """,
                     (self.project_id, file_path, file_path),
                 )
+                data = row_result.get("data", [])
+                row = data[0] if data else None
+                if not row and abs_file_path != file_path:
+                    row_result = self.database.execute(
+                        f"""
+                        SELECT id, path, original_path
+                        FROM files
+                        WHERE project_id = ? AND (path = ? OR original_path = ?) AND {WHERE_FILES_TRASHED}
+                        ORDER BY last_modified DESC
+                        LIMIT 1
+                        """,
+                        (self.project_id, abs_file_path, abs_file_path),
+                    )
                 data = row_result.get("data", [])
                 row = data[0] if data else None
                 if not row or not row.get("original_path"):

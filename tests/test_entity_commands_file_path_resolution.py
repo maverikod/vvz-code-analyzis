@@ -5,6 +5,7 @@ Author: Vasiliy Zdanovskiy
 email: vasilyvz@gmail.com
 """
 
+import uuid
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -46,17 +47,20 @@ async def test_list_code_entities_empty_when_file_not_in_project(
 ) -> None:
     """Unresolvable file_path returns empty entities, not project-wide rows."""
     mock_db = MagicMock()
-    mock_db.get_file_by_path.return_value = None
+    mock_db.execute.return_value = {"data": []}
     mock_db.disconnect.return_value = None
 
-    with patch.object(
-        BaseMCPCommand,
-        "_open_database_from_config",
-        return_value=mock_db,
-    ), patch.object(
-        BaseMCPCommand,
-        "_resolve_project_root",
-        return_value=tmp_path,
+    with (
+        patch.object(
+            BaseMCPCommand,
+            "_open_database_from_config",
+            return_value=mock_db,
+        ),
+        patch.object(
+            BaseMCPCommand,
+            "_resolve_project_root",
+            return_value=tmp_path,
+        ),
     ):
         cmd = ListCodeEntitiesMCPCommand()
         result = await cmd.execute(
@@ -66,25 +70,32 @@ async def test_list_code_entities_empty_when_file_not_in_project(
 
     assert result.data["entities"] == []
     assert result.data["count"] == 0
-    mock_db.get_file_by_path.assert_called_once_with("_fix_ssl_type.py", "p1")
+    assert mock_db.execute.call_count >= 1
 
 
 @pytest.mark.asyncio
 async def test_list_code_entities_filters_by_resolved_file_id(tmp_path: Path) -> None:
     """When file resolves, query is constrained to that file_id."""
     mock_db = MagicMock()
-    mock_db.get_file_by_path.return_value = {"id": 42}
-    mock_db.execute.return_value = {"data": []}
+    mock_db.execute.side_effect = [
+        {"data": [{"id": 42, "path": "/x/src/foo.py", "relative_path": "src/foo.py"}]},
+        {"data": []},
+        {"data": []},
+        {"data": []},
+    ]
     mock_db.disconnect.return_value = None
 
-    with patch.object(
-        BaseMCPCommand,
-        "_open_database_from_config",
-        return_value=mock_db,
-    ), patch.object(
-        BaseMCPCommand,
-        "_resolve_project_root",
-        return_value=tmp_path,
+    with (
+        patch.object(
+            BaseMCPCommand,
+            "_open_database_from_config",
+            return_value=mock_db,
+        ),
+        patch.object(
+            BaseMCPCommand,
+            "_resolve_project_root",
+            return_value=tmp_path,
+        ),
     ):
         cmd = ListCodeEntitiesMCPCommand()
         await cmd.execute(
@@ -93,7 +104,8 @@ async def test_list_code_entities_filters_by_resolved_file_id(tmp_path: Path) ->
         )
 
     calls = [c.args[0] for c in mock_db.execute.call_args_list]
-    for sql in calls:
+    filtered = [sql for sql in calls if "FROM files f WHERE f.project_id" not in sql]
+    for sql in filtered:
         assert (
             "file_id = ?" in sql or "func.file_id = ?" in sql or "c.file_id = ?" in sql
         )
@@ -105,17 +117,20 @@ async def test_get_code_entity_info_file_not_found_when_path_unresolved(
 ) -> None:
     """Explicit file_path with no DB row returns FILE_NOT_FOUND, not broad match."""
     mock_db = MagicMock()
-    mock_db.get_file_by_path.return_value = None
+    mock_db.execute.return_value = {"data": []}
     mock_db.disconnect.return_value = None
 
-    with patch.object(
-        BaseMCPCommand,
-        "_open_database_from_config",
-        return_value=mock_db,
-    ), patch.object(
-        BaseMCPCommand,
-        "_resolve_project_root",
-        return_value=tmp_path,
+    with (
+        patch.object(
+            BaseMCPCommand,
+            "_open_database_from_config",
+            return_value=mock_db,
+        ),
+        patch.object(
+            BaseMCPCommand,
+            "_resolve_project_root",
+            return_value=tmp_path,
+        ),
     ):
         cmd = GetCodeEntityInfoMCPCommand()
         result = await cmd.execute(
@@ -127,7 +142,7 @@ async def test_get_code_entity_info_file_not_found_when_path_unresolved(
 
     assert isinstance(result, ErrorResult)
     assert result.code == "FILE_NOT_FOUND"
-    mock_db.execute.assert_not_called()
+    assert mock_db.execute.call_count >= 1
 
 
 @pytest.mark.asyncio
@@ -135,18 +150,33 @@ async def test_get_code_entity_info_queries_with_file_id_when_resolved(
     tmp_path: Path,
 ) -> None:
     mock_db = MagicMock()
-    mock_db.get_file_by_path.return_value = {"id": 99}
-    mock_db.execute.return_value = {"data": []}
+    mock_db.execute.side_effect = [
+        {"data": [{"id": 99, "path": "/tmp/x/pkg/m.py", "relative_path": "pkg/m.py"}]},
+        {
+            "data": [
+                {
+                    "id": 1,
+                    "name": "Bar",
+                    "line": 7,
+                    "file_path": "pkg/m.py",
+                    "cst_node_id": str(uuid.uuid4()),
+                }
+            ]
+        },
+    ]
     mock_db.disconnect.return_value = None
 
-    with patch.object(
-        BaseMCPCommand,
-        "_open_database_from_config",
-        return_value=mock_db,
-    ), patch.object(
-        BaseMCPCommand,
-        "_resolve_project_root",
-        return_value=tmp_path,
+    with (
+        patch.object(
+            BaseMCPCommand,
+            "_open_database_from_config",
+            return_value=mock_db,
+        ),
+        patch.object(
+            BaseMCPCommand,
+            "_resolve_project_root",
+            return_value=tmp_path,
+        ),
     ):
         cmd = GetCodeEntityInfoMCPCommand()
         await cmd.execute(
@@ -156,6 +186,5 @@ async def test_get_code_entity_info_queries_with_file_id_when_resolved(
             file_path="pkg/m.py",
         )
 
-    mock_db.execute.assert_called_once()
-    sql = mock_db.execute.call_args[0][0]
+    sql = mock_db.execute.call_args_list[-1][0][0]
     assert "file_id = ?" in sql

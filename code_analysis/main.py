@@ -28,6 +28,7 @@ from code_analysis.main_daemon_logging import setup_daemon_logging
 from code_analysis.main_server_config import build_server_config
 from code_analysis.main_startup_info import print_startup_info
 from code_analysis.main_workers_run import run_workers_directly_and_start_monitoring
+from code_analysis.core.dependency_compat import assert_queue_dependencies_compatible
 
 from code_analysis import hooks  # noqa: F401
 from code_analysis.commands.base_mcp_command import (
@@ -88,6 +89,12 @@ def main() -> None:
     app_config, simple_config, server_host, server_port = (
         ensure_storage_and_load_app_config(config_path, full_config, args)
     )
+    queue_enabled = bool(
+        (full_config.get("queue_manager") or {}).get("enabled", True)
+        if isinstance(full_config, dict)
+        else True
+    )
+    assert_queue_dependencies_compatible(queue_enabled=queue_enabled)
     apply_global_config(config_path, simple_config, app_config)
 
     worker_manager = get_worker_manager()

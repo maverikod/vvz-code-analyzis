@@ -9,6 +9,7 @@ from typing import Any, Dict, Optional
 
 from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 
+from .file_resolution import resolve_project_file_record
 from ..base_mcp_command import BaseMCPCommand
 
 
@@ -37,7 +38,7 @@ class GetImportsMCPCommand(BaseMCPCommand):
                 "import_type": {
                     "type": "string",
                     "description": "Type of import: 'import' or 'import_from'",
-                    "enum": ["import", "import_from"],
+                    "enum": ["import", "import_from", "from"],
                 },
                 "module_name": {
                     "type": "string",
@@ -77,60 +78,30 @@ class GetImportsMCPCommand(BaseMCPCommand):
             params = [proj_id]
 
             if file_path:
-                from pathlib import Path
-
-                # Normalize file path
-                file_path_obj = Path(file_path)
-                if file_path_obj.is_absolute():
-                    try:
-                        normalized_path = file_path_obj.relative_to(root_path)
-                        file_path = str(normalized_path)
-                    except ValueError:
-                        pass
-                else:
-                    file_path = str(file_path_obj)
-
-                # Try multiple path formats
-                file_record = db.get_file_by_path(file_path, proj_id)
-
-                # Try versioned path pattern
-                if not file_record:
-                    result = db.execute(
-                        "SELECT * FROM files WHERE project_id = ? AND path LIKE ?",
-                        (proj_id, f"%{file_path}"),
-                    )
-                    data = result.get("data", [])
-                    if data:
-                        file_record = data[0]
-
-                # Try by filename
-                if not file_record and "/" in file_path:
-                    filename = file_path.split("/")[-1]
-                    result = db.execute(
-                        "SELECT * FROM files WHERE project_id = ? AND path LIKE ?",
-                        (proj_id, f"%{filename}"),
-                    )
-                    rows = result.get("data", [])
-                    for row in rows:
-                        path_str = row["path"]
-                        if file_path in path_str or path_str.endswith(file_path):
-                            file_record = row
-                            break
-                    if not file_record and rows:
-                        file_record = rows[0]
+                resolution = resolve_project_file_record(
+                    db=db,
+                    project_id=proj_id,
+                    project_root=root_path,
+                    file_path=file_path,
+                )
+                file_record = resolution["file_record"]
 
                 if not file_record:
                     db.disconnect()
                     return ErrorResult(
-                        message=f"File not found: {file_path}",
+                        message=f"File not found: {resolution['normalized_file_path']}",
                         code="FILE_NOT_FOUND",
                     )
                 query = "SELECT * FROM imports WHERE file_id = ?"
                 params = [file_record["id"]]
 
             if import_type:
-                query += " AND import_type = ?"
-                params.append(import_type)
+                if import_type in ("import_from", "from"):
+                    query += " AND import_type IN (?, ?)"
+                    params.extend(["import_from", "from"])
+                else:
+                    query += " AND import_type = ?"
+                    params.append(import_type)
 
             if module_name:
                 query += " AND module LIKE ?"

@@ -32,6 +32,7 @@ def register_commands_part2(reg: registry) -> None:
         from .commands.file_management_mcp_commands import (
             CleanupDeletedFilesMCPCommand,
             CollapseVersionsMCPCommand,
+            CreateTextFileMCPCommand,
             DeleteFileMCPCommand,
             DeleteFilesByMaskMCPCommand,
             ListDeletedFilesMCPCommand,
@@ -41,6 +42,7 @@ def register_commands_part2(reg: registry) -> None:
         )
 
         reg.register(CleanupDeletedFilesMCPCommand, "custom")
+        reg.register(CreateTextFileMCPCommand, "custom")
         reg.register(DeleteFileMCPCommand, "custom")
         reg.register(DeleteFilesByMaskMCPCommand, "custom")
         reg.register(ListDeletedFilesMCPCommand, "custom")

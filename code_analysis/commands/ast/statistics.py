@@ -10,6 +10,7 @@ from typing import Any, Dict, Optional
 from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 
 from ...core.sql_portable import WHERE_FILES_ACTIVE
+from .file_resolution import resolve_project_file_record
 from ..base_mcp_command import BaseMCPCommand
 
 
@@ -47,17 +48,28 @@ class ASTStatisticsMCPCommand(BaseMCPCommand):
         **kwargs,
     ) -> SuccessResult:
         try:
-            _ = self._resolve_project_root(project_id)
+            root_path = self._resolve_project_root(project_id)
             db = self._open_database()
             proj_id = project_id
 
             # Get AST statistics from database
             if file_path:
-                file_record = db.get_file_by_path(file_path, proj_id)
+                resolution = resolve_project_file_record(
+                    db=db,
+                    project_id=proj_id,
+                    project_root=root_path,
+                    file_path=file_path,
+                )
+                file_record = resolution["file_record"]
                 if not file_record:
                     db.disconnect()
+                    if resolution["exists_on_disk"]:
+                        return ErrorResult(
+                            message=f"AST not indexed for file: {resolution['normalized_file_path']}",
+                            code="AST_NOT_INDEXED",
+                        )
                     return ErrorResult(
-                        message=f"File not found: {file_path}",
+                        message=f"File not found: {resolution['normalized_file_path']}",
                         code="FILE_NOT_FOUND",
                     )
                 result = db.execute(
@@ -67,10 +79,15 @@ class ASTStatisticsMCPCommand(BaseMCPCommand):
                 data = result.get("data", [])
                 ast_count = data[0]["count"] if data else 0
                 db.disconnect()
+                if ast_count == 0:
+                    return ErrorResult(
+                        message=f"AST not indexed for file: {resolution['normalized_file_path']}",
+                        code="AST_NOT_INDEXED",
+                    )
                 return SuccessResult(
                     data={
                         "success": True,
-                        "file_path": file_path,
+                        "file_path": resolution["normalized_file_path"],
                         "ast_trees_count": ast_count,
                     }
                 )

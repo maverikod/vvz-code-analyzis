@@ -260,7 +260,25 @@ def unmark_file_deleted(
 
     from ...path_normalization import normalize_path_simple
 
-    abs_path = normalize_path_simple(file_path)
+    project_root = None
+    try:
+        db_project = self.get_project(project_id)
+        if db_project:
+            root_value = (
+                db_project.get("root_path")
+                if isinstance(db_project, dict)
+                else getattr(db_project, "root_path", None)
+            )
+            if root_value:
+                project_root = Path(str(root_value))
+    except Exception:
+        project_root = None
+
+    candidate = Path(file_path)
+    if project_root and not candidate.is_absolute():
+        abs_path = normalize_path_simple(project_root / candidate)
+    else:
+        abs_path = normalize_path_simple(file_path)
     row = self._fetchone(
         """
         SELECT id, path, original_path, version_dir 
@@ -272,6 +290,9 @@ def unmark_file_deleted(
         (project_id, abs_path, abs_path),
     )
     if not row:
+        if out_error is not None:
+            out_error["error_code"] = "FILE_NOT_FOUND"
+            out_error["message"] = f"File not found: {file_path}"
         return False
 
     file_id, current_path, original_path_str = (
@@ -281,6 +302,9 @@ def unmark_file_deleted(
     )
 
     if not original_path_str:
+        if out_error is not None:
+            out_error["error_code"] = "NO_ORIGINAL_PATH"
+            out_error["message"] = "File has no original_path, cannot restore"
         logger.warning(f"File {file_id} has no original_path, cannot restore")
         return False
 
@@ -300,6 +324,11 @@ def unmark_file_deleted(
     current_path_obj = Path(current_path)
 
     if not current_path_obj.exists():
+        if out_error is not None:
+            out_error["error_code"] = "TRASH_FILE_NOT_FOUND"
+            out_error["message"] = (
+                f"Trash file is missing at {current_path_obj}, cannot restore"
+            )
         logger.error(f"File not found at {current_path_obj}, cannot restore")
         return False
 

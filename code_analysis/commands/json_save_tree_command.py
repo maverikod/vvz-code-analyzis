@@ -69,6 +69,29 @@ class JsonSaveTreeCommand(BaseMCPCommand):
         BaseMCPCommand._validate_project_id_exists(params["project_id"])
         return params
 
+    @staticmethod
+    def _validate_relative_json_path(file_path: str) -> tuple[Path, str] | ErrorResult:
+        raw_path = (file_path or "").strip()
+        if not raw_path:
+            return ErrorResult(
+                code="INVALID_FILE_PATH",
+                message="file_path must be a non-empty relative path.",
+            )
+
+        rel_path = Path(raw_path)
+        if rel_path.is_absolute():
+            return ErrorResult(
+                code="INVALID_FILE_PATH",
+                message="Absolute file_path is not allowed. Use project-relative path.",
+            )
+        if any(part == ".." for part in rel_path.parts):
+            return ErrorResult(
+                code="INVALID_FILE_PATH",
+                message="Path traversal is not allowed in file_path.",
+            )
+
+        return rel_path, raw_path
+
     async def execute(
         self,
         tree_id: str,
@@ -84,9 +107,11 @@ class JsonSaveTreeCommand(BaseMCPCommand):
         try:
             database = self._open_database_from_config(auto_analyze=False)
             try:
-                absolute_path = self._resolve_file_path_from_project(
-                    database, project_id, file_path
-                )
+                validated_path = self._validate_relative_json_path(file_path)
+                if isinstance(validated_path, ErrorResult):
+                    return validated_path
+                rel_path, raw_path = validated_path
+
                 project = database.get_project(project_id)
                 if not project:
                     return ErrorResult(
@@ -94,13 +119,38 @@ class JsonSaveTreeCommand(BaseMCPCommand):
                         code="PROJECT_NOT_FOUND",
                         details={"project_id": project_id},
                     )
+                root_dir = Path(project.root_path).resolve()
+                absolute_path = (root_dir / rel_path).resolve()
+                try:
+                    absolute_path.relative_to(root_dir)
+                except ValueError:
+                    return ErrorResult(
+                        code="INVALID_FILE_PATH",
+                        message="Resolved path escapes project root.",
+                        details={
+                            "file_path": raw_path,
+                            "resolved_path": str(absolute_path),
+                            "root_dir": str(root_dir),
+                        },
+                    )
+                if not absolute_path.exists():
+                    return ErrorResult(
+                        message=f"File does not exist: {absolute_path}",
+                        code="FILE_NOT_FOUND",
+                        details={"file_path": str(absolute_path)},
+                    )
+                if not absolute_path.is_file():
+                    return ErrorResult(
+                        message=f"Path is not a file: {absolute_path}",
+                        code="INVALID_FILE",
+                        details={"file_path": str(absolute_path)},
+                    )
                 if absolute_path.suffix.lower() != ".json":
                     return ErrorResult(
                         message="json_save_tree only supports .json files",
                         code="INVALID_FILE",
                         details={"file_path": str(absolute_path)},
                     )
-                root_dir = Path(project.root_path)
 
                 blocked_venv = reject_if_write_under_project_venv(
                     absolute_path, root_dir
@@ -150,7 +200,7 @@ class JsonSaveTreeCommand(BaseMCPCommand):
             if not result.get("success"):
                 return ErrorResult(
                     message=result.get("error", "json_save_tree failed"),
-                    code="JSON_SAVE_ERROR",
+                    code=result.get("error_code", "JSON_SAVE_ERROR"),
                     details=result,
                 )
 

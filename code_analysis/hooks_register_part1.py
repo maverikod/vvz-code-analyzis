@@ -15,6 +15,17 @@ logger = logging.getLogger(__name__)
 def register_commands_part1(reg: registry) -> None:
     """Register CST, AST, analysis, search, and code_mapper commands."""
     try:
+        from .commands.health_command import HealthCommand
+        from .commands.queue_health_command import QueueHealthCommand
+        from .commands.qa_sleep_command import QASleepCommand
+
+        reg.register(HealthCommand, "custom")
+        reg.register(QueueHealthCommand, "custom")
+        reg.register(QASleepCommand, "custom")
+    except ImportError:
+        pass
+
+    try:
         from .commands.check_vectors_command import CheckVectorsCommand
 
         reg.register(CheckVectorsCommand, "custom")

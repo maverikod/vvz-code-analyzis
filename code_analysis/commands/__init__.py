@@ -10,3 +10,6 @@ from .project_management_mcp_commands import (  # noqa: F401
     ChangeProjectIdMCPCommand,
     ListProjectsMCPCommand,
 )
+from .file_management_mcp_commands import (  # noqa: F401
+    CreateTextFileMCPCommand,
+)

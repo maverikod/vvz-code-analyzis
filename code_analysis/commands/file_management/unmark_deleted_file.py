@@ -70,6 +70,24 @@ class UnmarkDeletedFileCommand:
         }
 
         try:
+            project = self.database.get_project(self.project_id)
+            root_path = None
+            if project:
+                root_path = (
+                    project.get("root_path")
+                    if isinstance(project, dict)
+                    else getattr(project, "root_path", None)
+                )
+            project_root = Path(root_path).resolve() if root_path else None
+            input_candidate = Path(self.file_path)
+            abs_file_path = (
+                str((project_root / input_candidate).resolve())
+                if project_root and not input_candidate.is_absolute()
+                else str(input_candidate.resolve())
+                if input_candidate.is_absolute()
+                else self.file_path
+            )
+
             # Get file info
             response = cast(
                 Dict[str, Any],
@@ -86,6 +104,22 @@ class UnmarkDeletedFileCommand:
             )
             data = response.get("data", [])
             row = data[0] if data else None
+            if not row and abs_file_path != self.file_path:
+                response = cast(
+                    Dict[str, Any],
+                    self.database.execute(
+                        """
+                        SELECT id, path, original_path, version_dir 
+                        FROM files 
+                        WHERE project_id = ? AND (path = ? OR original_path = ?)
+                        ORDER BY last_modified DESC
+                        LIMIT 1
+                        """,
+                        (self.project_id, abs_file_path, abs_file_path),
+                    ),
+                )
+                data = response.get("data", [])
+                row = data[0] if data else None
 
             if not row:
                 result["error"] = f"File not found: {self.file_path}"

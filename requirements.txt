@@ -10,7 +10,8 @@ svo-client>=3.0.0
 lark>=1.1.0
 libcst>=1.1.0
 embed-client>=3.1.7.24
-mcp-proxy-adapter>=8.10.4
+mcp-proxy-adapter>=8.10.6
+queuemgr>=1.0.17
 
 # PostgreSQL driver (основная СУБД в конфиге)
 psycopg[binary]>=3.1

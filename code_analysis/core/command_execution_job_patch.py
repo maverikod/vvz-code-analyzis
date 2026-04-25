@@ -26,7 +26,9 @@ logger = logging.getLogger(__name__)
 _patch_applied = False
 
 
-def _mcp_failure_message(payload: Dict[str, Any], cmd_result: Optional[Dict[str, Any]]) -> str:
+def _mcp_failure_message(
+    payload: Dict[str, Any], cmd_result: Optional[Dict[str, Any]]
+) -> str:
     for block in (cmd_result, payload):
         if not isinstance(block, dict):
             continue
@@ -36,6 +38,45 @@ def _mcp_failure_message(payload: Dict[str, Any], cmd_result: Optional[Dict[str,
         if block.get("message"):
             return str(block["message"])
     return "Command failed"
+
+
+def _extract_mcp_payload_from_state(state: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """
+    Extract MCP envelope from queue job state across queue-manager variants.
+
+    Known shapes:
+    - {"result": {"job_id": ..., "command": ..., "result": {...}, "status": ...}}
+    - {"mcp_result": {...}}
+    - direct envelope in state itself
+    """
+    direct_result = state.get("result")
+    if isinstance(direct_result, dict) and (
+        "command" in direct_result or "result" in direct_result
+    ):
+        return direct_result
+    mcp_result = state.get("mcp_result")
+    if isinstance(mcp_result, dict):
+        return mcp_result
+    if "command" in state or (
+        "result" in state and isinstance(state.get("result"), dict)
+    ):
+        return state
+    return None
+
+
+def _extract_command_result(payload: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """
+    Extract inner command result dict from MCP envelope.
+
+    In some adapters payload["result"] is the command result directly,
+    in others payload may itself be the command result.
+    """
+    inner = payload.get("result")
+    if isinstance(inner, dict):
+        return inner
+    if payload.get("success") is not None:
+        return payload
+    return None
 
 
 def reconcile_command_execution_job_status_after_mcp_result(job: Any) -> None:
@@ -55,24 +96,26 @@ def reconcile_command_execution_job_status_after_mcp_result(job: Any) -> None:
     try:
         state = job.get_status()
     except Exception:
-        logger.debug("reconcile: get_status failed for job %s", getattr(job, "job_id", "?"))
+        logger.debug(
+            "reconcile: get_status failed for job %s", getattr(job, "job_id", "?")
+        )
         return
     if not isinstance(state, dict):
         return
-    payload = state.get("result")
+    payload = _extract_mcp_payload_from_state(state)
     if not isinstance(payload, dict):
         return
 
-    cmd_result = payload.get("result")
+    cmd_result = _extract_command_result(payload)
     failed = False
     if payload.get("success") is False:
         failed = True
-    elif isinstance(cmd_result, dict) and cmd_result.get("success") is False:
+    elif cmd_result is not None and cmd_result.get("success") is False:
         failed = True
     if not failed:
         return
 
-    desc = _mcp_failure_message(payload, cmd_result if isinstance(cmd_result, dict) else None)
+    desc = _mcp_failure_message(payload, cmd_result)
     job_id = getattr(job, "job_id", "?")
     cmd_name = payload.get("command")
     detail = cmd_result if isinstance(cmd_result, dict) else payload

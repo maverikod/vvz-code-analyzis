@@ -182,6 +182,28 @@ def test_save_json_tree_to_file_atomic_mock_db(tmp_path: Path) -> None:
     ufab.assert_called_once()
 
 
+def test_save_json_tree_to_file_rejects_target_outside_root(tmp_path: Path) -> None:
+    root_dir = tmp_path / "proj"
+    root_dir.mkdir()
+    outside = tmp_path / "escape.json"
+
+    tree = build_tree_from_data(str(root_dir / "in.json"), {"a": 1}, register=True)
+    db = MagicMock()
+
+    result = save_json_tree_to_file(
+        tree_id=tree.tree_id,
+        file_path=str(outside),
+        root_dir=root_dir,
+        project_id="550e8400-e29b-41d4-a716-446655440000",
+        database=db,
+        backup=False,
+    )
+
+    assert result["success"] is False
+    assert result["error_code"] == "INVALID_FILE_PATH"
+    assert outside.exists() is False
+
+
 def test_key_path_normalization_matches_pointer() -> None:
     assert normalize_key_path("a.b.0") == "/a/b/0"
     assert normalize_key_path(["a", "b", 0]) == "/a/b/0"

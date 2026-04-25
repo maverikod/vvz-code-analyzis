@@ -10,6 +10,7 @@ from typing import Any, Dict, Optional
 
 from mcp_proxy_adapter.commands.result import SuccessResult
 
+from .file_resolution import resolve_project_file_record
 from ..base_mcp_command import BaseMCPCommand
 
 
@@ -74,9 +75,7 @@ class GetClassHierarchyMCPCommand(BaseMCPCommand):
             # Classes table has 'bases' field (JSON array of base class names)
             import json
 
-            # Build hierarchy map
             hierarchy = {}
-            all_classes = []
 
             # Get all classes for the project
             query = """
@@ -87,38 +86,26 @@ class GetClassHierarchyMCPCommand(BaseMCPCommand):
             """
             params = [proj_id]
 
-            if class_name:
-                query += " AND c.name = ?"
-                params.append(class_name)
-
             if file_path:
-                from pathlib import Path
-
-                file_path_obj = Path(file_path)
-                if file_path_obj.is_absolute():
-                    try:
-                        normalized_path = file_path_obj.relative_to(root_path)
-                        file_path = str(normalized_path)
-                    except ValueError:
-                        pass
-                else:
-                    file_path = str(file_path_obj)
-
-                # Try to find file
-                file_record = db.get_file_by_path(file_path, proj_id)
+                resolution = resolve_project_file_record(
+                    db=db,
+                    project_id=proj_id,
+                    project_root=root_path,
+                    file_path=file_path,
+                )
+                file_record = resolution["file_record"]
                 if not file_record:
-                    # Try versioned path
-                    result = db.execute(
-                        "SELECT id FROM files WHERE project_id = ? AND path LIKE ?",
-                        (proj_id, f"%{file_path}"),
+                    db.disconnect()
+                    return SuccessResult(
+                        data={
+                            "success": True,
+                            "class_name": class_name,
+                            "hierarchy": {},
+                            "count": 0,
+                        }
                     )
-                    data = result.get("data", [])
-                    if data:
-                        file_record = {"id": data[0]["id"]}
-
-                if file_record:
-                    query += " AND c.file_id = ?"
-                    params.append(file_record["id"])
+                query += " AND c.file_id = ?"
+                params.append(file_record["id"])
 
             result = db.execute(query, tuple(params))
             rows = result.get("data", [])
@@ -128,8 +115,7 @@ class GetClassHierarchyMCPCommand(BaseMCPCommand):
                 class_name_val = class_info["name"]
                 node_id = class_info.get("cst_node_id")
                 file_path_val = class_info.get("file_path")
-                # Contract: only include entities with file_path and valid UUID4 cst_node_id.
-                if not _is_valid_uuid4(node_id) or not file_path_val:
+                if not file_path_val:
                     continue
 
                 bases_str = class_info.get("bases")
@@ -152,10 +138,10 @@ class GetClassHierarchyMCPCommand(BaseMCPCommand):
                     "line": class_info.get("line"),
                     "bases": bases,
                     "children": [],
-                    "cst_node_id": node_id,
                 }
+                if _is_valid_uuid4(node_id):
+                    entity["cst_node_id"] = node_id
                 hierarchy[class_name_val] = entity
-                all_classes.append(class_info)
 
             # Build parent-child relationships
             for class_name_val, class_info in hierarchy.items():
@@ -169,7 +155,11 @@ class GetClassHierarchyMCPCommand(BaseMCPCommand):
 
             # Filter by class_name if specified
             if class_name:
-                result_hierarchy = hierarchy.get(class_name, {})
+                result_hierarchy = (
+                    {class_name: hierarchy[class_name]}
+                    if class_name in hierarchy
+                    else {}
+                )
             else:
                 result_hierarchy = hierarchy
 

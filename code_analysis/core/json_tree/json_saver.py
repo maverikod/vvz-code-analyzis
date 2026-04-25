@@ -52,6 +52,18 @@ def save_json_tree_to_file(
         target_path = (root_dir / target_path).resolve()
     else:
         target_path = target_path.resolve()
+    root_dir = root_dir.resolve()
+
+    try:
+        target_path.relative_to(root_dir)
+    except ValueError:
+        return {
+            "success": False,
+            "file_path": str(target_path),
+            "backup_uuid": None,
+            "error": "Resolved path escapes project root",
+            "error_code": "INVALID_FILE_PATH",
+        }
 
     if target_path.suffix.lower() != ".json":
         raise ValueError(f"Target must be .json: {target_path}")
@@ -198,6 +210,7 @@ def save_json_tree_to_file(
                 "file_path": str(target_path),
                 "backup_uuid": backup_uuid,
                 "error": str(e),
+                "error_code": "JSON_SAVE_ERROR",
             }
         finally:
             if temp_file is not None and temp_file.exists():

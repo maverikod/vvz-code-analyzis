@@ -78,3 +78,43 @@ def test_reconcile_noop_when_success(command_job: CommandExecutionJob) -> None:
         with patch.object(command_job, "set_mcp_result") as sm:
             reconcile_command_execution_job_status_after_mcp_result(command_job)
     sm.assert_not_called()
+
+
+def test_reconcile_handles_mcp_result_field_shape(
+    command_job: CommandExecutionJob,
+) -> None:
+    envelope = {
+        "job_id": command_job.job_id,
+        "command": "clear_trash",
+        "result": {
+            "success": False,
+            "error": {"code": -32000, "message": "CLEAR_TRASH_ERROR"},
+        },
+        "status": "completed",
+    }
+    with patch.object(command_job, "get_status", return_value={"mcp_result": envelope}):
+        with patch.object(command_job, "set_mcp_result") as sm:
+            with patch.object(command_job, "set_description"):
+                reconcile_command_execution_job_status_after_mcp_result(command_job)
+    sm.assert_called_once()
+    args, _kwargs = sm.call_args
+    assert args[1] == "failed"
+    assert args[0]["status"] == "failed"
+
+
+def test_reconcile_handles_direct_command_result_shape(
+    command_job: CommandExecutionJob,
+) -> None:
+    # Some adapters may store command result directly under state["result"].
+    state = {
+        "command": "clear_trash",
+        "result": {"success": False, "message": "CLEAR_TRASH_ERROR"},
+    }
+    with patch.object(command_job, "get_status", return_value=state):
+        with patch.object(command_job, "set_mcp_result") as sm:
+            with patch.object(command_job, "set_description"):
+                reconcile_command_execution_job_status_after_mcp_result(command_job)
+    sm.assert_called_once()
+    args, _kwargs = sm.call_args
+    assert args[1] == "failed"
+    assert args[0]["result"]["success"] is False

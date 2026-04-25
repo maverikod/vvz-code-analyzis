@@ -28,9 +28,7 @@ class _RPCHandlersFileTrashMixin:
     """Mixin for file trash RPC: mark_file_deleted, unmark_file_deleted, hard_delete_file, get_deleted_files."""
 
     def _get_code_db(self):
-        """Get CodeDatabase using existing driver connection (single connection in process)."""
-        if not hasattr(self.driver, "db_path") or not self.driver.db_path:
-            return None
+        """Get CodeDatabase using existing driver connection (backend-agnostic)."""
         from code_analysis.core.database import CodeDatabase
 
         return CodeDatabase.from_existing_driver(self.driver)
@@ -52,11 +50,6 @@ class _RPCHandlersFileTrashMixin:
                 description="mark_file_deleted requires file_path and project_id",
             )
         db = self._get_code_db()
-        if db is None:
-            return ErrorResult(
-                error_code=ErrorCode.INTERNAL_ERROR,
-                description="Driver has no db_path (file trash only supported for SQLite driver)",
-            )
         try:
             version_dir = params.get("version_dir")
             reason = params.get("reason")
@@ -93,11 +86,6 @@ class _RPCHandlersFileTrashMixin:
                 description="unmark_file_deleted requires file_path and project_id",
             )
         db = self._get_code_db()
-        if db is None:
-            return ErrorResult(
-                error_code=ErrorCode.INTERNAL_ERROR,
-                description="Driver has no db_path (file trash only supported for SQLite driver)",
-            )
         try:
             out_error: Dict[str, str] = {}
             ok = db.unmark_file_deleted(
@@ -140,11 +128,6 @@ class _RPCHandlersFileTrashMixin:
                 description="hard_delete_file file_id must be an integer",
             )
         db = self._get_code_db()
-        if db is None:
-            return ErrorResult(
-                error_code=ErrorCode.INTERNAL_ERROR,
-                description="Driver has no db_path (file trash only supported for SQLite driver)",
-            )
         try:
             db.hard_delete_file(file_id)
             return SuccessResult(data={"success": True})
@@ -171,11 +154,6 @@ class _RPCHandlersFileTrashMixin:
                 description="get_deleted_files requires project_id",
             )
         db = self._get_code_db()
-        if db is None:
-            return ErrorResult(
-                error_code=ErrorCode.INTERNAL_ERROR,
-                description="Driver has no db_path (file trash only supported for SQLite driver)",
-            )
         try:
             rows = db.get_deleted_files(project_id)
             # Convert rows to list of dicts (sqlite3.Row or similar)

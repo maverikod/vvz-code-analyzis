@@ -10,6 +10,7 @@ from typing import Any, Dict, List, Optional
 
 from mcp_proxy_adapter.commands.result import SuccessResult
 
+from .file_resolution import resolve_project_file_record
 from ..base_mcp_command import BaseMCPCommand
 
 
@@ -78,7 +79,7 @@ class ListCodeEntitiesMCPCommand(BaseMCPCommand):
         **kwargs,
     ) -> SuccessResult:
         try:
-            _ = self._resolve_project_root(project_id)
+            root_path = self._resolve_project_root(project_id)
             db = self._open_database()
             proj_id = project_id
 
@@ -87,7 +88,13 @@ class ListCodeEntitiesMCPCommand(BaseMCPCommand):
 
             resolved_file_id: Optional[int] = None
             if file_path:
-                file_record = db.get_file_by_path(file_path, proj_id)
+                resolution = resolve_project_file_record(
+                    db=db,
+                    project_id=proj_id,
+                    project_root=root_path,
+                    file_path=file_path,
+                )
+                file_record = resolution["file_record"]
                 if not file_record:
                     db.disconnect()
                     return SuccessResult(

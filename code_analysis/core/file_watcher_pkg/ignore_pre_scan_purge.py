@@ -23,12 +23,7 @@ from code_analysis.core.sql_portable import (
     database_has_sqlite_code_content_fts,
 )
 
-from .scanner import (
-    is_traversable_venv_root,
-    should_ignore_path,
-    should_prune_ignored_dir,
-    should_skip_dir,
-)
+from .scanner import should_ignore_path, should_prune_ignored_dir, should_skip_dir
 
 logger = logging.getLogger(__name__)
 
@@ -155,7 +150,7 @@ def list_non_ignored_code_files_under_root(
                 ignore_exception_files=ignore_exception_files,
                 ignore_exception_patterns=exception_patterns or None,
                 project_root=root,
-            ) and not is_traversable_venv_root(child):
+            ):
                 continue
             pruned_dirs.append(name)
         dirnames[:] = pruned_dirs

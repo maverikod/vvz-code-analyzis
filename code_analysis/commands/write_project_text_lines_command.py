@@ -32,6 +32,35 @@ from ..core.path_normalization import normalize_path_simple
 
 logger = logging.getLogger(__name__)
 
+PLAIN_TEXT_WRITE_SUFFIXES = frozenset(
+    {
+        ".adoc",
+        ".md",
+        ".rst",
+        ".txt",
+    }
+)
+
+
+def _reject_if_not_plain_text_path(file_path: str) -> ErrorResult | None:
+    """Return an error when a path is not an allowed plain-text file."""
+    suffix = Path(file_path).suffix.lower()
+    if suffix in PLAIN_TEXT_WRITE_SUFFIXES:
+        return None
+    return ErrorResult(
+        message=(
+            "write_project_text_lines supports only plain text files "
+            f"with suffixes: {', '.join(sorted(PLAIN_TEXT_WRITE_SUFFIXES))}. "
+            "Use JSON/YAML/Python-specific commands for structured or code files."
+        ),
+        code="TEXT_FILE_SUFFIX_NOT_ALLOWED",
+        details={
+            "file_path": file_path,
+            "suffix": suffix,
+            "allowed_suffixes": sorted(PLAIN_TEXT_WRITE_SUFFIXES),
+        },
+    )
+
 
 class WriteProjectTextLinesCommand(BaseMCPCommand):
     """Replace lines in non-code text files; Python and other source paths are rejected."""
@@ -232,6 +261,10 @@ class WriteProjectTextLinesCommand(BaseMCPCommand):
             blocked = reject_if_source_code_text_path(file_path)
             if blocked is not None:
                 return blocked
+            
+            plain_text_error = _reject_if_not_plain_text_path(file_path)
+            if plain_text_error is not None:
+                return plain_text_error
 
             if start_line < 1 or end_line < 1:
                 return ErrorResult(

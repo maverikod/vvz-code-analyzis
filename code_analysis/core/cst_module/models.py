@@ -21,10 +21,31 @@ class Selector:
     - function: match top-level FunctionDef by name
     - class: match top-level ClassDef by name
     - method: match class method FunctionDef by qualified name "ClassName.method"
-    - range: match statement by exact (start_line, end_line) anywhere in the module
+    - range: replace the module-level statement whose LibCST span equals
+      (start_line, end_line) (1-based, inclusive). Blank lines *above* that
+      statement are preserved (they are LibCST ``leading_lines`` on the same
+      node). With optional start_col/end_col, replacement matches that exact
+      span key instead.
     - block_id: match statement by stable id returned by list_cst_blocks
     - node_id: match statement/smallstmt by node_id returned by query_cst
     - cst_query: match statement/smallstmt by CSTQuery selector string
+
+    Selector fields are strict. Unsupported keys are ignored by the patcher
+    and can silently produce zero matches. Do not pass class_name for method
+    selectors. For methods, put the fully qualified name in name.
+
+    Valid examples:
+    - {"kind": "method", "name": "WriteProjectTextLinesCommand.execute"}
+    - {"kind": "function", "name": "update_file_data_atomic_batch"}
+    - {"kind": "class", "name": "WriteProjectTextLinesCommand"}
+    - {"kind": "range", "start_line": 10, "end_line": 20}
+    - {"kind": "node_id", "node_id": "<uuid-from-cst_load_file-or-query_cst>"}
+
+    Invalid common mistake:
+    - {"kind": "method", "class_name": "WriteProjectTextLinesCommand", "name": "execute"}
+
+    The invalid example does not match because class_name is not a Selector
+    field and method requires name="ClassName.method".
     """
 
     kind: str

@@ -13,6 +13,10 @@ from __future__ import annotations
 
 import libcst as cst
 
+from pathlib import Path
+
+from .project_text_file_guard import FORBIDDEN_PYTHON_SOURCE_SUFFIXES
+
 # Error message when file is healthy and line commands are disallowed
 LINE_CMD_DISALLOWED_MSG = (
     "This file parses successfully. Use CST commands instead: "
@@ -26,14 +30,20 @@ def healthy_parse_blocks_line_ops(
     *,
     allow_healthy_line_ops: bool,
     allow_line_commands_on_healthy_files: bool,
+    file_path: str = "",
 ) -> bool:
     """
     Return True if line-based read/write should refuse with USE_CST_COMMANDS.
 
     When False, the caller should proceed with line-range I/O (unhealthy parse
     or healthy parse explicitly allowed).
+
+    Only runs the CST parse check for Python source files (based on file extension).
+    Non-Python files are always allowed through without parsing.
     """
     if allow_healthy_line_ops or allow_line_commands_on_healthy_files:
+        return False
+    if file_path and Path(file_path).suffix.lower() not in FORBIDDEN_PYTHON_SOURCE_SUFFIXES:
         return False
     try:
         cst.parse_module(source_text)

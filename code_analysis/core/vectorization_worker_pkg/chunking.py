@@ -13,6 +13,7 @@ import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict, List
 
+from code_analysis.core.resolve_indexed_file_path import resolve_indexed_file_path
 from code_analysis.core.sql_portable import WHERE_FILES_ACTIVE, WHERE_FILES_ACTIVE_F
 
 if TYPE_CHECKING:
@@ -56,18 +57,19 @@ async def _request_chunking_for_files(
         file_start_time = time.time()
         try:
             file_id = file_record["id"]
-            file_path = file_record["path"]
             project_id = file_record["project_id"]
 
-            logger.info(f"[FILE {file_id}] Starting chunking for file {file_path}")
-
-            # Check if file exists on disk before attempting to read
-            file_path_obj = Path(file_path)
-            if not file_path_obj.exists():
-                logger.debug(
-                    f"[FILE {file_id}] Skipping missing file (may have been split/refactored): {file_path}"
+            file_path_obj = resolve_indexed_file_path(file_record)
+            if file_path_obj is None:
+                logger.info(
+                    "[FILE %s] Skipping chunking: no file on disk after resolving path "
+                    "from DB (watch_dir + project + relative_path / root_path / stored path)",
+                    file_id,
                 )
                 continue
+
+            file_path = str(file_path_obj)
+            logger.info(f"[FILE {file_id}] Starting chunking for file {file_path}")
 
             # Check that file and project still exist in DB and file is not marked deleted
             try:

@@ -12,6 +12,10 @@ import re
 from dataclasses import replace
 from typing import Any, Dict, List, NoReturn, Optional, Tuple
 
+from code_analysis.core.database.code_chunk_sql import (
+    code_chunk_upsert_norm_for_postgres_adapter,
+)
+
 from ..exceptions import (
     DatabaseErrorInfo,
     DriverOperationError,
@@ -154,6 +158,11 @@ _WATCH_DIR_PATHS_INSERT_OR_REPLACE_NULL_PATH_NORM = _norm_sql_one_line(
     "VALUES (?, NULL, (EXTRACT(JULIAN FROM CURRENT_TIMESTAMP)))"
 )
 
+# Portable ``code_chunks`` upsert: lookup norm from ``code_chunk_sql`` only
+# (single source). Adapted INSERT … ON CONFLICT below must stay column-aligned
+# with ``CODE_CHUNK_UPSERT_SQL`` / ``CODE_CHUNK_UPSERT_PARAM_ORDER`` in that module.
+_CODE_CHUNKS_INSERT_OR_REPLACE_NORM = code_chunk_upsert_norm_for_postgres_adapter()
+
 # SQLite schema often uses INTEGER 0/1 for these; PostgreSQL uses native BOOLEAN.
 _BOOL_COL_INT_ASSIGN = ("deleted", "has_docstring", "processing_paused")
 
@@ -226,6 +235,36 @@ def _adapt_sqlite_dml_for_postgres(sql: str) -> str:
             "VALUES (?, NULL, (EXTRACT(JULIAN FROM CURRENT_TIMESTAMP))) "
             "ON CONFLICT (watch_dir_id) DO UPDATE SET "
             "absolute_path = EXCLUDED.absolute_path, "
+            "updated_at = EXCLUDED.updated_at"
+        )
+    if norm == _CODE_CHUNKS_INSERT_OR_REPLACE_NORM:
+        return (
+            "INSERT INTO code_chunks "
+            "( file_id, project_id, chunk_uuid, chunk_type, chunk_text, "
+            "chunk_ordinal, vector_id, embedding_model, bm25_score, "
+            "embedding_vector, token_count, class_id, function_id, method_id, "
+            "line, ast_node_type, source_type, binding_level, "
+            "updated_at ) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, "
+            "(EXTRACT(JULIAN FROM CURRENT_TIMESTAMP))) "
+            "ON CONFLICT (chunk_uuid) DO UPDATE SET "
+            "file_id = EXCLUDED.file_id, "
+            "project_id = EXCLUDED.project_id, "
+            "chunk_type = EXCLUDED.chunk_type, "
+            "chunk_text = EXCLUDED.chunk_text, "
+            "chunk_ordinal = EXCLUDED.chunk_ordinal, "
+            "vector_id = EXCLUDED.vector_id, "
+            "embedding_model = EXCLUDED.embedding_model, "
+            "bm25_score = EXCLUDED.bm25_score, "
+            "embedding_vector = EXCLUDED.embedding_vector, "
+            "token_count = EXCLUDED.token_count, "
+            "class_id = EXCLUDED.class_id, "
+            "function_id = EXCLUDED.function_id, "
+            "method_id = EXCLUDED.method_id, "
+            "line = EXCLUDED.line, "
+            "ast_node_type = EXCLUDED.ast_node_type, "
+            "source_type = EXCLUDED.source_type, "
+            "binding_level = EXCLUDED.binding_level, "
             "updated_at = EXCLUDED.updated_at"
         )
     return s

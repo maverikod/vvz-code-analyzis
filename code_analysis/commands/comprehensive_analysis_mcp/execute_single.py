@@ -83,83 +83,40 @@ async def run_single_file(
                     f"File exists on disk at {abs_path}. This indicates data inconsistency."
                 )
             else:
-                result = db.execute(
+                # Diagnostic only: same absolute path may appear under another project
+                # (nested roots, relocation). Normal analysis must not mutate other rows.
+                diag_result = db.execute(
                     "SELECT id, project_id, deleted FROM files WHERE path = ? LIMIT 1",
                     (abs_path,),
                 )
-                data = result.get("data", [])
-                file_in_wrong_project = data[0] if data else None
-                if file_in_wrong_project:
-                    wrong_file_id = file_in_wrong_project["id"]
-                    wrong_project_id = file_in_wrong_project["project_id"]
-                    is_deleted = file_in_wrong_project.get("deleted", 0)
-                    analysis_logger.error(
-                        f"Data inconsistency detected: file exists on disk at {abs_path} "
-                        f"but is registered in project {wrong_project_id} (not {proj_id}). "
-                        f"File ID: {wrong_file_id}, deleted={is_deleted}. "
-                        f"Marking as deleted and clearing all related data."
-                    )
-                    try:
-                        db.clear_file_data(wrong_file_id)
-                        analysis_logger.info(
-                            f"Cleared all related data for file_id={wrong_file_id}"
+                diag_rows = diag_result.get("data", [])
+                other_row = diag_rows[0] if diag_rows else None
+                if other_row:
+                    other_pid = other_row.get("project_id")
+                    if str(other_pid) == str(proj_id):
+                        analysis_logger.warning(
+                            f"Database lookup inconsistency: path {abs_path} has row "
+                            f"file_id={other_row.get('id')} for project {proj_id} but "
+                            f"get_file_by_path returned no active row. deleted={other_row.get('deleted')}"
                         )
-                        db.execute(
-                            """
-                            UPDATE files 
-                            SET deleted = 1, updated_at = julianday('now')
-                            WHERE id = ?
-                            """,
-                            (wrong_file_id,),
+                    else:
+                        wrong_file_id = other_row["id"]
+                        wrong_project_id = other_row["project_id"]
+                        is_deleted = other_row.get("deleted", 0)
+                        analysis_logger.warning(
+                            f"Cross-project path overlap (diagnostic only): file on disk at {abs_path} "
+                            f"is indexed as file_id={wrong_file_id} in project {wrong_project_id} "
+                            f"(requested project {proj_id}), deleted={is_deleted}. "
+                            f"Not clearing or reassigning that row; analysis runs without a "
+                            f"file row for the requested project."
                         )
-                        analysis_logger.info(
-                            f"Marked file_id={wrong_file_id} as deleted in project {wrong_project_id}"
-                        )
-                        if file_path_obj.exists() and proj_id:
-                            try:
-                                try:
-                                    file_path_obj.relative_to(root_path)
-                                    text = file_path_obj.read_text(
-                                        encoding="utf-8", errors="ignore"
-                                    )
-                                    lines = text.count("\n") + (1 if text else 0)
-                                    stripped = text.lstrip()
-                                    has_docstring = stripped.startswith(
-                                        '"""'
-                                    ) or stripped.startswith("'''")
-                                    new_file_id = db.add_file(
-                                        path=abs_path,
-                                        lines=lines,
-                                        last_modified=file_mtime,
-                                        has_docstring=has_docstring,
-                                        project_id=proj_id,
-                                    )
-                                    file_id = new_file_id
-                                    file_project_id = proj_id
-                                    analysis_logger.info(
-                                        f"Added file to correct project {proj_id}: file_id={new_file_id}"
-                                    )
-                                except ValueError:
-                                    analysis_logger.info(
-                                        f"File {abs_path} is not within project root {root_path}, skipping addition to project {proj_id}"
-                                    )
-                            except Exception as e:
-                                logger.error(
-                                    f"Failed to add file to correct project: {e}",
-                                    exc_info=True,
-                                )
-                                analysis_logger.error(
-                                    f"Failed to add file to correct project: {e}",
-                                    exc_info=True,
-                                )
-                    except Exception as e:
-                        logger.error(
-                            f"Failed to clear data and mark file as deleted: {e}",
-                            exc_info=True,
-                        )
-                        analysis_logger.error(
-                            f"Failed to clear data and mark file as deleted: {e}",
-                            exc_info=True,
+                        logger.warning(
+                            "Cross-project path overlap in comprehensive_analysis single-file: "
+                            "abs_path=%s indexed_project=%s requested_project=%s file_id=%s",
+                            abs_path,
+                            wrong_project_id,
+                            proj_id,
+                            wrong_file_id,
                         )
                 else:
                     analysis_logger.info(
@@ -172,37 +129,19 @@ async def run_single_file(
 
     log_timing("single_file_db_lookup", t_single_start)
 
+    # Single-file comprehensive analysis always runs checks (no stale mtime-cache short
+    # circuit). Log when the DB gate would skip; callers still get fresh analyzer output.
     if file_id and file_project_id and hasattr(db, "should_analyze_file"):
         gate = db.should_analyze_file(file_id, file_mtime)
         if not gate["should_analyze"]:
-            cached = db.get_comprehensive_analysis_results(file_id, file_mtime)
-            if cached is None:
-                cached = db.get_comprehensive_analysis_results(file_id)
-            if cached:
-                db.disconnect()
-                if progress_tracker:
-                    progress_tracker.set_status("completed")
-                    progress_tracker.set_progress(100)
-                    progress_tracker.set_description("Analysis completed (cached)")
-                    progress_tracker.set_status("completed")
-                reason = gate.get("reason", "unknown")
-                analysis_logger.info(
-                    "Skipping %s: %s (db_mtime=%s, disk_mtime=%s)",
-                    rel_path,
-                    reason,
-                    gate.get("db_mtime"),
-                    gate.get("disk_mtime"),
-                )
-                cached_summary = cached["summary"].copy()
-                cached_summary["files_analyzed"] = 0
-                cached_summary["files_skipped"] = 1
-                cached_summary["files_total"] = 1
-                return SuccessResult(
-                    data={
-                        **cached["results"],
-                        "summary": cached_summary,
-                    }
-                )
+            analysis_logger.info(
+                "DB mtime gate would skip %s (%s); running single-file analyzers anyway "
+                "(db_mtime=%s, disk_mtime=%s)",
+                rel_path,
+                gate.get("reason", "unknown"),
+                gate.get("db_mtime"),
+                gate.get("disk_mtime"),
+            )
 
     logger.info(f"Analyzing single file: {rel_path}")
     analysis_logger.info(f"Starting analysis of single file: {rel_path}")

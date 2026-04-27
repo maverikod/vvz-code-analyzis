@@ -31,6 +31,8 @@ from .schema_definition import (
     get_schema_definition,
 )
 
+from .code_chunk_sql import build_code_chunk_upsert_batch
+
 logger = logging.getLogger(__name__)
 
 # Passed to database_driver_pkg execute/execute_batch so run_* skips per-statement commit
@@ -633,6 +635,23 @@ class CodeDatabase:
                 }
             )
         return results
+
+    def upsert_code_chunks_batch(
+        self,
+        param_rows: List[Tuple[Any, ...]],
+        transaction_id: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        """
+        Batch upsert ``code_chunks`` using portable SQL (same as RPC client's
+        :meth:`code_analysis.core.database_client.client_operations._ClientOperationsMixin.upsert_code_chunks_batch`).
+
+        Rows must match :mod:`code_analysis.core.database.code_chunk_sql`
+        ``CODE_CHUNK_UPSERT_PARAM_COUNT`` / ``CODE_CHUNK_UPSERT_PARAM_ORDER``.
+        """
+        return self.execute_batch(
+            build_code_chunk_upsert_batch(param_rows),
+            transaction_id=transaction_id,
+        )
 
     def execute_logical_write_operation(
         self, program: Dict[str, Any]

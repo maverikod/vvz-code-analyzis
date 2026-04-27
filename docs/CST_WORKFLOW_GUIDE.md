@@ -26,6 +26,7 @@ Quick decision guide: which CST command to use for a given task, and what to try
 
 **Notes:**
 
+- **`compose_cst_module`** with selector `kind: "range"` (only `start_line` / `end_line`): replaces the matching top-level statement and **keeps blank lines above** it (spacing before an import or `class` after `def`). Details: [commands/cst/compose_cst_module.md](commands/cst/compose_cst_module.md#selector-range).
 - Use **`project_id`** (from `list_projects` or `projectid` file) for project-scoped commands; see [COMMANDS_GUIDE.md](COMMANDS_GUIDE.md) for schema.
 - Prefer **`code_lines`** (array of strings) for multi-line code in `cst_modify_tree` and `query_cst` to avoid JSON escaping.
 - For **insert** in `cst_modify_tree`: `parent_node_id` must be a container (Module, FunctionDef, ClassDef); use `__root__` for module level; use the function’s node_id for function body, not its IndentedBlock child.

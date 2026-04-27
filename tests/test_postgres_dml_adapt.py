@@ -1,9 +1,19 @@
 """PostgreSQL driver: SQLite DML adaptation for execute_batch."""
 
+import inspect
+import re
+
+import pytest
+
 from code_analysis.core.database_driver_pkg.drivers.postgres_run import (
     _adapt_sqlite_bool_int_assignments_for_postgres,
     _adapt_sqlite_dml_for_postgres,
 )
+from code_analysis.core.database.code_chunk_sql import (
+    CODE_CHUNK_UPSERT_SQL,
+    code_chunk_upsert_norm_for_postgres_adapter,
+)
+from code_analysis.core.vectorization_worker_pkg import batch_processor
 
 
 def test_adapt_indexing_errors_insert_or_replace_to_upsert() -> None:
@@ -78,3 +88,103 @@ def test_adapt_watch_dir_paths_insert_or_replace_null_path_to_upsert() -> None:
     assert "INSERT OR REPLACE" not in out
     assert "ON CONFLICT (watch_dir_id) DO UPDATE SET" in out
     assert "VALUES (?, NULL," in out
+
+
+def test_adapt_code_chunks_insert_or_replace_to_upsert() -> None:
+    """Portable ``code_chunks`` upsert SQL must become valid PostgreSQL upsert."""
+    out = _adapt_sqlite_dml_for_postgres(CODE_CHUNK_UPSERT_SQL)
+    assert "INSERT OR REPLACE" not in out
+    assert "ON CONFLICT (chunk_uuid) DO UPDATE SET" in out
+    assert "file_id = EXCLUDED.file_id" in out
+    assert "updated_at = EXCLUDED.updated_at" in out
+    assert "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?," in out
+    # julianday rewritten for VALUES clause
+    assert "julianday" not in out.lower()
+    assert "EXTRACT(JULIAN FROM CURRENT_TIMESTAMP)" in out
+
+
+def test_code_chunk_sqlite_statement_is_insert_or_replace() -> None:
+    """SQLite / universal client path keeps INSERT OR REPLACE (driver translates on PG)."""
+    assert "INSERT OR REPLACE INTO code_chunks" in CODE_CHUNK_UPSERT_SQL
+    assert "chunk_uuid" in CODE_CHUNK_UPSERT_SQL
+
+
+def test_code_chunk_upsert_norm_matches_postgres_driver_lookup() -> None:
+    """``postgres_run`` norm key must stay aligned with ``code_chunk_sql`` (single source)."""
+    from code_analysis.core.database_driver_pkg.drivers import postgres_run
+
+    assert (
+        postgres_run._CODE_CHUNKS_INSERT_OR_REPLACE_NORM
+        == code_chunk_upsert_norm_for_postgres_adapter()
+    )
+
+
+def test_build_code_chunk_upsert_batch_rejects_wrong_param_row_length() -> None:
+    """Wrong-length rows must fail before execute_batch (clear, indexed message)."""
+    from code_analysis.core.database.code_chunk_sql import (
+        CODE_CHUNK_UPSERT_PARAM_COUNT,
+        CODE_CHUNK_UPSERT_PARAM_ORDER,
+        build_code_chunk_upsert_batch,
+    )
+
+    short = (1,) * (CODE_CHUNK_UPSERT_PARAM_COUNT - 1)
+    with pytest.raises(ValueError, match="code_chunk upsert param row 0") as exc:
+        build_code_chunk_upsert_batch([short])
+    msg = str(exc.value)
+    assert str(CODE_CHUNK_UPSERT_PARAM_COUNT) in msg
+    assert CODE_CHUNK_UPSERT_PARAM_ORDER[0] in msg
+
+    ok_row = (1,) * CODE_CHUNK_UPSERT_PARAM_COUNT
+    long = (1,) * (CODE_CHUNK_UPSERT_PARAM_COUNT + 1)
+    with pytest.raises(ValueError, match=r"param row 1") as exc2:
+        build_code_chunk_upsert_batch([ok_row, long])
+    assert "row 1" in str(exc2.value).lower()
+
+
+def test_build_code_chunk_upsert_batch_adapts_to_postgres_without_syntax_error() -> None:
+    """Batch built from portable SQL must survive PostgreSQL DML adaptation."""
+    from code_analysis.core.database.code_chunk_sql import build_code_chunk_upsert_batch
+
+    row = (
+        1,
+        "00000000-0000-0000-0000-000000000001",
+        "00000000-0000-4000-8000-000000000099",
+        "DocBlock",
+        "hello",
+        1,
+        None,
+        None,
+        None,
+        None,
+        5,
+        None,
+        None,
+        None,
+        1,
+        "Module",
+        "file_docstring",
+        0,
+    )
+    ops = build_code_chunk_upsert_batch([row])
+    assert len(ops) == 1
+    sql, params = ops[0]
+    assert "?" in sql
+    pg_sql = _adapt_sqlite_dml_for_postgres(sql)
+    assert "INSERT OR REPLACE" not in pg_sql
+    assert "ON CONFLICT (chunk_uuid)" in pg_sql
+    assert "?" in pg_sql  # ``?`` → ``%s`` happens at bind layer, not in _adapt_sqlite_dml_for_postgres
+    assert len(params) == 18
+
+
+def test_process_chunks_missing_embedding_params_sql_uses_having_count() -> None:
+    """PostgreSQL rejects HAVING on SELECT alias ``cnt``; use COUNT(cc.id) instead."""
+    src = inspect.getsource(batch_processor.process_chunks_missing_embedding_params)
+    assert "HAVING cnt > 0" not in src
+    assert "HAVING COUNT(cc.id) > 0" in src
+    # file-count query must not rely on SQLite-only alias in HAVING
+    m = re.search(
+        r"HAVING\s+COUNT\s*\(\s*cc\.id\s*\)\s*>\s*0",
+        src,
+        flags=re.IGNORECASE,
+    )
+    assert m is not None

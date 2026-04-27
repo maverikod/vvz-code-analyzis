@@ -184,3 +184,33 @@ class TestIndexFileValidProjectSucceeds:
         assert isinstance(result, SuccessResult)
         assert result.data is not None
         assert result.data.get("success") is True
+
+    def test_index_file_first_time_same_mtime_clears_needs_chunking_and_writes_ast(
+        self, index_file_handlers, valid_project_file, db_path
+    ):
+        """Watcher-style row (disk mtime = DB last_modified, no AST) must fully index, not skip."""
+        file_path, project_id = valid_project_file
+        result = index_file_handlers.handle_index_file(
+            {"file_path": file_path, "project_id": project_id}
+        )
+        assert isinstance(result, SuccessResult)
+        assert result.data is not None
+        assert result.data.get("skipped") is not True
+        driver = create_driver("sqlite", {"path": str(db_path)})
+        try:
+            r = driver.execute(
+                "SELECT f.id, f.needs_chunking FROM files f WHERE f.path = ? AND f.project_id = ?",
+                (file_path, project_id),
+                None,
+            )
+            row = (r.get("data") or [{}])[0]
+            assert row.get("needs_chunking") in (0, None, False)
+            fid = row["id"]
+            a = driver.execute(
+                "SELECT 1 as ok FROM ast_trees WHERE file_id = ?",
+                (fid,),
+                None,
+            )
+            assert len(a.get("data") or []) >= 1
+        finally:
+            driver.disconnect()

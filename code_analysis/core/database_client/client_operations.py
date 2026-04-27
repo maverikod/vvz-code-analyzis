@@ -10,8 +10,13 @@ email: vasilyvz@gmail.com
 from __future__ import annotations
 
 import logging
-from typing import Any, Dict, List, Optional, Set, Tuple, Union, cast
+from typing import Any, Dict, List, Optional, Sequence, Set, Tuple, Union, cast
 
+from code_analysis.core.database.code_chunk_sql import (
+    CODE_CHUNK_UPSERT_PARAM_COUNT,
+    CODE_CHUNK_UPSERT_SQL,
+    build_code_chunk_upsert_batch,
+)
 from code_analysis.core.database.logical_write_program import LogicalWriteProgramV1
 
 from .client_base import _DatabaseClientBase
@@ -369,17 +374,7 @@ class _ClientOperationsMixin(_DatabaseClientBase):
                 "embedding_model is required when embedding_vector is set; "
                 "a vector without model cannot be used for search"
             )
-        sql = """
-            INSERT OR REPLACE INTO code_chunks
-            (
-                file_id, project_id, chunk_uuid, chunk_type, chunk_text,
-                chunk_ordinal, vector_id, embedding_model, bm25_score,
-                embedding_vector, token_count, class_id, function_id, method_id,
-                line, ast_node_type, source_type, binding_level,
-                updated_at
-            )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, julianday('now'))
-        """
+        sql = CODE_CHUNK_UPSERT_SQL.strip()
         params = (
             file_id,
             project_id,
@@ -400,5 +395,70 @@ class _ClientOperationsMixin(_DatabaseClientBase):
             source_type,
             binding_level,
         )
+        if len(params) != CODE_CHUNK_UPSERT_PARAM_COUNT:
+            raise ValueError(
+                f"code_chunk upsert: internal param tuple length {len(params)} "
+                f"!= {CODE_CHUNK_UPSERT_PARAM_COUNT}"
+            )
         result = self.execute(sql, params)
         return result.get("lastrowid") or 0
+
+    def upsert_code_chunk(
+        self,
+        file_id: int,
+        project_id: str,
+        chunk_uuid: str,
+        chunk_type: str,
+        chunk_text: str,
+        chunk_ordinal: Optional[int] = None,
+        vector_id: Optional[int] = None,
+        embedding_model: Optional[str] = None,
+        bm25_score: Optional[float] = None,
+        embedding_vector: Optional[str] = None,
+        token_count: Optional[int] = None,
+        class_id: Optional[int] = None,
+        function_id: Optional[int] = None,
+        method_id: Optional[int] = None,
+        line: Optional[int] = None,
+        ast_node_type: Optional[str] = None,
+        source_type: Optional[str] = None,
+        binding_level: int = 0,
+    ) -> int:
+        """Portable alias for :meth:`add_code_chunk` (upsert by ``chunk_uuid``)."""
+        return self.add_code_chunk(
+            file_id,
+            project_id,
+            chunk_uuid,
+            chunk_type,
+            chunk_text,
+            chunk_ordinal,
+            vector_id,
+            embedding_model,
+            bm25_score,
+            embedding_vector,
+            token_count,
+            class_id,
+            function_id,
+            method_id,
+            line,
+            ast_node_type,
+            source_type,
+            binding_level,
+        )
+
+    def upsert_code_chunks_batch(
+        self,
+        param_rows: Sequence[Tuple[Any, ...]],
+        transaction_id: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        """
+        Batch upsert ``code_chunks`` rows using portable SQL (driver adapts per dialect).
+
+        Each row is the same :data:`~code_analysis.core.database.code_chunk_sql.CODE_CHUNK_UPSERT_PARAM_COUNT`-value
+        tuple as :meth:`add_code_chunk`, in
+        :data:`~code_analysis.core.database.code_chunk_sql.CODE_CHUNK_UPSERT_PARAM_ORDER`.
+        """
+        return self.execute_batch(
+            build_code_chunk_upsert_batch(param_rows),
+            transaction_id=transaction_id,
+        )

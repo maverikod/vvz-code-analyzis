@@ -14,6 +14,7 @@ import os
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from ..project_ignore_policy import filter_ignore_exception_py_paths_for_watcher
 from ..venv_path_policy import (
     allowed_venv_py_files_for_watch_dir,
     ignore_exception_files_for_watch_dir,
@@ -215,9 +216,7 @@ class FileWatcherWorker:
                     )
 
                     discovered = discover_projects_in_directory(root_dir)
-                    immediate_roots = {
-                        Path(p.root_path).resolve() for p in discovered
-                    }
+                    immediate_roots = {Path(p.root_path).resolve() for p in discovered}
                 except (
                     NestedProjectError,
                     DuplicateProjectIdError,
@@ -225,6 +224,12 @@ class FileWatcherWorker:
                     ValueError,
                 ):
                     immediate_roots = None
+                if immediate_roots:
+                    ign_ex = filter_ignore_exception_py_paths_for_watcher(
+                        ign_ex or set(),
+                        list(immediate_roots),
+                        allowed_venv or set(),
+                    )
                 scanned_files = scan_directory(
                     root_dir=root_dir,
                     watch_dirs=self.watch_dirs,

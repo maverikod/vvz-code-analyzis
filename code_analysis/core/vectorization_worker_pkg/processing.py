@@ -51,8 +51,11 @@ async def process_chunks(self, poll_interval: int = 30) -> Dict[str, Any]:
         Dictionary with processing statistics (only when stopped)
     """
     if not self.svo_client_manager:
-        logger.warning("SVO client manager not available, skipping vectorization")
-        return {"processed": 0, "errors": 0}
+        logger.warning(
+            "SVO client manager not configured: docstring chunking and FAISS maintenance "
+            "still run; embedding RPC and batches that require SVO remain skipped until "
+            "svo_config is present."
+        )
 
     cfg_raw = getattr(self, "config_path", None)
     if not cfg_raw:

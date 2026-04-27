@@ -13,6 +13,10 @@ from typing import Any, Dict, List, Optional, cast
 
 from mcp_proxy_adapter.commands.result import SuccessResult
 
+from ...core.project_ignore_policy import (
+    filter_paths_for_default_project_listing,
+    path_is_under_project_local_venv,
+)
 from ...core.venv_path_policy import (
     build_allowlisted_site_packages_py_files,
     expand_ignore_exception_all_files,
@@ -73,7 +77,11 @@ def _relative_path_matches_pattern(relative_posix: str, file_pattern: str) -> bo
 
 
 def _enumerate_project_paths(
-    project_root: Path, show_venv: bool, *, python_only: bool
+    project_root: Path,
+    show_venv: bool,
+    *,
+    python_only: bool,
+    include_venv_ignore_exceptions: bool = False,
 ) -> List[Path]:
     """
     Filesystem paths for ``list_project_files``.
@@ -99,9 +107,22 @@ def _enumerate_project_paths(
         found.extend(build_allowlisted_site_packages_py_files(root, allowlist))
     exc_patterns = load_ignore_exceptions_from_config()
     if exc_patterns:
-        found.extend(exc_expand(root, exc_patterns))
+        extra = list(exc_expand(root, exc_patterns))
+        if not include_venv_ignore_exceptions:
+            extra = [
+                p
+                for p in extra
+                if not path_is_under_project_local_venv(p.resolve(), root)
+            ]
+        found.extend(extra)
     uniq = {p.resolve() for p in found}
-    return sorted(uniq, key=lambda p: _canonical_relative_path(root, p))
+    ordered = sorted(uniq, key=lambda p: _canonical_relative_path(root, p))
+    return filter_paths_for_default_project_listing(
+        ordered,
+        root,
+        include_venv=show_venv,
+        include_venv_ignore_exceptions=include_venv_ignore_exceptions,
+    )
 
 
 def _file_obj_to_dict(f: Any) -> Dict[str, Any]:
@@ -175,10 +196,18 @@ class ListProjectFilesMCPCommand(BaseMCPCommand):
                     "type": "boolean",
                     "description": (
                         "When true, add config-allowlisted virtualenv site-packages "
-                        "``.py`` files (RECORD-based) on top of project sources and "
-                        "``code_analysis.ignore_exceptions`` matches. When false, "
-                        "``.venv``/``venv`` are still skipped except for paths matched by "
-                        "``ignore_exceptions`` (same as indexing)."
+                        "``.py`` files (RECORD-based) on top of project sources. "
+                        "When false, project-local ``.venv``/``venv`` trees are omitted "
+                        "from listing (same as watcher default)."
+                    ),
+                    "default": False,
+                },
+                "include_venv_ignore_exceptions": {
+                    "type": "boolean",
+                    "description": (
+                        "Diagnostic: when true, include ``code_analysis.ignore_exceptions`` "
+                        "matches that live under ``.venv``/``venv``. Default false so "
+                        "broad venv globs do not flood ``list_project_files``."
                     ),
                     "default": False,
                 },
@@ -203,6 +232,7 @@ class ListProjectFilesMCPCommand(BaseMCPCommand):
         offset: int = 0,
         show_venv: bool = False,
         python_only: bool = False,
+        include_venv_ignore_exceptions: bool = False,
         **kwargs,
     ) -> SuccessResult:
         try:
@@ -213,7 +243,10 @@ class ListProjectFilesMCPCommand(BaseMCPCommand):
             db_by_rel = _build_db_map_by_rel_key(project_root, db_files)
 
             fs_paths = _enumerate_project_paths(
-                project_root, show_venv=show_venv, python_only=python_only
+                project_root,
+                show_venv=show_venv,
+                python_only=python_only,
+                include_venv_ignore_exceptions=include_venv_ignore_exceptions,
             )
 
             if file_pattern:

@@ -224,7 +224,7 @@ async def process_chunks_missing_embedding_params(
           AND (cc.embedding_model IS NULL OR cc.embedding_vector IS NULL)
           AND (cc.vectorization_skipped IS NULL OR cc.vectorization_skipped = 0)
         GROUP BY f.id, f.path
-        HAVING cnt > 0
+        HAVING COUNT(cc.id) > 0
         """,
         (project_id,),
     )
@@ -242,7 +242,7 @@ async def process_chunks_missing_embedding_params(
     log_operation_timing(
         getattr(self, "log_timing", False),
         logger,
-        "Step0_SELECT_file_counts",
+        "reembed_SELECT_file_counts",
         step_duration,
         files=len(file_counts_data),
     )
@@ -255,7 +255,7 @@ async def process_chunks_missing_embedding_params(
     ]
     packets = pack_files_into_packets(file_table, batch_size)
     logger.info(
-        "[STEP] Step 0: file-based batching: %d files -> %d packet(s)",
+        "[missing_embedding_params] file-based batching: %d files -> %d packet(s)",
         len(file_table),
         len(packets),
     )
@@ -309,7 +309,7 @@ async def process_chunks_missing_embedding_params(
             log_operation_timing(
                 getattr(self, "log_timing", False),
                 logger,
-                "Step0_get_chunks_batch",
+                "reembed_get_chunks_batch",
                 time.time() - t0_batch,
                 texts=len(texts),
             )
@@ -335,7 +335,7 @@ async def process_chunks_missing_embedding_params(
                 log_operation_timing(
                     getattr(self, "log_timing", False),
                     logger,
-                    "Step0_execute_batch_UPDATE",
+                    "reembed_execute_batch_UPDATE",
                     time.time() - t0_db,
                     ops=len(u_ops),
                 )

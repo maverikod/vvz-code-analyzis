@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import logging
 import time
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -100,11 +100,7 @@ async def test_single_file_runs_mypy_when_mtime_gate_would_skip_cached_row(
 
     cmd._validate_file_path = _validate
 
-    with patch(
-        "code_analysis.commands.comprehensive_analysis_mcp.execute_single.resolve_mypy_config_for_single_file",
-        return_value=None,
-    ):
-        result = await run_single_file(cmd, ctx)
+    result = await run_single_file(cmd, ctx)
 
     db.get_comprehensive_analysis_results.assert_not_called()
     analyzer.check_mypy.assert_called_once()

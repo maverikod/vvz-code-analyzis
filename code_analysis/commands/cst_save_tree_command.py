@@ -381,6 +381,8 @@ class CSTSaveTreeCommand(BaseMCPCommand):
                                 "cst_save_tree succeeded after %s attempts",
                                 attempt,
                             )
+                        result["file_written"] = True
+                        result["preview_only"] = False
                         return SuccessResult(data=result)
                     finally:
                         database.disconnect()

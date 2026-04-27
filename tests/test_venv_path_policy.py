@@ -91,7 +91,7 @@ def test_expand_ignore_exception_py_files_under_venv(tmp_path: Path) -> None:
     assert vpy.resolve() in found
 
 
-def test_collect_python_files_for_indexing_merges_ignore_exceptions(
+def test_collect_python_files_for_indexing_does_not_merge_venv_ignore_exceptions(
     tmp_path: Path,
 ) -> None:
     root = tmp_path / "proj"
@@ -106,7 +106,7 @@ def test_collect_python_files_for_indexing_merges_ignore_exceptions(
     ):
         files = collect_python_files_for_indexing(root, [])
     assert (root / "src" / "app.py") in files
-    assert vpy.resolve() in files
+    assert vpy.resolve() not in files
 
 
 def test_load_ignore_exceptions_from_explicit_config_path(tmp_path: Path) -> None:
@@ -126,13 +126,34 @@ def test_load_ignore_exceptions_from_explicit_config_path(tmp_path: Path) -> Non
 
 def test_should_ignore_path_respects_allowlisted_venv_file(tmp_path: Path) -> None:
     root = tmp_path / "p"
+    root.mkdir()
     vpy = root / ".venv" / "lib" / "python3.12" / "site-packages" / "pkg" / "a.py"
     vpy.parent.mkdir(parents=True)
     vpy.write_text("#\n")
     resolved = {vpy.resolve()}
-    assert should_ignore_path(vpy, allowed_venv_py_files=resolved) is False
-    assert should_ignore_path(vpy, allowed_venv_py_files=None) is True
-    assert should_ignore_path(vpy, ignore_exception_files={vpy.resolve()}) is False
+    rr = root.resolve()
+    assert (
+        should_ignore_path(vpy, allowed_venv_py_files=resolved, project_root=rr)
+        is False
+    )
+    assert should_ignore_path(vpy, allowed_venv_py_files=None, project_root=rr) is True
+    assert (
+        should_ignore_path(
+            vpy,
+            ignore_exception_files={vpy.resolve()},
+            project_root=rr,
+        )
+        is True
+    )
+    assert (
+        should_ignore_path(
+            vpy,
+            ignore_exception_files={vpy.resolve()},
+            allowed_venv_py_files=resolved,
+            project_root=rr,
+        )
+        is False
+    )
 
 
 def test_format_message_non_empty() -> None:

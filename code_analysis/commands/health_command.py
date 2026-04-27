@@ -19,6 +19,7 @@ from mcp_proxy_adapter.integrations.queuemgr_integration import (
     QUEUE_MANAGER_ENABLED_DEFAULT,
 )
 
+from code_analysis.core.cst_tree.tree_builder import _trees
 from code_analysis.core.dependency_compat import collect_dependency_compatibility
 
 
@@ -52,6 +53,7 @@ class HealthCommand(Command):
                 "status": overall_status,
                 "version": dep["versions"]["code_analysis_server"],
                 "uptime": uptime_seconds,
+                "cst_trees_loaded": len(_trees),
                 "components": {
                     "system": {
                         "python_version": sys.version,

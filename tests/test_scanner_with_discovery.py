@@ -248,6 +248,43 @@ class TestScannerWithDiscovery:
             is False
         )
 
+    def test_should_skip_dir_soft_deleted_project_subtree(self, temp_dir):
+        root = temp_dir.resolve()
+        dead = (temp_dir / "dead_proj").resolve()
+        dead.mkdir()
+        soft = {dead}
+        assert (
+            should_skip_dir(dead, walk_root=root, soft_deleted_project_roots=soft)
+            is True
+        )
+        assert (
+            should_skip_dir(
+                dead / "pkg", walk_root=root, soft_deleted_project_roots=soft
+            )
+            is True
+        )
+
+    def test_scan_directory_prunes_soft_deleted_project_subtree(
+        self, temp_dir, project_id
+    ):
+        """Paths under ``soft_deleted_project_roots`` are not walked."""
+        alive = temp_dir / "alive"
+        dead = temp_dir / "dead"
+        alive.mkdir()
+        dead.mkdir()
+        create_projectid_file(alive, project_id)
+        create_projectid_file(dead, str(uuid.uuid4()))
+        (dead / "gone.py").write_text("x=1", encoding="utf-8")
+        (alive / "ok.py").write_text("x=2", encoding="utf-8")
+        files = scan_directory(
+            temp_dir,
+            [temp_dir],
+            immediate_project_roots={alive.resolve(), dead.resolve()},
+            soft_deleted_project_roots={dead.resolve()},
+        )
+        assert any("ok.py" in k for k in files)
+        assert not any("gone.py" in k for k in files)
+
     def test_scan_directory_keeps_exception_inside_ignored_dir(
         self, temp_dir, project_id
     ):
@@ -292,7 +329,9 @@ class TestScannerWithDiscovery:
         assert str(base.resolve()) in files
         assert str(blocked.resolve()) not in files
 
-    def test_scan_directory_uses_project_root_for_exception_glob_matching(self, temp_dir):
+    def test_scan_directory_uses_project_root_for_exception_glob_matching(
+        self, temp_dir
+    ):
         project1 = temp_dir / "project1"
         project2 = temp_dir / "project2"
         project1.mkdir()
@@ -314,3 +353,106 @@ class TestScannerWithDiscovery:
 
         assert str(keep.resolve()) in files
         assert str(blocked.resolve()) not in files
+
+    def test_scan_directory_skips_dot_venv_site_packages_without_allowlist(
+        self, temp_dir, project_id
+    ):
+        project_root = temp_dir / "project1"
+        project_root.mkdir()
+        create_projectid_file(project_root, project_id)
+        app = create_file(project_root / "src", "app.py", "x=1\n")
+        vpy = (
+            project_root
+            / ".venv"
+            / "lib"
+            / "python3.12"
+            / "site-packages"
+            / "pkg"
+            / "mod.py"
+        )
+        vpy.parent.mkdir(parents=True)
+        vpy.write_text("y=1\n", encoding="utf-8")
+
+        files = scan_directory(temp_dir, [temp_dir])
+        assert str(app.resolve()) in files
+        assert str(vpy.resolve()) not in files
+
+    def test_scan_directory_merges_allowlisted_venv_record_without_walking_venv(
+        self, temp_dir, project_id
+    ):
+        from code_analysis.core.venv_path_policy import (
+            build_allowlisted_site_packages_py_files,
+        )
+
+        project_root = temp_dir / "project1"
+        project_root.mkdir()
+        create_projectid_file(project_root, project_id)
+        app = create_file(project_root / "src", "app.py", "x=1\n")
+        sp = project_root / ".venv" / "lib" / "python3.12" / "site-packages"
+        sp.mkdir(parents=True)
+        pkg_dir = sp / "mypkg"
+        pkg_dir.mkdir()
+        mod = pkg_dir / "mod.py"
+        mod.write_text("z=1\n", encoding="utf-8")
+        dist = sp / "mypkg-1.0.dist-info"
+        dist.mkdir()
+        (dist / "METADATA").write_text("Name: mypkg\nVersion: 1.0\n")
+        (dist / "RECORD").write_text("mypkg/mod.py,sha256=abc,12\n", encoding="utf-8")
+
+        allowed = build_allowlisted_site_packages_py_files(project_root, ["mypkg"])
+        files = scan_directory(
+            temp_dir,
+            [temp_dir],
+            allowed_venv_py_files=allowed,
+        )
+        assert str(app.resolve()) in files
+        assert str(mod.resolve()) in files
+        other = sp / "otherpkg" / "noise.py"
+        other.parent.mkdir()
+        other.write_text("n=1\n")
+        assert str(other.resolve()) not in files
+
+    def test_scan_directory_merge_drops_venv_ignore_exception_without_allowlist(
+        self, temp_dir: Path, project_id: str
+    ) -> None:
+        """Merge must not pull ``ignore_exceptions`` targets from venv without allowlist."""
+        project_root = temp_dir / "project1"
+        project_root.mkdir()
+        create_projectid_file(project_root, project_id)
+        app = create_file(project_root / "src", "app.py", "x=1\n")
+        vpy = (
+            project_root
+            / ".venv"
+            / "lib"
+            / "python3.12"
+            / "site-packages"
+            / "pkg"
+            / "unlisted.py"
+        )
+        vpy.parent.mkdir(parents=True)
+        vpy.write_text("y=1\n", encoding="utf-8")
+
+        files = scan_directory(
+            temp_dir,
+            [temp_dir],
+            ignore_exception_files={vpy.resolve()},
+            immediate_project_roots={project_root.resolve()},
+        )
+        assert str(app.resolve()) in files
+        assert str(vpy.resolve()) not in files
+
+    def test_scan_directory_three_projects_no_venv_files(self, temp_dir: Path) -> None:
+        """Regression: multiple project roots under one watch dir must not index .venv."""
+        for name in ("mcp_proxy_adapter", "vast_srv", "code_analysis"):
+            pr = temp_dir / name
+            pr.mkdir()
+            create_projectid_file(pr, str(uuid.uuid4()))
+            create_file(pr / "src", "app.py", "x=1\n")
+            vpy = pr / ".venv" / "lib" / "python3.12" / "site-packages" / "x.py"
+            vpy.parent.mkdir(parents=True)
+            vpy.write_text("#\n")
+
+        files = scan_directory(temp_dir, [temp_dir])
+        assert len(files) == 3
+        for k in files:
+            assert ".venv" not in k

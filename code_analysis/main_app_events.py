@@ -29,6 +29,7 @@ from code_analysis.core.shared_database import (
     close_shared_database,
     set_shared_database,
 )
+from code_analysis.core.cst_tree.tree_builder import start_cst_tree_ttl_cleanup
 from code_analysis.main_workers import (
     startup_database_driver,
     startup_file_watcher_worker,
@@ -170,6 +171,7 @@ def register_startup_shutdown_events(
                 flush=True,
             )
             logger.info("✅ [STARTUP EVENT] Workers startup completed (shared DB set)")
+            start_cst_tree_ttl_cleanup()
         except Exception as e:
             print(
                 f"❌ [STARTUP EVENT] Failed to start workers: {e}",

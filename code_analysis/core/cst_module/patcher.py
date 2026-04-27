@@ -104,6 +104,32 @@ def _parse_snippet_as_module_body(snippet: str) -> list[cst.BaseStatement]:
         )
 
 
+def _copy_outer_trivia_to_replacements(
+    original: cst.BaseStatement,
+    replacements: list[cst.BaseStatement],
+) -> list[cst.BaseStatement]:
+    """
+    Preserve LibCST layout before a replaced statement.
+
+    Parsed replacement snippets default to empty ``leading_lines``; physical
+    blank lines immediately above the statement live there on the original node.
+    Copy ``leading_lines`` onto the first replacement so range/block/function/
+    method/cst_query replacements do not drop a blank line above the edit.
+
+    We intentionally do **not** copy ``trailing_whitespace`` from the original:
+    the replacement's own trailing trivia (including end-of-line ``# type:
+    ignore`` comments) must stay intact.
+    """
+    if not replacements:
+        return replacements
+    leading = original.leading_lines
+    if len(replacements) == 1:
+        sole = replacements[0]
+        return [sole.with_changes(leading_lines=leading)]
+    first = replacements[0].with_changes(leading_lines=leading)
+    return [first, *replacements[1:]]
+
+
 class _StatementListRewriter(cst.CSTTransformer):
     METADATA_DEPENDENCIES = (PositionProvider,)
 
@@ -131,9 +157,17 @@ class _StatementListRewriter(cst.CSTTransformer):
             span_key = (pos.start.line, pos.start.column, pos.end.line, pos.end.column)
             line_key = (pos.start.line, pos.end.line)
             if span_key in self._stmt_by_span:
-                new_body.extend(self._stmt_by_span[span_key])
+                new_body.extend(
+                    _copy_outer_trivia_to_replacements(
+                        original_stmt, self._stmt_by_span[span_key]
+                    )
+                )
             elif line_key in self._stmt_by_lines:
-                new_body.extend(self._stmt_by_lines[line_key])
+                new_body.extend(
+                    _copy_outer_trivia_to_replacements(
+                        original_stmt, self._stmt_by_lines[line_key]
+                    )
+                )
             else:
                 new_body.append(updated_stmt)
         return new_body

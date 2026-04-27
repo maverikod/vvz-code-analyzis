@@ -8,6 +8,11 @@ email: vasilyvz@gmail.com
 import logging
 from typing import Optional
 
+from code_analysis.core.database.code_chunk_sql import (
+    CODE_CHUNK_UPSERT_PARAM_COUNT,
+    CODE_CHUNK_UPSERT_SQL,
+)
+
 logger = logging.getLogger(__name__)
 
 
@@ -68,38 +73,34 @@ async def add_code_chunk(
             "embedding_model is required when embedding_vector is set; "
             "a vector without model cannot be used for search"
         )
+    params = (
+        file_id,
+        project_id,
+        chunk_uuid,
+        chunk_type,
+        chunk_text,
+        chunk_ordinal,
+        vector_id,
+        embedding_model,
+        bm25_score,
+        embedding_vector,
+        token_count,
+        class_id,
+        function_id,
+        method_id,
+        line,
+        ast_node_type,
+        source_type,
+        binding_level,
+    )
+    if len(params) != CODE_CHUNK_UPSERT_PARAM_COUNT:
+        raise ValueError(
+            f"code_chunk upsert: internal param tuple length {len(params)} "
+            f"!= {CODE_CHUNK_UPSERT_PARAM_COUNT}"
+        )
     self._execute(
-        """
-            INSERT OR REPLACE INTO code_chunks
-            (
-                file_id, project_id, chunk_uuid, chunk_type, chunk_text,
-                chunk_ordinal, vector_id, embedding_model, bm25_score,
-                embedding_vector, token_count, class_id, function_id, method_id,
-                line, ast_node_type, source_type, binding_level,
-                updated_at
-            )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, julianday('now'))
-        """,
-        (
-            file_id,
-            project_id,
-            chunk_uuid,
-            chunk_type,
-            chunk_text,
-            chunk_ordinal,
-            vector_id,
-            embedding_model,
-            bm25_score,
-            embedding_vector,
-            token_count,
-            class_id,
-            function_id,
-            method_id,
-            line,
-            ast_node_type,
-            source_type,
-            binding_level,
-        ),
+        CODE_CHUNK_UPSERT_SQL.strip(),
+        params,
     )
     self._commit()
     result = self._lastrowid()

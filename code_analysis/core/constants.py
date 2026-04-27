@@ -9,6 +9,8 @@ email: vasilyvz@gmail.com
 
 from typing import Set
 
+from .project_ignore_policy import DEFAULT_TRAVERSAL_SKIP_DIRECTORY_BASENAMES
+
 # ============================================================================
 # File Extensions
 # ============================================================================
@@ -28,19 +30,27 @@ CONFIG_FILE_EXTENSIONS: Set[str] = {".json", ".yaml", ".yml", ".toml", ".ini", "
 # Ignore Patterns
 # ============================================================================
 
-# Default patterns to ignore (always applied)
+# Default patterns to ignore (always applied). Unioned with shared traversal dir names.
 DEFAULT_IGNORE_PATTERNS: Set[str] = {
     "__pycache__",
     ".git",
     ".pytest_cache",
     ".mypy_cache",
+    ".ruff_cache",
+    ".cache",
+    ".tox",
+    ".nox",
     "node_modules",
-    ".venv",
-    "venv",
+    "dist",
+    "build",
     "data/versions",  # Version directory for deleted files
     "data/versions/**",  # All subdirectories in versions
     "*.pyc",
-}
+    "*.pyo",
+    "*.log",
+    "*.lock",
+    ".coverage",
+} | set(DEFAULT_TRAVERSAL_SKIP_DIRECTORY_BASENAMES)
 
 # Git ignore patterns (additional patterns for .gitignore)
 GIT_IGNORE_PATTERNS: Set[str] = {

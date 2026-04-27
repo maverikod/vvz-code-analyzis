@@ -8,7 +8,7 @@ email: vasilyvz@gmail.com
 import logging
 import uuid
 from pathlib import Path
-from typing import Dict, List, Any, Optional
+from typing import Any, Dict, List, Optional
 
 from code_analysis.core.sql_portable import (
     WHERE_FILES_ACTIVE,
@@ -80,6 +80,136 @@ def get_project(self, project_id: str) -> Optional[Dict[str, Any]]:
         Project record as dictionary or None if not found
     """
     return self._fetchone("SELECT * FROM projects WHERE id = ?", (project_id,))
+
+
+def _rewrite_abs_path_under_root(
+    old_root: Path, new_root: Path, path_str: Optional[str]
+) -> Optional[str]:
+    """If ``path_str`` resolves under ``old_root``, return the same relative path under ``new_root``."""
+    if not path_str:
+        return None
+    try:
+        p = Path(str(path_str)).expanduser().resolve()
+        rel = p.relative_to(old_root)
+        return str((new_root / rel).resolve())
+    except (ValueError, OSError):
+        return None
+
+
+def relocate_project_root_after_disk_move(
+    self,
+    project_id: str,
+    old_root_path: str,
+    new_root_path: str,
+) -> bool:
+    """
+    Update ``projects.root_path`` and absolute paths in ``files`` after the project
+    directory moved on disk (same ``projectid`` / UUID, new location).
+
+    Rewrites ``files.path``, and ``files.original_path`` / ``files.version_dir`` when
+    they still resolve under the old project root. ``files.relative_path`` is left
+    unchanged (it is relative to the project root).
+
+    Returns:
+        True if ``projects`` was updated or roots were already equal.
+        False if ``new_root_path`` is already taken by another project or paths
+        could not be resolved.
+    """
+    try:
+        old_r = Path(old_root_path).expanduser().resolve()
+        new_r = Path(new_root_path).expanduser().resolve()
+    except OSError as e:
+        logger.warning(
+            "relocate_project_root_after_disk_move: cannot resolve old=%s new=%s: %s",
+            old_root_path,
+            new_root_path,
+            e,
+        )
+        return False
+
+    if old_r == new_r:
+        return True
+
+    other = self._fetchone(
+        "SELECT id FROM projects WHERE root_path = ? AND id != ? LIMIT 1",
+        (str(new_r), project_id),
+    )
+    if other:
+        logger.error(
+            "relocate_project_root_after_disk_move: root_path %s already used by "
+            "project %s; refusing to move project %s from %s",
+            new_r,
+            other.get("id"),
+            project_id,
+            old_r,
+        )
+        return False
+
+    if not self._fetchone("SELECT id FROM projects WHERE id = ?", (project_id,)):
+        logger.warning(
+            "relocate_project_root_after_disk_move: project %s not found", project_id
+        )
+        return False
+
+    new_name = new_r.name
+    self._execute(
+        "UPDATE projects SET root_path = ?, name = ?, updated_at = julianday('now') "
+        "WHERE id = ?",
+        (str(new_r), new_name, project_id),
+    )
+
+    rows = self._fetchall(
+        "SELECT id, path, original_path, version_dir FROM files WHERE project_id = ?",
+        (project_id,),
+    )
+    n_path = 0
+    for row in rows:
+        fid = row.get("id")
+        path_val = row.get("path")
+        if fid is None or not path_val:
+            continue
+        new_path = _rewrite_abs_path_under_root(old_r, new_r, str(path_val))
+        if new_path is None:
+            logger.debug(
+                "relocate: file id=%s path=%s not under old root %s; leaving path",
+                fid,
+                path_val,
+                old_r,
+            )
+            continue
+
+        orig = row.get("original_path")
+        vdir = row.get("version_dir")
+        parts = ["path = ?"]
+        binds: List[Any] = [new_path]
+        if orig:
+            ro = _rewrite_abs_path_under_root(old_r, new_r, str(orig))
+            if ro:
+                parts.append("original_path = ?")
+                binds.append(ro)
+        if vdir:
+            rv = _rewrite_abs_path_under_root(old_r, new_r, str(vdir))
+            if rv:
+                parts.append("version_dir = ?")
+                binds.append(rv)
+        parts.append("updated_at = julianday('now')")
+        binds.append(fid)
+        self._execute(
+            f"UPDATE files SET {', '.join(parts)} WHERE id = ?",
+            tuple(binds),
+        )
+        n_path += 1
+
+    self._commit()
+    logger.info(
+        "relocate_project_root_after_disk_move: project_id=%s root %s -> %s "
+        "(updated %d file path(s))",
+        project_id,
+        old_r,
+        new_r,
+        n_path,
+    )
+    return True
 
 
 def get_all_projects(self) -> List[Dict[str, Any]]:

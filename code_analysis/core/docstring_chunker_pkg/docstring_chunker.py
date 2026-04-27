@@ -9,6 +9,10 @@ The worker expects:
 - chunks to be stored in `code_chunks` with `source_type` like "docstring"
 - optionally precomputed `embedding_vector` to speed up vectorization
 
+Persistence uses the portable statement in ``code_analysis.core.database.code_chunk_sql``
+and, when available, ``database.upsert_code_chunks_batch`` (RPC / in-process client);
+the PostgreSQL driver translates upserts in ``postgres_run._adapt_sqlite_dml_for_postgres``.
+
 Author: Vasiliy Zdanovskiy
 email: vasilyvz@gmail.com
 """
@@ -25,6 +29,10 @@ import uuid
 from dataclasses import dataclass
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
+from code_analysis.core.database.code_chunk_sql import (
+    CODE_CHUNK_UPSERT_PARAM_COUNT,
+    build_code_chunk_upsert_batch,
+)
 from code_analysis.core.sql_portable import WHERE_FILES_ACTIVE
 
 from ..exceptions import ChunkerResponseError
@@ -34,19 +42,6 @@ logger = logging.getLogger(__name__)
 
 # Max docstring texts per single ``get_chunks_batch`` RPC (multi-file prepared path).
 DOCSTRING_CHUNK_BATCH_MAX_TEXTS = 128
-
-# SQL for INSERT OR REPLACE code_chunks (same as DatabaseClient.add_code_chunk).
-_INSERT_CODE_CHUNK_SQL = """
-    INSERT OR REPLACE INTO code_chunks
-    (
-        file_id, project_id, chunk_uuid, chunk_type, chunk_text,
-        chunk_ordinal, vector_id, embedding_model, bm25_score,
-        embedding_vector, token_count, class_id, function_id, method_id,
-        line, ast_node_type, source_type, binding_level,
-        updated_at
-    )
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, julianday('now'))
-"""
 
 
 def _chunk_text_from_svo(chunk: Any) -> str:
@@ -90,6 +85,11 @@ class PreparedDocstringFile:
 class DocstringChunker:
     """
     Extract docstrings from a Python AST and store them as `code_chunks`.
+
+    This class owns AST extraction and stable chunk parameter rows only; it does not
+    embed SQL dialect details. Portable ``code_chunks`` upsert SQL and the 18-column
+    bind layout (``CODE_CHUNK_UPSERT_PARAM_COUNT`` / ``build_code_chunk_upsert_batch``)
+    live in ``code_analysis.core.database.code_chunk_sql``.
 
     Notes:
         - This implementation focuses on docstrings only (module/class/function/method).
@@ -207,7 +207,7 @@ class DocstringChunker:
             )
         return rows
 
-    def _build_insert_ops_for_docstring_rows(
+    def _code_chunk_upsert_param_rows_for_docstring_rows(
         self,
         file_id: int,
         project_id: str,
@@ -222,9 +222,15 @@ class DocstringChunker:
                 Optional[int],
             ]
         ],
-    ) -> List[Tuple[str, Tuple[Any, ...]]]:
-        """Turn resolved chunk rows into INSERT OR REPLACE ops for ``code_chunks``."""
-        insert_ops: List[Tuple[str, Tuple[Any, ...]]] = []
+    ) -> List[Tuple[Any, ...]]:
+        """
+        Build parameter tuples for portable ``code_chunks`` upsert.
+
+        Each tuple has ``CODE_CHUNK_UPSERT_PARAM_COUNT`` values in
+        ``CODE_CHUNK_UPSERT_PARAM_ORDER`` from ``code_chunk_sql`` (``updated_at`` is
+        set by the statement, not bound).
+        """
+        param_rows: List[Tuple[Any, ...]] = []
         ordinal = 0
         for (
             it,
@@ -237,7 +243,7 @@ class DocstringChunker:
             if not self._file_still_exists_and_not_deleted(file_id, project_id):
                 logger.warning(
                     f"[FILE {file_id}] File or project deleted during persist, "
-                    f"stopping after {len(insert_ops)} chunks for {file_path}"
+                    f"stopping after {len(param_rows)} chunks for {file_path}"
                 )
                 break
             ordinal += 1
@@ -292,8 +298,33 @@ class DocstringChunker:
                 it.source_type,
                 int(it.binding_level),
             )
-            insert_ops.append((_INSERT_CODE_CHUNK_SQL.strip(), params))
-        return insert_ops
+            if len(params) != CODE_CHUNK_UPSERT_PARAM_COUNT:
+                raise ValueError(
+                    "docstring chunk param row length mismatch: "
+                    f"expected {CODE_CHUNK_UPSERT_PARAM_COUNT}, got {len(params)}"
+                )
+            param_rows.append(params)
+        return param_rows
+
+    async def _persist_code_chunk_param_rows(
+        self, param_rows: List[Tuple[Any, ...]]
+    ) -> None:
+        """Persist via DB abstraction when available, else ``execute_batch`` of portable ops."""
+        if not param_rows:
+            return
+        upsert_batch = getattr(self.database, "upsert_code_chunks_batch", None)
+        if callable(upsert_batch):
+            if asyncio.iscoroutinefunction(upsert_batch):
+                await upsert_batch(param_rows)
+            else:
+                await asyncio.to_thread(upsert_batch, param_rows)
+            return
+        ops = build_code_chunk_upsert_batch(param_rows)
+        execute_batch = self.database.execute_batch
+        if asyncio.iscoroutinefunction(execute_batch):
+            await execute_batch(ops)
+        else:
+            await asyncio.to_thread(execute_batch, ops)
 
     async def _fetch_rows_for_item_with_get_chunks(self, item: _DocItem) -> List[
         Tuple[
@@ -359,7 +390,7 @@ class DocstringChunker:
         if not flat:
             return counts
 
-        all_insert_ops: List[Tuple[str, Tuple[Any, ...]]] = []
+        all_param_rows: List[Tuple[Any, ...]] = []
         idx = 0
         max_t = DOCSTRING_CHUNK_BATCH_MAX_TEXTS
         while idx < len(flat):
@@ -372,8 +403,8 @@ class DocstringChunker:
                     ):
                         continue
                     rows = self._rows_from_item_and_chunks(item, [])
-                    all_insert_ops.extend(
-                        self._build_insert_ops_for_docstring_rows(
+                    all_param_rows.extend(
+                        self._code_chunk_upsert_param_rows_for_docstring_rows(
                             pf.file_id,
                             pf.project_id,
                             pf.file_path,
@@ -390,8 +421,8 @@ class DocstringChunker:
                     ):
                         continue
                     rows = await self._fetch_rows_for_item_with_get_chunks(item)
-                    all_insert_ops.extend(
-                        self._build_insert_ops_for_docstring_rows(
+                    all_param_rows.extend(
+                        self._code_chunk_upsert_param_rows_for_docstring_rows(
                             pf.file_id,
                             pf.project_id,
                             pf.file_path,
@@ -424,8 +455,8 @@ class DocstringChunker:
                     ):
                         continue
                     rows = await self._fetch_rows_for_item_with_get_chunks(item)
-                    all_insert_ops.extend(
-                        self._build_insert_ops_for_docstring_rows(
+                    all_param_rows.extend(
+                        self._code_chunk_upsert_param_rows_for_docstring_rows(
                             pf.file_id,
                             pf.project_id,
                             pf.file_path,
@@ -443,8 +474,8 @@ class DocstringChunker:
                     if k < len(batch_results) and batch_results[k] is not None:
                         chunks = list(batch_results[k])
                     rows = self._rows_from_item_and_chunks(item, chunks)
-                    all_insert_ops.extend(
-                        self._build_insert_ops_for_docstring_rows(
+                    all_param_rows.extend(
+                        self._code_chunk_upsert_param_rows_for_docstring_rows(
                             pf.file_id,
                             pf.project_id,
                             pf.file_path,
@@ -452,24 +483,20 @@ class DocstringChunker:
                         )
                     )
 
-        if not all_insert_ops:
+        if not all_param_rows:
             return counts
 
         lw = getattr(self.database, "execute_logical_write_operation", None)
         if callable(lw):
-            program = {"batches": [all_insert_ops]}
+            program = {"batches": [build_code_chunk_upsert_batch(all_param_rows)]}
             if asyncio.iscoroutinefunction(lw):
                 await lw(program)
             else:
                 await asyncio.to_thread(lw, program)
         else:
-            execute_batch = self.database.execute_batch
-            if asyncio.iscoroutinefunction(execute_batch):
-                await execute_batch(all_insert_ops)
-            else:
-                await asyncio.to_thread(execute_batch, all_insert_ops)
+            await self._persist_code_chunk_param_rows(all_param_rows)
 
-        for _sql, params in all_insert_ops:
+        for params in all_param_rows:
             fid = int(params[0])
             counts[fid] = counts.get(fid, 0) + 1
         return counts
@@ -712,18 +739,14 @@ class DocstringChunker:
             f"({with_embedding} with embedding, {without_embedding} without) to database..."
         )
         persist_start_time = time.time()
-        insert_ops = self._build_insert_ops_for_docstring_rows(
+        param_rows = self._code_chunk_upsert_param_rows_for_docstring_rows(
             file_id, project_id, file_path, rows_to_persist
         )
 
         written = 0
-        if insert_ops:
-            execute_batch = self.database.execute_batch
-            if asyncio.iscoroutinefunction(execute_batch):
-                await execute_batch(insert_ops)
-            else:
-                await asyncio.to_thread(execute_batch, insert_ops)
-            written = len(insert_ops)
+        if param_rows:
+            await self._persist_code_chunk_param_rows(param_rows)
+            written = len(param_rows)
 
         persist_duration = time.time() - persist_start_time
         log_operation_timing(

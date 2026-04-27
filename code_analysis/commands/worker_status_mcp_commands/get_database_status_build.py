@@ -9,7 +9,22 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Tuple
 
+from code_analysis.core.project_ignore_policy import (
+    sql_and_absolute_path_eligible_for_default_status_aggregates as _sql_path_ok_status,
+)
 from code_analysis.core.sql_portable import WHERE_FILES_ACTIVE, WHERE_FILES_ACTIVE_F
+
+# "Indexed" for status: pipeline cleared needs_chunking, or AST exists (vectorization
+# backlog still uses needs_chunking=1 but content index is present).
+_WHERE_FILES_INDEXED = (
+    "((needs_chunking = 0 OR needs_chunking IS NULL) OR "
+    "EXISTS (SELECT 1 FROM ast_trees WHERE ast_trees.file_id = files.id))"
+)
+_WHERE_FILES_INDEXED_F = (
+    "((f.needs_chunking = 0 OR f.needs_chunking IS NULL) OR "
+    "EXISTS (SELECT 1 FROM ast_trees WHERE ast_trees.file_id = f.id))"
+)
+_WHERE_FILES_ACTIVE_FL = "(fl.deleted IS NOT TRUE OR fl.deleted IS NULL)"
 
 # Batch indices: 0=project_count, 1=projects_with_stats, 2=total_files, 3=deleted_files,
 # 4=files_with_docstring, 5=files_needing_chunking, 6=files_with_chunks, 7=files_indexed,
@@ -28,6 +43,9 @@ def _julian_day_threshold_sql(driver_type: str) -> str:
 def build_status_ops(driver_type: str) -> List[Tuple[str, Any]]:
     """SQL batch for get_database_status; SQLite uses julianday(), PostgreSQL uses EXTRACT(JULIAN ...)."""
     j = _julian_day_threshold_sql(driver_type)
+    p_files = _sql_path_ok_status("files.path")
+    p_f = _sql_path_ok_status("f.path")
+    p_fl = _sql_path_ok_status("fl.path")
     return [
         ("SELECT COUNT(*) as count FROM projects", None),
         (
@@ -37,17 +55,31 @@ def build_status_ops(driver_type: str) -> List[Tuple[str, Any]]:
             p.name,
             (SELECT COUNT(*) FROM files WHERE project_id = p.id AND """
             + WHERE_FILES_ACTIVE
+            + p_files
             + """) as file_count,
             (SELECT COUNT(*) FROM files WHERE project_id = p.id AND """
             + WHERE_FILES_ACTIVE
-            + """ AND (needs_chunking = 0 OR needs_chunking IS NULL)) as files_indexed,
+            + p_files
+            + """ AND """
+            + _WHERE_FILES_INDEXED
+            + """) as files_indexed,
             (SELECT COUNT(DISTINCT f.id) FROM files f WHERE f.project_id = p.id AND """
             + WHERE_FILES_ACTIVE_F
+            + p_f
             + """ AND EXISTS (SELECT 1 FROM code_chunks WHERE code_chunks.file_id = f.id)) as chunked_files,
-            (SELECT COUNT(*) FROM code_chunks WHERE project_id = p.id) as chunk_count,
-            (SELECT COUNT(*) FROM code_chunks WHERE project_id = p.id AND vector_id IS NOT NULL) as vectorized_chunks,
+            (SELECT COUNT(*) FROM code_chunks cc INNER JOIN files fl ON fl.id = cc.file_id
+              WHERE cc.project_id = p.id AND """
+            + _WHERE_FILES_ACTIVE_FL
+            + p_fl
+            + """) as chunk_count,
+            (SELECT COUNT(*) FROM code_chunks cc INNER JOIN files fl ON fl.id = cc.file_id
+              WHERE cc.project_id = p.id AND cc.vector_id IS NOT NULL AND """
+            + _WHERE_FILES_ACTIVE_FL
+            + p_fl
+            + """) as vectorized_chunks,
             (SELECT COUNT(DISTINCT f.id) FROM files f INNER JOIN code_chunks cc ON f.id = cc.file_id WHERE f.project_id = p.id AND """
             + WHERE_FILES_ACTIVE_F
+            + p_f
             + """ AND cc.vector_id IS NOT NULL) as files_vectorized
         FROM projects p
         ORDER BY p.name
@@ -55,61 +87,99 @@ def build_status_ops(driver_type: str) -> List[Tuple[str, Any]]:
         """,
             None,
         ),
-        ("SELECT COUNT(*) as count FROM files", None),
-        ("SELECT COUNT(*) as count FROM files WHERE deleted IS TRUE", None),
-        ("SELECT COUNT(*) as count FROM files WHERE has_docstring IS TRUE", None),
+        ("SELECT COUNT(*) as count FROM files WHERE 1=1" + p_files, None),
+        ("SELECT COUNT(*) as count FROM files WHERE deleted IS TRUE" + p_files, None),
+        (
+            "SELECT COUNT(*) as count FROM files WHERE has_docstring IS TRUE"
+            + p_files,
+            None,
+        ),
         (
             "SELECT COUNT(*) as count FROM files WHERE "
             + WHERE_FILES_ACTIVE
+            + p_files
             + " AND NOT EXISTS (SELECT 1 FROM code_chunks WHERE code_chunks.file_id = files.id)",
             None,
         ),
         (
             "SELECT COUNT(DISTINCT f.id) as count FROM files f WHERE "
             + WHERE_FILES_ACTIVE_F
+            + p_f
             + " AND EXISTS (SELECT 1 FROM code_chunks WHERE code_chunks.file_id = f.id)",
             None,
         ),
         (
             "SELECT COUNT(*) as count FROM files WHERE "
             + WHERE_FILES_ACTIVE
-            + " AND (needs_chunking = 0 OR needs_chunking IS NULL)",
+            + p_files
+            + " AND "
+            + _WHERE_FILES_INDEXED,
             None,
         ),
         (
             "SELECT COUNT(*) as count FROM files WHERE "
             + WHERE_FILES_ACTIVE
-            + " AND needs_chunking = 1",
-            None,
-        ),
-        ("SELECT COUNT(*) as count FROM code_chunks", None),
-        ("SELECT COUNT(*) as count FROM code_chunks WHERE vector_id IS NOT NULL", None),
-        (
-            "SELECT COUNT(*) as count FROM code_chunks WHERE vector_id IS NULL AND (vectorization_skipped IS NULL OR vectorization_skipped = 0)",
+            + p_files
+            + " AND NOT ("
+            + _WHERE_FILES_INDEXED
+            + ")",
             None,
         ),
         (
-            f"SELECT COUNT(*) as count FROM files WHERE updated_at > {j}",
+            "SELECT COUNT(*) as count FROM code_chunks cc INNER JOIN files fl ON fl.id = cc.file_id WHERE "
+            + _WHERE_FILES_ACTIVE_FL
+            + p_fl,
             None,
         ),
         (
-            f"SELECT COUNT(*) as count FROM code_chunks WHERE created_at > {j}",
+            "SELECT COUNT(*) as count FROM code_chunks cc INNER JOIN files fl ON fl.id = cc.file_id WHERE "
+            + _WHERE_FILES_ACTIVE_FL
+            + p_fl
+            + " AND cc.vector_id IS NOT NULL",
+            None,
+        ),
+        (
+            "SELECT COUNT(*) as count FROM code_chunks cc INNER JOIN files fl ON fl.id = cc.file_id WHERE "
+            + _WHERE_FILES_ACTIVE_FL
+            + p_fl
+            + " AND cc.vector_id IS NULL AND (cc.vectorization_skipped IS NULL OR cc.vectorization_skipped = 0)",
+            None,
+        ),
+        (
+            f"SELECT COUNT(*) as count FROM files WHERE updated_at > {j}" + p_files,
+            None,
+        ),
+        (
+            "SELECT COUNT(*) as count FROM code_chunks cc INNER JOIN files fl ON fl.id = cc.file_id WHERE cc.created_at > "
+            + j
+            + " AND "
+            + _WHERE_FILES_ACTIVE_FL
+            + p_fl,
             None,
         ),
         (
             "SELECT f.id, f.path, f.has_docstring, f.last_modified FROM files f WHERE "
             + WHERE_FILES_ACTIVE_F
-            + " AND f.needs_chunking = 1 ORDER BY f.updated_at ASC LIMIT 10",
+            + p_f
+            + " AND NOT ("
+            + _WHERE_FILES_INDEXED_F
+            + ") ORDER BY f.updated_at ASC LIMIT 10",
             None,
         ),
         (
             "SELECT f.id, f.path, f.has_docstring, f.last_modified FROM files f WHERE "
             + WHERE_FILES_ACTIVE_F
+            + p_f
             + " AND NOT EXISTS (SELECT 1 FROM code_chunks WHERE code_chunks.file_id = f.id) ORDER BY f.updated_at DESC LIMIT 10",
             None,
         ),
         (
-            "SELECT id, file_id, chunk_text, created_at FROM code_chunks WHERE vector_id IS NULL AND (vectorization_skipped IS NULL OR vectorization_skipped = 0) ORDER BY id DESC LIMIT 10",
+            "SELECT cc.id, cc.file_id, cc.chunk_text, cc.created_at FROM code_chunks cc "
+            "INNER JOIN files fl ON fl.id = cc.file_id WHERE cc.vector_id IS NULL "
+            "AND (cc.vectorization_skipped IS NULL OR cc.vectorization_skipped = 0) AND "
+            + _WHERE_FILES_ACTIVE_FL
+            + p_fl
+            + " ORDER BY cc.id DESC LIMIT 10",
             None,
         ),
     ]

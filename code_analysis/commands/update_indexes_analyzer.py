@@ -242,7 +242,7 @@ def analyze_file(
                 exc_info=True,
             )
 
-        database.mark_file_needs_chunking(rel_path, project_id)
+        database.mark_file_needs_chunking(abs_file_path, project_id)
 
         entities_updated = sync_result.get("entities_updated", 0)
         return {

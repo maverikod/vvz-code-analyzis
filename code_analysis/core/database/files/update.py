@@ -152,11 +152,19 @@ def update_file_data(
             current_mtime = file_record.get("last_modified", 0)
 
         # Skip full reindex if file exists and stored last_modified matches disk mtime
+        # *and* we already have structural index (AST). Watcher rows often have
+        # last_modified equal to disk mtime on first insert; without this guard,
+        # index_file would "succeed" with skipped=True while never creating AST/chunks.
         normalized_lm = _last_modified_to_unix(file_record.get("last_modified"))
+        ast_exists = self._fetchone(
+            "SELECT 1 AS ok FROM ast_trees WHERE file_id = ? LIMIT 1",
+            (file_id,),
+        )
         if (
             Path(abs_path).exists()
             and normalized_lm is not None
             and abs(normalized_lm - current_mtime) <= FILE_MODIFICATION_TOLERANCE
+            and ast_exists is not None
         ):
             try:
                 self._clear_file_vectors(file_id)

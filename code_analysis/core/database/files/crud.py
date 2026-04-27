@@ -74,8 +74,12 @@ def add_file(
     Files are stored with relative_path from project root.
     Files are uniquely identified by (project_id, path).
 
-    **Important**: If file exists in a different project, it will be marked as deleted
-    in the old project and all related data will be cleared before adding to the new project.
+    **Important**: If the same **absolute** path is already indexed as an active file row
+    in a different project (unusual; can indicate relocation or misconfiguration), that
+    other row is marked deleted and its related data cleared before continuing. Matching
+    ``relative_path`` alone across projects is **not** treated as a conflict, because
+    ``relative_path`` is only meaningful within a project root (e.g. parallel
+    ``.venv/site-packages/...`` trees under different project roots).
 
     Args:
         path: File path (will be normalized to absolute, then converted to relative)
@@ -87,7 +91,8 @@ def add_file(
     Returns:
         File ID
     """
-    from ...path_normalization import normalize_file_path, normalize_path_simple
+    from ...path_normalization import normalize_file_path
+    from ...file_identity import normalize_project_file_path, relative_path_for_project
     from ...exceptions import ProjectIdMismatchError, ProjectNotFoundError
 
     # Get project to find project root and watch_dir_id
@@ -98,15 +103,12 @@ def add_file(
     project_root = Path(project["root_path"]).resolve()
     watch_dir_id = project.get("watch_dir_id")
 
-    # Normalize input path to absolute
-    abs_path = normalize_path_simple(path)
+    # Normalize input path to absolute (identity for DB ``path`` column)
+    abs_path = normalize_project_file_path(path)
     abs_path_obj = Path(abs_path)
 
-    # Calculate relative path from project root
-    try:
-        relative_path = abs_path_obj.relative_to(project_root)
-    except ValueError:
-        raise ValueError(f"File {abs_path} is not within project root {project_root}")
+    # Project-relative path (POSIX); meaningful only within this project_id
+    relative_path_str = relative_path_for_project(abs_path, project_root)
 
     # Validate project_id matches (if projectid file exists)
     try:
@@ -128,16 +130,17 @@ def add_file(
         # Re-raise project ID mismatch - this is a critical error
         raise
 
-    # Check if file exists in a different project (by relative_path or path)
+    # Cross-project check: only the same absolute path can indicate a shared/relocated
+    # file row. Do not compare relative_path across project_id (not globally unique).
     existing_file = self._fetchone(
         f"""
         SELECT id, project_id FROM files 
-        WHERE (relative_path = ? OR path = ?) 
+        WHERE path = ? 
         AND project_id != ? 
         AND {WHERE_FILES_ACTIVE}
         LIMIT 1
         """,
-        (str(relative_path), abs_path, project_id),
+        (abs_path, project_id),
     )
 
     if existing_file:
@@ -145,8 +148,13 @@ def add_file(
         wrong_project_id = existing_file["project_id"]
 
         logger.error(
-            f"Data inconsistency detected: file {abs_path} exists in project {wrong_project_id} "
-            f"but is being added to project {project_id}. Marking as deleted in old project and clearing related data."
+            "Same absolute path already indexed in another project: path=%r is active "
+            "under project_id=%s while add_file targets project_id=%s. "
+            "Treating as relocation/conflict: marking the other project's file deleted "
+            "and clearing its related data.",
+            abs_path,
+            wrong_project_id,
+            project_id,
         )
 
         # Clear all related data for the file in wrong project
@@ -181,7 +189,7 @@ def add_file(
         WHERE project_id = ?
         AND (relative_path = ? OR path = ?)
         """,
-        (project_id, str(relative_path), abs_path),
+        (project_id, relative_path_str, abs_path),
     )
 
     if existing_in_correct_project:
@@ -206,7 +214,7 @@ def add_file(
             (
                 watch_dir_id,
                 abs_path,
-                str(relative_path),
+                relative_path_str,
                 lines,
                 last_modified,
                 has_docstring,
@@ -229,7 +237,7 @@ def add_file(
                 project_id,
                 watch_dir_id,
                 abs_path,
-                str(relative_path),
+                relative_path_str,
                 lines,
                 last_modified,
                 has_docstring,

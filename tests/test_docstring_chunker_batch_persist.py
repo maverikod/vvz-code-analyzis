@@ -1,5 +1,5 @@
 """
-Tests for DocstringChunker batch persist: execute_batch is used for all chunk INSERTs.
+Tests for DocstringChunker batch persist: ``upsert_code_chunks_batch`` / shared upsert SQL.
 
 Author: Vasiliy Zdanovskiy
 email: vasilyvz@gmail.com
@@ -12,20 +12,31 @@ from unittest.mock import Mock
 
 import pytest
 
+from code_analysis.core.database.code_chunk_sql import (
+    CODE_CHUNK_UPSERT_PARAM_COUNT,
+    CODE_CHUNK_UPSERT_SQL,
+    build_code_chunk_upsert_batch,
+)
 from code_analysis.core.docstring_chunker_pkg.docstring_chunker import DocstringChunker
 
 
 @pytest.fixture
 def mock_db_with_execute_batch():
-    """Database mock that records execute_batch calls and returns valid result list."""
+    """Database mock that records upsert + execute_batch (mirrors CodeDatabase)."""
     mock = Mock()
     mock.execute_batch_calls = []
+    mock.upsert_code_chunks_batch_calls: list = []
 
     def execute_batch(operations):
         mock.execute_batch_calls.append(operations)
         return [{"affected_rows": 1, "lastrowid": i} for i in range(len(operations))]
 
+    def upsert_code_chunks_batch(param_rows):
+        mock.upsert_code_chunks_batch_calls.append(list(param_rows))
+        return execute_batch(build_code_chunk_upsert_batch(param_rows))
+
     mock.execute_batch = execute_batch
+    mock.upsert_code_chunks_batch = upsert_code_chunks_batch
     mock.execute = Mock(
         return_value={"data": [{}], "affected_rows": 0, "lastrowid": None}
     )
@@ -43,13 +54,13 @@ class A:
 
 
 class TestDocstringChunkerBatchPersist:
-    """Test that DocstringChunker uses execute_batch for chunk persistence."""
+    """DocstringChunker persists via ``upsert_code_chunks_batch`` and shared upsert SQL."""
 
     @pytest.mark.asyncio
     async def test_process_file_calls_execute_batch_once(
         self, mock_db_with_execute_batch, minimal_python_with_docstrings
     ):
-        """process_file accumulates insert_ops and calls execute_batch once."""
+        """process_file calls upsert_code_chunks_batch once; driver uses shared upsert SQL."""
         chunker = DocstringChunker(
             database=mock_db_with_execute_batch,
             svo_client_manager=None,
@@ -66,14 +77,21 @@ class TestDocstringChunkerBatchPersist:
             file_content=source,
         )
 
+        assert len(mock_db_with_execute_batch.upsert_code_chunks_batch_calls) == 1
+        upsert_rows = mock_db_with_execute_batch.upsert_code_chunks_batch_calls[0]
+        assert len(upsert_rows) == 2
+        for row in upsert_rows:
+            assert len(row) == CODE_CHUNK_UPSERT_PARAM_COUNT
+
         assert len(mock_db_with_execute_batch.execute_batch_calls) == 1
         insert_ops = mock_db_with_execute_batch.execute_batch_calls[0]
         assert len(insert_ops) == 2, "Expected 2 docstring chunks (module + class)"
         assert written == 2
 
+        expected_sql = CODE_CHUNK_UPSERT_SQL.strip()
         for sql, params in insert_ops:
-            assert "INSERT OR REPLACE INTO code_chunks" in sql
-            assert len(params) == 18
+            assert sql == expected_sql
+            assert len(params) == CODE_CHUNK_UPSERT_PARAM_COUNT
             assert params[0] == 1
             assert params[1] == "test-project-id"
 

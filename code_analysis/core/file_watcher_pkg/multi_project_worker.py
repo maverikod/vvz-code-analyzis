@@ -16,10 +16,12 @@ import logging
 import multiprocessing
 import os
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Sequence
+from typing import Any, Dict, List, Optional, Sequence, Set
 
+from ..project_ignore_policy import filter_ignore_exception_py_paths_for_watcher
 from ..venv_path_policy import (
     allowed_venv_py_files_for_watch_dir,
+    build_ignore_exception_files_for_projects,
     load_ignore_exceptions_from_config,
     load_ignore_exceptions_from_config_path,
 )
@@ -346,12 +348,24 @@ class MultiProjectFileWatcherWorker:
                     ValueError,
                 ):
                     discovered = []
+                exc_files_raw: Set[Path] = set()
+                if exc_patterns:
+                    exc_files_raw = build_ignore_exception_files_for_projects(
+                        [Path(p.root_path) for p in discovered],
+                        list(exc_patterns),
+                    )
+                exc_files_filtered = filter_ignore_exception_py_paths_for_watcher(
+                    exc_files_raw,
+                    [Path(p.root_path) for p in discovered],
+                    allowed_venv or None,
+                )
                 immediate_roots = {Path(p.root_path).resolve() for p in discovered}
                 scanned_files = scan_directory(
                     root_dir=watch_dir,
                     watch_dirs=[spec.watch_dir],
                     ignore_patterns=merged_ignore,
                     allowed_venv_py_files=allowed_venv or None,
+                    ignore_exception_files=exc_files_filtered or None,
                     ignore_exception_patterns=exc_patterns or None,
                     immediate_project_roots=immediate_roots,
                 )

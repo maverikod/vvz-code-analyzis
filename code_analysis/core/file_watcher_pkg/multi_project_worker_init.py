@@ -8,6 +8,7 @@ email: vasilyvz@gmail.com
 from __future__ import annotations
 
 import logging
+from pathlib import Path
 from typing import Any, List
 
 from .multi_project_worker_specs import WatchDirSpec
@@ -29,6 +30,9 @@ def initialize_watch_dirs(database: Any, watch_dirs: List[WatchDirSpec]) -> None
     """
     from ..path_normalization import normalize_path_simple
     from ..project_discovery import discover_projects_in_directory
+    from .watcher_soft_deleted_projects import (
+        partition_discovered_projects_by_db_soft_delete,
+    )
 
     logger.info("Initializing watch directories...")
 
@@ -59,10 +63,51 @@ def initialize_watch_dirs(database: Any, watch_dirs: List[WatchDirSpec]) -> None
 
             try:
                 discovered_projects = discover_projects_in_directory(watch_dir_path)
+                discovered_projects, _ = (
+                    partition_discovered_projects_by_db_soft_delete(
+                        database, discovered_projects
+                    )
+                )
                 for project_root_obj in discovered_projects:
                     project_obj = database.get_project(project_root_obj.project_id)
                     if project_obj:
-                        if getattr(project_obj, "watch_dir_id", None) != watch_dir_id:
+                        stored_root = (
+                            project_obj.get("root_path")
+                            if isinstance(project_obj, dict)
+                            else getattr(project_obj, "root_path", None)
+                        )
+                        if stored_root:
+                            try:
+                                old_rr = Path(str(stored_root)).resolve()
+                                new_rr = project_root_obj.root_path.resolve()
+                            except OSError:
+                                old_rr = Path(str(stored_root))
+                                new_rr = project_root_obj.root_path.resolve()
+                            if old_rr != new_rr:
+                                if database.relocate_project_root_after_disk_move(
+                                    project_root_obj.project_id,
+                                    str(old_rr),
+                                    str(new_rr),
+                                ):
+                                    logger.info(
+                                        "[WATCHER_INIT] project_id=%s root_path %s -> %s",
+                                        project_root_obj.project_id,
+                                        old_rr,
+                                        new_rr,
+                                    )
+                                else:
+                                    logger.error(
+                                        "[WATCHER_INIT] failed to relocate project_id=%s "
+                                        "to %s (collision or DB error)",
+                                        project_root_obj.project_id,
+                                        new_rr,
+                                    )
+                        wd_id = (
+                            project_obj.get("watch_dir_id")
+                            if isinstance(project_obj, dict)
+                            else getattr(project_obj, "watch_dir_id", None)
+                        )
+                        if wd_id != watch_dir_id:
                             database.execute(
                                 """
                                 UPDATE projects 

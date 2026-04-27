@@ -111,6 +111,8 @@ def create_tree_from_code(
 
     _trees[tree.tree_id] = tree
     return tree
+
+
 def _build_tree_index(
     tree: CSTTree,
     node_types: Optional[List[str]] = None,
@@ -319,6 +321,8 @@ def remove_tree(tree_id: str) -> bool:
         del _trees[tree_id]
         return True
     return False
+
+
 def reload_tree_from_file(
     tree_id: str,
     node_types: Optional[List[str]] = None,
@@ -445,6 +449,7 @@ async def _cst_tree_ttl_cleanup_loop() -> None:
 
 def start_cst_tree_ttl_cleanup() -> None:
     asyncio.ensure_future(_cst_tree_ttl_cleanup_loop())
+
 
 # cst-node-ids: begin
 # cst-node-ids: version=2

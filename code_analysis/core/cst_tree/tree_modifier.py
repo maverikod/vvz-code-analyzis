@@ -106,6 +106,8 @@ def _use_mutable_batch_path(operations: List[TreeOperation], tree: CSTTree) -> b
         if node_type and node_type in FINE_GRAINED_REPLACE_NODE_TYPES:
             return False
     return replace_count > 1 or insert_count > 1 or has_delete
+
+
 def modify_tree(tree_id: str, operations: List[TreeOperation]) -> CSTTree:
     """
     Modify tree with atomic operations.
@@ -168,7 +170,9 @@ def modify_tree(tree_id: str, operations: List[TreeOperation]) -> CSTTree:
             _validate_module(new_module)
             tree.module = new_module
             # Snapshot {id(obj): old_uuid} before clearing for alias tracking
-            prev_obj_to_id: Dict[int, str] = {id(v): k for k, v in tree.node_map.items()}
+            prev_obj_to_id: Dict[int, str] = {
+                id(v): k for k, v in tree.node_map.items()
+            }
             tree.node_map.clear()
             tree.metadata_map.clear()
             tree.parent_map.clear()
@@ -461,6 +465,7 @@ def _validate_module(module: cst.Module) -> None:
         compile(module.code, "<string>", "exec")
     except SyntaxError as e:
         raise ValueError(f"Module validation failed: {e}") from e
+
 
 # cst-node-ids: begin
 # cst-node-ids: version=2

@@ -237,23 +237,11 @@ def path_is_under_project_local_venv(resolved_path: Path, project_root: Path) ->
     """
     True if ``resolved_path`` lies under ``project_root/.venv`` or ``project_root/venv``.
 
-    Uses :meth:`Path.resolve` for both paths when possible.
+    Delegates to :func:`code_analysis.core.project_ignore_policy.path_is_under_project_local_venv`.
     """
-    try:
-        p = resolved_path.resolve()
-        root = project_root.resolve()
-    except OSError:
-        return False
-    for name in (".venv", "venv"):
-        try:
-            anchor = (root / name).resolve()
-            p.relative_to(anchor)
-            return True
-        except ValueError:
-            continue
-        except OSError:
-            continue
-    return False
+    from .project_ignore_policy import path_is_under_project_local_venv as _under
+
+    return _under(resolved_path, project_root)
 
 
 def iter_site_packages_dirs(project_root: Path) -> List[Path]:
@@ -387,9 +375,7 @@ def _iter_project_walk_prune_dirs(dirs: List[str], ignore_dirs: Set[str]) -> Non
     dirs[:] = [
         d
         for d in dirs
-        if not d.startswith(".")
-        and d not in ignore_dirs
-        and d not in (".venv", "venv")
+        if not d.startswith(".") and d not in ignore_dirs and d not in (".venv", "venv")
     ]
 
 
@@ -402,7 +388,10 @@ def iter_project_python_files_excluding_venv(project_root: Path) -> List[Path]:
     """
     from .constants import DATA_DIR_NAME, DEFAULT_IGNORE_PATTERNS, LOGS_DIR_NAME
 
-    ignore_dirs: Set[str] = set(DEFAULT_IGNORE_PATTERNS) | {DATA_DIR_NAME, LOGS_DIR_NAME}
+    ignore_dirs: Set[str] = set(DEFAULT_IGNORE_PATTERNS) | {
+        DATA_DIR_NAME,
+        LOGS_DIR_NAME,
+    }
     root_path = project_root.resolve()
     files: List[Path] = []
     for walk_root, dirs, walk_files in os.walk(root_path):
@@ -423,7 +412,10 @@ def iter_project_files_excluding_venv(project_root: Path) -> List[Path]:
     """
     from .constants import DATA_DIR_NAME, DEFAULT_IGNORE_PATTERNS, LOGS_DIR_NAME
 
-    ignore_dirs: Set[str] = set(DEFAULT_IGNORE_PATTERNS) | {DATA_DIR_NAME, LOGS_DIR_NAME}
+    ignore_dirs: Set[str] = set(DEFAULT_IGNORE_PATTERNS) | {
+        DATA_DIR_NAME,
+        LOGS_DIR_NAME,
+    }
     root_path = project_root.resolve()
     files: List[Path] = []
     for walk_root, dirs, walk_files in os.walk(root_path):
@@ -477,16 +469,24 @@ def collect_python_files_for_indexing(
     """
     Project sources (excluding venv) plus allowlisted site-packages ``.py`` files.
 
-    Also merges ``.py`` paths matching ``code_analysis.ignore_exceptions`` (glob, project-relative).
+    Also merges ``.py`` paths matching ``code_analysis.ignore_exceptions`` (glob,
+    project-relative), except under ``.venv``/``venv`` unless allowlisted via RECORD.
 
     Ordering: sorted merged set.
     """
+    from .project_ignore_policy import filter_ignore_exception_py_paths_for_watcher
+
     base = iter_project_python_files_excluding_venv(project_root)
     extra = build_allowlisted_site_packages_py_files(
         project_root, distribution_allowlist
     )
-    ign_ex = expand_ignore_exception_py_files(
+    ign_ex_raw = expand_ignore_exception_py_files(
         project_root, load_ignore_exceptions_from_config()
+    )
+    ign_ex = filter_ignore_exception_py_paths_for_watcher(
+        ign_ex_raw,
+        [project_root.resolve()],
+        set(extra),
     )
     merged: Set[Path] = set(base) | set(extra) | ign_ex
     return sorted(merged)

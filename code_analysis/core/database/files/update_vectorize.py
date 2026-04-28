@@ -151,7 +151,7 @@ async def vectorize_file_immediately(
         )
 
         chunks_created = await chunker.process_file(
-            file_id=file_id,
+            file_id=str(file_id),
             project_id=project_id,
             file_path=file_path,
             tree=tree,

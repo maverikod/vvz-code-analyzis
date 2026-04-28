@@ -24,7 +24,7 @@ from ..exceptions import (
     TransientDatabaseError,
 )
 from ..sqlite_query_journal import SQLiteQueryJournal
-from .base import BaseDatabaseDriver
+from .base import BaseDatabaseDriver, DbIdentity
 from .sqlite_migrations import run_all_ensure
 from .sqlite_batch import expand_operations, split_batch_sql
 from .sqlite_operations import SQLiteOperations
@@ -288,7 +288,7 @@ class SQLiteDriver(BaseDatabaseDriver):
         except Exception as e:
             raise DriverOperationError(f"Failed to drop table: {e}") from e
 
-    def insert(self, table_name: str, data: Dict[str, Any]) -> int:
+    def insert(self, table_name: str, data: Dict[str, Any]) -> Optional[DbIdentity]:
         """Insert row into table."""
         if not self._operations:
             raise DriverOperationError("Operations manager not initialized")

@@ -9,9 +9,11 @@ from __future__ import annotations
 
 import logging
 import threading
+import uuid
 from typing import Any, Dict, List, Optional
 
 from ..exceptions import DriverOperationError
+from .base import DbIdentity
 
 logger = logging.getLogger(__name__)
 
@@ -34,6 +36,22 @@ def _coerce_pg_boolean_values(data: Dict[str, Any]) -> Dict[str, Any]:
         else:
             out[col] = val
     return out
+
+
+def _normalize_postgres_returning_pk(value: Any) -> DbIdentity:
+    """Map RETURNING primary key cell to universal driver identity (int or str).
+
+    Never coerce non-integer PKs to ``0`` — UUID and TEXT ids must surface as strings.
+    """
+    if isinstance(value, int) and not isinstance(value, bool):
+        return value
+    if isinstance(value, uuid.UUID):
+        return str(value)
+    if isinstance(value, str):
+        return value
+    if value is None:
+        raise DriverOperationError("INSERT RETURNING produced NULL primary key")
+    return str(value)
 
 
 def _postgres_where_clauses(
@@ -83,7 +101,7 @@ class PostgreSQLOperations:
                 return str(c["name"])
         return "id"
 
-    def insert(self, table_name: str, data: Dict[str, Any]) -> int:
+    def insert(self, table_name: str, data: Dict[str, Any]) -> Optional[DbIdentity]:
         if not self.conn:
             raise DriverOperationError("Database connection not established")
 
@@ -103,9 +121,9 @@ class PostgreSQLOperations:
                     cursor.execute(sql, values)
                     row = cursor.fetchone()
                     self.conn.commit()
-                    if row and row[0] is not None and isinstance(row[0], int):
-                        return int(row[0])
-                    return 0
+                    if not row or row[0] is None:
+                        return None
+                    return _normalize_postgres_returning_pk(row[0])
                 finally:
                     cursor.close()
             except Exception as e:

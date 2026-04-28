@@ -1,6 +1,11 @@
 """
 Mid-layer table definitions for code_analysis database schema (imports through code_chunks).
 
+Identity and FK columns to core entities use logical UUID (PostgreSQL native UUID;
+SQLite canonical TEXT via schema_sync_sql). Polymorphic references (Option A):
+``code_content.entity_id`` and ``vector_index.entity_id`` are logical UUID without
+FK enforcement; ``entity_type`` selects the semantic target table.
+
 Author: Vasiliy Zdanovskiy
 email: vasilyvz@gmail.com
 """
@@ -15,12 +20,11 @@ def get_tables_mid() -> Dict[str, Any]:
             "columns": [
                 {
                     "name": "id",
-                    "type": "INTEGER",
+                    "type": "UUID",
                     "not_null": True,
                     "primary_key": True,
-                    "autoincrement": True,
                 },
-                {"name": "file_id", "type": "INTEGER", "not_null": True},
+                {"name": "file_id", "type": "UUID", "not_null": True},
                 {"name": "name", "type": "TEXT", "not_null": True},
                 {"name": "module", "type": "TEXT", "not_null": False},
                 {"name": "import_type", "type": "TEXT", "not_null": True},
@@ -47,16 +51,15 @@ def get_tables_mid() -> Dict[str, Any]:
             "columns": [
                 {
                     "name": "id",
-                    "type": "INTEGER",
+                    "type": "UUID",
                     "not_null": True,
                     "primary_key": True,
-                    "autoincrement": True,
                 },
-                {"name": "file_id", "type": "INTEGER", "not_null": False},
-                {"name": "project_id", "type": "TEXT", "not_null": False},
-                {"name": "class_id", "type": "INTEGER", "not_null": False},
-                {"name": "function_id", "type": "INTEGER", "not_null": False},
-                {"name": "method_id", "type": "INTEGER", "not_null": False},
+                {"name": "file_id", "type": "UUID", "not_null": False},
+                {"name": "project_id", "type": "UUID", "not_null": False},
+                {"name": "class_id", "type": "UUID", "not_null": False},
+                {"name": "function_id", "type": "UUID", "not_null": False},
+                {"name": "method_id", "type": "UUID", "not_null": False},
                 {"name": "issue_type", "type": "TEXT", "not_null": True},
                 {"name": "line", "type": "INTEGER", "not_null": False},
                 {"name": "description", "type": "TEXT", "not_null": False},
@@ -107,12 +110,11 @@ def get_tables_mid() -> Dict[str, Any]:
             "columns": [
                 {
                     "name": "id",
-                    "type": "INTEGER",
+                    "type": "UUID",
                     "not_null": True,
                     "primary_key": True,
-                    "autoincrement": True,
                 },
-                {"name": "file_id", "type": "INTEGER", "not_null": True},
+                {"name": "file_id", "type": "UUID", "not_null": True},
                 {"name": "line", "type": "INTEGER", "not_null": True},
                 {"name": "usage_type", "type": "TEXT", "not_null": True},
                 {"name": "target_type", "type": "TEXT", "not_null": True},
@@ -141,14 +143,17 @@ def get_tables_mid() -> Dict[str, Any]:
             "columns": [
                 {
                     "name": "id",
-                    "type": "INTEGER",
+                    "type": "UUID",
                     "not_null": True,
                     "primary_key": True,
-                    "autoincrement": True,
                 },
-                {"name": "file_id", "type": "INTEGER", "not_null": True},
+                {"name": "file_id", "type": "UUID", "not_null": True},
                 {"name": "entity_type", "type": "TEXT", "not_null": True},
-                {"name": "entity_id", "type": "INTEGER", "not_null": False},
+                {
+                    "name": "entity_id",
+                    "type": "UUID",
+                    "not_null": False,
+                },
                 {"name": "entity_name", "type": "TEXT", "not_null": False},
                 {"name": "content", "type": "TEXT", "not_null": True},
                 {"name": "docstring", "type": "TEXT", "not_null": False},
@@ -174,13 +179,12 @@ def get_tables_mid() -> Dict[str, Any]:
             "columns": [
                 {
                     "name": "id",
-                    "type": "INTEGER",
+                    "type": "UUID",
                     "not_null": True,
                     "primary_key": True,
-                    "autoincrement": True,
                 },
-                {"name": "file_id", "type": "INTEGER", "not_null": True},
-                {"name": "project_id", "type": "TEXT", "not_null": True},
+                {"name": "file_id", "type": "UUID", "not_null": True},
+                {"name": "project_id", "type": "UUID", "not_null": True},
                 {"name": "ast_json", "type": "TEXT", "not_null": True},
                 {"name": "ast_hash", "type": "TEXT", "not_null": True},
                 {"name": "file_mtime", "type": "REAL", "not_null": True},
@@ -218,13 +222,12 @@ def get_tables_mid() -> Dict[str, Any]:
             "columns": [
                 {
                     "name": "id",
-                    "type": "INTEGER",
+                    "type": "UUID",
                     "not_null": True,
                     "primary_key": True,
-                    "autoincrement": True,
                 },
-                {"name": "file_id", "type": "INTEGER", "not_null": True},
-                {"name": "project_id", "type": "TEXT", "not_null": True},
+                {"name": "file_id", "type": "UUID", "not_null": True},
+                {"name": "project_id", "type": "UUID", "not_null": True},
                 {"name": "cst_code", "type": "TEXT", "not_null": True},
                 {"name": "cst_hash", "type": "TEXT", "not_null": True},
                 {"name": "file_mtime", "type": "REAL", "not_null": True},
@@ -262,14 +265,17 @@ def get_tables_mid() -> Dict[str, Any]:
             "columns": [
                 {
                     "name": "id",
-                    "type": "INTEGER",
+                    "type": "UUID",
                     "not_null": True,
                     "primary_key": True,
-                    "autoincrement": True,
                 },
-                {"name": "project_id", "type": "TEXT", "not_null": True},
+                {"name": "project_id", "type": "UUID", "not_null": True},
                 {"name": "entity_type", "type": "TEXT", "not_null": True},
-                {"name": "entity_id", "type": "INTEGER", "not_null": True},
+                {
+                    "name": "entity_id",
+                    "type": "UUID",
+                    "not_null": True,
+                },
                 {"name": "vector_id", "type": "INTEGER", "not_null": True},
                 {"name": "vector_dim", "type": "INTEGER", "not_null": True},
                 {"name": "embedding_model", "type": "TEXT", "not_null": False},
@@ -297,13 +303,12 @@ def get_tables_mid() -> Dict[str, Any]:
             "columns": [
                 {
                     "name": "id",
-                    "type": "INTEGER",
+                    "type": "UUID",
                     "not_null": True,
                     "primary_key": True,
-                    "autoincrement": True,
                 },
-                {"name": "file_id", "type": "INTEGER", "not_null": True},
-                {"name": "project_id", "type": "TEXT", "not_null": True},
+                {"name": "file_id", "type": "UUID", "not_null": True},
+                {"name": "project_id", "type": "UUID", "not_null": True},
                 {"name": "chunk_uuid", "type": "TEXT", "not_null": True},
                 {"name": "chunk_type", "type": "TEXT", "not_null": True},
                 {"name": "chunk_text", "type": "TEXT", "not_null": True},
@@ -313,9 +318,9 @@ def get_tables_mid() -> Dict[str, Any]:
                 {"name": "bm25_score", "type": "REAL", "not_null": False},
                 {"name": "embedding_vector", "type": "TEXT", "not_null": False},
                 {"name": "token_count", "type": "INTEGER", "not_null": False},
-                {"name": "class_id", "type": "INTEGER", "not_null": False},
-                {"name": "function_id", "type": "INTEGER", "not_null": False},
-                {"name": "method_id", "type": "INTEGER", "not_null": False},
+                {"name": "class_id", "type": "UUID", "not_null": False},
+                {"name": "function_id", "type": "UUID", "not_null": False},
+                {"name": "method_id", "type": "UUID", "not_null": False},
                 {"name": "line", "type": "INTEGER", "not_null": False},
                 {"name": "ast_node_type", "type": "TEXT", "not_null": False},
                 {"name": "source_type", "type": "TEXT", "not_null": False},

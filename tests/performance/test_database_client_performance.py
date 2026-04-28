@@ -123,7 +123,7 @@ class TestDatabaseClientPerformance:
             )
             assert concurrent_time > 0
             assert sequential_time > 0
-            assert all(r > 0 for r in results)
+            assert all(r is not None and isinstance(r, int) and r > 0 for r in results)
         finally:
             client.disconnect()
 

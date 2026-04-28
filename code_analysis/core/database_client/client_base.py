@@ -13,6 +13,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
 
+from code_analysis.core.database_driver_pkg.drivers.base import DbIdentity
+
 from .protocol import RPCResponse
 from .rpc_client import RPCClient
 
@@ -62,7 +64,7 @@ class _DatabaseClientBase:
         """Select rows from table. Implemented in _ClientOperationsMixin."""
         raise NotImplementedError
 
-    def insert(self, table_name: str, data: Dict[str, Any]) -> int:
+    def insert(self, table_name: str, data: Dict[str, Any]) -> Optional[DbIdentity]:
         """Insert row. Implemented in _ClientOperationsMixin."""
         raise NotImplementedError
 

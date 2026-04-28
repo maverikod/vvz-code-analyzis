@@ -120,12 +120,15 @@ class _RPCHandlersFileTrashMixin:
                 error_code=ErrorCode.VALIDATION_ERROR,
                 description="hard_delete_file requires file_id",
             )
-        try:
-            file_id = int(file_id)
-        except (TypeError, ValueError):
+        if not isinstance(file_id, (int, str)):
             return ErrorResult(
                 error_code=ErrorCode.VALIDATION_ERROR,
-                description="hard_delete_file file_id must be an integer",
+                description="hard_delete_file file_id must be a string or integer",
+            )
+        if isinstance(file_id, str) and not file_id.strip():
+            return ErrorResult(
+                error_code=ErrorCode.VALIDATION_ERROR,
+                description="hard_delete_file file_id must not be empty",
             )
         db = self._get_code_db()
         try:

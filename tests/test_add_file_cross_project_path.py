@@ -27,9 +27,7 @@ from code_analysis.core.database.base import create_driver_config_for_worker
 
 
 def _venv_client_path(root: Path) -> Path:
-    rel = Path(
-        ".venv/lib/python3.12/site-packages/mcp_proxy_adapter/core/client.py"
-    )
+    rel = Path(".venv/lib/python3.12/site-packages/mcp_proxy_adapter/core/client.py")
     p = root / rel
     p.parent.mkdir(parents=True, exist_ok=True)
     p.write_text("# stub\n", encoding="utf-8")
@@ -98,7 +96,7 @@ def test_add_file_same_relative_path_two_projects_no_clear(
             has_docstring=False,
             project_id=pid_a,
         )
-        assert fid_a > 0
+        uuid.UUID(str(fid_a))
         clear_mock.assert_not_called()
 
         mtime_b = float(path_b.stat().st_mtime)
@@ -109,7 +107,7 @@ def test_add_file_same_relative_path_two_projects_no_clear(
             has_docstring=False,
             project_id=pid_b,
         )
-        assert fid_b > 0
+        uuid.UUID(str(fid_b))
         assert fid_b != fid_a
         clear_mock.assert_not_called()
 
@@ -167,12 +165,8 @@ def test_add_file_cleanup_safety_chunks_preserved_other_project(
     _write_projectid(root_b, pid_b)
     path_a = _venv_client_path(root_a)
     path_b = _venv_client_path(root_b)
-    sqlite_db.get_or_create_project(
-        str(root_a.resolve()), name="pa", project_id=pid_a
-    )
-    sqlite_db.get_or_create_project(
-        str(root_b.resolve()), name="pb", project_id=pid_b
-    )
+    sqlite_db.get_or_create_project(str(root_a.resolve()), name="pa", project_id=pid_a)
+    sqlite_db.get_or_create_project(str(root_b.resolve()), name="pb", project_id=pid_b)
 
     fid_a = sqlite_db.add_file(
         path=str(path_a.resolve()),
@@ -183,9 +177,9 @@ def test_add_file_cleanup_safety_chunks_preserved_other_project(
     )
     chunk_uuid = "00000000-0000-4000-8000-00000000aaa1"
     sqlite_db._execute(
-        "INSERT INTO code_chunks (file_id, project_id, chunk_uuid, chunk_type, "
-        "chunk_text, chunk_ordinal) VALUES (?, ?, ?, ?, ?, ?)",
-        (fid_a, pid_a, chunk_uuid, "docstring", "chunk body", 1),
+        "INSERT INTO code_chunks (id, file_id, project_id, chunk_uuid, chunk_type, "
+        "chunk_text, chunk_ordinal) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        (str(uuid.uuid4()), fid_a, pid_a, chunk_uuid, "docstring", "chunk body", 1),
     )
     sqlite_db._commit()
 

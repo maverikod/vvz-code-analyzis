@@ -138,7 +138,8 @@ class TestDatabaseClient:
 
         try:
             row_id = client.insert("test_table", {"name": "John", "age": 30})
-            assert row_id > 0
+            assert row_id is not None
+            assert isinstance(row_id, int) and row_id > 0
         finally:
             client.disconnect()
 
@@ -185,6 +186,7 @@ class TestDatabaseClient:
         try:
             # Insert test data
             row_id = client.insert("test_table", {"name": "Charlie", "age": 20})
+            assert row_id is not None
 
             # Update
             affected = client.update(
@@ -209,6 +211,7 @@ class TestDatabaseClient:
         try:
             # Insert test data
             row_id = client.insert("test_table", {"name": "DeleteMe", "age": 99})
+            assert row_id is not None
 
             # Delete
             affected = client.delete("test_table", where={"id": row_id})
@@ -340,6 +343,7 @@ class TestDatabaseClient:
 
             # Insert in transaction
             row_id = client.insert("test_table", {"name": "Trans", "age": 1})
+            assert row_id is not None
 
             # Commit transaction
             result = client.commit_transaction(transaction_id)
@@ -462,6 +466,7 @@ class TestDatabaseClient:
             # Insert data
             row_id1 = client.insert("workflow_table", {"name": "Item1", "value": 10})
             row_id2 = client.insert("workflow_table", {"name": "Item2", "value": 20})
+            assert row_id1 is not None and row_id2 is not None
 
             # Select all
             rows = client.select("workflow_table")

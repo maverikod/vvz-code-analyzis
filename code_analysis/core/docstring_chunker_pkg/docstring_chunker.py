@@ -74,7 +74,7 @@ class _DocItem:
 class PreparedDocstringFile:
     """One file ready for multi-file docstring chunking (``process_prepared_files``)."""
 
-    file_id: int
+    file_id: str
     project_id: str
     file_path: str
     tree: ast.Module
@@ -133,7 +133,7 @@ class DocstringChunker:
         self.embedding_model = embedding_model
         self.log_timing = log_timing
 
-    def _file_still_exists_and_not_deleted(self, file_id: int, project_id: str) -> bool:
+    def _file_still_exists_and_not_deleted(self, file_id: str, project_id: str) -> bool:
         """
         Check if file and project still exist and file is not marked deleted.
 
@@ -209,7 +209,7 @@ class DocstringChunker:
 
     def _code_chunk_upsert_param_rows_for_docstring_rows(
         self,
-        file_id: int,
+        file_id: str,
         project_id: str,
         file_path: str,
         rows_to_persist: List[
@@ -278,7 +278,9 @@ class DocstringChunker:
                         it.line,
                     )
                     raise err
+            chunk_pk = str(uuid.uuid4())
             params = (
+                chunk_pk,
                 file_id,
                 project_id,
                 chunk_uuid,
@@ -374,7 +376,7 @@ class DocstringChunker:
 
     async def process_prepared_files(
         self, prepared: List[PreparedDocstringFile]
-    ) -> Dict[int, int]:
+    ) -> Dict[str, int]:
         """
         Process multiple prepared files using ``get_chunks_batch`` when available.
 
@@ -382,7 +384,7 @@ class DocstringChunker:
         :data:`DOCSTRING_CHUNK_BATCH_MAX_TEXTS`, then persists all inserts in one
         logical write batch when supported.
         """
-        counts: Dict[int, int] = {pf.file_id: 0 for pf in prepared}
+        counts: Dict[str, int] = {pf.file_id: 0 for pf in prepared}
         flat: List[Tuple[PreparedDocstringFile, _DocItem]] = []
         for pf in prepared:
             for it in pf.items:
@@ -497,14 +499,14 @@ class DocstringChunker:
             await self._persist_code_chunk_param_rows(all_param_rows)
 
         for params in all_param_rows:
-            fid = int(params[0])
+            fid = params[1]
             counts[fid] = counts.get(fid, 0) + 1
         return counts
 
     async def process_file(
         self,
         *,
-        file_id: int,
+        file_id: str,
         project_id: str,
         file_path: str,
         tree: ast.AST,

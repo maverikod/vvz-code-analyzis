@@ -48,6 +48,10 @@ class _ClientAPIDuplicatesStatsMixin(_DatabaseClientBase):
 
         data = object_to_db_row(duplicate)
         row_id = self.insert(table_name, data)
+        if row_id is None:
+            raise ValueError(
+                "Failed to create code duplicate: insert returned no row id"
+            )
 
         # Fetch created duplicate
         rows = self.select(table_name, where={"id": row_id})

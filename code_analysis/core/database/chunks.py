@@ -6,6 +6,7 @@ email: vasilyvz@gmail.com
 """
 
 import logging
+import uuid
 from typing import Optional
 
 from code_analysis.core.database.code_chunk_sql import (
@@ -18,7 +19,7 @@ logger = logging.getLogger(__name__)
 
 async def add_code_chunk(
     self,
-    file_id: int,
+    file_id: str,
     project_id: str,
     chunk_uuid: str,
     chunk_type: str,
@@ -29,14 +30,14 @@ async def add_code_chunk(
     bm25_score: Optional[float] = None,
     embedding_vector: Optional[str] = None,
     token_count: Optional[int] = None,
-    class_id: Optional[int] = None,
-    function_id: Optional[int] = None,
-    method_id: Optional[int] = None,
+    class_id: Optional[str] = None,
+    function_id: Optional[str] = None,
+    method_id: Optional[str] = None,
     line: Optional[int] = None,
     ast_node_type: Optional[str] = None,
     source_type: Optional[str] = None,
     binding_level: int = 0,
-) -> int:
+) -> str:
     """
     Add or update code chunk. Returns chunk_id.
 
@@ -64,7 +65,7 @@ async def add_code_chunk(
         binding_level: AST binding - nesting level (0 = top level)
 
     Returns:
-        Chunk ID
+        Chunk primary key (UUID string)
     """
     if embedding_vector is not None and not (
         embedding_model and str(embedding_model).strip()
@@ -73,7 +74,9 @@ async def add_code_chunk(
             "embedding_model is required when embedding_vector is set; "
             "a vector without model cannot be used for search"
         )
+    chunk_pk = str(uuid.uuid4())
     params = (
+        chunk_pk,
         file_id,
         project_id,
         chunk_uuid,
@@ -103,6 +106,4 @@ async def add_code_chunk(
         params,
     )
     self._commit()
-    result = self._lastrowid()
-    assert result is not None
-    return result
+    return chunk_pk

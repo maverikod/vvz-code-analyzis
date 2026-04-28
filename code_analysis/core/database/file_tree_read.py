@@ -69,7 +69,7 @@ def get_snapshot_tree_structure(
     if not snapshot_row:
         return result
 
-    snapshot_id = int(snapshot_row["id"])
+    snapshot_id = str(snapshot_row["id"])
     result["snapshot_id"] = snapshot_id
     result["has_snapshot"] = True
 

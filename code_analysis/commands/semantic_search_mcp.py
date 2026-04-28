@@ -234,6 +234,8 @@ class SemanticSearchMCPCommand(BaseMCPCommand):
                 result = database.execute(
                     f"""
                     SELECT
+                        c.id AS chunk_id,
+                        c.file_id,
                         c.vector_id,
                         c.chunk_uuid,
                         c.chunk_type,
@@ -266,6 +268,8 @@ class SemanticSearchMCPCommand(BaseMCPCommand):
                         "score": score,
                         "distance": float(dist),
                         "vector_id": int(vid),
+                        "chunk_id": row.get("chunk_id"),
+                        "file_id": row.get("file_id"),
                         "chunk_uuid": row.get("chunk_uuid"),
                         "chunk_type": row.get("chunk_type"),
                         "file_path": row.get("file_path"),
@@ -494,8 +498,10 @@ class SemanticSearchMCPCommand(BaseMCPCommand):
                             "List of similar code chunks. Each contains:\n"
                             "- score: Similarity score (0.0-1.0, higher is better)\n"
                             "- distance: Distance in vector space (lower is better)\n"
-                            "- vector_id: Vector ID in FAISS index\n"
-                            "- chunk_uuid: Chunk UUID\n"
+                            "- vector_id: Integer position in the FAISS index (not a DB primary key)\n"
+                            "- chunk_id: code_chunks.id (UUID string after DB UUID migration)\n"
+                            "- file_id: files.id for the chunk (UUID string after migration)\n"
+                            "- chunk_uuid: Stable chunk business key (string; distinct from chunk_id)\n"
                             "- chunk_type: Type of chunk\n"
                             "- file_path: Path to file containing the chunk\n"
                             "- line: Line number in file\n"
@@ -514,7 +520,9 @@ class SemanticSearchMCPCommand(BaseMCPCommand):
                                 "score": 0.85,
                                 "distance": 0.176,
                                 "vector_id": 42,
-                                "chunk_uuid": "chunk123...",
+                                "chunk_id": "c3d4e5f6-a7b8-4901-c234-567890123456",
+                                "file_id": "f1e2d3c4-b5a6-4789-8012-3456789abcde",
+                                "chunk_uuid": "9f8e7d6c-5b4a-4321-8fed-cba987654321",
                                 "chunk_type": "function",
                                 "file_path": "src/db.py",
                                 "line": 10,

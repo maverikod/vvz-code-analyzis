@@ -66,7 +66,8 @@ class TestDatabaseClientIntegrationRealServer:
         try:
             # Test insert
             row_id = client.insert("test_table", {"name": "Test", "value": 42})
-            assert row_id > 0
+            assert row_id is not None
+            assert isinstance(row_id, int) and row_id > 0
 
             # Test select
             rows = client.select("test_table")
@@ -116,7 +117,7 @@ class TestDatabaseClientIntegrationRealServer:
                 for i in range(20)
             ]
 
-            assert all(r > 0 for r in results)
+            assert all(r is not None and isinstance(r, int) and r > 0 for r in results)
 
             rows = client.select("test_table")
             assert len(rows) >= 20
@@ -136,7 +137,8 @@ class TestDatabaseClientIntegrationRealServer:
         try:
             # Normal operation should work
             row_id = client.insert("test_table", {"name": "RetryTest", "value": 99})
-            assert row_id > 0
+            assert row_id is not None
+            assert isinstance(row_id, int) and row_id > 0
 
             # Verify operation succeeded
             rows = client.select("test_table", where={"id": row_id})

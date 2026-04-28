@@ -52,7 +52,7 @@ def get_all_chunks_for_faiss_rebuild(
             WHERE cc.project_id = ?
               AND cc.embedding_model IS NOT NULL
               AND cc.embedding_vector IS NOT NULL
-            ORDER BY cc.id
+            ORDER BY cc.created_at, cc.id
             """,
                 (project_id,),
             ),
@@ -82,7 +82,7 @@ def get_all_chunks_for_faiss_rebuild(
             FROM code_chunks cc
             WHERE cc.embedding_model IS NOT NULL
               AND cc.embedding_vector IS NOT NULL
-            ORDER BY cc.id
+            ORDER BY cc.created_at, cc.id
                 """
             ),
         )
@@ -131,7 +131,7 @@ def get_non_vectorized_chunks(
           AND {WHERE_FILES_ACTIVE_F}
           AND cc.embedding_vector IS NOT NULL
           AND cc.vector_id IS NULL
-        ORDER BY cc.id
+        ORDER BY cc.created_at, cc.id
         LIMIT ?
         """,
             (project_id, limit),
@@ -141,7 +141,7 @@ def get_non_vectorized_chunks(
 
 async def update_chunk_vector_id(
     db: Any,
-    chunk_id: int,
+    chunk_id: str,
     vector_id: int,
     embedding_model: Optional[str] = None,
 ) -> None:
@@ -152,7 +152,7 @@ async def update_chunk_vector_id(
 
     Args:
         db: CodeDatabase instance (or duck-typed with _execute, _commit).
-        chunk_id: Chunk ID.
+        chunk_id: Chunk primary key (UUID string).
         vector_id: FAISS index position (vector ID).
         embedding_model: Optional embedding model name.
     """

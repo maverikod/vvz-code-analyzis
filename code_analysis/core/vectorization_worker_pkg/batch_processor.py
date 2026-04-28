@@ -249,8 +249,8 @@ async def process_chunks_missing_embedding_params(
     if not file_counts_data:
         return updated_count, error_count
 
-    file_table: List[Tuple[int, str, int]] = [
-        (int(r["file_id"]), r.get("file_path") or "", int(r["cnt"]))
+    file_table: List[Tuple[str, str, int]] = [
+        (str(r["file_id"]), r.get("file_path") or "", int(r["cnt"]))
         for r in file_counts_data
     ]
     packets = pack_files_into_packets(file_table, batch_size)
@@ -270,7 +270,7 @@ async def process_chunks_missing_embedding_params(
           AND cc.vector_id IS NULL
           AND (cc.embedding_model IS NULL OR cc.embedding_vector IS NULL)
           AND (cc.vectorization_skipped IS NULL OR cc.vectorization_skipped = 0)
-        ORDER BY cc.id
+        ORDER BY cc.created_at, cc.id
         LIMIT ?
     """
 
@@ -406,6 +406,7 @@ async def process_embedding_ready_chunks(
           AND {WHERE_FILES_ACTIVE_F}
           AND cc.embedding_vector IS NOT NULL
           AND cc.vector_id IS NULL
+        ORDER BY cc.created_at, cc.id
         LIMIT ?
         """,
         (self.project_id, self.batch_size),
@@ -453,7 +454,7 @@ async def process_embedding_ready_chunks(
     total_db_update_s = 0.0
 
     # Collect (chunk_id, vector_id, embedding_model) for batch UPDATE at the end
-    updates_to_apply: List[Tuple[int, int, str]] = []
+    updates_to_apply: List[Tuple[str, int, str]] = []
 
     for chunk in chunks:
         if self._stop_event.is_set():

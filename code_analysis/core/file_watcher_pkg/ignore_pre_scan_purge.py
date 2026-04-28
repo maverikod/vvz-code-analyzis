@@ -69,9 +69,11 @@ def collect_file_ids_to_purge_for_ignore_policy(
     allowed_venv_py_files: Optional[Set[Path]] = None,
     ignore_exception_files: Optional[Set[Path]] = None,
     ignore_exception_patterns: Optional[Sequence[str]] = None,
-) -> List[int]:
+) -> List[str]:
     """
     Return ``files.id`` for active rows whose path should be ignored by scanner rules.
+
+    ``files.id`` is a UUID string on migrated schemas.
 
     Matches ``scan_directory`` / ``should_ignore_path`` semantics (including
     ``ignore_exception_files`` and venv allowlist).
@@ -84,7 +86,7 @@ def collect_file_ids_to_purge_for_ignore_policy(
     project_root = _project_root_for_id(database, project_id)
     patterns = list(ignore_patterns)
     exception_patterns = list(ignore_exception_patterns or ())
-    out: List[int] = []
+    out: List[str] = []
     for row in rows:
         fid = row.get("id")
         pstr = row.get("path")
@@ -103,7 +105,7 @@ def collect_file_ids_to_purge_for_ignore_policy(
             ignore_exception_patterns=exception_patterns or None,
             project_root=project_root,
         ):
-            out.append(int(fid))
+            out.append(str(fid))
     return out
 
 
@@ -201,7 +203,7 @@ DELETE FROM entity_cross_ref WHERE
 
 def build_ignore_purge_sql_batch(
     project_id: str,
-    file_ids: Sequence[int],
+    file_ids: Sequence[str],
     *,
     include_code_content_fts: bool = True,
 ) -> List[Tuple[str, tuple[Any, ...]]]:
@@ -209,6 +211,8 @@ def build_ignore_purge_sql_batch(
     Build (sql, params) ops: CREATE TEMP, INSERT ids, then FK-safe DELETEs.
 
     Caller must run inside ``execute_logical_write_operation`` on a single DB connection.
+
+    ``file_ids`` are ``files.id`` values (UUID strings after migration).
     """
     if not file_ids:
         return []
@@ -218,12 +222,12 @@ def build_ignore_purge_sql_batch(
     ops.append((f"DROP TABLE IF EXISTS {TEMP_PURGE_TABLE}", ()))
     ops.append(
         (
-            f"CREATE TEMP TABLE {TEMP_PURGE_TABLE} (id INTEGER NOT NULL PRIMARY KEY)",
+            f"CREATE TEMP TABLE {TEMP_PURGE_TABLE} (id TEXT NOT NULL PRIMARY KEY)",
             (),
         )
     )
 
-    ids_list = [int(x) for x in file_ids]
+    ids_list = [str(x) for x in file_ids]
     for i in range(0, len(ids_list), _INSERT_CHUNK):
         chunk = ids_list[i : i + _INSERT_CHUNK]
         placeholders = ",".join(["(?)"] * len(chunk))
@@ -333,7 +337,7 @@ def build_ignore_purge_sql_batch(
 
 def build_ignore_purge_logical_write_program(
     project_id: str,
-    file_ids: Sequence[int],
+    file_ids: Sequence[str],
     *,
     include_code_content_fts: bool = True,
     operation_name: str = "watcher_ignore_purge",
@@ -352,11 +356,11 @@ def build_ignore_purge_logical_write_program(
 
 def collect_file_ids_for_active_paths(
     database: Any, project_id: str, path_strings: Sequence[str]
-) -> List[int]:
+) -> List[str]:
     """Resolve ``files.id`` for the given active ``path`` values under ``project_id``."""
     if not path_strings:
         return []
-    out: List[int] = []
+    out: List[str] = []
     chunk: List[str] = []
     for p in path_strings:
         chunk.append(p)
@@ -374,7 +378,7 @@ def collect_file_ids_for_active_paths(
 
 def _collect_file_ids_for_paths_chunk(
     database: Any, project_id: str, abs_paths: Tuple[str, ...]
-) -> List[int]:
+) -> List[str]:
     if not abs_paths:
         return []
     placeholders = ",".join(["?"] * len(abs_paths))
@@ -384,11 +388,11 @@ def _collect_file_ids_for_paths_chunk(
     )
     params = (project_id, *abs_paths)
     rows = _query_file_rows(database, sql, params)
-    ids: List[int] = []
+    ids: List[str] = []
     for row in rows:
         i = row.get("id")
         if i is not None:
-            ids.append(int(i))
+            ids.append(str(i))
     return ids
 
 

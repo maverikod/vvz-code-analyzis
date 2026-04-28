@@ -59,7 +59,7 @@ def _insert_project(db: CodeDatabase, tmp_path: Path) -> str:
 
 def _insert_file_in_project(
     db: CodeDatabase, tmp_path: Path, project_id: str, rel_name: str
-) -> tuple[int, Path]:
+) -> tuple[str, Path]:
     fp = tmp_path / rel_name
     fp.parent.mkdir(parents=True, exist_ok=True)
     fp.write_text("# x\n", encoding="utf-8")
@@ -106,26 +106,23 @@ def test_purge_removes_duplicate_occurrences_and_comprehensive(temp_db, tmp_path
     pid = _insert_project(temp_db, tmp_path)
     fid, _ = _insert_file_in_project(temp_db, tmp_path, pid, "zdup_one.py")
 
+    dup_id = str(uuid.uuid4())
     temp_db._execute(
-        "INSERT INTO code_duplicates (project_id, duplicate_hash, similarity) VALUES (?, ?, ?)",
-        (pid, "h1", 1.0),
+        "INSERT INTO code_duplicates (id, project_id, duplicate_hash, similarity) "
+        "VALUES (?, ?, ?, ?)",
+        (dup_id, pid, "h1", 1.0),
     )
     temp_db._commit()
-    dup_row = temp_db._fetchone(
-        "SELECT id FROM code_duplicates WHERE project_id = ?", (pid,)
-    )
-    assert dup_row
-    dup_id = int(dup_row["id"])
     temp_db._execute(
-        "INSERT INTO duplicate_occurrences (duplicate_id, file_id, start_line, end_line) "
-        "VALUES (?, ?, ?, ?)",
-        (dup_id, fid, 1, 1),
+        "INSERT INTO duplicate_occurrences (id, duplicate_id, file_id, start_line, end_line) "
+        "VALUES (?, ?, ?, ?, ?)",
+        (str(uuid.uuid4()), dup_id, fid, 1, 1),
     )
     temp_db._execute(
         "INSERT INTO comprehensive_analysis_results "
-        "(file_id, project_id, file_mtime, results_json, summary_json) "
-        "VALUES (?, ?, ?, ?, ?)",
-        (fid, pid, 1.0, "{}", "{}"),
+        "(id, file_id, project_id, file_mtime, results_json, summary_json) "
+        "VALUES (?, ?, ?, ?, ?, ?)",
+        (str(uuid.uuid4()), fid, pid, 1.0, "{}", "{}"),
     )
     temp_db._commit()
 
@@ -153,7 +150,12 @@ def test_purge_removes_duplicate_occurrences_and_comprehensive(temp_db, tmp_path
 
 
 def test_build_batch_starts_with_temp_table():
-    ops = build_ignore_purge_sql_batch("proj-1", [1, 2, 3])
+    ids = [
+        "aaaaaaaa-bbbb-4ccc-dddd-000000000001",
+        "aaaaaaaa-bbbb-4ccc-dddd-000000000002",
+        "aaaaaaaa-bbbb-4ccc-dddd-000000000003",
+    ]
+    ops = build_ignore_purge_sql_batch("proj-1", ids)
     assert ops[0][0].startswith("DROP TABLE IF EXISTS")
     assert "CREATE TEMP TABLE" in ops[1][0]
     assert any("duplicate_occurrences" in x[0] for x in ops)
@@ -161,7 +163,11 @@ def test_build_batch_starts_with_temp_table():
 
 
 def test_build_ignore_purge_batch_skips_fts_when_disabled():
-    ops = build_ignore_purge_sql_batch("proj-1", [1], include_code_content_fts=False)
+    ops = build_ignore_purge_sql_batch(
+        "proj-1",
+        ["aaaaaaaa-bbbb-4ccc-dddd-000000000001"],
+        include_code_content_fts=False,
+    )
     assert not any("code_content_fts" in x[0] for x in ops)
     assert not any("rowid" in x[0] for x in ops)
 

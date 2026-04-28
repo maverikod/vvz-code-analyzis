@@ -7,14 +7,18 @@ email: vasilyvz@gmail.com
 
 import logging
 from pathlib import Path
-from typing import Any, Dict, List, Optional, TYPE_CHECKING, cast
+from typing import Any, Dict, List, Optional, TYPE_CHECKING, Union, cast
 
 if TYPE_CHECKING:
     from ...core.database_client.client import DatabaseClient
 else:
     DatabaseClient = Any
 
+from ...core.sql_portable import sql_julian_timestamp_now_expr
+
 logger = logging.getLogger(__name__)
+
+_FileRowId = Union[str, int]
 
 
 class RepairDatabaseCommand:
@@ -145,14 +149,15 @@ class RepairDatabaseCommand:
                         # File exists but marked as deleted - restore it
                         try:
                             if not self.dry_run:
+                                _now = sql_julian_timestamp_now_expr(self.database)
                                 self.database.execute(
-                                    """
+                                    f"""
                                     UPDATE files 
                                     SET deleted = 0, 
                                         original_path = NULL, 
                                         version_dir = NULL, 
                                         path = ?,
-                                        updated_at = julianday('now')
+                                        updated_at = {_now}
                                     WHERE id = ?
                                     """,
                                     (check_path, file_id),
@@ -249,7 +254,7 @@ class RepairDatabaseCommand:
 
     async def _restore_file_from_cst(
         self,
-        file_id: int,
+        file_id: _FileRowId,
         file_path: str,
         file_record: Dict[str, Any],
         force: bool = False,
@@ -262,7 +267,7 @@ class RepairDatabaseCommand:
         After writing file, sync DB from file via unified pipeline (sync_file_to_db_atomic).
 
         Args:
-            file_id: File ID
+            file_id: File primary key (UUID or legacy int)
             file_path: File path
             file_record: File record from database
             force: If True, allow overwrite after mandatory backup
@@ -350,7 +355,7 @@ class RepairDatabaseCommand:
             logger.error("Error restoring file from DB: %s", e, exc_info=True)
             return False
 
-    async def _get_restore_payload(self, file_id: int) -> Optional[str]:
+    async def _get_restore_payload(self, file_id: _FileRowId) -> Optional[str]:
         """
         Get full source payload for restore (snapshot source_payload or cst_trees.cst_code).
 

@@ -12,6 +12,8 @@ from __future__ import annotations
 import logging
 from typing import Any, Dict, List, Optional, Sequence, Set, Tuple, Union, cast
 
+from code_analysis.core.database_driver_pkg.drivers.base import DbIdentity
+
 from code_analysis.core.database.code_chunk_sql import (
     CODE_CHUNK_UPSERT_PARAM_COUNT,
     CODE_CHUNK_UPSERT_SQL,
@@ -39,7 +41,7 @@ _LOGICAL_WRITE_LOCK_SCOPES: Set[str] = {
 class _ClientOperationsMixin(_DatabaseClientBase):
     """Mixin class with database operation methods."""
 
-    def insert(self, table_name: str, data: Dict[str, Any]) -> int:
+    def insert(self, table_name: str, data: Dict[str, Any]) -> Optional[DbIdentity]:
         """Insert row into table.
 
         Args:
@@ -47,7 +49,8 @@ class _ClientOperationsMixin(_DatabaseClientBase):
             data: Row data as dictionary
 
         Returns:
-            Row ID of inserted row
+            Primary key / row identity from the driver (integer or UUID string), or
+            ``None`` when the driver does not report an identity.
 
         Raises:
             RPCClientError: If RPC call fails
@@ -61,7 +64,14 @@ class _ClientOperationsMixin(_DatabaseClientBase):
             if isinstance(result_data, dict)
             else {}
         )
-        return data_inner.get("row_id", 0) if isinstance(data_inner, dict) else 0
+        if not isinstance(data_inner, dict) or "row_id" not in data_inner:
+            return None
+        row_id = data_inner.get("row_id")
+        if row_id is None:
+            return None
+        if isinstance(row_id, (int, str)):
+            return row_id
+        return None
 
     def update(
         self,

@@ -12,6 +12,15 @@ from typing import Any, Dict, List, Set
 from .schema_sync_models import IndexDef
 
 
+def _logical_type_to_sqlite_storage(logical_type: str) -> str:
+    """Map logical schema types to SQLite column types."""
+    t = (logical_type or "TEXT").upper().strip()
+    if t == "UUID":
+        # Canonical UUID strings (see full-uuid-db-migration layering for SQLite).
+        return "TEXT"
+    return logical_type
+
+
 def generate_create_table_sql(
     schema_definition: Dict[str, Any],
     table_name: str,
@@ -24,7 +33,8 @@ def generate_create_table_sql(
 
     col_defs = []
     for col in columns:
-        col_sql = f"{col['name']} {col['type']}"
+        sqlite_type = _logical_type_to_sqlite_storage(col["type"])
+        col_sql = f"{col['name']} {sqlite_type}"
         if col.get("primary_key"):
             col_sql += " PRIMARY KEY"
         if col.get("autoincrement"):

@@ -13,6 +13,7 @@ from .restore_deleted_files import RestoreDeletedFilesMCPCommand
 from .list_deleted_files import ListDeletedFilesMCPCommand
 from .collapse_versions import CollapseVersionsMCPCommand
 from .repair_database import RepairDatabaseMCPCommand
+from .run_uuid_identity_migration import RunUuidIdentityMigrationMCPCommand
 from .create_text_file import CreateTextFileMCPCommand
 
 __all__ = [
@@ -24,5 +25,6 @@ __all__ = [
     "ListDeletedFilesMCPCommand",
     "CollapseVersionsMCPCommand",
     "RepairDatabaseMCPCommand",
+    "RunUuidIdentityMigrationMCPCommand",
     "CreateTextFileMCPCommand",
 ]

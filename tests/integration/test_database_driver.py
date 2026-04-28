@@ -171,6 +171,7 @@ class TestDatabaseDriverIntegration:
                         "lines": len(file_path.read_text().splitlines()),
                     },
                 )
+                assert file_id is not None
                 file_ids.append(file_id)
 
             # Select files for project
@@ -354,6 +355,7 @@ class TestDatabaseDriverIntegration:
             # Insert data
             row_id1 = client.insert("workflow_test", {"name": "Item1", "value": 10})
             row_id2 = client.insert("workflow_test", {"name": "Item2", "value": 20})
+            assert row_id1 is not None and row_id2 is not None
 
             # Select all
             rows = client.select("workflow_test")

@@ -97,7 +97,7 @@ def test_adapt_code_chunks_insert_or_replace_to_upsert() -> None:
     assert "ON CONFLICT (chunk_uuid) DO UPDATE SET" in out
     assert "file_id = EXCLUDED.file_id" in out
     assert "updated_at = EXCLUDED.updated_at" in out
-    assert "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?," in out
+    assert "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?," in out
     # julianday rewritten for VALUES clause
     assert "julianday" not in out.lower()
     assert "EXTRACT(JULIAN FROM CURRENT_TIMESTAMP)" in out
@@ -141,12 +141,15 @@ def test_build_code_chunk_upsert_batch_rejects_wrong_param_row_length() -> None:
     assert "row 1" in str(exc2.value).lower()
 
 
-def test_build_code_chunk_upsert_batch_adapts_to_postgres_without_syntax_error() -> None:
+def test_build_code_chunk_upsert_batch_adapts_to_postgres_without_syntax_error() -> (
+    None
+):
     """Batch built from portable SQL must survive PostgreSQL DML adaptation."""
     from code_analysis.core.database.code_chunk_sql import build_code_chunk_upsert_batch
 
     row = (
-        1,
+        "30000000-0000-4000-8000-000000000001",
+        "00000000-0000-0000-0000-000000000002",
         "00000000-0000-0000-0000-000000000001",
         "00000000-0000-4000-8000-000000000099",
         "DocBlock",
@@ -172,8 +175,10 @@ def test_build_code_chunk_upsert_batch_adapts_to_postgres_without_syntax_error()
     pg_sql = _adapt_sqlite_dml_for_postgres(sql)
     assert "INSERT OR REPLACE" not in pg_sql
     assert "ON CONFLICT (chunk_uuid)" in pg_sql
-    assert "?" in pg_sql  # ``?`` → ``%s`` happens at bind layer, not in _adapt_sqlite_dml_for_postgres
-    assert len(params) == 18
+    assert (
+        "?" in pg_sql
+    )  # ``?`` → ``%s`` happens at bind layer, not in _adapt_sqlite_dml_for_postgres
+    assert len(params) == 19
 
 
 def test_process_chunks_missing_embedding_params_sql_uses_having_count() -> None:

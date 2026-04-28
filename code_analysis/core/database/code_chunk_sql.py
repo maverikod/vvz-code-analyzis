@@ -26,8 +26,9 @@ from __future__ import annotations
 from typing import Any, List, Sequence, Tuple
 
 # Stable bound-parameter layout (placeholders only; ``updated_at`` is SQL-side).
-CODE_CHUNK_UPSERT_PARAM_COUNT = 18
+CODE_CHUNK_UPSERT_PARAM_COUNT = 19
 CODE_CHUNK_UPSERT_PARAM_ORDER = (
+    "id",
     "file_id",
     "project_id",
     "chunk_uuid",
@@ -52,13 +53,13 @@ CODE_CHUNK_UPSERT_PARAM_ORDER = (
 CODE_CHUNK_UPSERT_SQL = """
     INSERT OR REPLACE INTO code_chunks
     (
-        file_id, project_id, chunk_uuid, chunk_type, chunk_text,
+        id, file_id, project_id, chunk_uuid, chunk_type, chunk_text,
         chunk_ordinal, vector_id, embedding_model, bm25_score,
         embedding_vector, token_count, class_id, function_id, method_id,
         line, ast_node_type, source_type, binding_level,
         updated_at
     )
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, julianday('now'))
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, julianday('now'))
 """
 
 

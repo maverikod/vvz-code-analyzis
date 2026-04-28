@@ -15,12 +15,11 @@ def get_tables_rest() -> Dict[str, Any]:
             "columns": [
                 {
                     "name": "id",
-                    "type": "INTEGER",
+                    "type": "UUID",
                     "not_null": True,
                     "primary_key": True,
-                    "autoincrement": True,
                 },
-                {"name": "project_id", "type": "TEXT", "not_null": True},
+                {"name": "project_id", "type": "UUID", "not_null": True},
                 {"name": "duplicate_hash", "type": "TEXT", "not_null": True},
                 {"name": "similarity", "type": "REAL", "not_null": True},
                 {
@@ -45,13 +44,12 @@ def get_tables_rest() -> Dict[str, Any]:
             "columns": [
                 {
                     "name": "id",
-                    "type": "INTEGER",
+                    "type": "UUID",
                     "not_null": True,
                     "primary_key": True,
-                    "autoincrement": True,
                 },
-                {"name": "duplicate_id", "type": "INTEGER", "not_null": True},
-                {"name": "file_id", "type": "INTEGER", "not_null": True},
+                {"name": "duplicate_id", "type": "UUID", "not_null": True},
+                {"name": "file_id", "type": "UUID", "not_null": True},
                 {"name": "start_line", "type": "INTEGER", "not_null": True},
                 {"name": "end_line", "type": "INTEGER", "not_null": True},
                 {"name": "code_snippet", "type": "TEXT", "not_null": False},
@@ -84,13 +82,12 @@ def get_tables_rest() -> Dict[str, Any]:
             "columns": [
                 {
                     "name": "id",
-                    "type": "INTEGER",
+                    "type": "UUID",
                     "not_null": True,
                     "primary_key": True,
-                    "autoincrement": True,
                 },
-                {"name": "file_id", "type": "INTEGER", "not_null": True},
-                {"name": "project_id", "type": "TEXT", "not_null": True},
+                {"name": "file_id", "type": "UUID", "not_null": True},
+                {"name": "project_id", "type": "UUID", "not_null": True},
                 {"name": "file_mtime", "type": "REAL", "not_null": True},
                 {"name": "results_json", "type": "TEXT", "not_null": True},
                 {"name": "summary_json", "type": "TEXT", "not_null": True},
@@ -283,12 +280,11 @@ def get_tables_rest() -> Dict[str, Any]:
             "columns": [
                 {
                     "name": "id",
-                    "type": "INTEGER",
+                    "type": "UUID",
                     "not_null": True,
                     "primary_key": True,
-                    "autoincrement": True,
                 },
-                {"name": "project_id", "type": "TEXT", "not_null": True},
+                {"name": "project_id", "type": "UUID", "not_null": True},
                 {"name": "file_path", "type": "TEXT", "not_null": True},
                 {"name": "error_type", "type": "TEXT", "not_null": False},
                 {"name": "error_message", "type": "TEXT", "not_null": False},
@@ -368,13 +364,12 @@ def get_tables_rest() -> Dict[str, Any]:
             "columns": [
                 {
                     "name": "id",
-                    "type": "INTEGER",
+                    "type": "UUID",
                     "not_null": True,
                     "primary_key": True,
-                    "autoincrement": True,
                 },
-                {"name": "file_id", "type": "INTEGER", "not_null": True},
-                {"name": "project_id", "type": "TEXT", "not_null": True},
+                {"name": "file_id", "type": "UUID", "not_null": True},
+                {"name": "project_id", "type": "UUID", "not_null": True},
                 {"name": "source_payload", "type": "TEXT", "not_null": True},
                 {"name": "file_mtime", "type": "REAL", "not_null": True},
                 {
@@ -411,7 +406,7 @@ def get_tables_rest() -> Dict[str, Any]:
             "columns": [
                 {
                     "name": "snapshot_id",
-                    "type": "INTEGER",
+                    "type": "UUID",
                     "not_null": True,
                     "primary_key": True,
                 },
@@ -432,12 +427,11 @@ def get_tables_rest() -> Dict[str, Any]:
             "columns": [
                 {
                     "name": "id",
-                    "type": "INTEGER",
+                    "type": "UUID",
                     "not_null": True,
                     "primary_key": True,
-                    "autoincrement": True,
                 },
-                {"name": "snapshot_id", "type": "INTEGER", "not_null": True},
+                {"name": "snapshot_id", "type": "UUID", "not_null": True},
                 {"name": "node_id", "type": "TEXT", "not_null": True},
                 {"name": "parent_node_id", "type": "TEXT", "not_null": False},
                 {"name": "child_index", "type": "INTEGER", "not_null": True},

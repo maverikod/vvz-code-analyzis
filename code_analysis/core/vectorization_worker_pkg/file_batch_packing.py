@@ -13,8 +13,8 @@ from __future__ import annotations
 
 from typing import List, Optional, Tuple
 
-# (file_id, file_path, count or take_count)
-FileCountRow = Tuple[int, str, int]
+# (file_id UUID string, file_path, count or take_count)
+FileCountRow = Tuple[str, str, int]
 
 
 def pack_files_into_packets(

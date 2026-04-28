@@ -39,6 +39,19 @@ WHERE_PROCESSING_ACTIVE_P = (
 )
 
 
+def sql_julian_timestamp_now_expr(database: Any) -> str:
+    """
+    SQL fragment for REAL Julian-day style timestamps (``files.updated_at``).
+
+    SQLite uses ``julianday('now')``; PostgreSQL uses ``EXTRACT(JULIAN FROM CURRENT_TIMESTAMP)``
+    to match schema defaults mapped in ``schema_sync_sql_postgres``.
+    """
+    dt = getattr(database, "_driver_type", None)
+    if isinstance(dt, str) and dt == "postgres":
+        return "EXTRACT(JULIAN FROM CURRENT_TIMESTAMP)"
+    return "julianday('now')"
+
+
 def database_has_sqlite_code_content_fts(database: Any) -> bool:
     """
     Return True if DML may target SQLite FTS5 ``code_content_fts``.

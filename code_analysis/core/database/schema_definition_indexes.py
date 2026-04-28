@@ -301,7 +301,7 @@ def get_schema_indexes() -> List[Dict[str, Any]]:
         {
             "name": "idx_code_chunks_not_vectorized",
             "table": "code_chunks",
-            "columns": ["project_id", "id"],
+            "columns": ["project_id", "created_at", "id"],
             "unique": False,
             "where_clause": "vector_id IS NULL",
         },

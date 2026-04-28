@@ -15,6 +15,7 @@ import hashlib
 import json
 import ast
 from pathlib import Path
+from typing import Union
 
 from code_analysis.core.database_client.client import DatabaseClient
 from code_analysis.core.database_client.objects import (
@@ -128,7 +129,7 @@ class TestASTCSTOperationsRealData:
 
     def _setup_real_file(
         self, client: DatabaseClient, file_path: Path, project_id: str
-    ) -> int:
+    ) -> Union[str, int]:
         """Setup real file in database and return file_id."""
         # Insert file
         file_id = client.insert(
@@ -139,6 +140,7 @@ class TestASTCSTOperationsRealData:
                 "lines": len(file_path.read_text().splitlines()),
             },
         )
+        assert file_id is not None
 
         # Save AST tree
         source_code = file_path.read_text(encoding="utf-8")

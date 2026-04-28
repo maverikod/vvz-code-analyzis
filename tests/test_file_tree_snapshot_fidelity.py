@@ -24,6 +24,8 @@ from code_analysis.core.database.base import create_driver_config_for_worker
 from code_analysis.commands.update_indexes_analyzer import analyze_file
 from code_analysis.commands.file_management import RepairDatabaseCommand
 
+MOCK_FILE_UUID = "00000000-0000-4000-8000-000000000001"
+
 
 # --- Fixtures ---
 
@@ -83,12 +85,12 @@ def test_tree_save_flow_calls_unified_sync(
     with patch(
         "code_analysis.core.database.file_tree_sync.sync_file_to_db_atomic"
     ) as sync_mock:
-        sync_mock.return_value = {"success": True, "file_id": 1}
+        sync_mock.return_value = {"success": True, "file_id": MOCK_FILE_UUID}
         test_db.get_file_by_path = lambda p, pid: None
-        test_db.add_file = lambda *a, **k: 1
-        created = type("File", (), {"id": 1})()
+        test_db.add_file = lambda *a, **k: MOCK_FILE_UUID
+        created = type("File", (), {"id": MOCK_FILE_UUID})()
         test_db.create_file = lambda *a, **k: created
-        updated = type("File", (), {"id": 1})()
+        updated = type("File", (), {"id": MOCK_FILE_UUID})()
         test_db.update_file = lambda *a, **k: updated
         test_db.select = lambda *a, **k: []
         test_db.execute_logical_write_operation = lambda *a, **k: {
@@ -107,7 +109,8 @@ def test_tree_save_flow_calls_unified_sync(
     assert result.get("success") is True
     sync_mock.assert_called_once()
     call_kw = sync_mock.call_args[1]
-    assert call_kw.get("source_code") == code
+    src = call_kw.get("source_code") or ""
+    assert src.split("# cst-node-ids:", 1)[0].strip() == code.strip()
     assert call_kw.get("project_id") == project_id
 
 
@@ -119,11 +122,11 @@ def test_background_indexing_flow_calls_unified_sync(
     code = "y = 2\n"
     path.write_text(code, encoding="utf-8")
     test_db.get_file_by_path = lambda p, pid: None
-    test_db.add_file = lambda *a, **k: 1
+    test_db.add_file = lambda *a, **k: MOCK_FILE_UUID
     with patch(
         "code_analysis.commands.update_indexes_analyzer.sync_file_to_db_atomic"
     ) as sync_mock:
-        sync_mock.return_value = {"success": True, "file_id": 1}
+        sync_mock.return_value = {"success": True, "file_id": MOCK_FILE_UUID}
         result = analyze_file(
             database=test_db,
             file_path=path,
@@ -147,16 +150,16 @@ def test_no_bypass_path_both_flows_use_same_sync(
     path.write_text(code, encoding="utf-8")
     tree = create_tree_from_code(str(path), code)
     test_db.get_file_by_path = lambda p, pid: None
-    test_db.add_file = lambda *a, **k: 1
-    created = type("File", (), {"id": 1})()
+    test_db.add_file = lambda *a, **k: MOCK_FILE_UUID
+    created = type("File", (), {"id": MOCK_FILE_UUID})()
     test_db.create_file = lambda *a, **k: created
-    updated = type("File", (), {"id": 1})()
+    updated = type("File", (), {"id": MOCK_FILE_UUID})()
     test_db.update_file = lambda *a, **k: updated
     test_db.select = lambda *a, **k: []
     with patch(
         "code_analysis.core.database.file_tree_sync.sync_file_to_db_atomic"
     ) as sync_mock:
-        sync_mock.return_value = {"success": True, "file_id": 1}
+        sync_mock.return_value = {"success": True, "file_id": MOCK_FILE_UUID}
         save_tree_to_file(
             tree_id=tree.tree_id,
             file_path="c.py",
@@ -171,11 +174,11 @@ def test_no_bypass_path_both_flows_use_same_sync(
     path2 = temp_dir / "d.py"
     path2.write_text("w = 4\n", encoding="utf-8")
     test_db.get_file_by_path = lambda p, pid: None
-    test_db.add_file = lambda *a, **k: 1
+    test_db.add_file = lambda *a, **k: MOCK_FILE_UUID
     with patch(
         "code_analysis.commands.update_indexes_analyzer.sync_file_to_db_atomic"
     ) as sync_mock2:
-        sync_mock2.return_value = {"success": True, "file_id": 1}
+        sync_mock2.return_value = {"success": True, "file_id": MOCK_FILE_UUID}
         analyze_file(
             database=test_db,
             file_path=path2,
@@ -226,10 +229,10 @@ def test_inject_failure_during_sync_operation_fails(
     path.write_text(code, encoding="utf-8")
     tree = create_tree_from_code(str(path), code)
     test_db.get_file_by_path = lambda p, pid: None
-    test_db.add_file = lambda *a, **k: 1
-    created = type("File", (), {"id": 1})()
+    test_db.add_file = lambda *a, **k: MOCK_FILE_UUID
+    created = type("File", (), {"id": MOCK_FILE_UUID})()
     test_db.create_file = lambda *a, **k: created
-    updated = type("File", (), {"id": 1})()
+    updated = type("File", (), {"id": MOCK_FILE_UUID})()
     test_db.update_file = lambda *a, **k: updated
     test_db.select = lambda *a, **k: []
     with patch(
@@ -259,7 +262,7 @@ def test_file_not_reported_success_on_sync_failure(
     path = temp_dir / "nope.py"
     path.write_text("b = 2\n", encoding="utf-8")
     test_db.get_file_by_path = lambda p, pid: None
-    test_db.add_file = lambda *a, **k: 1
+    test_db.add_file = lambda *a, **k: MOCK_FILE_UUID
     with patch(
         "code_analysis.core.database.file_tree_sync.sync_file_to_db_atomic"
     ) as sync_mock:
@@ -283,10 +286,10 @@ def test_rerun_after_failure_restores_full_file_state(
     path.write_text(code, encoding="utf-8")
     tree = create_tree_from_code(str(path), code)
     test_db.get_file_by_path = lambda p, pid: None
-    test_db.add_file = lambda *a, **k: 1
-    created = type("File", (), {"id": 1})()
+    test_db.add_file = lambda *a, **k: MOCK_FILE_UUID
+    created = type("File", (), {"id": MOCK_FILE_UUID})()
     test_db.create_file = lambda *a, **k: created
-    updated = type("File", (), {"id": 1})()
+    updated = type("File", (), {"id": MOCK_FILE_UUID})()
     test_db.select = lambda *a, **k: []
     test_db.execute_logical_write_operation = lambda *a, **k: {
         "success": True,
@@ -301,7 +304,12 @@ def test_rerun_after_failure_restores_full_file_state(
         if call_count[0] == 1:
             return {"success": False, "error": "injected"}
         return m.sync_file_to_db_atomic(
-            test_db, project_id, kwargs["absolute_path"], code, 0.0, 1
+            test_db,
+            project_id,
+            kwargs["absolute_path"],
+            code,
+            0.0,
+            MOCK_FILE_UUID,
         )
 
     with patch(
@@ -321,7 +329,7 @@ def test_rerun_after_failure_restores_full_file_state(
     with patch(
         "code_analysis.core.database.file_tree_sync.sync_file_to_db_atomic"
     ) as sync_mock:
-        sync_mock.return_value = {"success": True, "file_id": 1}
+        sync_mock.return_value = {"success": True, "file_id": MOCK_FILE_UUID}
         r2 = save_tree_to_file(
             tree_id=tree.tree_id,
             file_path="retry.py",
@@ -332,7 +340,8 @@ def test_rerun_after_failure_restores_full_file_state(
             backup=False,
         )
     assert r2.get("success") is True
-    assert path.read_text(encoding="utf-8").strip() == code.strip()
+    disk = path.read_text(encoding="utf-8")
+    assert disk.split("# cst-node-ids:", 1)[0].strip() == code.strip()
 
 
 # --- TZ §10.3: Restoration (tests 7–9) ---
@@ -614,7 +623,7 @@ def test_get_snapshot_tree_structure_returns_nodes(
     result = get_snapshot_tree_structure(project_id, "read_api.py", test_db)
     assert result["has_snapshot"] is True
     assert result["snapshot_id"] is not None
-    assert isinstance(result["snapshot_id"], int)
+    assert isinstance(result["snapshot_id"], str)
     assert result["root_node_id"] is not None
     assert isinstance(result["root_node_id"], str)
     assert len(result["nodes"]) >= 1

@@ -16,6 +16,7 @@ email: vasilyvz@gmail.com
 
 from __future__ import annotations
 
+import asyncio
 import gzip
 import logging
 from pathlib import Path
@@ -425,19 +426,21 @@ class CSTApplyBufferCommand(BaseMCPCommand):
 
         t_start = time.perf_counter()
 
-        return await run_ops_mode(
+        return await asyncio.to_thread(
+            run_ops_mode,
             self,
-            project_id=project_id,
-            file_path=file_path,
-            root_path=root_path,
-            ops=ops,
-            apply=apply,
-            create_backup=create_backup,
-            return_diff=return_diff,
-            commit_message=commit_message,
-            t_start=t_start,
-            t_prev=t_start,
-            validate_syntax_only=validate_syntax_only,
+            project_id,
+            file_path,
+            root_path,
+            ops,
+            apply,
+            create_backup,
+            return_diff,
+            commit_message,
+            t_start,
+            t_start,
+            None,
+            validate_syntax_only,
         )
 
 # cst-node-ids: begin

@@ -154,16 +154,26 @@ def get_metadata(cls: Type[Any]) -> Dict[str, Any]:
                         "indexed": "Files indexed by indexing worker (needs_chunking=0)",
                         "indexed_percent": "Percentage of active files indexed",
                         "needing_indexing": "Active files with needs_chunking=1 (pending indexer)",
-                        "needing_indexing_sample": "Sample of files needing indexing (up to 10). Each contains: id, path, has_docstring, last_modified",
+                        "needing_indexing_sample": (
+                            "Sample of files needing indexing (up to 10). Each contains: id (UUID "
+                            "string files.pk), path, has_docstring, last_modified"
+                        ),
                         "needing_chunking": "Active files without chunks",
-                        "needing_chunking_sample": "Sample of files needing chunking (up to 10). Each contains: id, path, has_docstring, last_modified",
+                        "needing_chunking_sample": (
+                            "Sample of files needing chunking (up to 10). Each contains: id (UUID "
+                            "string files.pk), path, has_docstring, last_modified"
+                        ),
                     },
                     "chunks": {
                         "total": "Total number of chunks",
                         "vectorized": "Chunks with embedding vectors",
                         "not_vectorized": "Chunks without embedding vectors",
                         "vectorization_percent": "Percentage of vectorized chunks",
-                        "needing_vectorization_sample": "Sample of chunks needing vectorization (up to 10). Each contains: id, file_id, chunk_preview, created_at",
+                        "needing_vectorization_sample": (
+                            "Sample of chunks needing vectorization (up to 10). Each contains: "
+                            "id (code_chunks.pk UUID string), file_id (files.pk UUID string), "
+                            "chunk_preview, created_at"
+                        ),
                     },
                     "recent_activity": {
                         "files_updated_24h": "Files updated in last 24 hours",
@@ -199,7 +209,7 @@ def get_metadata(cls: Type[Any]) -> Dict[str, Any]:
                         "needing_indexing": 50,
                         "needing_indexing_sample": [
                             {
-                                "id": 1001,
+                                "id": "aaaaaaaa-bbbb-4ccc-dddd-eeeeeeeeeeee",
                                 "path": "src/new_file.py",
                                 "has_docstring": False,
                                 "last_modified": "2024-01-15T10:00:00",
@@ -208,7 +218,7 @@ def get_metadata(cls: Type[Any]) -> Dict[str, Any]:
                         "needing_chunking": 25,
                         "needing_chunking_sample": [
                             {
-                                "id": 1002,
+                                "id": "bbbbbbbb-cccc-4ddd-eeee-ffffffffffff",
                                 "path": "src/unchunked.py",
                                 "has_docstring": True,
                                 "last_modified": "2024-01-15T10:00:00",
@@ -222,8 +232,8 @@ def get_metadata(cls: Type[Any]) -> Dict[str, Any]:
                         "vectorization_percent": 96.0,
                         "needing_vectorization_sample": [
                             {
-                                "id": 5001,
-                                "file_id": 1001,
+                                "id": "cccccccc-dddd-4eee-ffff-000011112222",
+                                "file_id": "aaaaaaaa-bbbb-4ccc-dddd-eeeeeeeeeeee",
                                 "chunk_preview": "def new_function(): ...",
                                 "created_at": "2024-01-15T10:00:00",
                             }

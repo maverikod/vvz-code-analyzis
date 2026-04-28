@@ -245,6 +245,8 @@ def _parse_small_stmt_snippet(snippet: str) -> list[cst.BaseSmallStatement]:
             "Small-statement replacement must be a single SimpleStatementLine (e.g. 'return 1')"
         )
     return list(mod.body[0].body)
+
+
 def apply_replace_ops(source: str, ops: list[ReplaceOp]) -> tuple[str, dict[str, Any]]:
     """
     Apply replace operations to blocks in `source`.
@@ -338,12 +340,13 @@ def apply_replace_ops(source: str, ops: list[ReplaceOp]) -> tuple[str, dict[str,
             and isinstance(body[0], cst.SimpleStatementLine)
             and len(body[0].body) == 1
             and isinstance(body[0].body[0], cst.Expr)
-            and isinstance(body[0].body[0].value, (cst.SimpleString, cst.ConcatenatedString, cst.FormattedString))
+            and isinstance(
+                body[0].body[0].value,
+                (cst.SimpleString, cst.ConcatenatedString, cst.FormattedString),
+            )
         ):
             # Replace existing docstring, preserve trailing whitespace of original
-            body[0] = docstring_stmt.with_changes(
-                leading_lines=body[0].leading_lines
-            )
+            body[0] = docstring_stmt.with_changes(leading_lines=body[0].leading_lines)
         else:
             # Insert new docstring at top
             body.insert(0, docstring_stmt)
@@ -513,6 +516,7 @@ def apply_replace_ops(source: str, ops: list[ReplaceOp]) -> tuple[str, dict[str,
         ],
     }
     return new_source, stats
+
 
 # cst-node-ids: begin
 # cst-node-ids: version=2

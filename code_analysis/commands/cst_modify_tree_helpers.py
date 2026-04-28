@@ -107,6 +107,8 @@ def _resolve_to_replaceable_node_id(tree: Any, node_id: str) -> str:
         if parent_type in ("Module", "IndentedBlock"):
             return current_id
         current_id = parent_id
+
+
 def _expand_replace_many_operations(
     operations: List[Dict[str, Any]],
 ) -> List[Dict[str, Any]]:
@@ -185,6 +187,7 @@ def _resolve_selector_to_tree_node_ids(
             if m.node_id in tree.metadata_map:
                 node_ids.append(m.node_id)
     return node_ids
+
 
 # cst-node-ids: begin
 # cst-node-ids: version=2

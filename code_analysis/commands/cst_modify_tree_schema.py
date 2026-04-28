@@ -8,6 +8,8 @@ email: vasilyvz@gmail.com
 from __future__ import annotations
 
 from typing import Any, Dict
+
+
 def get_cst_modify_tree_schema() -> Dict[str, Any]:
     """Return JSON schema for cst_modify_tree command parameters."""
     return {
@@ -201,6 +203,7 @@ def get_cst_modify_tree_schema() -> Dict[str, Any]:
         "required": ["tree_id", "operations"],
         "additionalProperties": False,
     }
+
 
 # cst-node-ids: begin
 # cst-node-ids: version=2

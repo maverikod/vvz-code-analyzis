@@ -391,7 +391,7 @@ def get_deleted_files(self, project_id: str) -> List[Dict[str, Any]]:
     )
 
 
-def hard_delete_file(self, file_id: int) -> None:
+def hard_delete_file(self, file_id: str | int) -> None:
     """
     Permanently delete file and all related data (hard delete).
 

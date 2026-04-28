@@ -36,7 +36,7 @@ def _worker(tmp_path: Path, db_path: Path) -> VectorizationWorker:
     )
 
 
-def _seed_docstring_file(db: CodeDatabase, tmp_path: Path, project_id: str) -> int:
+def _seed_docstring_file(db: CodeDatabase, tmp_path: Path, project_id: str) -> str:
     mod = tmp_path / "mod.py"
     mod.write_text(
         '"""Module docstring long enough for chunking minimum length rules."""\n'
@@ -52,7 +52,7 @@ def _seed_docstring_file(db: CodeDatabase, tmp_path: Path, project_id: str) -> i
     )
     db._execute("UPDATE files SET needs_chunking = 1 WHERE id = ?", (file_id,))
     db._commit()
-    return int(file_id)
+    return str(file_id)
 
 
 @pytest.mark.asyncio

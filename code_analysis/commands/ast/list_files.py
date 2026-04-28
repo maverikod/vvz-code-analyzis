@@ -482,8 +482,9 @@ class ListProjectFilesMCPCommand(BaseMCPCommand):
                     "data": {
                         "success": "Always true on success",
                         "files": (
-                            "List of file dictionaries. Indexed files include full DB fields; "
-                            "unindexed on-disk files include path, relative_path, and project_id."
+                            "List of file dictionaries. Indexed files include full DB fields "
+                            "(id/file primary keys as UUID strings after DB UUID migration); "
+                            "unindexed on-disk files include path, relative_path, and project_id only."
                         ),
                         "count": "Number of files in current page (after pagination)",
                         "total": "Total number of files matching criteria (before pagination)",
@@ -493,7 +494,7 @@ class ListProjectFilesMCPCommand(BaseMCPCommand):
                         "success": True,
                         "files": [
                             {
-                                "id": 1,
+                                "id": "f47ac10b-58cc-4372-a567-0e02b2c3d479",
                                 "path": "/home/proj/src/main.py",
                                 "relative_path": "src/main.py",
                                 "classes_count": 2,
@@ -504,7 +505,7 @@ class ListProjectFilesMCPCommand(BaseMCPCommand):
                             {
                                 "path": "/home/proj/src/new.py",
                                 "relative_path": "src/new.py",
-                                "project_id": "uuid",
+                                "project_id": "223e4567-e89b-12d3-a456-426614174000",
                             },
                         ],
                         "count": 2,

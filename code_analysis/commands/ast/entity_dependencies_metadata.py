@@ -55,10 +55,16 @@ def get_entity_dependencies_metadata() -> Dict[str, Any]:
                 "enum": list(CALLER_TYPES),
             },
             "entity_id": {
-                "description": "Database ID of the entity.",
-                "type": "integer",
+                "description": (
+                    "Primary key of the entity (UUID string after DB UUID migration). "
+                    "Legacy integer row ids may still work until migration completes."
+                ),
+                "type": "string",
                 "required": False,
-                "examples": [1, 42, 100],
+                "examples": [
+                    "a1b2c3d4-e5f6-4789-a012-345678901234",
+                    "b2c3d4e5-f6a7-4890-b123-456789012345",
+                ],
             },
             "entity_name": {
                 "description": "Name of the entity; resolved to id within project.",
@@ -82,9 +88,11 @@ def get_entity_dependencies_metadata() -> Dict[str, Any]:
                 "command": {
                     "root_dir": "/home/user/projects/my_project",
                     "entity_type": "function",
-                    "entity_id": 15,
+                    "entity_id": "a1b2c3d4-e5f6-4789-a012-345678901234",
                 },
-                "explanation": "Returns all entities that the function with id 15 calls or uses.",
+                "explanation": (
+                    "Returns all entities that the given function (by UUID pk) calls or uses."
+                ),
             },
             {
                 "description": "Get dependencies by name",
@@ -118,7 +126,10 @@ def get_entity_dependencies_metadata() -> Dict[str, Any]:
             "success": {
                 "description": "Command executed successfully",
                 "data": {
-                    "dependencies": "List of dicts: callee_entity_type, callee_entity_id, ref_type, file_path, line, cst_node_id."
+                    "dependencies": (
+                        "List of dicts: callee_entity_type, callee_entity_id (UUID string pk), "
+                        "ref_type, file_path, line, cst_node_id."
+                    ),
                 },
             },
             "error": {
@@ -174,10 +185,16 @@ def get_entity_dependents_metadata() -> Dict[str, Any]:
                 "enum": list(CALLEE_TYPES),
             },
             "entity_id": {
-                "description": "Database ID of the entity.",
-                "type": "integer",
+                "description": (
+                    "Primary key of the entity (UUID string after DB UUID migration). "
+                    "Legacy integer row ids may still work until migration completes."
+                ),
+                "type": "string",
                 "required": False,
-                "examples": [1, 42, 100],
+                "examples": [
+                    "a1b2c3d4-e5f6-4789-a012-345678901234",
+                    "b2c3d4e5-f6a7-4890-b123-456789012345",
+                ],
             },
             "entity_name": {
                 "description": "Name of the entity; resolved to id within project.",
@@ -201,9 +218,11 @@ def get_entity_dependents_metadata() -> Dict[str, Any]:
                 "command": {
                     "root_dir": "/home/user/projects/my_project",
                     "entity_type": "function",
-                    "entity_id": 8,
+                    "entity_id": "a1b2c3d4-e5f6-4789-a012-345678901234",
                 },
-                "explanation": "Returns all entities that call the function with id 8.",
+                "explanation": (
+                    "Returns all entities that call the function identified by UUID pk."
+                ),
             },
             {
                 "description": "Get dependents by name",
@@ -237,7 +256,10 @@ def get_entity_dependents_metadata() -> Dict[str, Any]:
             "success": {
                 "description": "Command executed successfully",
                 "data": {
-                    "dependents": "List of dicts: caller_entity_type, caller_entity_id, ref_type, file_path, line, cst_node_id."
+                    "dependents": (
+                        "List of dicts: caller_entity_type, caller_entity_id (UUID string pk), "
+                        "ref_type, file_path, line, cst_node_id."
+                    ),
                 },
             },
             "error": {

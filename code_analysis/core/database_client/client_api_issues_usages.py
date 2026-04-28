@@ -48,6 +48,8 @@ class _ClientAPIIssuesUsagesMixin(_DatabaseClientBase):
 
         data = object_to_db_row(issue)
         row_id = self.insert(table_name, data)
+        if row_id is None:
+            raise ValueError("Failed to create issue: insert returned no row id")
 
         # Fetch created issue
         rows = self.select(table_name, where={"id": row_id})
@@ -169,6 +171,8 @@ class _ClientAPIIssuesUsagesMixin(_DatabaseClientBase):
 
         data = object_to_db_row(usage)
         row_id = self.insert(table_name, data)
+        if row_id is None:
+            raise ValueError("Failed to create usage: insert returned no row id")
 
         # Fetch created usage
         rows = self.select(table_name, where={"id": row_id})

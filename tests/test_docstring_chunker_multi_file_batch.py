@@ -18,6 +18,11 @@ from code_analysis.core.docstring_chunker_pkg.docstring_chunker import (
     PreparedDocstringFile,
 )
 
+FID_A = "10000000-0000-4000-8000-000000000001"
+FID_B = "10000000-0000-4000-8000-000000000002"
+FID_X = "10000000-0000-4000-8000-000000000010"
+FID_MANY = "10000000-0000-4000-8000-000000000003"
+
 
 class _FakeChunk:
     def __init__(self, body: str) -> None:
@@ -80,7 +85,7 @@ async def test_process_prepared_files_single_ws_batch_two_files(
 
     prepared = [
         PreparedDocstringFile(
-            file_id=1,
+            file_id=FID_A,
             project_id="p1",
             file_path="a.py",
             tree=tree_a,
@@ -88,7 +93,7 @@ async def test_process_prepared_files_single_ws_batch_two_files(
             items=items_a,
         ),
         PreparedDocstringFile(
-            file_id=2,
+            file_id=FID_B,
             project_id="p1",
             file_path="b.py",
             tree=tree_b,
@@ -97,7 +102,7 @@ async def test_process_prepared_files_single_ws_batch_two_files(
         ),
     ]
     out = await chunker.process_prepared_files(prepared)
-    assert out[1] == 1 and out[2] == 1
+    assert out[FID_A] == 1 and out[FID_B] == 1
     assert len(mock_db_execute_batch.logical_write_calls) == 1
     prog = mock_db_execute_batch.logical_write_calls[0]
     assert len(prog["batches"]) == 1
@@ -139,7 +144,7 @@ async def test_process_prepared_files_fallback_per_file_on_batch_failure(
 
     prepared = [
         PreparedDocstringFile(
-            file_id=10,
+            file_id=FID_X,
             project_id="p1",
             file_path="x.py",
             tree=tree,
@@ -148,7 +153,7 @@ async def test_process_prepared_files_fallback_per_file_on_batch_failure(
         ),
     ]
     out = await chunker.process_prepared_files(prepared)
-    assert out[10] >= 1
+    assert out[FID_X] >= 1
     mgr.get_chunks_batch.assert_awaited()
     assert mgr.get_chunks.await_count >= 1
 
@@ -183,7 +188,7 @@ async def test_process_prepared_files_segments_when_over_max_texts(
 
     prepared = [
         PreparedDocstringFile(
-            file_id=3,
+            file_id=FID_MANY,
             project_id="p1",
             file_path="many.py",
             tree=tree,
@@ -192,7 +197,7 @@ async def test_process_prepared_files_segments_when_over_max_texts(
         ),
     ]
     out = await chunker.process_prepared_files(prepared)
-    assert out[3] == 5
+    assert out[FID_MANY] == 5
     assert mgr.get_chunks_batch.await_count == 3
     assert len(mock_db_execute_batch.logical_write_calls) == 1
     assert len(mock_db_execute_batch.logical_write_calls[0]["batches"][0]) == 5

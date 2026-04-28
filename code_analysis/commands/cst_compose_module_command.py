@@ -9,6 +9,7 @@ email: vasilyvz@gmail.com
 
 from __future__ import annotations
 
+import asyncio
 
 import logging
 
@@ -323,7 +324,8 @@ class ComposeCSTModuleCommand(BaseMCPCommand):
             t_prev = _t
 
             if has_ops:
-                return await run_ops_mode(
+                return await asyncio.to_thread(
+                    run_ops_mode,
                     self,
                     project_id=project_id,
                     file_path=file_path,
@@ -339,15 +341,16 @@ class ComposeCSTModuleCommand(BaseMCPCommand):
                     validate_syntax_only=validate_syntax_only,
                 )
 
-            return run_tree_id_flow(
+            return await asyncio.to_thread(
+                run_tree_id_flow,
                 self,
-                project_id=project_id,
-                file_path=file_path,
-                tree_id=tree_id or "",
-                node_id=node_id,
-                commit_message=commit_message,
-                t_start=t_start,
-                t_prev=_t,
+                project_id,
+                file_path,
+                tree_id or "",
+                node_id,
+                commit_message,
+                t_start,
+                _t,
             )
 
         except Exception as e:

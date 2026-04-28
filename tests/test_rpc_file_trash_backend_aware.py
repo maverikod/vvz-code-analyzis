@@ -36,7 +36,9 @@ def test_mark_file_deleted_without_db_path_uses_existing_driver(monkeypatch) -> 
 
     from code_analysis.core.database import CodeDatabase
 
-    monkeypatch.setattr(CodeDatabase, "from_existing_driver", _fake_from_existing_driver)
+    monkeypatch.setattr(
+        CodeDatabase, "from_existing_driver", _fake_from_existing_driver
+    )
     driver = object()  # No db_path attribute (PostgreSQL-like)
     handler = _Handler(driver)
 
@@ -56,9 +58,7 @@ def test_get_deleted_files_without_db_path_returns_data_result(monkeypatch) -> N
 
     from code_analysis.core.database import CodeDatabase
 
-    monkeypatch.setattr(
-        CodeDatabase, "from_existing_driver", lambda _driver: _FakeDB()
-    )
+    monkeypatch.setattr(CodeDatabase, "from_existing_driver", lambda _driver: _FakeDB())
     handler = _Handler(object())  # No db_path attribute
 
     result = handler.handle_get_deleted_files({"project_id": "p1"})
@@ -79,9 +79,7 @@ def test_unmark_file_deleted_without_db_path_returns_success(monkeypatch) -> Non
 
     from code_analysis.core.database import CodeDatabase
 
-    monkeypatch.setattr(
-        CodeDatabase, "from_existing_driver", lambda _driver: _FakeDB()
-    )
+    monkeypatch.setattr(CodeDatabase, "from_existing_driver", lambda _driver: _FakeDB())
     handler = _Handler(object())  # No db_path attribute
 
     result = handler.handle_unmark_file_deleted(
@@ -118,7 +116,9 @@ def test_cleanup_deleted_files_dry_run_with_client_without_db_path() -> None:
     assert result["total_files"] == 1
 
 
-def test_sqlite_driver_compatibility_still_uses_from_existing_driver(monkeypatch) -> None:
+def test_sqlite_driver_compatibility_still_uses_from_existing_driver(
+    monkeypatch,
+) -> None:
     class _FakeDB:
         def mark_file_deleted(self, **kwargs: Any) -> bool:
             return True
@@ -146,6 +146,42 @@ def test_sqlite_driver_compatibility_still_uses_from_existing_driver(monkeypatch
     assert captured == [driver]
 
 
+def test_hard_delete_file_accepts_uuid_string(monkeypatch) -> None:
+    captured: list[object] = []
+
+    class _FakeDB:
+        def hard_delete_file(self, file_id: object) -> None:
+            captured.append(file_id)
+
+    from code_analysis.core.database import CodeDatabase
+
+    monkeypatch.setattr(CodeDatabase, "from_existing_driver", lambda _driver: _FakeDB())
+    handler = _Handler(object())
+    fid = "550e8400-e29b-41d4-a716-446655440000"
+    result = handler.handle_hard_delete_file({"file_id": fid})
+
+    assert isinstance(result, SuccessResult)
+    assert result.data == {"success": True}
+    assert captured == [fid]
+
+
+def test_hard_delete_file_still_accepts_int(monkeypatch) -> None:
+    captured: list[object] = []
+
+    class _FakeDB:
+        def hard_delete_file(self, file_id: object) -> None:
+            captured.append(file_id)
+
+    from code_analysis.core.database import CodeDatabase
+
+    monkeypatch.setattr(CodeDatabase, "from_existing_driver", lambda _driver: _FakeDB())
+    handler = _Handler(object())
+    result = handler.handle_hard_delete_file({"file_id": 42})
+
+    assert isinstance(result, SuccessResult)
+    assert captured == [42]
+
+
 def test_missing_trash_file_returns_structured_error(monkeypatch) -> None:
     class _FakeDB:
         def unmark_file_deleted(
@@ -161,9 +197,7 @@ def test_missing_trash_file_returns_structured_error(monkeypatch) -> None:
 
     from code_analysis.core.database import CodeDatabase
 
-    monkeypatch.setattr(
-        CodeDatabase, "from_existing_driver", lambda _driver: _FakeDB()
-    )
+    monkeypatch.setattr(CodeDatabase, "from_existing_driver", lambda _driver: _FakeDB())
     handler = _Handler(object())
 
     result = handler.handle_unmark_file_deleted(

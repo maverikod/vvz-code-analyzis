@@ -35,7 +35,7 @@ def get_tables_core() -> Dict[str, Any]:
             "columns": [
                 {
                     "name": "id",
-                    "type": "TEXT",
+                    "type": "UUID",
                     "not_null": True,
                     "primary_key": True,
                 },
@@ -61,7 +61,7 @@ def get_tables_core() -> Dict[str, Any]:
             "columns": [
                 {
                     "name": "watch_dir_id",
-                    "type": "TEXT",
+                    "type": "UUID",
                     "not_null": True,
                     "primary_key": True,
                 },
@@ -94,14 +94,14 @@ def get_tables_core() -> Dict[str, Any]:
             "columns": [
                 {
                     "name": "id",
-                    "type": "TEXT",
+                    "type": "UUID",
                     "not_null": True,
                     "primary_key": True,
                 },
                 {"name": "root_path", "type": "TEXT", "not_null": True},
                 {"name": "name", "type": "TEXT", "not_null": False},
                 {"name": "comment", "type": "TEXT", "not_null": False},
-                {"name": "watch_dir_id", "type": "TEXT", "not_null": False},
+                {"name": "watch_dir_id", "type": "UUID", "not_null": False},
                 {
                     "name": "created_at",
                     "type": "REAL",
@@ -142,13 +142,12 @@ def get_tables_core() -> Dict[str, Any]:
             "columns": [
                 {
                     "name": "id",
-                    "type": "INTEGER",
+                    "type": "UUID",
                     "not_null": True,
                     "primary_key": True,
-                    "autoincrement": True,
                 },
-                {"name": "project_id", "type": "TEXT", "not_null": True},
-                {"name": "watch_dir_id", "type": "TEXT", "not_null": False},
+                {"name": "project_id", "type": "UUID", "not_null": True},
+                {"name": "watch_dir_id", "type": "UUID", "not_null": False},
                 {"name": "path", "type": "TEXT", "not_null": True},
                 {"name": "relative_path", "type": "TEXT", "not_null": False},
                 {"name": "lines", "type": "INTEGER", "not_null": False},
@@ -202,12 +201,11 @@ def get_tables_core() -> Dict[str, Any]:
             "columns": [
                 {
                     "name": "id",
-                    "type": "INTEGER",
+                    "type": "UUID",
                     "not_null": True,
                     "primary_key": True,
-                    "autoincrement": True,
                 },
-                {"name": "file_id", "type": "INTEGER", "not_null": True},
+                {"name": "file_id", "type": "UUID", "not_null": True},
                 {"name": "name", "type": "TEXT", "not_null": True},
                 {"name": "line", "type": "INTEGER", "not_null": True},
                 {"name": "end_line", "type": "INTEGER", "not_null": False},
@@ -236,12 +234,11 @@ def get_tables_core() -> Dict[str, Any]:
             "columns": [
                 {
                     "name": "id",
-                    "type": "INTEGER",
+                    "type": "UUID",
                     "not_null": True,
                     "primary_key": True,
-                    "autoincrement": True,
                 },
-                {"name": "class_id", "type": "INTEGER", "not_null": True},
+                {"name": "class_id", "type": "UUID", "not_null": True},
                 {"name": "name", "type": "TEXT", "not_null": True},
                 {"name": "line", "type": "INTEGER", "not_null": True},
                 {"name": "end_line", "type": "INTEGER", "not_null": False},
@@ -289,12 +286,11 @@ def get_tables_core() -> Dict[str, Any]:
             "columns": [
                 {
                     "name": "id",
-                    "type": "INTEGER",
+                    "type": "UUID",
                     "not_null": True,
                     "primary_key": True,
-                    "autoincrement": True,
                 },
-                {"name": "file_id", "type": "INTEGER", "not_null": True},
+                {"name": "file_id", "type": "UUID", "not_null": True},
                 {"name": "name", "type": "TEXT", "not_null": True},
                 {"name": "line", "type": "INTEGER", "not_null": True},
                 {"name": "end_line", "type": "INTEGER", "not_null": False},
@@ -324,27 +320,26 @@ def get_tables_core() -> Dict[str, Any]:
             "columns": [
                 {
                     "name": "id",
-                    "type": "INTEGER",
+                    "type": "UUID",
                     "not_null": True,
                     "primary_key": True,
-                    "autoincrement": True,
                 },
-                {"name": "caller_class_id", "type": "INTEGER", "not_null": False},
-                {"name": "caller_method_id", "type": "INTEGER", "not_null": False},
+                {"name": "caller_class_id", "type": "UUID", "not_null": False},
+                {"name": "caller_method_id", "type": "UUID", "not_null": False},
                 {
                     "name": "caller_function_id",
-                    "type": "INTEGER",
+                    "type": "UUID",
                     "not_null": False,
                 },
-                {"name": "callee_class_id", "type": "INTEGER", "not_null": False},
-                {"name": "callee_method_id", "type": "INTEGER", "not_null": False},
+                {"name": "callee_class_id", "type": "UUID", "not_null": False},
+                {"name": "callee_method_id", "type": "UUID", "not_null": False},
                 {
                     "name": "callee_function_id",
-                    "type": "INTEGER",
+                    "type": "UUID",
                     "not_null": False,
                 },
                 {"name": "ref_type", "type": "TEXT", "not_null": True},
-                {"name": "file_id", "type": "INTEGER", "not_null": False},
+                {"name": "file_id", "type": "UUID", "not_null": False},
                 {"name": "line", "type": "INTEGER", "not_null": False},
                 {
                     "name": "created_at",

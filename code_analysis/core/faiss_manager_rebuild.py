@@ -52,7 +52,7 @@ async def rebuild_from_database_impl(
                     WITH ranked AS (
                         SELECT
                             id,
-                            (ROW_NUMBER() OVER (ORDER BY id) - 1) AS new_vector_id
+                            (ROW_NUMBER() OVER (ORDER BY created_at, id) - 1) AS new_vector_id
                         FROM code_chunks
                         WHERE project_id = ?
                           AND embedding_model IS NOT NULL
@@ -70,7 +70,7 @@ async def rebuild_from_database_impl(
                     WITH ranked AS (
                         SELECT
                             id,
-                            (ROW_NUMBER() OVER (ORDER BY id) - 1) AS new_vector_id
+                            (ROW_NUMBER() OVER (ORDER BY created_at, id) - 1) AS new_vector_id
                         FROM code_chunks
                         WHERE embedding_model IS NOT NULL
                           AND embedding_vector IS NOT NULL
@@ -88,7 +88,7 @@ async def rebuild_from_database_impl(
                     WITH ranked AS (
                         SELECT
                             id,
-                            (ROW_NUMBER() OVER (ORDER BY id) - 1) AS new_vector_id
+                            (ROW_NUMBER() OVER (ORDER BY created_at, id) - 1) AS new_vector_id
                         FROM code_chunks
                         WHERE project_id = ?
                           AND embedding_model IS NOT NULL
@@ -106,7 +106,7 @@ async def rebuild_from_database_impl(
                     WITH ranked AS (
                         SELECT
                             id,
-                            (ROW_NUMBER() OVER (ORDER BY id) - 1) AS new_vector_id
+                            (ROW_NUMBER() OVER (ORDER BY created_at, id) - 1) AS new_vector_id
                         FROM code_chunks
                         WHERE embedding_model IS NOT NULL
                           AND embedding_vector IS NOT NULL
@@ -206,7 +206,7 @@ def _fetch_chunks_for_rebuild(
         """
         if project_id:
             sql_common += " AND cc.project_id = ?"
-        sql_common += " ORDER BY cc.id LIMIT ? OFFSET ?"
+        sql_common += " ORDER BY cc.created_at, cc.id LIMIT ? OFFSET ?"
         offset = 0
         while True:
             params: Tuple[Any, ...]

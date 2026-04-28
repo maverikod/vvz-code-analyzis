@@ -131,3 +131,13 @@ SQLite-specific branch:
 - AST/CST/entities/chunks/duplicates/snapshots/comprehensive analysis still resolve correctly.
 - MCP commands remain backward-compatible or provide explicit breaking-change migration notes.
 - Runtime verification shows indexing, chunking, vectorization, and search still work after migration.
+
+## Implementation closure — 2026-04-28
+
+**Engineering status:** **closed.** The repository implements this plan end-to-end: universal driver `DbIdentity` / insert `RETURNING` behavior, logical UUID schema (core / mid / rest + indexes), migration framework (step 09), PostgreSQL phases 3–6 and SQLite phases 3–6 (swap opt-in), runtime CRUD/indexing/chunks/cleanup (steps 12–17), vector/FAISS boundary (15), MCP field/schema updates (16), MCP admin command **`run_uuid_identity_migration`**, migration helpers compatible with **`DatabaseClient.execute`** (no `_fetchone` / `_execute` on client), and PostgreSQL **`run_execute`** no longer appends **`RETURNING id`** for `INSERT` targets missing from `schema_tables` (e.g. `uuid_migration_*`).
+
+**Automated verification:** Targeted pytest for schema, migration modules, vectorization, and the migration MCP command passes in development. Re-run the step **18** matrix after **data** migration (phase 2+ and any non–dry-run phases) on a **database clone** that matches production shape.
+
+**Operator-only tail (per-instance, not implied by “closed” above):** backup; maintenance window; `run_uuid_identity_migration` sequence (`preflight` → `phase2_mappings` → `phases_345` dry rehearsal → apply → `phase6_swap` only with `i_confirm_maintenance_swap: true`); restart daemon (**`casmgr restart`** with active `.venv` per project rules); confirm **`health`**, **`get_database_status`**, worker logs (step 18); retain or drop `*_int_backup_*` per policy.
+
+**Note:** Sections *Current verified runtime baseline* and *Current driver-layer facts* describe the **plan authoring** snapshot and historical blockers; implementation supersedes those driver constraints.

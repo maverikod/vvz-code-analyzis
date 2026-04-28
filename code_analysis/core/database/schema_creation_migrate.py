@@ -340,3 +340,58 @@ def run_migrate_schema(db: Any) -> None:
             db._commit()
         except Exception as e:
             logger.warning(f"Could not create entity_cross_ref table: {e}")
+
+
+def run_uuid_migration_phase2(db: Any, *, skip_preflight: bool = False) -> Any:
+    """
+    Block E — Phase 2 only: populate ``uuid_migration_*`` mapping tables (idempotent).
+
+    Does **not** create new UUID business tables, copy rows, rename/swap tables, or
+    touch ``vector_id`` semantics (those are Phases 3–6 / steps 10–11).
+
+    ``file_tree_snapshot_roots`` uses Option A — no mapping table here; remap via
+    ``uuid_migration_file_tree_snapshots`` in a later Phase-4 rewrite.
+
+    For full API and polymorphic helpers see :mod:`code_analysis.core.database.migrations`.
+    """
+    from code_analysis.core.database.migrations import (
+        run_uuid_migration_phase2 as _phase2_mappings,
+    )
+
+    return _phase2_mappings(db, skip_preflight=skip_preflight)
+
+
+def run_uuid_migration_phases_3_to_5_postgres(db: Any, **kwargs: Any) -> Any:
+    """Facade: PostgreSQL shadow copy + validate — see migrations package."""
+    from code_analysis.core.database.migrations.uuid_identity_postgres_data_migrate import (
+        run_uuid_migration_phases_3_to_5_postgres as _p345,
+    )
+
+    return _p345(db, **kwargs)
+
+
+def run_uuid_migration_phase6_swap_postgres(db: Any, **kwargs: Any) -> Any:
+    """Facade: PostgreSQL table rename swap — destructive; see docstring in implementation."""
+    from code_analysis.core.database.migrations.uuid_identity_postgres_data_migrate import (
+        run_uuid_migration_phase6_swap_postgres as _p6,
+    )
+
+    return _p6(db, **kwargs)
+
+
+def run_uuid_migration_phases_3_to_5_sqlite(db: Any, **kwargs: Any) -> Any:
+    """Facade: SQLite shadow copy + validate — see migrations package."""
+    from code_analysis.core.database.migrations.uuid_identity_sqlite_data_migrate import (
+        run_uuid_migration_phases_3_to_5_sqlite as _s345,
+    )
+
+    return _s345(db, **kwargs)
+
+
+def run_uuid_migration_phase6_swap_sqlite(db: Any, **kwargs: Any) -> Any:
+    """Facade: SQLite rename swap + optional FTS rebuild — destructive; see implementation."""
+    from code_analysis.core.database.migrations.uuid_identity_sqlite_data_migrate import (
+        run_uuid_migration_phase6_swap_sqlite as _s6,
+    )
+
+    return _s6(db, **kwargs)

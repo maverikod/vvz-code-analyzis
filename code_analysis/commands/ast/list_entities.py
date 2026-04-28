@@ -86,7 +86,7 @@ class ListCodeEntitiesMCPCommand(BaseMCPCommand):
             # List entities from database
             entities = []
 
-            resolved_file_id: Optional[int] = None
+            resolved_file_id: Optional[Any] = None
             if file_path:
                 resolution = resolve_project_file_record(
                     db=db,
@@ -104,7 +104,7 @@ class ListCodeEntitiesMCPCommand(BaseMCPCommand):
                             "count": 0,
                         }
                     )
-                resolved_file_id = int(file_record["id"])
+                resolved_file_id = file_record["id"]
 
             if not entity_type or entity_type == "class":
                 query = (
@@ -357,6 +357,8 @@ class ListCodeEntitiesMCPCommand(BaseMCPCommand):
                         "success": "Always true on success",
                         "entities": (
                             "List of entity dictionaries. Each entity includes:\n"
+                            "- id: Database primary key of the entity row (UUID string after DB UUID migration)\n"
+                            "- file_id: Foreign key to files.id (UUID string after migration)\n"
                             "- file_path: Path relative to project root (required)\n"
                             "- cst_node_id: Valid UUID4 CST node identifier (required, non-empty)\n"
                             "- type: Entity type ('class', 'function', or 'method')\n"
@@ -372,6 +374,8 @@ class ListCodeEntitiesMCPCommand(BaseMCPCommand):
                         "entities": [
                             {
                                 "type": "class",
+                                "id": "11111111-2222-4333-8444-555566667777",
+                                "file_id": "aaaaaaaa-bbbb-4ccc-dddd-eeeeeeeeeeee",
                                 "name": "DataProcessor",
                                 "file_path": "src/processor.py",
                                 "cst_node_id": "a1b2c3d4-e5f6-4789-a012-345678901234",
@@ -381,6 +385,8 @@ class ListCodeEntitiesMCPCommand(BaseMCPCommand):
                             },
                             {
                                 "type": "function",
+                                "id": "22222222-3333-4444-8555-666677778888",
+                                "file_id": "aaaaaaaa-bbbb-4ccc-dddd-eeeeeeeeeeee",
                                 "name": "process_data",
                                 "file_path": "src/utils.py",
                                 "cst_node_id": "b2c3d4e5-f6a7-4890-b123-456789012345",
@@ -390,6 +396,8 @@ class ListCodeEntitiesMCPCommand(BaseMCPCommand):
                             },
                             {
                                 "type": "method",
+                                "id": "33333333-4444-4555-8666-777788889999",
+                                "file_id": "bbbbbbbb-cccc-4ddd-eeee-ffffffffffff",
                                 "name": "execute",
                                 "class_name": "TaskHandler",
                                 "file_path": "src/handlers.py",

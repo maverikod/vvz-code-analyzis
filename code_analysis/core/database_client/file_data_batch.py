@@ -14,6 +14,7 @@ import ast
 import hashlib
 import json
 import logging
+import uuid
 from typing import Any, Dict, List, Optional, Tuple
 
 from .objects.class_function import Class, Function
@@ -23,8 +24,10 @@ logger = logging.getLogger(__name__)
 
 
 def _row_to_insert_sql(table: str, row: Dict[str, Any]) -> Tuple[str, tuple]:
-    """Build (sql, params) for INSERT from row dict; exclude id for new rows."""
-    data = {k: v for k, v in row.items() if k != "id"}
+    """Build (sql, params) for INSERT from row dict; generates UUID ``id`` when absent."""
+    data = dict(row)
+    if data.get("id") is None:
+        data["id"] = str(uuid.uuid4())
     if not data:
         raise ValueError(f"Empty row for table {table}")
     cols = list(data.keys())
@@ -34,25 +37,24 @@ def _row_to_insert_sql(table: str, row: Dict[str, Any]) -> Tuple[str, tuple]:
     return (sql, vals)
 
 
-def _method_insert_sql_with_class_id_subquery(
+def _method_insert_sql_with_class_id(
     row: Dict[str, Any],
-    file_id: int,
-    class_idx: int,
+    class_id: str,
 ) -> Tuple[str, Tuple[Any, ...]]:
-    """INSERT method row binding class_id via correlated subquery (no extra SELECT batch)."""
+    """INSERT method row with explicit class UUID and generated method UUID."""
     data = {k: v for k, v in row.items() if k not in ("id", "class_id")}
     if not data:
         raise ValueError("Empty method row")
-    cols = ["class_id"] + list(data.keys())
-    subq = "(SELECT id FROM classes WHERE file_id = ? ORDER BY id ASC LIMIT 1 OFFSET ?)"
-    placeholders = [subq] + ["?"] * len(data)
-    sql = f"INSERT INTO methods ({', '.join(cols)}) VALUES ({', '.join(placeholders)})"
-    params = (file_id, class_idx) + tuple(data.values())
-    return (sql, params)
+    mid = str(uuid.uuid4())
+    cols = ["id", "class_id"] + list(data.keys())
+    placeholders = ", ".join(["?"] * len(cols))
+    sql = f"INSERT INTO methods ({', '.join(cols)}) VALUES ({placeholders})"
+    params = (mid, class_id) + tuple(data.values())
+    return sql, params
 
 
 def build_file_data_atomic_batches(
-    file_id: int,
+    file_id: str,
     project_id: str,
     source_code: str,
     file_path: str,
@@ -89,11 +91,16 @@ def build_file_data_atomic_batches(
             },
         )
 
+    # UUID file ids at runtime; entity row objects still declare legacy int annotation.
+    fid_entity: Any = file_id
+
     ast_dump = ast.dump(tree)
     ast_data = ast_dump if isinstance(ast_dump, dict) else {"ast": ast_dump}
     ast_json = json.dumps(ast_data)
     ast_hash = hashlib.sha256(ast_json.encode()).hexdigest()
     cst_hash = hashlib.sha256(source_code.encode()).hexdigest()
+    ast_row_id = str(uuid.uuid4())
+    cst_row_id = str(uuid.uuid4())
 
     ops1: List[Tuple[str, Optional[tuple]]] = [
         (
@@ -106,12 +113,14 @@ def build_file_data_atomic_batches(
         ("DELETE FROM functions WHERE file_id = ?", (file_id,)),
         ("DELETE FROM imports WHERE file_id = ?", (file_id,)),
         (
-            "INSERT INTO ast_trees (file_id, project_id, ast_json, ast_hash, file_mtime) VALUES (?, ?, ?, ?, ?)",
-            (file_id, project_id, ast_json, ast_hash, file_mtime),
+            "INSERT INTO ast_trees (id, file_id, project_id, ast_json, ast_hash, file_mtime) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            (ast_row_id, file_id, project_id, ast_json, ast_hash, file_mtime),
         ),
         (
-            "INSERT INTO cst_trees (file_id, project_id, cst_code, cst_hash, file_mtime) VALUES (?, ?, ?, ?, ?)",
-            (file_id, project_id, source_code, cst_hash, file_mtime),
+            "INSERT INTO cst_trees (id, file_id, project_id, cst_code, cst_hash, file_mtime) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            (cst_row_id, file_id, project_id, source_code, cst_hash, file_mtime),
         ),
     ]
 
@@ -134,7 +143,7 @@ def build_file_data_atomic_batches(
                     except AttributeError:
                         bases.append(str(base))
             class_obj = Class(
-                file_id=file_id,
+                file_id=fid_entity,
                 name=node.name,
                 line=node.lineno,
                 docstring=docstring,
@@ -199,7 +208,7 @@ def build_file_data_atomic_batches(
                             arg_name += f": {str(arg.annotation)}"
                     args.append(arg_name)
             func_obj = Function(
-                file_id=file_id,
+                file_id=fid_entity,
                 name=node.name,
                 line=node.lineno,
                 docstring=docstring,
@@ -215,7 +224,7 @@ def build_file_data_atomic_batches(
         if isinstance(node, ast.Import):
             for alias in node.names:
                 imp = Import(
-                    file_id=file_id,
+                    file_id=fid_entity,
                     module="",
                     name=alias.name,
                     import_type="import",
@@ -229,7 +238,7 @@ def build_file_data_atomic_batches(
             module = node.module or ""
             for alias in node.names:
                 imp = Import(
-                    file_id=file_id,
+                    file_id=fid_entity,
                     module=module,
                     name=alias.name,
                     import_type="from",
@@ -240,6 +249,9 @@ def build_file_data_atomic_batches(
                 row.pop("created_at", None)
                 import_rows.append(row)
 
+    for r in class_rows:
+        r["id"] = str(uuid.uuid4())
+
     batches: list[list[Tuple[str, Any]]] = [ops1]
 
     if class_rows:
@@ -249,9 +261,8 @@ def build_file_data_atomic_batches(
     ops3: List[Tuple[str, Any]] = []
     for class_idx, row in method_specs:
         row_d = dict(row)
-        ops3.append(
-            _method_insert_sql_with_class_id_subquery(row_d, file_id, class_idx)
-        )
+        class_id_val = class_rows[class_idx]["id"]
+        ops3.append(_method_insert_sql_with_class_id(row_d, class_id_val))
     for row in function_rows:
         ops3.append(_row_to_insert_sql("functions", row))
     for row in import_rows:
@@ -280,7 +291,7 @@ def build_file_data_atomic_batches(
 
 def update_file_data_atomic_batch(
     database: Any,
-    file_id: int,
+    file_id: str,
     project_id: str,
     source_code: str,
     file_path: str,

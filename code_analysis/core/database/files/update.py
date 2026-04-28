@@ -55,7 +55,7 @@ def update_file_data(
         Dictionary with update result:
         {
             "success": bool,
-            "file_id": int,
+            "file_id": str,
             "file_path": str,
             "ast_updated": bool,
             "cst_updated": bool,

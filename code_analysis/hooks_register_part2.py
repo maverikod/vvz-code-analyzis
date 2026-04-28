@@ -37,6 +37,7 @@ def register_commands_part2(reg: registry) -> None:
             DeleteFilesByMaskMCPCommand,
             ListDeletedFilesMCPCommand,
             RepairDatabaseMCPCommand,
+            RunUuidIdentityMigrationMCPCommand,
             RestoreDeletedFilesMCPCommand,
             UnmarkDeletedFileMCPCommand,
         )
@@ -50,7 +51,9 @@ def register_commands_part2(reg: registry) -> None:
         reg.register(RestoreDeletedFilesMCPCommand, "custom")
         reg.register(CollapseVersionsMCPCommand, "custom")
         reg.register(RepairDatabaseMCPCommand, "custom")
+        reg.register(RunUuidIdentityMigrationMCPCommand, "custom")
         logger.info("✅ Registered repair_database command")
+        logger.info("✅ Registered run_uuid_identity_migration command")
     except ImportError as e:
         logger.warning("Failed to import file management commands: %s", e)
     except Exception as e:

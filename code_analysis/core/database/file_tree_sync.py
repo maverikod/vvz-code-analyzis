@@ -12,20 +12,21 @@ from __future__ import annotations
 
 import logging
 import time
+import uuid
 from typing import Any, Dict, List, Optional, Tuple
 
 from ..database_client.file_data_batch import build_file_data_atomic_batches
 
 logger = logging.getLogger(__name__)
 
-# Multi-row INSERT chunk size for file_tree_snapshot_nodes. Each row binds four
-# placeholders (file_id for snapshot subquery, node_id, parent_node_id, child_index).
+# Multi-row INSERT chunk size for file_tree_snapshot_nodes. Each row binds five
+# placeholders (node row id, snapshot_id, node_id, parent_node_id, child_index).
 # Stay below SQLite's SQLITE_MAX_VARIABLE_NUMBER (often 999) with margin.
 FILE_TREE_SNAPSHOT_NODES_INSERT_CHUNK_SIZE = 200
 
 
 def _build_snapshot_node_insert_ops(
-    file_id: int,
+    snapshot_id: str,
     node_rows: List[Tuple[str, Optional[str], int]],
     *,
     chunk_size: Optional[int] = None,
@@ -46,20 +47,20 @@ def _build_snapshot_node_insert_ops(
     if size < 1:
         raise ValueError("chunk_size must be >= 1")
     ops: List[Tuple[str, Any]] = []
-    row_fragment = (
-        "((SELECT id FROM file_tree_snapshots WHERE file_id = ? "
-        "ORDER BY id DESC LIMIT 1), ?, ?, ?)"
-    )
+    row_fragment = "(?, ?, ?, ?, ?)"
     for i in range(0, len(node_rows), size):
         chunk = node_rows[i : i + size]
         values_sql = ",\n".join(row_fragment for _ in chunk)
         sql = (
             "INSERT INTO file_tree_snapshot_nodes "
-            "(snapshot_id, node_id, parent_node_id, child_index) VALUES\n" + values_sql
+            "(id, snapshot_id, node_id, parent_node_id, child_index) VALUES\n"
+            + values_sql
         )
         params: List[Any] = []
         for nid, pid, cidx in chunk:
-            params.extend((file_id, nid, pid, cidx))
+            params.extend(
+                (str(uuid.uuid4()), snapshot_id, nid, pid, cidx),
+            )
         ops.append((sql, tuple(params)))
     return ops
 
@@ -70,7 +71,7 @@ def sync_file_to_db_atomic(
     absolute_path: str,
     source_code: str,
     file_mtime: float,
-    file_id: Optional[int] = None,
+    file_id: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
     Rebuild and write all file-level DB structures for one file in one coordinated operation.
@@ -86,7 +87,8 @@ def sync_file_to_db_atomic(
         absolute_path: Absolute normalized file path.
         source_code: Full source code of the file.
         file_mtime: File mtime (Unix timestamp) for operational metadata.
-        file_id: Optional existing file_id; if None, resolved by path and project_id.
+        file_id: Optional existing file row id (UUID string or legacy int);
+            if None, resolved by path and project_id.
 
     Returns:
         Dict with:
@@ -127,7 +129,7 @@ def sync_file_to_db_atomic(
             if not file_record:
                 result["error"] = f"File not found in database: {absolute_path}"
                 return result
-            file_id = file_record["id"]
+            file_id = str(file_record["id"])
         result["file_id"] = file_id
 
         try:
@@ -162,6 +164,8 @@ def sync_file_to_db_atomic(
 
         node_rows = _build_snapshot_node_rows(tree, 0)
 
+        snapshot_row_id = str(uuid.uuid4())
+
         # Child-first teardown: do not rely on ON DELETE CASCADE on legacy/migrated DBs.
         s_batches: list[list[Tuple[str, Any]]] = [
             [
@@ -183,24 +187,22 @@ def sync_file_to_db_atomic(
             [
                 (
                     "INSERT INTO file_tree_snapshots "
-                    "(file_id, project_id, source_payload, file_mtime) "
-                    "VALUES (?, ?, ?, ?)",
-                    (file_id, project_id, source_code, file_mtime),
+                    "(id, file_id, project_id, source_payload, file_mtime) "
+                    "VALUES (?, ?, ?, ?, ?)",
+                    (snapshot_row_id, file_id, project_id, source_code, file_mtime),
                 )
             ],
             [
                 (
                     "INSERT INTO file_tree_snapshot_roots (snapshot_id, root_node_id) "
-                    "VALUES ("
-                    "(SELECT id FROM file_tree_snapshots WHERE file_id = ? "
-                    "ORDER BY id DESC LIMIT 1), ?)",
-                    (file_id, root_node_id),
+                    "VALUES (?, ?)",
+                    (snapshot_row_id, root_node_id),
                 )
             ],
         ]
 
         if node_rows:
-            node_ops = _build_snapshot_node_insert_ops(file_id, node_rows)
+            node_ops = _build_snapshot_node_insert_ops(snapshot_row_id, node_rows)
             s_batches.append(node_ops)
 
         all_batches = s_batches + fd_batches

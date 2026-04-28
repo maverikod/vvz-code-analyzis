@@ -40,7 +40,7 @@ class GetASTMCPCommand(BaseMCPCommand):
         return (project_root / normalized_file_path).resolve()
 
     @staticmethod
-    def _has_searchable_ast_index(db: Any, project_id: str, file_id: int) -> bool:
+    def _has_searchable_ast_index(db: Any, project_id: str, file_id: Any) -> bool:
         """
         True when file is searchable via AST-related entity indexes.
 
@@ -351,8 +351,8 @@ class GetASTMCPCommand(BaseMCPCommand):
                 "include_json": {
                     "description": (
                         "If true, includes full AST JSON in response. If false, returns only "
-                        "metadata (file_path, file_id). Default is true. Set to false for "
-                        "large files to reduce response size."
+                        "metadata (file_path, file_id as UUID string for files.id). Default is true. "
+                        "Set to false for large files to reduce response size."
                     ),
                     "type": "boolean",
                     "required": False,
@@ -438,7 +438,7 @@ class GetASTMCPCommand(BaseMCPCommand):
                     "data": {
                         "success": "Always true on success",
                         "file_path": "File path (normalized)",
-                        "file_id": "Database ID of file",
+                        "file_id": "files.id primary key (UUID string after DB UUID migration)",
                         "ast": (
                             "Full AST JSON (if include_json=true). "
                             "AST structure follows Python AST module format with node types, "
@@ -448,7 +448,7 @@ class GetASTMCPCommand(BaseMCPCommand):
                     "example_with_json": {
                         "success": True,
                         "file_path": "src/main.py",
-                        "file_id": 1,
+                        "file_id": "f47ac10b-58cc-4372-a567-0e02b2c3d479",
                         "ast": {
                             "_type": "Module",
                             "body": [
@@ -464,7 +464,7 @@ class GetASTMCPCommand(BaseMCPCommand):
                     "example_without_json": {
                         "success": True,
                         "file_path": "src/main.py",
-                        "file_id": 1,
+                        "file_id": "f47ac10b-58cc-4372-a567-0e02b2c3d479",
                     },
                 },
                 "error": {

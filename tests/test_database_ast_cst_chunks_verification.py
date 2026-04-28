@@ -339,18 +339,21 @@ def new_function() -> str:
             uuid_lib.uuid5(uuid_lib.NAMESPACE_URL, f"{file_id}-test-chunk")
         )
 
+        chunk_row_id = str(uuid_lib.uuid4())
+
         # Add chunk without vector_id (will be set by vectorization worker)
         # Use direct SQL since add_code_chunk is async
         test_db._execute(
             """
             INSERT INTO code_chunks
-            (file_id, project_id, chunk_uuid, chunk_type, chunk_text,
+            (id, file_id, project_id, chunk_uuid, chunk_type, chunk_text,
              chunk_ordinal, vector_id, embedding_model, embedding_vector,
              class_id, function_id, method_id, line, ast_node_type, source_type, binding_level,
              updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, julianday('now'))
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, julianday('now'))
             """,
             (
+                chunk_row_id,
                 file_id,
                 project_id,
                 chunk_uuid,
@@ -370,12 +373,11 @@ def new_function() -> str:
             ),
         )
         test_db._commit()
-        chunk_id = test_db._lastrowid()
-
-        assert chunk_id is not None, "Chunk should be created"
 
         # Verify chunk structure
-        chunk = test_db._fetchone("SELECT * FROM code_chunks WHERE id = ?", (chunk_id,))
+        chunk = test_db._fetchone(
+            "SELECT * FROM code_chunks WHERE id = ?", (chunk_row_id,)
+        )
         assert chunk is not None, "Chunk should exist in database"
         assert chunk["file_id"] == file_id, "Chunk should be linked to file"
         assert chunk["project_id"] == project_id, "Chunk should be linked to project"
@@ -403,13 +405,13 @@ def new_function() -> str:
             SET embedding_vector = ?, vector_id = ?, embedding_model = ?
             WHERE id = ?
             """,
-            (embedding_vector_json, test_vector_id, "test-model", chunk_id),
+            (embedding_vector_json, test_vector_id, "test-model", chunk_row_id),
         )
         test_db._commit()
 
         # Verify chunk was updated
         updated_chunk = test_db._fetchone(
-            "SELECT * FROM code_chunks WHERE id = ?", (chunk_id,)
+            "SELECT * FROM code_chunks WHERE id = ?", (chunk_row_id,)
         )
         assert (
             updated_chunk["vector_id"] == test_vector_id

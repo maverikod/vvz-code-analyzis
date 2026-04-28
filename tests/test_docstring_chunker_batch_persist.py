@@ -70,7 +70,7 @@ class TestDocstringChunkerBatchPersist:
         tree = ast.parse(source)
 
         written = await chunker.process_file(
-            file_id=1,
+            file_id="00000000-0000-0000-0000-000000000001",
             project_id="test-project-id",
             file_path="test.py",
             tree=tree,
@@ -92,8 +92,9 @@ class TestDocstringChunkerBatchPersist:
         for sql, params in insert_ops:
             assert sql == expected_sql
             assert len(params) == CODE_CHUNK_UPSERT_PARAM_COUNT
-            assert params[0] == 1
-            assert params[1] == "test-project-id"
+            assert isinstance(params[0], str) and len(params[0]) >= 32
+            assert params[1] == "00000000-0000-0000-0000-000000000001"
+            assert params[2] == "test-project-id"
 
     @pytest.mark.asyncio
     async def test_process_file_execute_batch_result_shape(
@@ -109,7 +110,7 @@ class TestDocstringChunkerBatchPersist:
         tree = ast.parse(source)
 
         await chunker.process_file(
-            file_id=42,
+            file_id="00000000-0000-0000-0000-000000000042",
             project_id="proj-uuid",
             file_path="x.py",
             tree=tree,
@@ -120,9 +121,9 @@ class TestDocstringChunkerBatchPersist:
         for sql, params in insert_ops:
             assert isinstance(sql, str)
             assert isinstance(params, (tuple, list))
-            assert params[0] == 42
-            assert params[1] == "proj-uuid"
-            assert params[5] in (1, 2)
+            assert params[1] == "00000000-0000-0000-0000-000000000042"
+            assert params[2] == "proj-uuid"
+            assert params[6] in (1, 2)
 
     @pytest.mark.asyncio
     async def test_process_file_no_chunks_does_not_call_execute_batch(
@@ -138,7 +139,7 @@ class TestDocstringChunkerBatchPersist:
         )
 
         written = await chunker.process_file(
-            file_id=1,
+            file_id="00000000-0000-0000-0000-000000000001",
             project_id="p",
             file_path="nodoc.py",
             tree=tree,

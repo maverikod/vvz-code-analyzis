@@ -10,7 +10,20 @@ from code_analysis.commands.clear_project_data_impl import (
     _clear_project_data_impl,
     mark_project_deleted_impl,
 )
-from code_analysis.core.sql_portable import database_has_sqlite_code_content_fts
+from code_analysis.core.sql_portable import (
+    database_has_sqlite_code_content_fts,
+    sql_julian_timestamp_now_expr,
+)
+
+
+def test_sql_julian_timestamp_now_expr_backend_specific() -> None:
+    pg = MagicMock()
+    pg._driver_type = "postgres"
+    assert "EXTRACT(JULIAN FROM CURRENT_TIMESTAMP)" in sql_julian_timestamp_now_expr(pg)
+    sl = MagicMock()
+    sl._driver_type = "sqlite_proxy"
+    assert sql_julian_timestamp_now_expr(sl) == "julianday('now')"
+    assert sql_julian_timestamp_now_expr(object()) == "julianday('now')"
 
 
 def test_database_has_sqlite_code_content_fts_by_driver() -> None:

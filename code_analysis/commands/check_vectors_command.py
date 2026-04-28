@@ -235,8 +235,10 @@ class CheckVectorsCommand(BaseMCPCommand):
                             "type": "object",
                             "properties": {
                                 "id": {
-                                    "type": "integer",
-                                    "description": "Internal chunk ID in the database.",
+                                    "type": "string",
+                                    "description": (
+                                        "code_chunks.id primary key (UUID string after DB UUID migration)."
+                                    ),
                                 },
                                 "chunk_type": {
                                     "type": "string",

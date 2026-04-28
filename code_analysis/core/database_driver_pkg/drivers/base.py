@@ -15,6 +15,11 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from ..exceptions import DriverOperationError
 
+# Inserted row primary key: INTEGER (legacy / transitional) or UUID string (native UUID
+# on PostgreSQL, canonical TEXT UUID on SQLite). Callers must not assume SQLite
+# lastrowid semantics when the PK was supplied explicitly or is non-integer.
+DbIdentity = int | str
+
 
 class BaseDatabaseDriver(ABC):
     """Base class for all database drivers (DB-agnostic abstraction).
@@ -77,7 +82,7 @@ class BaseDatabaseDriver(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    def insert(self, table_name: str, data: Dict[str, Any]) -> int:
+    def insert(self, table_name: str, data: Dict[str, Any]) -> Optional[DbIdentity]:
         """Insert row into table.
 
         Args:
@@ -85,7 +90,13 @@ class BaseDatabaseDriver(ABC):
             data: Dictionary with column names as keys and values as values
 
         Returns:
-            ID of inserted row (lastrowid)
+            Primary key of the inserted row: ``int`` for INTEGER/autoincrement tables,
+            ``str`` for UUID (PostgreSQL) or canonical UUID TEXT (SQLite) primary keys.
+            ``None`` if the backend returned no generated/surrogate key (unusual).
+
+            This is not always SQLite ``lastrowid``: TEXT/UUID primary keys and explicit
+            ``id`` values in ``data`` are returned as provided or as returned by
+            ``RETURNING``.
 
         Raises:
             DriverOperationError: If operation fails

@@ -240,14 +240,15 @@ def _adapt_sqlite_dml_for_postgres(sql: str) -> str:
     if norm == _CODE_CHUNKS_INSERT_OR_REPLACE_NORM:
         return (
             "INSERT INTO code_chunks "
-            "( file_id, project_id, chunk_uuid, chunk_type, chunk_text, "
+            "( id, file_id, project_id, chunk_uuid, chunk_type, chunk_text, "
             "chunk_ordinal, vector_id, embedding_model, bm25_score, "
             "embedding_vector, token_count, class_id, function_id, method_id, "
             "line, ast_node_type, source_type, binding_level, "
             "updated_at ) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, "
             "(EXTRACT(JULIAN FROM CURRENT_TIMESTAMP))) "
             "ON CONFLICT (chunk_uuid) DO UPDATE SET "
+            "id = EXCLUDED.id, "
             "file_id = EXCLUDED.file_id, "
             "project_id = EXCLUDED.project_id, "
             "chunk_type = EXCLUDED.chunk_type, "
@@ -288,9 +289,14 @@ def _sqlite_qmarks_to_psycopg(
 def _returning_column_for_table(
     table_name: str, schema_tables: Dict[str, Any]
 ) -> Optional[str]:
+    """PK column for RETURNING on INSERT; ``None`` if table is unknown (no guessed ``id``).
+
+    Migration and ad-hoc tables (e.g. ``uuid_migration_*``) are often absent from ``schema_tables``;
+    appending ``RETURNING id`` would fail when the real PK is ``old_id`` or there is no ``id``.
+    """
     tdef = schema_tables.get(table_name)
     if not tdef:
-        return "id"
+        return None
     pks = [c["name"] for c in tdef["columns"] if c.get("primary_key")]
     if len(pks) == 1:
         return str(pks[0])

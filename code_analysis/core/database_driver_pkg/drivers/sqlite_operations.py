@@ -10,9 +10,22 @@ email: vasilyvz@gmail.com
 from __future__ import annotations
 
 import threading
+import uuid
 from typing import Any, Dict, List, Optional
 
 from ..exceptions import DriverOperationError
+from .base import DbIdentity
+
+
+def _normalize_sqlite_insert_identity(value: Any) -> DbIdentity:
+    """Normalize explicit or lastrowid primary key for universal driver contract."""
+    if isinstance(value, int) and not isinstance(value, bool):
+        return value
+    if isinstance(value, uuid.UUID):
+        return str(value)
+    if isinstance(value, str):
+        return value
+    return str(value)
 
 
 class SQLiteOperations:
@@ -27,7 +40,7 @@ class SQLiteOperations:
         self.conn = connection
         self._lock = threading.Lock()
 
-    def insert(self, table_name: str, data: Dict[str, Any]) -> int:
+    def insert(self, table_name: str, data: Dict[str, Any]) -> Optional[DbIdentity]:
         """Insert row into table.
 
         Args:
@@ -35,7 +48,10 @@ class SQLiteOperations:
             data: Dictionary with column names as keys and values as values
 
         Returns:
-            ID of inserted row (lastrowid)
+            Primary key of the inserted row. For INTEGER PRIMARY KEY tables without
+            ``id`` in ``data``, returns SQLite ``lastrowid``. For TEXT/UUID primary keys
+            (and any insert that includes ``id`` in ``data``), returns that identity
+            (string UUID for migrated tables), not ``lastrowid``.
 
         Raises:
             DriverOperationError: If operation fails
@@ -56,7 +72,12 @@ class SQLiteOperations:
                 cursor = self.conn.cursor()
                 cursor.execute(sql, values)
                 self.conn.commit()
-                return cursor.lastrowid or 0
+                if "id" in data:
+                    return _normalize_sqlite_insert_identity(data["id"])
+                lid = cursor.lastrowid
+                if lid is not None and lid != 0:
+                    return int(lid)
+                return 0
             except Exception as e:
                 self.conn.rollback()
                 raise DriverOperationError(f"Failed to insert row: {e}") from e

@@ -12,6 +12,12 @@ from typing import Any, Dict, Optional
 
 from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 
+from ...core.config import get_driver_config
+from ...core.postgres_cli_backup import (
+    PostgresCliBackupError,
+    backup_postgres_custom_format,
+)
+from ...core.storage_paths import load_raw_config
 from ..base_mcp_command import BaseMCPCommand
 
 logger = logging.getLogger(__name__)
@@ -32,7 +38,9 @@ class BackupDatabaseMCPCommand(BaseMCPCommand):
 
     name = "backup_database"
     version = "1.0.0"
-    descr = "Backup project SQLite database file (db + wal/shm/journal if present)"
+    descr = (
+        "Backup database: SQLite file (+ wal/shm/journal) or PostgreSQL (pg_dump -Fc)"
+    )
     category = "database_integrity"
     author = "Vasiliy Zdanovskiy"
     email = "vasilyvz@gmail.com"
@@ -50,7 +58,10 @@ class BackupDatabaseMCPCommand(BaseMCPCommand):
         """
         return {
             "type": "object",
-            "description": "Create filesystem backup of the shared database (one DB for all projects).",
+            "description": (
+                "Create backup of the shared database: SQLite copies files; PostgreSQL "
+                "runs pg_dump custom format (requires pg_dump on PATH)."
+            ),
             "properties": {
                 "root_dir": {
                     "type": "string",
@@ -88,17 +99,48 @@ class BackupDatabaseMCPCommand(BaseMCPCommand):
             SuccessResult with backup paths or ErrorResult on failure.
         """
         try:
-            from ...core.db_integrity import backup_sqlite_files
-
+            config_path = BaseMCPCommand._resolve_config_path()
+            raw = load_raw_config(config_path)
+            driver = get_driver_config(raw) or {}
+            driver_type = str(driver.get("type") or "").lower()
             storage = BaseMCPCommand._get_shared_storage()
-            db_path = storage.db_path
             out_dir = Path(backup_dir).resolve() if backup_dir else storage.backup_dir
 
+            if driver_type == "postgres":
+                dcfg = driver.get("config") or {}
+                if not isinstance(dcfg, dict):
+                    return ErrorResult(
+                        message="Invalid PostgreSQL driver config (expected object)",
+                        code="BACKUP_DATABASE_ERROR",
+                        details={"driver_type": driver_type},
+                    )
+                try:
+                    backups = backup_postgres_custom_format(dcfg, backup_dir=out_dir)
+                except PostgresCliBackupError as e:
+                    return ErrorResult(
+                        message=str(e),
+                        code="BACKUP_DATABASE_ERROR",
+                        details={"driver_type": driver_type},
+                    )
+                return SuccessResult(
+                    data={
+                        "driver": "postgres",
+                        "backup_dir": str(out_dir),
+                        "backup_paths": list(backups),
+                        "count": len(backups),
+                        "format": "custom",
+                    }
+                )
+
+            from ...core.db_integrity import backup_sqlite_files
+
+            db_path = storage.db_path
             backups = backup_sqlite_files(
                 db_path, backup_dir=out_dir, include_sidecars=True
             )
             return SuccessResult(
                 data={
+                    "driver": "sqlite",
                     "db_path": str(db_path),
                     "backup_dir": str(out_dir),
                     "backup_paths": list(backups),
@@ -131,9 +173,11 @@ class BackupDatabaseMCPCommand(BaseMCPCommand):
             "author": cls.author,
             "email": cls.email,
             "detailed_description": (
-                "The backup_database command creates filesystem backups of a project's "
-                "SQLite database file and its sidecar files (WAL, SHM, journal). "
-                "This is a safety measure before destructive operations like repair.\n\n"
+                "The backup_database command backs up the shared database from server config. "
+                "For SQLite it copies the .db file and sidecars (WAL, SHM, journal). "
+                "For PostgreSQL it runs ``pg_dump -Fc`` (custom format) using "
+                "``code_analysis.database.driver.config``; ``pg_dump`` must be on PATH "
+                "or set ``pg_dump_path`` in driver config.\n\n"
                 "Operation flow:\n"
                 "1. Resolves database path from server config (one shared DB for all projects)\n"
                 "2. Determines backup directory (default: backup_dir from server config)\n"

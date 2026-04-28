@@ -211,6 +211,61 @@ get_file_lines for read-only line views
 
 Do not write Python through `write_project_text_lines` or the text handler. Do not edit Python through AST-only transformations because AST does not preserve source formatting/comments.
 
+## Shell-style file name pattern rule
+
+Universal file commands and file-listing instructions must support shell-style filename patterns like `ls`, `cp`, and `mv`.
+
+Required glob syntax:
+
+```text
+*          matches any chars inside one path segment
+?          matches one char inside one path segment
+[abc]      matches one char from set
+[a-z]      matches one char from range
+[!abc]     matches one char not in set
+**         matches zero or more directories only when recursive=true or globstar=true
+```
+
+Examples:
+
+```text
+docs/*.md
+README.*
+code_analysis/commands/*text*.py
+code_analysis/commands/*_{read,write}_*.py  # optional brace expansion only if explicitly implemented
+code_analysis/**/*.py                       # requires recursive/globstar mode
+```
+
+Minimum required behavior:
+
+- `list_project_files` must accept and document `file_pattern` with shell-style glob semantics.
+- Any new bulk-capable command must use explicit pattern fields such as `source_patterns` / `target_pattern`, not vague directory-only selection.
+- Pattern expansion must happen after project-root containment checks and must never escape the project root.
+- Pattern matching must not include `.venv`, `venv`, `site-packages`, installed packages, deleted files, or trashed projects unless an explicit safe option says so.
+- Bulk write/delete/move operations must support `dry_run=true` and must return the expanded file list before mutation.
+- If a pattern matches zero files, return a clear `NO_FILES_MATCHED` error for write/delete/move operations. For read/list operations, zero matches may be a successful empty result only if documented.
+- If a pattern matches multiple files for a single-file command, return `MULTIPLE_FILES_MATCHED` and include the matched paths.
+- If a pattern is malformed, return `INVALID_FILE_PATTERN` before file access side effects.
+
+Forbidden forms in plan steps:
+
+```text
+list_project_files without file_pattern
+list_project_files with only directory/path-style narrowing
+broad project root scan without a name pattern
+```
+
+If a performer does not know the exact file name, they must first use the narrowest safe shell-style pattern, then refine. Examples:
+
+```text
+code_analysis/commands/*text*.py
+code_analysis/commands/*json*.py
+code_analysis/core/*file*/*
+docs/plans/*universal-file-commands-refactor*/*
+```
+
+The goal is to make searches reproducible for `qwen 32B Q4_K_M`, reduce accidental broad scans, and ensure every file-listing observation records the exact pattern used.
+
 ## Qwen 32B Q4_K_M step contract
 
 Every step file in `steps/` is a work packet. A performer must be able to execute one step without inferring hidden context.
@@ -235,6 +290,7 @@ Rules for small/local models:
 - do not rely on memory of previous steps;
 - repeat critical safety rules in each step or reference this README plus the exact step file;
 - include expected command names and expected error codes;
+- every `list_project_files` example must use an explicit `file_pattern` with shell-style semantics;
 - require MCP behavior verification, not only unit-test success.
 
 ## Current bug record to preserve
@@ -258,13 +314,14 @@ Status: open until verified by MCP command behavior
 4. Handler-specific schemas in command help/metadata.
 5. Text handler with strict suffix allowlist and 1-based inclusive ranges.
 6. Text-safe metadata update path that does not parse text as Python.
-7. Single-range text replace before multi-range replace.
-8. Dry-run and unified diff for save/replace before write mode is accepted.
-9. JSON handler based on existing JSON tree commands.
-10. YAML handler with explicit parser/dependency decision.
-11. Python handler delegating to CST-safe workflows.
-12. MCP-level tests proving wrong-handler edits fail before side effects.
-13. `observations.md` recording current behavior, bugs, fixes, and post-fix verification.
+7. Shell-style `file_pattern` support for file listing and any bulk-capable file command.
+8. Single-range text replace before multi-range replace.
+9. Dry-run and unified diff for save/replace before write mode is accepted.
+10. JSON handler based on existing JSON tree commands.
+11. YAML handler with explicit parser/dependency decision.
+12. Python handler delegating to CST-safe workflows.
+13. MCP-level tests proving wrong-handler edits fail before side effects.
+14. `observations.md` recording current behavior, bugs, fixes, and post-fix verification.
 
 ## Required MCP behavior tests
 
@@ -275,6 +332,9 @@ Status: open until verified by MCP command behavior
 - `.yaml` and `.yml` route to YAML handler or return documented unsupported-handler error before side effects until implemented.
 - `.py`, `.pyi`, `.pyw` route to Python handler for writes/replaces/deletes.
 - `write_project_text_lines` remains backward-compatible only for allowed text suffixes or is explicitly deprecated with a replacement path.
+- `list_project_files file_pattern=docs/*.md` returns only matching names.
+- `list_project_files file_pattern=code_analysis/commands/*text*.py` uses shell-style `*` semantics.
+- malformed patterns fail with `INVALID_FILE_PATTERN` where validation is implemented.
 - unknown extension fails closed before backup/write/index update.
 - `.toml` fails closed until a TOML policy is added.
 - unsupported source suffixes such as `.go` and `.rs` fail with `CODE_FILE_FORBIDDEN` or the universal equivalent.
@@ -290,6 +350,7 @@ This refactor block is complete only when:
 - behavior is proven through MCP command execution;
 - every write is verified by a separate read command;
 - wrong-handler requests fail before side effects;
+- every `list_project_files` command used in docs, tests, and observations records an explicit shell-style `file_pattern`;
 - text writes no longer call Python parsing/entity/index update paths;
 - handler selection is visible in command responses;
 - observations are written in `docs/plans/2026-04-27-universal-file-commands-refactor/observations.md`;

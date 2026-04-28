@@ -20,7 +20,7 @@ from ..exceptions import (
     DriverOperationError,
     TransientDatabaseError,
 )
-from .base import BaseDatabaseDriver
+from .base import BaseDatabaseDriver, DbIdentity
 from .postgres_migrations import ensure_postgres_schema
 from .postgres_operations import PostgreSQLOperations
 from .postgres_run import run_execute, run_execute_batch
@@ -302,7 +302,7 @@ class PostgreSQLDriver(BaseDatabaseDriver):
             raise DriverOperationError("Database connection not established")
         return run_drop_table_postgres(self.conn, table_name)
 
-    def insert(self, table_name: str, data: Dict[str, Any]) -> int:
+    def insert(self, table_name: str, data: Dict[str, Any]) -> Optional[DbIdentity]:
         if not self._operations:
             raise DriverOperationError("Operations manager not initialized")
         try:

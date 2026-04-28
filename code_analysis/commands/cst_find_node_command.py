@@ -28,7 +28,7 @@ from ..core.cst_tree.tree_finder import find_nodes
 
 logger = logging.getLogger(__name__)
 
-class CSTFindNodeCommand:
+class CSTFindNodeCommand(BaseMCPCommand):
     
     
     """Find nodes in CST tree."""

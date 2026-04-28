@@ -140,8 +140,8 @@ class CodeChunk(BaseObject):
         updated_at: Last update timestamp
     """
 
-    id: Optional[int] = None
-    file_id: int = 0
+    id: Optional[str] = None
+    file_id: str = ""
     project_id: str = ""
     chunk_uuid: str = ""
     chunk_type: str = ""
@@ -152,9 +152,9 @@ class CodeChunk(BaseObject):
     bm25_score: Optional[float] = None
     embedding_vector: Optional[str] = None
     token_count: Optional[int] = None
-    class_id: Optional[int] = None
-    function_id: Optional[int] = None
-    method_id: Optional[int] = None
+    class_id: Optional[str] = None
+    function_id: Optional[str] = None
+    method_id: Optional[str] = None
     line: Optional[int] = None
     ast_node_type: Optional[str] = None
     source_type: Optional[str] = None

@@ -33,9 +33,7 @@ def row_to_dict(row: Any) -> Dict[str, Any]:
     return dict(row)
 
 
-def path_by_file_ids(
-    db: Any, file_ids: List[Optional[int]]
-) -> Dict[Optional[int], str]:
+def path_by_file_ids(db: Any, file_ids: List[Any]) -> Dict[Any, str]:
     """Build mapping file_id -> path by querying files table."""
     ids = [fid for fid in file_ids if fid is not None]
     if not ids:
@@ -46,7 +44,7 @@ def path_by_file_ids(
         tuple(ids),
     )
     rows = result.get("data") or []
-    path_by_id: Dict[Optional[int], str] = {}
+    path_by_id: Dict[Any, str] = {}
     for r in rows:
         d = row_to_dict(r)
         path_by_id[d["id"]] = d.get("path", "")
@@ -54,7 +52,7 @@ def path_by_file_ids(
 
 
 def get_entity_dependencies_via_execute(
-    db: Any, entity_type: str, entity_id: int
+    db: Any, entity_type: str, entity_id: Any
 ) -> List[Dict[str, Any]]:
     """Get dependencies by querying entity_cross_ref (caller -> callee)."""
     if entity_type == "class":
@@ -115,7 +113,7 @@ def resolve_entity_id_by_name(
     entity_type: str,
     entity_name: str,
     target_class: Optional[str] = None,
-) -> Optional[int]:
+) -> Optional[Any]:
     """Resolve entity name to database id within the project."""
     if entity_type == "class":
         r = db.execute(
@@ -169,7 +167,7 @@ def resolve_entity_id_by_name(
 
 
 def get_entity_dependents_via_execute(
-    db: Any, entity_type: str, entity_id: int
+    db: Any, entity_type: str, entity_id: Any
 ) -> List[Dict[str, Any]]:
     """Get dependents by querying entity_cross_ref (callee -> caller)."""
     if entity_type == "class":

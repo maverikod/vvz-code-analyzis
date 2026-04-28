@@ -32,7 +32,7 @@ from .compose_cst_writer import validate_and_write_temp
 logger = logging.getLogger(__name__)
 
 
-async def run_ops_mode(
+def run_ops_mode(
     command: Any,
     project_id: str,
     file_path: str,

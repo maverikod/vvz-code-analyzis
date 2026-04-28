@@ -781,7 +781,7 @@ class CodeDatabase:
 
     async def update_chunk_vector_id(
         self,
-        chunk_id: int,
+        chunk_id: str,
         vector_id: int,
         embedding_model: Optional[str] = None,
     ) -> None:

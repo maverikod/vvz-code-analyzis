@@ -228,7 +228,7 @@ class TestVectorizationIntegrationRealData:
                     has_docstring=False,
                     project_id=project_id,
                 )
-                assert file_id > 0
+                assert isinstance(file_id, str) and len(file_id) > 0
 
     def test_vectorization_large_files(
         self, temp_db, mock_svo_client_manager, mock_faiss_manager
@@ -268,7 +268,7 @@ class TestVectorizationIntegrationRealData:
                 has_docstring=False,
                 project_id=project_id,
             )
-            assert file_id > 0
+            assert isinstance(file_id, str) and len(file_id) > 0
 
     @pytest.mark.asyncio
     async def test_vectorization_error_handling(
@@ -372,7 +372,7 @@ class TestVectorizationIntegrationRealData:
                     has_docstring=False,
                     project_id=project_id,
                 )
-                assert file_id > 0
+                assert isinstance(file_id, str) and len(file_id) > 0
 
             elapsed = time.time() - start_time
             # Should complete in reasonable time (< 1 second for 10 files)

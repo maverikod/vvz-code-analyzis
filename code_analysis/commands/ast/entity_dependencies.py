@@ -24,6 +24,20 @@ from .entity_dependencies_metadata import (
 )
 
 
+def _normalize_entity_id_param(raw: Optional[Any]) -> Optional[Any]:
+    """Accept UUID strings or legacy numeric ids from MCP JSON parameters."""
+    if raw is None:
+        return None
+    if isinstance(raw, str):
+        s = raw.strip()
+        return s if s else None
+    if isinstance(raw, bool):
+        return None
+    if isinstance(raw, int):
+        return raw
+    return raw
+
+
 class GetEntityDependenciesMCPCommand(BaseMCPCommand):
     """Get dependencies of an entity (what it calls/uses) by entity id."""
 
@@ -53,10 +67,21 @@ class GetEntityDependenciesMCPCommand(BaseMCPCommand):
                     "enum": list(CALLER_TYPES),
                 },
                 "entity_id": {
-                    "type": "integer",
                     "description": (
-                        "Database ID of the entity. Either entity_id or entity_name must be set."
+                        "Primary key of the entity in classes/functions/methods tables. "
+                        "Use a canonical UUID string after DB UUID migration; integer is accepted "
+                        "only for pre-migration tooling. Either entity_id or entity_name must be set."
                     ),
+                    "anyOf": [
+                        {
+                            "type": "string",
+                            "description": "UUID string (recommended).",
+                        },
+                        {
+                            "type": "integer",
+                            "description": "Legacy integer row id (deprecated).",
+                        },
+                    ],
                 },
                 "entity_name": {
                     "type": "string",
@@ -80,7 +105,7 @@ class GetEntityDependenciesMCPCommand(BaseMCPCommand):
         self,
         project_id: str,
         entity_type: str,
-        entity_id: Optional[int] = None,
+        entity_id: Optional[Any] = None,
         entity_name: Optional[str] = None,
         target_class: Optional[str] = None,
         **kwargs,
@@ -93,7 +118,7 @@ class GetEntityDependenciesMCPCommand(BaseMCPCommand):
                     message=f"entity_type must be one of {CALLER_TYPES!r}",
                     code="VALIDATION_ERROR",
                 )
-            eid = entity_id
+            eid = _normalize_entity_id_param(entity_id)
             if eid is None:
                 if not entity_name:
                     return ErrorResult(
@@ -150,10 +175,21 @@ class GetEntityDependentsMCPCommand(BaseMCPCommand):
                     "enum": list(CALLEE_TYPES),
                 },
                 "entity_id": {
-                    "type": "integer",
                     "description": (
-                        "Database ID of the entity. Either entity_id or entity_name must be set."
+                        "Primary key of the entity in classes/functions/methods tables. "
+                        "Use a canonical UUID string after DB UUID migration; integer is accepted "
+                        "only for pre-migration tooling. Either entity_id or entity_name must be set."
                     ),
+                    "anyOf": [
+                        {
+                            "type": "string",
+                            "description": "UUID string (recommended).",
+                        },
+                        {
+                            "type": "integer",
+                            "description": "Legacy integer row id (deprecated).",
+                        },
+                    ],
                 },
                 "entity_name": {
                     "type": "string",
@@ -177,7 +213,7 @@ class GetEntityDependentsMCPCommand(BaseMCPCommand):
         self,
         project_id: str,
         entity_type: str,
-        entity_id: Optional[int] = None,
+        entity_id: Optional[Any] = None,
         entity_name: Optional[str] = None,
         target_class: Optional[str] = None,
         **kwargs,
@@ -190,7 +226,7 @@ class GetEntityDependentsMCPCommand(BaseMCPCommand):
                     message=f"entity_type must be one of {CALLEE_TYPES!r}",
                     code="VALIDATION_ERROR",
                 )
-            eid = entity_id
+            eid = _normalize_entity_id_param(entity_id)
             if eid is None:
                 if not entity_name:
                     return ErrorResult(

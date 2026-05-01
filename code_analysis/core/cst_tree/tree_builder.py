@@ -8,6 +8,7 @@ email: vasilyvz@gmail.com
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import logging
 import time
 import uuid
@@ -28,6 +29,13 @@ from .node_id_markers import (
 from .node_type_utils import get_node_kind, get_node_name, get_node_qualname
 
 logger = logging.getLogger(__name__)
+
+
+def _attach_disk_snapshot(tree: CSTTree, source: str) -> None:
+    source_bytes = source.encode("utf-8")
+    tree.disk_source_sha256_hex = hashlib.sha256(source_bytes).hexdigest()
+    tree.disk_source_length = len(source_bytes)
+
 
 # In-memory storage for CST trees
 _trees: dict[str, CSTTree] = {}
@@ -70,6 +78,7 @@ def load_file_to_tree(
         include_children=include_children,
         persisted_node_ids=persisted_node_ids,
     )
+    _attach_disk_snapshot(tree, source)
 
     _trees[tree.tree_id] = tree
     return tree
@@ -108,6 +117,8 @@ def create_tree_from_code(
         include_children=include_children,
         persisted_node_ids=persisted_node_ids,
     )
+    tree.disk_source_sha256_hex = None
+    tree.disk_source_length = 0
 
     _trees[tree.tree_id] = tree
     return tree
@@ -384,6 +395,7 @@ def reload_tree_from_file(
         previous_metadata_map=previous_metadata_map,
         persisted_node_ids=persisted_node_ids,
     )
+    _attach_disk_snapshot(tree, source)
 
     return tree
 
@@ -400,6 +412,11 @@ def rollback_tree_to_code(
 
     Replaces tree.module with parsed code and rebuilds index. Use when save
     fails after modify so the tree is reverted to pre-modify state.
+
+    Disk snapshot fields (``disk_source_sha256_hex``, ``disk_source_length``) are
+    cleared to None and 0: rollback reflects in-memory code only, not the file on
+    disk, so save-side disk verification must not run against a stale snapshot
+    until ``reload_tree_from_file`` / equivalent reload from disk.
 
     Args:
         tree_id: Tree ID to roll back
@@ -428,6 +445,8 @@ def rollback_tree_to_code(
         previous_metadata_map=previous_metadata_map,
         persisted_node_ids=persisted_node_ids,
     )
+    tree.disk_source_sha256_hex = None
+    tree.disk_source_length = 0
     return True
 
 

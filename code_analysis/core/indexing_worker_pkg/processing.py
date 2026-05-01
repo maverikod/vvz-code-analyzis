@@ -34,18 +34,23 @@ from code_analysis.core.sql_portable import (
     WHERE_FILES_ACTIVE,
     WHERE_FILES_ACTIVE_F,
     WHERE_PROCESSING_ACTIVE_P,
+    sql_julian_timestamp_now_expr,
 )
+from code_analysis.core.worker_db_rpc_priority import BACKGROUND_WORKER_DB_RPC_PRIORITY
 
 logger = logging.getLogger(__name__)
 
 # Projects with files needing indexing, excluding processing_paused projects.
+# Order: projects with the most recently updated pending file first (stable tie-break on project id).
 INDEXING_PROJECT_DISCOVERY_SQL = (
-    "SELECT DISTINCT f.project_id FROM files f "
+    "SELECT f.project_id FROM files f "
     "INNER JOIN projects p ON p.id = f.project_id "
-    "WHERE "
+    "WHERE f.project_id IS NOT NULL AND "
     + WHERE_FILES_ACTIVE_F
     + " AND f.needs_chunking = 1 AND "
     + WHERE_PROCESSING_ACTIVE_P
+    + " GROUP BY f.project_id "
+    + "ORDER BY MAX(f.updated_at) DESC, f.project_id DESC"
 )
 
 # Project activity lease (Step 16): long batches may exceed TTL without heartbeat.
@@ -55,10 +60,11 @@ _INDEXER_LEASE_TTL_S = 120.0
 async def process_cycle(self: Any, poll_interval: int = 30) -> Dict[str, Any]:
     """Run indexing cycles until stop: query projects with needs_chunking=1, index batch per project.
 
-    Discovery: DISTINCT project_id from files joined to projects where processing is not paused
-    and (deleted=0 OR deleted IS NULL) AND needs_chunking=1. Per project: SELECT id, path, project_id FROM files
+    Discovery: project_id from files joined to projects where processing is not paused
+    and (deleted=0 OR deleted IS NULL) AND needs_chunking=1, grouped by project_id,
+    ORDER BY MAX(updated_at) DESC (freshest pending work first). Per project: SELECT id, path, project_id FROM files
     WHERE project_id=? AND (deleted=0 OR deleted IS NULL) AND needs_chunking=1
-    ORDER BY updated_at ASC LIMIT ?. For each file call database.index_file(path, project_id).
+    ORDER BY updated_at DESC, id DESC LIMIT ?. For each file call database.index_file(path, project_id).
     Driver clears needs_chunking after success. Backoff 1–60s when DB unavailable.
 
     Args:
@@ -111,6 +117,7 @@ async def process_cycle(self: Any, poll_interval: int = 30) -> Dict[str, Any]:
                         database.execute(
                             "SELECT 1",
                             None,
+                            priority=BACKGROUND_WORKER_DB_RPC_PRIORITY,
                         )
                         if not db_available:
                             logger.info("Database is now available")
@@ -181,6 +188,7 @@ async def process_cycle(self: Any, poll_interval: int = 30) -> Dict[str, Any]:
                     WHERE cycle_end_time IS NULL
                     """,
                     (cycle_start_time,),
+                    priority=BACKGROUND_WORKER_DB_RPC_PRIORITY,
                 )
                 discovery_start = time.time()
                 files_total_result = database.execute(
@@ -191,6 +199,7 @@ async def process_cycle(self: Any, poll_interval: int = 30) -> Dict[str, Any]:
                     + """ AND needs_chunking = 1
                     """,
                     None,
+                    priority=BACKGROUND_WORKER_DB_RPC_PRIORITY,
                 )
                 files_total_at_start = 0
                 if isinstance(files_total_result, dict) and files_total_result.get(
@@ -213,23 +222,31 @@ async def process_cycle(self: Any, poll_interval: int = 30) -> Dict[str, Any]:
                     ) VALUES (?, ?, ?, 0, 0, 0.0, NULL, julianday('now'))
                     """,
                     (cycle_id, cycle_start_time, files_total_at_start),
+                    priority=BACKGROUND_WORKER_DB_RPC_PRIORITY,
                 )
 
                 try:
                     projects_result = database.execute(
                         INDEXING_PROJECT_DISCOVERY_SQL,
                         None,
+                        priority=BACKGROUND_WORKER_DB_RPC_PRIORITY,
                     )
                     projects_data = (
                         projects_result.get("data", [])
                         if isinstance(projects_result, dict)
                         else []
                     )
-                    project_ids = [
-                        row["project_id"]
-                        for row in projects_data
-                        if row.get("project_id")
-                    ]
+                    project_ids: list[str] = []
+                    _seen_pid: set[str] = set()
+                    for row in projects_data:
+                        raw = row.get("project_id")
+                        if raw is None:
+                            continue
+                        pid = str(raw).strip()
+                        if not pid or pid in _seen_pid:
+                            continue
+                        _seen_pid.add(pid)
+                        project_ids.append(pid)
                     discovery_duration = time.time() - discovery_start
                     log_operation_timing(
                         log_timing,
@@ -266,6 +283,7 @@ async def process_cycle(self: Any, poll_interval: int = 30) -> Dict[str, Any]:
                                 owner_id,
                                 "indexer_processing",
                                 _INDEXER_LEASE_TTL_S,
+                                rpc_priority=BACKGROUND_WORKER_DB_RPC_PRIORITY,
                             ):
                                 logger.info(
                                     "[WORKER_COORD] indexer skip project_id=%s "
@@ -281,8 +299,9 @@ async def process_cycle(self: Any, poll_interval: int = 30) -> Dict[str, Any]:
                                     "WHERE project_id = ? AND "
                                     + WHERE_FILES_ACTIVE
                                     + " "
-                                    "AND needs_chunking = 1 ORDER BY updated_at ASC LIMIT ?",
+                                    "AND needs_chunking = 1 ORDER BY updated_at DESC, id DESC LIMIT ?",
                                     (project_id, self.batch_size),
+                                    priority=BACKGROUND_WORKER_DB_RPC_PRIORITY,
                                 )
                                 files_data = (
                                     files_result.get("data", [])
@@ -307,6 +326,7 @@ async def process_cycle(self: Any, poll_interval: int = 30) -> Dict[str, Any]:
                                             database.execute(
                                                 "UPDATE files SET needs_chunking = 0 WHERE id = ?",
                                                 (row.get("id"),),
+                                                priority=BACKGROUND_WORKER_DB_RPC_PRIORITY,
                                             )
                                         except Exception:
                                             pass
@@ -317,6 +337,7 @@ async def process_cycle(self: Any, poll_interval: int = 30) -> Dict[str, Any]:
                                             owner_id,
                                             "indexer_processing",
                                             _INDEXER_LEASE_TTL_S,
+                                            rpc_priority=BACKGROUND_WORKER_DB_RPC_PRIORITY,
                                         )
                                         continue
                                     file_start = time.time()
@@ -335,7 +356,11 @@ async def process_cycle(self: Any, poll_interval: int = 30) -> Dict[str, Any]:
                                         progress_percent=progress_pct,
                                     )
                                     try:
-                                        result = database.index_file(path, project_id)
+                                        result = database.index_file(
+                                            path,
+                                            project_id,
+                                            priority=BACKGROUND_WORKER_DB_RPC_PRIORITY,
+                                        )
                                         elapsed = time.time() - file_start
                                         log_operation_timing(
                                             log_timing,
@@ -419,6 +444,7 @@ async def process_cycle(self: Any, poll_interval: int = 30) -> Dict[str, Any]:
                                         owner_id,
                                         "indexer_processing",
                                         _INDEXER_LEASE_TTL_S,
+                                        rpc_priority=BACKGROUND_WORKER_DB_RPC_PRIORITY,
                                     )
                                 project_batch: list[
                                     tuple[str, tuple[Any, ...] | None]
@@ -430,23 +456,38 @@ async def process_cycle(self: Any, poll_interval: int = 30) -> Dict[str, Any]:
                                             (p, file_path),
                                         )
                                     )
+                                now_err_sql = sql_julian_timestamp_now_expr(database)
                                 for p, file_path, typ, msg in errors_to_insert:
                                     project_batch.append(
                                         (
-                                            "INSERT OR REPLACE INTO indexing_errors "
-                                            "(project_id, file_path, error_type, error_message, created_at) "
-                                            "VALUES (?, ?, ?, ?, julianday('now'))",
-                                            (p, file_path, typ, msg),
+                                            "INSERT INTO indexing_errors "
+                                            "(id, project_id, file_path, error_type, error_message, created_at) "
+                                            f"VALUES (?, ?, ?, ?, ?, {now_err_sql}) "
+                                            "ON CONFLICT (project_id, file_path) DO UPDATE SET "
+                                            "error_type = excluded.error_type, "
+                                            "error_message = excluded.error_message, "
+                                            "created_at = excluded.created_at",
+                                            (
+                                                str(uuid.uuid4()),
+                                                p,
+                                                file_path,
+                                                typ,
+                                                msg,
+                                            ),
                                         )
                                     )
                                 if project_batch:
-                                    database.execute_batch(project_batch)
+                                    database.execute_batch(
+                                        project_batch,
+                                        priority=BACKGROUND_WORKER_DB_RPC_PRIORITY,
+                                    )
                             finally:
                                 release_project_activity(
                                     database,
                                     project_id,
                                     "indexer",
                                     owner_id,
+                                    rpc_priority=BACKGROUND_WORKER_DB_RPC_PRIORITY,
                                 )
                         total_files = cycle_files_indexed + cycle_files_failed
                         avg_time = (
@@ -465,6 +506,7 @@ async def process_cycle(self: Any, poll_interval: int = 30) -> Dict[str, Any]:
                                 avg_time,
                                 cycle_id,
                             ),
+                            priority=BACKGROUND_WORKER_DB_RPC_PRIORITY,
                         )
                         write_worker_status(
                             getattr(self, "status_file_path", None),
@@ -514,6 +556,7 @@ async def process_cycle(self: Any, poll_interval: int = 30) -> Dict[str, Any]:
                         WHERE cycle_id = ?
                         """,
                         (time.time(), cycle_id),
+                        priority=BACKGROUND_WORKER_DB_RPC_PRIORITY,
                     )
                 except Exception as e:
                     try:

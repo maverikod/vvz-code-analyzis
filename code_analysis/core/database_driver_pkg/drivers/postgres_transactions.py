@@ -1,6 +1,18 @@
 """
 PostgreSQL transaction management (separate connection per transaction).
 
+RPC callers that ``begin_transaction`` and pass the returned ``transaction_id`` into
+``execute`` / ``execute_batch`` always run on the **dedicated** connection stored in
+``PostgreSQLTransactionManager._transactions``. ``PostgreSQLDriver`` must route those
+calls to that connection only and **must not** substitute the self-managed write/read
+pool (the fixed 3+2 lanes used when ``transaction_id`` is absent, empty, or
+``\"local\"``).
+
+While an explicit transaction is open, its connection is **outside** that pool:
+additional server connections are held for the lifetime of the transaction. Open
+transactions do not occupy the three pooled write slots, but they still consume
+PostgreSQL backend resources.
+
 Author: Vasiliy Zdanovskiy
 email: vasilyvz@gmail.com
 """
@@ -17,7 +29,12 @@ logger = logging.getLogger(__name__)
 
 
 class PostgreSQLTransactionManager:
-    """One psycopg connection per open transaction (same contract as SQLite driver)."""
+    """One psycopg connection per open RPC transaction.
+
+    Maps each ``transaction_id`` to exactly one connection until commit/rollback.
+    This path is orthogonal to ``PostgreSQLConnectionPool``; the driver never
+    replaces a transaction-scoped connection with a pooled lease.
+    """
 
     def __init__(
         self,

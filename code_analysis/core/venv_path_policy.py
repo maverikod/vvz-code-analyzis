@@ -370,21 +370,46 @@ _LIST_PROJECT_SKIP_FILE_SUFFIXES: frozenset[str] = frozenset(
 )
 
 
-def _iter_project_walk_prune_dirs(dirs: List[str], ignore_dirs: Set[str]) -> None:
+def _iter_project_walk_prune_dirs(
+    dirs: List[str],
+    ignore_dirs: Set[str],
+    *,
+    show_hidden: bool = False,
+) -> None:
     """In-place prune for ``os.walk`` (shared by Python-only and all-files walkers)."""
-    dirs[:] = [
-        d
-        for d in dirs
-        if not d.startswith(".") and d not in ignore_dirs and d not in (".venv", "venv")
-    ]
+    from .project_ignore_policy import LISTING_CACHE_DIRECTORY_SEGMENTS
+
+    def _prune_dir(name: str) -> bool:
+        if name in (".venv", "venv"):
+            return True
+        if show_hidden:
+            if name in LISTING_CACHE_DIRECTORY_SEGMENTS:
+                return False
+            if name.startswith("."):
+                return False
+            if name in ignore_dirs:
+                return True
+            return False
+        if name in LISTING_CACHE_DIRECTORY_SEGMENTS:
+            return True
+        if name in ignore_dirs:
+            return True
+        if name.startswith("."):
+            return True
+        return False
+
+    dirs[:] = [d for d in dirs if not _prune_dir(d)]
 
 
-def iter_project_python_files_excluding_venv(project_root: Path) -> List[Path]:
+def iter_project_python_files_excluding_venv(
+    project_root: Path, *, show_hidden: bool = False
+) -> List[Path]:
     """
     Walk project tree for ``.py`` files, excluding hidden dirs and venv/data/logs.
 
     Mirrors :func:`code_analysis.commands.code_mapper_mcp_command` discovery
-    (no ``.venv`` / ``venv`` traversal).
+    (no ``.venv`` / ``venv`` traversal). Dot-prefixed dirs (except venv roots) and
+    cache dir basenames are skipped unless ``show_hidden`` is true (``ls -a``-style).
     """
     from .constants import DATA_DIR_NAME, DEFAULT_IGNORE_PATTERNS, LOGS_DIR_NAME
 
@@ -395,20 +420,23 @@ def iter_project_python_files_excluding_venv(project_root: Path) -> List[Path]:
     root_path = project_root.resolve()
     files: List[Path] = []
     for walk_root, dirs, walk_files in os.walk(root_path):
-        _iter_project_walk_prune_dirs(dirs, ignore_dirs)
+        _iter_project_walk_prune_dirs(dirs, ignore_dirs, show_hidden=show_hidden)
         for f in walk_files:
             if f.endswith(".py"):
                 files.append(Path(walk_root) / f)
     return files
 
 
-def iter_project_files_excluding_venv(project_root: Path) -> List[Path]:
+def iter_project_files_excluding_venv(
+    project_root: Path, *, show_hidden: bool = False
+) -> List[Path]:
     """
     Walk the project tree for regular files (not only ``.py``), excluding the same
     directories as :func:`iter_project_python_files_excluding_venv`.
 
     Skips bytecode, native libraries, and similar binary suffixes; does not descend into
-    ``.venv`` / ``venv`` / ``.git`` / ``__pycache__`` / configured ignore dirs.
+    ``.venv`` / ``venv`` or non-hidden noise dirs; dot-prefixed dirs and cache basenames
+    are skippable unless ``show_hidden`` is true.
     """
     from .constants import DATA_DIR_NAME, DEFAULT_IGNORE_PATTERNS, LOGS_DIR_NAME
 
@@ -419,7 +447,7 @@ def iter_project_files_excluding_venv(project_root: Path) -> List[Path]:
     root_path = project_root.resolve()
     files: List[Path] = []
     for walk_root, dirs, walk_files in os.walk(root_path):
-        _iter_project_walk_prune_dirs(dirs, ignore_dirs)
+        _iter_project_walk_prune_dirs(dirs, ignore_dirs, show_hidden=show_hidden)
         for f in walk_files:
             p = Path(walk_root) / f
             try:

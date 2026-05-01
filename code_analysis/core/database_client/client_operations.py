@@ -135,6 +135,8 @@ class _ClientOperationsMixin(_DatabaseClientBase):
         limit: Optional[int] = None,
         offset: Optional[int] = None,
         order_by: Optional[List[str]] = None,
+        *,
+        priority: int = 0,
     ) -> List[Dict[str, Any]]:
         """Select rows from table.
 
@@ -161,7 +163,7 @@ class _ClientOperationsMixin(_DatabaseClientBase):
             offset=offset,
             order_by=order_by,
         )
-        response = self.rpc_client.call("select", request.to_dict())
+        response = self.rpc_client.call("select", request.to_dict(), priority=priority)
         result_data = self._extract_result_data(response)
         # For DataResult, _extract_result_data returns {"success": True, "data": [...]}
         # We need to extract the list from "data" key
@@ -180,6 +182,8 @@ class _ClientOperationsMixin(_DatabaseClientBase):
         sql: str,
         params: Optional[tuple] = None,
         transaction_id: Optional[str] = None,
+        *,
+        priority: int = 0,
     ) -> Dict[str, Any]:
         """Execute raw SQL query.
 
@@ -204,7 +208,7 @@ class _ClientOperationsMixin(_DatabaseClientBase):
             sql_preview,
             (transaction_id[:8] + "…") if transaction_id else None,
         )
-        response = self.rpc_client.call("execute", rpc_params)
+        response = self.rpc_client.call("execute", rpc_params, priority=priority)
         result = self._extract_result_data(response)
         # _extract_result_data() returns the full result dict from RPC
         # For SuccessResult: {"success": True, "data": {"affected_rows": ..., "lastrowid": ..., "data": [...]}}
@@ -224,6 +228,8 @@ class _ClientOperationsMixin(_DatabaseClientBase):
         self,
         operations: List[Tuple[str, Optional[Union[tuple, list]]]],
         transaction_id: Optional[str] = None,
+        *,
+        priority: int = 0,
     ) -> List[Dict[str, Any]]:
         """Execute multiple SQL statements in one RPC round-trip.
 
@@ -254,7 +260,7 @@ class _ClientOperationsMixin(_DatabaseClientBase):
             len(operations),
             (transaction_id[:8] + "…") if transaction_id else None,
         )
-        response = self.rpc_client.call("execute_batch", rpc_params)
+        response = self.rpc_client.call("execute_batch", rpc_params, priority=priority)
         result = self._extract_result_data(response)
         if isinstance(result, dict):
             # SuccessResult: {"success": True, "data": {"results": [...]}}

@@ -13,10 +13,6 @@ from unittest.mock import MagicMock, patch
 import pytest
 from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 
-from code_analysis.core.constants import (
-    DEFAULT_READ_PROJECT_TEXT_JSON_STRUCTURED_MAX_BYTES,
-)
-
 from code_analysis.commands.base_mcp_command import BaseMCPCommand
 from code_analysis.commands.project_text_file_guard import (
     FORBIDDEN_NON_PYTHON_CODE_SUFFIXES,
@@ -29,8 +25,6 @@ from code_analysis.commands.project_text_file_guard import (
 )
 from code_analysis.commands.read_project_text_file_command import (
     ReadProjectTextFileCommand,
-    _resolved_json_structured_max_bytes,
-    _should_return_structured_json,
 )
 from code_analysis.commands.write_project_text_lines_command import (
     WriteProjectTextLinesCommand,
@@ -128,14 +122,17 @@ class TestReadProjectTextFile:
         f = tmp_path / "notes.txt"
         f.write_text("a\nb\nc\nd\n", encoding="utf-8")
         mock_db = MagicMock()
-        with patch.object(
-            BaseMCPCommand,
-            "_open_database_from_config",
-            return_value=mock_db,
-        ), patch.object(
-            BaseMCPCommand,
-            "_resolve_file_path_from_project",
-            return_value=f,
+        with (
+            patch.object(
+                BaseMCPCommand,
+                "_open_database_from_config",
+                return_value=mock_db,
+            ),
+            patch.object(
+                BaseMCPCommand,
+                "_resolve_file_path_from_project",
+                return_value=f,
+            ),
         ):
             cmd = ReadProjectTextFileCommand()
             result = await cmd.execute(
@@ -149,19 +146,23 @@ class TestReadProjectTextFile:
         assert result.data["total_lines"] == 4
         assert result.data["start_line"] == 2
         assert result.data["end_line"] == 3
+        assert result.data.get("handler_id") == "text"
 
     async def test_text_invalid_range_after_resolve(self, tmp_path: Path) -> None:
         f = tmp_path / "notes.txt"
         f.write_text("a\n", encoding="utf-8")
         mock_db = MagicMock()
-        with patch.object(
-            BaseMCPCommand,
-            "_open_database_from_config",
-            return_value=mock_db,
-        ), patch.object(
-            BaseMCPCommand,
-            "_resolve_file_path_from_project",
-            return_value=f,
+        with (
+            patch.object(
+                BaseMCPCommand,
+                "_open_database_from_config",
+                return_value=mock_db,
+            ),
+            patch.object(
+                BaseMCPCommand,
+                "_resolve_file_path_from_project",
+                return_value=f,
+            ),
         ):
             cmd = ReadProjectTextFileCommand()
             result = await cmd.execute(
@@ -179,14 +180,17 @@ class TestReadProjectTextFile:
         f = tmp_path / "foo.py"
         f.write_text("def foo():\n    return 42\n", encoding="utf-8")
         mock_db = MagicMock()
-        with patch.object(
-            BaseMCPCommand,
-            "_open_database_from_config",
-            return_value=mock_db,
-        ), patch.object(
-            BaseMCPCommand,
-            "_resolve_file_path_from_project",
-            return_value=f,
+        with (
+            patch.object(
+                BaseMCPCommand,
+                "_open_database_from_config",
+                return_value=mock_db,
+            ),
+            patch.object(
+                BaseMCPCommand,
+                "_resolve_file_path_from_project",
+                return_value=f,
+            ),
         ):
             cmd = ReadProjectTextFileCommand()
             result = await cmd.execute(
@@ -198,6 +202,7 @@ class TestReadProjectTextFile:
         assert isinstance(result, SuccessResult)
         assert result.data["lines"] == ["def foo():", "    return 42"]
         assert result.data.get("success") is True
+        assert result.data.get("handler_id") == "python"
 
     async def test_python_invalid_range_delegates_to_get_file_lines(
         self, tmp_path: Path
@@ -205,14 +210,17 @@ class TestReadProjectTextFile:
         f = tmp_path / "bad.py"
         f.write_text("a\n", encoding="utf-8")
         mock_db = MagicMock()
-        with patch.object(
-            BaseMCPCommand,
-            "_open_database_from_config",
-            return_value=mock_db,
-        ), patch.object(
-            BaseMCPCommand,
-            "_resolve_file_path_from_project",
-            return_value=f,
+        with (
+            patch.object(
+                BaseMCPCommand,
+                "_open_database_from_config",
+                return_value=mock_db,
+            ),
+            patch.object(
+                BaseMCPCommand,
+                "_resolve_file_path_from_project",
+                return_value=f,
+            ),
         ):
             cmd = ReadProjectTextFileCommand()
             result = await cmd.execute(
@@ -241,18 +249,17 @@ class TestReadProjectTextFile:
         f = tmp_path / "data.json"
         f.write_text('{"hello": "world"}\n', encoding="utf-8")
         mock_db = MagicMock()
-        with patch.object(
-            BaseMCPCommand,
-            "_open_database_from_config",
-            return_value=mock_db,
-        ), patch.object(
-            BaseMCPCommand,
-            "_resolve_file_path_from_project",
-            return_value=f,
-        ), patch.object(
-            ReadProjectTextFileCommand,
-            "_get_raw_config",
-            return_value={"code_analysis": {}},
+        with (
+            patch.object(
+                BaseMCPCommand,
+                "_open_database_from_config",
+                return_value=mock_db,
+            ),
+            patch.object(
+                BaseMCPCommand,
+                "_resolve_file_path_from_project",
+                return_value=f,
+            ),
         ):
             cmd = ReadProjectTextFileCommand()
             result = await cmd.execute(
@@ -265,31 +272,31 @@ class TestReadProjectTextFile:
         d = result.data
         assert "lines" not in d
         assert d.get("success") is True
+        assert d.get("handler_id") == "json"
         assert d.get("tree_id")
         assert d.get("root_node_id")
         assert isinstance(d.get("nodes"), list)
         assert d.get("total_nodes", 0) >= 1
 
-    async def test_json_over_threshold_returns_raw_lines(self, tmp_path: Path) -> None:
+    async def test_json_large_file_still_structured_via_handler(
+        self, tmp_path: Path
+    ) -> None:
         f = tmp_path / "big.json"
         payload = '{"pad":"' + ("x" * 80) + '"}'
         f.write_text(payload, encoding="utf-8")
         assert f.stat().st_size > 64
         mock_db = MagicMock()
-        with patch.object(
-            BaseMCPCommand,
-            "_open_database_from_config",
-            return_value=mock_db,
-        ), patch.object(
-            BaseMCPCommand,
-            "_resolve_file_path_from_project",
-            return_value=f,
-        ), patch.object(
-            ReadProjectTextFileCommand,
-            "_get_raw_config",
-            return_value={
-                "code_analysis": {"read_project_text_json_structured_max_bytes": 64}
-            },
+        with (
+            patch.object(
+                BaseMCPCommand,
+                "_open_database_from_config",
+                return_value=mock_db,
+            ),
+            patch.object(
+                BaseMCPCommand,
+                "_resolve_file_path_from_project",
+                return_value=f,
+            ),
         ):
             cmd = ReadProjectTextFileCommand()
             result = await cmd.execute(
@@ -299,28 +306,28 @@ class TestReadProjectTextFile:
                 end_line=10,
             )
         assert isinstance(result, SuccessResult)
-        assert "lines" in result.data
-        assert result.data.get("tree_id") is None
-        assert len(result.data["lines"]) >= 1
+        assert "lines" not in result.data
+        assert result.data.get("handler_id") == "json"
+        assert result.data.get("tree_id")
+        assert isinstance(result.data.get("nodes"), list)
 
-    async def test_json_invalid_under_threshold_returns_invalid_json(
+    async def test_json_invalid_returns_handler_validation_failed(
         self, tmp_path: Path
     ) -> None:
         f = tmp_path / "bad.json"
         f.write_text("{ not json", encoding="utf-8")
         mock_db = MagicMock()
-        with patch.object(
-            BaseMCPCommand,
-            "_open_database_from_config",
-            return_value=mock_db,
-        ), patch.object(
-            BaseMCPCommand,
-            "_resolve_file_path_from_project",
-            return_value=f,
-        ), patch.object(
-            ReadProjectTextFileCommand,
-            "_get_raw_config",
-            return_value={"code_analysis": {}},
+        with (
+            patch.object(
+                BaseMCPCommand,
+                "_open_database_from_config",
+                return_value=mock_db,
+            ),
+            patch.object(
+                BaseMCPCommand,
+                "_resolve_file_path_from_project",
+                return_value=f,
+            ),
         ):
             cmd = ReadProjectTextFileCommand()
             result = await cmd.execute(
@@ -330,47 +337,13 @@ class TestReadProjectTextFile:
                 end_line=5,
             )
         assert isinstance(result, ErrorResult)
-        assert result.code == "INVALID_JSON"
-
-
-class TestReadProjectTextFileJsonHelpers:
-    def test_resolved_threshold_default(self) -> None:
-        assert (
-            _resolved_json_structured_max_bytes({})
-            == DEFAULT_READ_PROJECT_TEXT_JSON_STRUCTURED_MAX_BYTES
-        )
-        assert (
-            _resolved_json_structured_max_bytes(
-                {"code_analysis": {"read_project_text_json_structured_max_bytes": None}}
-            )
-            == DEFAULT_READ_PROJECT_TEXT_JSON_STRUCTURED_MAX_BYTES
-        )
-
-    def test_resolved_threshold_explicit(self) -> None:
-        assert (
-            _resolved_json_structured_max_bytes(
-                {"code_analysis": {"read_project_text_json_structured_max_bytes": 4096}}
-            )
-            == 4096
-        )
-
-    def test_should_return_structured_json(self, tmp_path: Path) -> None:
-        j = tmp_path / "a.json"
-        j.write_text("{}", encoding="utf-8")
-        assert _should_return_structured_json(
-            j, {"code_analysis": {"read_project_text_json_structured_max_bytes": 10}}
-        )
-        txt = tmp_path / "a.txt"
-        txt.write_text("{}", encoding="utf-8")
-        assert not _should_return_structured_json(
-            txt, {"code_analysis": {"read_project_text_json_structured_max_bytes": 10}}
-        )
+        assert result.code == "validation_failed"
 
 
 @pytest.mark.asyncio
 class TestWriteProjectTextLines:
     async def test_replaces_range(self, tmp_path: Path) -> None:
-        cfg = tmp_path / "app.toml"
+        cfg = tmp_path / "notes.txt"
         cfg.write_text("a\nb\nc\n", encoding="utf-8")
         mock_db = MagicMock()
         mock_proj = MagicMock()
@@ -378,31 +351,36 @@ class TestWriteProjectTextLines:
         mock_db.get_project.return_value = mock_proj
         mock_db.select.return_value = [{"id": 99}]
 
-        batch_calls: list[dict] = []
+        meta_calls: list[dict[str, object]] = []
 
-        def _capture_batch(*args: object, **kwargs: object) -> dict:
-            batch_calls.append(dict(kwargs))
-            return {"success": True}
+        def _capture_meta(**kwargs: object) -> dict[str, object]:
+            meta_calls.append(dict(kwargs))
+            return {"success": True, "file_id": 99, "metadata_only": True}
 
-        with patch.object(
-            BaseMCPCommand,
-            "_open_database_from_config",
-            return_value=mock_db,
-        ), patch.object(
-            BaseMCPCommand,
-            "_resolve_file_path_from_project",
-            return_value=cfg,
-        ), patch(
-            "code_analysis.commands.write_project_text_lines_command.update_file_data_atomic_batch",
-            side_effect=_capture_batch,
-        ), patch(
-            "code_analysis.commands.write_project_text_lines_command.BackupManager"
-        ) as bm_cls:
+        with (
+            patch.object(
+                BaseMCPCommand,
+                "_open_database_from_config",
+                return_value=mock_db,
+            ),
+            patch.object(
+                BaseMCPCommand,
+                "_resolve_file_path_from_project",
+                return_value=cfg,
+            ),
+            patch(
+                "code_analysis.commands.write_project_text_lines_command.persist_plain_text_file_metadata",
+                side_effect=_capture_meta,
+            ),
+            patch(
+                "code_analysis.commands.write_project_text_lines_command.BackupManager"
+            ) as bm_cls,
+        ):
             bm_cls.return_value.create_backup.return_value = "bu-1"
             cmd = WriteProjectTextLinesCommand()
             result = await cmd.execute(
                 project_id=_PID,
-                file_path="app.toml",
+                file_path="notes.txt",
                 start_line=2,
                 end_line=2,
                 new_lines=["X"],
@@ -412,14 +390,14 @@ class TestWriteProjectTextLines:
         assert isinstance(result, SuccessResult)
         # join() does not add a trailing newline after the last line (same as replace_file_lines)
         assert cfg.read_text(encoding="utf-8") == "a\nX\nc"
-        mock_db.update_file.assert_called_once()
-        assert len(batch_calls) == 1
-        assert batch_calls[0].get("transaction_id") is None
+        assert len(meta_calls) == 1
+        assert meta_calls[0].get("project_id") == _PID
+        mock_db.update_file.assert_not_called()
         mock_db.begin_transaction.assert_not_called()
         mock_db.commit_transaction.assert_not_called()
         mock_db.rollback_transaction.assert_not_called()
 
-    async def test_update_batch_failure_restores_file_when_backup(
+    async def test_metadata_failure_restores_file_when_backup(
         self, tmp_path: Path
     ) -> None:
         cfg = tmp_path / "notes.txt"
@@ -431,20 +409,25 @@ class TestWriteProjectTextLines:
         mock_db.get_project.return_value = mock_proj
         mock_db.select.return_value = [{"id": 42}]
 
-        with patch.object(
-            BaseMCPCommand,
-            "_open_database_from_config",
-            return_value=mock_db,
-        ), patch.object(
-            BaseMCPCommand,
-            "_resolve_file_path_from_project",
-            return_value=cfg,
-        ), patch(
-            "code_analysis.commands.write_project_text_lines_command.update_file_data_atomic_batch",
-            return_value={"success": False, "error": "db failed"},
-        ), patch(
-            "code_analysis.commands.write_project_text_lines_command.BackupManager"
-        ) as bm_cls:
+        with (
+            patch.object(
+                BaseMCPCommand,
+                "_open_database_from_config",
+                return_value=mock_db,
+            ),
+            patch.object(
+                BaseMCPCommand,
+                "_resolve_file_path_from_project",
+                return_value=cfg,
+            ),
+            patch(
+                "code_analysis.commands.write_project_text_lines_command.persist_plain_text_file_metadata",
+                return_value={"success": False, "error": "db failed"},
+            ),
+            patch(
+                "code_analysis.commands.write_project_text_lines_command.BackupManager"
+            ) as bm_cls,
+        ):
             bm_cls.return_value.create_backup.return_value = "bu-restore"
             bm_inst = bm_cls.return_value
             cmd = WriteProjectTextLinesCommand()
@@ -488,3 +471,80 @@ class TestWriteProjectTextLines:
         )
         assert isinstance(result, ErrorResult)
         assert result.code == "CODE_FILE_FORBIDDEN"
+
+    async def test_rejects_go_suffix(self) -> None:
+        cmd = WriteProjectTextLinesCommand()
+        result = await cmd.execute(
+            project_id=_PID,
+            file_path="main.go",
+            start_line=1,
+            end_line=1,
+            new_lines=["x"],
+        )
+        assert isinstance(result, ErrorResult)
+        assert result.code == "CODE_FILE_FORBIDDEN"
+
+    async def test_rejects_json_not_plain_text_allowlist(self) -> None:
+        cmd = WriteProjectTextLinesCommand()
+        with patch.object(BaseMCPCommand, "_open_database_from_config") as odb:
+            result = await cmd.execute(
+                project_id=_PID,
+                file_path="data.json",
+                start_line=1,
+                end_line=1,
+                new_lines=["x"],
+            )
+        assert isinstance(result, ErrorResult)
+        assert result.code == "TEXT_FILE_SUFFIX_NOT_ALLOWED"
+        odb.assert_not_called()
+
+    async def test_invalid_range_before_database_open(self) -> None:
+        cmd = WriteProjectTextLinesCommand()
+        with patch.object(BaseMCPCommand, "_open_database_from_config") as odb:
+            result = await cmd.execute(
+                project_id=_PID,
+                file_path="README.md",
+                start_line=4,
+                end_line=1,
+                new_lines=["x"],
+            )
+        assert isinstance(result, ErrorResult)
+        assert result.code == "INVALID_RANGE"
+        odb.assert_not_called()
+
+    async def test_rejects_write_under_project_venv(self, tmp_path: Path) -> None:
+        vdir = tmp_path / ".venv"
+        vdir.mkdir(parents=True, exist_ok=True)
+        cfg = vdir / "notes.txt"
+        cfg.write_text("a\nb\n", encoding="utf-8")
+        mock_db = MagicMock()
+        mock_proj = MagicMock()
+        mock_proj.root_path = str(tmp_path)
+        mock_db.get_project.return_value = mock_proj
+
+        with (
+            patch.object(
+                BaseMCPCommand,
+                "_open_database_from_config",
+                return_value=mock_db,
+            ),
+            patch.object(
+                BaseMCPCommand,
+                "_resolve_file_path_from_project",
+                return_value=cfg,
+            ),
+            patch(
+                "code_analysis.commands.write_project_text_lines_command.BackupManager"
+            ),
+        ):
+            cmd = WriteProjectTextLinesCommand()
+            result = await cmd.execute(
+                project_id=_PID,
+                file_path=".venv/notes.txt",
+                start_line=1,
+                end_line=1,
+                new_lines=["x"],
+            )
+
+        assert isinstance(result, ErrorResult)
+        assert result.code == "PROJECT_VENV_WRITE_FORBIDDEN"

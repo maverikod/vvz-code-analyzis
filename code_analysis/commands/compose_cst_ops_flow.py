@@ -55,9 +55,9 @@ def run_ops_mode(
     When validate_syntax_only=true, skip linter/mypy and only check syntax.
     """
     target_path = (root_path / file_path).resolve()
-    if target_path.suffix != ".py":
+    if target_path.suffix.lower() not in (".py", ".pyi", ".pyw"):
         return ErrorResult(
-            message="Target file must be a .py file",
+            message="Target file must be a Python source file (.py, .pyi, .pyw)",
             code="INVALID_FILE",
             details={"file_path": str(target_path)},
         )
@@ -280,6 +280,7 @@ def run_ops_mode(
             raise err
     finally:
         database.disconnect()
+
 
 # cst-node-ids: begin
 # cst-node-ids: version=2

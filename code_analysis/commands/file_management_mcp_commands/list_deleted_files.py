@@ -6,13 +6,33 @@ email: vasilyvz@gmail.com
 """
 
 import logging
-from typing import Any, Dict
+from pathlib import Path
+from typing import Any, Dict, Optional
 
 from mcp_proxy_adapter.commands.result import SuccessResult, ErrorResult
 
 from ..base_mcp_command import BaseMCPCommand
+from ..file_management.relative_path_list_pattern import (
+    canonical_relative_path,
+    effective_listing_pattern,
+    relative_path_matches_listing_pattern,
+)
 
 logger = logging.getLogger(__name__)
+
+
+def _deleted_entry_rel_posix(project_root: Path, item: Dict[str, Any]) -> str | None:
+    """Project-relative posix path for pattern matching (prefer ``original_path``)."""
+    op = item.get("original_path")
+    if op:
+        p = Path(str(op))
+        if p.is_absolute():
+            return canonical_relative_path(project_root, p)
+        return Path(str(op)).as_posix()
+    raw = item.get("path")
+    if not raw:
+        return None
+    return canonical_relative_path(project_root, Path(str(raw)))
 
 
 class ListDeletedFilesMCPCommand(BaseMCPCommand):
@@ -21,7 +41,9 @@ class ListDeletedFilesMCPCommand(BaseMCPCommand):
     name = "list_deleted_files"
     version = "1.0.0"
     descr = (
-        "List deleted files for a project; path is trash path, original_path in project"
+        "List deleted files for a project (trash path, original_path). Optional "
+        "``file_pattern`` / ``glob`` filter on project-relative paths (fnmatch / prefix, "
+        "same as list_project_files)."
     )
     category = "file_management"
     author = "Vasiliy Zdanovskiy"
@@ -38,6 +60,19 @@ class ListDeletedFilesMCPCommand(BaseMCPCommand):
                     "type": "string",
                     "description": "Project UUID (from create_project or list_projects).",
                 },
+                "file_pattern": {
+                    "type": "string",
+                    "description": (
+                        "Optional fnmatch on resolved project-relative path (prefers "
+                        "``original_path``; falls back to ``path``). ``glob`` is an alias."
+                    ),
+                },
+                "glob": {
+                    "type": "string",
+                    "description": (
+                        "Alias of ``file_pattern``; non-empty ``file_pattern`` wins when both set."
+                    ),
+                },
             },
             "required": ["project_id"],
             "additionalProperties": False,
@@ -46,6 +81,8 @@ class ListDeletedFilesMCPCommand(BaseMCPCommand):
     async def execute(
         self,
         project_id: str,
+        file_pattern: Optional[str] = None,
+        glob: Optional[str] = None,
         **kwargs: Any,
     ) -> SuccessResult | ErrorResult:
         """
@@ -62,7 +99,7 @@ class ListDeletedFilesMCPCommand(BaseMCPCommand):
             SuccessResult with list of deleted file entries.
         """
         try:
-            self._resolve_project_root(project_id)
+            root = self._resolve_project_root(project_id)
             database = self._open_database_from_config(auto_analyze=False)
             try:
                 rows = database.get_deleted_files(project_id)
@@ -77,6 +114,16 @@ class ListDeletedFilesMCPCommand(BaseMCPCommand):
                     }
                     for r in rows
                 ]
+                eff = effective_listing_pattern(file_pattern, glob)
+                if eff:
+                    filtered = []
+                    for it in items:
+                        rel = _deleted_entry_rel_posix(root, it)
+                        if rel is None:
+                            continue
+                        if relative_path_matches_listing_pattern(rel, eff):
+                            filtered.append(it)
+                    items = filtered
                 return SuccessResult(data={"deleted_files": items, "total": len(items)})
             finally:
                 database.disconnect()

@@ -64,10 +64,11 @@ class DeleteFilesByMaskMCPCommand(BaseMCPCommand):
                 "path_mask": {
                     "type": "string",
                     "description": (
-                        "Mask relative to project root. Optional leading ``/`` = project root. "
-                        "Examples: ``/build`` (prefix tree); ``/tes*`` (top-level names matching "
-                        "``tes*``, any file under those dirs); ``tests/**/*.py``; ``**/*.tmp``. "
-                        "Backslashes normalized to ``/``; outer whitespace stripped."
+                        "Mask relative to project root (see ``path_mask_match`` semantics — **not** "
+                        "the same as ``list_project_files`` ``file_pattern``: rm-style globs without "
+                        "``/`` match only the first path segment; ``**`` is segment-aware). Optional "
+                        "leading ``/`` = project root. Examples: ``/build`` (prefix tree); ``/tes*``; "
+                        "``tests/**/*.py``; ``**/*.tmp``. Backslashes → ``/``; trimmed."
                     ),
                 },
             },

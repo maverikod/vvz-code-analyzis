@@ -31,6 +31,10 @@ def pytest_configure(config) -> None:
         "markers",
         "integration: mark test as integration (slower, real DB/driver).",
     )
+    config.addinivalue_line(
+        "markers",
+        "postgres: optional live PostgreSQL (e.g. CODE_ANALYSIS_POSTGRES_TEST_DSN).",
+    )
 
 
 @pytest.fixture

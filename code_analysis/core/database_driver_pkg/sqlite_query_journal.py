@@ -17,11 +17,26 @@ import io
 import json
 import logging
 import threading
-from datetime import datetime, timezone
+import uuid
+from datetime import date, datetime, time, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
+
+
+def _journal_param_json(value: Any) -> Any:
+    """Recursively normalize bind values for json.dumps (UUID → str, date/time → ISO)."""
+    if isinstance(value, uuid.UUID):
+        return str(value)
+    if isinstance(value, (datetime, date, time)):
+        return value.isoformat()
+    if isinstance(value, dict):
+        return {k: _journal_param_json(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_journal_param_json(v) for v in value]
+    return value
+
 
 # Default max size before rotation (100 MB)
 DEFAULT_JOURNAL_MAX_BYTES = 100 * 1024 * 1024
@@ -119,9 +134,9 @@ class SQLiteQueryJournal:
                 if params is None:
                     params_ser = None
                 elif isinstance(params, dict):
-                    params_ser = params
+                    params_ser = {k: _journal_param_json(v) for k, v in params.items()}
                 else:
-                    params_ser = list(params)
+                    params_ser = [_journal_param_json(v) for v in params]
                 entry: Dict[str, Any] = {
                     "ts": datetime.now(timezone.utc).isoformat(),
                     "sql": sql,

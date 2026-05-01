@@ -9,6 +9,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Tuple
 
+from code_analysis.core.database_driver_pkg.drivers.postgres import PostgreSQLDriver
 from code_analysis.core.project_ignore_policy import (
     sql_and_absolute_path_eligible_for_default_status_aggregates as _sql_path_ok_status,
 )
@@ -90,8 +91,7 @@ def build_status_ops(driver_type: str) -> List[Tuple[str, Any]]:
         ("SELECT COUNT(*) as count FROM files WHERE 1=1" + p_files, None),
         ("SELECT COUNT(*) as count FROM files WHERE deleted IS TRUE" + p_files, None),
         (
-            "SELECT COUNT(*) as count FROM files WHERE has_docstring IS TRUE"
-            + p_files,
+            "SELECT COUNT(*) as count FROM files WHERE has_docstring IS TRUE" + p_files,
             None,
         ),
         (
@@ -187,6 +187,36 @@ def build_status_ops(driver_type: str) -> List[Tuple[str, Any]]:
 
 # Default batch for SQLite-style servers (tests, scripts).
 STATUS_OPS: List[tuple] = build_status_ops("sqlite_proxy")
+
+
+def _postgres_pool_observability_fields(db: Any, driver_type: str) -> Dict[str, Any]:
+    """Top-level pg_* pool counters for Postgres in-process; empty dict otherwise."""
+    out: Dict[str, Any] = {}
+    if driver_type != "postgres":
+        return out
+    rpc = getattr(db, "rpc_client", None)
+    handlers = getattr(rpc, "handlers", None) if rpc is not None else None
+    driver = getattr(handlers, "driver", None) if handlers is not None else None
+    if not isinstance(driver, PostgreSQLDriver):
+        return out
+    pool_st = driver.pool_status()
+    if not pool_st.get("enabled"):
+        return out
+    w = pool_st.get("write") or {}
+    r = pool_st.get("read") or {}
+    if "in_use" in w:
+        out["pg_write_pool_in_use"] = w["in_use"]
+    if "idle" in w:
+        out["pg_write_pool_idle"] = w["idle"]
+    if "waiters" in w:
+        out["pg_write_pool_waiters"] = w["waiters"]
+    if "in_use" in r:
+        out["pg_read_pool_in_use"] = r["in_use"]
+    if "idle" in r:
+        out["pg_read_pool_idle"] = r["idle"]
+    if "waiters" in r:
+        out["pg_read_pool_waiters"] = r["waiters"]
+    return out
 
 
 def build_database_status_result(
@@ -400,4 +430,5 @@ def build_database_status_result(
         for c in _data(16)
     ]
 
+    result.update(_postgres_pool_observability_fields(db, driver_type))
     return result

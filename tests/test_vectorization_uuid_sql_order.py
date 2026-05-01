@@ -32,3 +32,19 @@ def test_base_chunks_queries_use_created_at_order() -> None:
     assert "ORDER BY cc.created_at, cc.id" in src
     src2 = inspect.getsource(base_chunks.get_non_vectorized_chunks)
     assert "ORDER BY cc.created_at, cc.id" in src2
+
+
+def test_batch_processor_reembed_select_orders_chunks_newest_first() -> None:
+    """Worker hot-path: re-embed chunk batch uses DESC created_at (fresh chunks first)."""
+    from code_analysis.core.vectorization_worker_pkg import batch_processor
+
+    src = inspect.getsource(batch_processor.process_chunks_missing_embedding_params)
+    assert "ORDER BY cc.created_at DESC, cc.id DESC" in src
+
+
+def test_batch_processor_embedding_ready_orders_chunks_newest_first() -> None:
+    """Worker hot-path: embedding-ready batch uses DESC created_at."""
+    from code_analysis.core.vectorization_worker_pkg import batch_processor
+
+    src = inspect.getsource(batch_processor.process_embedding_ready_chunks)
+    assert "ORDER BY cc.created_at DESC, cc.id DESC" in src

@@ -27,7 +27,7 @@ def _make_mock_database(
     """Build a mock DatabaseClient that returns given projects and file batches."""
     call_count = [0]  # mutable to share across invocations
 
-    def execute(sql: str, params=None, transaction_id=None):
+    def execute(sql: str, params=None, transaction_id=None, **kwargs):
         call_count[0] += 1
         sql_lower = sql.strip().lower()
         if "project_activity_locks" in sql_lower:
@@ -39,13 +39,27 @@ def _make_mock_database(
                 len(files_per_project.get(p["project_id"], [])) for p in projects
             )
             return {"data": [{"count": total}]}
-        if "inner join projects" in sql_lower and "distinct" in sql_lower:
+        if "inner join projects" in sql_lower and (
+            "distinct" in sql_lower or "group by" in sql_lower
+        ):
             return {"data": projects}
         if "select id, path, project_id" in sql_lower and params:
             project_id = str(params[0]) if params and params[0] is not None else ""
             limit = params[1] if len(params) > 1 else batch_size
-            files = (files_per_project.get(project_id) or [])[:limit]
-            return {"data": files}
+            files = list(files_per_project.get(project_id) or [])
+            if "updated_at desc" in sql_lower:
+                def _sort_file_row(row: dict) -> tuple:
+                    raw = row.get("updated_at", 0)
+                    try:
+                        ufv = float(raw)
+                    except (TypeError, ValueError):
+                        ufv = 0.0
+                    rid = row.get("id")
+                    sid = str(rid) if rid is not None else ""
+                    return (ufv, sid)
+
+                files.sort(key=_sort_file_row, reverse=True)
+            return {"data": files[:limit]}
         return None
 
     mock_index_file = MagicMock(return_value={"success": True})
@@ -65,8 +79,8 @@ async def test_process_cycle_calls_index_file_for_files_with_needs_chunking(tmp_
     batch_size = 5
     projects = [{"project_id": "proj-a"}]
     files = [
-        {"id": 1, "path": "/repo/proj-a/src/foo.py", "project_id": "proj-a"},
-        {"id": 2, "path": "/repo/proj-a/src/bar.py", "project_id": "proj-a"},
+        {"id": 1, "path": "/repo/proj-a/src/foo.py", "project_id": "proj-a", "updated_at": 2.0},
+        {"id": 2, "path": "/repo/proj-a/src/bar.py", "project_id": "proj-a", "updated_at": 1.0},
     ]
     files_per_project = {"proj-a": files}
 
@@ -109,9 +123,9 @@ async def test_process_cycle_respects_batch_size(tmp_path):
     projects = [{"project_id": "p1"}]
     # 3 files available; batch_size=2 so only first 2 should be requested
     files = [
-        {"id": 1, "path": "/p1/a.py", "project_id": "p1"},
-        {"id": 2, "path": "/p1/b.py", "project_id": "p1"},
-        {"id": 3, "path": "/p1/c.py", "project_id": "p1"},
+        {"id": 1, "path": "/p1/a.py", "project_id": "p1", "updated_at": 300.0},
+        {"id": 2, "path": "/p1/b.py", "project_id": "p1", "updated_at": 200.0},
+        {"id": 3, "path": "/p1/c.py", "project_id": "p1", "updated_at": 100.0},
     ]
     files_per_project = {"p1": files}
 
@@ -154,8 +168,8 @@ async def test_process_cycle_respects_project_order(tmp_path):
         {"project_id": "second"},
     ]
     files_per_project = {
-        "first": [{"id": 1, "path": "/first/one.py", "project_id": "first"}],
-        "second": [{"id": 2, "path": "/second/two.py", "project_id": "second"}],
+        "first": [{"id": 1, "path": "/first/one.py", "project_id": "first", "updated_at": 1.0}],
+        "second": [{"id": 2, "path": "/second/two.py", "project_id": "second", "updated_at": 1.0}],
     }
 
     mock_db = _make_mock_database(projects, files_per_project, batch_size)
@@ -301,25 +315,32 @@ async def test_indexing_worker_one_cycle_integration(tmp_path):
             ), f"Expected at least one file indexed, got {result}"
             assert result["errors"] == 0, f"Expected no errors, got {result}"
 
-            # needs_chunking cleared for the file
-            r = client.execute(
-                "SELECT needs_chunking FROM files WHERE id = ?", (file_id,)
-            )
-            data = r.get("data", []) if isinstance(r, dict) else []
-            assert len(data) == 1, f"Expected one file row, got {r}"
-            assert (
-                data[0].get("needs_chunking") == 0
-            ), f"Expected needs_chunking=0, got {data[0]}"
+            # process_cycle disconnects the worker DB client in its finally; use a fresh
+            # client for post-conditions (same pattern as avoiding double connect() deadlock).
+            verify_client = DatabaseClient(socket_path=socket_path)
+            verify_client.connect()
+            try:
+                # needs_chunking cleared for the file
+                r = verify_client.execute(
+                    "SELECT needs_chunking FROM files WHERE id = ?", (file_id,)
+                )
+                data = r.get("data", []) if isinstance(r, dict) else []
+                assert len(data) == 1, f"Expected one file row, got {r}"
+                assert (
+                    data[0].get("needs_chunking") == 0
+                ), f"Expected needs_chunking=0, got {data[0]}"
 
-            # Indexing path (sync_file_to_db_atomic) populates AST/CST/entities; code_content
-            # may be filled by a later chunking/vectorization step when needs_chunking is set.
-            r2 = client.execute(
-                "SELECT COUNT(*) as c FROM code_content WHERE file_id = ?", (file_id,)
-            )
-            data2 = r2.get("data", []) if isinstance(r2, dict) else []
-            assert len(data2) == 1
-            # After unified indexing path, code_content can be 0 until chunking runs
-            assert data2[0].get("c", 0) >= 0, f"Invalid code_content count: {data2[0]}"
+                # Indexing path (sync_file_to_db_atomic) populates AST/CST/entities; code_content
+                # may be filled by a later chunking/vectorization step when needs_chunking is set.
+                r2 = verify_client.execute(
+                    "SELECT COUNT(*) as c FROM code_content WHERE file_id = ?", (file_id,)
+                )
+                data2 = r2.get("data", []) if isinstance(r2, dict) else []
+                assert len(data2) == 1
+                # After unified indexing path, code_content can be 0 until chunking runs
+                assert data2[0].get("c", 0) >= 0, f"Invalid code_content count: {data2[0]}"
+            finally:
+                verify_client.disconnect()
 
             client.disconnect()
         finally:

@@ -5,6 +5,8 @@ Author: Vasiliy Zdanovskiy
 email: vasilyvz@gmail.com
 """
 
+from typing import Any
+
 import pytest
 
 from code_analysis.core.database_client.protocol import (
@@ -149,6 +151,67 @@ class TestRPCRequest:
         assert request.params == {"table_name": "users"}
         assert request.request_id is None
 
+    def test_request_priority_round_trip_nonzero(self):
+        """to_dict/from_dict preserves non-default priority."""
+        original = RPCRequest(
+            method="insert",
+            params={"k": "v"},
+            priority=7,
+            request_id="req-1",
+        )
+        restored = RPCRequest.from_dict(original.to_dict())
+        assert restored.method == original.method
+        assert restored.params == original.params
+        assert restored.priority == 7
+        assert restored.request_id == original.request_id
+
+    def test_request_from_dict_priority_key_absent(self):
+        """Missing priority in payload defaults to 0."""
+        data = {
+            "jsonrpc": "2.0",
+            "method": "ping",
+            "params": {},
+        }
+        request = RPCRequest.from_dict(data)
+        assert request.priority == 0
+
+    def test_request_to_dict_omits_priority_when_zero(self):
+        """Default and explicit priority=0 must not add a wire key (step 1 contract)."""
+        req_default = RPCRequest(method="m", params={})
+        assert "priority" not in req_default.to_dict()
+        req_explicit = RPCRequest(method="m", params={}, priority=0)
+        assert "priority" not in req_explicit.to_dict()
+
+    def test_request_round_trip_priority_explicit_zero(self):
+        """Explicit priority:0 in JSON round-trips without bloating minimal to_dict."""
+        data = {
+            "jsonrpc": "2.0",
+            "method": "ping",
+            "params": {},
+            "priority": 0,
+        }
+        request = RPCRequest.from_dict(data)
+        assert request.priority == 0
+        out = request.to_dict()
+        assert "priority" not in out
+
+    def test_request_from_dict_priority_non_numeric_raises(self):
+        """Invalid priority payload should fail fast (wire misuse)."""
+        data: dict[str, Any] = {
+            "jsonrpc": "2.0",
+            "method": "ping",
+            "params": {},
+            "priority": "not-int",
+        }
+        with pytest.raises(ValueError):
+            RPCRequest.from_dict(data)
+
+    def test_request_to_dict_negative_priority_serialized(self):
+        """Non-zero negative priorities are preserved on the wire (if ever used)."""
+        original = RPCRequest(method="m", params={}, priority=-3, request_id="x")
+        restored = RPCRequest.from_dict(original.to_dict())
+        assert restored.priority == -3
+
 
 class TestRPCResponse:
     """Test RPCResponse class."""
@@ -261,7 +324,7 @@ class TestRPCResponse:
 
     def test_error_from_dict_defaults(self):
         """Test creating error from dictionary with defaults."""
-        data = {}  # Empty dict
+        data: dict[str, Any] = {}
         error = RPCError.from_dict(data)
         assert error.code == ErrorCode.INTERNAL_ERROR
         assert error.message == "Unknown error"

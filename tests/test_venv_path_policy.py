@@ -171,6 +171,27 @@ def test_iter_project_files_excluding_venv_skips_pyc(tmp_path: Path) -> None:
     assert not any(p.name == "mod.pyc" for p in found)
 
 
+def test_iter_project_files_excluding_venv_show_hidden_descends_mypy_and_dot_dir(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "proj"
+    root.mkdir()
+    cache_dir = root / ".mypy_cache" / "3.12"
+    cache_dir.mkdir(parents=True)
+    marker = cache_dir / "data.json"
+    marker.write_text("{}", encoding="utf-8")
+    dot_dir = root / ".github" / "workflows"
+    dot_dir.mkdir(parents=True)
+    wf = dot_dir / "ci.yml"
+    wf.write_text("on: {}\n", encoding="utf-8")
+    found_default = iter_project_files_excluding_venv(root)
+    assert not any(".mypy_cache" in p.as_posix() for p in found_default)
+    assert not any(".github" in p.as_posix() for p in found_default)
+    found_hidden = iter_project_files_excluding_venv(root, show_hidden=True)
+    assert marker.resolve() in [p.resolve() for p in found_hidden]
+    assert wf.resolve() in [p.resolve() for p in found_hidden]
+
+
 def test_expand_ignore_exception_all_files_includes_non_py(tmp_path: Path) -> None:
     root = tmp_path / "proj"
     root.mkdir()

@@ -8,16 +8,18 @@
 
 ## Current status
 
-The plan has been corrected against current code. The universal handler implementation is not present yet.
+**2026-05-01:** Plan is **implemented**. All 23 steps completed; universal commands registered on the live server (verified via `help` MCP). Remaining: E2E MCP verification for the `Partial` items in observations.md definition-of-done checklist.
 
-Current verified facts:
+Verified facts (updated 2026-05-01):
 
-- `code_analysis/core/file_handlers/` does not exist yet.
-- `write_project_text_lines` already has strict plain-text suffix allowlist `.adoc/.md/.rst/.txt`.
-- `write_project_text_lines` still calls `update_file_data_atomic_batch` and this was reproduced as a real `UPDATE_FILE_DATA_ERROR` on Markdown.
-- `read_project_text_file` routes Python to `get_file_lines` and may return structured JSON for small `.json` files.
+- `code_analysis/core/file_handlers/` **exists** with 6+ files (registry, base, text_handler, json_handler, yaml_handler, python_handler, diff_support, text_ranges).
+- `universal_file_read/save/replace/delete` registered and accessible via `help` on `code-analysis-server`.
+- `write_project_text_lines` uses `persist_plain_text_file_metadata` only; `update_file_data_atomic_batch` removed from text write path.
+- `read_project_text_file` routes via universal handler registry for supported types.
 
-## Step execution order
+## Legacy draft files (NOT part of steps/)
+
+Files `03-replace-file-lines-command.md`, `04-create-text-file-command.md`, `05-json-load-file-command.md`, `06-json-modify-tree-command.md` in the plan root are **stale early drafts** from before the corrected step structure. They are NOT implementation work packets. Use only files under `steps/` for execution.
 
 1. `steps/01-code_analysis-core-file_handlers-registry.md`
 2. `steps/02-code_analysis-core-file_handlers-base.md`

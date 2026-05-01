@@ -10,6 +10,8 @@ import logging
 from mcp_proxy_adapter.commands.command_registry import registry
 
 logger = logging.getLogger(__name__)
+
+
 def register_commands_part2(reg: registry) -> None:
     """Register backup, file management, log viewer, workers, DB integrity, restore, projects."""
     from .commands.backup_mcp_commands import (
@@ -210,6 +212,7 @@ def register_commands_part2(reg: registry) -> None:
         logger.warning("Failed to import restart_server command: %s", e)
     except Exception as e:
         logger.error("Failed to register restart_server command: %s", e, exc_info=True)
+
 
 # cst-node-ids: begin
 # cst-node-ids: version=2

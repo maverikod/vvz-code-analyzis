@@ -24,6 +24,7 @@ from ..core.backup_manager import BackupManager
 from ..core.database_client.file_data_batch import update_file_data_atomic_batch
 from ..core.database_client.objects.base import BaseObject
 from ..core.git_integration import create_git_commit
+from ..core.sql_portable import sql_julian_timestamp_now_expr
 from .compose_cst_db import delete_file_data, restore_file_data
 
 logger = logging.getLogger(__name__)
@@ -44,9 +45,9 @@ def validate_and_write_temp(
     Args:
         source_code: Source code to write
         target_path: Target file path
-        validate_syntax_only: When True, skip linter and type checker.
-            Only syntax check (ast.parse/compile) runs. Use when pre-existing
-            mypy/flake8 errors block a local patch.
+        validate_syntax_only: When True, skip linter, type checker, and docstring
+            policy checks. Only syntax check (ast.parse/compile) runs. Use when
+            pre-existing mypy/flake8/docstring issues block a local patch.
 
     Returns:
         Tuple of (temp_file_path, error_result or None, validation_results or None)
@@ -78,6 +79,7 @@ def validate_and_write_temp(
         temp_file_path=temp_file,
         validate_linter=not validate_syntax_only,
         validate_type_checker=not validate_syntax_only,
+        validate_docstrings=not validate_syntax_only,
     )
 
     if not validation_success:
@@ -159,10 +161,11 @@ def update_file_record(
         created_file = database.create_file(file_obj)
         return created_file.id
 
+    now_sql = sql_julian_timestamp_now_expr(database)
     database.execute(
-        """
+        f"""
         UPDATE files SET
-            lines = ?, has_docstring = ?, updated_at = julianday('now')
+            lines = ?, has_docstring = ?, updated_at = {now_sql}
         WHERE id = ?
         """,
         (lines, has_docstring, file_id),
@@ -392,6 +395,7 @@ def apply_changes(
         )
 
         raise error
+
 
 # cst-node-ids: begin
 # cst-node-ids: version=2

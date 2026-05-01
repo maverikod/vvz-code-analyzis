@@ -9,8 +9,12 @@ from __future__ import annotations
 
 import json
 import logging
+import uuid
 from pathlib import Path
 from typing import TYPE_CHECKING, List
+
+from ..sql_portable import sql_julian_timestamp_now_expr
+from ..worker_db_rpc_priority import BACKGROUND_WORKER_DB_RPC_PRIORITY
 
 if TYPE_CHECKING:
     from ..database_client.client import DatabaseClient
@@ -22,9 +26,9 @@ def _refresh_config(self) -> None:
     """Reload worker watch_dirs from config file if it changed."""
     try:
         if not self.config_path:
-            combined: List[Path] = []
-            if set(map(str, combined)) != set(map(str, self.watch_dirs)):
-                self.watch_dirs = combined
+            # No on-disk config: cannot discover paths; keep self.watch_dirs unchanged.
+            # Clearing to [] made downstream logic treat every DB watch_dir as "not in config"
+            # and wipe watch_dir_paths (see file_watcher initialize_watch_dirs).
             return
 
         if not self.config_path.exists():
@@ -77,6 +81,7 @@ async def _enqueue_watch_dirs(self, database: "DatabaseClient") -> int:
                     LIMIT 1
                     """,
                     (file_path_str, self.project_id),
+                    priority=BACKGROUND_WORKER_DB_RPC_PRIORITY,
                 )
                 file_rows = (
                     file_result.get("data", []) if isinstance(file_result, dict) else []
@@ -85,12 +90,22 @@ async def _enqueue_watch_dirs(self, database: "DatabaseClient") -> int:
                 if not file_rec:
                     # Register file and mark as needing chunking
                     file_lines = len(file_path.read_text(encoding="utf-8").splitlines())
+                    now_sql = sql_julian_timestamp_now_expr(database)
+                    new_id = str(uuid.uuid4())
                     database.execute(
-                        """
-                        INSERT INTO files (project_id, path, lines, last_modified, has_docstring, updated_at)
-                        VALUES (?, ?, ?, ?, ?, julianday('now'))
+                        f"""
+                        INSERT INTO files (id, project_id, path, lines, last_modified, has_docstring, updated_at)
+                        VALUES (?, ?, ?, ?, ?, ?, {now_sql})
                         """,
-                        (self.project_id, file_path_str, file_lines, file_mtime, False),
+                        (
+                            new_id,
+                            self.project_id,
+                            file_path_str,
+                            file_lines,
+                            file_mtime,
+                            False,
+                        ),
+                        priority=BACKGROUND_WORKER_DB_RPC_PRIORITY,
                     )
                     # Use execute() for mark_file_needs_chunking
                     database.execute(
@@ -98,6 +113,7 @@ async def _enqueue_watch_dirs(self, database: "DatabaseClient") -> int:
                         UPDATE files SET needs_chunking = 1 WHERE path = ? AND project_id = ?
                         """,
                         (file_path_str, self.project_id),
+                        priority=BACKGROUND_WORKER_DB_RPC_PRIORITY,
                     )
                     enqueued += 1
                 else:
@@ -108,6 +124,7 @@ async def _enqueue_watch_dirs(self, database: "DatabaseClient") -> int:
                             UPDATE files SET needs_chunking = 1 WHERE path = ? AND project_id = ?
                             """,
                             (file_path_str, self.project_id),
+                            priority=BACKGROUND_WORKER_DB_RPC_PRIORITY,
                         )
                         enqueued += 1
         except Exception as e:

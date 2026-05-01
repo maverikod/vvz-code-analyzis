@@ -14,6 +14,7 @@ import logging
 import time
 from typing import Any, List, Tuple
 
+from ..worker_db_rpc_priority import BACKGROUND_WORKER_DB_RPC_PRIORITY
 from ..worker_status_file import (
     STATUS_OPERATION_CHUNKING,
     STATUS_OPERATION_VECTORIZING,
@@ -106,8 +107,8 @@ async def process_projects_in_cycle(
             )
             try:
                 try:
-                    fill_count, fill_errors = await process_chunks_missing_embedding_params(
-                        worker, database
+                    fill_count, fill_errors = (
+                        await process_chunks_missing_embedding_params(worker, database)
                     )
                     logger.info(
                         "[PROJECT_CYCLE STEP 0] done filled=%s errors=%s project_id=%s",
@@ -235,12 +236,14 @@ async def process_projects_in_cycle(
                               SELECT 1 FROM code_chunks cc
                               WHERE cc.file_id = f.id
                           ))
+                        ORDER BY f.updated_at DESC, f.id DESC
                         LIMIT ?
                         """,
                         (
                             project_id,
                             worker.max_files_per_pass,
                         ),
+                        priority=BACKGROUND_WORKER_DB_RPC_PRIORITY,
                     )
                     files_to_chunk = (
                         files_result.get("data", [])
@@ -394,6 +397,7 @@ async def process_projects_in_cycle(
                         batch_duration,
                         cycle_id,
                     ),
+                    priority=BACKGROUND_WORKER_DB_RPC_PRIORITY,
                 )
             finally:
                 worker.faiss_manager = original_faiss_manager

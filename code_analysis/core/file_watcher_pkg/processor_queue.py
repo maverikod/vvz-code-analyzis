@@ -8,6 +8,8 @@ email: vasilyvz@gmail.com
 from __future__ import annotations
 
 import logging
+
+from ..worker_db_rpc_priority import BACKGROUND_WORKER_DB_RPC_PRIORITY
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -23,6 +25,7 @@ from .ignore_pre_scan_purge import (
     build_ignore_purge_logical_write_program,
     collect_file_ids_for_active_paths,
     database_has_sqlite_code_content_fts,
+    database_uses_postgres,
     try_unlink_faiss_index_for_project,
 )
 from .processor_delta import FileDelta
@@ -60,7 +63,11 @@ class ProcessorQueueOps:
     def _db_execute(self, sql: str, params: Optional[tuple] = None) -> Any:
         """Execute SQL; support both execute() (client) and _execute() (CodeDatabase)."""
         if hasattr(self.database, "execute"):
-            return self.database.execute(sql, params or ())
+            return self.database.execute(
+                sql,
+                params or (),
+                priority=BACKGROUND_WORKER_DB_RPC_PRIORITY,
+            )
         self.database._execute(sql, params)
         result = getattr(self.database, "_last_execute_result", None)
         if result is not None:
@@ -81,7 +88,10 @@ class ProcessorQueueOps:
         if not operations:
             return []
         if hasattr(self.database, "execute_batch"):
-            return self.database.execute_batch(operations)
+            return self.database.execute_batch(
+                operations,
+                priority=BACKGROUND_WORKER_DB_RPC_PRIORITY,
+            )
         results: List[Dict[str, Any]] = []
         for sql, params in operations:
             self._db_execute(sql, params or ())
@@ -419,6 +429,7 @@ class ProcessorQueueOps:
                                 self.database
                             ),
                             operation_name="watcher_ignore_purge",
+                            use_uuid_temp_table=database_uses_postgres(self.database),
                         )
                         try:
                             lw(program)

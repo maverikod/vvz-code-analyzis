@@ -26,6 +26,8 @@ def _is_valid_uuid4(value: Optional[str]) -> bool:
         return str(u) == s
     except (ValueError, TypeError):
         return False
+
+
 def _normalize_entities(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     """
     Return all entities that have file_path (from JOIN).
@@ -445,6 +447,7 @@ class GetCodeEntityInfoMCPCommand(BaseMCPCommand):
                 "Use for code navigation and documentation generation",
             ],
         }
+
 
 # cst-node-ids: begin
 # cst-node-ids: version=2

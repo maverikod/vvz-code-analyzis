@@ -9,9 +9,10 @@ site-packages paths (and optional diagnostic listing flags) may surface them.
 **Callers (by symbol)** — config expansion stays in workers / ``venv_path_policy``:
 
 - ``path_is_under_project_local_venv``: ``scanner`` (ignore / merge), ``venv_path_policy``.
-- ``is_ignored_project_relative_path`` / ``filter_paths_for_default_project_listing``:
+- ``is_ignored_project_relative_path`` / ``filter_paths_for_default_project_listing`` /
+  ``LISTING_CACHE_DIRECTORY_SEGMENTS``:
   ``commands/ast/list_files`` (default listing); chunking / indexing should align via
-  the same relative-path rules where applicable.
+  the same relative-path rules where applicable (listing-only ``show_hidden``).
 - ``sql_and_absolute_path_eligible_for_default_status_aggregates``:
   ``commands/worker_status_mcp_commands/get_database_status_build`` (SQL fragments).
 - ``filter_ignore_exception_py_paths_for_watcher``: ``multi_project_worker_scan``,
@@ -27,6 +28,18 @@ from __future__ import annotations
 import fnmatch
 from pathlib import Path
 from typing import AbstractSet, Collection, FrozenSet, Optional
+
+# Cache-like directory basenames: omitted from default ``list_project_files`` unless
+# ``show_hidden`` (with dot-prefixed dirs, ``ls -a``-style); venv uses separate flags.
+LISTING_CACHE_DIRECTORY_SEGMENTS: FrozenSet[str] = frozenset(
+    {
+        "__pycache__",
+        ".mypy_cache",
+        ".pytest_cache",
+        ".ruff_cache",
+        ".cache",
+    }
+)
 
 # Directory basenames: never descend in watcher / prune in project walks.
 DEFAULT_TRAVERSAL_SKIP_DIRECTORY_BASENAMES: FrozenSet[str] = frozenset(
@@ -94,6 +107,7 @@ def is_ignored_project_relative_path(
     *,
     include_venv: bool = False,
     include_venv_ignore_exceptions: bool = False,
+    show_hidden: bool = False,
 ) -> bool:
     """
     Return True when a project-relative POSIX path should be hidden from normal listing.
@@ -102,7 +116,9 @@ def is_ignored_project_relative_path(
     under a ``.venv`` or ``venv`` segment are not ignored by this helper (caller may
     still restrict to allowlisted RECORD paths). When ``include_venv_ignore_exceptions``
     is True, paths under venv are not ignored here so ``ignore_exceptions`` expansions
-    can appear in diagnostic listings.
+    can appear in diagnostic listings. When ``show_hidden`` is True (``ls -a``-style),
+    paths under dot-prefixed directory segments (except ``.venv``/``venv``) and under
+    :data:`LISTING_CACHE_DIRECTORY_SEGMENTS` are not ignored for those segments.
     """
     rel = (relative_posix or "").strip().replace("\\", "/").strip("/")
     if not rel:
@@ -112,6 +128,14 @@ def is_ignored_project_relative_path(
         if seg in DEFAULT_IGNORED_RELATIVE_DIR_SEGMENTS:
             if seg in (".venv", "venv") and (
                 include_venv or include_venv_ignore_exceptions
+            ):
+                continue
+            if seg in LISTING_CACHE_DIRECTORY_SEGMENTS and show_hidden:
+                continue
+            if (
+                show_hidden
+                and seg.startswith(".")
+                and seg not in (".venv", "venv")
             ):
                 continue
             return True
@@ -159,6 +183,7 @@ def filter_paths_for_default_project_listing(
     *,
     include_venv: bool,
     include_venv_ignore_exceptions: bool,
+    show_hidden: bool = False,
 ) -> list[Path]:
     """Drop ignored relative paths; used when assembling ``list_project_files`` results."""
     root = project_root.resolve()
@@ -174,6 +199,7 @@ def filter_paths_for_default_project_listing(
             rel,
             include_venv=include_venv,
             include_venv_ignore_exceptions=include_venv_ignore_exceptions,
+            show_hidden=show_hidden,
         ):
             continue
         out.append(p)

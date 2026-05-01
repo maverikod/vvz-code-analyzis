@@ -8,6 +8,7 @@ Author: Vasiliy Zdanovskiy
 email: vasilyvz@gmail.com
 """
 
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 import logging
 import time
@@ -36,21 +37,26 @@ def validate_file_in_temp(
     temp_file_path: Path,
     validate_linter: bool = True,
     validate_type_checker: bool = True,
+    validate_docstrings: bool = True,
 ) -> Tuple[bool, Optional[str], Dict[str, ValidationResult]]:
     """
     Validate entire file in temporary file.
 
     Performs comprehensive validation:
     1. Compilation check (syntax validation)
-    2. Docstring validation
+    2. Docstring validation (optional)
     3. Linter check (flake8) - optional
     4. Type checker (mypy) - optional
+
+    When both linter and type checker are enabled, steps 3 and 4 run in parallel
+    (separate subprocesses) so wall time is roughly max(flake8, mypy) instead of sum.
 
     Args:
         source_code: Full source code of the file
         temp_file_path: Path to temporary file where source_code is written
         validate_linter: Whether to run linter (flake8)
         validate_type_checker: Whether to run type checker (mypy)
+        validate_docstrings: Whether to run docstring policy checks (return hints, etc.)
 
     Returns:
         Tuple of (overall_success, error_message, results_dict)
@@ -102,53 +108,117 @@ def validate_file_in_temp(
         return (False, error_msg, results)
 
     # 2. Docstring validation
-    docstring_success, docstring_error, docstring_errors = validate_module_docstrings(
-        source_code
-    )
-    _t = time.perf_counter()
-    logger.info("[PROFILE] validate_file_in_temp docstrings elapsed=%.3fs", _t - t_prev)
-    t_prev = _t
-    results["docstrings"] = ValidationResult(
-        success=docstring_success,
-        error_message=docstring_error,
-        errors=docstring_errors,
-    )
-
-    # 3. Linter check (optional)
-    if validate_linter:
-        linter_success, linter_error, linter_errors = lint_with_flake8(
-            temp_file_path, ignore=None
+    if validate_docstrings:
+        docstring_success, docstring_error, docstring_errors = (
+            validate_module_docstrings(source_code)
         )
         _t = time.perf_counter()
-        logger.info("[PROFILE] validate_file_in_temp flake8 elapsed=%.3fs", _t - t_prev)
+        logger.info(
+            "[PROFILE] validate_file_in_temp docstrings elapsed=%.3fs", _t - t_prev
+        )
+        t_prev = _t
+        results["docstrings"] = ValidationResult(
+            success=docstring_success,
+            error_message=docstring_error,
+            errors=docstring_errors,
+        )
+    else:
+        results["docstrings"] = ValidationResult(
+            success=True, error_message=None, errors=[]
+        )
+
+    # 3–4. Linter and/or type checker (optional); run both in parallel when both on.
+    if validate_linter and validate_type_checker:
+        t_parallel = time.perf_counter()
+
+        def _flake8_job() -> Tuple[Tuple[bool, Optional[str], List[str]], float]:
+            t0 = time.perf_counter()
+            return (
+                lint_with_flake8(temp_file_path, ignore=None),
+                time.perf_counter() - t0,
+            )
+
+        def _mypy_job() -> Tuple[Tuple[bool, Optional[str], List[str]], float]:
+            t0 = time.perf_counter()
+            return (
+                type_check_with_mypy(
+                    temp_file_path, config_file=None, ignore_errors=False
+                ),
+                time.perf_counter() - t0,
+            )
+
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            f_lint = pool.submit(_flake8_job)
+            f_mypy = pool.submit(_mypy_job)
+            (linter_success, linter_error, linter_errors), lint_sec = f_lint.result()
+            (type_check_success, type_check_error, type_check_errors), mypy_sec = (
+                f_mypy.result()
+            )
+
+        _t = time.perf_counter()
+        logger.info(
+            "[PROFILE] validate_file_in_temp flake8 elapsed=%.3fs (parallel)",
+            lint_sec,
+        )
+        logger.info(
+            "[PROFILE] validate_file_in_temp mypy elapsed=%.3fs (parallel)",
+            mypy_sec,
+        )
+        logger.info(
+            "[PROFILE] validate_file_in_temp flake8_mypy_parallel_wall elapsed=%.3fs",
+            _t - t_parallel,
+        )
         t_prev = _t
         results["linter"] = ValidationResult(
             success=linter_success,
             error_message=linter_error,
             errors=linter_errors,
         )
-    else:
-        results["linter"] = ValidationResult(
-            success=True, error_message=None, errors=[]
-        )
-
-    # 4. Type checker (optional)
-    if validate_type_checker:
-        type_check_success, type_check_error, type_check_errors = type_check_with_mypy(
-            temp_file_path, config_file=None, ignore_errors=False
-        )
-        _t = time.perf_counter()
-        logger.info("[PROFILE] validate_file_in_temp mypy elapsed=%.3fs", _t - t_prev)
-        t_prev = _t
         results["type_checker"] = ValidationResult(
             success=type_check_success,
             error_message=type_check_error,
             errors=type_check_errors,
         )
     else:
-        results["type_checker"] = ValidationResult(
-            success=True, error_message=None, errors=[]
-        )
+        if validate_linter:
+            linter_success, linter_error, linter_errors = lint_with_flake8(
+                temp_file_path, ignore=None
+            )
+            _t = time.perf_counter()
+            logger.info(
+                "[PROFILE] validate_file_in_temp flake8 elapsed=%.3fs", _t - t_prev
+            )
+            t_prev = _t
+            results["linter"] = ValidationResult(
+                success=linter_success,
+                error_message=linter_error,
+                errors=linter_errors,
+            )
+        else:
+            results["linter"] = ValidationResult(
+                success=True, error_message=None, errors=[]
+            )
+
+        if validate_type_checker:
+            type_check_success, type_check_error, type_check_errors = (
+                type_check_with_mypy(
+                    temp_file_path, config_file=None, ignore_errors=False
+                )
+            )
+            _t = time.perf_counter()
+            logger.info(
+                "[PROFILE] validate_file_in_temp mypy elapsed=%.3fs", _t - t_prev
+            )
+            t_prev = _t
+            results["type_checker"] = ValidationResult(
+                success=type_check_success,
+                error_message=type_check_error,
+                errors=type_check_errors,
+            )
+        else:
+            results["type_checker"] = ValidationResult(
+                success=True, error_message=None, errors=[]
+            )
 
     # Determine overall success
     overall_success = all(result.success for result in results.values())

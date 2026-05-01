@@ -126,3 +126,14 @@ class TestPackFilesIntoPackets:
         # Sorted by count: 3,2,1. Packet: 3+2+1 = 6
         assert len(packets) == 1
         assert packets[0][0][2] >= packets[0][1][2] >= packets[0][2][2]
+
+    def test_equal_count_prefers_newer_updated_at(self) -> None:
+        """Same chunk count: higher updated_at is packed / sorted first."""
+        result = pack_files_into_packets(
+            [
+                ("1", "a.py", 5, 100.0),
+                ("2", "b.py", 5, 200.0),
+            ],
+            batch_size=10,
+        )
+        assert result == [[("2", "b.py", 5), ("1", "a.py", 5)]]

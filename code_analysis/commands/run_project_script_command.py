@@ -142,9 +142,11 @@ class RunProjectScriptCommand(BaseMCPCommand):
         }
 
     def validate_params(self, params: Dict[str, Any]) -> Dict[str, Any]:
-        """Validate params and reject unknown project_id before queuing."""
+        """Validate params (no DB access: job queue runs sync without event loop)."""
         params = super().validate_params(params)
-        BaseMCPCommand._validate_project_id_exists(params["project_id"])
+        pid = params.get("project_id")
+        if isinstance(pid, str):
+            params["project_id"] = pid.strip()
         return params
 
     @classmethod

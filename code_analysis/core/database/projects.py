@@ -210,6 +210,8 @@ def relocate_project_root_after_disk_move(
         n_path,
     )
     return True
+
+
 def get_all_projects(self) -> List[Dict[str, Any]]:
     """Get all active (non-soft-deleted) projects.
 
@@ -528,6 +530,7 @@ def get_project_files(
             }
         )
     return result
+
 
 # cst-node-ids: begin
 # cst-node-ids: version=2

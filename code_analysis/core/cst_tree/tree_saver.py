@@ -12,12 +12,20 @@ import os
 import time
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Sequence
 
 from ..backup_manager import BackupManager
 from ..file_lock import file_lock
+from .models import TreeOperation
 from .node_id_markers import append_persisted_node_ids
-from .tree_builder import get_tree
+from .tree_builder import _attach_disk_snapshot, get_tree
+from .tree_save_verification import (
+    WRITE_VERIFY_FAILED,
+    SaveVerificationError,
+    assert_disk_matches_tree_snapshot,
+    assert_file_bytes_match,
+    assert_replay_matches,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -31,6 +39,7 @@ def save_tree_to_file(
     validate: bool = True,
     backup: bool = True,
     commit_message: Optional[str] = None,
+    tree_operations: Optional[Sequence[TreeOperation]] = None,
 ) -> Dict[str, Any]:
     """
     Save tree to file with atomic operations.
@@ -56,6 +65,7 @@ def save_tree_to_file(
         validate: Whether to validate file before saving
         backup: Whether to create backup
         commit_message: Optional git commit message
+        tree_operations: When non-empty and not None, run replay verification before writing.
 
     Returns:
         Dictionary with result:
@@ -69,6 +79,7 @@ def save_tree_to_file(
     Raises:
         ValueError: If tree not found or validation fails
         RuntimeError: If file operations fail
+        SaveVerificationError: If disk snapshot, replay, or post-write verification fails
     """
     timings: Dict[str, float] = {}
     t0 = time.perf_counter()
@@ -94,30 +105,51 @@ def save_tree_to_file(
     temp_file: Optional[Path] = None
 
     with file_lock(target_path):
-        try:
-            # Step 1: Validate original file if it exists
-            t0 = time.perf_counter()
-            if validate and target_path.exists():
+
+        def try_restore_from_backup() -> None:
+            if backup_uuid and backup_manager and target_path.exists():
                 try:
-                    original_source = target_path.read_text(encoding="utf-8")
-                    compile(original_source, str(target_path), "exec")
-                except SyntaxError as e:
-                    logger.warning(f"Original file has syntax errors: {e}")
-                    # Continue anyway - we're replacing it
+                    rel_path = str(target_path.relative_to(root_dir))
+                except ValueError:
+                    rel_path = str(target_path)
+                restore_success, restore_message = backup_manager.restore_file(
+                    rel_path, backup_uuid
+                )
+                if restore_success:
+                    logger.info("File restored from backup: %s", restore_message)
+                    try:
+                        _attach_disk_snapshot(
+                            tree, target_path.read_text(encoding="utf-8")
+                        )
+                    except OSError:
+                        logger.warning(
+                            "Could not refresh disk snapshot after backup restore (%s)",
+                            target_path,
+                        )
+                else:
+                    logger.error(
+                        "Failed to restore file from backup: %s",
+                        restore_message,
+                    )
+
+        try:
+            # Step 1: Disk snapshot vs on-disk UTF-8 (before backup); capture text for replay
+            t0 = time.perf_counter()
+            disk_source_for_replay = ""
+            if target_path.exists():
+                if tree.disk_source_sha256_hex is not None:
+                    assert_disk_matches_tree_snapshot(target_path, tree)
+                disk_source_for_replay = target_path.read_text(encoding="utf-8")
+                if validate:
+                    try:
+                        compile(disk_source_for_replay, str(target_path), "exec")
+                    except SyntaxError as e:
+                        logger.warning(f"Original file has syntax errors: {e}")
             timings["validate_original"] = time.perf_counter() - t0
 
             # Step 2: Create backup (mandatory before overwriting existing file)
             t0 = time.perf_counter()
             if target_path.exists():
-                logger.info(
-                    "cst_save_tree backup before create",
-                    extra={
-                        "cst_save_stage": "backup_before",
-                        "project_id": project_id,
-                        "tree_id": tree_id,
-                        "file_path": str(target_path),
-                    },
-                )
                 backup_manager = BackupManager(root_dir)
                 try:
                     rel_path = str(target_path.relative_to(root_dir))
@@ -133,26 +165,6 @@ def save_tree_to_file(
                         "Backup to old_code (versions) is mandatory before write; "
                         "create_backup failed. Aborting cst_save_tree."
                     )
-                logger.info(
-                    "cst_save_tree backup after create",
-                    extra={
-                        "cst_save_stage": "backup_after",
-                        "project_id": project_id,
-                        "tree_id": tree_id,
-                        "file_path": str(target_path),
-                        "backup_uuid": backup_uuid,
-                    },
-                )
-            else:
-                logger.debug(
-                    "cst_save_tree no existing target file; backup skipped",
-                    extra={
-                        "cst_save_stage": "backup_skipped",
-                        "project_id": project_id,
-                        "tree_id": tree_id,
-                        "file_path": str(target_path),
-                    },
-                )
             timings["backup"] = time.perf_counter() - t0
 
             # Step 3: Generate source code from CST tree
@@ -164,6 +176,15 @@ def save_tree_to_file(
                 tree.root_node_id,
             )
             timings["code_gen"] = time.perf_counter() - t0
+
+            ops_list = list(tree_operations) if tree_operations is not None else None
+            if ops_list:
+                assert_replay_matches(
+                    original_source=disk_source_for_replay,
+                    target_path=target_path,
+                    tree=tree,
+                    tree_operations=ops_list,
+                )
 
             # Step 4: Write to target.tmp (same directory as target)
             t0 = time.perf_counter()
@@ -185,41 +206,16 @@ def save_tree_to_file(
 
             # Step 6: Atomically replace file
             t0 = time.perf_counter()
-            logger.info(
-                "cst_save_tree atomic replace before",
-                extra={
-                    "cst_save_stage": "replace_before",
-                    "project_id": project_id,
-                    "tree_id": tree_id,
-                    "file_path": str(target_path),
-                    "backup_uuid": backup_uuid,
-                },
-            )
             os.replace(str(temp_file), str(target_path))
             temp_file = None  # File was moved, don't delete it
-            logger.info(
-                "cst_save_tree atomic replace after",
-                extra={
-                    "cst_save_stage": "replace_after",
-                    "project_id": project_id,
-                    "tree_id": tree_id,
-                    "file_path": str(target_path),
-                    "backup_uuid": backup_uuid,
-                },
-            )
             timings["replace"] = time.perf_counter() - t0
+
+            assert_file_bytes_match(target_path=target_path, expected=source_code)
+
+            _attach_disk_snapshot(tree, source_code)
 
             # Step 7: Ensure file record exists (create or update in files table)
             t0 = time.perf_counter()
-            logger.info(
-                "cst_save_tree DB file record ops before",
-                extra={
-                    "cst_save_stage": "db_file_record_before",
-                    "project_id": project_id,
-                    "tree_id": tree_id,
-                    "file_path": str(target_path),
-                },
-            )
             lines = clean_source_code.count("\n") + (1 if clean_source_code else 0)
             stripped = clean_source_code.lstrip()
             has_docstring = stripped.startswith('"""') or stripped.startswith("'''")
@@ -260,32 +256,12 @@ def save_tree_to_file(
                 )
                 created_file = database.create_file(file_obj)
                 file_id = created_file.id
-            logger.info(
-                "cst_save_tree DB file record ops after",
-                extra={
-                    "cst_save_stage": "db_file_record_after",
-                    "project_id": project_id,
-                    "tree_id": tree_id,
-                    "file_path": normalized_path,
-                    "file_id": file_id,
-                },
-            )
             timings["db_file_record"] = time.perf_counter() - t0
 
             # Step 8: Sync file to DB via shared file-level pipeline
             t0 = time.perf_counter()
             from ..database.file_tree_sync import sync_file_to_db_atomic
 
-            logger.info(
-                "cst_save_tree sync_file_to_db_atomic before",
-                extra={
-                    "cst_save_stage": "sync_db_before",
-                    "project_id": project_id,
-                    "tree_id": tree_id,
-                    "file_path": normalized_path,
-                    "file_id": file_id,
-                },
-            )
             # Pass source_code with markers so DB tree gets same node_ids as in-memory tree.
             sync_result = sync_file_to_db_atomic(
                 database=database,
@@ -294,17 +270,6 @@ def save_tree_to_file(
                 source_code=source_code,
                 file_mtime=last_modified_timestamp,
                 file_id=file_id,
-            )
-            logger.info(
-                "cst_save_tree sync_file_to_db_atomic after",
-                extra={
-                    "cst_save_stage": "sync_db_after",
-                    "project_id": project_id,
-                    "tree_id": tree_id,
-                    "file_path": normalized_path,
-                    "file_id": file_id,
-                    "sync_success": bool(sync_result.get("success")),
-                },
             )
             timings["sync_file_to_db"] = time.perf_counter() - t0
 
@@ -332,33 +297,18 @@ def save_tree_to_file(
                 "timings": timings,
             }
 
-        except Exception as e:
-            logger.error(
-                "cst_save_tree error before backup restore",
-                extra={
-                    "cst_save_stage": "error_before_restore",
-                    "project_id": project_id,
-                    "tree_id": tree_id,
-                    "file_path": str(target_path),
-                    "backup_uuid": backup_uuid,
-                    "exc_type": type(e).__name__,
-                },
-            )
-            # Restore file from backup if backup was created
-            if backup_uuid and backup_manager and target_path.exists():
-                try:
-                    rel_path = str(target_path.relative_to(root_dir))
-                except ValueError:
-                    rel_path = str(target_path)
-                restore_success, restore_message = backup_manager.restore_file(
-                    rel_path, backup_uuid
+        except SaveVerificationError as exc:
+            if exc.code == WRITE_VERIFY_FAILED:
+                logger.critical(
+                    "CST save_tree_to_file post-write byte verification failed: %s",
+                    exc.details,
+                    exc_info=True,
                 )
-                if restore_success:
-                    logger.info(f"File restored from backup: {restore_message}")
-                else:
-                    logger.error(
-                        "Failed to restore file from backup: " f"{restore_message}"
-                    )
+                try_restore_from_backup()
+            raise
+
+        except Exception as e:
+            try_restore_from_backup()
             logger.error(f"Error saving tree to file: {e}", exc_info=True)
             return {
                 "success": False,

@@ -18,40 +18,43 @@ def get_metadata(cls: Type[Any]) -> Dict[str, Any]:
         "author": cls.author,
         "email": cls.email,
         "detailed_description": (
-            "**CRITICAL — required parameter:** You MUST pass `worker_type` in `params` "
-            '(e.g. `{"worker_type": "vectorization"}`). '
-            "`params: {}` is invalid and will fail with \"required parameter 'worker_type' is missing\".\n\n"
+            "**Optional `worker_type`:** Omit it or set `worker_type` to `all` to aggregate every "
+            "registered worker in one response. Pass a specific type to scope processes, log "
+            "activity, and DB cycle stats to that worker only.\n\n"
             "The get_worker_status command monitors worker process status, resource usage, "
-            "and recent activity. It supports workers: file_watcher, vectorization, and indexing. "
-            "The command provides comprehensive information about worker processes including "
-            "CPU/memory usage, uptime, lock file status, and log activity.\n\n"
+            "and recent activity. It supports workers: file_watcher, vectorization, indexing, "
+            "and aggregate mode `all` (or omit `worker_type`). "
+            "The command provides information about processes registered in WorkerManager, "
+            "optional lock file metadata, log tail activity when `log_path` resolves, and "
+            "optional DB-backed `cycle_stats` from the MCP layer.\n\n"
             "Operation flow:\n"
-            "1. Validates worker_type parameter (file_watcher, vectorization, or indexing)\n"
-            "2. Attempts to get registered workers from WorkerManager\n"
-            "3. If no registered workers, searches for processes by name pattern\n"
-            "4. For file_watcher, checks lock file status if provided\n"
-            "5. Reads PID from PID file if log_path provided (fallback)\n"
-            "6. Collects process information (CPU, memory, uptime)\n"
-            "7. Analyzes recent log activity if log_path provided\n"
-            "8. Returns comprehensive status summary\n\n"
+            "1. Validates optional worker_type (file_watcher, vectorization, indexing, or all)\n"
+            "2. Resolves default log_path from server config when omitted and worker_type is a single type\n"
+            "3. WorkerStatusCommand reads PIDs from WorkerManager registry (by_type); no cmdline scan\n"
+            "4. For each PID, collects psutil process fields (CPU, memory, uptime, status)\n"
+            "5. If lock_file_path is set: for worker_type file_watcher or all, reads lock JSON (informational)\n"
+            "6. If log_path points to an existing .log file: analyzes last lines for log_activity\n"
+            "7. If log_path follows the .log convention: may read sibling .status.json for progress fields\n"
+            "8. Optionally compares known PID files under logs/ to registry and logs if mismatched\n"
+            "9. MCP layer may attach cycle_stats from DB (single object per type, or dict keyed by type when all)\n\n"
             "Worker Types:\n"
             "- file_watcher: Monitors file system changes and updates database\n"
             "- vectorization: Processes code chunks and generates embeddings\n"
-            "- indexing: Indexes files with needs_chunking=1 (AST, CST, fulltext)\n\n"
-            "Process Discovery Methods:\n"
-            "1. WorkerManager: Gets registered workers (most reliable)\n"
-            "2. Process name search: Searches running processes by cmdline pattern\n"
-            "3. Lock file: For file_watcher, uses lock file PID\n"
-            "4. PID file: Reads PID from <worker>.pid file (if log_path provided)\n\n"
+            "- indexing: Indexes files with needs_chunking=1 (AST, CST, fulltext)\n"
+            "- all / omitted worker_type: Same registry query merged across all registered types\n\n"
+            "Process / PID sources:\n"
+            "1. WorkerManager registry (primary; processes list is built only from registered PIDs)\n"
+            "2. PID files next to logs (vectorization_worker.pid, file_watcher_worker.pid, indexing_worker.pid): "
+            "consistency check vs registry only, not used to populate processes\n"
+            "3. Lock file: optional metadata when lock_file_path is provided (file_watcher semantics)\n\n"
             "Resource Monitoring:\n"
             "- CPU usage: Percentage of CPU time used (per process and total)\n"
             "- Memory usage: Resident Set Size (RSS) in megabytes\n"
             "- Uptime: Process uptime in seconds\n"
             "- Process status: Running state (running, sleeping, etc.)\n\n"
-            "Lock File (file_watcher only):\n"
-            "- Contains PID, creation timestamp, worker name, hostname\n"
-            "- Used to identify active file watcher process\n"
-            "- Validates that process is still alive\n\n"
+            "Lock File (when lock_file_path set):\n"
+            "- JSON with PID, creation timestamp, worker name, hostname\n"
+            "- Response includes process_alive check; does not add processes to the list\n\n"
             "Log Activity:\n"
             "- Analyzes recent log entries (last 10 lines by default)\n"
             "- Extracts timestamp from log entries\n"
@@ -69,25 +72,31 @@ def get_metadata(cls: Type[Any]) -> Dict[str, Any]:
             "- Process discovery may find multiple workers of same type\n"
             "- Lock file is optional but recommended for file_watcher\n"
             "- Log path is optional but enables activity monitoring\n"
-            "- PID file discovery works if log_path points to .log file"
+            "- Sibling .pid / .status.json are derived from log_path basename when log_path ends with .log\n"
+            "- cycle_stats: present when DB exposes stats getters; shape is one object per worker_type, "
+            "or an object with keys file_watcher / vectorization / indexing when worker_type is all"
         ),
         "parameters": {
             "worker_type": {
                 "description": (
-                    "**REQUIRED (not optional).** Must be exactly one of: `file_watcher`, "
-                    "`vectorization`, or `indexing`. Omitting this field causes command failure."
+                    "Optional. One of `file_watcher`, `vectorization`, `indexing`, or `all`. "
+                    "Omit or use `all` to include every registered worker; DB `cycle_stats` is "
+                    "then keyed by worker type when available."
                 ),
                 "type": "string",
-                "required": True,
-                "enum": ["file_watcher", "vectorization", "indexing"],
-                "examples": ["file_watcher", "vectorization", "indexing"],
+                "required": False,
+                "enum": ["file_watcher", "vectorization", "indexing", "all"],
+                "examples": ["file_watcher", "vectorization", "indexing", "all"],
             },
             "log_path": {
                 "description": (
-                    "Optional path to worker log file. If provided:\n"
-                    "- Enables log activity analysis\n"
-                    "- Enables PID file discovery (<log_name>.pid)\n"
-                    "- Should point to worker's log file (e.g., file_watcher.log)"
+                    "Optional path to worker log file. If provided and the file exists:\n"
+                    "- Enables log_activity (tail of last lines)\n"
+                    "- If path ends with .log, enables sibling <name>.status.json for progress fields\n"
+                    "- Sibling <name>.pid may be checked against WorkerManager for diagnostics (not used "
+                    "to build the processes list)\n"
+                    "- When worker_type is a single type and this param is omitted, the server may fill "
+                    "it from config (code_analysis.worker / file_watcher / indexing_worker log_path)"
                 ),
                 "type": "string",
                 "required": False,
@@ -98,9 +107,9 @@ def get_metadata(cls: Type[Any]) -> Dict[str, Any]:
             },
             "lock_file_path": {
                 "description": (
-                    "Optional path to lock file (for file_watcher only). "
-                    "Lock file contains PID and metadata of active file watcher. "
-                    "Used to identify the correct worker process."
+                    "Optional path to lock file (file_watcher semantics). "
+                    "Read when worker_type is file_watcher or all. "
+                    "Returns lock JSON metadata only; process list still comes from WorkerManager."
                 ),
                 "type": "string",
                 "required": False,
@@ -110,6 +119,19 @@ def get_metadata(cls: Type[Any]) -> Dict[str, Any]:
             },
         },
         "usage_examples": [
+            {
+                "description": "Check all workers (omit worker_type)",
+                "command": {},
+                "explanation": (
+                    "Returns combined process list from WorkerManager for every registered type; "
+                    "optional cycle_stats object keyed by worker type when the DB exposes stats."
+                ),
+            },
+            {
+                "description": "Explicit all workers",
+                "command": {"worker_type": "all"},
+                "explanation": "Same as empty params: aggregate every registered worker.",
+            },
             {
                 "description": "Check file watcher status",
                 "command": {"worker_type": "file_watcher"},
@@ -148,8 +170,11 @@ def get_metadata(cls: Type[Any]) -> Dict[str, Any]:
                 "examples": [
                     {
                         "case": "Invalid worker type",
-                        "message": "Invalid worker_type",
-                        "solution": "Use 'file_watcher', 'vectorization', or 'indexing'",
+                        "message": "parameter 'worker_type' must be one of enum values",
+                        "solution": (
+                            "Use 'file_watcher', 'vectorization', 'indexing', or 'all'; "
+                            "or omit worker_type for the same behavior as 'all'."
+                        ),
                     },
                     {
                         "case": "Permission denied",
@@ -187,14 +212,19 @@ def get_metadata(cls: Type[Any]) -> Dict[str, Any]:
                         "- cmdline: Process command line (first 3 args)"
                     ),
                     "lock_file": (
-                        "Lock file information (file_watcher only). Contains:\n"
-                        "- exists: Whether lock file exists\n"
-                        "- pid: PID from lock file\n"
-                        "- process_alive: Whether process is still running\n"
-                        "- created_at: Lock file creation timestamp\n"
-                        "- worker_name: Worker name\n"
-                        "- hostname: Hostname where worker runs"
+                        "Lock file JSON when lock_file_path was provided and worker_type is "
+                        "file_watcher or all. Informational only; not merged into processes list. "
+                        "Fields: exists, pid, process_alive, created_at, worker_name, hostname (or error)."
                     ),
+                    "cycle_stats": (
+                        "Optional. From DB after status: one enriched stats object when worker_type is "
+                        "a single type; when worker_type is all or omitted, a dict with keys among "
+                        "file_watcher, vectorization, indexing (only keys with data)."
+                    ),
+                    "current_operation": "Optional string from sibling .status.json of log_path",
+                    "current_file": "Optional string from status file",
+                    "progress_percent": "Optional number from status file",
+                    "progress_updated_at": "Optional ISO timestamp from status file",
                     "log_activity": (
                         "Recent log activity information. Contains:\n"
                         "- available: Whether log file is available\n"

@@ -22,6 +22,7 @@ from typing import Any, List, Optional, Tuple
 import numpy as np
 
 from code_analysis.core.sql_portable import WHERE_FILES_ACTIVE_F
+from code_analysis.core.worker_db_rpc_priority import BACKGROUND_WORKER_DB_RPC_PRIORITY
 
 from .file_batch_packing import pack_files_into_packets
 from .timing_log import log_operation_timing
@@ -215,7 +216,8 @@ async def process_chunks_missing_embedding_params(
     )
     file_counts_result = database.execute(
         f"""
-        SELECT f.id AS file_id, f.path AS file_path, COUNT(cc.id) AS cnt
+        SELECT f.id AS file_id, f.path AS file_path, COUNT(cc.id) AS cnt,
+               MAX(f.updated_at) AS max_file_updated_at
         FROM files f
         INNER JOIN code_chunks cc ON cc.file_id = f.id
         WHERE cc.project_id = ?
@@ -227,6 +229,7 @@ async def process_chunks_missing_embedding_params(
         HAVING COUNT(cc.id) > 0
         """,
         (project_id,),
+        priority=BACKGROUND_WORKER_DB_RPC_PRIORITY,
     )
     file_counts_data = (
         file_counts_result.get("data", [])
@@ -249,8 +252,22 @@ async def process_chunks_missing_embedding_params(
     if not file_counts_data:
         return updated_count, error_count
 
-    file_table: List[Tuple[str, str, int]] = [
-        (str(r["file_id"]), r.get("file_path") or "", int(r["cnt"]))
+    def _row_file_updated_at(row: dict) -> float:
+        raw = row.get("max_file_updated_at")
+        if raw is None:
+            return 0.0
+        try:
+            return float(raw)
+        except (TypeError, ValueError):
+            return 0.0
+
+    file_table: List[Tuple[str, str, int, float]] = [
+        (
+            str(r["file_id"]),
+            r.get("file_path") or "",
+            int(r["cnt"]),
+            _row_file_updated_at(r),
+        )
         for r in file_counts_data
     ]
     packets = pack_files_into_packets(file_table, batch_size)
@@ -270,7 +287,7 @@ async def process_chunks_missing_embedding_params(
           AND cc.vector_id IS NULL
           AND (cc.embedding_model IS NULL OR cc.embedding_vector IS NULL)
           AND (cc.vectorization_skipped IS NULL OR cc.vectorization_skipped = 0)
-        ORDER BY cc.created_at, cc.id
+        ORDER BY cc.created_at DESC, cc.id DESC
         LIMIT ?
     """
 
@@ -288,6 +305,7 @@ async def process_chunks_missing_embedding_params(
             part_result = database.execute(
                 chunk_select_sql,
                 (project_id, file_id, take_count),
+                priority=BACKGROUND_WORKER_DB_RPC_PRIORITY,
             )
             part = part_result.get("data", []) if isinstance(part_result, dict) else []
             rows.extend(part)
@@ -331,7 +349,9 @@ async def process_chunks_missing_embedding_params(
         if u_ops:
             try:
                 t0_db = time.time()
-                database.execute_batch(u_ops)
+                database.execute_batch(
+                    u_ops, priority=BACKGROUND_WORKER_DB_RPC_PRIORITY
+                )
                 log_operation_timing(
                     getattr(self, "log_timing", False),
                     logger,
@@ -350,7 +370,9 @@ async def process_chunks_missing_embedding_params(
                 updated_count -= u_cnt
         if s_ops:
             try:
-                database.execute_batch(s_ops)
+                database.execute_batch(
+                    s_ops, priority=BACKGROUND_WORKER_DB_RPC_PRIORITY
+                )
             except Exception as e:
                 logger.warning(
                     "execute_batch failed for vectorization_skipped updates: %s", e
@@ -406,10 +428,11 @@ async def process_embedding_ready_chunks(
           AND {WHERE_FILES_ACTIVE_F}
           AND cc.embedding_vector IS NOT NULL
           AND cc.vector_id IS NULL
-        ORDER BY cc.created_at, cc.id
+        ORDER BY cc.created_at DESC, cc.id DESC
         LIMIT ?
         """,
         (self.project_id, self.batch_size),
+        priority=BACKGROUND_WORKER_DB_RPC_PRIORITY,
     )
     chunks = chunks_result.get("data", []) if isinstance(chunks_result, dict) else []
     step_duration = time.time() - step_start
@@ -564,7 +587,7 @@ async def process_embedding_ready_chunks(
             )
             for (cid, vid, em) in updates_to_apply
         ]
-        database.execute_batch(update_ops)
+        database.execute_batch(update_ops, priority=BACKGROUND_WORKER_DB_RPC_PRIORITY)
         total_db_update_s = time.time() - db_batch_start
         logger.debug(
             f"[TIMING] execute_batch: {len(update_ops)} UPDATEs in {total_db_update_s:.3f}s"

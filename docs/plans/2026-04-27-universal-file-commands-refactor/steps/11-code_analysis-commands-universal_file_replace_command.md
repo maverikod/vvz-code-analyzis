@@ -8,5 +8,5 @@
 - YAML: accept yaml_path replacement.
 - Python: accept CST selector/node_id/range-safe replacement only.
 - Support dry_run=true and diff=true.
-- Reject overlapping text ranges before writing.
+- Reject overlapping text ranges before backup and before write (multi-range); document in plan README.
 - Acceptance: no partial replacement occurs after any validation failure; response includes selected handler and changed ranges/nodes.

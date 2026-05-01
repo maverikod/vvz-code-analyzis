@@ -78,11 +78,9 @@ class PostgreSQLSchemaManager:
         create_table_func: Any,
     ) -> Dict[str, Any]:
         del create_table_func, backup_dir
-        from code_analysis.core.database.sqlite_to_postgres import (
-            create_postgresql_schema,
-        )
+        from .postgres_migrations import ensure_postgres_schema
 
-        create_postgresql_schema(self.conn, schema_definition)
+        ensure_postgres_schema(self.conn, schema_definition)
         names = list(schema_definition.get("tables", {}).keys())
         logger.info(
             "PostgreSQL sync_schema applied (tables=%s); FTS virtual tables skipped on PG",

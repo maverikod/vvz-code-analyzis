@@ -5,12 +5,43 @@ Author: Vasiliy Zdanovskiy
 email: vasilyvz@gmail.com
 """
 
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 
 from ..base_mcp_command import BaseMCPCommand
+from ..file_management.relative_path_list_pattern import (
+    effective_listing_pattern,
+    relative_path_matches_listing_pattern,
+)
 from ..log_viewer import ListLogFilesCommand
+
+
+def _dedupe_log_files_by_resolved_path(
+    rows: List[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    """Drop duplicate rows that point at the same inode (different path spellings).
+
+    Default ``log_dirs`` may list both ``<config_dir>/logs`` and ``logs``; when they
+    resolve to the same directory, :class:`ListLogFilesCommand` can emit the same file
+    twice with different ``path`` strings. Keep the first occurrence in scan order.
+    """
+    seen: set[str] = set()
+    out: List[Dict[str, Any]] = []
+    for row in rows:
+        raw = str(row.get("path") or "")
+        if not raw:
+            continue
+        try:
+            key = str(Path(raw).resolve())
+        except OSError:
+            key = Path(raw).as_posix()
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(row)
+    return out
 
 
 class ListWorkerLogsMCPCommand(BaseMCPCommand):
@@ -18,7 +49,12 @@ class ListWorkerLogsMCPCommand(BaseMCPCommand):
 
     name = "list_worker_logs"
     version = "1.0.0"
-    descr = "List available worker log files"
+    descr = (
+        "List worker log files under scanned dirs; optional ``file_pattern`` / ``glob`` "
+        "as fnmatch on each file's absolute path (normalized ``\\\\`` → ``/``). "
+        "When multiple scan roots resolve to the same directory, each physical file "
+        "appears once in the response."
+    )
     category = "logging"
     author = "Vasiliy Zdanovskiy"
     email = "vasilyvz@gmail.com"
@@ -33,7 +69,13 @@ class ListWorkerLogsMCPCommand(BaseMCPCommand):
                 "log_dirs": {
                     "type": "array",
                     "items": {"type": "string"},
-                    "description": "List of directories to scan for log files (optional, defaults to ['logs'])",
+                    "description": (
+                        "Directories to scan (absolute or relative to server CWD). "
+                        'If omitted, defaults to ``[<config_dir>/logs>, "logs"]`` from '
+                        "server storage (two entries so both config-adjacent and CWD "
+                        '``logs/`` are covered); falls back to ``["logs"]`` if storage '
+                        "is unavailable."
+                    ),
                 },
                 "worker_type": {
                     "type": "string",
@@ -45,7 +87,25 @@ class ListWorkerLogsMCPCommand(BaseMCPCommand):
                         "analysis",
                         "server",
                     ],
-                    "description": "Filter by worker type (optional)",
+                    "description": (
+                        "Optional filter: only include files whose detected type matches. "
+                        "Values: file_watcher, vectorization, indexing, database_driver, "
+                        "analysis (comprehensive_analysis logs), server (MCP/proxy and other "
+                        "generic ``*.log`` when no other rule matches)."
+                    ),
+                },
+                "file_pattern": {
+                    "type": "string",
+                    "description": (
+                        "Optional fnmatch on each log file's **absolute** path after "
+                        "normalizing slashes (``*`` crosses ``/``). ``glob`` is an alias."
+                    ),
+                },
+                "glob": {
+                    "type": "string",
+                    "description": (
+                        "Alias of ``file_pattern``; non-empty ``file_pattern`` wins when both set."
+                    ),
                 },
             },
             "required": [],
@@ -56,6 +116,8 @@ class ListWorkerLogsMCPCommand(BaseMCPCommand):
         self,
         log_dirs: Optional[List[str]] = None,
         worker_type: Optional[str] = None,
+        file_pattern: Optional[str] = None,
+        glob: Optional[str] = None,
         **kwargs: Any,
     ) -> SuccessResult | ErrorResult:
         """Execute list worker logs command."""
@@ -72,6 +134,29 @@ class ListWorkerLogsMCPCommand(BaseMCPCommand):
                 log_dirs=resolved_dirs, worker_type=worker_type
             )
             result = await command.execute()
+            if isinstance(result, dict) and result.get("log_files"):
+                result = {
+                    **result,
+                    "log_files": _dedupe_log_files_by_resolved_path(
+                        list(result["log_files"])
+                    ),
+                }
+                result["total_files"] = len(result["log_files"])
+            eff = effective_listing_pattern(file_pattern, glob)
+            if eff and isinstance(result, dict):
+                logs = result.get("log_files") or []
+                filtered = [
+                    row
+                    for row in logs
+                    if relative_path_matches_listing_pattern(
+                        Path(str(row.get("path", ""))).as_posix(), eff
+                    )
+                ]
+                result = {
+                    **result,
+                    "log_files": filtered,
+                    "total_files": len(filtered),
+                }
             return SuccessResult(data=result)
         except Exception as e:
             return self._handle_error(e, "LOG_LIST_ERROR", "list_worker_logs")
@@ -87,29 +172,41 @@ class ListWorkerLogsMCPCommand(BaseMCPCommand):
             "author": cls.author,
             "email": cls.email,
             "parameters_summary": (
-                "Optional: worker_type, log_dirs. No limit parameter."
+                "Optional: ``worker_type``, ``log_dirs``, ``file_pattern`` / ``glob`` (fnmatch on "
+                "each log file's absolute path)."
             ),
             "detailed_description": (
-                "The list_worker_logs command lists available worker log files in specified directories. "
-                "It scans configured log directories and returns available log files for workers "
-                "(file_watcher, vectorization, analysis) and server logs.\n\n"
+                "The list_worker_logs command lists worker and server log files under the "
+                "configured scan directories. Detected worker kinds include file_watcher, "
+                "vectorization, indexing, database_driver, analysis (comprehensive_analysis "
+                "filenames), and server (MCP/proxy logs and other ``*.log`` files).\n\n"
                 "Operation flow:\n"
-                "1. If log_dirs provided, uses those directories\n"
-                "2. If log_dirs not provided, defaults to ['logs'] directory\n"
-                "3. Scans directories for log files\n"
-                "4. If worker_type specified, filters by worker type\n"
-                "5. If worker_type not specified, returns all log files\n"
-                "6. Returns list of log files with metadata (path, size, modified time)"
+                "1. If ``log_dirs`` is provided, those directories are scanned\n"
+                '2. If omitted, uses ``[<config_dir>/logs>, "logs"]`` from server storage, '
+                'or ``["logs"]`` alone when storage metadata is unavailable\n'
+                "3. Glob patterns per ``worker_type`` (or all patterns when unset) find files\n"
+                "4. If ``worker_type`` is set, rows whose detected type does not match are dropped "
+                "(with a special case so ``server`` can still include unmatched ``*.log`` files)\n"
+                "5. Rows that resolve to the same absolute path (duplicate scan roots) are merged\n"
+                "6. If ``file_pattern`` or ``glob`` is set, keeps entries whose absolute ``path`` "
+                "matches (fnmatch; ``*`` crosses ``/``; literals without ``*?[]`` match exact path "
+                "or directory prefix)\n"
+                "7. Returns log_files (path, size, modified, worker_type), total_files, scanned_dirs"
             ),
             "parameters": {
                 "log_dirs": {
-                    "description": "List of directories to scan. Optional. Defaults to ['logs'].",
+                    "description": (
+                        "Directories to scan. Optional. When omitted, the server uses "
+                        "``<config_dir>/logs`` plus ``logs`` (see command schema)."
+                    ),
                     "type": "array",
                     "required": False,
                     "items": {"type": "string"},
                 },
                 "worker_type": {
-                    "description": "Filter by worker type. Optional.",
+                    "description": (
+                        "Optional filter matching detected log kind (see schema enum)."
+                    ),
                     "type": "string",
                     "required": False,
                     "enum": [
@@ -121,12 +218,29 @@ class ListWorkerLogsMCPCommand(BaseMCPCommand):
                         "server",
                     ],
                 },
+                "file_pattern": {
+                    "description": (
+                        "Optional fnmatch on each log file's absolute path (posix slashes). "
+                        "``glob`` is an alias."
+                    ),
+                    "type": "string",
+                    "required": False,
+                    "examples": ["*file_watcher*.log*", "*/logs/*.log"],
+                },
+                "glob": {
+                    "description": "Alias of ``file_pattern``.",
+                    "type": "string",
+                    "required": False,
+                },
             },
             "usage_examples": [
                 {
                     "description": "List all log files",
                     "command": {},
-                    "explanation": "Lists all in 'logs'.",
+                    "explanation": (
+                        "Uses default scan dirs (config ``logs`` plus ``logs`` under CWD when "
+                        "both exist); merges duplicate paths that resolve to the same file."
+                    ),
                 },
                 {
                     "description": "List file_watcher logs",
@@ -155,6 +269,7 @@ class ListWorkerLogsMCPCommand(BaseMCPCommand):
             },
             "best_practices": [
                 "Use this command first to discover available log files",
+                "Narrow with file_pattern on absolute path (e.g. *vectorization*)",
                 "Use returned paths with view_worker_logs",
             ],
         }

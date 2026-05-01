@@ -15,6 +15,8 @@ def resolve_file_path_from_project(
     database: DatabaseClient,
     project_id: str,
     relative_file_path: str,
+    *,
+    require_exists: bool = True,
 ) -> Path:
     """
     Resolve absolute file path from project_id and relative path.
@@ -25,6 +27,11 @@ def resolve_file_path_from_project(
         database: DatabaseClient instance.
         project_id: Project identifier (UUID4).
         relative_file_path: File path relative to project root.
+
+    Args:
+        require_exists: When True (default), the resolved path must exist and refer to an
+            existing filesystem entry (legacy behavior for reads/patches). When False, only
+            project/watch-dir resolution is validated — used for create/save-new flows.
 
     Returns:
         Resolved absolute Path object.
@@ -90,7 +97,7 @@ def resolve_file_path_from_project(
     absolute_path = Path(watch_dir_path) / project.name / relative_file_path
     resolved_path = absolute_path.resolve()
 
-    if not resolved_path.exists():
+    if require_exists and not resolved_path.exists():
         raise ValidationError(
             f"File does not exist: {resolved_path}",
             field="file_path",

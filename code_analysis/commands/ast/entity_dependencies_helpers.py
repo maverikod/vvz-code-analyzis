@@ -26,6 +26,17 @@ def is_valid_uuid4(value: Optional[str]) -> bool:
         return False
 
 
+def _bind_entity_id_for_cross_ref(entity_id: Any) -> Any:
+    """Bind value for UUID/text id columns (PostgreSQL); SQLite tolerates str for int PKs."""
+    if entity_id is None:
+        return None
+    if isinstance(entity_id, uuid.UUID):
+        return str(entity_id)
+    if isinstance(entity_id, str):
+        return entity_id
+    return str(entity_id)
+
+
 def row_to_dict(row: Any) -> Dict[str, Any]:
     """Convert sqlite Row or dict to dict."""
     if hasattr(row, "keys"):
@@ -73,7 +84,8 @@ def get_entity_dependencies_via_execute(
         LEFT JOIN functions fn ON e.callee_function_id = fn.id
         WHERE {col} = ?
     """
-    result = db.execute(sql, (entity_id,))
+    bind_id = _bind_entity_id_for_cross_ref(entity_id)
+    result = db.execute(sql, (bind_id,))
     rows = result.get("data") or []
     if not rows:
         return []
@@ -188,7 +200,8 @@ def get_entity_dependents_via_execute(
         LEFT JOIN functions fn ON e.caller_function_id = fn.id
         WHERE {col} = ?
     """
-    result = db.execute(sql, (entity_id,))
+    bind_id = _bind_entity_id_for_cross_ref(entity_id)
+    result = db.execute(sql, (bind_id,))
     rows = result.get("data") or []
     if not rows:
         return []

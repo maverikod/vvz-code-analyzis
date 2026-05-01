@@ -5,6 +5,7 @@ Author: Vasiliy Zdanovskiy
 email: vasilyvz@gmail.com
 """
 
+import asyncio
 import logging
 import re
 from datetime import datetime
@@ -222,12 +223,17 @@ class LogViewerCommand:
             result["error"] = f"Log file not found: {self.log_path}"
             return result
         try:
-            lines: List[str] = []
-            for p in files_to_read:
-                try:
-                    lines.extend(read_log_lines(p))
-                except (OSError, gzip.BadGzipFile) as e:
-                    logger.warning("Skip reading %s: %s", p, e)
+
+            def _read_all_log_files_sync() -> List[str]:
+                out_lines: List[str] = []
+                for p in files_to_read:
+                    try:
+                        out_lines.extend(read_log_lines(p))
+                    except (OSError, gzip.BadGzipFile) as e:
+                        logger.warning("Skip reading %s: %s", p, e)
+                return out_lines
+
+            lines = await asyncio.to_thread(_read_all_log_files_sync)
             result["total_lines"] = len(lines)
             result["files_read"] = len(files_to_read)
             if self.tail:

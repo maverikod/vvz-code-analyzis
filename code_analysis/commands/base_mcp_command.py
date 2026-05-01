@@ -406,9 +406,16 @@ class BaseMCPCommand(Command):
         database: DatabaseClient,
         project_id: str,
         relative_file_path: str,
+        *,
+        require_exists: bool = True,
     ) -> Path:
         """Resolve absolute file path from project_id and relative path."""
-        return resolve_file_path_from_project(database, project_id, relative_file_path)
+        return resolve_file_path_from_project(
+            database,
+            project_id,
+            relative_file_path,
+            require_exists=require_exists,
+        )
 
     def _handle_error(
         self: "BaseMCPCommand", error: Exception, error_code: str, operation: str = None

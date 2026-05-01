@@ -511,7 +511,13 @@ class _ClientAPIFilesMixin(_DatabaseClientBase):
         )
         return db_rows_to_objects(rows, File)
 
-    def index_file(self, file_path: str, project_id: str) -> Dict[str, Any]:
+    def index_file(
+        self,
+        file_path: str,
+        project_id: str,
+        *,
+        priority: int = 0,
+    ) -> Dict[str, Any]:
         """Request full file index (AST, CST, entities, code_content) via driver RPC.
 
         Project root is resolved from the database (projects.root_path). On success,
@@ -520,6 +526,7 @@ class _ClientAPIFilesMixin(_DatabaseClientBase):
         Args:
             file_path: Absolute path to the file (as stored in files.path)
             project_id: Project UUID
+            priority: Non-zero tags background/heavy callers on the RPC request
 
         Returns:
             Update result dict: success, file_id, file_path, ast_updated, cst_updated,
@@ -532,6 +539,7 @@ class _ClientAPIFilesMixin(_DatabaseClientBase):
         response = self.rpc_client.call(
             "index_file",
             {"file_path": file_path, "project_id": project_id},
+            priority=priority,
         )
         result = self._extract_result_data(response)
         if isinstance(result, dict) and "data" in result:

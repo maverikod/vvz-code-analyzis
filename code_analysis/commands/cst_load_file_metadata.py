@@ -112,7 +112,11 @@ def get_cst_load_file_metadata(cls: Type[Any]) -> Dict[str, Any]:
                 "default": "full",
             },
             "selector": {
-                "description": "Optional. XPath selector or list of node_ids; response includes selected_nodes with code.",
+                "description": (
+                    "Optional. XPath string, list of node_ids, or object "
+                    '{"query": "<xpath>"} / {"node_ids": ["<uuid>", ...]}; '
+                    "response includes selected_nodes with code."
+                ),
                 "type": "string",
                 "required": False,
             },

@@ -86,12 +86,28 @@ class CSTLoadFileCommand(BaseMCPCommand):
                 },
                 "selector": {
                     "description": (
-                        "Optional: XPath-like selector string or list of node_ids. "
-                        "When set, response includes selected_nodes with content (code) for matching nodes."
+                        "Optional: CSTQuery xpath string, array of node_id strings, or object "
+                        "{ \"query\": \"<xpath>\" } / { \"node_ids\": [\"<uuid>\", ...] }. "
+                        "When set, response includes selected_nodes with code for matching nodes."
                     ),
                     "oneOf": [
                         {"type": "string"},
                         {"type": "array", "items": {"type": "string"}},
+                        {
+                            "type": "object",
+                            "additionalProperties": False,
+                            "properties": {
+                                "query": {
+                                    "type": "string",
+                                    "description": "CSTQuery xpath string (same as passing a bare string).",
+                                },
+                                "node_ids": {
+                                    "type": "array",
+                                    "items": {"type": "string"},
+                                    "description": "Explicit node UUIDs (same as passing a bare string array).",
+                                },
+                            },
+                        },
                     ],
                 },
             },

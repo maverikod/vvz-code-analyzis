@@ -39,7 +39,9 @@ class UnmarkDeletedFileMCPCommand(BaseMCPCommand):
                 },
                 "file_path": {
                     "type": "string",
-                    "description": "File path (current in version_dir or original_path)",
+                    "description": (
+                        "Single literal path (current in version_dir or original_path); globs not supported."
+                    ),
                 },
                 "dry_run": {
                     "type": "boolean",

@@ -68,6 +68,7 @@ class ListCodeEntitiesMCPCommand(BaseMCPCommand):
             "required": ["project_id"],
             "additionalProperties": False,
         }
+
     async def execute(
         self,
         project_id: str,
@@ -417,6 +418,7 @@ class ListCodeEntitiesMCPCommand(BaseMCPCommand):
                 "Combine with get_code_entity_info for detailed entity information",
             ],
         }
+
 
 # cst-node-ids: begin
 # cst-node-ids: version=2

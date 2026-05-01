@@ -280,3 +280,23 @@ def test_function(x: int) -> str:
     assert error is not None
     assert "compile" in results
     assert results["compile"].success is False
+
+
+def test_validate_skip_docstrings_syntax_only_mode(temp_file):
+    """When validate_docstrings=False, docstring policy must not block compile-only."""
+    source_code = '''"""Module."""
+
+def no_return_hint():
+    """Body."""
+    return 1
+'''
+    success, error, results = validate_file_in_temp(
+        source_code=source_code,
+        temp_file_path=temp_file,
+        validate_linter=False,
+        validate_type_checker=False,
+        validate_docstrings=False,
+    )
+    assert success is True, error
+    assert results["docstrings"].success is True
+    assert results["compile"].success is True

@@ -48,6 +48,8 @@ class _DatabaseClientBase:
         sql: str,
         params: Optional[tuple] = None,
         transaction_id: Optional[str] = None,
+        *,
+        priority: int = 0,
     ) -> Dict[str, Any]:
         """Execute raw SQL. Implemented in _ClientOperationsMixin."""
         raise NotImplementedError
@@ -60,6 +62,8 @@ class _DatabaseClientBase:
         limit: Optional[int] = None,
         offset: Optional[int] = None,
         order_by: Optional[List[str]] = None,
+        *,
+        priority: int = 0,
     ) -> List[Dict[str, Any]]:
         """Select rows from table. Implemented in _ClientOperationsMixin."""
         raise NotImplementedError
@@ -89,6 +93,8 @@ class _DatabaseClientBase:
         self,
         operations: List[Tuple[str, Any]],
         transaction_id: Optional[str] = None,
+        *,
+        priority: int = 0,
     ) -> List[Dict[str, Any]]:
         """Execute multiple SQL statements. Implemented in _ClientOperationsMixin."""
         raise NotImplementedError

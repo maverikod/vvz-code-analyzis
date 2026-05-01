@@ -19,6 +19,12 @@ from code_analysis.core.database.sqlite_to_postgres import create_postgresql_sch
 
 logger = logging.getLogger(__name__)
 
+# Session advisory lock: prevents concurrent CREATE TABLE IF NOT EXISTS on a cold DB
+# from racing on pg_type_typname_nsp_index (duplicate typname for the same table).
+# See PostgreSQL concurrent DDL on identical new relation names.
+_SCHEMA_ENSURE_LOCK_KEY1 = 425_001_707
+_SCHEMA_ENSURE_LOCK_KEY2 = 91_735
+
 
 def _ensure_missing_column(
     conn: Any,
@@ -79,15 +85,33 @@ def idempotent_ensure_project_activity_locks_table(
 
 def ensure_postgres_schema(conn: Any, schema_definition: Dict[str, Any]) -> None:
     """Create tables and indexes if missing (FTS5 virtual tables are not created)."""
-    create_postgresql_schema(conn, schema_definition)
-    # Step 12: explicit idempotent pass (CREATE IF NOT EXISTS) for the lease table and index.
-    idempotent_ensure_project_activity_locks_table(conn, schema_definition)
-    _ensure_missing_column(
-        conn,
-        table_name="code_chunks",
-        column_name="vectorization_skipped",
-        add_sql=(
-            "ALTER TABLE code_chunks ADD COLUMN vectorization_skipped "
-            "INTEGER DEFAULT 0"
-        ),
-    )
+    locked = False
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT pg_advisory_lock(%s, %s)",
+                (_SCHEMA_ENSURE_LOCK_KEY1, _SCHEMA_ENSURE_LOCK_KEY2),
+            )
+        locked = True
+        create_postgresql_schema(conn, schema_definition)
+        # Step 12: explicit idempotent pass (CREATE IF NOT EXISTS) for the lease table and index.
+        idempotent_ensure_project_activity_locks_table(conn, schema_definition)
+        _ensure_missing_column(
+            conn,
+            table_name="code_chunks",
+            column_name="vectorization_skipped",
+            add_sql=(
+                "ALTER TABLE code_chunks ADD COLUMN vectorization_skipped "
+                "INTEGER DEFAULT 0"
+            ),
+        )
+    finally:
+        if locked:
+            try:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        "SELECT pg_advisory_unlock(%s, %s)",
+                        (_SCHEMA_ENSURE_LOCK_KEY1, _SCHEMA_ENSURE_LOCK_KEY2),
+                    )
+            except Exception as exc:
+                logger.warning("pg_advisory_unlock failed (non-fatal): %s", exc)

@@ -20,6 +20,7 @@ from ..venv_path_policy import (
     load_ignore_exceptions_from_config_path,
     load_venv_site_packages_index_allowlist_from_config,
 )
+from ..worker_db_rpc_priority import BACKGROUND_WORKER_DB_RPC_PRIORITY
 from ..worker_project_activity import (
     get_project_activity,
     release_project_activity,
@@ -210,6 +211,7 @@ Returns:
                             WHERE id = ?
                             """,
                             tuple(update_values),
+                            priority=BACKGROUND_WORKER_DB_RPC_PRIORITY,
                         )
                         logger.debug(
                             f"Updated project {project_root_obj.project_id}: "
@@ -220,6 +222,7 @@ Returns:
                     existing_result = database.execute(
                         "SELECT id FROM projects WHERE root_path = ? LIMIT 1",
                         (str(project_root_obj.root_path),),
+                        priority=BACKGROUND_WORKER_DB_RPC_PRIORITY,
                     )
                     existing_rows = (
                         existing_result.get("data", [])
@@ -247,6 +250,7 @@ Returns:
                                     project_root_obj.description,
                                     existing_project_id,
                                 ),
+                                priority=BACKGROUND_WORKER_DB_RPC_PRIORITY,
                             )
                     else:
                         existing_project_obj = database.get_project(
@@ -289,6 +293,7 @@ Returns:
                                 project_description,
                                 watch_dir_id,
                             ),
+                            priority=BACKGROUND_WORKER_DB_RPC_PRIORITY,
                         )
                         logger.info(
                             f"Auto-created project {project_root_obj.project_id} "
@@ -432,6 +437,7 @@ Returns:
                         LIMIT 1
                         """,
                         None,
+                        priority=BACKGROUND_WORKER_DB_RPC_PRIORITY,
                     )
                     cycle_rows = (
                         cycle_result.get("data", [])
@@ -447,6 +453,7 @@ Returns:
                             WHERE cycle_id = ?
                             """,
                             (current_project_id, cycle_id),
+                            priority=BACKGROUND_WORKER_DB_RPC_PRIORITY,
                         )
                 except Exception as e:
                     logger.debug(f"Could not update current_project_id: {e}")

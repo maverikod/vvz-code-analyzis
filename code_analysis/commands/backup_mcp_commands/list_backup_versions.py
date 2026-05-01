@@ -21,7 +21,10 @@ class ListBackupVersionsMCPCommand(BaseMCPCommand):
 
     name = "list_backup_versions"
     version = "1.0.0"
-    descr = "List all versions of a backed up file"
+    descr = (
+        "List all backup versions for one file; ``file_path`` is a literal project-relative "
+        "path (no wildcards — use list_backup_files to discover paths)"
+    )
     category = "backup"
     author = "Vasiliy Zdanovskiy"
     email = "vasilyvz@gmail.com"
@@ -37,7 +40,11 @@ class ListBackupVersionsMCPCommand(BaseMCPCommand):
                 **base_props,
                 "file_path": {
                     "type": "string",
-                    "description": "Original file path (relative to project root)",
+                    "description": (
+                        "Single original file path relative to project root (literal path segment; "
+                        "no fnmatch wildcards — use exact path, e.g. as returned by list_backup_files "
+                        "or list_project_files)."
+                    ),
                 },
             },
             "required": ["project_id", "file_path"],
@@ -102,10 +109,10 @@ class ListBackupVersionsMCPCommand(BaseMCPCommand):
                 "It returns detailed information about each backup including UUID, timestamp, file size, "
                 "line count, command that created it, and related files.\n\n"
                 "Operation flow:\n"
-                "1. Validates root_dir exists and is a directory\n"
+                "1. Resolves project root from ``project_id``\n"
                 "2. Initializes BackupManager for the project\n"
                 "3. Loads backup index from old_code/index.txt\n"
-                "4. Searches index for all backups matching the file_path\n"
+                "4. Searches index for all backups matching the literal ``file_path`` (no globs)\n"
                 "5. For each matching backup, verifies backup file exists\n"
                 "6. Calculates file size in bytes and line count\n"
                 "7. Extracts metadata (command, comment, related_files) from index\n"
@@ -126,30 +133,26 @@ class ListBackupVersionsMCPCommand(BaseMCPCommand):
                 "- Understand what operations created each backup\n"
                 "- Track file evolution over time\n\n"
                 "Important notes:\n"
-                "- File path must be relative to root_dir\n"
+                "- ``file_path`` must be the exact project-relative path (not a glob); use "
+                "``list_backup_files`` / ``list_project_files`` to discover paths\n"
                 "- Versions are sorted by timestamp (newest first)\n"
                 "- Only backups with existing files are returned\n"
                 "- If no backups found, returns empty list (count: 0)\n"
                 "- Path matching is normalized (handles / and \\ separators)"
             ),
             "parameters": {
-                "root_dir": {
+                "project_id": {
                     "description": (
-                        "Project root directory path. Can be absolute or relative. "
-                        "Must contain old_code/ directory with backups."
+                        "Project UUID (from create_project or list_projects). "
+                        "Required; project root is resolved from the database."
                     ),
                     "type": "string",
                     "required": True,
-                    "examples": [
-                        "/home/user/projects/my_project",
-                        ".",
-                        "./code_analysis",
-                    ],
                 },
                 "file_path": {
                     "description": (
-                        "Original file path relative to root_dir. This is the path of the file "
-                        "as it existed when backed up. Use forward slashes or backslashes."
+                        "Original file path relative to project root (one concrete file; "
+                        "no ``*?[]`` wildcards). Use forward slashes or backslashes."
                     ),
                     "type": "string",
                     "required": True,
@@ -164,7 +167,7 @@ class ListBackupVersionsMCPCommand(BaseMCPCommand):
                 {
                     "description": "List all versions of a specific file",
                     "command": {
-                        "root_dir": "/home/user/projects/my_project",
+                        "project_id": "550e8400-e29b-41d4-a716-446655440000",
                         "file_path": "code_analysis/core/backup_manager.py",
                     },
                     "explanation": (
@@ -175,7 +178,7 @@ class ListBackupVersionsMCPCommand(BaseMCPCommand):
                 {
                     "description": "Check backup history for a file",
                     "command": {
-                        "root_dir": ".",
+                        "project_id": "550e8400-e29b-41d4-a716-446655440000",
                         "file_path": "src/main.py",
                     },
                     "explanation": (
@@ -187,12 +190,12 @@ class ListBackupVersionsMCPCommand(BaseMCPCommand):
                 "LIST_BACKUP_VERSIONS_ERROR": {
                     "description": "General error during version listing",
                     "example": (
-                        "Invalid root_dir, missing old_code directory, "
+                        "Unknown project_id, missing old_code directory, "
                         "corrupted index file, file_path not found, or permission errors"
                     ),
                     "solution": (
-                        "Verify root_dir exists, check file_path is correct and relative to root_dir, "
-                        "ensure old_code/index.txt is readable, check file permissions"
+                        "Verify project is registered, check file_path is correct and relative to "
+                        "project root, ensure old_code/index.txt is readable, check file permissions"
                     ),
                 },
             },

@@ -12,6 +12,9 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from code_analysis.commands.ast.list_files import ListProjectFilesMCPCommand
+from code_analysis.commands.file_management.relative_path_list_pattern import (
+    relative_path_matches_listing_pattern,
+)
 from code_analysis.core.database_client.objects.file import File
 
 
@@ -150,6 +153,42 @@ async def test_default_skips_venv_tree(tmp_path) -> None:
     rels = [f["relative_path"] for f in result.data["files"]]
     assert rels == ["main.py"]
     assert not any(".venv" in r for r in rels)
+
+
+@pytest.mark.asyncio
+async def test_default_skips_cache_dir_show_hidden_lists_it(tmp_path) -> None:
+    root = tmp_path / "proj"
+    root.mkdir()
+    (root / "app.py").write_text("#\n")
+    cache = root / ".pytest_cache" / "v" / "lastfailed"
+    cache.parent.mkdir(parents=True)
+    cache.write_text("{}", encoding="utf-8")
+
+    pid = "00000000-0000-0000-0000-0000000000c1"
+    mock_db = MagicMock()
+    mock_db.get_project_files.return_value = []
+    mock_db.disconnect = MagicMock()
+
+    with (
+        patch.object(
+            ListProjectFilesMCPCommand, "_resolve_project_root", return_value=root
+        ),
+        patch.object(
+            ListProjectFilesMCPCommand,
+            "_open_database_from_config",
+            return_value=mock_db,
+        ),
+    ):
+        cmd = ListProjectFilesMCPCommand()
+        off = await cmd.execute(project_id=pid)
+        on = await cmd.execute(project_id=pid, show_hidden=True)
+
+    assert off.data is not None and on.data is not None
+    off_rels = sorted(f["relative_path"] for f in off.data["files"])
+    on_rels = sorted(f["relative_path"] for f in on.data["files"])
+    assert off_rels == ["app.py"]
+    assert ".pytest_cache/v/lastfailed" in on_rels
+    assert "app.py" in on_rels
 
 
 @pytest.mark.asyncio
@@ -559,3 +598,192 @@ async def test_nested_commands_pattern_fnmatch(tmp_path) -> None:
     assert result.data is not None
     assert result.data["total"] == 1
     assert result.data["files"][0]["relative_path"] == "code_analysis/commands/ast/x.py"
+
+
+def test_relative_path_matches_directory_prefix_without_wildcards() -> None:
+    assert relative_path_matches_listing_pattern(
+        "docs/plans/foo/README.md", "docs/plans/foo"
+    )
+    assert relative_path_matches_listing_pattern(
+        "docs/plans/foo/README.md", "docs/plans/foo/"
+    )
+    assert not relative_path_matches_listing_pattern(
+        "docs/plans/foobar/x.md", "docs/plans/foo"
+    )
+    assert not relative_path_matches_listing_pattern(
+        "docs/plans/foobar/x.md", "docs/plans/foo/"
+    )
+    assert relative_path_matches_listing_pattern("docs/plans/foo", "docs/plans/foo")
+
+
+@pytest.mark.asyncio
+async def test_plan_directory_literal_prefix_without_star(tmp_path) -> None:
+    """Directory path without * should match all files under that prefix."""
+    root = tmp_path / "proj"
+    plan = root / "docs" / "plans" / "db_retry_worker_coordination_100_qwen"
+    plan.mkdir(parents=True)
+    (plan / "README.md").write_text("#\n")
+    (plan / "step_01.md").write_text("#\n")
+
+    mock_db = MagicMock()
+    mock_db.get_project_files.return_value = []
+    mock_db.disconnect = MagicMock()
+
+    prefix = "docs/plans/db_retry_worker_coordination_100_qwen"
+    with (
+        patch.object(
+            ListProjectFilesMCPCommand, "_resolve_project_root", return_value=root
+        ),
+        patch.object(
+            ListProjectFilesMCPCommand,
+            "_open_database_from_config",
+            return_value=mock_db,
+        ),
+    ):
+        cmd = ListProjectFilesMCPCommand()
+        result = await cmd.execute(
+            project_id="00000000-0000-0000-0000-000000000015",
+            file_pattern=prefix,
+        )
+
+    assert result.data is not None
+    rels = {f["relative_path"] for f in result.data["files"]}
+    assert rels == {
+        "docs/plans/db_retry_worker_coordination_100_qwen/README.md",
+        "docs/plans/db_retry_worker_coordination_100_qwen/step_01.md",
+    }
+
+
+@pytest.mark.asyncio
+async def test_plan_directory_literal_prefix_with_trailing_slash(tmp_path) -> None:
+    """``file_pattern`` ending in ``/`` must behave like a directory prefix."""
+    root = tmp_path / "proj"
+    plan = root / "docs" / "plans" / "db_retry_worker_coordination_100_qwen"
+    plan.mkdir(parents=True)
+    (plan / "README.md").write_text("#\n")
+    (plan / "step_01.md").write_text("#\n")
+
+    mock_db = MagicMock()
+    mock_db.get_project_files.return_value = []
+    mock_db.disconnect = MagicMock()
+
+    prefix = "docs/plans/db_retry_worker_coordination_100_qwen/"
+    with (
+        patch.object(
+            ListProjectFilesMCPCommand, "_resolve_project_root", return_value=root
+        ),
+        patch.object(
+            ListProjectFilesMCPCommand,
+            "_open_database_from_config",
+            return_value=mock_db,
+        ),
+    ):
+        cmd = ListProjectFilesMCPCommand()
+        result = await cmd.execute(
+            project_id="00000000-0000-0000-0000-000000000015",
+            file_pattern=prefix,
+        )
+
+    assert result.data is not None
+    rels = {f["relative_path"] for f in result.data["files"]}
+    assert rels == {
+        "docs/plans/db_retry_worker_coordination_100_qwen/README.md",
+        "docs/plans/db_retry_worker_coordination_100_qwen/step_01.md",
+    }
+
+
+@pytest.mark.asyncio
+async def test_glob_param_alias(tmp_path) -> None:
+    root = tmp_path / "proj"
+    root.mkdir()
+    (root / "a.py").write_text("#\n")
+    (root / "b.txt").write_text("x\n")
+
+    mock_db = MagicMock()
+    mock_db.get_project_files.return_value = []
+    mock_db.disconnect = MagicMock()
+
+    with (
+        patch.object(
+            ListProjectFilesMCPCommand, "_resolve_project_root", return_value=root
+        ),
+        patch.object(
+            ListProjectFilesMCPCommand,
+            "_open_database_from_config",
+            return_value=mock_db,
+        ),
+    ):
+        cmd = ListProjectFilesMCPCommand()
+        result = await cmd.execute(
+            project_id="00000000-0000-0000-0000-000000000016",
+            glob="*.py",
+        )
+
+    assert result.data is not None
+    assert result.data["total"] == 1
+    assert result.data["files"][0]["relative_path"] == "a.py"
+
+
+@pytest.mark.asyncio
+async def test_file_pattern_wins_over_glob(tmp_path) -> None:
+    root = tmp_path / "proj"
+    root.mkdir()
+    (root / "a.py").write_text("#\n")
+    (root / "b.md").write_text("#\n")
+
+    mock_db = MagicMock()
+    mock_db.get_project_files.return_value = []
+    mock_db.disconnect = MagicMock()
+
+    with (
+        patch.object(
+            ListProjectFilesMCPCommand, "_resolve_project_root", return_value=root
+        ),
+        patch.object(
+            ListProjectFilesMCPCommand,
+            "_open_database_from_config",
+            return_value=mock_db,
+        ),
+    ):
+        cmd = ListProjectFilesMCPCommand()
+        result = await cmd.execute(
+            project_id="00000000-0000-0000-0000-000000000017",
+            file_pattern="*.py",
+            glob="*.md",
+        )
+
+    assert result.data is not None
+    assert result.data["total"] == 1
+    assert result.data["files"][0]["relative_path"] == "a.py"
+
+
+@pytest.mark.asyncio
+async def test_backslashes_in_pattern_normalized(tmp_path) -> None:
+    root = tmp_path / "proj"
+    sub = root / "pkg" / "mod"
+    sub.mkdir(parents=True)
+    (sub / "z.py").write_text("#\n")
+
+    mock_db = MagicMock()
+    mock_db.get_project_files.return_value = []
+    mock_db.disconnect = MagicMock()
+
+    with (
+        patch.object(
+            ListProjectFilesMCPCommand, "_resolve_project_root", return_value=root
+        ),
+        patch.object(
+            ListProjectFilesMCPCommand,
+            "_open_database_from_config",
+            return_value=mock_db,
+        ),
+    ):
+        cmd = ListProjectFilesMCPCommand()
+        result = await cmd.execute(
+            project_id="00000000-0000-0000-0000-000000000018",
+            file_pattern=r"pkg\mod\*.py",
+        )
+
+    assert result.data is not None
+    assert result.data["total"] == 1
+    assert result.data["files"][0]["relative_path"] == "pkg/mod/z.py"

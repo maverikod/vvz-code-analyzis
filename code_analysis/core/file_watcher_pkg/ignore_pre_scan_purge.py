@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Set, Tuple, cast
 
 from code_analysis.core.database.logical_write_program import LogicalWriteProgramV1
+from code_analysis.core.worker_db_rpc_priority import BACKGROUND_WORKER_DB_RPC_PRIORITY
 from code_analysis.core.sql_portable import (
     WHERE_FILES_ACTIVE,
     database_has_sqlite_code_content_fts,
@@ -33,13 +34,22 @@ _PURGE = f"SELECT id FROM {TEMP_PURGE_TABLE}"
 _INSERT_CHUNK = 400
 
 
+def database_uses_postgres(database: Any) -> bool:
+    """True when the DB client is backed by PostgreSQL (strict UUID typing)."""
+    return getattr(database, "_driver_type", None) == "postgres"
+
+
 def _query_file_rows(
     database: Any, sql: str, params: tuple[Any, ...]
 ) -> List[dict[str, Any]]:
     if hasattr(database, "_fetchall"):
         rows = database._fetchall(sql, params)
         return list(rows) if isinstance(rows, list) else []
-    out = database.execute(sql, params)
+    out = database.execute(
+        sql,
+        params,
+        priority=BACKGROUND_WORKER_DB_RPC_PRIORITY,
+    )
     if not isinstance(out, dict):
         return []
     data = out.get("data")
@@ -206,6 +216,7 @@ def build_ignore_purge_sql_batch(
     file_ids: Sequence[str],
     *,
     include_code_content_fts: bool = True,
+    use_uuid_temp_table: bool = False,
 ) -> List[Tuple[str, tuple[Any, ...]]]:
     """
     Build (sql, params) ops: CREATE TEMP, INSERT ids, then FK-safe DELETEs.
@@ -213,6 +224,10 @@ def build_ignore_purge_sql_batch(
     Caller must run inside ``execute_logical_write_operation`` on a single DB connection.
 
     ``file_ids`` are ``files.id`` values (UUID strings after migration).
+
+    ``use_uuid_temp_table``: When True (PostgreSQL), the temp id column is UUID so
+    ``... WHERE uuid_col IN (SELECT id FROM temp)`` does not compare uuid to text.
+    SQLite keeps TEXT (default False).
     """
     if not file_ids:
         return []
@@ -220,9 +235,10 @@ def build_ignore_purge_sql_batch(
     ops: List[Tuple[str, tuple[Any, ...]]] = []
 
     ops.append((f"DROP TABLE IF EXISTS {TEMP_PURGE_TABLE}", ()))
+    _id_col = "UUID NOT NULL PRIMARY KEY" if use_uuid_temp_table else "TEXT NOT NULL PRIMARY KEY"
     ops.append(
         (
-            f"CREATE TEMP TABLE {TEMP_PURGE_TABLE} (id TEXT NOT NULL PRIMARY KEY)",
+            f"CREATE TEMP TABLE {TEMP_PURGE_TABLE} (id {_id_col})",
             (),
         )
     )
@@ -341,10 +357,14 @@ def build_ignore_purge_logical_write_program(
     *,
     include_code_content_fts: bool = True,
     operation_name: str = "watcher_ignore_purge",
+    use_uuid_temp_table: bool = False,
 ) -> LogicalWriteProgramV1:
     """Single-batch logical write program for ignore purge (watcher / RPC contract)."""
     batch = build_ignore_purge_sql_batch(
-        project_id, file_ids, include_code_content_fts=include_code_content_fts
+        project_id,
+        file_ids,
+        include_code_content_fts=include_code_content_fts,
+        use_uuid_temp_table=use_uuid_temp_table,
     )
     return {
         "batches": [cast(List[Tuple[str, Sequence[Any]]], batch)],
@@ -535,6 +555,7 @@ def run_pre_scan_ignore_purge_for_project(
         project_id,
         ids,
         include_code_content_fts=database_has_sqlite_code_content_fts(database),
+        use_uuid_temp_table=database_uses_postgres(database),
     )
     lw(program)
     try_unlink_faiss_index_for_project(project_id, config_path)

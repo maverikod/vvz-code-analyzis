@@ -1,0 +1,59 @@
+"""
+Central MCP registration for ``file_management`` universal and legacy commands.
+
+Registers :mod:`code_analysis.commands.universal_file_*` first-class commands and legacy
+compat wrappers (**``read_project_text_file``**, **``write_project_text_lines``**).
+
+Handlers and documentation-oriented schema fragments live in
+``code_analysis.core.file_handlers.registry``: **``get_handler_schema(handler_id, operation)``**,
+``list_handler_mappings()``, ``HANDLER_IDS``.
+
+Author: Vasiliy Zdanovskiy
+email: vasilyvz@gmail.com
+"""
+
+from __future__ import annotations
+
+from typing import Any
+
+
+# Appended to MCP descr / schemas so models steer to handler routing vs plain-text pitfalls.
+MCP_FILE_MANAGEMENT_REGISTRY_HELP = (
+    "Use ``code_analysis.core.file_handlers.registry.get_handler_schema(handler_id, operation)`` "
+    "for per-handler request hints and ``list_handler_mappings()`` for suffix→handler rows "
+    "(handler ids: text, json, yaml, python). "
+    "Legacy **read_project_text_file** / **write_project_text_lines** are compatibility "
+    "wrappers — they **must not** be treated as alternate editors for source code "
+    "(``.py``, ``.pyi``, …), ``.json``, ``.yaml``, or other structured formats; route those "
+    "through universal_file_read, universal_file_save, universal_file_replace, "
+    "universal_file_delete, and JSON/YAML/Python/CST tooling as documented."
+)
+
+# Compact line for embedding in JSON-schema ``description`` fields (helps MCP help payloads).
+REGISTRY_SCHEMA_DISCOVERY_SHORT = (
+    "Discovery: code_analysis.core.file_handlers.registry.get_handler_schema(handler_id, operation) "
+    "and list_handler_mappings(); handler ids text, json, yaml, python."
+)
+
+
+def register_file_management_commands(reg: Any) -> None:
+    """Register universal file commands and legacy text compat commands.
+
+    Commands use ``category = 'file_management'`` on classes; MCP help groups by category.
+
+    Args:
+        reg: ``mcp_proxy_adapter.commands.command_registry.registry`` implementation.
+    """
+    from .read_project_text_file_command import ReadProjectTextFileCommand
+    from .universal_file_delete_command import UniversalFileDeleteCommand
+    from .universal_file_read_command import UniversalFileReadCommand
+    from .universal_file_replace_command import UniversalFileReplaceCommand
+    from .universal_file_save_command import UniversalFileSaveCommand
+    from .write_project_text_lines_command import WriteProjectTextLinesCommand
+
+    reg.register(ReadProjectTextFileCommand, "custom")
+    reg.register(UniversalFileReadCommand, "custom")
+    reg.register(UniversalFileSaveCommand, "custom")
+    reg.register(UniversalFileReplaceCommand, "custom")
+    reg.register(UniversalFileDeleteCommand, "custom")
+    reg.register(WriteProjectTextLinesCommand, "custom")

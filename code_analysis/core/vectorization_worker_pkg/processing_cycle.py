@@ -16,6 +16,7 @@ import time
 import uuid
 from typing import Any, List, Tuple
 
+from ..worker_db_rpc_priority import BACKGROUND_WORKER_DB_RPC_PRIORITY
 from ..worker_status_file import (
     STATUS_OPERATION_IDLE,
     write_worker_status,
@@ -83,7 +84,10 @@ SELECT
            AND cc.vector_id IS NULL
            AND (cc.embedding_vector IS NULL OR cc.embedding_model IS NULL)
            AND (cc.vectorization_skipped IS NULL OR cc.vectorization_skipped = 0))
-    ) AS pending_count
+    ) AS pending_count,
+    (SELECT MAX(f2.updated_at) FROM files f2
+     WHERE f2.project_id = p.id
+       AND {WHERE_FILES_ACTIVE_F.replace("f.", "f2.")}) AS max_file_updated_at
 FROM projects p
 WHERE {WHERE_PROCESSING_ACTIVE_P}
 AND (
@@ -135,7 +139,7 @@ AND (
        AND (cc.embedding_vector IS NULL OR cc.embedding_model IS NULL)
        AND (cc.vectorization_skipped IS NULL OR cc.vectorization_skipped = 0))
 ) > 0
-ORDER BY pending_count ASC
+ORDER BY max_file_updated_at DESC, pending_count ASC, p.id DESC
 """
 
 
@@ -173,6 +177,7 @@ async def run_one_cycle(
         WHERE cycle_end_time IS NULL
         """,
         (cycle_start_time,),
+        priority=BACKGROUND_WORKER_DB_RPC_PRIORITY,
     )
 
     chunks_result = database.execute(
@@ -180,6 +185,7 @@ async def run_one_cycle(
            WHERE vector_id IS NULL
              AND (vectorization_skipped IS NULL OR vectorization_skipped = 0)""",
         None,
+        priority=BACKGROUND_WORKER_DB_RPC_PRIORITY,
     )
     chunks_data = (
         chunks_result.get("data", []) if isinstance(chunks_result, dict) else []
@@ -189,6 +195,7 @@ async def run_one_cycle(
     files_result = database.execute(
         f"SELECT COUNT(*) as count FROM files WHERE {WHERE_FILES_ACTIVE}",
         None,
+        priority=BACKGROUND_WORKER_DB_RPC_PRIORITY,
     )
     files_data = files_result.get("data", []) if isinstance(files_result, dict) else []
     files_total_at_start = files_data[0].get("count", 0) if files_data else 0
@@ -202,6 +209,7 @@ async def run_one_cycle(
         AND cc.vector_id IS NOT NULL
         """,
         None,
+        priority=BACKGROUND_WORKER_DB_RPC_PRIORITY,
     )
     vectorized_data = (
         vectorized_result.get("data", []) if isinstance(vectorized_result, dict) else []
@@ -222,6 +230,7 @@ async def run_one_cycle(
             files_total_at_start,
             files_vectorized,
         ),
+        priority=BACKGROUND_WORKER_DB_RPC_PRIORITY,
     )
     cycle_start_time = time.time()
 
@@ -241,7 +250,9 @@ async def run_one_cycle(
         current_file=None,
         extra={"cycle": cycle_count},
     )
-    projects_result = database.execute(PROJECTS_PENDING_SQL, None)
+    projects_result = database.execute(
+        PROJECTS_PENDING_SQL, None, priority=BACKGROUND_WORKER_DB_RPC_PRIORITY
+    )
     projects: List[Any] = (
         projects_result.get("data", []) if isinstance(projects_result, dict) else []
     )
@@ -274,6 +285,7 @@ async def run_one_cycle(
             WHERE cycle_id = ?
             """,
             (0, 0, 0, 0.0, cycle_id),
+            priority=BACKGROUND_WORKER_DB_RPC_PRIORITY,
         )
     else:
         logger.info(
@@ -374,6 +386,7 @@ async def run_one_cycle(
         WHERE cycle_id = ?
         """,
         (time.time(), cycle_id),
+        priority=BACKGROUND_WORKER_DB_RPC_PRIORITY,
     )
 
     return (

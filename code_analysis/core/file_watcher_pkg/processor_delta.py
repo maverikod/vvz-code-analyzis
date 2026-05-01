@@ -13,6 +13,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from ..worker_db_rpc_priority import BACKGROUND_WORKER_DB_RPC_PRIORITY
 from .scanner import find_missing_files
 
 logger = logging.getLogger(__name__)
@@ -155,11 +156,21 @@ def compute_delta(
     try:
         if hasattr(database, "select"):
             all_projects = (
-                database.select("projects", columns=["id", "root_path"]) or []
+                database.select(
+                    "projects",
+                    columns=["id", "root_path"],
+                    priority=BACKGROUND_WORKER_DB_RPC_PRIORITY,
+                )
+                or []
             )
         else:
             all_projects = (
-                database.execute("SELECT id, root_path FROM projects").get("data") or []
+                database.execute(
+                    "SELECT id, root_path FROM projects",
+                    None,
+                    priority=BACKGROUND_WORKER_DB_RPC_PRIORITY,
+                ).get("data")
+                or []
             )
         if not isinstance(all_projects, list):
             all_projects = []

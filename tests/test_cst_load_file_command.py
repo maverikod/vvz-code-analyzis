@@ -21,6 +21,7 @@ from code_analysis.commands.cst_load_file_command import CSTLoadFileCommand
 from code_analysis.commands.cst_load_file_helpers import (
     MAX_SYNTAX_FIX_ITERATIONS,
     apply_syntax_error_fix,
+    build_load_response,
     classify_syntax_error,
     indent_for_pass_after_error,
     is_block_starter_line,
@@ -403,3 +404,34 @@ def test_cst_load_file_recovery_failed_returns_error_result(tmp_path: Path) -> N
     assert details.get("changes_applied") is False
     assert "original_error" in details
     assert broken.read_text() == "def f():\n    x = \n"
+
+
+def test_build_load_response_selector_dict_query(tmp_path: Path) -> None:
+    """Object selector {query: xpath} fills selected_nodes like a string selector."""
+    p = tmp_path / "m.py"
+    tree = create_tree_from_code(
+        str(p), "def foo():\n    return 1\n", include_children=True
+    )
+    data = build_load_response(
+        tree, p, "full", {"query": "function[name='foo']"}, [], None
+    )
+    assert data.get("selected_nodes")
+    codes = " ".join((n.get("code") or "") for n in data["selected_nodes"])
+    assert "foo" in codes
+    assert "return" in codes
+
+
+def test_build_load_response_selector_dict_node_ids(tmp_path: Path) -> None:
+    """Object selector {node_ids: [...]} resolves metadata like a list selector."""
+    p = tmp_path / "n.py"
+    tree = create_tree_from_code(str(p), "x = 1\n", include_children=True)
+    mod_id = next(
+        nid
+        for nid, m in tree.metadata_map.items()
+        if getattr(m, "type", None) == "Module"
+    )
+    data = build_load_response(
+        tree, p, "full", {"node_ids": [mod_id]}, [], None
+    )
+    assert len(data.get("selected_nodes", [])) == 1
+    assert data["selected_nodes"][0].get("type") == "Module"

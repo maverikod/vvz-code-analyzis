@@ -22,7 +22,10 @@ class GetWorkerStatusMCPCommand(BaseMCPCommand):
 
     name = "get_worker_status"
     version = "1.0.0"
-    descr = "Get worker status (requires params.worker_type: file_watcher | vectorization | indexing)"
+    descr = (
+        "Get worker status. Optional worker_type: file_watcher | vectorization | indexing | all; "
+        "omit worker_type to report all registered workers."
+    )
     category = "monitoring"
     author = "Vasiliy Zdanovskiy"
     email = "vasilyvz@gmail.com"
@@ -34,17 +37,16 @@ class GetWorkerStatusMCPCommand(BaseMCPCommand):
         return {
             "type": "object",
             "description": (
-                "Always pass worker_type. Calling with params {} or without worker_type is invalid "
-                "and returns a validation error."
+                "Optional worker_type filters to one worker; omit it or use `all` to aggregate every "
+                "registered worker (process list, summary, optional DB cycle stats per type)."
             ),
             "properties": {
                 "worker_type": {
                     "type": "string",
-                    "enum": ["file_watcher", "vectorization", "indexing"],
+                    "enum": ["file_watcher", "vectorization", "indexing", "all"],
                     "description": (
-                        "REQUIRED. Which background worker to inspect: "
-                        "`file_watcher` (filesystem watcher), `vectorization` (chunk embeddings / FAISS), "
-                        "or `indexing` (AST/CST/fulltext for files with needs_chunking)."
+                        "Which background worker to inspect: `file_watcher`, `vectorization`, "
+                        "`indexing`, or `all`. Omit this field (or pass `all`) to include all types."
                     ),
                 },
                 "log_path": {
@@ -56,18 +58,65 @@ class GetWorkerStatusMCPCommand(BaseMCPCommand):
                     "description": "Path to lock file (optional, for file_watcher)",
                 },
             },
-            "required": ["worker_type"],
             "additionalProperties": False,
             "examples": [
+                {},
+                {"worker_type": "all"},
                 {"worker_type": "vectorization"},
                 {"worker_type": "file_watcher"},
                 {"worker_type": "indexing"},
             ],
         }
 
+    @staticmethod
+    def _enrich_cycle_stats(worker_type: str, stats: Dict[str, Any]) -> Dict[str, Any]:
+        """Add derived speed / percent fields for MCP response (mutates stats in place)."""
+        if worker_type == "file_watcher":
+            if stats.get("average_processing_time_seconds"):
+                avg_time = stats["average_processing_time_seconds"]
+                if avg_time and avg_time > 0:
+                    stats["processing_speed_files_per_second"] = round(
+                        1.0 / avg_time, 2
+                    )
+                else:
+                    stats["processing_speed_files_per_second"] = None
+            else:
+                stats["processing_speed_files_per_second"] = None
+            files_total = stats.get("files_total_at_start", 0)
+            files_processed = stats.get("files_processed", 0)
+            if files_total and files_total > 0:
+                stats["files_processed_percent"] = round(
+                    (files_processed / files_total) * 100, 2
+                )
+            else:
+                stats["files_processed_percent"] = None
+        elif worker_type == "vectorization":
+            if stats.get("average_processing_time_seconds"):
+                avg_time = stats["average_processing_time_seconds"]
+                if avg_time and avg_time > 0:
+                    stats["processing_speed_chunks_per_second"] = round(
+                        1.0 / avg_time, 2
+                    )
+                else:
+                    stats["processing_speed_chunks_per_second"] = None
+            else:
+                stats["processing_speed_chunks_per_second"] = None
+        elif worker_type == "indexing":
+            if stats.get("average_processing_time_seconds"):
+                avg_time = stats["average_processing_time_seconds"]
+                if avg_time and avg_time > 0:
+                    stats["processing_speed_files_per_second"] = round(
+                        1.0 / avg_time, 2
+                    )
+                else:
+                    stats["processing_speed_files_per_second"] = None
+            else:
+                stats["processing_speed_files_per_second"] = None
+        return stats
+
     async def execute(
         self,
-        worker_type: str,
+        worker_type: Optional[str] = None,
         log_path: Optional[str] = None,
         lock_file_path: Optional[str] = None,
         **kwargs,
@@ -76,7 +125,7 @@ class GetWorkerStatusMCPCommand(BaseMCPCommand):
         Execute get worker status command.
 
         Args:
-            worker_type: Type of worker (file_watcher or vectorization)
+            worker_type: Type of worker; omit or ``all`` for every registered worker.
             log_path: Path to worker log file
             lock_file_path: Path to lock file (for file_watcher)
 
@@ -84,7 +133,9 @@ class GetWorkerStatusMCPCommand(BaseMCPCommand):
             SuccessResult with worker status or ErrorResult on failure
         """
         try:
-            if log_path is None:
+            effective = (worker_type or "").strip() or "all"
+
+            if log_path is None and effective != "all":
                 try:
                     from ...core.storage_paths import (
                         load_raw_config,
@@ -97,11 +148,11 @@ class GetWorkerStatusMCPCommand(BaseMCPCommand):
                         config_data=config_data, config_path=config_path
                     )
                     ca = config_data.get("code_analysis") or {}
-                    if worker_type == "vectorization":
+                    if effective == "vectorization":
                         rel = (ca.get("worker") or {}).get("log_path")
-                    elif worker_type == "file_watcher":
+                    elif effective == "file_watcher":
                         rel = (ca.get("file_watcher") or {}).get("log_path")
-                    elif worker_type == "indexing":
+                    elif effective == "indexing":
                         rel = (ca.get("indexing_worker") or {}).get("log_path")
                     else:
                         rel = None
@@ -110,7 +161,7 @@ class GetWorkerStatusMCPCommand(BaseMCPCommand):
                 except Exception as e:
                     logger.debug("Could not resolve log_path from config: %s", e)
             command = WorkerStatusCommand(
-                worker_type=worker_type,
+                worker_type=effective,
                 log_path=log_path,
                 lock_file_path=lock_file_path,
             )
@@ -119,59 +170,49 @@ class GetWorkerStatusMCPCommand(BaseMCPCommand):
             try:
                 db = self._open_database_from_config(auto_analyze=False)
                 try:
-                    if worker_type == "file_watcher":
+                    if effective == "all":
+                        cycle_by: Dict[str, Any] = {}
+                        get_fw = getattr(db, "get_file_watcher_stats", None)
+                        s_fw = get_fw() if callable(get_fw) else None
+                        if s_fw:
+                            cycle_by["file_watcher"] = self._enrich_cycle_stats(
+                                "file_watcher", dict(s_fw)
+                            )
+                        get_vs = getattr(db, "get_vectorization_stats", None)
+                        s_vs = get_vs() if callable(get_vs) else None
+                        if s_vs:
+                            cycle_by["vectorization"] = self._enrich_cycle_stats(
+                                "vectorization", dict(s_vs)
+                            )
+                        get_is = getattr(db, "get_indexing_stats", None)
+                        s_is = get_is() if callable(get_is) else None
+                        if s_is:
+                            cycle_by["indexing"] = self._enrich_cycle_stats(
+                                "indexing", dict(s_is)
+                            )
+                        if cycle_by:
+                            result["cycle_stats"] = cycle_by
+                    elif effective == "file_watcher":
                         get_fw = getattr(db, "get_file_watcher_stats", None)
                         stats = get_fw() if callable(get_fw) else None
                         if stats:
-                            if stats.get("average_processing_time_seconds"):
-                                avg_time = stats["average_processing_time_seconds"]
-                                if avg_time and avg_time > 0:
-                                    stats["processing_speed_files_per_second"] = round(
-                                        1.0 / avg_time, 2
-                                    )
-                                else:
-                                    stats["processing_speed_files_per_second"] = None
-                            else:
-                                stats["processing_speed_files_per_second"] = None
-                            files_total = stats.get("files_total_at_start", 0)
-                            files_processed = stats.get("files_processed", 0)
-                            if files_total and files_total > 0:
-                                stats["files_processed_percent"] = round(
-                                    (files_processed / files_total) * 100, 2
-                                )
-                            else:
-                                stats["files_processed_percent"] = None
-                            result["cycle_stats"] = stats
-                    elif worker_type == "vectorization":
+                            result["cycle_stats"] = self._enrich_cycle_stats(
+                                "file_watcher", dict(stats)
+                            )
+                    elif effective == "vectorization":
                         get_vs = getattr(db, "get_vectorization_stats", None)
                         stats = get_vs() if callable(get_vs) else None
                         if stats:
-                            if stats.get("average_processing_time_seconds"):
-                                avg_time = stats["average_processing_time_seconds"]
-                                if avg_time and avg_time > 0:
-                                    stats["processing_speed_chunks_per_second"] = round(
-                                        1.0 / avg_time, 2
-                                    )
-                                else:
-                                    stats["processing_speed_chunks_per_second"] = None
-                            else:
-                                stats["processing_speed_chunks_per_second"] = None
-                            result["cycle_stats"] = stats
-                    elif worker_type == "indexing":
+                            result["cycle_stats"] = self._enrich_cycle_stats(
+                                "vectorization", dict(stats)
+                            )
+                    elif effective == "indexing":
                         get_is = getattr(db, "get_indexing_stats", None)
                         stats = get_is() if callable(get_is) else None
                         if stats:
-                            if stats.get("average_processing_time_seconds"):
-                                avg_time = stats["average_processing_time_seconds"]
-                                if avg_time and avg_time > 0:
-                                    stats["processing_speed_files_per_second"] = round(
-                                        1.0 / avg_time, 2
-                                    )
-                                else:
-                                    stats["processing_speed_files_per_second"] = None
-                            else:
-                                stats["processing_speed_files_per_second"] = None
-                            result["cycle_stats"] = stats
+                            result["cycle_stats"] = self._enrich_cycle_stats(
+                                "indexing", dict(stats)
+                            )
                 finally:
                     db.disconnect()
             except Exception as e:

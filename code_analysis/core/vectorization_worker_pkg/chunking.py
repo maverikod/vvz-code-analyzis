@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING, Any, Dict, List
 
 from code_analysis.core.resolve_indexed_file_path import resolve_indexed_file_path
 from code_analysis.core.sql_portable import WHERE_FILES_ACTIVE, WHERE_FILES_ACTIVE_F
+from code_analysis.core.worker_db_rpc_priority import BACKGROUND_WORKER_DB_RPC_PRIORITY
 
 if TYPE_CHECKING:
     from ..database_client.client import DatabaseClient
@@ -77,6 +78,7 @@ async def _request_chunking_for_files(
                     "SELECT 1 FROM files WHERE id = ? AND project_id = ? AND "
                     + WHERE_FILES_ACTIVE,
                     (file_id, project_id),
+                    priority=BACKGROUND_WORKER_DB_RPC_PRIORITY,
                 )
                 check_data = (
                     check_result.get("data", [])
@@ -158,6 +160,7 @@ async def _request_chunking_for_files(
                 database.execute(
                     "UPDATE files SET needs_chunking = 0 WHERE id = ?",
                     (file_id,),
+                    priority=BACKGROUND_WORKER_DB_RPC_PRIORITY,
                 )
                 log_operation_timing(
                     getattr(self, "log_timing", False),
@@ -222,6 +225,7 @@ def _log_missing_docstring_files(
             LIMIT ?
             """,
             (self.project_id, sample),
+            priority=BACKGROUND_WORKER_DB_RPC_PRIORITY,
         )
         # Extract data from result - execute() returns dict with "data" key
         rows = rows_result.get("data", []) if isinstance(rows_result, dict) else []

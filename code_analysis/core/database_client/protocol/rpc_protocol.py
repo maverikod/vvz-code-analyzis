@@ -63,6 +63,7 @@ class RPCRequest:
 
     method: str
     params: Dict[str, Any]
+    priority: int = 0
     request_id: Optional[str] = None
 
     def to_dict(self) -> Dict[str, Any]:
@@ -72,6 +73,8 @@ class RPCRequest:
             "method": self.method,
             "params": self.params,
         }
+        if self.priority != 0:
+            result["priority"] = self.priority
         if self.request_id is not None:
             result["id"] = self.request_id
         return result
@@ -81,8 +84,14 @@ class RPCRequest:
         """Create request from dictionary."""
         method = data.get("method", "")
         params = data.get("params", {})
+        priority = int(data.get("priority", 0))
         request_id = data.get("id")
-        return cls(method=method, params=params, request_id=request_id)
+        return cls(
+            method=method,
+            params=params,
+            priority=priority,
+            request_id=request_id,
+        )
 
 
 @dataclass

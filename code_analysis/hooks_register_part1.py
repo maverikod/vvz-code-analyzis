@@ -77,17 +77,10 @@ def register_commands_part1(reg: registry) -> None:
         pass
 
     try:
-        from .commands.read_project_text_file_command import ReadProjectTextFileCommand
-        from .commands.write_project_text_lines_command import (
-            WriteProjectTextLinesCommand,
-        )
+        from .commands.registration import register_file_management_commands
 
-        reg.register(ReadProjectTextFileCommand, "custom")
-        reg.register(WriteProjectTextLinesCommand, "custom")
-        logger.info(
-            "✅ Registered file_management text commands: "
-            "read_project_text_file, write_project_text_lines"
-        )
+        register_file_management_commands(reg)
+        logger.info("✅ Registered file_management universal + legacy commands")
     except ImportError as e:
         logger.warning("Failed to import project text file commands: %s", e)
     except Exception as e:
@@ -311,6 +304,7 @@ def register_commands_part1(reg: registry) -> None:
         logger.info("✅ Registered cst_apply_buffer command")
     except ImportError as e:
         logger.warning("Failed to import cst_apply_buffer command: %s", e)
+
 
 # cst-node-ids: begin
 # cst-node-ids: version=2

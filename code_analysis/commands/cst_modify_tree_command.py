@@ -29,6 +29,12 @@ from .cst_modify_tree_ops_build import build_tree_operations
 from ..core.cst_tree.models import TreeOperation, TreeOperationType
 from ..core.cst_tree.tree_builder import get_tree, rollback_tree_to_code
 from ..core.cst_tree.tree_modifier import modify_tree
+from ..core.cst_tree.tree_save_verification import (
+    CST_REPLAY_MISMATCH,
+    FILE_CHANGED_SINCE_LOAD,
+    SaveVerificationError,
+    WRITE_VERIFY_FAILED,
+)
 from ..core.cst_tree.tree_saver import save_tree_to_file
 
 logger = logging.getLogger(__name__)
@@ -244,7 +250,23 @@ class CSTModifyTreeCommand(BaseMCPCommand):
                             validate=validate,
                             backup=backup,
                             commit_message=commit_message,
+                            tree_operations=tree_operations,
                         )
+                    except SaveVerificationError as save_exc:
+                        rollback_tree_to_code(tree_id, original_code)
+                        data["modify_applied"] = False
+                        data["save_applied"] = False
+                        data["file_written"] = False
+                        data["save_error"] = str(save_exc)
+                        data["save_error_cause"] = str(save_exc)
+                        if save_exc.code in (
+                            FILE_CHANGED_SINCE_LOAD,
+                            CST_REPLAY_MISMATCH,
+                            WRITE_VERIFY_FAILED,
+                        ):
+                            data["save_error_code"] = save_exc.code
+                            data["save_error_details"] = dict(save_exc.details)
+                        return SuccessResult(data=data)
                     except Exception as save_exc:
                         rollback_tree_to_code(tree_id, original_code)
                         data["modify_applied"] = False

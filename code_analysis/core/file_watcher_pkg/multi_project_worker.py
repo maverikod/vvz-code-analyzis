@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Set
 
 from ..project_ignore_policy import filter_ignore_exception_py_paths_for_watcher
+from ..worker_db_rpc_priority import BACKGROUND_WORKER_DB_RPC_PRIORITY
 from ..venv_path_policy import (
     allowed_venv_py_files_for_watch_dir,
     build_ignore_exception_files_for_projects,
@@ -153,7 +154,11 @@ class MultiProjectFileWatcherWorker:
                         # Test connection with a simple query
                         try:
                             # Try to get a project to test connection
-                            database.execute("SELECT 1", None)
+                            database.execute(
+                                "SELECT 1",
+                                None,
+                                priority=BACKGROUND_WORKER_DB_RPC_PRIORITY,
+                            )
                             # Connection successful
                             if not db_available:
                                 # Status changed: unavailable -> available

@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import logging
 import re
+from contextlib import contextmanager
+from typing import cast
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -31,6 +33,23 @@ def _driver() -> PostgreSQLDriver:
     d._query_journal = None
     d.conn = MagicMock()
     d.conn.rollback = MagicMock()
+
+    @contextmanager
+    def _acquire(write: bool = False):
+        try:
+            yield d.conn
+        except BaseException as exc:
+            try:
+                d.conn.rollback()
+            except Exception as rb:
+                raise DriverOperationError(
+                    f"Rollback before database retry failed: {rb}"
+                ) from rb
+            raise exc
+
+    mock_pool = MagicMock()
+    mock_pool.acquire = MagicMock(side_effect=lambda write=False: _acquire(write=write))
+    d._pool = mock_pool
     return d
 
 
@@ -82,6 +101,39 @@ def test_execute_retries_self_managed_transient(_sleep: MagicMock) -> None:
     assert r == result
     assert n == 2
     d.conn.rollback.assert_called_once()
+
+
+def test_external_transaction_execute_and_batch_skips_pool_acquire() -> None:
+    """Explicit transaction_id uses _transactions conn; never pool.acquire."""
+    d = _driver()
+    pool_mock = cast(MagicMock, d._pool)
+    d._transaction_manager = MagicMock()
+    ext = MagicMock()
+    d._transaction_manager._transactions = {"ext-tx": ext}
+
+    with patch.object(postgres_mod, "run_execute") as mock_run:
+        mock_run.return_value = {
+            "affected_rows": 0,
+            "lastrowid": None,
+            "data": None,
+        }
+        d.execute("SELECT 1", transaction_id="ext-tx")
+
+    mock_run.assert_called_once()
+    assert mock_run.call_args[0][0] is ext
+    pool_mock.acquire.assert_not_called()
+
+    pool_mock.acquire.reset_mock()
+
+    with patch.object(postgres_mod, "run_execute_batch") as mock_batch:
+        mock_batch.return_value = [
+            {"affected_rows": 0, "lastrowid": None, "data": None},
+        ]
+        d.execute_batch([("SELECT 1", None)], transaction_id="ext-tx")
+
+    mock_batch.assert_called_once()
+    assert mock_batch.call_args[0][0] is ext
+    pool_mock.acquire.assert_not_called()
 
 
 @patch.object(postgres_mod.time, "sleep", autospec=True)
@@ -161,7 +213,7 @@ def test_no_retry_when_commit_outcome_unknown(_sleep: MagicMock) -> None:
         with pytest.raises(TransientDatabaseError):
             d.execute("SELECT 1")
     assert n == 1
-    d.conn.rollback.assert_not_called()
+    d.conn.rollback.assert_called_once()
 
 
 @patch.object(postgres_mod.time, "sleep", autospec=True)

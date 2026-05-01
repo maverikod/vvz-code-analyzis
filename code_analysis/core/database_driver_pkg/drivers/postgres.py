@@ -21,6 +21,11 @@ from ..exceptions import (
     TransientDatabaseError,
 )
 from .base import BaseDatabaseDriver, DbIdentity
+from .postgres_connection_pool import PostgreSQLConnectionPool
+from .postgres_execute_lane import (
+    postgres_batch_requires_write_pool,
+    postgres_execute_requires_write_pool,
+)
 from .postgres_migrations import ensure_postgres_schema
 from .postgres_operations import PostgreSQLOperations
 from .postgres_run import run_execute, run_execute_batch
@@ -98,6 +103,7 @@ class PostgreSQLDriver(BaseDatabaseDriver):
 
     def __init__(self) -> None:
         self.conn: Any = None
+        self._pool: Optional[PostgreSQLConnectionPool] = None
         self._connect_kwargs: Dict[str, Any] = {}
         self._full_schema: Dict[str, Any] = {}
         self._schema_tables: Dict[str, Any] = {}
@@ -107,6 +113,7 @@ class PostgreSQLDriver(BaseDatabaseDriver):
         self._query_journal: Any = None
         self._retry_policy: RetryPolicy = RetryPolicy()
         self._qa_transient_injections_remaining: int = 0
+        self._pool_max_wait_seconds: float = 30.0
 
     def qa_set_db_retry_injections(self, remaining: int) -> Dict[str, Any]:
         """QA only: next N self-managed execute/execute_batch attempts raise a synthetic deadlock."""
@@ -166,6 +173,14 @@ class PostgreSQLDriver(BaseDatabaseDriver):
             self._schema_manager = PostgreSQLSchemaManager(self.conn)
             self._operations = PostgreSQLOperations(self.conn, self._schema_tables)
 
+            # Connection topology (phase 1): one **main** ``self.conn`` for schema manager,
+            # ``PostgreSQLOperations``, and ``commit``/``rollback`` on the default session;
+            # **five** pool connections (3 write + 2 read) for self-managed ``execute`` /
+            # ``execute_batch`` only; ``begin_transaction`` / explicit ``transaction_id`` uses
+            # additional connections from ``PostgreSQLTransactionManager`` (not the pool).
+            self._pool_max_wait_seconds = float(
+                config.get("pool_max_wait_seconds", 30.0)
+            )
             query_log_path = config.get("query_log_path")
             if query_log_path:
                 from ..sqlite_query_journal import (
@@ -184,6 +199,9 @@ class PostgreSQLDriver(BaseDatabaseDriver):
                     backup_count=backup_count,
                 )
                 logger.info("Query journal enabled: %s", query_log_path)
+            self._pool = PostgreSQLConnectionPool(
+                self._connect_kwargs, max_wait_seconds=self._pool_max_wait_seconds
+            )
         except DriverConnectionError:
             raise
         except Exception as e:
@@ -200,10 +218,18 @@ class PostgreSQLDriver(BaseDatabaseDriver):
             self.conn.rollback()
 
     def _reconnect_main(self) -> None:
-        """Rebuild main connection and dependent managers (after dropped connection)."""
+        """Rebuild main connection and dependent managers (after dropped connection).
+
+        Safe default: tear down and recreate the **entire** execute pool when the main
+        session is lost, so no thread keeps a stale pool connection. Waiters in
+        ``acquire()`` wake with ``DriverConnectionError`` if the pool was closed under them.
+        """
         import psycopg
 
         logger.warning("PostgreSQLDriver: reconnecting main session")
+        if self._pool:
+            self._pool.close_all()
+            self._pool = None
         if self.conn:
             try:
                 self.conn.close()
@@ -215,6 +241,9 @@ class PostgreSQLDriver(BaseDatabaseDriver):
         ensure_postgres_schema(self.conn, self._full_schema)
         self._schema_manager = PostgreSQLSchemaManager(self.conn)
         self._operations = PostgreSQLOperations(self.conn, self._schema_tables)
+        self._pool = PostgreSQLConnectionPool(
+            self._connect_kwargs, max_wait_seconds=self._pool_max_wait_seconds
+        )
 
     def _sleep_before_retry(self, attempt_1based: int) -> None:
         time.sleep(self._retry_policy.delay_for_attempt(attempt_1based))
@@ -258,12 +287,7 @@ class PostgreSQLDriver(BaseDatabaseDriver):
                     ) from e
                 if not self.conn:
                     raise DriverOperationError("Database connection not established")
-                try:
-                    self.conn.rollback()
-                except Exception as rb:
-                    raise DriverOperationError(
-                        f"Rollback before database retry failed: {rb}"
-                    ) from rb
+                self._rollback_self_managed_before_retry()
                 logger.info(
                     "[DB_RETRY] backend=postgres layer=driver operation=%s "
                     "attempt=%s/%s sqlstate=%s error_kind=%s",
@@ -276,6 +300,31 @@ class PostgreSQLDriver(BaseDatabaseDriver):
                 self._sleep_before_retry(attempt)
         raise RuntimeError("PostgreSQL driver: retry loop exited without result")
 
+    def _rollback_self_managed_before_retry(self) -> None:
+        """Rollback before retrying self-managed execute after a transient error.
+
+        When ``_pool`` is active, rollback of the **leased** connection is handled inside
+        ``PostgreSQLConnectionPool.acquire``; this path only rolls back ``self.conn`` when
+        the retry path still used the main session without a pool lease.
+        """
+        if self._pool is not None:
+            return
+        if self.conn:
+            try:
+                self.conn.rollback()
+            except Exception as rb:
+                raise DriverOperationError(
+                    f"Rollback before database retry failed: {rb}"
+                ) from rb
+
+    def pool_status(self) -> Dict[str, Any]:
+        """Snapshot of execute pool lanes for observability (step 6 consumers)."""
+        if self._pool is None:
+            return {"enabled": False}
+        status = {"enabled": True}
+        status.update(self._pool.snapshot())
+        return status
+
     def disconnect(self) -> None:
         try:
             if self._query_journal:
@@ -286,6 +335,9 @@ class PostgreSQLDriver(BaseDatabaseDriver):
                 self._query_journal = None
             if self._transaction_manager:
                 self._transaction_manager.close_all()
+            if self._pool:
+                self._pool.close_all()
+                self._pool = None
             if self.conn:
                 self.conn.close()
                 self.conn = None
@@ -365,6 +417,16 @@ class PostgreSQLDriver(BaseDatabaseDriver):
         operations: List[Tuple[str, Optional[tuple]]],
         transaction_id: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
+        """Run batched SQL.
+
+        External ``transaction_id`` (from ``begin_transaction``): uses only the
+        connection in ``_transaction_manager._transactions``; the 3-write/2-read pool
+        is not used.
+
+        Self-managed (``None``, ``\"\"``, or ``\"local\"``): leases from the pool;
+        when all write slots are busy, acquire blocks until one frees (reads use
+        their own two slots).
+        """
         if not operations:
             return []
         if not _is_self_managed_transaction(transaction_id):
@@ -382,16 +444,21 @@ class PostgreSQLDriver(BaseDatabaseDriver):
             )
         if not self.conn:
             raise DriverOperationError("Database connection not established")
+        if not self._pool:
+            raise DriverOperationError("Database connection pool not initialized")
+        need_write = postgres_batch_requires_write_pool(operations)
+        pool = self._pool
 
         def do_run() -> List[Dict[str, Any]]:
             self._qa_maybe_inject_transient()
-            return run_execute_batch(
-                self.conn,
-                operations,
-                transaction_id,
-                self._query_journal,
-                self._schema_tables,
-            )
+            with pool.acquire(write=need_write) as pc:
+                return run_execute_batch(
+                    pc,
+                    operations,
+                    transaction_id,
+                    self._query_journal,
+                    self._schema_tables,
+                )
 
         return self._run_self_managed_with_retry("execute_batch", do_run)
 
@@ -401,6 +468,12 @@ class PostgreSQLDriver(BaseDatabaseDriver):
         params: Optional[tuple] = None,
         transaction_id: Optional[str] = None,
     ) -> Dict[str, Any]:
+        """Execute one statement.
+
+        Same routing as ``execute_batch``: explicit RPC transaction id → dedicated
+        ``_transactions`` connection only; self-managed → pool (writes may wait when
+        all three write connections are busy).
+        """
         if not _is_self_managed_transaction(transaction_id):
             if not self._transaction_manager:
                 raise DriverOperationError("Transaction manager not initialized")
@@ -417,17 +490,22 @@ class PostgreSQLDriver(BaseDatabaseDriver):
             )
         if not self.conn:
             raise DriverOperationError("Database connection not established")
+        if not self._pool:
+            raise DriverOperationError("Database connection pool not initialized")
+        need_write = postgres_execute_requires_write_pool(sql)
+        pool = self._pool
 
         def do_run() -> Dict[str, Any]:
             self._qa_maybe_inject_transient()
-            return run_execute(
-                self.conn,
-                sql,
-                params,
-                transaction_id,
-                self._query_journal,
-                self._schema_tables,
-            )
+            with pool.acquire(write=need_write) as pc:
+                return run_execute(
+                    pc,
+                    sql,
+                    params,
+                    transaction_id,
+                    self._query_journal,
+                    self._schema_tables,
+                )
 
         return self._run_self_managed_with_retry("execute", do_run)
 

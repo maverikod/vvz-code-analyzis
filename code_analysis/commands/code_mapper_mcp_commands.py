@@ -6,6 +6,7 @@ email: vasilyvz@gmail.com
 """
 
 import logging
+from pathlib import Path
 from typing import Any, Dict, Optional
 
 from mcp_proxy_adapter.commands.result import SuccessResult, ErrorResult
@@ -13,6 +14,11 @@ from mcp_proxy_adapter.commands.result import SuccessResult, ErrorResult
 from ..core.constants import DEFAULT_MAX_FILE_LINES
 from .base_mcp_command import BaseMCPCommand
 from .code_mapper_commands import ListLongFilesCommand, ListErrorsByCategoryCommand
+from .file_management.relative_path_list_pattern import (
+    canonical_relative_path,
+    effective_listing_pattern,
+    relative_path_matches_listing_pattern,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -26,7 +32,10 @@ class ListLongFilesMCPCommand(BaseMCPCommand):
 
     name = "list_long_files"
     version = "1.0.0"
-    descr = "List files exceeding maximum line limit (code_mapper functionality)"
+    descr = (
+        "List files exceeding a line threshold; optional ``file_pattern`` / ``glob`` on "
+        "project-relative paths (fnmatch / prefix, same as list_project_files)"
+    )
     category = "analysis"
     author = "Vasiliy Zdanovskiy"
     email = "vasilyvz@gmail.com"
@@ -37,6 +46,11 @@ class ListLongFilesMCPCommand(BaseMCPCommand):
         """Get JSON schema for command parameters."""
         return {
             "type": "object",
+            "description": (
+                "List indexed project files whose ``lines`` exceed ``max_lines``. "
+                "Optional ``file_pattern`` / ``glob`` filter on paths normalized relative to "
+                "project root. **No** ``limit``/``offset`` — the full filtered list is returned."
+            ),
             "properties": {
                 "project_id": {
                     "type": "string",
@@ -47,6 +61,20 @@ class ListLongFilesMCPCommand(BaseMCPCommand):
                     "description": "Maximum lines threshold (default: 400)",
                     "default": 400,
                 },
+                "file_pattern": {
+                    "type": "string",
+                    "description": (
+                        "Optional fnmatch on each row's ``path`` from the database after "
+                        "normalizing to a project-relative POSIX string (``*`` crosses ``/``). "
+                        "``glob`` is an alias."
+                    ),
+                },
+                "glob": {
+                    "type": "string",
+                    "description": (
+                        "Alias of ``file_pattern``; non-empty ``file_pattern`` wins when both set."
+                    ),
+                },
             },
             "required": ["project_id"],
             "additionalProperties": False,
@@ -56,6 +84,8 @@ class ListLongFilesMCPCommand(BaseMCPCommand):
         self,
         project_id: str,
         max_lines: int = DEFAULT_MAX_FILE_LINES,
+        file_pattern: Optional[str] = None,
+        glob: Optional[str] = None,
         **kwargs,
     ) -> SuccessResult | ErrorResult:
         """
@@ -69,12 +99,25 @@ class ListLongFilesMCPCommand(BaseMCPCommand):
             SuccessResult with long files list or ErrorResult on failure
         """
         try:
-            self._resolve_project_root(project_id)
+            root = self._resolve_project_root(project_id)
             db = self._open_database_from_config(auto_analyze=False)
 
             command = ListLongFilesCommand(db, project_id, max_lines)
             result = await command.execute()
             db.disconnect()
+
+            eff = effective_listing_pattern(file_pattern, glob)
+            if eff and isinstance(result, dict):
+                files = result.get("files") or []
+                out = []
+                for f in files:
+                    raw_path = f.get("path")
+                    if not raw_path:
+                        continue
+                    rel = canonical_relative_path(root, Path(str(raw_path)))
+                    if relative_path_matches_listing_pattern(rel, eff):
+                        out.append(f)
+                result = {**result, "files": out, "count": len(out)}
 
             return SuccessResult(data=result)
 
@@ -108,12 +151,12 @@ class ListLongFilesMCPCommand(BaseMCPCommand):
                 "line limit. This is equivalent to old code_mapper functionality for finding oversized files. "
                 "Large files are harder to maintain and may need to be split into smaller modules.\n\n"
                 "Operation flow:\n"
-                "1. Validates root_dir exists and is a directory\n"
+                "1. Resolves project root from ``project_id``\n"
                 "2. Opens database connection\n"
-                "3. Resolves project_id (from parameter or inferred from root_dir)\n"
-                "4. Queries files table for project files\n"
-                "5. Filters files where lines > max_lines\n"
-                "6. Returns list of files exceeding the threshold\n\n"
+                "3. Queries files table for project files with lines > ``max_lines``\n"
+                "4. Optionally filters rows where the DB path matches ``file_pattern`` / ``glob`` "
+                "(fnmatch on project-relative path; same rules as ``list_project_files``)\n"
+                "5. Returns list of files exceeding the threshold\n\n"
                 "Use cases:\n"
                 "- Identify files that need to be split\n"
                 "- Monitor file size compliance\n"
@@ -123,13 +166,13 @@ class ListLongFilesMCPCommand(BaseMCPCommand):
                 "- Uses line count from database (updated during indexing)\n"
                 "- Default threshold is 400 lines (project standard)\n"
                 "- Files are sorted by line count (descending)\n"
+                "- No pagination: all matching long files are returned in one response\n"
                 "- Equivalent to code_mapper functionality"
             ),
             "parameters": {
-                "root_dir": {
+                "project_id": {
                     "description": (
-                        "Project root directory path. Can be absolute or relative. "
-                        "Must contain data/code_analysis.db file."
+                        "Project UUID (from create_project or list_projects). Required."
                     ),
                     "type": "string",
                     "required": True,
@@ -143,10 +186,16 @@ class ListLongFilesMCPCommand(BaseMCPCommand):
                     "required": False,
                     "default": 400,
                 },
-                "project_id": {
+                "file_pattern": {
                     "description": (
-                        "Optional project UUID. If omitted, inferred from root_dir."
+                        "Optional fnmatch on each file path resolved relative to project root. "
+                        "``glob`` is an alias."
                     ),
+                    "type": "string",
+                    "required": False,
+                },
+                "glob": {
+                    "description": "Alias of ``file_pattern``.",
                     "type": "string",
                     "required": False,
                 },
@@ -155,25 +204,26 @@ class ListLongFilesMCPCommand(BaseMCPCommand):
                 {
                     "description": "List files exceeding 400 lines (default)",
                     "command": {
-                        "root_dir": "/home/user/projects/my_project",
+                        "project_id": "550e8400-e29b-41d4-a716-446655440000",
                     },
                     "explanation": (
                         "Lists all files in project exceeding 400 lines (default threshold)."
                     ),
                 },
                 {
-                    "description": "List files exceeding custom threshold",
+                    "description": "Long Python files under a subtree",
                     "command": {
-                        "root_dir": "/home/user/projects/my_project",
-                        "max_lines": 500,
+                        "project_id": "550e8400-e29b-41d4-a716-446655440000",
+                        "max_lines": 300,
+                        "file_pattern": "code_analysis/**/*.py",
                     },
-                    "explanation": ("Lists all files exceeding 500 lines."),
+                    "explanation": ("Combines line threshold with path glob."),
                 },
             ],
             "error_cases": {
                 "PROJECT_NOT_FOUND": {
                     "description": "Project not found in database",
-                    "example": "root_dir='/path' but project not registered",
+                    "example": "Unknown project_id",
                     "solution": "Ensure project is registered. Run update_indexes first.",
                 },
                 "LIST_LONG_FILES_ERROR": {
@@ -188,7 +238,7 @@ class ListLongFilesMCPCommand(BaseMCPCommand):
                 "success": {
                     "description": "Command executed successfully",
                     "data": {
-                        "long_files": (
+                        "files": (
                             "List of files exceeding max_lines. Each entry contains:\n"
                             "- path: File path\n"
                             "- lines: Number of lines in file\n"
@@ -198,12 +248,14 @@ class ListLongFilesMCPCommand(BaseMCPCommand):
                         "max_lines": "Maximum lines threshold used",
                     },
                     "example": {
-                        "long_files": [
+                        "success": True,
+                        "files": [
                             {"path": "src/main.py", "lines": 450},
                             {"path": "src/utils.py", "lines": 520},
                         ],
                         "count": 2,
                         "max_lines": 400,
+                        "project_id": "550e8400-e29b-41d4-a716-446655440000",
                     },
                 },
                 "error": {
@@ -214,6 +266,7 @@ class ListLongFilesMCPCommand(BaseMCPCommand):
             },
             "best_practices": [
                 f"Use default max_lines={DEFAULT_MAX_FILE_LINES} to follow project standards",
+                "Use file_pattern or glob to scope long files to a subtree (fnmatch on full path)",
                 "Run this command regularly to monitor file sizes",
                 "Use split_file_to_package to split large files",
                 "Combine with comprehensive_analysis for complete code quality overview",

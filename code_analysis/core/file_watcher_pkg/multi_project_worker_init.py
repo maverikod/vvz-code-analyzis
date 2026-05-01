@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any, List
 
 from ..sql_portable import sql_julian_timestamp_now_expr
+from ..worker_db_rpc_priority import BACKGROUND_WORKER_DB_RPC_PRIORITY
 from .multi_project_worker_specs import WatchDirSpec
 
 logger = logging.getLogger(__name__)
@@ -28,6 +29,8 @@ def _watch_dir_id_str(watch_dir_id: Any) -> str:
     if watch_dir_id is None:
         return ""
     return str(watch_dir_id)
+
+
 def _is_path_under(path: Path, parent: Path) -> bool:
     """Check whether ``path`` is equal to or under ``parent``.
 
@@ -73,8 +76,14 @@ def _verify_and_relocate_orphaned_projects(
 
     all_projects = database.get_all_projects()
     for proj in all_projects:
-        project_id = proj.get("id") if isinstance(proj, dict) else getattr(proj, "id", None)
-        raw_root = proj.get("root_path") if isinstance(proj, dict) else getattr(proj, "root_path", None)
+        project_id = (
+            proj.get("id") if isinstance(proj, dict) else getattr(proj, "id", None)
+        )
+        raw_root = (
+            proj.get("root_path")
+            if isinstance(proj, dict)
+            else getattr(proj, "root_path", None)
+        )
         if not project_id or not raw_root:
             continue
 
@@ -119,6 +128,7 @@ def _verify_and_relocate_orphaned_projects(
                         f"UPDATE projects SET watch_dir_id = ?, updated_at = {now_sql} "
                         "WHERE id = ?",
                         (wid, project_id),
+                        priority=BACKGROUND_WORKER_DB_RPC_PRIORITY,
                     )
                     logger.info(
                         "[WATCHER_INIT] project_id=%s relocated %s -> %s, watch_dir_id=%s",
@@ -145,6 +155,8 @@ def _verify_and_relocate_orphaned_projects(
                 project_id,
                 current_root,
             )
+
+
 def initialize_watch_dirs(database: Any, watch_dirs: List[WatchDirSpec]) -> None:
     """Initialize watch directories from config.
 
@@ -196,6 +208,7 @@ def initialize_watch_dirs(database: Any, watch_dirs: List[WatchDirSpec]) -> None
                 updated_at = EXCLUDED.updated_at
             """,
             (wid, watch_dir_path.name),
+            priority=BACKGROUND_WORKER_DB_RPC_PRIORITY,
         )
 
         if watch_dir_path.exists():
@@ -209,6 +222,7 @@ def initialize_watch_dirs(database: Any, watch_dirs: List[WatchDirSpec]) -> None
                     updated_at = EXCLUDED.updated_at
                 """,
                 (wid, normalized_path),
+                priority=BACKGROUND_WORKER_DB_RPC_PRIORITY,
             )
             logger.debug(f"Updated watch_dir_path: {wid} -> {normalized_path}")
 
@@ -266,6 +280,7 @@ def initialize_watch_dirs(database: Any, watch_dirs: List[WatchDirSpec]) -> None
                                 WHERE id = ?
                                 """,
                                 (wid, project_root_obj.project_id),
+                                priority=BACKGROUND_WORKER_DB_RPC_PRIORITY,
                             )
                             logger.debug(
                                 f"Updated project {project_root_obj.project_id} "
@@ -285,6 +300,7 @@ def initialize_watch_dirs(database: Any, watch_dirs: List[WatchDirSpec]) -> None
                                 project_root_obj.description,
                                 wid,
                             ),
+                            priority=BACKGROUND_WORKER_DB_RPC_PRIORITY,
                         )
                         logger.info(
                             f"Created project {project_root_obj.project_id} "
@@ -306,6 +322,7 @@ def initialize_watch_dirs(database: Any, watch_dirs: List[WatchDirSpec]) -> None
                     updated_at = EXCLUDED.updated_at
                 """,
                 (wid,),
+                priority=BACKGROUND_WORKER_DB_RPC_PRIORITY,
             )
             logger.warning(
                 f"Watch dir path does not exist: {watch_dir_path}, "
@@ -315,6 +332,7 @@ def initialize_watch_dirs(database: Any, watch_dirs: List[WatchDirSpec]) -> None
     all_watch_dirs_result = database.execute(
         "SELECT id FROM watch_dirs",
         None,
+        priority=BACKGROUND_WORKER_DB_RPC_PRIORITY,
     )
     all_watch_dirs_rows = (
         all_watch_dirs_result.get("data", [])
@@ -333,6 +351,7 @@ def initialize_watch_dirs(database: Any, watch_dirs: List[WatchDirSpec]) -> None
                     updated_at = EXCLUDED.updated_at
                 """,
                 (db_wid,),
+                priority=BACKGROUND_WORKER_DB_RPC_PRIORITY,
             )
             logger.debug(f"Watch dir {db_wid} not in config, setting path to NULL")
 
@@ -343,6 +362,7 @@ def initialize_watch_dirs(database: Any, watch_dirs: List[WatchDirSpec]) -> None
     _verify_and_relocate_orphaned_projects(database, config_watch_dir_paths, now_sql)
 
     logger.info("Watch directories initialization completed")
+
 
 # cst-node-ids: begin
 # cst-node-ids: version=2

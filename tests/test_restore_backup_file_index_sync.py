@@ -88,7 +88,7 @@ def _index_file(
         db.rollback_transaction(transaction_id)
         raise
     assert update_result.get("success"), update_result
-    return int(file_id)
+    return file_id
 
 
 @pytest.mark.asyncio

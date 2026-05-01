@@ -11,6 +11,10 @@ from typing import Any, Dict
 from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 
 from ..base_mcp_command import BaseMCPCommand
+from ..file_management.relative_path_list_pattern import (
+    effective_listing_pattern,
+    relative_path_matches_listing_pattern,
+)
 from ...core.backup_manager import BackupManager
 
 logger = logging.getLogger(__name__)
@@ -21,7 +25,10 @@ class ListBackupFilesMCPCommand(BaseMCPCommand):
 
     name = "list_backup_files"
     version = "1.0.0"
-    descr = "List all backed up files"
+    descr = (
+        "List backed-up files in old_code; optional ``file_pattern`` / ``glob`` filter "
+        "(fnmatch on project-relative paths, same semantics as list_project_files)"
+    )
     category = "backup"
     author = "Vasiliy Zdanovskiy"
     email = "vasilyvz@gmail.com"
@@ -33,14 +40,39 @@ class ListBackupFilesMCPCommand(BaseMCPCommand):
         base_props = cls._get_base_schema_properties()
         return {
             "type": "object",
+            "description": (
+                "List each backed-up **original** path once (metadata from latest backup). "
+                "Optional ``file_pattern`` / ``glob`` only. **No** ``limit``/``offset`` — the "
+                "full filtered list is returned (unlike ``list_project_files``)."
+            ),
             "properties": {
                 **base_props,
+                "file_pattern": {
+                    "type": "string",
+                    "description": (
+                        "Optional filter: fnmatch on each backup ``file_path`` (project-relative "
+                        "POSIX, ``*`` crosses ``/``). Literal without ``*?[]`` = exact path or "
+                        "directory prefix. ``glob`` is an alias."
+                    ),
+                },
+                "glob": {
+                    "type": "string",
+                    "description": (
+                        "Alias of ``file_pattern``; non-empty ``file_pattern`` wins when both set."
+                    ),
+                },
             },
             "required": ["project_id"],
             "additionalProperties": False,
         }
 
-    async def execute(self, project_id: str, **kwargs) -> SuccessResult | ErrorResult:
+    async def execute(
+        self,
+        project_id: str,
+        file_pattern: str | None = None,
+        glob: str | None = None,
+        **kwargs,
+    ) -> SuccessResult | ErrorResult:
         """
         List all backed up files.
 
@@ -79,6 +111,17 @@ class ListBackupFilesMCPCommand(BaseMCPCommand):
                 else:
                     files_with_info.append(file_info)
 
+            eff = effective_listing_pattern(file_pattern, glob)
+            if eff:
+                files_with_info = [
+                    row
+                    for row in files_with_info
+                    if relative_path_matches_listing_pattern(
+                        str(row.get("file_path") or "").replace("\\", "/"),
+                        eff,
+                    )
+                ]
+
             return SuccessResult(
                 data={
                     "files": files_with_info,
@@ -111,22 +154,27 @@ class ListBackupFilesMCPCommand(BaseMCPCommand):
             "author": cls.author,
             "email": cls.email,
             "parameters_summary": (
-                "Required: project_id. No limit or other optional parameters."
+                "Required: ``project_id``. Optional: ``file_pattern`` or ``glob`` to filter "
+                "by project-relative path (fnmatch / directory-prefix, same rules as "
+                "``list_project_files``). No pagination parameters — the full filtered set "
+                "is returned."
             ),
             "detailed_description": (
                 "The list_backup_files command retrieves all unique files that have been backed up "
                 "in the project's old_code directory. It returns a list of file paths along with "
                 "metadata from the latest backup version for each file.\n\n"
                 "Operation flow:\n"
-                "1. Validates root_dir exists and is a directory\n"
+                "1. Resolves project root from ``project_id``\n"
                 "2. Initializes BackupManager for the project\n"
                 "3. Loads backup index from old_code/index.txt\n"
                 "4. Extracts unique file paths from all backup entries\n"
                 "5. For each file, finds the latest backup version\n"
                 "6. Enriches file info with command name and related_files from latest backup\n"
-                "7. Returns list of files with metadata\n\n"
+                "7. Optionally filters rows where ``file_path`` matches ``file_pattern`` / ``glob`` "
+                "(fnmatch on full relative path; literals without ``*?[]`` are directory prefixes)\n"
+                "8. Returns list of files with metadata\n\n"
                 "Backup System:\n"
-                "- Backups are stored in old_code/ directory relative to root_dir\n"
+                "- Backups are stored in old_code/ directory relative to the project root\n"
                 "- Each backup has a UUID and is indexed in old_code/index.txt\n"
                 "- Backup filename format: path_with_underscores-UUID\n"
                 "- Index format: UUID|File Path|Timestamp|Command|Related Files|Comment\n\n"
@@ -141,28 +189,38 @@ class ListBackupFilesMCPCommand(BaseMCPCommand):
                 "- command field shows which command created the latest backup\n"
                 "- related_files field shows files created/modified together (e.g., from split operations)\n"
                 "- Empty backup directory returns empty list (count: 0)\n"
-                "- File paths are relative to root_dir"
+                "- File paths are relative to the project root\n"
+                "- No ``limit``/``offset``: the full filtered list is returned in one response"
             ),
             "parameters": {
-                "root_dir": {
+                "project_id": {
                     "description": (
-                        "Project root directory path. Can be absolute or relative. "
-                        "Must contain old_code/ directory with backups."
+                        "Project UUID (from create_project or list_projects). "
+                        "Required; project root is resolved from the database."
                     ),
                     "type": "string",
                     "required": True,
-                    "examples": [
-                        "/home/user/projects/my_project",
-                        ".",
-                        "./code_analysis",
-                    ],
+                },
+                "file_pattern": {
+                    "description": (
+                        "Optional fnmatch on each ``file_path`` (project-relative POSIX). "
+                        "``glob`` is an alias; non-empty ``file_pattern`` wins when both are set."
+                    ),
+                    "type": "string",
+                    "required": False,
+                    "examples": ["*.py", "code_analysis/commands/*", "docs/plans/foo"],
+                },
+                "glob": {
+                    "description": "Alias of ``file_pattern``.",
+                    "type": "string",
+                    "required": False,
                 },
             },
             "usage_examples": [
                 {
                     "description": "List all backed up files in project",
                     "command": {
-                        "root_dir": "/home/user/projects/my_project",
+                        "project_id": "550e8400-e29b-41d4-a716-446655440000",
                     },
                     "explanation": (
                         "Returns all unique files that have been backed up, "
@@ -170,12 +228,13 @@ class ListBackupFilesMCPCommand(BaseMCPCommand):
                     ),
                 },
                 {
-                    "description": "Check backups in current directory",
+                    "description": "Only backups under a path prefix",
                     "command": {
-                        "root_dir": ".",
+                        "project_id": "550e8400-e29b-41d4-a716-446655440000",
+                        "file_pattern": "code_analysis/commands",
                     },
                     "explanation": (
-                        "Lists all backed up files in the current working directory's project."
+                        "Literal prefix (no wildcards) keeps every ``file_path`` under that directory."
                     ),
                 },
             ],
@@ -183,12 +242,12 @@ class ListBackupFilesMCPCommand(BaseMCPCommand):
                 "LIST_BACKUP_FILES_ERROR": {
                     "description": "General error during backup file listing",
                     "example": (
-                        "Invalid root_dir, missing old_code directory, "
+                        "Unknown project_id, missing old_code directory, "
                         "corrupted index file, or permission errors"
                     ),
                     "solution": (
-                        "Verify root_dir exists and is accessible, check old_code/index.txt "
-                        "file integrity, ensure proper file permissions"
+                        "Verify project is registered, project root exists and is accessible, "
+                        "check old_code/index.txt integrity, ensure proper file permissions"
                     ),
                 },
             },

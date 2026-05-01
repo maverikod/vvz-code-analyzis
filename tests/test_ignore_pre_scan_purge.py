@@ -158,8 +158,19 @@ def test_build_batch_starts_with_temp_table():
     ops = build_ignore_purge_sql_batch("proj-1", ids)
     assert ops[0][0].startswith("DROP TABLE IF EXISTS")
     assert "CREATE TEMP TABLE" in ops[1][0]
+    assert "TEXT NOT NULL PRIMARY KEY" in ops[1][0]
     assert any("duplicate_occurrences" in x[0] for x in ops)
     assert any("DELETE FROM files WHERE id IN" in x[0] for x in ops)
+
+
+def test_build_batch_postgres_uses_uuid_temp_column():
+    """PostgreSQL: temp purge ids must be UUID so IN (SELECT id FROM temp) matches uuid columns."""
+    ops = build_ignore_purge_sql_batch(
+        "00000000-0000-0000-0000-000000000001",
+        ["aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"],
+        use_uuid_temp_table=True,
+    )
+    assert "UUID NOT NULL PRIMARY KEY" in ops[1][0]
 
 
 def test_build_ignore_purge_batch_skips_fts_when_disabled():

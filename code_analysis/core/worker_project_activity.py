@@ -99,14 +99,66 @@ def _affected(result: Dict[str, Any]) -> int:
         return 0
 
 
-def _fetch_lock_row(database: Any, project_id: str) -> Optional[Dict[str, Any]]:
-    rows = database.select(
-        TABLE,
-        where={"project_id": project_id},
+def _execute_coord(
+    database: Any,
+    sql: str,
+    params: Optional[tuple],
+    *,
+    transaction_id: Optional[str],
+    rpc_priority: int,
+) -> Dict[str, Any]:
+    """``database.execute`` with optional RPC priority when the object supports it."""
+    if rpc_priority:
+        try:
+            return cast(
+                Dict[str, Any],
+                database.execute(
+                    sql,
+                    params,
+                    transaction_id=transaction_id,
+                    priority=rpc_priority,
+                ),
+            )
+        except TypeError:
+            pass
+    return cast(
+        Dict[str, Any],
+        database.execute(sql, params, transaction_id=transaction_id),
     )
+
+
+def _select_coord_lock_row(
+    database: Any,
+    project_id: str,
+    *,
+    rpc_priority: int,
+) -> Optional[Dict[str, Any]]:
+    if rpc_priority:
+        try:
+            rows = database.select(
+                TABLE,
+                where={"project_id": project_id},
+                priority=rpc_priority,
+            )
+        except TypeError:
+            rows = database.select(
+                TABLE,
+                where={"project_id": project_id},
+            )
+    else:
+        rows = database.select(
+            TABLE,
+            where={"project_id": project_id},
+        )
     if not rows:
         return None
     return cast(Dict[str, Any], dict(rows[0]))
+
+
+def _fetch_lock_row(
+    database: Any, project_id: str, *, rpc_priority: int = 0
+) -> Optional[Dict[str, Any]]:
+    return _select_coord_lock_row(database, project_id, rpc_priority=rpc_priority)
 
 
 def _log_coord(
@@ -137,6 +189,8 @@ def try_acquire_project_activity(
     owner_id: str,
     activity: str,
     ttl_seconds: float,
+    *,
+    rpc_priority: int = 0,
 ) -> bool:
     """Atomically take or refresh the project lease, or return False if busy.
 
@@ -162,7 +216,13 @@ def try_acquire_project_activity(
         now,
         now,
     )
-    res = database.execute(_ACQUIRE_SQL, params, transaction_id=None)
+    res = _execute_coord(
+        database,
+        _ACQUIRE_SQL,
+        params,
+        transaction_id=None,
+        rpc_priority=rpc_priority,
+    )
     ok = _affected(res) > 0
     if ok:
         _log_coord(
@@ -174,7 +234,7 @@ def try_acquire_project_activity(
             result="acquired",
         )
         return True
-    before = _fetch_lock_row(database, project_id)
+    before = _fetch_lock_row(database, project_id, rpc_priority=rpc_priority)
     extra: Optional[Dict[str, Any]] = None
     if before:
         extra = {
@@ -201,6 +261,8 @@ def heartbeat_project_activity(
     owner_id: str,
     activity: str,
     ttl_seconds: float,
+    *,
+    rpc_priority: int = 0,
 ) -> bool:
     _validate_project_id(project_id)
     _validate_owner_type(owner_type)
@@ -210,7 +272,13 @@ def heartbeat_project_activity(
     now = time.time()
     lease_until = now + float(ttl_seconds)
     params = (activity, now, lease_until, project_id, owner_type, owner_id, now)
-    res = database.execute(_HEARTBEAT_SQL, params, transaction_id=None)
+    res = _execute_coord(
+        database,
+        _HEARTBEAT_SQL,
+        params,
+        transaction_id=None,
+        rpc_priority=rpc_priority,
+    )
     ok = _affected(res) > 0
     _log_coord(
         "heartbeat",
@@ -228,15 +296,19 @@ def release_project_activity(
     project_id: str,
     owner_type: str,
     owner_id: str,
+    *,
+    rpc_priority: int = 0,
 ) -> bool:
     _validate_project_id(project_id)
     _validate_owner_type(owner_type)
     _validate_owner_id(owner_id)
-    row = _fetch_lock_row(database, project_id)
-    res = database.execute(
+    row = _fetch_lock_row(database, project_id, rpc_priority=rpc_priority)
+    res = _execute_coord(
+        database,
         _RELEASE_SQL,
         (project_id, owner_type, owner_id),
         transaction_id=None,
+        rpc_priority=rpc_priority,
     )
     ok = _affected(res) > 0
     act_log: str

@@ -78,6 +78,8 @@ class ListLogsMCPCommand(BaseMCPCommand):
                 "Use these log_id values with view_worker_logs (log_id parameter). "
                 "Identifiers are stable and do not change when logs are rotated. "
                 "Reading in view_worker_logs includes rotated files (.1, .2, .gz).\n\n"
+                "There is no filename glob here — to scan log **files** on disk with optional "
+                "``file_pattern`` / ``glob``, use ``list_worker_logs``.\n\n"
                 "Log identifiers: mcp_server, code_analysis, vectorization, file_watcher, indexing_worker."
             ),
             "parameters": {

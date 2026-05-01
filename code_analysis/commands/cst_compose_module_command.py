@@ -128,7 +128,15 @@ class ComposeCSTModuleCommand(BaseMCPCommand):
                 },
                 "ops": {
                     "type": "array",
-                    "description": "List of replace operations (ops mode). Each item: { selector: { kind, ... }, new_code [, file_docstring ] }. Selector kinds: module, function, class, method, range, block_id, node_id (UUID4), cst_query. For kind range (line span without columns), the statement matching that span is replaced and blank lines above it are kept. When ops contain node_id selector, tree_id is required.",
+                    "description": (
+                        "List of replace operations (ops mode). Each item: "
+                        "{ selector: { kind, ... }, new_code [, file_docstring ] }. "
+                        "Selector kinds: module, function, class, method, range, block_id, node_id (UUID4), cst_query. "
+                        "For kind=module on an existing file: only file_docstring is applied (updates or inserts "
+                        "the module docstring); new_code is ignored—use function/class/range/etc. to replace code. "
+                        "For kind range (line span without columns), the statement matching that span is replaced "
+                        "and blank lines above it are kept. When ops contain node_id selector, tree_id is required."
+                    ),
                     "items": {
                         "type": "object",
                         "properties": {
@@ -156,7 +164,11 @@ class ComposeCSTModuleCommand(BaseMCPCommand):
                 },
                 "validate_syntax_only": {
                     "type": "boolean",
-                    "description": "If true, skip flake8/mypy validation and only check Python syntax. Use when the file has pre-existing linter/type errors that should not block a local patch.",
+                    "description": (
+                        "If true, skip flake8, mypy, and docstring policy validation; only "
+                        "check Python syntax (compile). Use when pre-existing style/type/"
+                        "docstring issues would block a local patch."
+                    ),
                     "default": False,
                 },
                 "commit_message": {

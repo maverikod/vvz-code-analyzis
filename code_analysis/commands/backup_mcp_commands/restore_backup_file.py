@@ -43,7 +43,10 @@ class RestoreBackupFileMCPCommand(BaseMCPCommand):
                 **base_props,
                 "file_path": {
                     "type": "string",
-                    "description": "Original file path (relative to project root)",
+                    "description": (
+                        "Single literal original path relative to project root (no globs; "
+                        "must match the path used when the backup was created)."
+                    ),
                 },
                 "backup_uuid": {
                     "type": "string",

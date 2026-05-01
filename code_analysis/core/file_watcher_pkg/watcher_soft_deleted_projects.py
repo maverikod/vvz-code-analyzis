@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Any, List, Set, Tuple
 
 from ..project_discovery import ProjectRoot
+from ..worker_db_rpc_priority import BACKGROUND_WORKER_DB_RPC_PRIORITY
 
 logger = logging.getLogger(__name__)
 
@@ -88,6 +89,7 @@ def partition_discovered_projects_by_db_soft_delete(
         res = database.execute(
             "SELECT id, deleted FROM projects WHERE root_path = ? LIMIT 1",
             (root_s,),
+            priority=BACKGROUND_WORKER_DB_RPC_PRIORITY,
         )
         rows = _execute_data_rows(res)
         if rows and _truthy_deleted(rows[0].get("deleted")):

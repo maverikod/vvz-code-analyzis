@@ -1,5 +1,5 @@
 """
-Code linter using flake8 as a library.
+Code linter using the flake8 CLI in a subprocess.
 
 Author: Vasiliy Zdanovskiy
 email: vasilyvz@gmail.com
@@ -16,55 +16,25 @@ def lint_with_flake8(
     file_path: Path, ignore: Optional[List[str]] = None
 ) -> Tuple[bool, Optional[str], List[str]]:
     """
-    Lint Python code using flake8 as a library.
+    Lint Python code using the flake8 CLI in a subprocess.
 
-    Args:
-        file_path: Path to Python file to lint
-        ignore: List of error codes to ignore
-
-    Returns:
-        Tuple of (success, error_message, list_of_errors)
+    In-process ``flake8.api.legacy.get_style_guide().check_files()`` is not used:
+    it has no wall-clock timeout and could block the server on pathological inputs.
+    Subprocess ``flake8`` is capped at 30 seconds and runs with a sanitized
+    ``PYTHONPATH`` (see ``_lint_with_subprocess``).
     """
-    try:
-        from flake8.api import legacy as flake8_legacy  # type: ignore[import-untyped]
-
-        # Create flake8 checker
-        style_guide = flake8_legacy.get_style_guide(
-            ignore=ignore or [],
-            max_line_length=88,
-        )
-
-        # Check file
-        report = style_guide.check_files([str(file_path)])
-        if report.total_errors > 0:
-            # NOTE:
-            # flake8's internal report API is not stable across versions and can return
-            # different shapes for `get_statistics()`. To keep this tool robust, we
-            # delegate detailed error collection to the subprocess output.
-            return _lint_with_subprocess(file_path, ignore)
-
-        logger.debug(f"No flake8 errors found in {file_path}")
-        return (True, None, [])
-
-    except ImportError:
-        # Fallback to subprocess if flake8 is not available as library
-        logger.debug("Flake8 not available as library, falling back to subprocess")
-        return _lint_with_subprocess(file_path, ignore)
-    except Exception as e:
-        # If flake8 library path fails, fall back to subprocess to avoid hard-failing.
-        logger.warning(f"flake8 library lint failed, falling back to subprocess: {e}")
-        return _lint_with_subprocess(file_path, ignore)
+    return _lint_with_subprocess(file_path, ignore)
 
 
 def _lint_with_subprocess(
     file_path: Path, ignore: Optional[List[str]] = None
 ) -> Tuple[bool, Optional[str], List[str]]:
-    """Fallback to subprocess if flake8 library is not available."""
+    """Run flake8 in a subprocess with timeout and sanitized environment."""
     import os
     import subprocess
 
     try:
-        cmd = ["flake8", str(file_path)]
+        cmd = ["flake8", "--max-line-length=88", str(file_path)]
         if ignore:
             cmd.extend(["--ignore", ",".join(ignore)])
 

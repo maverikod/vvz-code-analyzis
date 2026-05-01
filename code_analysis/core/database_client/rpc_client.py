@@ -102,6 +102,11 @@ class RPCClient:
         if self._closed:
             raise ConnectionError("RPC client is closed")
 
+        # Second connect() with a full pool would block forever on Queue.put;
+        # callers (e.g. indexing worker tests) may connect before process_cycle.
+        if self._connected:
+            return
+
         # Pre-create connections in pool.
         # During server restart there is a short window when socket file may exist
         # but driver still returns ECONNREFUSED; keep retrying for a bounded timeout.
@@ -158,6 +163,8 @@ class RPCClient:
         method: str,
         params: Dict[str, Any],
         request_id: Optional[str] = None,
+        *,
+        priority: int = 0,
     ) -> RPCResponse:
         """Call RPC method.
 
@@ -165,6 +172,7 @@ class RPCClient:
             method: RPC method name
             params: Method parameters
             request_id: Optional request ID (generated if not provided)
+            priority: Optional request priority (non-zero included on wire JSON-RPC)
 
         Returns:
             RPC response
@@ -180,7 +188,9 @@ class RPCClient:
         if not request_id:
             request_id = str(uuid.uuid4())
 
-        request = RPCRequest(method=method, params=params, request_id=request_id)
+        request = RPCRequest(
+            method=method, params=params, priority=priority, request_id=request_id
+        )
         tid = (params or {}).get("transaction_id") if isinstance(params, dict) else None
         logger.info(
             "[CHAIN] rpc_client call method=%s tid=%s request_id=%s",

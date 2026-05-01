@@ -72,12 +72,17 @@ class InProcessRpcClient:
         method: str,
         params: Dict[str, Any],
         request_id: Optional[str] = None,
+        *,
+        priority: int = 0,
     ) -> RPCResponse:
-        if self._closed:
-            raise ConnectionError("In-process RPC client is closed")
         if not request_id:
             request_id = str(uuid.uuid4())
-        request = RPCRequest(method=method, params=params, request_id=request_id)
+        request = RPCRequest(
+            method=method,
+            params=params,
+            priority=priority,
+            request_id=request_id,
+        )
         tid = (params or {}).get("transaction_id") if isinstance(params, dict) else None
         logger.info(
             "[CHAIN] in_process_rpc call method=%s tid=%s request_id=%s",
@@ -85,10 +90,17 @@ class InProcessRpcClient:
             (tid[:8] + "…") if tid and len(str(tid)) > 8 else tid,
             request_id[:8] + "…" if request_id and len(request_id) > 8 else request_id,
         )
+        # Critical section: only lifecycle visibility for `_closed`. We hold `_call_lock`
+        # just long enough for `disconnect()` and concurrent `call()` to agree on whether
+        # a new dispatch may begin. `process_rpc_request` runs without this lock so
+        # concurrent PostgreSQL RPCs can proceed and contend on the driver pool instead
+        # of FIFO-serializing the whole universal path.
+        with self._call_lock:
+            if self._closed:
+                raise ConnectionError("In-process RPC client is closed")
         t_rpc = time.perf_counter()
         try:
-            with self._call_lock:
-                response = process_rpc_request(self.handlers, request)
+            response = process_rpc_request(self.handlers, request)
         except Exception as e:
             logger.warning("[CHAIN] in_process_rpc call method=%s error: %s", method, e)
             raise RPCClientError(f"RPC call failed: {e}") from e

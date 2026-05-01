@@ -12,16 +12,17 @@ email: vasilyvz@gmail.com
 
 ## Purpose (Предназначение)
 
-The `list_project_files` command enumerates **Python (`.py`) source files** under the project root by **walking the filesystem first**, then **joining database rows** when a non-deleted indexed file matches the same normalized relative path. This gives an on-disk catalog with optional index metadata (ids, line counts, timestamps, etc.).
+The `list_project_files` command enumerates **project files on disk** (by default ordinary non-binary files under the root; use `python_only: true` for legacy **`.py`-only** indexing-aligned walks), then **joins database rows** when a non-deleted indexed file matches the same normalized relative path. Dot-prefixed directories, tool cache dirs, and project-local `.venv` / `venv` are **excluded by default** (like `ls` without `-a`); opt in with `show_hidden` (hidden + caches, `ls -a`-style), `show_venv`, or `include_venv_ignore_exceptions` (see below).
 
 Operation flow:
 
 1. Resolves project root from `project_id` (via the database).
 2. Opens the database connection.
 3. Loads non-deleted `files` rows for the project (for metadata lookup).
-4. Enumerates `.py` files on disk:
-   - By default, uses the same discovery as indexing: project tree **excluding** project-local `.venv` and `venv` directories (and other ignore rules shared with indexing).
+4. Enumerates files on disk:
+   - By default, project tree **excluding** dot-prefixed directories (except what appears via other flags), project-local `.venv` / `venv`, **cache dirs** (`__pycache__`, `.mypy_cache`, …), and other shared ignore rules (`node_modules`, `dist`, …). With `show_hidden: true`, listing follows **`ls -a`**: dotdirs (except `.venv`/`venv` roots) and cache basenames are descended; bytecode/binary suffixes still skipped; bulky dirs like `node_modules` remain excluded.
    - With `show_venv: true`, **additionally** includes only **config-allowlisted** virtualenv `site-packages` `.py` files resolved from pip **RECORD** entries (see `venv_site_packages_index_allowlisted_distributions` in server config). The **entire** virtualenv is never listed.
+   - With `include_venv_ignore_exceptions: true`, `code_analysis.ignore_exceptions` matches under `.venv` / `venv` are included (default: excluded).
 5. If `file_pattern` is set, filters relative paths with `fnmatch`.
 6. Sorts paths stably (by relative path string), then applies `offset` / `limit`.
 7. For each filesystem path, if a DB row matches, returns the usual DB-backed fields; otherwise returns a minimal row (`project_id`, `path`, `relative_path`, `deleted: false`).
@@ -39,12 +40,16 @@ Important notes:
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `project_id` | string | **Yes** | Project UUID (from `create_project` or `list_projects`). |
-| `file_pattern` | string | No | Optional `fnmatch` pattern on **relative** paths (e.g. `*.py`, `src/*`). |
+| `file_pattern` | string | No | Optional `fnmatch` pattern on the **full** path relative to project root (see command metadata). |
+| `glob` | string | No | Same as `file_pattern` if the client uses this name; non-empty `file_pattern` wins when both are set. |
 | `limit` | integer | No | Max number of results after sort (pagination). |
 | `offset` | integer | No | Skip N results after sort. Default: `0`. |
-| `show_venv` | boolean | No | Default `false`. When `true`, include only allowlisted venv `site-packages` `.py` files (RECORD-based), in addition to normal project sources; never the full venv. If the allowlist is empty, no venv files are added. |
+| `show_venv` | boolean | No | Default `false`. When `true`, add allowlisted venv `site-packages` `.py` files (RECORD-based). Does not expose arbitrary paths under `.venv`/`venv` without `include_venv_ignore_exceptions`. |
+| `python_only` | boolean | No | Default `false`. When `true`, enumerate only `.py` files (legacy indexing-aligned walk). |
+| `include_venv_ignore_exceptions` | boolean | No | Default `false`. When `true`, include `ignore_exceptions` matches under `.venv` / `venv`. |
+| `show_hidden` | boolean | No | Default `false`. When `true`, **`ls -a`‑style**: descend into dot-prefixed directories (except project `.venv`/`venv`) and into cache basenames (`__pycache__`, `.mypy_cache`, …). `node_modules` / `dist` / … stay excluded. |
 
-**Schema:** `additionalProperties: false` — only the parameters above are accepted.
+**Schema:** `additionalProperties: false` — only the parameters listed in `get_schema()` for this command are accepted.
 
 ---
 

@@ -157,6 +157,7 @@ class WorkerStatusCommand:
             return [
                 logs_dir / "vectorization_worker.pid",
                 logs_dir / "file_watcher_worker.pid",
+                logs_dir / "indexing_worker.pid",
             ]
         pid_path = self._get_pid_file_path()
         return [pid_path] if pid_path else []
@@ -302,7 +303,7 @@ class WorkerStatusCommand:
         self._verify_pid_files_against_registry(registered_pids_set)
 
         # Lock file info (for file watcher) — informational only, no fallback
-        if self.worker_type == "file_watcher":
+        if self.worker_type in ("file_watcher", "all"):
             result["lock_file"] = self._get_lock_file_info()
 
         # Get recent log activity

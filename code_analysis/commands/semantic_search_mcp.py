@@ -64,7 +64,14 @@ class SemanticSearchMCPCommand(BaseMCPCommand):
                 },
                 "limit": {
                     "type": "integer",
-                    "description": "Maximum number of results to return (1-100). Same as fulltext_search/search_ast_nodes.",
+                    "description": (
+                        "Maximum FAISS neighbors to retrieve (1–100). Default 10. "
+                        "Values outside the range are clamped. Same parameter name as "
+                        "fulltext_search / search_ast_nodes."
+                    ),
+                    "default": 10,
+                    "minimum": 1,
+                    "maximum": 100,
                 },
                 "min_score": {
                     "type": "number",
@@ -74,6 +81,16 @@ class SemanticSearchMCPCommand(BaseMCPCommand):
             "required": ["project_id", "query"],
             "additionalProperties": False,
         }
+
+    def validate_params(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        """Clamp ``limit`` to 1–100 after schema validation."""
+        params = super().validate_params(params)
+        if "limit" in params and params["limit"] is not None:
+            try:
+                params["limit"] = max(1, min(100, int(params["limit"])))
+            except (TypeError, ValueError):
+                params["limit"] = 10
+        return params
 
     async def execute(
         self: "SemanticSearchMCPCommand",
@@ -323,51 +340,44 @@ class SemanticSearchMCPCommand(BaseMCPCommand):
             "author": cls.author,
             "email": cls.email,
             "detailed_description": (
-                "The semantic_search command performs semantic search using embeddings and FAISS vector index. "
-                "It converts the query text to an embedding vector using an embedding service, "
-                "then searches for similar code chunks in the FAISS index.\n\n"
+                "The semantic_search command performs semantic search using embeddings and a "
+                "FAISS vector index. It converts the query text to an embedding via the "
+                "configured embedding service, then searches for similar code chunks in the "
+                "per-project index.\n\n"
                 "Operation flow:\n"
-                "1. Validates root_dir exists and is a directory\n"
-                "2. Opens database connection\n"
-                "3. Resolves project_id (from parameter or inferred from root_dir)\n"
-                "4. Loads server config to get vector_dim and embedding service config\n"
-                "5. Resolves FAISS index path (one index per project: {faiss_dir}/{project_id}.bin)\n"
-                "6. Loads FAISS index using FaissIndexManager\n"
-                "7. Gets query embedding from embedding service (SVOClientManager)\n"
-                "8. Normalizes embedding vector\n"
-                "9. Searches FAISS index for limit nearest neighbors\n"
-                "10. Filters results by min_score (if provided)\n"
-                "11. Returns similar code chunks with similarity scores\n\n"
-                "Semantic Search:\n"
-                "- Uses embedding vectors to find semantically similar code\n"
-                "- Query is converted to embedding using embedding service\n"
-                "- Searches in FAISS index for similar vectors\n"
-                "- Returns chunks ranked by similarity (distance)\n"
+                "1. Resolves the project root from required ``project_id``\n"
+                "2. Opens the shared database client\n"
+                "3. Loads server config (vector_dim, embedding service, storage paths)\n"
+                "4. Resolves FAISS index path (one file per project: {faiss_dir}/{project_id}.bin)\n"
+                "5. Loads the FAISS index (FaissIndexManager)\n"
+                "6. Obtains and L2-normalizes the query embedding (SVOClientManager)\n"
+                "7. Runs FAISS search for up to ``limit`` neighbors (clamped 1–100, default 10)\n"
+                "8. Loads chunk metadata from SQLite and applies optional ``min_score`` filter\n"
+                "9. Returns ranked results with similarity scores\n\n"
+                "Semantic search:\n"
+                "- Embedding-based similarity, not keyword FTS\n"
                 "- Similarity score: 1.0 / (1.0 + distance)\n\n"
-                "FAISS Index:\n"
-                "- One index per project: {faiss_dir}/{project_id}.bin\n"
-                "- Must be built with update_indexes first\n"
-                "- Uses cosine similarity (normalized vectors)\n"
-                "- Returns up to limit nearest neighbors\n\n"
+                "FAISS index:\n"
+                "- One index per project under configured ``faiss_dir``\n"
+                "- Must exist (run ``update_indexes`` / vectorization pipeline first)\n\n"
                 "Important notes:\n"
-                "- Requires embedding service to be available\n"
-                "- Requires FAISS index (run update_indexes first)\n"
-                "- Similarity scores range from 0.0 to 1.0 (higher is better)\n"
-                "- min_score filters results by similarity threshold"
+                "- Requires a working embedding service\n"
+                "- Requires FAISS (optional dependency); missing FAISS may yield empty results with a warning\n"
+                "- ``limit`` is clamped to 1–100 in ``validate_params``\n"
+                "- ``min_score`` filters by similarity threshold when set"
             ),
             "parameters": {
-                "root_dir": {
+                "project_id": {
                     "description": (
-                        "Project root directory path. Can be absolute or relative. "
-                        "Must contain data/code_analysis.db (or project registered in server DB). Embedding/config from server only."
+                        "Project UUID (from ``create_project`` or ``list_projects``). Required; "
+                        "selects the FAISS index file and DB rows for this project."
                     ),
                     "type": "string",
                     "required": True,
                 },
                 "query": {
                     "description": (
-                        "Search query text. Will be converted to embedding vector using embedding service. "
-                        "Searches for semantically similar code chunks."
+                        "Search query text. Converted to an embedding vector; used to query FAISS."
                     ),
                     "type": "string",
                     "required": True,
@@ -380,8 +390,9 @@ class SemanticSearchMCPCommand(BaseMCPCommand):
                 },
                 "limit": {
                     "description": (
-                        "Maximum number of results to return. Range: 1-100. Default is 10. "
-                        "Same parameter name as fulltext_search and search_ast_nodes."
+                        "Maximum number of FAISS neighbors (1–100). Default 10. Out-of-range "
+                        "values are clamped. Same parameter name as ``fulltext_search`` and "
+                        "``search_ast_nodes``."
                     ),
                     "type": "integer",
                     "required": False,
@@ -391,7 +402,7 @@ class SemanticSearchMCPCommand(BaseMCPCommand):
                 },
                 "min_score": {
                     "description": (
-                        "Optional minimum similarity score threshold (0.0-1.0). "
+                        "Optional minimum similarity score threshold (0.0–1.0). "
                         "Only results with score >= min_score are returned. "
                         "Score is calculated as 1.0 / (1.0 + distance)."
                     ),
@@ -401,31 +412,24 @@ class SemanticSearchMCPCommand(BaseMCPCommand):
                     "maximum": 1.0,
                     "examples": [0.5, 0.7, 0.9],
                 },
-                "project_id": {
-                    "description": (
-                        "Optional project UUID. If omitted, inferred from root_dir."
-                    ),
-                    "type": "string",
-                    "required": False,
-                },
             },
             "usage_examples": [
                 {
                     "description": "Basic semantic search",
                     "command": {
-                        "root_dir": "/home/user/projects/my_project",
+                        "project_id": "550e8400-e29b-41d4-a716-446655440000",
                         "query": "database connection",
                         "limit": 10,
                     },
                     "explanation": (
                         "Searches for code chunks semantically similar to 'database connection', "
-                        "returning top 10 results."
+                        "returning up to 10 results."
                     ),
                 },
                 {
                     "description": "Search with minimum score threshold",
                     "command": {
-                        "root_dir": "/home/user/projects/my_project",
+                        "project_id": "550e8400-e29b-41d4-a716-446655440000",
                         "query": "error handling",
                         "limit": 20,
                         "min_score": 0.7,
@@ -438,22 +442,22 @@ class SemanticSearchMCPCommand(BaseMCPCommand):
                 {
                     "description": "Find highly similar code",
                     "command": {
-                        "root_dir": "/home/user/projects/my_project",
+                        "project_id": "550e8400-e29b-41d4-a716-446655440000",
                         "query": "file processing",
                         "limit": 5,
                         "min_score": 0.9,
                     },
                     "explanation": (
                         "Finds highly similar code (score >= 0.9) related to 'file processing', "
-                        "returning top 5 results."
+                        "returning up to 5 results."
                     ),
                 },
             ],
             "error_cases": {
                 "PROJECT_NOT_FOUND": {
                     "description": "Project not found in database",
-                    "example": "root_dir='/path' but project not registered",
-                    "solution": "Ensure project is registered. Run update_indexes first.",
+                    "example": "Unknown ``project_id`` or project root missing from registration",
+                    "solution": "Use ``list_projects`` and a valid UUID. Run ``update_indexes`` first.",
                 },
                 "CONFIG_NOT_FOUND": {
                     "description": "Configuration file not found",

@@ -1,9 +1,12 @@
 """
 MCP command: read_project_text_file
 
-Read raw text file lines in a range for non-code files. Python paths are
-delegated to ``get_file_lines`` (line-based CST path) automatically; other
-program source suffixes remain rejected — see ``project_text_file_guard``.
+Compatibility wrapper over :class:`UniversalFileReadCommand` for registry-first
+reads. Non-Python program sources are rejected via ``project_text_file_guard``
+(``CODE_FILE_FORBIDDEN``). Python paths registered in the handler map delegate to
+the same line-based flow as ``get_file_lines``; other Python-ecosystem suffixes
+(``.pyx``, ``.pxd``, ``.pxi``) fall back to ``GetFileLinesCommand`` when the
+registry has no mapping yet.
 
 Author: Vasiliy Zdanovskiy
 email: vasilyvz@gmail.com
@@ -12,8 +15,7 @@ email: vasilyvz@gmail.com
 from __future__ import annotations
 
 import logging
-from pathlib import Path
-from typing import Any, Dict, Type
+from typing import Any, Dict, Type, Union
 
 from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 
@@ -23,48 +25,27 @@ from .project_text_file_guard import (
     is_python_text_path,
     reject_if_non_python_code_text_path,
 )
-from ..core.constants import DEFAULT_READ_PROJECT_TEXT_JSON_STRUCTURED_MAX_BYTES
+from .registration import (
+    MCP_FILE_MANAGEMENT_REGISTRY_HELP,
+    REGISTRY_SCHEMA_DISCOVERY_SHORT,
+)
+from .universal_file_read_command import UniversalFileReadCommand
 from ..core.exceptions import ValidationError
-from ..core.file_lock import file_lock
-from ..core.json_tree.tree_builder import load_file_to_tree
+from ..core.file_handlers.registry import HANDLER_PYTHON
 
 logger = logging.getLogger(__name__)
 
 
-def _resolved_json_structured_max_bytes(config_data: Dict[str, Any]) -> int:
-    """Byte threshold for structured .json via read_project_text_file; config or default."""
-    ca = config_data.get("code_analysis") or {}
-    v = ca.get("read_project_text_json_structured_max_bytes")
-    if v is None:
-        return DEFAULT_READ_PROJECT_TEXT_JSON_STRUCTURED_MAX_BYTES
-    if isinstance(v, bool) or not isinstance(v, int):
-        return DEFAULT_READ_PROJECT_TEXT_JSON_STRUCTURED_MAX_BYTES
-    if v < 1:
-        return DEFAULT_READ_PROJECT_TEXT_JSON_STRUCTURED_MAX_BYTES
-    return v
-
-
-def _should_return_structured_json(path: Path, config_data: Dict[str, Any]) -> bool:
-    """True when .json and on-disk size is within structured-read threshold."""
-    if path.suffix.lower() != ".json":
-        return False
-    max_bytes = _resolved_json_structured_max_bytes(config_data)
-    try:
-        size = path.stat().st_size
-    except OSError:
-        return False
-    return size <= max_bytes
-
-
 class ReadProjectTextFileCommand(BaseMCPCommand):
-    """Return raw lines in a range; Python paths route to get_file_lines automatically."""
+    """Delegate reads to universal_file_read; keep legacy guard and Python fallbacks."""
 
     name = "read_project_text_file"
     version = "1.0.0"
     descr = (
-        "Plain text and configs: reads raw lines. Python (.py, .pyi, …) is handled automatically "
-        "via the same line-based path as get_file_lines (not raw-text rejection). "
-        "Other program source suffixes are still forbidden."
+        "Plain text and configs: reads via the universal handler registry (see "
+        "`universal_file_read`). Python (``.py``, ``.pyi``, ``.pyw``) uses the same "
+        "line-based path as `get_file_lines`. Other program source suffixes are "
+        "forbidden." + " " + MCP_FILE_MANAGEMENT_REGISTRY_HELP
     )
     category = "file_management"
     author = "Vasiliy Zdanovskiy"
@@ -77,14 +58,14 @@ class ReadProjectTextFileCommand(BaseMCPCommand):
             "type": "object",
             "title": "read_project_text_file",
             "description": (
-                "Read raw text lines from a project file. **Python paths** (.py, .pyi, …) are "
-                "automatically routed to the same behavior as `get_file_lines` (line-based read; "
-                "healthy Python succeeds without USE_CST_COMMANDS). Other blocked program-source "
-                "suffixes return CODE_FILE_FORBIDDEN. Non-code files: docs and plain configs "
-                "(README, .md, .json, .toml). For .json within the configured byte threshold, "
-                "the response matches json_load_file (structured tree); larger .json files use "
-                "raw lines. Line range is 1-based inclusive; clamped to file. Structured .json "
-                "responses use the full document (line range ignored)."
+                "Read lines or structured content from a project file. Routes through "
+                "`universal_file_read` (handler registry). **Python paths** "
+                "(``.py``, ``.pyi``, ``.pyw``) use the same behavior as `get_file_lines`. "
+                "Other blocked program-source suffixes return CODE_FILE_FORBIDDEN. "
+                "``.json`` / ``.yaml`` use structured handlers (line ranges ignored for those). "
+                "Success payloads include ``handler_id`` when returned by the universal read "
+                "path. Line range is 1-based inclusive for text and Python line views; "
+                "clamped to the file. " + REGISTRY_SCHEMA_DISCOVERY_SHORT
             ),
             "properties": {
                 "project_id": {
@@ -98,9 +79,9 @@ class ReadProjectTextFileCommand(BaseMCPCommand):
                 "file_path": {
                     "type": "string",
                     "description": (
-                        "Path relative to project root. Python (.py, .pyi, …) is routed to "
-                        "get_file_lines automatically. Other program-source suffixes (e.g. .go, .rs) "
-                        "are rejected (CODE_FILE_FORBIDDEN)."
+                        "Single literal path relative to project root (no ``*?[]`` globs). "
+                        "Registry resolves the handler. Known non-Python source suffixes "
+                        "(e.g. ``.go``, ``.rs``) are rejected (CODE_FILE_FORBIDDEN) before routing."
                     ),
                     "examples": ["README.md", "docs/config.json", "src/module.py"],
                 },
@@ -138,12 +119,11 @@ class ReadProjectTextFileCommand(BaseMCPCommand):
             "author": cls.author,
             "email": cls.email,
             "detailed_description": (
-                "For **non-code** paths: reads raw lines without parsing. For **Python** paths "
-                "(.py, .pyi, .pyw, .pyx, .pxd, .pxi), the implementation delegates to `get_file_lines` "
-                "with internal routing so healthy files return lines (same response shape as "
-                "get_file_lines). Other program-source suffixes are still rejected.\n\n"
-                "Line numbers are 1-based inclusive. The range is clamped to the file; the response "
-                "includes the actual start_line/end_line after clamping and total_lines."
+                "Delegates to **`universal_file_read`** for registry-based routing "
+                "(text, JSON, YAML, Python). **Non-Python program sources** are rejected "
+                "first with CODE_FILE_FORBIDDEN. Responses include **`handler_id`** and "
+                "**`operation`** where the universal command supplies them.\n\n"
+                "Line numbers are 1-based inclusive for text and Python line views."
             ),
             "parameters": {
                 "project_id": {
@@ -152,8 +132,8 @@ class ReadProjectTextFileCommand(BaseMCPCommand):
                 },
                 "file_path": {
                     "description": (
-                        "Path relative to project root. Python → auto `get_file_lines`; other "
-                        "blocked source suffixes → error."
+                        "Path relative to project root (registry + guard). "
+                        "Python → line read; blocked code suffixes → error."
                     ),
                     "required": True,
                 },
@@ -177,7 +157,7 @@ class ReadProjectTextFileCommand(BaseMCPCommand):
                     },
                 },
                 {
-                    "description": "Python file (routed to get_file_lines; same response shape)",
+                    "description": "Python file (line read; handler_id=python)",
                     "params": {
                         "project_id": "550e8400-e29b-41d4-a716-446655440000",
                         "file_path": "pkg/mod.py",
@@ -190,13 +170,15 @@ class ReadProjectTextFileCommand(BaseMCPCommand):
                 "CODE_FILE_FORBIDDEN",
                 "INVALID_RANGE",
                 "FILE_NOT_FOUND",
-                "INVALID_JSON",
                 "VALIDATION_ERROR",
                 "READ_PROJECT_TEXT_FILE_ERROR",
+                "UNSUPPORTED_FILE_EXTENSION",
+                "validation_failed",
             ],
             "error_codes_note": (
-                "CODE_FILE_FORBIDDEN: non-Python program source — use the appropriate workflow. "
-                "Python paths are routed to get_file_lines (see command description)."
+                "CODE_FILE_FORBIDDEN: non-Python program source. Invalid JSON under the "
+                "JSON handler may return validation_failed (from the handler). "
+                "Unknown / unmapped extensions return UNSUPPORTED_FILE_EXTENSION."
             ),
         }
 
@@ -207,120 +189,51 @@ class ReadProjectTextFileCommand(BaseMCPCommand):
         start_line: int,
         end_line: int,
         **kwargs: Any,
-    ) -> SuccessResult:
+    ) -> Union[SuccessResult, ErrorResult]:
         try:
             blocked = reject_if_non_python_code_text_path(file_path)
             if blocked is not None:
                 return blocked
 
-            if is_python_text_path(file_path):
-                routed = GetFileLinesCommand()
-                return await routed.execute(
-                    project_id=project_id,
-                    file_path=file_path,
-                    start_line=start_line,
-                    end_line=end_line,
-                    allow_healthy_line_ops=True,
-                )
-
-            database = self._open_database_from_config(auto_analyze=False)
-            absolute_path = self._resolve_file_path_from_project(
-                database, project_id, file_path
+            inner = UniversalFileReadCommand()
+            result = await inner.execute(
+                project_id=project_id,
+                file_path=file_path,
+                start_line=start_line,
+                end_line=end_line,
             )
 
-            if not absolute_path.exists():
-                return ErrorResult(
-                    message=f"File not found: {absolute_path}",
-                    code="FILE_NOT_FOUND",
-                    details={
-                        "project_id": project_id,
-                        "file_path": file_path,
-                        "resolved_path": str(absolute_path),
-                    },
-                )
-
-            if _should_return_structured_json(absolute_path, self._get_raw_config()):
-                try:
-                    with file_lock(absolute_path):
-                        tree = load_file_to_tree(str(absolute_path))
-                except ValueError as e:
-                    return ErrorResult(
-                        message=str(e),
-                        code="INVALID_JSON",
-                        details={
-                            "project_id": project_id,
-                            "file_path": file_path,
-                            "error": str(e),
-                        },
+            if (
+                isinstance(result, ErrorResult)
+                and result.code == "UNSUPPORTED_FILE_EXTENSION"
+            ):
+                if is_python_text_path(file_path):
+                    routed = GetFileLinesCommand()
+                    py_res = await routed.execute(
+                        project_id=project_id,
+                        file_path=file_path,
+                        start_line=start_line,
+                        end_line=end_line,
+                        allow_healthy_line_ops=True,
                     )
-                nodes = [m.to_dict() for m in tree.metadata_map.values()]
-                return SuccessResult(
-                    data={
-                        "success": True,
-                        "tree_id": tree.tree_id,
-                        "file_path": tree.file_path,
-                        "root_node_id": tree.root_node_id,
-                        "nodes": nodes,
-                        "total_nodes": len(nodes),
-                    }
-                )
+                    if isinstance(py_res, ErrorResult):
+                        det = dict(py_res.details or {})
+                        det.setdefault("handler_id", HANDLER_PYTHON)
+                        det.setdefault("operation", "read")
+                        return ErrorResult(
+                            message=py_res.message,
+                            code=py_res.code or "ERROR",
+                            details=det,
+                        )
+                    data = dict(py_res.data or {})
+                    data["success"] = True
+                    data["handler_id"] = HANDLER_PYTHON
+                    data["operation"] = "read"
+                    data["project_id"] = project_id
+                    data["file_path"] = file_path
+                    return SuccessResult(data=data)
 
-            if start_line > end_line:
-                return ErrorResult(
-                    message=f"Invalid range: start_line ({start_line}) > end_line ({end_line})",
-                    code="INVALID_RANGE",
-                    details={
-                        "project_id": project_id,
-                        "file_path": file_path,
-                        "start_line": start_line,
-                        "end_line": end_line,
-                    },
-                )
-            if start_line < 1 or end_line < 1:
-                return ErrorResult(
-                    message="Line numbers must be >= 1 (1-based)",
-                    code="INVALID_RANGE",
-                    details={
-                        "project_id": project_id,
-                        "file_path": file_path,
-                        "start_line": start_line,
-                        "end_line": end_line,
-                    },
-                )
-
-            text = absolute_path.read_text(encoding="utf-8", errors="replace")
-            all_lines = text.splitlines(keepends=False)
-            total_lines = len(all_lines)
-
-            if total_lines == 0:
-                return SuccessResult(
-                    data={
-                        "success": True,
-                        "file_path": file_path,
-                        "start_line": 1,
-                        "end_line": 0,
-                        "lines": [],
-                        "total_lines": 0,
-                    }
-                )
-
-            # Clamp to actual file range (1-based inclusive), same as get_file_lines
-            low = max(1, min(start_line, total_lines))
-            high = max(1, min(end_line, total_lines))
-            if low > high:
-                low, high = high, low
-            lines = all_lines[low - 1 : high]
-
-            return SuccessResult(
-                data={
-                    "success": True,
-                    "file_path": file_path,
-                    "start_line": low,
-                    "end_line": high,
-                    "lines": lines,
-                    "total_lines": total_lines,
-                }
-            )
+            return result
 
         except ValidationError as e:
             return ErrorResult(

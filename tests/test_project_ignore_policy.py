@@ -8,6 +8,7 @@ import pytest
 
 from code_analysis.core.project_ignore_policy import (
     filter_ignore_exception_py_paths_for_watcher,
+    filter_paths_for_default_project_listing,
     is_ignored_project_relative_path,
     path_is_under_project_local_venv,
     sql_and_absolute_path_eligible_for_default_status_aggregates,
@@ -45,6 +46,42 @@ def test_is_ignored_project_relative_path_defaults(rel: str, expected: bool) -> 
         )
         is expected
     )
+
+
+def test_is_ignored_project_relative_path_show_hidden_unignores_cache_and_dot_segments() -> None:
+    rel = ".mypy_cache/3.12/foo.data.json"
+    assert is_ignored_project_relative_path(rel, show_hidden=False) is True
+    assert is_ignored_project_relative_path(rel, show_hidden=True) is False
+    assert is_ignored_project_relative_path(".cursor/foo.md", show_hidden=True) is False
+    assert (
+        is_ignored_project_relative_path(
+            ".venv/lib/x.py",
+            show_hidden=True,
+            include_venv=False,
+        )
+        is True
+    )
+
+
+def test_filter_paths_for_default_project_listing_respects_show_hidden(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "proj"
+    root.mkdir()
+    p = root / ".pytest_cache" / "README.md"
+    p.parent.mkdir(parents=True)
+    p.write_text("x", encoding="utf-8")
+    pr = p.resolve()
+    assert filter_paths_for_default_project_listing(
+        [pr], root, include_venv=False, include_venv_ignore_exceptions=False
+    ) == []
+    assert filter_paths_for_default_project_listing(
+        [pr],
+        root,
+        include_venv=False,
+        include_venv_ignore_exceptions=False,
+        show_hidden=True,
+    ) == [pr]
 
 
 def test_path_is_under_project_local_venv(tmp_path: Path) -> None:

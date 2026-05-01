@@ -16,10 +16,35 @@ from __future__ import annotations
 import json
 import logging
 import time
+import uuid
+from datetime import date, datetime
+from decimal import Decimal
 from pathlib import Path
 from typing import Any, Dict, Optional, Union
 
 logger = logging.getLogger(__name__)
+
+
+def _to_json_serializable(obj: Any) -> Any:
+    """Recursively convert DB/driver types so json.dump never fails on status payloads."""
+    if obj is None or isinstance(obj, (str, int, float, bool)):
+        return obj
+    if isinstance(obj, uuid.UUID):
+        return str(obj)
+    if isinstance(obj, Path):
+        return str(obj)
+    if isinstance(obj, (datetime, date)):
+        return obj.isoformat()
+    if isinstance(obj, Decimal):
+        return float(obj)
+    if isinstance(obj, dict):
+        return {str(k): _to_json_serializable(v) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple)):
+        return [_to_json_serializable(v) for v in obj]
+    if isinstance(obj, (set, frozenset)):
+        return [_to_json_serializable(v) for v in obj]
+    return str(obj)
+
 
 STATUS_OPERATION_IDLE = "idle"
 # Worker cycle start (query DB for work). Chunker is WS-only, no HTTP polling.
@@ -66,6 +91,7 @@ def write_worker_status(
             )
         if extra:
             data.update(extra)
+        data = _to_json_serializable(data)
         with open(path, "w", encoding="utf-8") as f:
             json.dump(data, f, ensure_ascii=False)
     except Exception as e:

@@ -20,6 +20,7 @@ from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 from .base_mcp_command import BaseMCPCommand
 from .project_text_file_guard import reject_if_write_under_project_venv
 from ..core.cst_tree.tree_saver import save_tree_to_file
+from ..core.cst_tree.tree_save_verification import SaveVerificationError
 from ..core.cst_tree.tree_builder import reload_tree_from_file
 from ..core.git_integration import commit_after_write
 from ..core.database_client.exceptions import ConnectionError as DBConnectionError
@@ -72,7 +73,11 @@ class CSTSaveTreeCommand(BaseMCPCommand):
                     "description": (
                         "Whether to validate file before saving. Default true. "
                         "Set false for controlled incremental edits (for example docstring-only pass), "
-                        "then run format_code/lint_code/type_check_code explicitly."
+                        "then run format_code/lint_code/type_check_code explicitly. "
+                        "With verification enabled, saving may fail if the file changed on disk since "
+                        "load (FILE_CHANGED_SINCE_LOAD), edits do not replay identically "
+                        "(CST_REPLAY_MISMATCH), or the written bytes do not match after replace "
+                        "(WRITE_VERIFY_FAILED)—reload or reconcile before retrying."
                     ),
                 },
                 "backup": {
@@ -113,7 +118,7 @@ class CSTSaveTreeCommand(BaseMCPCommand):
         commit_message: Optional[str] = None,
         auto_reload: bool = True,
         **kwargs,
-    ) -> SuccessResult:
+    ) -> SuccessResult | ErrorResult:
         logger.info(
             "[SAVE_PATH] cst_save_tree enter tree_id=%s project_id=%s file_path=%s",
             tree_id,
@@ -175,17 +180,42 @@ class CSTSaveTreeCommand(BaseMCPCommand):
                                 "backup": backup,
                             },
                         )
-                        result = await asyncio.to_thread(
-                            save_tree_to_file,
-                            tree_id=tree_id,
-                            file_path=str(absolute_file_path),
-                            root_dir=project_root,
-                            project_id=project_id,
-                            database=database,
-                            validate=validate,
-                            backup=backup,
-                            commit_message=commit_message,
-                        )
+                        try:
+                            result = await asyncio.to_thread(
+                                save_tree_to_file,
+                                tree_id=tree_id,
+                                file_path=str(absolute_file_path),
+                                root_dir=project_root,
+                                project_id=project_id,
+                                database=database,
+                                validate=validate,
+                                backup=backup,
+                                commit_message=commit_message,
+                            )
+                        except SaveVerificationError as exc:
+                            logger.warning(
+                                "cst_save_tree save verification failed code=%s tree_id=%s",
+                                exc.code,
+                                tree_id,
+                                extra={
+                                    "cst_save_stage": "save_verification_failed",
+                                    "project_id": project_id,
+                                    "tree_id": tree_id,
+                                    "file_path": file_path,
+                                    "verification_code": exc.code,
+                                    "verification_details": dict(exc.details),
+                                },
+                            )
+                            verification_details: Dict[str, Any] = {
+                                "tree_id": tree_id,
+                                "file_path": file_path,
+                            }
+                            verification_details.update(exc.details)
+                            return ErrorResult(
+                                message=f"Save verification failed: {exc.code}",
+                                code=exc.code,
+                                details=verification_details,
+                            )
                         logger.info(
                             "cst_save_tree save_tree_to_file thread returned",
                             extra={
@@ -381,8 +411,6 @@ class CSTSaveTreeCommand(BaseMCPCommand):
                                 "cst_save_tree succeeded after %s attempts",
                                 attempt,
                             )
-                        result["file_written"] = True
-                        result["preview_only"] = False
                         return SuccessResult(data=result)
                     finally:
                         database.disconnect()
@@ -495,6 +523,11 @@ class CSTSaveTreeCommand(BaseMCPCommand):
                 "- Backup is automatically restored on any error\n\n"
                 "Error Handling:\n"
                 "- If validation fails: operation stops before any changes\n"
+                "- Save verification (when enabled): FILE_CHANGED_SINCE_LOAD if disk bytes "
+                "no longer match the snapshot from load; CST_REPLAY_MISMATCH if replaying "
+                "operations on the original source does not match the working tree; "
+                "WRITE_VERIFY_FAILED if the file read back after atomic replace does not "
+                "match the generated source.\n"
                 "- If file write fails: transaction rolled back, backup restored\n"
                 "- If database update fails: transaction rolled back, backup restored\n"
                 "- If git commit fails: file and database are already saved (non-critical)\n\n"
@@ -532,7 +565,11 @@ class CSTSaveTreeCommand(BaseMCPCommand):
                     "required": True,
                 },
                 "validate": {
-                    "description": "Whether to validate file before saving. Default is True.",
+                    "description": (
+                        "Whether to validate file before saving. Default is True. "
+                        "Verification failures return structured codes: FILE_CHANGED_SINCE_LOAD, "
+                        "CST_REPLAY_MISMATCH, WRITE_VERIFY_FAILED."
+                    ),
                     "type": "boolean",
                     "required": False,
                     "default": True,
@@ -680,6 +717,34 @@ class CSTSaveTreeCommand(BaseMCPCommand):
                     "description": "Project not found in database",
                     "message": "Project {project_id} not found",
                     "solution": "Verify project_id is correct and project exists in database",
+                },
+                "FILE_CHANGED_SINCE_LOAD": {
+                    "description": (
+                        "On-disk file bytes no longer match the snapshot taken when the tree "
+                        "was loaded (another process or editor changed the file)."
+                    ),
+                    "solution": (
+                        "Reload with cst_load_file after resolving external changes, or save "
+                        "with reconciled content."
+                    ),
+                },
+                "CST_REPLAY_MISMATCH": {
+                    "description": (
+                        "Replaying recorded edits on the original source did not produce the "
+                        "same code as the in-memory tree (internal consistency check)."
+                    ),
+                    "solution": (
+                        "Reload the file and re-apply edits, or report if the issue persists."
+                    ),
+                },
+                "WRITE_VERIFY_FAILED": {
+                    "description": (
+                        "After atomic replace, reading the file back did not match the "
+                        "generated source (unexpected filesystem or encoding issue)."
+                    ),
+                    "solution": (
+                        "Retry once; check disk health and concurrent writers on the same path."
+                    ),
                 },
                 "CST_SAVE_ERROR": {
                     "description": "Error during save operation",

@@ -11,7 +11,6 @@ email: vasilyvz@gmail.com
 from __future__ import annotations
 
 import logging
-from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Type
 
@@ -22,42 +21,41 @@ from .project_text_file_guard import (
     reject_if_source_code_text_path,
     reject_if_write_under_project_venv,
 )
+from .registration import (
+    MCP_FILE_MANAGEMENT_REGISTRY_HELP,
+    REGISTRY_SCHEMA_DISCOVERY_SHORT,
+)
 from ..core.backup_manager import BackupManager
+from ..core.file_handlers.text_handler import (
+    TEXT_SUFFIXES,
+    compute_replace_lines_single_range,
+    join_lines_unix,
+    persist_plain_text_file_metadata,
+    validate_write_range,
+)
 from ..core.file_lock import file_lock
 from ..core.exceptions import ValidationError
-from ..core.database_client.file_data_batch import update_file_data_atomic_batch
-from ..core.database_client.objects.base import BaseObject
-from ..core.database_client.objects.file import File
 from ..core.path_normalization import normalize_path_simple
 
 logger = logging.getLogger(__name__)
-
-PLAIN_TEXT_WRITE_SUFFIXES = frozenset(
-    {
-        ".adoc",
-        ".md",
-        ".rst",
-        ".txt",
-    }
-)
 
 
 def _reject_if_not_plain_text_path(file_path: str) -> ErrorResult | None:
     """Return an error when a path is not an allowed plain-text file."""
     suffix = Path(file_path).suffix.lower()
-    if suffix in PLAIN_TEXT_WRITE_SUFFIXES:
+    if suffix in TEXT_SUFFIXES:
         return None
     return ErrorResult(
         message=(
             "write_project_text_lines supports only plain text files "
-            f"with suffixes: {', '.join(sorted(PLAIN_TEXT_WRITE_SUFFIXES))}. "
+            f"with suffixes: {', '.join(sorted(TEXT_SUFFIXES))}. "
             "Use JSON/YAML/Python-specific commands for structured or code files."
         ),
         code="TEXT_FILE_SUFFIX_NOT_ALLOWED",
         details={
             "file_path": file_path,
             "suffix": suffix,
-            "allowed_suffixes": sorted(PLAIN_TEXT_WRITE_SUFFIXES),
+            "allowed_suffixes": sorted(TEXT_SUFFIXES),
         },
     )
 
@@ -70,7 +68,7 @@ class WriteProjectTextLinesCommand(BaseMCPCommand):
     descr = (
         "Replaces a line range (1-based) for non-code text files. Python (.py, .pyi, …) and "
         "other blocked program source suffixes are not supported; use CST or line commands "
-        "for Python as documented."
+        "for Python as documented." + " " + MCP_FILE_MANAGEMENT_REGISTRY_HELP
     )
     category = "file_management"
     author = "Vasiliy Zdanovskiy"
@@ -86,8 +84,10 @@ class WriteProjectTextLinesCommand(BaseMCPCommand):
                 "Replace a contiguous line range in a non-code text file. **Python** paths return "
                 "`PYTHON_FILE_FORBIDDEN`; other blocked program-source suffixes return "
                 "`CODE_FILE_FORBIDDEN`. When backup is true (default), creates a version backup before "
-                "overwriting. Updates indexed file metadata after a successful write. Each string in "
-                "new_lines is one logical line; lines are joined with '\\n'."
+                "overwriting. Updates the ``files`` table row (line count, mtime) after a successful "
+                "write — no Python parse or code-index batch update. Each string in "
+                "new_lines is one logical line; lines are joined with '\\n'. "
+                + REGISTRY_SCHEMA_DISCOVERY_SHORT
             ),
             "properties": {
                 "project_id": {
@@ -101,8 +101,8 @@ class WriteProjectTextLinesCommand(BaseMCPCommand):
                 "file_path": {
                     "type": "string",
                     "description": (
-                        "Path relative to project root. Must not be Python or other blocked "
-                        "program-source suffixes (see error codes)."
+                        "Single literal path relative to project root (no globs). Must not be "
+                        "Python or other blocked program-source suffixes (see error codes)."
                     ),
                     "examples": ["README.md", "config/app.toml", "notes.txt"],
                 },
@@ -175,7 +175,7 @@ class WriteProjectTextLinesCommand(BaseMCPCommand):
                 "**Python** and other blocked program-source suffixes are rejected (see error "
                 "codes).\n\n"
                 "Performs optional backup, file write under lock, then updates DB via "
-                "update_file_data_atomic_batch.\n\n"
+                "plain-text-safe ``files`` metadata only.\n\n"
                 "An empty file yields EMPTY_FILE. If backup=true and backup creation fails, returns "
                 "BACKUP_REQUIRED."
             ),
@@ -261,7 +261,7 @@ class WriteProjectTextLinesCommand(BaseMCPCommand):
             blocked = reject_if_source_code_text_path(file_path)
             if blocked is not None:
                 return blocked
-            
+
             plain_text_error = _reject_if_not_plain_text_path(file_path)
             if plain_text_error is not None:
                 return plain_text_error
@@ -316,13 +316,39 @@ class WriteProjectTextLinesCommand(BaseMCPCommand):
                     details={"file_path": file_path},
                 )
 
-            low = max(0, min(start_line - 1, total - 1))
-            high = max(0, min(end_line - 1, total - 1))
-            if low > high:
-                low, high = high, low
+            try:
+                validate_write_range(start_line, end_line, total)
+            except ValueError as e:
+                return ErrorResult(
+                    message=str(e),
+                    code="INVALID_RANGE",
+                    details={
+                        "start_line": start_line,
+                        "end_line": end_line,
+                        "file_path": file_path,
+                        "error": str(e),
+                    },
+                )
 
-            new_content_lines = all_lines[:low] + new_lines + all_lines[high + 1 :]
-            source_code = "\n".join(new_content_lines)
+            try:
+                new_content_lines = compute_replace_lines_single_range(
+                    all_lines,
+                    start_line,
+                    end_line,
+                    new_lines,
+                )
+            except ValueError as e:
+                return ErrorResult(
+                    message=str(e),
+                    code="INVALID_RANGE",
+                    details={
+                        "start_line": start_line,
+                        "end_line": end_line,
+                        "file_path": file_path,
+                        "error": str(e),
+                    },
+                )
+            source_code = join_lines_unix(new_content_lines)
 
             backup_uuid = None
             with file_lock(absolute_path):
@@ -361,65 +387,24 @@ class WriteProjectTextLinesCommand(BaseMCPCommand):
 
                 try:
                     normalized_path = normalize_path_simple(str(absolute_path))
-                    existing = database.select(
-                        "files",
-                        where={
-                            "path": normalized_path,
-                            "project_id": project_id,
-                        },
-                    )
-                    lines_count = len(new_content_lines)
-                    stripped = source_code.lstrip()
-                    has_docstring = stripped.startswith('"""') or stripped.startswith(
-                        "'''"
-                    )
-                    last_modified = datetime.fromtimestamp(
-                        absolute_path.stat().st_mtime
-                    )
-
-                    if existing:
-                        file_record = existing[0]
-                        file_obj = File(
-                            id=file_record["id"],
-                            project_id=project_id,
-                            path=normalized_path,
-                            lines=lines_count,
-                            last_modified=last_modified,
-                            has_docstring=has_docstring,
-                        )
-                        database.update_file(file_obj)
-                        file_id = file_obj.id
-                    else:
-                        file_obj = File(
-                            project_id=project_id,
-                            path=normalized_path,
-                            lines=lines_count,
-                            last_modified=last_modified,
-                            has_docstring=has_docstring,
-                        )
-                        created = database.create_file(file_obj)
-                        file_id = created.id
-
-                    file_mtime = BaseObject._to_timestamp(last_modified) or 0.0
-                    # Single logical-write RPC (transaction_id=None); avoid a long-lived outer
-                    # transaction with multiple execute_batch calls — reduces DB lock / driver churn.
-                    update_result = update_file_data_atomic_batch(
+                    meta_result = persist_plain_text_file_metadata(
                         database=database,
-                        file_id=file_id,
                         project_id=project_id,
+                        absolute_path=absolute_path,
+                        normalized_path=normalized_path,
                         source_code=source_code,
-                        file_path=str(absolute_path),
-                        file_mtime=file_mtime,
                     )
 
-                    if not update_result.get("success"):
+                    if not meta_result.get("success"):
                         _restore_file_from_backup()
                         return ErrorResult(
-                            message="Failed to update file data: "
-                            + update_result.get("error", "unknown"),
+                            message="Failed to update file metadata: "
+                            + str(meta_result.get("error", "unknown")),
                             code="UPDATE_FILE_DATA_ERROR",
-                            details=update_result,
+                            details=meta_result,
                         )
+
+                    file_id = meta_result.get("file_id")
 
                     return SuccessResult(
                         data={
@@ -429,9 +414,9 @@ class WriteProjectTextLinesCommand(BaseMCPCommand):
                             "backup_uuid": backup_uuid,
                             "start_line": start_line,
                             "end_line": end_line,
-                            "replaced_line_count": high - low + 1,
+                            "replaced_line_count": end_line - start_line + 1,
                             "new_line_count": len(new_lines),
-                            "update_result": update_result,
+                            "metadata_update": meta_result,
                         }
                     )
                 except Exception:

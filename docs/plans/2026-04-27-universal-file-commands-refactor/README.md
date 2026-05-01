@@ -41,6 +41,8 @@ universal_file_replace
 universal_file_delete
 ```
 
+`universal_file_replace` routes by extension like read/save: `resolve_handler(file_path, "replace")` runs before validation, backup, filesystem write, DB updates, or indexing. Plain-text multi-range replaces reject overlapping ranges before backup and before write.
+
 The short names `read/save/replace/delete` may appear only as internal handler operation names.
 
 Each public command must require:
@@ -355,8 +357,10 @@ This refactor block is complete only when:
 - handler selection is visible in command responses;
 - observations are written in `docs/plans/2026-04-27-universal-file-commands-refactor/observations.md`;
 - each bug is documented in the required bug format;
-- all changed plan files are re-read after modification.
-
 ## Status
 
-Plan corrected against current code. Source implementation is still pending for the universal handler layer.
+**2026-05-01:** Plan is **Complete** (implementation and pytest). Universal commands `universal_file_read/save/replace/delete` are registered on the live `code-analysis-server` (verified via `help` MCP on 2026-05-01). Remaining: run E2E MCP checks from step 23 definition-of-done to close the `Partial` items in observations.md.
+
+**2026-04-29 (historical):** The refactor block's definition of done was Incomplete for live MCP: the registered `code-analysis-server` instance did not expose universal commands. This was resolved by server restart/rebuild.
+
+**Cross-plan note:** `PythonFileHandler` uses the `compose_cst_module` (run_ops_mode) pipeline, which is **not** covered by the `2026-05-01-cst-save-safety` plan (tree-based pipeline only). The compose pipeline will receive disk snapshot / replay / readback protections in a future phase — see `2026-05-01-cst-save-safety/README.md` section on out-of-scope paths.

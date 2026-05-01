@@ -42,7 +42,10 @@ class RestoreDeletedFilesMCPCommand(BaseMCPCommand):
                 "file_paths": {
                     "type": "array",
                     "items": {"type": "string"},
-                    "description": "List of file paths (current in trash or original_path) to restore",
+                    "description": (
+                        "Explicit list of paths (trash path or original_path) to restore — "
+                        "each entry is a literal path string; this command does not expand globs."
+                    ),
                 },
                 "dry_run": {
                     "type": "boolean",

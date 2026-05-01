@@ -324,6 +324,8 @@ class CodeDatabase:
         sql: str,
         params: Optional[tuple] = None,
         transaction_id: Optional[str] = None,
+        *,
+        priority: int = 0,
     ) -> Dict[str, Any]:
         """
         Execute SQL and return result in RPC/driver contract format.
@@ -336,12 +338,15 @@ class CodeDatabase:
             params: Optional parameters for the statement.
             transaction_id: Accepted for API parity with drivers and
                 :func:`worker_project_activity` (local DB uses active CodeDatabase tx).
+            priority: Accepted for API parity with :class:`DatabaseClient` RPC path;
+                ignored for direct driver execution.
 
         Returns:
             Dict with at least key "data": list of rows for SELECT,
             empty list for INSERT/UPDATE/DELETE etc.
         """
         del transaction_id  # local path uses :meth:`_driver_transaction_id` via _execute
+        del priority  # RPC hint only; no queue on direct driver
         if sql.strip().upper().startswith("SELECT"):
             rows = self._fetchall(sql, params)
             return {"data": rows}
@@ -401,8 +406,11 @@ class CodeDatabase:
         limit: Optional[int] = None,
         offset: Optional[int] = None,
         order_by: Optional[List[str]] = None,
+        *,
+        priority: int = 0,
     ) -> List[Dict[str, Any]]:
         """Table read (used by :mod:`worker_project_activity` lock reads)."""
+        del priority  # Parity with :class:`DatabaseClient.select`; direct driver ignores it.
         dselect = getattr(self.driver, "select", None)
         if callable(dselect):
             if self._lock:
@@ -580,6 +588,8 @@ class CodeDatabase:
         self,
         operations: List[Tuple[str, Optional[tuple]]],
         transaction_id: Optional[str] = None,
+        *,
+        priority: int = 0,
     ) -> List[Dict[str, Any]]:
         """
         Execute multiple SQL statements in order (same transaction).
@@ -590,10 +600,13 @@ class CodeDatabase:
         Args:
             operations: List of (sql, params) tuples.
             transaction_id: Optional; ignored for direct SQLite (uses active transaction).
+            priority: Accepted for API parity with :class:`DatabaseClient` RPC path;
+                ignored for direct driver execution.
 
         Returns:
             List of dicts with keys affected_rows, lastrowid, data (one per operation).
         """
+        del priority  # RPC hint only; no queue on direct driver
         effective_tid = transaction_id
         if effective_tid is None:
             effective_tid = self._driver_transaction_id()
@@ -660,19 +673,31 @@ class CodeDatabase:
         Run all batches in program under one transaction (in-process SQLite).
 
         Mirrors DatabaseClient.execute_logical_write_operation result shape.
+
+        If a transaction is already active (e.g. ``restore_backup_file`` /
+        ``replace_file_lines`` opened one before ``update_file_data_atomic_batch``),
+        batches run in that outer transaction: no nested ``BEGIN``, and this
+        method does not ``COMMIT`` / ``ROLLBACK`` (caller owns the transaction).
+        ``sqlite_proxy`` keeps the previous behaviour (single outer RPC tx).
         """
         batches = program.get("batches")
         if not batches or not isinstance(batches, list):
             raise ValueError("LogicalWriteProgramV1 requires non-empty batches")
-        tid = self.begin_transaction()
+        outer_active = self._transaction_active
+        nested = outer_active and self._driver_type != "sqlite_proxy"
+        if nested:
+            tid = self._driver_transaction_id()
+        else:
+            tid = self.begin_transaction()
         try:
-            if program.get("defer_constraints"):
+            if program.get("defer_constraints") and not nested:
                 self._execute("PRAGMA defer_foreign_keys=ON", None)
             batch_results: list[dict[str, Any]] = []
             for batch_ops in batches:
                 results = self.execute_batch(batch_ops, tid)
                 batch_results.append({"results": results})
-            self.commit_transaction(tid)
+            if not nested:
+                self.commit_transaction(tid)
             return {
                 "success": True,
                 "data": {
@@ -681,10 +706,11 @@ class CodeDatabase:
                 },
             }
         except Exception:
-            try:
-                self.rollback_transaction(tid)
-            except Exception:
-                pass
+            if not nested:
+                try:
+                    self.rollback_transaction(tid)
+                except Exception:
+                    pass
             raise
 
     def _in_transaction(self) -> bool:

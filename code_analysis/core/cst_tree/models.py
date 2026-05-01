@@ -109,6 +109,8 @@ class TreeOperation:
 
 # Reserved node_id: denotes the Module (root) node of the tree.
 ROOT_NODE_ID_SENTINEL = "__root__"
+
+
 @dataclass
 class CSTTree:
     """
@@ -134,6 +136,9 @@ class CSTTree:
     )
     loaded_at: float = field(default_factory=time.monotonic)
     last_accessed_at: float = field(default_factory=time.monotonic)
+    # Snapshot of UTF-8 file text at last disk sync (load/reload); None/0 = no snapshot.
+    disk_source_sha256_hex: Optional[str] = None
+    disk_source_length: int = 0
 
     @classmethod
     def create(cls, file_path: str, module: cst.Module) -> CSTTree:
@@ -144,6 +149,7 @@ class CSTTree:
             file_path=file_path,
             module=module,
         )
+
 
 # cst-node-ids: begin
 # cst-node-ids: version=2

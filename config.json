@@ -156,8 +156,23 @@
     "vectorization_retry_attempts": 3,
     "vectorization_retry_delay": 10.0,
     "log_vectorization_chunker_trace": true,
-    "ignore_exceptions": [],
-    "venv_site_packages_index_allowlisted_distributions": [],
+    "ignore_exceptions": [
+      ".venv/lib/**/site-packages/mcp/**/*.py",
+      ".venv/lib/**/site-packages/mcp_proxy_adapter/**/*.py",
+      ".venv/lib/**/site-packages/embed_client/**/*.py",
+      ".venv/lib/**/site-packages/svo_client/**/*.py",
+      ".venv/lib/**/site-packages/mcp_security_framework/**/*.py",
+      ".venv/lib/**/site-packages/queuemgr/**/*.py",
+      ".venv/lib/**/site-packages/chunk_metadata_adapter/**/*.py"
+    ],
+    "venv_site_packages_index_allowlisted_distributions": [
+      "chunk_metadata_adapter",
+      "embed-client",
+      "mcp-proxy-adapter",
+      "mcp-security-framework",
+      "queuemgr",
+      "svo-client"
+    ],
     "worker": {
       "enabled": true,
       "poll_interval": 30,

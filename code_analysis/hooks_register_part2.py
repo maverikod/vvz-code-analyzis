@@ -203,16 +203,6 @@ def register_commands_part2(reg: registry) -> None:
             "Failed to register project management commands: %s", e, exc_info=True
         )
 
-    try:
-        from .commands.restart_server_command import RestartServerCommand
-
-        reg.register(RestartServerCommand, "custom")
-        logger.info("✅ Registered restart_server command")
-    except ImportError as e:
-        logger.warning("Failed to import restart_server command: %s", e)
-    except Exception as e:
-        logger.error("Failed to register restart_server command: %s", e, exc_info=True)
-
 
 # cst-node-ids: begin
 # cst-node-ids: version=2

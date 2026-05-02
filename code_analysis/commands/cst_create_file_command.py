@@ -35,6 +35,7 @@ class CSTCreateFileCommand(BaseMCPCommand):
     author = "Vasiliy Zdanovskiy"
     email = "vasilyvz@gmail.com"
     use_queue = False
+
     @classmethod
     def get_schema(cls) -> Dict[str, Any]:
         return {
@@ -78,6 +79,7 @@ class CSTCreateFileCommand(BaseMCPCommand):
         params = super().validate_params(params)
         BaseMCPCommand._validate_project_id_exists(params["project_id"])
         return params
+
     async def execute(
         self,
         project_id: str,
@@ -88,22 +90,22 @@ class CSTCreateFileCommand(BaseMCPCommand):
         **kwargs,
     ) -> SuccessResult:
         """
-    Create a new Python file.
+        Create a new Python file.
 
-    If source_code is provided, it is used as-is (must contain a valid
-    module docstring). Otherwise the file is created from docstring only.
+        If source_code is provided, it is used as-is (must contain a valid
+        module docstring). Otherwise the file is created from docstring only.
 
-    Args:
-        project_id: Project ID
-        file_path: File path relative to project root
-        docstring: File-level docstring (always required and validated)
-        source_code: Optional full source code. When provided, replaces
-            the auto-built docstring-only content.
-        commit_message: Optional git commit message
+        Args:
+            project_id: Project ID
+            file_path: File path relative to project root
+            docstring: File-level docstring (always required and validated)
+            source_code: Optional full source code. When provided, replaces
+                the auto-built docstring-only content.
+            commit_message: Optional git commit message
 
-    Returns:
-        SuccessResult with tree_id and file_path
-    """
+        Returns:
+            SuccessResult with tree_id and file_path
+        """
         t_start = time.perf_counter()
         try:
             database = self._open_database_from_config(auto_analyze=False)
@@ -516,6 +518,7 @@ class CSTCreateFileCommand(BaseMCPCommand):
                 "Use returned node metadata to find parent_node_id for insert operations",
             ],
         }
+
 
 # cst-node-ids: begin
 # cst-node-ids: version=2

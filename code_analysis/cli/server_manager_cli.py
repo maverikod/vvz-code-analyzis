@@ -24,6 +24,13 @@ _StderrDest = Union[int, io.TextIOWrapper]
 
 DEFAULT_SHUTDOWN_GRACE_SECONDS = 10.0
 
+# Stop/restart: re-scan processes so slow children and races do not leave duplicates;
+# cap rounds so a wedged host still returns.
+_STOP_MAX_ROUNDS = 30
+_STOP_ROUND_DELAY_S = 0.2
+# Brief pause after last PID disappears so listen sockets / workers can release.
+_RESTART_SETTLE_S = 0.35
+
 # Override for tests or exotic layouts (must be an existing executable).
 _ENV_DAEMON_PYTHON = "CODE_ANALYSIS_DAEMON_PYTHON"
 
@@ -292,6 +299,35 @@ def _is_alive(pid: int) -> bool:
         return True
 
 
+def _is_zombie(pid: int) -> bool:
+    """True if ``pid`` is a zombie (defunct). Excluded from daemon discovery."""
+
+    if sys.platform != "linux":
+        return False
+    try:
+        status_path = Path(f"/proc/{pid}/status")
+        if not status_path.is_file():
+            return False
+        for line in status_path.read_text(encoding="utf-8").splitlines():
+            if line.startswith("State:"):
+                parts = line.split()
+                if len(parts) < 2:
+                    return False
+                # e.g. "State: Z (zombie)"
+                return parts[1].upper().startswith("Z")
+    except OSError:
+        return False
+    return False
+
+
+def _is_effectively_dead(pid: int) -> bool:
+    """True if PID is gone or only a zombie (no longer a real running process)."""
+
+    if not _is_alive(pid):
+        return True
+    return _is_zombie(pid)
+
+
 def _kill_process_group(pid: int, timeout_s: float) -> None:
     """
     Terminate process group with SIGTERM, then SIGKILL if needed.
@@ -325,7 +361,7 @@ def _kill_process_group(pid: int, timeout_s: float) -> None:
 
     deadline = time.time() + timeout_s
     while time.time() < deadline:
-        if not _is_alive(pid):
+        if _is_effectively_dead(pid):
             return
         time.sleep(0.2)
 
@@ -393,7 +429,9 @@ def _find_daemon_pids(config_path: str) -> list[int]:
         if resolved == cfg_resolved:
             pids.append(pid)
 
-    return _root_daemon_pids_only(sorted(set(pids)))
+    # Zombies still appear in ``ps`` and answer ``kill(0)``; they are not daemons.
+    living = [p for p in sorted(set(pids)) if not _is_zombie(p)]
+    return _root_daemon_pids_only(living)
 
 
 def _read_ppid(pid: int) -> Optional[int]:
@@ -570,6 +608,9 @@ def _cmd_stop(config_path: str) -> int:
     """
     Stop daemon process.
 
+    Re-scans for matching PIDs each round so a single ``restart`` cannot leave a
+    second daemon alive (race between SIGTERM and ``ps``).
+
     Args:
         config_path: Path to server config JSON.
 
@@ -579,19 +620,24 @@ def _cmd_stop(config_path: str) -> int:
 
     grace = _read_shutdown_grace_seconds(config_path)
     pidfile = _default_pidfile_path(config_path)
-    pid = _read_pid(pidfile)
 
-    # Prefer pidfile, but also kill any matching daemons (stale pidfiles happen).
-    pids: list[int] = []
-    if pid is not None:
-        pids.append(pid)
-    pids.extend([p for p in _find_daemon_pids(config_path) if p not in pids])
+    for _ in range(_STOP_MAX_ROUNDS):
+        pid = _read_pid(pidfile)
+        discovered = _find_daemon_pids(config_path)
+        merged: list[int] = []
+        if pid is not None:
+            merged.append(pid)
+        for p in discovered:
+            if p not in merged:
+                merged.append(p)
 
-    if not pids:
-        return 0
+        alive = [p for p in merged if _is_alive(p) and not _is_zombie(p)]
+        if not alive:
+            break
 
-    for p in pids:
-        _kill_process_group(p, timeout_s=grace)
+        for p in alive:
+            _kill_process_group(p, timeout_s=grace)
+        time.sleep(_STOP_ROUND_DELAY_S)
 
     try:
         pidfile.unlink(missing_ok=True)
@@ -599,6 +645,17 @@ def _cmd_stop(config_path: str) -> int:
         # Best effort cleanup; stale pidfile is handled by status/start.
         pass
     return 0
+
+
+def _wait_until_no_daemons(config_path: str, *, timeout_s: float) -> bool:
+    """Poll until ``_find_daemon_pids`` is empty or ``timeout_s`` elapses."""
+
+    deadline = time.time() + max(timeout_s, 0.1)
+    while time.time() < deadline:
+        if not _find_daemon_pids(config_path):
+            return True
+        time.sleep(_STOP_ROUND_DELAY_S)
+    return not bool(_find_daemon_pids(config_path))
 
 
 def _cmd_start(config_path: str) -> int:
@@ -670,6 +727,9 @@ def _cmd_restart(config_path: str) -> int:
     """
     Restart daemon process.
 
+    Waits until discovery reports no daemons for this config before ``start``,
+    so a new instance is not stacked on a still-shutting-down one.
+
     Args:
         config_path: Path to server config JSON.
 
@@ -677,7 +737,19 @@ def _cmd_restart(config_path: str) -> int:
         Exit code.
     """
 
+    grace = _read_shutdown_grace_seconds(config_path)
     _cmd_stop(config_path)
+    drain_timeout = max(45.0, grace * 4.0 + 5.0)
+    if not _wait_until_no_daemons(config_path, timeout_s=drain_timeout):
+        daemons = _find_daemon_pids(config_path)
+        print(
+            "error: daemon process(es) still present after stop; "
+            f"pids={','.join(str(p) for p in daemons)} — run `casmgr --config … stop` "
+            "manually, then `start`.",
+            file=sys.stderr,
+        )
+        return 1
+    time.sleep(_RESTART_SETTLE_S)
     return _cmd_start(config_path)
 
 

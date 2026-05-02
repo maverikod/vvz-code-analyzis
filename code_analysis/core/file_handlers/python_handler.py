@@ -2,9 +2,9 @@
 Python file handler: reads and mutates only via CST-safe paths (compose_cst ops).
 
 Raw plain-text line edits (``start_line`` / ``new_lines`` / …) are rejected for
-mutating operations. Writes delegate to :func:`run_ops_mode` (same pipeline as
-``compose_cst_module`` ops mode), including parse/lint validation before any
-backup or filesystem replace when applying.
+mutating operations. Writes delegate to :func:`run_ops_mode` (CST replace-ops
+pipeline), including parse/lint validation before any backup or filesystem replace
+when applying.
 
 Author: Vasiliy Zdanovskiy
 email: vasilyvz@gmail.com
@@ -20,7 +20,6 @@ from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 
 from ..backup_manager import BackupManager
 from ...commands.compose_cst_ops_flow import run_ops_mode
-from ...commands.cst_compose_module_command import ComposeCSTModuleCommand
 from ...commands.line_command_cst_gate import (
     LINE_CMD_DISALLOWED_MSG,
     healthy_parse_blocks_line_ops,
@@ -194,13 +193,6 @@ def _require_root_path(request: FileHandlerRequest) -> Path | FileHandlerResult:
     return raw
 
 
-def _compose_cmd(request: FileHandlerRequest) -> Any:
-    cmd = request.extra.get("compose_command")
-    if cmd is not None:
-        return cmd
-    return ComposeCSTModuleCommand()
-
-
 def _ops_for_save_new_or_overwrite(
     content: str,
     *,
@@ -208,7 +200,7 @@ def _ops_for_save_new_or_overwrite(
     relative_file: str,
 ) -> List[Dict[str, Any]]:
     """
-    Build compose_cst_module ops for full-document save.
+    Build CST replace ops for full-document save.
 
     New/empty files use ``module`` selector. Existing files must use a line range
     covering the current module body: ``kind=module`` ignores ``new_code`` when
@@ -238,13 +230,12 @@ class PythonFileHandler(BaseFileHandler):
     Python/CST handler: ``read`` (lines or minimal CST view), ``save`` / ``replace``
     / ``delete`` via ``run_ops_mode`` only.
 
-    Mutations require ``extra.root_path`` (project root), relative ``request.file_path``,
-    and ``extra.compose_command`` (optional :class:`ComposeCSTModuleCommand` instance)
-    when callers must supply a configured command for DB-backed applies.
+    Mutations require ``extra.root_path`` (project root) and relative ``request.file_path``.
 
     ``save`` writes ``extra.content`` via CST ops (``module`` selector for new
     files; full line-span ``range`` when overwriting an existing file).
-    ``replace`` / non-full ``delete`` use ``extra.ops`` (compose_cst_module shape).
+    ``replace`` / non-full ``delete`` use ``extra.ops`` (selector + ``new_code`` per
+    :func:`code_analysis.commands.compose_cst_validation.ops_from_params`).
     """
 
     @property
@@ -384,7 +375,6 @@ class PythonFileHandler(BaseFileHandler):
         return_diff = bool(request.dry_run or request.diff)
         t0 = time.perf_counter()
         mcp = run_ops_mode(
-            command=_compose_cmd(request),
             project_id=request.project_id,
             file_path=request.file_path,
             root_path=root,
@@ -424,7 +414,6 @@ class PythonFileHandler(BaseFileHandler):
         return_diff = bool(request.dry_run or request.diff)
         t0 = time.perf_counter()
         mcp = run_ops_mode(
-            command=_compose_cmd(request),
             project_id=request.project_id,
             file_path=request.file_path,
             root_path=root,
@@ -530,7 +519,6 @@ class PythonFileHandler(BaseFileHandler):
         return_diff = bool(request.dry_run or request.diff)
         t0 = time.perf_counter()
         mcp = run_ops_mode(
-            command=_compose_cmd(request),
             project_id=request.project_id,
             file_path=request.file_path,
             root_path=root,

@@ -40,7 +40,7 @@ class TestReadOnlyBatchWhitelist:
         mutating = (
             "cst_save_tree",
             "cst_modify_tree",
-            "compose_cst_module",
+            "cst_apply_buffer",
             "cst_create_file",
             "format_code",
             "delete_file",

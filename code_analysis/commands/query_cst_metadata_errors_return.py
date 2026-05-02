@@ -101,7 +101,7 @@ def get_return_value() -> Dict[str, Any]:
                 "truncated": "True if results were truncated due to max_results",
                 "matches": (
                     "List of match dictionaries. Each contains:\n"
-                    "- node_id: Stable identifier for compose_cst_module\n"
+                    "- node_id: Stable identifier for cst_modify_tree\n"
                     "- kind: Node kind (stmt, smallstmt, class, function, method, etc.)\n"
                     "- type: LibCST node type (If, Return, ClassDef, FunctionDef, etc.)\n"
                     "- name: Node name (if applicable)\n"
@@ -186,8 +186,8 @@ def get_best_practices() -> List[str]:
     """Return the best_practices list for query_cst metadata."""
     return [
         "For find+replace in one call: pass replace_with or code_lines (and optionally match_index or replace_all)",
-        "Use query_cst to find specific nodes before compose_cst_module",
-        "Save node_id from matches for use in compose_cst_module",
+        "Use query_cst to find specific nodes before cst_modify_tree",
+        "Save node_id from matches for use in cst_modify_tree",
         "Use include_code=True only when needed (can be large)",
         "Set max_results to limit output size for broad queries",
         "Check truncated field to see if results were limited",
@@ -195,6 +195,6 @@ def get_best_practices() -> List[str]:
         "Combine selectors with combinators for complex queries",
         "Use pseudos (:first, :last, :nth) to select specific matches",
         "See docs/CST_QUERY.md for selector syntax reference",
-        "Use node_id with compose_cst_module selector kind='node_id'",
-        "Or use selector directly with compose_cst_module kind='cst_query'",
+        "Use node_id with cst_modify_tree selector kind='node_id'",
+        "Or use selector directly with cst_modify_tree kind='cst_query'",
     ]

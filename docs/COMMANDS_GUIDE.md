@@ -35,7 +35,7 @@ Schema source of truth: `code_analysis/commands/**/*.py` → `get_schema()` and 
 
 Before any command modifies existing code, the file is placed in **versions** (backup to `old_code` via BackupManager). This is mandatory for all write commands.
 
-**Optional git:** when the project is a git repository, pass `commit_message` to create a git commit *after* the change. Commands that support it: `cst_save_tree`, `compose_cst_module`. Git does not replace backup: backup is always created before write; git commit is an extra version snapshot after write.
+**Optional git:** when the project is a git repository, pass `commit_message` to create a git commit *after* the change. Commands that support it: `cst_save_tree`, `cst_apply_buffer`. Git does not replace backup: backup is always created before write; git commit is an extra version snapshot after write.
 
 ---
 
@@ -96,7 +96,7 @@ Before any command modifies existing code, the file is placed in **versions** (b
 | cst_get_node_info | [cst_get_node_info.md](commands/cst/cst_get_node_info.md) | Get node metadata |
 | cst_get_node_by_range | [cst_get_node_by_range.md](commands/cst/cst_get_node_by_range.md) | Get node by line/column range |
 | cst_modify_tree | [cst_modify_tree.md](commands/cst/cst_modify_tree.md) | Apply edits to CST tree |
-| compose_cst_module | [compose_cst_module.md](commands/cst/compose_cst_module.md) | Compose module from blocks |
+| cst_apply_buffer | (see server `help` / OpenAPI) | Apply buffered code via CST replace-ops |
 | cst_create_file | [cst_create_file.md](commands/cst/cst_create_file.md) | Create new file from CST |
 | cst_convert_and_save | [cst_convert_and_save.md](commands/cst/cst_convert_and_save.md) | Convert and save CST to file |
 | list_cst_blocks | [list_cst_blocks.md](commands/cst/list_cst_blocks.md) | List CST blocks for module |

@@ -153,8 +153,8 @@ class _ClientAPIFilesMixin(_DatabaseClientBase):
         watch_dir_id = getattr(project, "watch_dir_id", None)
         result = self.execute(
             "INSERT OR REPLACE INTO files "
-            "(project_id, path, relative_path, lines, last_modified, has_docstring, watch_dir_id) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            "(project_id, path, relative_path, lines, last_modified, has_docstring, deleted, watch_dir_id) "
+            "VALUES (?, ?, ?, ?, ?, ?, 0, ?)",
             (
                 project_id,
                 abs_path,
@@ -174,14 +174,6 @@ class _ClientAPIFilesMixin(_DatabaseClientBase):
                 f"INSERT OR REPLACE into files did not return a row id for {abs_path}"
             )
         return str(row_id)
-
-    def save_ast_tree(
-        self,
-        file_id: int,
-        project_id: str,
-        ast_json: str,
-        ast_hash: str,
-        file_mtime: float,
         overwrite: bool = False,
     ) -> int:
         """Save AST tree for a file. Returns ast_tree id."""

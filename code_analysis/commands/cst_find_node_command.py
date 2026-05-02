@@ -156,7 +156,7 @@ class CSTFindNodeCommand(BaseMCPCommand):
                 if len(matches) > 1:
                     candidates = [
                         {
-                            "node_id": m.node_id,
+                            "stable_id": m.stable_id,
                             "start_line": m.start_line,
                             "name": m.name,
                             "type": m.type,
@@ -186,7 +186,7 @@ class CSTFindNodeCommand(BaseMCPCommand):
             }
             if require_one and len(nodes) == 1:
                 data["node"] = nodes[0]
-                data["node_id"] = nodes[0].get("node_id")
+                data["stable_id"] = nodes[0].get("stable_id")
     
             logger.info(
                 "[TIMING] command=cst_find_node total_elapsed_sec=%.4f",

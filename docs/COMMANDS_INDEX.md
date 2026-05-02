@@ -84,7 +84,7 @@ email: vasilyvz@gmail.com
 | cst_get_node_info   | CSTGetNodeInfoCommand     | commands/cst_get_node_info_command.py    |
 | cst_get_node_by_range| CSTGetNodeByRangeCommand  | commands/cst_get_node_by_range_command.py |
 | cst_modify_tree     | CSTModifyTreeCommand      | commands/cst_modify_tree_command.py       |
-| compose_cst_module   | ComposeCSTModuleCommand   | commands/cst_compose_module_command.py   |
+| cst_apply_buffer    | CSTApplyBufferCommand     | commands/cst_apply_buffer_command.py      |
 | cst_create_file     | CSTCreateFileCommand     | commands/cst_create_file_command.py       |
 | cst_convert_and_save | CSTConvertAndSaveCommand  | commands/cst_convert_and_save_command.py  |
 | list_cst_blocks     | ListCSTBlocksCommand      | commands/list_cst_blocks_command.py       |

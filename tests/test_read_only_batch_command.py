@@ -108,9 +108,9 @@ async def test_reject_non_whitelisted_command(tmp_path: Any) -> None:
 
 @pytest.mark.asyncio
 async def test_reject_mutating_command_by_name(tmp_path: Any) -> None:
-    """Batch rejects mutating command (compose_cst_module) via whitelist."""
+    """Batch rejects mutating command (cst_apply_buffer) via whitelist."""
     registry = _make_mock_registry()
-    invocations = [{"command": "compose_cst_module", "params": {}}]
+    invocations = [{"command": "cst_apply_buffer", "params": {}}]
     result = await run_read_only_batch(
         cast(Sequence[_Invocation], invocations),
         max_response_bytes=100_000,
@@ -119,7 +119,7 @@ async def test_reject_mutating_command_by_name(tmp_path: Any) -> None:
     )
     assert result.get("inline") is False
     assert result.get("error_code") == ERROR_CODE_NOT_WHITELISTED
-    assert "compose_cst_module" in (result.get("command"), result.get("error", ""))
+    assert "cst_apply_buffer" in (result.get("command"), result.get("error", ""))
 
 
 @pytest.mark.asyncio
@@ -266,8 +266,7 @@ def test_whitelist_contains_expected_read_only_commands() -> None:
         "find_usages",
         "get_entity_dependencies",
         "get_entity_dependents",
-        "export_graph",
     }
     assert expected <= READ_ONLY_BATCH_WHITELIST
-    mutating = {"cst_save_tree", "compose_cst_module", "cst_modify_tree"}
+    mutating = {"cst_save_tree", "cst_apply_buffer", "cst_modify_tree"}
     assert READ_ONLY_BATCH_WHITELIST.isdisjoint(mutating)

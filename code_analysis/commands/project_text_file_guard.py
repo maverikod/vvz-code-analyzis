@@ -102,7 +102,7 @@ def reject_if_python_text_path(file_path: str) -> Optional[ErrorResult]:
         return ErrorResult(
             message=(
                 "Python source files cannot be read or written with this command; use CST "
-                "commands (cst_load_file, cst_modify_tree, compose_cst_module, cst_save_tree) "
+                "commands (cst_load_file, cst_modify_tree, cst_save_tree) "
                 "instead."
             ),
             code="PYTHON_FILE_FORBIDDEN",

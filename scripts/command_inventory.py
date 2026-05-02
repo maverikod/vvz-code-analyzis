@@ -134,7 +134,7 @@ def check_command_files(commands_to_check: Set[str] = None) -> Dict[str, bool]:
 
     # Map command names to expected file paths
     command_file_map = {
-        "compose_cst_module": commands_dir / "cst_compose_module_command.py",
+        "cst_load_file": commands_dir / "cst_load_file_command.py",
         "list_cst_blocks": commands_dir / "list_cst_blocks_command.py",
         "query_cst": commands_dir / "query_cst_command.py",
     }
@@ -158,9 +158,9 @@ def check_command_imports(commands_to_check: Set[str] = None) -> Dict[str, bool]
     results: Dict[str, bool] = {}
 
     import_map = {
-        "compose_cst_module": (
-            "code_analysis.commands.cst_compose_module_command",
-            "ComposeCSTModuleCommand",
+        "cst_load_file": (
+            "code_analysis.commands.cst_load_file_command",
+            "CSTLoadFileCommand",
         ),
         "list_cst_blocks": (
             "code_analysis.commands.list_cst_blocks_command",
@@ -200,17 +200,20 @@ def check_hooks_registration(commands_to_check: Set[str] = None) -> Dict[str, bo
 
     content = hooks_file.read_text(encoding="utf-8")
 
-    # Map command names to class names and registration patterns
+    # Map command names to (display class, unique substring in hooks.py).
     registration_map = {
-        "compose_cst_module": (
-            "ComposeCSTModuleCommand",
-            "reg.register(ComposeCSTModuleCommand",
+        "cst_load_file": (
+            "CSTLoadFileCommand",
+            'register_auto_import_module("code_analysis.commands.cst_load_file_command")',
         ),
         "list_cst_blocks": (
             "ListCSTBlocksCommand",
-            "reg.register(ListCSTBlocksCommand",
+            'register_auto_import_module("code_analysis.commands.list_cst_blocks_command")',
         ),
-        "query_cst": ("QueryCSTCommand", "reg.register(QueryCSTCommand"),
+        "query_cst": (
+            "QueryCSTCommand",
+            'register_auto_import_module("code_analysis.commands.query_cst_command")',
+        ),
     }
 
     # If specific commands requested, check only those
@@ -220,12 +223,12 @@ def check_hooks_registration(commands_to_check: Set[str] = None) -> Dict[str, bo
         }
 
     for cmd_name, (class_name, register_pattern) in registration_map.items():
-        found = class_name in content and register_pattern in content
+        found = register_pattern in content
         results[cmd_name] = found
         if found:
-            print(f"  ✅ {cmd_name}: registered in hooks.py")
+            print(f"  ✅ {cmd_name}: hooks.py ({class_name})")
         else:
-            print(f"  ❌ {cmd_name}: NOT registered in hooks.py")
+            print(f"  ❌ {cmd_name}: NOT found in hooks.py ({class_name})")
 
     return results
 

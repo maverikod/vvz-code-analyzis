@@ -251,6 +251,8 @@ def insert_node(
     if not inserter.inserted:
         raise ValueError(f"Nodes were not inserted into {parent_node_id}")
     return result
+
+
 def insert_node_relative(
     module: cst.Module,
     tree: CSTTree,
@@ -414,6 +416,7 @@ def insert_node_relative(
     if not inserter.done:
         raise ValueError(f"Nodes were not inserted into parent {parent_node_id}")
     return result
+
 
 # cst-node-ids: begin
 # cst-node-ids: version=2

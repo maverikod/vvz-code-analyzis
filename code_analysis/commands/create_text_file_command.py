@@ -75,7 +75,7 @@ def _reject_if_not_plain_text_handler(
         return ErrorResult(
             message=(
                 "Python source files cannot be created with create_text_file; use "
-                "cst_create_file, compose_cst_module, universal_file_save, or other CST/Python "
+                "cst_create_file, universal_file_save, or other CST/Python "
                 "commands instead."
             ),
             code="PYTHON_FILE_FORBIDDEN",

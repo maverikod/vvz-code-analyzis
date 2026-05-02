@@ -12,7 +12,7 @@ email: vasilyvz@gmail.com
 
 ## Purpose (Предназначение)
 
-The list_cst_blocks command lists logical blocks (functions, classes, methods) in a Python file with stable IDs and exact line ranges. These blocks can be used with compose_cst_module for safe refactoring operations.
+The list_cst_blocks command lists logical blocks (functions, classes, methods) in a Python file with stable IDs and exact line ranges. These blocks can be used with cst_modify_tree for safe refactoring operations.
 
 Operation flow:
 1. Validates root_dir exists and is a directory
@@ -39,7 +39,7 @@ Block ID Format:
 - Stable enough for edit workflows (if code moves, refresh via list_cst_blocks)
 
 Block Information:
-- id: Stable block identifier (use with compose_cst_module)
+- id: Stable block identifier (use with cst_modify_tree)
 - kind: Block type (function, class, method)
 - qualname: Qualified name (function name, class name, or ClassName.method)
 - start_line: Starting line number (1-based)
@@ -47,7 +47,7 @@ Block Information:
 
 Use cases:
 - Discover code structure before refactoring
-- Get stable IDs for compose_cst_module operations
+- Get stable IDs for cst_modify_tree operations
 - Find functions, classes, and methods in a file
 - Understand file organization
 - Prepare for safe code modifications
@@ -55,7 +55,7 @@ Use cases:
 Typical Workflow:
 1. Run list_cst_blocks to discover blocks
 2. Pick block_id from results
-3. Use compose_cst_module with selector kind='block_id'
+3. Use cst_modify_tree with selector kind='block_id'
 4. Preview diff and compile result
 5. Apply changes if satisfied
 
@@ -90,7 +90,7 @@ All MCP commands return either a **success** result (with `data`) or an **error*
 - `success`: Always True on success
 - `file_path`: Path to analyzed file
 - `blocks`: List of block dictionaries. Each contains:
-- id: Stable block identifier (use with compose_cst_module)
+- id: Stable block identifier (use with cst_modify_tree)
 - kind: Block type (function, class, method)
 - qualname: Qualified name
 - start_line: Starting line number (1-based)
@@ -125,7 +125,7 @@ Lists all logical blocks (functions, classes, methods) in main.py with stable ID
 }
 ```
 
-Lists blocks to understand file structure before using compose_cst_module.
+Lists blocks to understand file structure before using cst_modify_tree.
 
 ### Incorrect usage
 
@@ -145,10 +145,10 @@ Lists blocks to understand file structure before using compose_cst_module.
 
 ## Best practices
 
-- Use list_cst_blocks before compose_cst_module to discover blocks
-- Save block IDs for use in compose_cst_module operations
+- Use list_cst_blocks before cst_modify_tree to discover blocks
+- Save block IDs for use in cst_modify_tree operations
 - Refresh block list if file structure changes significantly
-- Use block IDs with compose_cst_module selector kind='block_id'
+- Use block IDs with cst_modify_tree selector kind='block_id'
 - Check start_line and end_line to understand block boundaries
 - Use qualname to identify specific methods (ClassName.method)
 - Combine with query_cst for more granular node discovery

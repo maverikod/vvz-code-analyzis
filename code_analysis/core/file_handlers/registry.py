@@ -185,7 +185,7 @@ def get_handler_schema(handler_id: str, operation: str) -> Dict[str, Any]:
     if handler_id == HANDLER_PYTHON:
         return {
             **base_common,
-            "description": "Python: CST/compose_cst_module ops only; no raw text line editor.",
+            "description": "Python: CST replace-ops only (run_ops_mode); no raw text line editor.",
             "properties": {
                 **base_common["properties"],
                 "content": {"type": "string"},

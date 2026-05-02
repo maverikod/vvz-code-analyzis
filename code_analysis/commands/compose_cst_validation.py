@@ -1,7 +1,7 @@
 """
-Validation and parsing for compose_cst_module: selectors and ops.
+Validation and parsing for CST replace-ops (selectors and ops).
 
-Builds Selector/ReplaceOp from request params. Used by ComposeCSTModuleCommand.
+Builds Selector/ReplaceOp from request params. Used by run_ops_mode and tests.
 
 Author: Vasiliy Zdanovskiy
 email: vasilyvz@gmail.com

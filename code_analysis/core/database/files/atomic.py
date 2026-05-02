@@ -260,7 +260,7 @@ def update_file_data_atomic(
                     docstring,
                     bases,
                     end_line=end_line_class,
-                    cst_node_id=class_cst_node.node_id,
+                    cst_node_id=class_cst_node.stable_id,
                 )
                 classes_added += 1
                 class_nodes[node] = class_id
@@ -317,7 +317,7 @@ def update_file_data_atomic(
                             method_docstring,
                             complexity=method_complexity,
                             end_line=end_line_method,
-                            cst_node_id=method_cst_node.node_id,
+                            cst_node_id=method_cst_node.stable_id,
                         )
                         methods_added += 1
 
@@ -385,7 +385,7 @@ def update_file_data_atomic(
                         docstring,
                         complexity=function_complexity,
                         end_line=end_line_func,
-                        cst_node_id=function_cst_node.node_id,
+                        cst_node_id=function_cst_node.stable_id,
                     )
                     functions_added += 1
 

@@ -2,7 +2,7 @@
 
 **Date:** 2026-04-29  
 **Found by:** Claude (code_analysis session)  
-**Severity:** CRITICAL — blocks `cst_save_tree`, `compose_cst_module`, all CST write operations  
+**Severity:** CRITICAL — blocks `cst_save_tree`, `cst_apply_buffer`, all CST write operations  
 **Status:** Open  
 
 ---
@@ -22,7 +22,7 @@ Failed to sync file to DB: execute_batch failed:
   CONTEXT: unnamed portal parameter $1 = '...'
 ```
 
-**Trigger:** Any call to `cst_save_tree` or `compose_cst_module` with `apply=true`.
+**Trigger:** Any call to `cst_save_tree` or `cst_apply_buffer` with `apply=true`.
 
 **Root cause:** During the SQLite→Postgres migration, `file_id` (formerly INTEGER autoincrement PK) may now be a UUID in Postgres. However, the DB sync path `tree_saver.py` → `execute_batch` still passes a UUID string where a SQL column typed as `INTEGER` is expected.
 

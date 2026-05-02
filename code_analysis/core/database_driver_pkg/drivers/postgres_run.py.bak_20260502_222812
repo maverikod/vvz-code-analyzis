@@ -181,12 +181,6 @@ _FUNCTIONS_INSERT_OR_REPLACE_NORM = _norm_sql_one_line(
     "VALUES (?, ?, ?, ?, ?, ?, ?)"
 )
 
-_FILES_INSERT_OR_REPLACE_NORM = _norm_sql_one_line(
-    "INSERT OR REPLACE INTO files "
-    "(project_id, path, relative_path, lines, last_modified, has_docstring, deleted, watch_dir_id) "
-    "VALUES (?, ?, ?, ?, ?, ?, 0, ?)"
-)
-
 
 # SQLite schema often uses INTEGER 0/1 for these; PostgreSQL uses native BOOLEAN.
 _BOOL_COL_INT_ASSIGN = ("deleted", "has_docstring", "processing_paused")
@@ -325,20 +319,6 @@ def _adapt_sqlite_dml_for_postgres(sql: str) -> str:
             "cst_node_id = EXCLUDED.cst_node_id, "
             "args = EXCLUDED.args, "
             "docstring = EXCLUDED.docstring"
-        )
-    if norm == _FILES_INSERT_OR_REPLACE_NORM:
-        return (
-            "INSERT INTO files "
-            "(project_id, path, relative_path, lines, last_modified, has_docstring, deleted, watch_dir_id) "
-            "VALUES (?, ?, ?, ?, ?, ?, FALSE, ?) "
-            "ON CONFLICT (project_id, path) DO UPDATE SET "
-            "path = EXCLUDED.path, "
-            "relative_path = EXCLUDED.relative_path, "
-            "lines = EXCLUDED.lines, "
-            "last_modified = EXCLUDED.last_modified, "
-            "has_docstring = EXCLUDED.has_docstring, "
-            "deleted = EXCLUDED.deleted, "
-            "watch_dir_id = EXCLUDED.watch_dir_id"
         )
     return s
 

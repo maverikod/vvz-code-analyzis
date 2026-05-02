@@ -129,7 +129,7 @@ class GetFileLinesCommand(BaseMCPCommand):
                         "cst_commands": [
                             "cst_load_file",
                             "cst_modify_tree",
-                            "compose_cst_module",
+                            "cst_modify_tree",
                         ],
                     },
                 )

@@ -22,7 +22,7 @@ def get_find_examples() -> List[Dict[str, Any]]:
             },
             "explanation": (
                 "Finds all classes named exactly 'MyClass' in main.py. "
-                "Returns node_id that can be used with compose_cst_module."
+                "Returns node_id that can be used with cst_modify_tree."
             ),
         },
         {

@@ -34,7 +34,7 @@ You **combine** test authorship and validation **only** through server commands 
 
 - **MCP Proxy** tools that invoke **code-analysis-server** (e.g. `call_server` with `server_id` of this project’s analysis server, `help`, `list_servers` as needed for discovery).
 - **Project scope:** only **`project_id`** values and file paths that the server resolves for a **registered, watched** project (resolve via `list_projects`, `list_watch_dirs`, root **`projectid`** per subtree — see project docs).
-- **Commands** (non-exhaustive): project/context (`list_projects`, `create_project`, …), CST (`cst_load_file`, `cst_modify_tree`, `cst_save_tree`, `compose_cst_module`, `cst_create_file`, `list_cst_blocks`, `query_cst`, …), quality (`format_code`, `lint_code`, `type_check_code`), analysis/indexes (`comprehensive_analysis`, `update_indexes`, …), search/AST as documented under `docs/commands/`.
+- **Commands** (non-exhaustive): project/context (`list_projects`, `create_project`, …), CST (`cst_load_file`, `cst_modify_tree`, `cst_save_tree`, `cst_apply_buffer`, `cst_create_file`, `list_cst_blocks`, `query_cst`, …), quality (`format_code`, `lint_code`, `type_check_code`), analysis/indexes (`comprehensive_analysis`, `update_indexes`, …), search/AST as documented under `docs/commands/`.
 - Use **`help`** on the server for exact parameter schemas before calling unfamiliar commands.
 
 ### Forbidden
@@ -52,8 +52,8 @@ You **combine** test authorship and validation **only** through server commands 
 1. **Resolve `project_id`** — from `list_projects` or the target subtree’s **`projectid`** file. If missing or invalid (**CR-003**), stop and report.
 2. **Discover commands** — `help` on the server for the command you need.
 3. **Read code** — `cst_load_file` / `cst_get_node_info` with `include_code`, or `list_cst_blocks` / `query_cst` with `include_code` — **not** file tools.
-4. **Edit** — `cst_modify_tree` (with **`code_lines`**, correct container `parent_node_id`) and/or `compose_cst_module` / `cst_create_file` as documented.
-5. **Save** — `cst_save_tree` / `compose_cst_module` with backups per server rules.
+4. **Edit** — `cst_modify_tree` (with **`code_lines`**, correct container `parent_node_id`) and/or `cst_apply_buffer` / `cst_create_file` as documented.
+5. **Save** — `cst_save_tree` / `cst_apply_buffer` with backups per server rules.
 6. **Validate** — `format_code`, `lint_code`, `type_check_code` on changed paths; optionally `comprehensive_analysis` / `update_indexes` per docs.
 7. **Report** — scope, `project_id`, commands used, verdict (pass/fail), blockers (server down, invalid `projectid`, command errors).
 

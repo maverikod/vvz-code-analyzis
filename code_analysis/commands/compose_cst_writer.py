@@ -1,8 +1,8 @@
 """
-Validation, file write, and apply logic for compose_cst_module.
+Validation, file write, and apply logic for the CST replace-ops write path.
 
 Temp file validation, file record update, rollback, and apply_changes.
-Used by ComposeCSTModuleCommand.
+Used by run_ops_mode (via these helpers).
 
 Author: Vasiliy Zdanovskiy
 email: vasilyvz@gmail.com
@@ -265,7 +265,7 @@ def apply_changes(
     t_apply = time.perf_counter()
     t_prev = t_apply
     logger.info(
-        "[CHAIN] compose_cst_module _apply_changes entry transaction_id=%s",
+        "[CHAIN] run_ops_mode _apply_changes entry transaction_id=%s",
         (
             (transaction_id[:8] + "...")
             if transaction_id and len(transaction_id) > 8
@@ -328,7 +328,7 @@ def apply_changes(
         logger.info("[PROFILE] _apply_changes os_replace elapsed=%.3fs", _t - t_prev)
         t_prev = _t
 
-        logger.info("[CHAIN] compose_cst_module calling database.commit_transaction")
+        logger.info("[CHAIN] run_ops_mode calling database.commit_transaction")
         database.commit_transaction(transaction_id)
         _t = time.perf_counter()
         logger.info(
@@ -373,14 +373,14 @@ def apply_changes(
 
     except Exception as error:
         logger.warning(
-            "[CHAIN] compose_cst_module _apply_changes failed: %s; attempting rollback",
+            "[CHAIN] run_ops_mode _apply_changes failed: %s; attempting rollback",
             type(error).__name__,
         )
         try:
             database.rollback_transaction(transaction_id)
         except Exception as rollback_error:
             logger.error(
-                "[CHAIN] compose_cst_module rollback_transaction failed: %s",
+                "[CHAIN] run_ops_mode rollback_transaction failed: %s",
                 rollback_error,
             )
 

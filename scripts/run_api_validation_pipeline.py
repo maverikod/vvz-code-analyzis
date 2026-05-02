@@ -56,7 +56,6 @@ VALIDATION_GROUPS = {
         "cst_save_tree",
         "cst_create_file",
         "cst_modify_tree",
-        "compose_cst_module",
         "cst_convert_and_save",
         "cst_find_node",
         "cst_get_node_info",

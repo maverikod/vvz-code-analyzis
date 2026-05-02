@@ -20,7 +20,7 @@ from .project_text_file_guard import FORBIDDEN_PYTHON_SOURCE_SUFFIXES
 # Error message when file is healthy and line commands are disallowed
 LINE_CMD_DISALLOWED_MSG = (
     "This file parses successfully. Use CST commands instead: "
-    "cst_load_file (load tree), cst_modify_tree (edit by node), compose_cst_module (patch by selector). "
+    "cst_load_file (load tree), cst_modify_tree (edit by node), CST replace-ops (selector + new_code). "
     "Set code_analysis.allow_line_commands_on_healthy_files=true to allow get_file_lines/replace_file_lines on healthy files."
 )
 

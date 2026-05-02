@@ -153,8 +153,8 @@ class _ClientAPIFilesMixin(_DatabaseClientBase):
         watch_dir_id = getattr(project, "watch_dir_id", None)
         result = self.execute(
             "INSERT OR REPLACE INTO files "
-            "(project_id, path, relative_path, lines, last_modified, has_docstring, watch_dir_id) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            "(project_id, path, relative_path, lines, last_modified, has_docstring, deleted, watch_dir_id) "
+            "VALUES (?, ?, ?, ?, ?, ?, 0, ?)",
             (
                 project_id,
                 abs_path,

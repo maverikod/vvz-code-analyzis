@@ -421,12 +421,6 @@ COMMAND_MAP = [
         "cst",
     ),
     (
-        "compose_cst_module",
-        "code_analysis.commands.cst_compose_module_command",
-        "ComposeCSTModuleCommand",
-        "cst",
-    ),
-    (
         "cst_create_file",
         "code_analysis.commands.cst_create_file_command",
         "CSTCreateFileCommand",

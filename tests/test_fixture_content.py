@@ -61,7 +61,7 @@ def test_function() -> str:
     """Updated test function with explicit return type.
 
     Returns:
-        Updated string used by compose_cst_module integration tests.
+        Updated string used by CST-related integration tests.
     """
     return "updated"
 '''

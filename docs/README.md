@@ -176,7 +176,7 @@ projects = manager.get_project_list()
 
 If you want to refactor by **logical blocks** (preserving comments, moving imports to the top,
 validating via `compile()`), see `docs/CST_TOOLS.md`, `docs/CST_QUERY.md` and MCP commands
-`compose_cst_module` / `query_cst`.
+`cst_apply_buffer` / `query_cst`.
 
 ## MCP Server usage (proxy vs direct)
 

@@ -268,7 +268,7 @@ class ListBackupFilesMCPCommand(BaseMCPCommand):
                         "files": [
                             {
                                 "file_path": "code_analysis/core/backup_manager.py",
-                                "command": "compose_cst_module",
+                                "command": "cst_save_tree",
                                 "related_files": [],
                             },
                             {

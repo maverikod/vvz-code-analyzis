@@ -1,7 +1,7 @@
 """
-Database backup, delete, and restore for compose_cst_module.
+Database backup, delete, and restore for CST compose write path.
 
-Used by ComposeCSTModuleCommand and compose_cst_writer for transactional file updates.
+Used by compose_cst_writer and run_ops_mode for transactional file updates.
 
 Author: Vasiliy Zdanovskiy
 email: vasilyvz@gmail.com

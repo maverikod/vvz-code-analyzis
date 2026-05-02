@@ -16,7 +16,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 from mcp_proxy_adapter.commands.result import ErrorResult
 
-from code_analysis.commands.cst_compose_module_command import ComposeCSTModuleCommand
+from code_analysis.commands.base_mcp_command import BaseMCPCommand
 from code_analysis.core.file_handlers import (
     HANDLER_PYTHON,
     HANDLER_TEXT,
@@ -261,7 +261,7 @@ def test_invalid_node_id_selector_fails_before_backup_and_db(tmp_path: Path) -> 
             "code_analysis.commands.compose_cst_ops_flow.BackupManager",
         ) as bm_cls,
         patch.object(
-            ComposeCSTModuleCommand,
+            BaseMCPCommand,
             "_open_database_from_config",
             MagicMock(),
         ) as open_db,
@@ -312,7 +312,7 @@ def test_parse_validation_failure_before_apply_skips_backup_and_db(
             "code_analysis.commands.compose_cst_ops_flow.BackupManager",
         ) as bm_cls,
         patch.object(
-            ComposeCSTModuleCommand,
+            BaseMCPCommand,
             "_open_database_from_config",
             MagicMock(),
         ) as open_db,

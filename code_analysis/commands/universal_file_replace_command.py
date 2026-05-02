@@ -268,7 +268,7 @@ def _validate_replace_payload_for_handler(
         if not isinstance(ops, list) or len(ops) == 0:
             return ErrorResult(
                 message="Python replace requires a non-empty ops list "
-                "(compose_cst_module ops; CST-safe only)",
+                "(CST replace-ops; CST-safe only)",
                 code="VALIDATION_ERROR",
                 details={"field": "ops"},
             )
@@ -399,7 +399,7 @@ class UniversalFileReplaceCommand(BaseMCPCommand):
                 "ops": {
                     "type": "array",
                     "description": (
-                        "Python handler: non-empty compose_cst_module ops (CST selectors / "
+                        "Python handler: non-empty CST replace ops (selectors / "
                         "range-safe patches only)."
                     ),
                 },

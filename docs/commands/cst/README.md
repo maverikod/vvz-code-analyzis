@@ -3,7 +3,7 @@
 Author: Vasiliy Zdanovskiy  
 email: vasilyvz@gmail.com
 
-Commands for working with Concrete Syntax Tree: get_file_lines (raw lines without parsing), load, save, reload, find node, get node info, get node by range, get node at line (node + parent in one call), modify tree, compose module, create file, convert and save; plus list_cst_blocks and query_cst.
+Commands for working with Concrete Syntax Tree: get_file_lines (raw lines without parsing), load, save, reload, find node, get node info, get node by range, get node at line (node + parent in one call), modify tree, create file, convert and save; plus list_cst_blocks and query_cst. Large-buffer CST applies use `cst_apply_buffer` (see command docs).
 
 **Concept and pipeline:** [CST_CONCEPT_AND_PIPELINE.md](../../plans/cst_concept/CST_CONCEPT_AND_PIPELINE.md) — full concept, load-by-levels, node expand (direct/recursive), write node (parent + file), syntax-error handling, and comparison with direct text editing. Subdir `docs/plans/cst_concept/` is used for CST concept and refactoring planning.
 
@@ -20,7 +20,7 @@ Commands for working with Concrete Syntax Tree: get_file_lines (raw lines withou
 | cst_get_node_by_range| CSTGetNodeByRangeCommand| `commands/cst_get_node_by_range_command.py`|
 | cst_get_node_at_line| CSTGetNodeAtLineCommand  | `commands/cst_get_node_at_line_command.py`|
 | cst_modify_tree    | CSTModifyTreeCommand      | `commands/cst_modify_tree_command.py`    |
-| compose_cst_module| ComposeCSTModuleCommand   | `commands/cst_compose_module_command.py` |
+| cst_apply_buffer   | CSTApplyBufferCommand     | `commands/cst_apply_buffer_command.py` |
 | cst_create_file    | CSTCreateFileCommand     | `commands/cst_create_file_command.py`    |
 | cst_convert_and_save| CSTConvertAndSaveCommand| `commands/cst_convert_and_save_command.py`|
 | list_cst_blocks    | ListCSTBlocksCommand      | `commands/list_cst_blocks_command.py`    |

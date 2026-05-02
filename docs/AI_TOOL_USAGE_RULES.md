@@ -35,7 +35,7 @@ This document defines rules for AI models on how to use the code analysis and re
 **IF server is available:**
 
 1. **Python code operations → SERVER TOOLS ONLY (MANDATORY)**
-   - ✅ Editing existing Python code → `compose_cst_module` OR `cst_load_file` → `cst_modify_tree` → `cst_save_tree` (via MCP)
+   - ✅ Editing existing Python code → `cst_apply_buffer` OR `cst_load_file` → `cst_modify_tree` → `cst_save_tree` (via MCP)
    - ✅ **For multi-line code**: Use `code_lines` (array of strings) in `cst_modify_tree` - avoids JSON escaping issues
    - ✅ **For test projects**: ONLY server tools, NEVER direct file editing
    - ✅ Splitting files → `split_file_to_package` (via MCP)
@@ -64,8 +64,8 @@ This document defines rules for AI models on how to use the code analysis and re
 
 **Traditional (single operation):** Use `project_id` (required by schema).
 1. `list_cst_blocks` (project_id, file_path) → discover structure
-2. `compose_cst_module` with `apply=false` → preview
-3. `compose_cst_module` with `apply=true` → apply
+2. `cst_apply_buffer` with `apply=false` → preview
+3. `cst_apply_buffer` with `apply=true` → apply
 4. `comprehensive_analysis` (project_id) → validate quality
 
 **Tree-based (multiple operations):** Use `project_id` for load/save.
@@ -97,7 +97,7 @@ This document defines rules for AI models on how to use the code analysis and re
 **IF server `code-analysis-server` is available via MCP Proxy:**
 
 1. **MUST use server tools** for ALL Python code operations:
-   - ✅ Editing existing Python code → `compose_cst_module` (MANDATORY)
+   - ✅ Editing existing Python code → `cst_apply_buffer` (MANDATORY)
    - ✅ Splitting files → `split_file_to_package` (MANDATORY)
    - ✅ Code analysis → `comprehensive_analysis`, `get_code_entity_info` (MANDATORY)
    - ✅ Code quality → `format_code`, `lint_code`, `type_check_code` (MANDATORY)
@@ -123,7 +123,7 @@ This document defines rules for AI models on how to use the code analysis and re
    - Report what operation was attempted
 
 2. **MUST NOT automatically switch to fallback tools**:
-   - ❌ Do NOT silently use `search_replace` if `compose_cst_module` fails
+   - ❌ Do NOT silently use `search_replace` if `cst_apply_buffer` fails
    - ❌ Do NOT proceed with direct file editing without user approval
    - ✅ Wait for user decision
 
@@ -147,8 +147,8 @@ This document defines rules for AI models on how to use the code analysis and re
 **For existing Python files, ALWAYS follow this sequence (when server is available):**
 
 1. **Discover** → `list_cst_blocks` to find code structure
-2. **Preview** → `compose_cst_module` with `apply=false` to see changes
-3. **Apply** → `compose_cst_module` with `apply=true` and `create_backup=true`
+2. **Preview** → `cst_apply_buffer` with `apply=false` to see changes
+3. **Apply** → `cst_apply_buffer` with `apply=true` and `create_backup=true`
 4. **Validate** → `format_code`, `lint_code`, `type_check_code`
 5. **Analyze** → `comprehensive_analysis` after logically completed steps
 
@@ -191,7 +191,7 @@ This document defines rules for AI models on how to use the code analysis and re
 Is server available?
 ├─ YES → Is it Python code?
 │   ├─ YES → Is file existing?
-│   │   ├─ YES → Use compose_cst_module (MANDATORY)
+│   │   ├─ YES → Use cst_apply_buffer (MANDATORY)
 │   │   │   └─ If fails → Report error to user → Wait for decision
 │   │   └─ NO → Use write (allowed for new files)
 │   └─ NO → Use write/search_replace (allowed for non-Python)
@@ -257,7 +257,7 @@ python -m code_analysis.cli.server_manager_cli --config config.json restart
 
 **When editing existing code, use this priority (when server is available):**
 
-1. ✅ **CST Tools** (via `compose_cst_module` MCP command) - **PRIMARY FOR EXISTING CODE**
+1. ✅ **CST Tools** (via `cst_apply_buffer` MCP command) - **PRIMARY FOR EXISTING CODE**
 2. ⚠️ **Direct file editing** (`search_replace`, `write`) - **ONLY FOR NEW FILES OR WHEN CST FAILS AND USER APPROVES**
 
 **IMPORTANT**: If CST tools fail, you MUST:
@@ -287,8 +287,8 @@ python -m code_analysis.cli.server_manager_cli --config config.json restart
 **1. Traditional File-based CST (simpler for single operations)**:
 1. **Discover**: Use `list_cst_blocks` to find blocks with stable IDs
 2. **Query** (optional): Use `query_cst` for complex selectors
-3. **Preview**: Use `compose_cst_module` with `apply=false` and `return_diff=true`
-4. **Apply**: Use `compose_cst_module` with `apply=true` and `create_backup=true`
+3. **Preview**: Use `cst_apply_buffer` with `apply=false` and `return_diff=true`
+4. **Apply**: Use `cst_apply_buffer` with `apply=true` and `create_backup=true`
 
 **2. In-Memory Tree-based CST (better for multiple operations)** - **RECOMMENDED**:
 1. **Load**: Use `cst_load_file` to load file into tree (returns tree_id)
@@ -326,7 +326,7 @@ mcp_MCP-Proxy-2_call_server(
 # Step 2: Replace method using block_id or selector
 mcp_MCP-Proxy-2_call_server(
     server_id="code-analysis-server",
-    command="compose_cst_module",
+    command="cst_apply_buffer",
     params={
         "root_dir": "/path",
         "file_path": "file.py",
@@ -346,7 +346,7 @@ mcp_MCP-Proxy-2_call_server(
 # ✅ CORRECT: Use CST to remove (empty new_code)
 mcp_MCP-Proxy-2_call_server(
     server_id="code-analysis-server",
-    command="compose_cst_module",
+    command="cst_apply_buffer",
     params={
         "root_dir": "/path",
         "file_path": "file.py",
@@ -389,14 +389,14 @@ search_replace(
     old_string="def old_method(self):",
     new_string="def new_method(self, param: int) -> str:"
 )
-# Should use compose_cst_module instead!
+# Should use cst_apply_buffer instead!
 ```
 
 ### 2.4 Hybrid Approach
 
 **Best Practice**: Use hybrid approach based on context:
 1. **New Python files** → Direct write (`write` tool)
-2. **Existing Python files** → **CST tools** (`compose_cst_module` via MCP)
+2. **Existing Python files** → **CST tools** (`cst_apply_buffer` via MCP)
 3. **Complex refactoring** → Specialized commands (`split_class`, `split_file_to_package`)
 4. **Non-Python files** → Direct editing (`write`, `search_replace`)
 
@@ -436,7 +436,7 @@ write("new_file.py", "...")  # Don't do this for splitting!
 
 ### 3.1 Automatic Validation
 
-**Rule**: `compose_cst_module` automatically validates:
+**Rule**: `cst_apply_buffer` automatically validates:
 - ✅ Syntax (compilation check)
 - ✅ Docstrings (file, class, method)
 - ✅ Type hints (parameters, return types)
@@ -559,7 +559,7 @@ mcp_MCP-Proxy-2_call_server(
 4. ✅ **Run comprehensive analysis** (after each logically completed step)
 5. ✅ Restart server if code changed
 
-**Indexes**: Saving via `cst_save_tree` or `compose_cst_module` updates the database (and indexes for that file) automatically via `update_file_data_atomic`. Run `update_indexes` only when needed (e.g. initial project setup or after external file changes left indexes out of sync).
+**Indexes**: Saving via `cst_save_tree` or `cst_apply_buffer` updates the database (and indexes for that file) automatically via `update_file_data_atomic`. Run `update_indexes` only when needed (e.g. initial project setup or after external file changes left indexes out of sync).
 
 ### 5.3 Comprehensive Code Quality Check
 
@@ -690,14 +690,14 @@ result = mcp_MCP-Proxy-2_call_server(
 - `split_class` - Split class into multiple classes
 - `extract_superclass` - Extract base class
 - `split_file_to_package` - Split file into package
-- `compose_cst_module` - Apply CST-based patches
+- `cst_apply_buffer` - Apply CST-based patches
 
 ### 6.5 CST Commands
 
 **Traditional CST Commands (File-based)**:
 - `list_cst_blocks` - List logical blocks with stable IDs
 - `query_cst` - Query using CSTQuery selectors
-- `compose_cst_module` - Apply CST patches to files directly
+- `cst_apply_buffer` - Apply CST patches to files directly
 
 **`query_cst` behavior contract (IMPORTANT):**
 - Query-only mode requires `selector`.
@@ -726,7 +726,7 @@ result = mcp_MCP-Proxy-2_call_server(
 - ✅ When atomicity across multiple operations is critical
 
 **When to use Traditional CST Commands**:
-- ✅ Single operation on a file (compose_cst_module is simpler)
+- ✅ Single operation on a file (cst_apply_buffer is simpler)
 - ✅ Quick edits without needing tree exploration
 - ✅ When you don't need to keep tree in memory
 
@@ -738,7 +738,7 @@ result = mcp_MCP-Proxy-2_call_server(
 
 ### 6.7 Utility Commands
 
-- `update_indexes` - Full project scan to (re)build indexes; use when needed (e.g. initial setup or out-of-sync). Saving via `cst_save_tree`/`compose_cst_module` updates indexes for the saved file automatically.
+- `update_indexes` - Full project scan to (re)build indexes; use when needed (e.g. initial setup or out-of-sync). Saving via `cst_save_tree`/`cst_apply_buffer` updates indexes for the saved file automatically.
 - `get_imports` - Get imports
 - `find_dependencies` - Find dependencies
 - `get_class_hierarchy` - Get class hierarchy
@@ -802,8 +802,8 @@ When a CST command fails, use this table to choose an alternative. Full task→c
 | `cst_modify_tree` "was not replaced" (e.g. SimpleStatementLine in Module.body) | `query_cst` with `replace_with` or `code_lines` | `query_cst(project_id, file_path, selector="ImportFrom", match_index=0, replace_with="from foo import bar")` |
 | `query_cst` returns no matches | Check selector syntax; try a simpler selector (e.g. `ImportFrom`, `function[name='x']`) | Use query-only first: `query_cst(..., include_code=true)` to verify matches |
 | `cst_load_file` fails (syntax error in file) | `replace_file_lines` to fix the broken range | `replace_file_lines(project_id, file_path, start_line, end_line, new_lines)` then retry `cst_load_file` |
-| `compose_cst_module` validation/docstring errors | Fix code to satisfy validation, or use `cst_load_file` → `cst_modify_tree` → `cst_save_tree` | Ensure docstrings and type hints in `new_code`; tree path may give different validation behavior |
-| Need multiple edits in one file | Prefer `cst_load_file` → `cst_modify_tree` (multiple ops) → `cst_save_tree` | Single atomic save; avoid multiple `compose_cst_module` calls for the same file |
+| `cst_apply_buffer` validation/docstring errors | Fix code to satisfy validation, or use `cst_load_file` → `cst_modify_tree` → `cst_save_tree` | Ensure docstrings and type hints in `new_code`; tree path may give different validation behavior |
+| Need multiple edits in one file | Prefer `cst_load_file` → `cst_modify_tree` (multiple ops) → `cst_save_tree` | Single atomic save; avoid multiple `cst_apply_buffer` calls for the same file |
 
 ## 8. Code Writing Standards
 
@@ -867,7 +867,7 @@ def process_data(data, count):
 
 ### 8.3 Import Organization
 
-**Rule**: Imports are automatically normalized by `compose_cst_module`.
+**Rule**: Imports are automatically normalized by `cst_apply_buffer`.
 
 **Manual organization**:
 1. Standard library imports
@@ -879,10 +879,10 @@ def process_data(data, count):
 ### 9.1 Creating New Module
 
 ```python
-# 1. Create module with compose_cst_module
+# 1. Create module with cst_apply_buffer
 mcp_MCP-Proxy-2_call_server(
     server_id="code-analysis-server",
-    command="compose_cst_module",
+    command="cst_apply_buffer",
     params={
         "root_dir": "/path",
         "file_path": "new_module.py",
@@ -936,7 +936,7 @@ query_result = mcp_MCP-Proxy-2_call_server(
 # Step 3: Preview changes (recommended)
 preview_result = mcp_MCP-Proxy-2_call_server(
     server_id="code-analysis-server",
-    command="compose_cst_module",
+    command="cst_apply_buffer",
     params={
         "root_dir": "/path",
         "file_path": "file.py",
@@ -956,13 +956,13 @@ preview_result = mcp_MCP-Proxy-2_call_server(
 # Step 4: Apply changes
 result = mcp_MCP-Proxy-2_call_server(
     server_id="code-analysis-server",
-    command="compose_cst_module",
+    command="cst_apply_buffer",
     params={
         "root_dir": "/path",
         "file_path": "file.py",
         "ops": [{
             "selector": {"kind": "block_id", "block_id": "function:my_func:10-20"},
-            # For multi-line code, new_code is a single string (compose_cst_module handles it)
+            # For multi-line code, new_code is a single string (cst_apply_buffer handles it)
             "new_code": "def my_func(param: int) -> str:\n    \"\"\"Updated function.\"\"\"\n    return str(param)"
         }],
         "apply": True,
@@ -1210,7 +1210,7 @@ mcp_MCP-Proxy-2_call_server(
 - `"xpath"` - Use CSTQuery XPath-like selectors (powerful, flexible)
 - `"simple"` - Simple search by type, name, qualname, or line range
 
-**Selector Types for `compose_cst_module`**:
+**Selector Types for `cst_apply_buffer`**:
 - `{"kind": "block_id", "block_id": "..."}` - Use stable ID from `list_cst_blocks`
 - `{"kind": "function", "name": "func_name"}` - Find by function name
 - `{"kind": "class", "name": "ClassName"}` - Find by class name
@@ -1315,7 +1315,7 @@ mcp_MCP-Proxy-2_call_server(
 **CRITICAL**: For test projects (e.g., `test_data/particles/`), code modifications **MUST** be done **ONLY** through server tools:
 
 - ✅ **MANDATORY**: Use `cst_load_file` → `cst_modify_tree` → `cst_save_tree`
-- ✅ **MANDATORY**: Use `compose_cst_module` for single operations
+- ✅ **MANDATORY**: Use `cst_apply_buffer` for single operations
 - ❌ **FORBIDDEN**: Direct file editing (`search_replace`, `write`) for test project code
 - ❌ **FORBIDDEN**: Manual file modifications
 
@@ -1339,11 +1339,11 @@ mcp_MCP-Proxy-2_call_server(
 
 4. **Modify**:
    - Tree-based: `cst_modify_tree` with `code_lines` for multi-line code
-   - Traditional: `compose_cst_module` with `new_code` string
+   - Traditional: `cst_apply_buffer` with `new_code` string
 
 5. **Save**:
    - Tree-based: `cst_save_tree` → atomic save with backup
-   - Traditional: `compose_cst_module` with `apply=true` → saves automatically
+   - Traditional: `cst_apply_buffer` with `apply=true` → saves automatically
 
 6. **Validate**:
    - `format_code`, `lint_code`, `type_check_code`
@@ -1355,7 +1355,7 @@ mcp_MCP-Proxy-2_call_server(
 
 - ✅ Use MCP commands as primary interface
 - ✅ **Use CST tools for ALL existing code modifications**
-  - **Traditional**: `compose_cst_module` for single operations
+  - **Traditional**: `cst_apply_buffer` for single operations
   - **Tree-based**: `cst_load_file` → `cst_modify_tree` → `cst_save_tree` for multiple operations
 - ✅ **Use `code_lines` (array) for multi-line code** - avoids JSON escaping issues
 - ✅ **Use `list_cst_blocks` and `query_cst` to discover code structure before editing** (traditional)
@@ -1369,7 +1369,7 @@ mcp_MCP-Proxy-2_call_server(
 - ✅ Keep files under 400 lines
 - ✅ Add proper docstrings and type hints
 - ✅ Restart server after code changes
-- ✅ Indexes update automatically when saving via `cst_save_tree`/`compose_cst_module`; run `update_indexes` only when needed (e.g. initial setup or out-of-sync)
+- ✅ Indexes update automatically when saving via `cst_save_tree`/`cst_apply_buffer`; run `update_indexes` only when needed (e.g. initial setup or out-of-sync)
 - ✅ Use direct write (`write` tool) ONLY for new files
 
 ### 11.2 Never Do
@@ -1396,7 +1396,7 @@ mcp_MCP-Proxy-2_call_server(
 ### 12.2 Code Editing Priority
 
 1. **Existing Python code** → **CST tools** (via MCP) - **REQUIRED**
-   - **Single operation**: `compose_cst_module` (traditional)
+   - **Single operation**: `cst_apply_buffer` (traditional)
    - **Multiple operations**: `cst_load_file` → `cst_modify_tree` → `cst_save_tree` (tree-based)
 2. **New Python files** → Direct write (`write` tool)
 3. **Non-Python files** → Direct editing (`write`, `search_replace`)
@@ -1404,8 +1404,8 @@ mcp_MCP-Proxy-2_call_server(
 **CST Workflow (Traditional - for single operations)**:
 1. `list_cst_blocks` → discover structure
 2. `query_cst` (optional) → find specific nodes
-3. `compose_cst_module` with `apply=false` → preview
-4. `compose_cst_module` with `apply=true` → apply
+3. `cst_apply_buffer` with `apply=false` → preview
+4. `cst_apply_buffer` with `apply=true` → apply
 
 **CST Workflow (Tree-based - for multiple operations)**:
 1. `cst_load_file` → load file into tree (get tree_id)
@@ -1419,7 +1419,7 @@ mcp_MCP-Proxy-2_call_server(
 
 ### 12.3 Validation
 
-- **Automatic** → `compose_cst_module` validates automatically
+- **Automatic** → `cst_apply_buffer` validates automatically
 - **Manual** → `format_code`, `lint_code`, `type_check_code`
 
 ### 12.4 After Changes

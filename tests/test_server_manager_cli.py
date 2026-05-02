@@ -105,20 +105,57 @@ def test_stop_kills_pidfile_and_matching_find_daemon_pids(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     pidfile.write_text("10", encoding="utf-8")
-    monkeypatch.setattr(server_manager_cli, "_find_daemon_pids", lambda _cfg: [20])
+    alive = {10, 20}
+
+    def find_pids(_cfg: str) -> list[int]:
+        return sorted(alive) if alive else []
+
+    monkeypatch.setattr(server_manager_cli, "_find_daemon_pids", find_pids)
 
     killed: list[int] = []
-    monkeypatch.setattr(
-        server_manager_cli,
-        "_kill_process_group",
-        lambda pid, timeout_s: killed.append(pid),
-    )
+
+    def kill_one(pid: int, timeout_s: float) -> None:
+        killed.append(pid)
+        alive.discard(pid)
+
+    monkeypatch.setattr(server_manager_cli, "_kill_process_group", kill_one)
+    monkeypatch.setattr(server_manager_cli, "_is_alive", lambda p: p in alive)
+    monkeypatch.setattr(server_manager_cli, "_is_zombie", lambda _p: False)
+    monkeypatch.setattr(server_manager_cli.time, "sleep", lambda _s: None)
 
     rc = server_manager_cli._cmd_stop(str(config_path))
 
     assert rc == 0
     assert sorted(killed) == [10, 20]
     assert not pidfile.exists()
+
+
+def test_restart_stops_drains_then_starts(
+    config_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    seq: list[str] = []
+
+    monkeypatch.setattr(
+        server_manager_cli,
+        "_cmd_stop",
+        lambda cp: seq.append("stop") or 0,
+    )
+    monkeypatch.setattr(
+        server_manager_cli,
+        "_wait_until_no_daemons",
+        lambda *_a, **_kw: seq.append("drain") or True,
+    )
+    monkeypatch.setattr(server_manager_cli.time, "sleep", lambda _s: None)
+    monkeypatch.setattr(
+        server_manager_cli,
+        "_cmd_start",
+        lambda cp: seq.append("start") or 0,
+    )
+
+    rc = server_manager_cli._cmd_restart(str(config_path))
+    assert rc == 0
+    assert seq == ["stop", "drain", "start"]
 
 
 def test_status_stopped_no_pidfile(

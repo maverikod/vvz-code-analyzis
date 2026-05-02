@@ -16,7 +16,7 @@ Each command is described in a separate file: purpose, arguments, return format,
 | cst_get_node_by_range | Node ID for a line range | [cst_get_node_by_range.md](cst_get_node_by_range.md) |
 | cst_get_node_at_line | Node at line + parent in one call | [cst_get_node_at_line.md](cst_get_node_at_line.md) |
 | cst_modify_tree | Modify CST tree (atomic ops) | [cst_modify_tree.md](cst_modify_tree.md) |
-| compose_cst_module | Compose/patch module with CST branch | [compose_cst_module.md](compose_cst_module.md) |
+| cst_apply_buffer | Apply buffered code via CST replace-ops | (see server `help`; same selector shapes as tree workflow) |
 | cst_create_file | Create new Python file with docstring | [cst_create_file.md](cst_create_file.md) |
 | cst_convert_and_save | Convert source to CST, save to DB | [cst_convert_and_save.md](cst_convert_and_save.md) |
 | list_cst_blocks | List CST blocks for file/tree | [list_cst_blocks.md](list_cst_blocks.md) |

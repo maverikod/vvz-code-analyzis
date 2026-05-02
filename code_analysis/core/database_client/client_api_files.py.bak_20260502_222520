@@ -129,7 +129,7 @@ class _ClientAPIFilesMixin(_DatabaseClientBase):
         """Add or update file record. Returns file id (UUID string when DB uses UUID PK).
 
         Path must be absolute. If file exists for this project, updates it.
-        Uses atomic INSERT OR REPLACE to avoid TOCTOU race between get and insert.
+        Simplified client implementation; does not handle cross-project moves.
 
         Args:
             path: Absolute file path.
@@ -151,29 +151,37 @@ class _ClientAPIFilesMixin(_DatabaseClientBase):
         except ValueError:
             relative_path = Path(abs_path).name
         watch_dir_id = getattr(project, "watch_dir_id", None)
-        result = self.execute(
-            "INSERT OR REPLACE INTO files "
-            "(project_id, path, relative_path, lines, last_modified, has_docstring, watch_dir_id) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?)",
-            (
-                project_id,
-                abs_path,
-                str(relative_path),
-                lines,
-                last_modified,
-                1 if has_docstring else 0,
-                watch_dir_id,
-            ),
-        )
-        row_id = result.get("lastrowid") if result else None
-        if row_id is None:
-            existing = self.get_file_by_path(abs_path, project_id)
-            if existing:
-                return str(existing["id"])
-            raise ValueError(
-                f"INSERT OR REPLACE into files did not return a row id for {abs_path}"
+        existing = self.get_file_by_path(abs_path, project_id)
+        if existing:
+            file_id = existing["id"]
+            self.update(
+                "files",
+                where={"id": file_id},
+                data={
+                    "path": abs_path,
+                    "relative_path": str(relative_path),
+                    "lines": lines,
+                    "last_modified": last_modified,
+                    "has_docstring": 1 if has_docstring else 0,
+                    "watch_dir_id": watch_dir_id,
+                },
             )
-        return str(row_id)
+            return str(file_id)
+        data: Dict[str, Any] = {
+            "project_id": project_id,
+            "path": abs_path,
+            "relative_path": str(relative_path),
+            "lines": lines,
+            "last_modified": last_modified,
+            "has_docstring": 1 if has_docstring else 0,
+            "deleted": 0,
+        }
+        if watch_dir_id is not None:
+            data["watch_dir_id"] = watch_dir_id
+        new_id = self.insert("files", data)
+        if new_id is None:
+            raise ValueError("insert into files did not return a row id")
+        return str(new_id)
 
     def save_ast_tree(
         self,

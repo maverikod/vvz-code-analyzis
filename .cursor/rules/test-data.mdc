@@ -75,14 +75,14 @@ Detailed docs: `docs/commands/project_management/list_projects.md`, `docs/comman
 
 1. **`list_cst_blocks`** — List blocks (with stable IDs) in a file. Params: `project_id`, `file_path`.
 2. **`query_cst`** — Find nodes by selector. Params: `project_id`, `file_path`, `selector` (e.g. `class[name="MyClass"]`). Optional: `include_code`, `max_results`.
-3. **`compose_cst_module`** — Apply one or more patches: `project_id`, `file_path`, `ops`: list of `{ "selector": { "kind": "...", ... }, "new_code" }`. Use `apply=false` and `return_diff=true` to preview; then `apply=true` and `create_backup=true` to apply.
+3. **`cst_apply_buffer`** — Apply one or more patches: `project_id`, `file_path`, `ops`: list of `{ "selector": { "kind": "...", ... }, "new_code" }`. Use `apply=false` and `return_diff=true` to preview; then `apply=true` and `create_backup=true` to apply.
 
 **Creating a new Python file in test_data:**
 
 - **`cst_create_file`** — Create a new `.py` file from CST content. Params: `project_id`, `file_path`, content (e.g. module body). Use this instead of writing the file directly.
-- Alternatively, **`compose_cst_module`** with a new `file_path` and appropriate ops can create/overwrite; prefer `cst_create_file` when the server supports it for “new file” semantics.
+- Alternatively, **`cst_apply_buffer`** with a new `file_path` and appropriate ops can create/overwrite; prefer `cst_create_file` when the server supports it for “new file” semantics.
 
-Detailed docs: `docs/commands/cst/` (e.g. `cst_load_file.md`, `cst_modify_tree.md`, `cst_save_tree.md`, `compose_cst_module.md`, `list_cst_blocks.md`, `query_cst.md`, `cst_create_file.md`).
+Detailed docs: `docs/commands/cst/` (e.g. `cst_load_file.md`, `cst_modify_tree.md`, `cst_save_tree.md`, `cst_apply_buffer.md`, `list_cst_blocks.md`, `query_cst.md`, `cst_create_file.md`).
 
 ### 3. Code quality (on files in test_data)
 
@@ -119,12 +119,12 @@ Use with `project_id` of the test project so you can plan edits. Docs: `docs/com
 
 3. **Edit**  
    - Tree: `cst_find_node` / `cst_get_node_by_range` → `cst_modify_tree` with `code_lines` → `cst_save_tree`.  
-   - Single patch: `list_cst_blocks` or `query_cst` → `compose_cst_module` (preview with `apply=false`, then `apply=true`).
+   - Single patch: `list_cst_blocks` or `query_cst` → `cst_apply_buffer` (preview with `apply=false`, then `apply=true`).
 
 4. **Validate**  
    Run `format_code`, `lint_code`, `type_check_code` on the modified file(s). Optionally `comprehensive_analysis` for the test project.
 
-Indexes are updated automatically when saving via `cst_save_tree` or `compose_cst_module` (they call `update_file_data_atomic`). Run `update_indexes` only as a last resort (e.g. initial project setup or if indexes are out of sync after external file changes).
+Indexes are updated automatically when saving via `cst_save_tree` or `cst_apply_buffer` (they call `update_file_data_atomic`). Run `update_indexes` only as a last resort (e.g. initial project setup or if indexes are out of sync after external file changes).
 
 ---
 

@@ -54,7 +54,7 @@ Supported Attributes:
 - start_line, end_line: Line numbers
 
 Node Information:
-- node_id: Stable-enough identifier (span-based) for compose_cst_module
+- node_id: Stable-enough identifier (span-based) for cst_modify_tree
 - kind: Node kind classification
 - type: LibCST node type
 - name: Node name (if applicable)
@@ -69,12 +69,12 @@ Use cases:
 - Discover code patterns
 - Find nodes for refactoring operations
 - Analyze code structure
-- Prepare for compose_cst_module operations
+- Prepare for cst_modify_tree operations
 
 Typical Workflow (query only):
 1. Use query_cst to find target nodes
 2. Get node_id from matches
-3. Use compose_cst_module with selector kind='node_id' or kind='cst_query'
+3. Use cst_modify_tree with selector kind='node_id' or kind='cst_query'
 4. Preview diff and compile result
 5. Apply changes if satisfied
 
@@ -127,7 +127,7 @@ All MCP commands return either a **success** result (with `data`) or an **error*
 - `selector`: Selector string that was used
 - `truncated`: True if results were truncated due to max_results
 - `matches`: List of match dictionaries. Each contains:
-- node_id: Stable identifier for compose_cst_module
+- node_id: Stable identifier for cst_modify_tree
 - kind: Node kind (stmt, smallstmt, class, function, method, etc.)
 - type: LibCST node type (If, Return, ClassDef, FunctionDef, etc.)
 - name: Node name (if applicable)
@@ -161,7 +161,7 @@ All MCP commands return either a **success** result (with `data`) or an **error*
 }
 ```
 
-Finds all classes named exactly 'MyClass' in main.py. Returns node_id that can be used with compose_cst_module.
+Finds all classes named exactly 'MyClass' in main.py. Returns node_id that can be used with cst_modify_tree.
 
 **Find class by name prefix**
 ```json
@@ -253,8 +253,8 @@ See docs/CST_QUERY.md for syntax reference.
 ## Best practices
 
 - For find+replace in one call: pass replace_with or code_lines (and optionally match_index or replace_all)
-- Use query_cst to find specific nodes before compose_cst_module
-- Save node_id from matches for use in compose_cst_module
+- Use query_cst to find specific nodes before cst_modify_tree
+- Save node_id from matches for use in cst_modify_tree
 - Use include_code=True only when needed (can be large)
 - Set max_results to limit output size for broad queries
 - Check truncated field to see if results were limited

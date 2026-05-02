@@ -1,7 +1,7 @@
 """
 Module patcher implementation for CST module tools.
 
-This is the core logic used by `compose_cst_module`.
+This is the core logic used by `run_ops_mode` (Python handler / cst_apply_buffer).
 
 Author: Vasiliy Zdanovskiy
 email: vasilyvz@gmail.com

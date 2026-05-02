@@ -362,7 +362,7 @@ class UniversalFileDeleteCommand(BaseMCPCommand):
                 "ops": {
                     "type": "array",
                     "description": (
-                        "Python delete_mode=cst_selector: compose_cst_module replace ops "
+                        "Python delete_mode=cst_selector: CST replace-ops "
                         "(empty new_code removes matched nodes)."
                     ),
                 },

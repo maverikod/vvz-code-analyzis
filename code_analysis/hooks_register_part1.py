@@ -10,6 +10,8 @@ import logging
 from mcp_proxy_adapter.commands.command_registry import registry
 
 logger = logging.getLogger(__name__)
+
+
 def register_commands_part1(reg: registry) -> None:
     """Register CST, AST, analysis, search, and code_mapper commands."""
     try:
@@ -273,6 +275,7 @@ def register_commands_part1(reg: registry) -> None:
         logger.info("✅ Registered cst_apply_buffer command")
     except ImportError as e:
         logger.warning("Failed to import cst_apply_buffer command: %s", e)
+
 
 # cst-node-ids: begin
 # cst-node-ids: version=2

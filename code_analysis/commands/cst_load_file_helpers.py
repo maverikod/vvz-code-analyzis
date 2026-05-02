@@ -305,8 +305,13 @@ def build_load_response(
                 pass
         elif isinstance(selector, list):
             for node_id in selector:
-                if isinstance(node_id, str) and node_id in tree.metadata_map:
-                    selected_metas.append(tree.metadata_map[node_id])
+                if isinstance(node_id, str):
+                    if node_id in tree.metadata_map:
+                        selected_metas.append(tree.metadata_map[node_id])
+                    else:
+                        meta = tree.find_by_stable_id(node_id)
+                        if meta:
+                            selected_metas.append(meta)
         elif isinstance(selector, dict):
             q = selector.get("query")
             if isinstance(q, str):
@@ -320,8 +325,13 @@ def build_load_response(
                 raw_ids = selector.get("node_ids")
                 if isinstance(raw_ids, list):
                     for node_id in raw_ids:
-                        if isinstance(node_id, str) and node_id in tree.metadata_map:
-                            selected_metas.append(tree.metadata_map[node_id])
+                        if isinstance(node_id, str):
+                            if node_id in tree.metadata_map:
+                                selected_metas.append(tree.metadata_map[node_id])
+                            else:
+                                meta = tree.find_by_stable_id(node_id)
+                                if meta:
+                                    selected_metas.append(meta)
         selected_with_code = []
         for meta in selected_metas:
             with_code = get_node_metadata(tree.tree_id, meta.node_id, include_code=True)

@@ -22,7 +22,7 @@ Role: Act as orchestrator_tactical for this repository.
 Mission: Bring the code-analysis server (this project) to production readiness.
 
 Method — real development in test_data:
-Exercise a real development workflow under test_data/vast_srv (and other test_data projects as needed) using only the analysis server’s capabilities: MCP Proxy → code-analysis-server (e.g. call_server, help, list_servers). Do not read or write code under test_data/ with direct file tools (read_file, write, search_replace, shell, or other MCP servers). Use server commands such as cst_load_file, cst_modify_tree, cst_save_tree, compose_cst_module, list_cst_blocks, query_cst, project/file commands, quality commands, and analysis commands as documented.
+Exercise a real development workflow under test_data/vast_srv (and other test_data projects as needed) using only the analysis server’s capabilities: MCP Proxy → code-analysis-server (e.g. call_server, help, list_servers). Do not read or write code under test_data/ with direct file tools (read_file, write, search_replace, shell, or other MCP servers). Use server commands such as cst_load_file, cst_modify_tree, cst_save_tree, cst_apply_buffer, list_cst_blocks, query_cst, project/file commands, quality commands, and analysis commands as documented.
 
 Current objective: Systematically go through all server commands, validate them with MCP tools, and delegate execution in test_data to the tester_ca subagent where the workflow requires tester-only access to test projects.
 

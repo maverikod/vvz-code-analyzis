@@ -173,6 +173,27 @@ def validate_query_mode(
                 details={},
             )
         return None
+    # Reject ambiguous combination: selector + range both provided in replace mode.
+    # When both are present, range_only=True silently ignores the selector, producing
+    # a misleading "replaced: 1" response with an empty diff (silent data-loss bug).
+    if range_only and selector:
+        return ErrorResult(
+            message=(
+                "Ambiguous replace mode: both selector and start_line/end_line provided. "
+                "Use selector alone (CST-based replace) or start_line/end_line alone "
+                "(line-range replace), not both."
+            ),
+            code="CST_QUERY_AMBIGUOUS_REPLACE",
+            details={
+                "selector": selector,
+                "start_line": start_line,
+                "end_line": end_line,
+                "hint": (
+                    "To replace by line range: omit selector. "
+                    "To replace by selector: omit start_line and end_line."
+                ),
+            },
+        )
     if not range_only and not selector:
         return ErrorResult(
             message=(

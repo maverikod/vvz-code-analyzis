@@ -105,6 +105,14 @@ def ensure_postgres_schema(conn: Any, schema_definition: Dict[str, Any]) -> None
                 "INTEGER DEFAULT 0"
             ),
         )
+        # CREATE TABLE IF NOT EXISTS does not add columns to existing tables (same as SQLite
+        # run_migrate_schema / sqlite_migrations editing_pid).
+        _ensure_missing_column(
+            conn,
+            table_name="files",
+            column_name="editing_pid",
+            add_sql="ALTER TABLE files ADD COLUMN editing_pid INTEGER DEFAULT NULL",
+        )
     finally:
         if locked:
             try:

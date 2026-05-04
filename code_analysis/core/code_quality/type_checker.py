@@ -34,6 +34,12 @@ def _build_single_file_config(config_file: Path) -> Optional[Path]:
     top-level scope expanders (`files`/`modules`) in primary mypy section.
 
     This keeps single-file invocation bounded to the explicit target argument.
+
+    Args:
+        config_file: Path to original mypy config file (.ini or pyproject.toml).
+
+    Returns:
+        Path to temporary sanitised config, or None if no scope keys were removed.
     """
     try:
         text = config_file.read_text(encoding="utf-8")
@@ -94,6 +100,13 @@ def resolve_mypy_config_for_single_file(
     If ``explicit_config`` is set, returns it. Otherwise walks parents of
     ``file_path`` for ``pyproject.toml``, skipping a directory that looks like
     this repository root (contains a ``code_analysis`` package dir).
+
+    Args:
+        file_path: Path to the Python file being type-checked.
+        explicit_config: Optional explicit config path; returned as-is when set.
+
+    Returns:
+        Resolved config path, or None if no suitable pyproject.toml was found.
     """
     if explicit_config is not None:
         return explicit_config.resolve()
@@ -258,6 +271,19 @@ def _type_check_with_subprocess(
         errors = _filter_mypy_errors_to_target(target_file, raw_lines, cwd)
 
         if result.returncode != 0:
+            # After filtering output to the target file, errors may be empty even
+            # when mypy returned non-zero exit code (e.g. mypy only printed a
+            # summary line like 'Found 1 error in 1 file (checked 1 source file)'
+            # that does not match the target path pattern). In that case the file
+            # itself is clean — treat as success.
+            if not errors:
+                logger.debug(
+                    "mypy returncode=%d but no target-file errors after"
+                    " output filtering; treating as success for %s",
+                    result.returncode,
+                    target_file,
+                )
+                return (True, None, [])
             error_msg = f"Found {len(errors)} mypy errors"
             if ignore_errors:
                 logger.info(f"{error_msg} in {target_file} (ignored)")

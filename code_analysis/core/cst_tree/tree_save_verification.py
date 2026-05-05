@@ -5,7 +5,6 @@ Author: Vasiliy Zdanovskiy
 email: vasilyvz@gmail.com
 """
 
-
 from __future__ import annotations
 
 
@@ -43,13 +42,14 @@ FILE_CHANGED_SINCE_LOAD = "FILE_CHANGED_SINCE_LOAD"
 CST_REPLAY_MISMATCH = "CST_REPLAY_MISMATCH"
 
 WRITE_VERIFY_FAILED = "WRITE_VERIFY_FAILED"
-# @node-id: b0767762-b4f9-4a7f-a338-a623eb96bb78
-
+TREE_MODULE_CORRUPT = "TREE_MODULE_CORRUPT"
+# @node-id: 5732116d-5d8e-402b-8494-fcb9a41610d9
 
 
 class SaveVerificationError(Exception):
     """Raised when a save-time verification invariant fails."""
-    # @node-id: b6f609f5-b730-4d05-bd40-bc0cdea9ffb5
+    # @node-id: 71e1af78-030d-46c7-b123-225af4503e0b
+
 
     def __init__(
         self, *, code: str, details: Mapping[str, object] | None = None
@@ -57,7 +57,8 @@ class SaveVerificationError(Exception):
         self.code = code
         self.details: dict[str, object] = dict(details) if details is not None else {}
         super().__init__(code)
-# @node-id: fa85e511-aa24-4f59-8c8b-7ce4a1602009
+# @node-id: 5a844df9-a519-4318-ae99-c4215ac30b39
+
 
 
 
@@ -74,7 +75,8 @@ def _resolve_meta_for_replay_remap(
     if id_lookup_tree is not None:
         return id_lookup_tree.metadata_map.get(node_id)
     return None
-# @node-id: edfa70f7-d7e4-408d-b34c-412037cea797
+# @node-id: 64b37bd5-cc63-42b5-aa08-5e5652af2720
+
 
 
 
@@ -123,7 +125,8 @@ def _replay_node_id_for_operation_id(
             best_score = score
             best = rid
     return best if best is not None else node_id
-# @node-id: b404252d-68d5-4ba4-9ed9-42d0fcb5de0a
+# @node-id: 8a12f37e-d3e4-46f3-bc81-cd007788be4f
+
 
 
 
@@ -147,7 +150,7 @@ def _remap_ops_to_replay_tree(
         )
         exact_to_replay_id[exact_key] = rid
         loose_to_replay_ids[(rmeta.start_line, rmeta.start_col, rmeta.type)].append(rid)
-    # @node-id: ba023fd6-2530-4210-8acd-151f7b1674a1
+    # @node-id: 07334d1a-20a5-46b5-938c-4641ca4a03fd
 
     def _remap_one(nid: Optional[str]) -> Optional[str]:
         if not nid:
@@ -174,7 +177,8 @@ def _remap_ops_to_replay_tree(
             )
         )
     return out
-# @node-id: e79c8af5-0fb9-4429-a00d-74c9c0335088
+# @node-id: 2621d201-f543-465d-ae29-c5a33b6a3851
+
 
 
 
@@ -215,7 +219,8 @@ def _replay_operations_produce_code_at_path(
         return cast(str, final.module.code)
     finally:
         remove_tree(new_id)
-# @node-id: 1b58d832-19d2-45a1-9959-7e65d7f27f57
+# @node-id: 30529c9b-3203-4509-9494-c52653dc4d24
+
 
 
 
@@ -237,7 +242,8 @@ def disk_matches_tree_snapshot(target_path: Path, tree: CSTTree) -> bool:
     raw = text.encode("utf-8")
     digest = hashlib.sha256(raw).hexdigest()
     return bool(digest == snapshot_hex and len(raw) == tree.disk_source_length)
-# @node-id: 42031977-d818-47e9-8456-331d81514a9e
+# @node-id: 660a8ba1-05c7-439a-a018-ce0712b8de9e
+
 
 
 
@@ -270,7 +276,8 @@ def assert_disk_matches_tree_snapshot(target_path: Path, tree: CSTTree) -> None:
     if read_error is not None:
         details["read_error"] = read_error
     raise SaveVerificationError(code=FILE_CHANGED_SINCE_LOAD, details=dict(details))
-# @node-id: 9af8fbae-669d-4916-8db1-585f896d0e42
+# @node-id: 629373c4-73c3-4aee-8adc-2600a86dbb99
+
 
 
 
@@ -283,7 +290,8 @@ def replay_operations_produce_code(
     return _replay_operations_produce_code_at_path(
         original_source, tree_operations, stub, id_lookup_tree=None
     )
-# @node-id: 57515718-ffe5-48ea-b8d5-e54bb34b91b6
+# @node-id: d1feb303-7ae4-4dd4-99ea-ffc5cc7c73c9
+
 
 
 
@@ -320,7 +328,8 @@ def assert_replay_matches(
             "working_length": len(working),
         },
     )
-# @node-id: b5ac225a-f3b4-42ce-aaa5-76578cd1c80e
+# @node-id: 6d45d829-5ae8-4a8f-ba74-31d905b324e3
+
 
 
 
@@ -337,7 +346,10 @@ def assert_file_bytes_match(*, target_path: Path, expected: str) -> None:
             "actual_length": len(actual),
         },
     )
-# @node-id: c23e7053-a346-4ff8-ac13-20b8965665e0
+# @node-id: 471356cc-4ff7-4be1-afe8-0bf434a2fd62
+
+
+
 
 def assert_tree_module_integrity(tree: CSTTree) -> None:
     """Raise SaveVerificationError if tree.module.code SHA256 doesn't match recorded snapshot.

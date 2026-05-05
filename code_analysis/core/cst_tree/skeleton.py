@@ -61,6 +61,7 @@ def skeleton_from_tree(tree: CSTTree) -> str:
     """Backward-compatible alias for the new declarative overview."""
     overview, _outline_nodes = build_declarative_overview(tree)
     return overview
+# @node-id: e4c7a0f5-b5f2-4026-b568-a223ba317823
 
 
 def build_node_declarative_overview(

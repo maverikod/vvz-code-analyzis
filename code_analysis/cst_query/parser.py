@@ -18,15 +18,20 @@ email: vasilyvz@gmail.com
 """
 
 
+
 from __future__ import annotations
+
 
 
 from dataclasses import dataclass
 
+
 from typing import Any, Optional
 
 
+
 from lark import Lark, Transformer, Token, UnexpectedInput
+
 
 
 from .ast import (
@@ -39,7 +44,9 @@ from .ast import (
     SelectorStep,
 )
 
+
 from ..core.exceptions import QueryParseError
+
 
 _GRAMMAR = r"""
 ?start: selector
@@ -78,43 +85,48 @@ INT: /[0-9]+/
 
 
 
+
 _parser = Lark(_GRAMMAR, parser="lalr", start="start")
-# @node-id: ad1bd1c6-138b-411e-83a0-34db5f35c442
-
-
+# @node-id: 3a4e8c0c-1240-475f-b1c9-30d6580d6630
 
 @dataclass(frozen=True)
 class _ParsedPseudo:
     name: str
     index: Optional[int]
-# @node-id: ddb378c9-fcc1-4538-9c65-43faa0f5fe3b
+    not_query: Optional["Query"] = None
+# @node-id: eb82b23d-a243-4aff-9450-75aa65c0dde2
 
 class _ToAst:
-    # @node-id: 8112ede7-f8eb-474f-83c0-450c73154047
+    # @node-id: 72611ff5-9aff-4d7e-bb63-9051d5d10d62
+    
+    
     
     
     def NAME(self, t: Token) -> str:  # noqa: N802
         return str(t)
-    # @node-id: ca73e612-e373-47e4-9122-61c0e359c0d4
+    # @node-id: 180e49f5-8805-4db3-804a-68621cdeba07
+    
     
     
     def INT(self, t: Token) -> int:  # noqa: N802
         return int(str(t))
-    # @node-id: d182063d-d7d7-42ea-967d-d425bbb75acb
+    # @node-id: f85cb223-6b79-4eab-8472-18368754844a
+    
     
     
     def STAR(self, _t: Token) -> str:  # noqa: N802
         return "*"
-    # @node-id: e2165a0f-a0f0-4855-91bf-156e721873fd
+    # @node-id: 8feddf07-ae40-48a2-acfc-7db5ca597652
+    
     
     
     def BAREWORD(self, t: Token) -> str:  # noqa: N802
         """Parse bareword value, handling quoted strings that were parsed as barewords.
-    
-            Sometimes quoted strings (especially single quotes inside double-quoted
-            Python strings) are parsed as BAREWORD instead of STRING.
-            We need to detect and handle these cases.
-            """
+        
+                Sometimes quoted strings (especially single quotes inside double-quoted
+                Python strings) are parsed as BAREWORD instead of STRING.
+                We need to detect and handle these cases.
+                """
         raw = str(t)
         # Check if it looks like a quoted string (starts and ends with same quote)
         if len(raw) >= 2 and raw[0] == raw[-1] and raw[0] in ("'", '"'):
@@ -125,15 +137,16 @@ class _ToAst:
             except (UnicodeDecodeError, UnicodeError):
                 return unquoted
         return raw
-    # @node-id: a9f06d3f-e888-4515-aca9-69388b72fe98
+    # @node-id: f2da1145-eab9-4c8e-b604-6e035b474316
+    
     
     
     def STRING(self, t: Token) -> str:  # noqa: N802
         """Parse string value, removing quotes and handling escape sequences.
-    
-            Lark provides the string token with quotes included.
-            We need to remove the outer quotes and decode escape sequences.
-            """
+        
+                Lark provides the string token with quotes included.
+                We need to remove the outer quotes and decode escape sequences.
+                """
         raw = str(t)
         # Remove outer quotes if present (both single and double quotes supported)
         if len(raw) >= 2:
@@ -147,19 +160,22 @@ class _ToAst:
                     # If decoding fails, return unquoted string as-is
                     return unquoted
         return raw
-    # @node-id: 1a82f31f-a7b0-4505-8999-d243239f8a6a
+    # @node-id: eaa75272-799a-451b-aa24-0a409de4a60b
+    
     
     
     def OP(self, t: Token) -> str:  # noqa: N802
         return str(t)
-    # @node-id: da19daf7-65f6-41a2-b65f-18b026baeeeb
+    # @node-id: 9574d197-6a78-404d-bf88-bab6e2721d0f
+    
     
     def predicate(self, items: list[Any]) -> Predicate:
         # items: [AT?, NAME, OP, value] — AT is optional and discarded
         filtered = [it for it in items if not (isinstance(it, Token) and it.type == "AT")]
         attr, op_str, value = str(filtered[0]), str(filtered[1]), str(filtered[2])
         return Predicate(attr=attr, op=PredicateOp(op_str), value=value)
-    # @node-id: 642a322e-78b0-4251-855f-b8cd61c7b0ae
+    # @node-id: cfb51e82-c904-4824-b1bc-dee27a5ed589
+    
     
     def pseudo_args(self, items: list[Any]) -> Any:
         # Either INT (for :nth) or a Query (for :not)
@@ -168,16 +184,18 @@ class _ToAst:
         if items and isinstance(items[0], Query):
             return items[0]
         return items[0] if items else None
-    # @node-id: 0fe55623-da59-4a9b-afa4-c0007f75bcb4
-    
+    # @node-id: aea25e08-60c4-4e56-9bc8-00a343fee584
     
     def pseudo(self, items: list[Any]) -> _ParsedPseudo:
         name = str(items[0])
-        idx: Optional[int] = None
-        if len(items) > 1:
-            idx = int(items[1])
-        return _ParsedPseudo(name=name, index=idx)
-    # @node-id: 10c8620e-15ca-41db-902b-bbcbdacef41c
+        arg = items[1] if len(items) > 1 else None
+        if isinstance(arg, int):
+            return _ParsedPseudo(name=name, index=arg)
+        if isinstance(arg, Query):
+            return _ParsedPseudo(name=name, index=None, not_query=arg)
+        return _ParsedPseudo(name=name, index=None)
+    # @node-id: a037c5a9-d899-43bf-93cb-5699d031d942
+    
     
     
     def node_type(self, items: list[Any]) -> str:
@@ -185,14 +203,15 @@ class _ToAst:
         if len(items) > 1:
             return name + ":*"
         return name
-    # @node-id: 5b5a3379-470b-44bd-a07f-a1cb67e2af3a
+    # @node-id: b0bdedaa-ec53-454b-a8fa-485b23d8dac3
+    
     
     def step(self, items: list[Any]) -> SelectorStep:
         node_type: str = "*"
         predicates: list[Predicate] = []
         pseudos: list[Pseudo] = []
         not_selector: Any = None
-    
+        
         for it in items:
             if isinstance(it, str):
                 node_type = it
@@ -206,19 +225,20 @@ class _ToAst:
                     pseudos.append(p)
             else:
                 raise QueryParseError(f"Unexpected step item: {it!r}")
-    
+        
         return SelectorStep(
             node_type=node_type,
             predicates=tuple(predicates),
             pseudos=tuple(pseudos),
             not_selector=not_selector,
         )
-    # @node-id: 1d936fb7-65af-4f3d-8bf4-c0f055d6c38b
-    
+    # @node-id: e7f5a0d4-99ac-4024-b48c-732ae329702e
     
     def selector(self, items: list[Any]) -> Query:
         if not items:
             raise QueryParseError("Empty selector")
+        # dslash_step emits a wildcard SelectorStep before the real step
+        # so items[0] is always a SelectorStep after transform
         first = items[0]
         if not isinstance(first, SelectorStep):
             raise QueryParseError("Invalid selector start")
@@ -242,9 +262,9 @@ class _ToAst:
     
         return Query(first=first, rest=tuple(rest))
     
-# @node-id: a985f9fd-98cb-4f63-bb6e-b61e7c7a01eb
-
-
+    
+    
+# @node-id: 4932b273-43e7-433c-b761-bfcea1bf67c8
 def _pseudo_from_parsed(p: _ParsedPseudo) -> Pseudo:
     name = p.name.lower()
     if name == PseudoKind.FIRST.value:
@@ -256,11 +276,14 @@ def _pseudo_from_parsed(p: _ParsedPseudo) -> Pseudo:
             raise QueryParseError(":last does not accept arguments")
         return Pseudo(kind=PseudoKind.LAST)
     if name == PseudoKind.NTH.value:
-        if p.index is None:
+        if not isinstance(p.index, int):
             raise QueryParseError(":nth requires an integer argument, e.g. :nth(0)")
         return Pseudo(kind=PseudoKind.NTH, index=p.index)
+    if name == PseudoKind.NOT.value:
+        return Pseudo(kind=PseudoKind.NOT)
     raise QueryParseError(f"Unsupported pseudo: {p.name}")
-# @node-id: cf6062f2-1ff0-4289-bcbe-2ec5d7e6a926
+# @node-id: fae53247-00d0-4c56-a5c0-776d146cb777
+
 
 
 

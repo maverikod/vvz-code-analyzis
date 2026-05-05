@@ -5,23 +5,51 @@ Author: Vasiliy Zdanovskiy
 email: vasilyvz@gmail.com
 """
 
+
 from __future__ import annotations
 
-import hashlib
-from pathlib import Path
-from typing import Mapping, MutableMapping, Sequence, cast
 
-from .models import CSTTree, TreeOperation
+import hashlib
+
+from collections import defaultdict
+
+from dataclasses import replace
+
+from pathlib import Path
+
+from typing import (
+    DefaultDict,
+    List,
+    Mapping,
+    MutableMapping,
+    Optional,
+    Sequence,
+    Tuple,
+    cast,
+)
+
+
+from .models import ROOT_NODE_ID_SENTINEL, CSTTree, TreeNodeMetadata, TreeOperation
+
+from .node_id_markers import build_exact_node_key
+
 from .tree_builder import create_tree_from_code, get_tree, remove_tree
+
 from .tree_modifier import modify_tree
 
+
 FILE_CHANGED_SINCE_LOAD = "FILE_CHANGED_SINCE_LOAD"
+
 CST_REPLAY_MISMATCH = "CST_REPLAY_MISMATCH"
+
 WRITE_VERIFY_FAILED = "WRITE_VERIFY_FAILED"
+# @node-id: b0767762-b4f9-4a7f-a338-a623eb96bb78
+
 
 
 class SaveVerificationError(Exception):
     """Raised when a save-time verification invariant fails."""
+    # @node-id: b6f609f5-b730-4d05-bd40-bc0cdea9ffb5
 
     def __init__(
         self, *, code: str, details: Mapping[str, object] | None = None
@@ -29,17 +57,151 @@ class SaveVerificationError(Exception):
         self.code = code
         self.details: dict[str, object] = dict(details) if details is not None else {}
         super().__init__(code)
+# @node-id: fa85e511-aa24-4f59-8c8b-7ce4a1602009
+
+
+
+def _resolve_meta_for_replay_remap(
+    node_id: str,
+    ref_tree: CSTTree,
+    id_lookup_tree: Optional[CSTTree],
+) -> Optional[TreeNodeMetadata]:
+    if not node_id or node_id == ROOT_NODE_ID_SENTINEL:
+        return None
+    meta = ref_tree.metadata_map.get(node_id)
+    if meta is not None:
+        return meta
+    if id_lookup_tree is not None:
+        return id_lookup_tree.metadata_map.get(node_id)
+    return None
+# @node-id: edfa70f7-d7e4-408d-b34c-412037cea797
+
+
+
+def _replay_node_id_for_operation_id(
+    node_id: str,
+    ref_tree: CSTTree,
+    replay_tree: CSTTree,
+    id_lookup_tree: Optional[CSTTree],
+    exact_to_replay_id: dict[Tuple[int, int, int, int, str], str],
+    loose_to_replay_ids: dict[Tuple[int, int, str], List[str]],
+) -> str:
+    if not node_id or node_id == ROOT_NODE_ID_SENTINEL:
+        return node_id
+    if node_id in replay_tree.metadata_map:
+        return node_id
+    meta = _resolve_meta_for_replay_remap(node_id, ref_tree, id_lookup_tree)
+    if meta is None:
+        return node_id
+    exact_key = build_exact_node_key(
+        meta.start_line,
+        meta.start_col,
+        meta.end_line,
+        meta.end_col,
+        meta.type,
+    )
+    mapped = exact_to_replay_id.get(exact_key)
+    if mapped is not None:
+        return mapped
+    loose_key = (meta.start_line, meta.start_col, meta.type)
+    cands = loose_to_replay_ids.get(loose_key)
+    if not cands:
+        return node_id
+    if len(cands) == 1:
+        return cands[0]
+    best: Optional[str] = None
+    best_score: Optional[Tuple[int, int]] = None
+    for rid in cands:
+        rm = replay_tree.metadata_map.get(rid)
+        if rm is None:
+            continue
+        score = (
+            abs(rm.end_line - meta.end_line),
+            abs(rm.end_col - meta.end_col),
+        )
+        if best_score is None or score < best_score:
+            best_score = score
+            best = rid
+    return best if best is not None else node_id
+# @node-id: b404252d-68d5-4ba4-9ed9-42d0fcb5de0a
+
+
+
+def _remap_ops_to_replay_tree(
+    ops: Sequence[TreeOperation],
+    ref_tree: CSTTree,
+    replay_tree: CSTTree,
+    id_lookup_tree: Optional[CSTTree],
+) -> List[TreeOperation]:
+    exact_to_replay_id: dict[Tuple[int, int, int, int, str], str] = {}
+    loose_to_replay_ids: DefaultDict[Tuple[int, int, str], List[str]] = defaultdict(
+        list
+    )
+    for rid, rmeta in replay_tree.metadata_map.items():
+        exact_key = build_exact_node_key(
+            rmeta.start_line,
+            rmeta.start_col,
+            rmeta.end_line,
+            rmeta.end_col,
+            rmeta.type,
+        )
+        exact_to_replay_id[exact_key] = rid
+        loose_to_replay_ids[(rmeta.start_line, rmeta.start_col, rmeta.type)].append(rid)
+    # @node-id: ba023fd6-2530-4210-8acd-151f7b1674a1
+
+    def _remap_one(nid: Optional[str]) -> Optional[str]:
+        if not nid:
+            return nid
+        return _replay_node_id_for_operation_id(
+            nid,
+            ref_tree,
+            replay_tree,
+            id_lookup_tree,
+            exact_to_replay_id,
+            loose_to_replay_ids,
+        )
+
+    out: List[TreeOperation] = []
+    for op in ops:
+        out.append(
+            replace(
+                op,
+                node_id=_remap_one(op.node_id) or "",
+                parent_node_id=_remap_one(op.parent_node_id),
+                target_node_id=_remap_one(op.target_node_id),
+                start_node_id=_remap_one(op.start_node_id),
+                end_node_id=_remap_one(op.end_node_id),
+            )
+        )
+    return out
+# @node-id: e79c8af5-0fb9-4429-a00d-74c9c0335088
+
 
 
 def _replay_operations_produce_code_at_path(
     original_source: str,
     tree_operations: Sequence[TreeOperation],
     replay_file_path: str,
+    *,
+    id_lookup_tree: Optional[CSTTree] = None,
 ) -> str:
-    replay_tree = create_tree_from_code(replay_file_path, original_source)
+    ref_tree = create_tree_from_code(
+        replay_file_path,
+        original_source,
+        persist_sidecar=False,
+        register_in_memory=False,
+    )
+    replay_tree = create_tree_from_code(
+        replay_file_path,
+        original_source,
+        persist_sidecar=False,
+    )
     new_id = replay_tree.tree_id
+    remapped = _remap_ops_to_replay_tree(
+        tree_operations, ref_tree, replay_tree, id_lookup_tree
+    )
     try:
-        modify_tree(new_id, list(tree_operations))
+        modify_tree(new_id, remapped)
         final = get_tree(new_id)
         if final is None:
             raise SaveVerificationError(
@@ -53,6 +215,8 @@ def _replay_operations_produce_code_at_path(
         return cast(str, final.module.code)
     finally:
         remove_tree(new_id)
+# @node-id: 1b58d832-19d2-45a1-9959-7e65d7f27f57
+
 
 
 def disk_matches_tree_snapshot(target_path: Path, tree: CSTTree) -> bool:
@@ -73,6 +237,8 @@ def disk_matches_tree_snapshot(target_path: Path, tree: CSTTree) -> bool:
     raw = text.encode("utf-8")
     digest = hashlib.sha256(raw).hexdigest()
     return bool(digest == snapshot_hex and len(raw) == tree.disk_source_length)
+# @node-id: 42031977-d818-47e9-8456-331d81514a9e
+
 
 
 def assert_disk_matches_tree_snapshot(target_path: Path, tree: CSTTree) -> None:
@@ -104,6 +270,8 @@ def assert_disk_matches_tree_snapshot(target_path: Path, tree: CSTTree) -> None:
     if read_error is not None:
         details["read_error"] = read_error
     raise SaveVerificationError(code=FILE_CHANGED_SINCE_LOAD, details=dict(details))
+# @node-id: 9af8fbae-669d-4916-8db1-585f896d0e42
+
 
 
 def replay_operations_produce_code(
@@ -113,8 +281,10 @@ def replay_operations_produce_code(
     """Parse ``original_source``, apply ``tree_operations`` on a fresh tree; return serialized code."""
     stub = str(Path("_cst_save_verification_replay_stub.py").resolve())
     return _replay_operations_produce_code_at_path(
-        original_source, tree_operations, stub
+        original_source, tree_operations, stub, id_lookup_tree=None
     )
+# @node-id: 57515718-ffe5-48ea-b8d5-e54bb34b91b6
+
 
 
 def assert_replay_matches(
@@ -123,13 +293,21 @@ def assert_replay_matches(
     target_path: Path,
     tree: CSTTree,
     tree_operations: Sequence[TreeOperation],
+    id_lookup_tree: Optional[CSTTree] = None,
 ) -> None:
     """
     Replay the same edits on ``original_source`` and require the result equals ``tree.module.code``.
     Removes the temporary replay tree from ``_trees`` via try/finally.
+
+    ``id_lookup_tree`` resolves operation ``node_id`` values that are absent from the fresh
+    replay parse (and from ``tree`` after destructive replaces). When omitted, ``tree`` is used.
     """
+    lookup = id_lookup_tree if id_lookup_tree is not None else tree
     replayed = _replay_operations_produce_code_at_path(
-        original_source, tree_operations, str(target_path)
+        original_source,
+        tree_operations,
+        str(target_path),
+        id_lookup_tree=lookup,
     )
     working = cast(str, tree.module.code)
     if replayed == working:
@@ -142,6 +320,8 @@ def assert_replay_matches(
             "working_length": len(working),
         },
     )
+# @node-id: b5ac225a-f3b4-42ce-aaa5-76578cd1c80e
+
 
 
 def assert_file_bytes_match(*, target_path: Path, expected: str) -> None:
@@ -155,5 +335,37 @@ def assert_file_bytes_match(*, target_path: Path, expected: str) -> None:
             "target_path": str(Path(target_path)),
             "expected_length": len(expected),
             "actual_length": len(actual),
+        },
+    )
+# @node-id: c23e7053-a346-4ff8-ac13-20b8965665e0
+
+def assert_tree_module_integrity(tree: CSTTree) -> None:
+    """Raise SaveVerificationError if tree.module.code SHA256 doesn't match recorded snapshot.
+
+    Called before cst_modify_tree and before cst_save_tree to catch corrupt in-memory trees.
+    Skipped when module_source_sha256_hex is None (tree created from code, no snapshot yet).
+
+    Args:
+        tree: CSTTree to verify
+
+    Raises:
+        SaveVerificationError: If module code SHA256 mismatches the stored snapshot.
+    """
+    expected_hex = tree.module_source_sha256_hex
+    if expected_hex is None:
+        return
+    actual_code = tree.module.code
+    actual_hex = hashlib.sha256(actual_code.encode("utf-8")).hexdigest()
+    if actual_hex == expected_hex:
+        return
+    raise SaveVerificationError(
+        code=TREE_MODULE_CORRUPT,
+        details={
+            "tree_id": tree.tree_id,
+            "file_path": tree.file_path,
+            "expected_sha256": expected_hex,
+            "actual_sha256": actual_hex,
+            "expected_lines": tree.module.code.count("\n"),
+            "actual_lines": actual_code.count("\n"),
         },
     )

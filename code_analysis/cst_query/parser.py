@@ -94,29 +94,29 @@ class _ParsedPseudo:
     name: str
     index: Optional[int]
     not_query: Optional["Query"] = None
-# @node-id: eb82b23d-a243-4aff-9450-75aa65c0dde2
+# @node-id: c79e0a29-3f68-41e9-a396-a556b6ea0c96
 
 class _ToAst:
-    # @node-id: 72611ff5-9aff-4d7e-bb63-9051d5d10d62
+    # @node-id: ae1ec6dc-7764-4dec-af8f-035b00ec4db4
     
     
     
     
     def NAME(self, t: Token) -> str:  # noqa: N802
         return str(t)
-    # @node-id: 180e49f5-8805-4db3-804a-68621cdeba07
+    # @node-id: b7d12d2a-4763-45d4-98db-2019c1e3bd4c
     
     
     
     def INT(self, t: Token) -> int:  # noqa: N802
         return int(str(t))
-    # @node-id: f85cb223-6b79-4eab-8472-18368754844a
+    # @node-id: 459efaf2-0f7f-4a49-b945-bc9a0b9cfe7e
     
     
     
     def STAR(self, _t: Token) -> str:  # noqa: N802
         return "*"
-    # @node-id: 8feddf07-ae40-48a2-acfc-7db5ca597652
+    # @node-id: 825a40ca-51c1-4c75-bdbe-061ea78bf425
     
     
     
@@ -137,7 +137,7 @@ class _ToAst:
             except (UnicodeDecodeError, UnicodeError):
                 return unquoted
         return raw
-    # @node-id: f2da1145-eab9-4c8e-b604-6e035b474316
+    # @node-id: ff148399-6f95-408c-8b76-99f7bcd4922c
     
     
     
@@ -160,13 +160,13 @@ class _ToAst:
                     # If decoding fails, return unquoted string as-is
                     return unquoted
         return raw
-    # @node-id: eaa75272-799a-451b-aa24-0a409de4a60b
+    # @node-id: 24e72091-5380-4cfc-b838-6a06bea40b88
     
     
     
     def OP(self, t: Token) -> str:  # noqa: N802
         return str(t)
-    # @node-id: 9574d197-6a78-404d-bf88-bab6e2721d0f
+    # @node-id: 2b524622-7f50-49b3-8b01-2eda167448bf
     
     
     def predicate(self, items: list[Any]) -> Predicate:
@@ -174,7 +174,19 @@ class _ToAst:
         filtered = [it for it in items if not (isinstance(it, Token) and it.type == "AT")]
         attr, op_str, value = str(filtered[0]), str(filtered[1]), str(filtered[2])
         return Predicate(attr=attr, op=PredicateOp(op_str), value=value)
-    # @node-id: cfb51e82-c904-4824-b1bc-dee27a5ed589
+    # @node-id: eb018f86-9ff0-4caf-b01b-0ca441a4c899
+    def dslash_step(self, items: list[Any]) -> SelectorStep:
+        """Transform //step: return the inner SelectorStep directly.
+
+    Grammar rule `dslash_step: DSLASH step` gives [DSLASH_token, SelectorStep].
+    The `selector` rule then treats this SelectorStep as the leading step of
+    a descendant search (starting from root wildcard).
+    """
+        inner = next((it for it in items if isinstance(it, SelectorStep)), None)
+        if inner is None:
+            raise QueryParseError("dslash_step: expected SelectorStep")
+        return inner
+    # @node-id: 3db05f77-8890-4d9a-96e7-b71edfd81519
     
     
     def pseudo_args(self, items: list[Any]) -> Any:
@@ -184,7 +196,7 @@ class _ToAst:
         if items and isinstance(items[0], Query):
             return items[0]
         return items[0] if items else None
-    # @node-id: aea25e08-60c4-4e56-9bc8-00a343fee584
+    # @node-id: a46404ed-bcd9-4e26-a353-127e522013b6
     
     def pseudo(self, items: list[Any]) -> _ParsedPseudo:
         name = str(items[0])
@@ -194,7 +206,7 @@ class _ToAst:
         if isinstance(arg, Query):
             return _ParsedPseudo(name=name, index=None, not_query=arg)
         return _ParsedPseudo(name=name, index=None)
-    # @node-id: a037c5a9-d899-43bf-93cb-5699d031d942
+    # @node-id: a75225bd-7759-4de9-97bc-c0434a5b66c3
     
     
     
@@ -203,7 +215,7 @@ class _ToAst:
         if len(items) > 1:
             return name + ":*"
         return name
-    # @node-id: b0bdedaa-ec53-454b-a8fa-485b23d8dac3
+    # @node-id: 9abe1c42-bec3-4e53-b1ac-9ddff0d9c298
     
     
     def step(self, items: list[Any]) -> SelectorStep:
@@ -232,7 +244,7 @@ class _ToAst:
             pseudos=tuple(pseudos),
             not_selector=not_selector,
         )
-    # @node-id: e7f5a0d4-99ac-4024-b48c-732ae329702e
+    # @node-id: 6b3b495e-497e-43bb-82af-d93991403ad6
     
     def selector(self, items: list[Any]) -> Query:
         if not items:
@@ -264,7 +276,7 @@ class _ToAst:
     
     
     
-# @node-id: 4932b273-43e7-433c-b761-bfcea1bf67c8
+# @node-id: e1695844-4214-4bb1-9465-a4aec2162403
 def _pseudo_from_parsed(p: _ParsedPseudo) -> Pseudo:
     name = p.name.lower()
     if name == PseudoKind.FIRST.value:
@@ -282,7 +294,7 @@ def _pseudo_from_parsed(p: _ParsedPseudo) -> Pseudo:
     if name == PseudoKind.NOT.value:
         return Pseudo(kind=PseudoKind.NOT)
     raise QueryParseError(f"Unsupported pseudo: {p.name}")
-# @node-id: fae53247-00d0-4c56-a5c0-776d146cb777
+# @node-id: 837efd5d-d9d6-447c-85de-76e9cb0d04f4
 
 
 

@@ -334,10 +334,22 @@ def build_load_response(
                                     selected_metas.append(meta)
         selected_with_code = []
         for meta in selected_metas:
-            with_code = get_node_metadata(tree.tree_id, meta.node_id, include_code=True)
-            selected_with_code.append(
-                with_code.to_dict() if with_code else meta.to_dict()
-            )
+            entry = meta.to_dict()
+            # Apply declarative rules: function/method/class -> skeleton view;
+            # other node kinds -> include full code inline.
+            if meta.kind in {"function", "method", "class"}:
+                overview_text, outline = build_node_declarative_overview(
+                    tree, meta.node_id
+                )
+                entry["declarative"] = overview_text
+                entry["outline_nodes"] = outline
+            else:
+                with_code = get_node_metadata(
+                    tree.tree_id, meta.node_id, include_code=True
+                )
+                if with_code:
+                    entry = with_code.to_dict()
+            selected_with_code.append(entry)
         data["selected_nodes"] = selected_with_code
 
     if commented_lines_info:

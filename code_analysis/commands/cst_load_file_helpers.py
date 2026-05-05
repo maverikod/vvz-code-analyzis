@@ -17,7 +17,7 @@ from typing import Any, Dict, List, Optional, Tuple
 import libcst as cst
 
 from ..core.cst_tree.models import CSTTree
-from ..core.cst_tree.skeleton import build_declarative_overview
+from ..core.cst_tree.skeleton import build_declarative_overview, build_node_declarative_overview
 from ..core.cst_tree.tree_finder import find_nodes
 from ..core.cst_tree.tree_metadata import get_node_metadata
 

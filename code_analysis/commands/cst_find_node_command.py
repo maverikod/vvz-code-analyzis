@@ -8,35 +8,49 @@ email: vasilyvz@gmail.com
 """
 
 
+
 from __future__ import annotations
+
 
 
 import logging
 
+
 import time
 
+
 from typing import Any, Dict, Optional
+
 
 
 from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 
 
+
 from .base_mcp_command import BaseMCPCommand
+
 
 from ..core.cst_tree.tree_finder import find_nodes
 
 
-logger = logging.getLogger(__name__)
 
-class CSTFindNodeCommand(BaseMCPCommand):
+logger = logging.getLogger(__name__)
+# @node-id: a0c8e0d6-3f5a-40e9-b809-a2fb58a5f748
+
+class CSTFindNodeCommand:
+    
+    
     
     
     """Find nodes in CST tree."""
     
     
+    
     name = "cst_find_node"
     
+    
     version = "1.0.0"
+    
     
     descr = (
         "Find nodes in a CST tree using simple or XPath-like (CSTQuery) selectors. "
@@ -45,13 +59,18 @@ class CSTFindNodeCommand(BaseMCPCommand):
         "and :not(selector) pseudo-class."
     )
     
+    
     category = "cst"
+    
     
     author = "Vasiliy Zdanovskiy"
     
+    
     email = "vasilyvz@gmail.com"
     
+    
     use_queue = False
+    # @node-id: 6d22c246-9455-4d9f-b7cc-e31ab898174a
     
     @classmethod
     def get_schema(cls) -> Dict[str, Any]:
@@ -70,7 +89,15 @@ class CSTFindNodeCommand(BaseMCPCommand):
                 },
                 "query": {
                     "type": "string",
-                    "description": "CSTQuery selector string (for xpath search)",
+                    "description": (
+                        "CSTQuery selector string (for xpath search). "
+                        "Supports: "
+                        "(1) // for recursive descendant traversal (e.g. //FunctionDef), "
+                        "(2) @attr for attribute access in predicates, "
+                        "(3) numeric comparison operators >=/<=/>/< on start_line/end_line/children_count, "
+                        "(4) :not(selector) pseudo-class for negation. "
+                        "Example: //ClassDef//FunctionDef[@name='foo'][start_line>=10]"
+                    ),
                 },
                 "node_type": {
                     "type": "string",
@@ -112,6 +139,8 @@ class CSTFindNodeCommand(BaseMCPCommand):
             "required": ["tree_id"],
             "additionalProperties": False,
         }
+    # @node-id: 1400cc6a-e058-49ef-8628-1e8080b52a75
+    
     
     async def execute(
         self,
@@ -146,7 +175,7 @@ class CSTFindNodeCommand(BaseMCPCommand):
                 time.perf_counter() - t0,
                 len(matches),
             )
-    
+        
             if require_one:
                 if len(matches) == 0:
                     return ErrorResult(
@@ -178,10 +207,10 @@ class CSTFindNodeCommand(BaseMCPCommand):
                             "candidates": candidates,
                         },
                     )
-    
+        
             # Convert to dictionaries
             nodes = [meta.to_dict() for meta in matches]
-    
+        
             data: Dict[str, Any] = {
                 "success": True,
                 "tree_id": tree_id,
@@ -193,13 +222,13 @@ class CSTFindNodeCommand(BaseMCPCommand):
                 data["node"] = nodes[0]
                 data["stable_id"] = nodes[0].get("stable_id")
                 data["node_id"] = nodes[0].get("node_id")
-    
+        
             logger.info(
                 "[TIMING] command=cst_find_node total_elapsed_sec=%.4f",
                 time.perf_counter() - t_start,
             )
             return SuccessResult(data=data)
-    
+        
         except ValueError as e:
             return ErrorResult(
                 message=f"Invalid search parameters: {e}",
@@ -211,14 +240,16 @@ class CSTFindNodeCommand(BaseMCPCommand):
             return ErrorResult(
                 message=f"cst_find_node failed: {e}", code="CST_FIND_ERROR"
             )
+    # @node-id: c3868880-afcf-4eab-bbd9-6346700c16a2
+    
     @classmethod
     def metadata(cls: type["CSTFindNodeCommand"]) -> Dict[str, Any]:
         """
-    Get detailed command metadata for AI models.
-
-    Returns:
-        Dictionary with command metadata.
-    """
+        Get detailed command metadata for AI models.
+    
+        Returns:
+            Dictionary with command metadata.
+        """
         return {
             "name": cls.name,
             "version": cls.version,
@@ -246,8 +277,13 @@ class CSTFindNodeCommand(BaseMCPCommand):
                 "   - Multiple filters can be combined (AND logic)\n"
                 "2. XPath-like search (search_type='xpath'):\n"
                 "   - Uses CSTQuery selector syntax\n"
-                "   - Supports all CSTQuery features (combinators, predicates, pseudos)\n"
-                '   - Examples: class[name="MyClass"], FunctionDef[name="f"]\n'
+                "   - Supports all CSTQuery features:\n"
+                "     * // — recursive descendant traversal (e.g. //FunctionDef finds all funcs at any depth)\n"
+                "     * @attr — attribute access in predicates (e.g. [@name='foo'])\n"
+                "     * Numeric operators >=/<=/>/< on start_line/end_line/children_count\n"
+                "       (e.g. [start_line>=10][end_line<=50])\n"
+                "     * :not(selector) — negation pseudo-class (e.g. FunctionDef:not([name='_private']))\n"
+                '   - Examples: ClassDef[name="MyClass"], //FunctionDef[@name="f"][start_line>=10]\n'
                 "   - See query_cst command metadata for full CSTQuery syntax\n\n"
                 "Key flags:\n"
                 "- include_code=True: returns source code of each match inline, eliminating "
@@ -257,7 +293,7 @@ class CSTFindNodeCommand(BaseMCPCommand):
                 "Advantages:\n"
                 "- Search is performed on server (no need to transfer tree)\n"
                 "- Fast search on full tree structure\n"
-                "- Supports complex queries with CSTQuery\n"
+                "- Supports complex queries with CSTQuery including // and :not()\n"
                 "- include_code eliminates extra cst_get_node_info call\n"
                 "- Returns only matching nodes (efficient)\n\n"
                 "Optimal 2-call edit workflow:\n"
@@ -289,6 +325,11 @@ class CSTFindNodeCommand(BaseMCPCommand):
                 "query": {
                     "description": (
                         "CSTQuery selector string (required for xpath search). "
+                        "Supports: "
+                        "(1) // for recursive descendant traversal (e.g. //FunctionDef), "
+                        "(2) @attr for attribute access in predicates (e.g. [@name='foo']), "
+                        "(3) numeric comparison operators >=/<=/>/< on start_line/end_line/children_count, "
+                        "(4) :not(selector) pseudo-class for negation. "
                         "See query_cst command metadata for full syntax and examples."
                     ),
                     "type": "string",
@@ -297,6 +338,9 @@ class CSTFindNodeCommand(BaseMCPCommand):
                         "FunctionDef[name='add']",
                         "ClassDef[name='MyClass']",
                         "FunctionDef[name='process'] Return:first",
+                        "//FunctionDef[@name='foo'][start_line>=10]",
+                        "ClassDef:not([name='Base'])//FunctionDef",
+                        "FunctionDef[children_count>=5][end_line<=100]",
                     ],
                 },
                 "node_type": {
@@ -428,12 +472,36 @@ class CSTFindNodeCommand(BaseMCPCommand):
                     ),
                 },
                 {
-                    "description": "XPath: find all functions",
+                    "description": "XPath //: recursive descendant — find all functions at any depth",
                     "command": {
                         "tree_id": "a1b2c3d4-...",
-                        "query": "FunctionDef",
+                        "query": "//FunctionDef",
                     },
-                    "explanation": "Finds all FunctionDef nodes in the tree.",
+                    "explanation": "Finds all FunctionDef nodes anywhere in the tree (any depth).",
+                },
+                {
+                    "description": "XPath @attr + numeric operators: functions starting at or after line 10",
+                    "command": {
+                        "tree_id": "a1b2c3d4-...",
+                        "query": "//FunctionDef[@start_line>=10]",
+                    },
+                    "explanation": "Combines // traversal with numeric predicate on start_line.",
+                },
+                {
+                    "description": "XPath :not(): all classes except Base",
+                    "command": {
+                        "tree_id": "a1b2c3d4-...",
+                        "query": "ClassDef:not([name='Base'])",
+                    },
+                    "explanation": "Finds all ClassDef nodes whose name is not 'Base'.",
+                },
+                {
+                    "description": "XPath combined: methods in a specific class, not private",
+                    "command": {
+                        "tree_id": "a1b2c3d4-...",
+                        "query": "ClassDef[name='MyClass']//FunctionDef:not([@name='__init__'])",
+                    },
+                    "explanation": "All functions inside MyClass except __init__.",
                 },
                 {
                     "description": "XPath: find first return in a specific function",
@@ -498,9 +566,14 @@ class CSTFindNodeCommand(BaseMCPCommand):
                 "Use include_code=True to get current code inline — avoids extra cst_get_node_info call",
                 "Use require_one=True when you expect exactly one match to get node_id at top level",
                 "Combine include_code+require_one for safest single-target edit: find → replace_many",
+                "Use // for deep traversal: //FunctionDef finds all functions regardless of nesting",
+                "Use @attr syntax for attribute predicates: [@name='foo'] is equivalent to [name='foo']",
+                "Use numeric operators for range filtering: [start_line>=10][end_line<=50]",
+                "Use :not() for exclusion: FunctionDef:not([name='__init__'])",
                 "Use XPath search for structural queries (FunctionDef[name='x'])",
                 "Use simple search for broad type scans (all FunctionDef nodes)",
                 "Tree must be loaded first with cst_load_file",
                 "node_id from results is stable within the session (use with cst_modify_tree)",
             ],
         }
+    

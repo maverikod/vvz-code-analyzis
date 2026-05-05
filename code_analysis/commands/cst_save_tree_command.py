@@ -119,6 +119,21 @@ class CSTSaveTreeCommand(BaseMCPCommand):
         auto_reload: bool = True,
         **kwargs,
     ) -> SuccessResult | ErrorResult:
+        """Execute cst_save_tree: save tree to file with lock check and retry logic.
+
+    Args:
+        tree_id: CST tree identifier from cst_load_file.
+        project_id: Project UUID.
+        file_path: Target file path relative to project root.
+        validate: Validate syntax before and after save.
+        backup: Create backup before overwriting.
+        commit_message: Optional git commit message.
+        auto_reload: Reload tree from file after save.
+        **kwargs: Ignored extra keyword args.
+
+    Returns:
+        SuccessResult with save metadata, or ErrorResult with code.
+    """
         logger.info(
             "[SAVE_PATH] cst_save_tree enter tree_id=%s project_id=%s file_path=%s",
             tree_id,
@@ -240,6 +255,20 @@ class CSTSaveTreeCommand(BaseMCPCommand):
 
                         if not result.get("success"):
                             err_msg = result.get("error", "Failed to save tree")
+                            err_code = result.get("error_code", "CST_SAVE_ERROR")
+                            # Propagate FILE_EDIT_LOCKED directly - no retry needed.
+                            if err_code == "FILE_EDIT_LOCKED":
+                                return ErrorResult(
+                                    message=err_msg,
+                                    code="FILE_EDIT_LOCKED",
+                                    details={
+                                        "file_path": file_path,
+                                        "hint": (
+                                            "Another process holds a write lock on this file. "
+                                            "Wait for it to finish and retry cst_save_tree."
+                                        ),
+                                    },
+                                )
                             if is_sqlite_db_locked(err_msg):
                                 elapsed = time.perf_counter() - t_retry_start
                                 if (

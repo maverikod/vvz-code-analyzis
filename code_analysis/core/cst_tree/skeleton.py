@@ -61,6 +61,36 @@ def skeleton_from_tree(tree: CSTTree) -> str:
     """Backward-compatible alias for the new declarative overview."""
     overview, _outline_nodes = build_declarative_overview(tree)
     return overview
+
+
+def build_node_declarative_overview(
+    tree: CSTTree,
+    node_id: str,
+) -> tuple[str, List[Dict[str, Any]]]:
+    """Return declarative overview text and outline nodes for a single node.
+
+    Applies the same rules as :func:`build_declarative_overview` but scoped
+    to one node.  Used for search results where each matched node should be
+    presented as a compact skeleton instead of its full source.
+
+    Args:
+        tree: CST tree containing the node.
+        node_id: UUID of the node to render.
+
+    Returns:
+        Tuple of (overview_text, outline_nodes) same shape as
+        :func:`build_declarative_overview`.
+    """
+    lines: List[str] = []
+    outline_nodes: List[Dict[str, Any]] = []
+    _append_node_overview(
+        tree=tree,
+        node_id=node_id,
+        depth=0,
+        lines=lines,
+        outline_nodes=outline_nodes,
+    )
+    return ("\n".join(lines) + ("\n" if lines else ""), outline_nodes)
 # @node-id: 2b4af175-9480-4dfe-8d1c-a5eda6642410
 
 def _append_node_overview(

@@ -13,15 +13,23 @@ Author: Vasiliy Zdanovskiy
 email: vasilyvz@gmail.com
 """
 
+
 from __future__ import annotations
+
 
 from typing import Optional
 
+
 import libcst as cst
 
+
 from .ast import Combinator, Predicate, PredicateOp, PseudoKind, Query, SelectorStep
+
 from .index_builder import Match, NodeInfo, build_index, parse_source_for_query
+
 from .parser import parse_selector
+# @node-id: 38ab47be-e5c4-4bd4-bd6d-0613f8d408f5
+
 
 
 def query_source(
@@ -75,6 +83,8 @@ def query_source(
             )
         )
     return out
+# @node-id: 62d8828e-4981-45d0-9b16-e67cbd66a6bb
+
 
 
 def _legacy_node_id(info: NodeInfo) -> str:
@@ -84,6 +94,8 @@ def _legacy_node_id(info: NodeInfo) -> str:
         f"{info.kind}:{q}:{info.node_type}:"
         f"{info.start_line}:{info.start_col}-{info.end_line}:{info.end_col}"
     )
+# @node-id: 74ba1aaa-a9bc-4e53-9da6-4e3331d6d84f
+
 
 
 def _eval_query(nodes: list[NodeInfo], q: Query) -> list[NodeInfo]:
@@ -97,6 +109,8 @@ def _eval_query(nodes: list[NodeInfo], q: Query) -> list[NodeInfo]:
             current, nxt_candidates, comb, parent_map=parent_map
         )
     return current
+# @node-id: 6d2fd29a-f207-4e4e-8552-697ee24b0443
+
 
 
 def _apply_combinator(
@@ -124,6 +138,8 @@ def _apply_combinator(
                 break
             p = parent_map.get(p)
     return out
+# @node-id: 2b6d7d07-9f3a-4d64-a8d1-8ab4d433e0aa
+
 
 
 def _apply_step(nodes: list[NodeInfo], step: SelectorStep) -> list[NodeInfo]:
@@ -137,7 +153,7 @@ def _apply_step(nodes: list[NodeInfo], step: SelectorStep) -> list[NodeInfo]:
             idx = pseudo.index or 0
             matched = [matched[idx]] if 0 <= idx < len(matched) else []
     return matched
-
+# @node-id: f022acae-4eb1-4049-8074-5bc74f4542ed
 
 def _matches_step(node: NodeInfo, step: SelectorStep) -> bool:
     if not _matches_node_type(node, step.node_type):
@@ -145,7 +161,14 @@ def _matches_step(node: NodeInfo, step: SelectorStep) -> bool:
     for pred in step.predicates:
         if not _matches_predicate(node, pred):
             return False
+    # :not(selector) pseudo-class
+    if step.not_selector is not None:
+        not_matches = _eval_query([node], step.not_selector)
+        if not_matches:
+            return False
     return True
+# @node-id: 03a71f08-e734-43c9-a04f-a18fb1197581
+
 
 
 def _matches_node_type(node: NodeInfo, node_type: str) -> bool:
@@ -183,6 +206,8 @@ def _matches_node_type(node: NodeInfo, node_type: str) -> bool:
     }:
         return node.kind == alias
     return node.node_type.lower() == t.lower()
+# @node-id: 0a81211c-b0e5-47b6-9207-f06b575d23c2
+
 
 
 def _matches_predicate(node: NodeInfo, pred: Predicate) -> bool:
@@ -190,7 +215,7 @@ def _matches_predicate(node: NodeInfo, pred: Predicate) -> bool:
     if val is None:
         return False
     return _compare(str(val), pred.op, pred.value)
-
+# @node-id: 067d9ee5-0bee-430e-b9ce-3211e7a5a3a5
 
 def _get_attr(node: NodeInfo, attr: str) -> Optional[str]:
     """Return attribute value for predicate matching. Supports module for ImportFrom."""
@@ -207,10 +232,12 @@ def _get_attr(node: NodeInfo, attr: str) -> Optional[str]:
         return str(node.start_line)
     if a == "end_line":
         return str(node.end_line)
+    if a == "children_count":
+        return str(len(getattr(node, "children", None) or []))
     if a == "module" and node.extra_attrs and "module" in node.extra_attrs:
         return node.extra_attrs["module"]
     return None
-
+# @node-id: 2008b35b-56b4-4487-a541-d5e691949764
 
 def _compare(left: str, op: PredicateOp, right: str) -> bool:
     if op == PredicateOp.EQ:
@@ -223,4 +250,18 @@ def _compare(left: str, op: PredicateOp, right: str) -> bool:
         return left.startswith(right)
     if op == PredicateOp.SUFFIX:
         return left.endswith(right)
+    # Numeric comparisons: GT, LT, GTE, LTE
+    if op in (PredicateOp.GT, PredicateOp.LT, PredicateOp.GTE, PredicateOp.LTE):
+        try:
+            l_num, r_num = int(left), int(right)
+        except (ValueError, TypeError):
+            return False
+        if op == PredicateOp.GT:
+            return l_num > r_num
+        if op == PredicateOp.LT:
+            return l_num < r_num
+        if op == PredicateOp.GTE:
+            return l_num >= r_num
+        if op == PredicateOp.LTE:
+            return l_num <= r_num
     return False

@@ -10,31 +10,22 @@ Author: Vasiliy Zdanovskiy
 email: vasilyvz@gmail.com
 """
 
-
 from __future__ import annotations
 
-
 import time
-
 from pathlib import Path
-
 from typing import Any, Dict, List, Optional
-
 
 from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 
-
 from ..backup_manager import BackupManager
-
 from ...commands.compose_cst_ops_flow import run_ops_mode
-
 from ...commands.line_command_cst_gate import (
     LINE_CMD_DISALLOWED_MSG,
     healthy_parse_blocks_line_ops,
 )
-
 from ..cst_tree.tree_builder import get_tree
-
+from ..cst_tree.node_id_markers import strip_persisted_node_ids
 from .base import (
     VALIDATION_FAILED,
     BaseFileHandler,
@@ -42,32 +33,26 @@ from .base import (
     FileHandlerResult,
     standard_error_result,
 )
-
 from .registry import HANDLER_PYTHON, get_handler_schema
 
-
 PYTHON_SUFFIXES = frozenset({".py", ".pyi", ".pyw"})
-
 
 LINE_RANGE_MUTATION_KEYS = frozenset(
     {"start_line", "end_line", "new_lines", "replacements"}
 )
-# @node-id: d596566f-74d2-4569-a23d-108a65fd1963
-
+# @node-id: 0986b2ce-94e4-47c8-8e2c-3dd884ad7e4d
 
 
 def ensure_python_suffix(file_path: str) -> None:
     suf = Path(file_path).suffix.lower()
     if suf not in PYTHON_SUFFIXES:
         raise ValueError(f"Not a configured Python handler suffix: {suf!r}")
-# @node-id: 4b54bcb1-bcbe-465c-887f-5f60ce59df16
-
+# @node-id: 3724b6aa-b870-4546-b8f3-93f63f48f553
 
 
 def is_registered_python_suffix(file_path: str) -> bool:
     return Path(file_path).suffix.lower() in PYTHON_SUFFIXES
-# @node-id: c53a1054-70bd-4cf5-84b6-8f5bc46ccde6
-
+# @node-id: 1aa9b21e-9baa-47dd-8123-ac1ba3f32880
 
 
 def _reject_line_mutation_params(
@@ -85,42 +70,43 @@ def _reject_line_mutation_params(
         request=request,
         extra_details={"unsupported_keys": sorted(overlap)},
     )
-# @node-id: a27dc208-0164-42f7-a561-22f26181b3b4
-
-def read_python_lines_payload(self):
-    
-    
+# @node-id: 5fadc53c-a3ba-40a4-b029-688dd9e19481
+def read_python_lines_payload(
+    *,
+    project_relative_path: str,
+    absolute_path: Path,
+    start_line: int,
+    end_line: int,
+    allow_healthy_line_ops: bool = False,
+    allow_line_commands_on_healthy_files: bool = False,
+) -> Dict[str, Any]:
     """
-        Line-range read aligned with ``get_file_lines`` (clamp, healthy-parse gate).
-    
-        Returns a dict with ``success`` bool and either line fields or ``code``/``message``.
-        """
-    
-    
+    Line-range read aligned with ``get_file_lines`` (clamp, healthy-parse gate).
+
+    Returns a dict with ``success`` bool and either line fields or ``code``/``message``.
+    """
+
     if start_line > end_line:
         return {
             "success": False,
             "code": "INVALID_RANGE",
             "message": f"Invalid range: start_line ({start_line}) > end_line ({end_line})",
         }
-    
     if start_line < 1 or end_line < 1:
         return {
             "success": False,
             "code": "INVALID_RANGE",
             "message": "Line numbers must be >= 1 (1-based)",
         }
-    
     if not absolute_path.exists():
         return {
             "success": False,
             "code": "FILE_NOT_FOUND",
             "message": f"File not found: {absolute_path}",
         }
-    
-    
+
     text = absolute_path.read_text(encoding="utf-8", errors="replace")
-    
+    text, _ = strip_persisted_node_ids(text)
     if healthy_parse_blocks_line_ops(
         text,
         allow_healthy_line_ops=allow_healthy_line_ops,
@@ -132,12 +118,9 @@ def read_python_lines_payload(self):
             "code": "USE_CST_COMMANDS",
             "message": LINE_CMD_DISALLOWED_MSG,
         }
-    
-    
+
     all_lines = text.splitlines(keepends=False)
-    
     total_lines = len(all_lines)
-    
     if total_lines == 0:
         return {
             "success": True,
@@ -147,17 +130,12 @@ def read_python_lines_payload(self):
             "lines": [],
             "total_lines": 0,
         }
-    
-    
+
     low = max(1, min(start_line, total_lines))
-    
     high = max(1, min(end_line, total_lines))
-    
     if low > high:
         low, high = high, low
-    
     lines = all_lines[low - 1 : high]
-    
     return {
         "success": True,
         "file_path": project_relative_path,
@@ -166,8 +144,7 @@ def read_python_lines_payload(self):
         "lines": lines,
         "total_lines": total_lines,
     }
-    
-# @node-id: 3a9ecf2b-d252-4d46-b34e-637302f0b6f9
+# @node-id: 4ab90ce2-d1ef-4d22-920b-5c00b215be5b
 
 
 def _mcp_to_file_handler_result(
@@ -208,8 +185,7 @@ def _mcp_to_file_handler_result(
         message=str(data.get("message", "")),
         data=data,
     )
-# @node-id: 7e4357b1-a041-4733-9d0e-b6bf9d994855
-
+# @node-id: 07d960af-37b0-40a7-8585-b61078af8492
 
 
 def _require_root_path(request: FileHandlerRequest) -> Path | FileHandlerResult:
@@ -221,8 +197,7 @@ def _require_root_path(request: FileHandlerRequest) -> Path | FileHandlerResult:
             request=request,
         )
     return raw
-# @node-id: 2b79a747-9392-494b-9b86-892b892884d4
-
+# @node-id: 618869c5-6718-42e3-a02c-c923c8bb6f24
 
 
 def _ops_for_save_new_or_overwrite(
@@ -255,8 +230,7 @@ def _ops_for_save_new_or_overwrite(
             "new_code": content,
         },
     ]
-# @node-id: 45a16dc7-5c2c-4f1f-b56b-bed3f38039b3
-
+# @node-id: 6d36bb79-e5fd-41d3-ae68-ca9e78a00747
 
 
 class PythonFileHandler(BaseFileHandler):
@@ -271,16 +245,16 @@ class PythonFileHandler(BaseFileHandler):
     ``replace`` / non-full ``delete`` use ``extra.ops`` (selector + ``new_code`` per
     :func:`code_analysis.commands.compose_cst_validation.ops_from_params`).
     """
-    # @node-id: a6b636f1-7b71-4e7b-b832-02132a7d50ce
+    # @node-id: 12e12885-b6be-4182-9560-ad69cd0c29df
 
     @property
     def handler_id(self) -> str:
         return HANDLER_PYTHON
-    # @node-id: e2aacde7-30c2-4cf5-a923-a3fa30e2359b
+    # @node-id: 3150a538-bc9e-4e22-b719-6b07cd300c73
 
     def json_schema_for(self, operation: str) -> Dict[str, Any]:
         return get_handler_schema(HANDLER_PYTHON, operation)
-    # @node-id: 090d689e-039d-45a0-8479-14e500f07d88
+    # @node-id: 4c964b86-6ece-4235-8614-f2bb24ac5eaf
 
     def read(self, request: FileHandlerRequest) -> FileHandlerResult:
         abs_path = request.extra.get("absolute_path")
@@ -384,7 +358,7 @@ class PythonFileHandler(BaseFileHandler):
             dry_run=request.dry_run,
             data=payload,
         )
-    # @node-id: 22f40d31-ea75-450e-b700-3aa5069275a4
+    # @node-id: bebf1150-ad10-4983-968f-46bd1a4168ff
 
     def save(self, request: FileHandlerRequest) -> FileHandlerResult:
         pre = self.mutating_precheck(request)
@@ -428,7 +402,7 @@ class PythonFileHandler(BaseFileHandler):
             validate_docstrings=bool(request.extra.get("validate_docstrings", True)),
         )
         return _mcp_to_file_handler_result(request, mcp)
-    # @node-id: 07b8812b-a9b5-4df9-9b73-e1701eb27052
+    # @node-id: 1fc9b6e6-b1a9-4164-b264-be682e55062e
 
     def replace(self, request: FileHandlerRequest) -> FileHandlerResult:
         pre = self.mutating_precheck(request)
@@ -469,7 +443,7 @@ class PythonFileHandler(BaseFileHandler):
             validate_docstrings=bool(request.extra.get("validate_docstrings", True)),
         )
         return _mcp_to_file_handler_result(request, mcp)
-    # @node-id: afd3feb4-fadc-427e-9265-75ec6770c0d8
+    # @node-id: c25cad2d-bdb4-443b-ac65-75fcaa149df2
 
     def delete(self, request: FileHandlerRequest) -> FileHandlerResult:
         pre = self.mutating_precheck(request)

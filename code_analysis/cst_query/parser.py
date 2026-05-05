@@ -1,13 +1,26 @@
 """
 CSTQuery selector parser (Lark).
 
-Supported features (intentionally minimal but practical):
+Supported features:
 - Steps: `TYPE`, `TYPE:*` (prefix/suffix match on node type), or `*`
-- Combinators: descendant (space) and direct child (`>`)
-- Predicates: [attr=value], [attr!=value], [attr~=value], [attr^=value], [attr$=value]
-- Pseudos: :first, :last, :nth(N)
+- Combinators: descendant (space), direct child (`>`), recursive descendant (`//`)
+- Predicates: [attr OP value] or [@attr OP value] (@ prefix is optional)
+  - String ops: =, !=, ~= (contains), ^= (starts-with), $= (ends-with)
+  - Numeric ops: >, <, >=, <= (for start_line, end_line, children_count)
+- Pseudos: :first, :last, :nth(N), :not(selector)
 
-Type modifier `:*` matches by prefix or suffix: e.g. `Def:*` → FunctionDef, ClassDef.
+Type modifier `:*` matches by prefix or suffix: e.g. `Def:*` -> FunctionDef, ClassDef.
+
+Available attributes for predicates:
+  name, qualname, type, kind, start_line, end_line, children_count, module
+
+Examples:
+  function[name='foo']                     # function named foo
+  //FunctionDef[@name='foo']               # same, XPath-style with // and @
+  function[start_line>=100]                # functions starting at line 100+
+  function[@name^='_']:not([name^='__'])   # private but not dunder functions
+  class > method:first                     # first method of each class
+  Def:*[name='run']                        # FunctionDef or ClassDef named run
 
 Notes:
 - Values can be quoted with single or double quotes; unquoted barewords are allowed.

@@ -8,7 +8,9 @@ Author: Vasiliy Zdanovskiy
 email: vasilyvz@gmail.com
 """
 
+
 from __future__ import annotations
+
 
 from .tree_modifier_ops_find import (
     delete_node,
@@ -16,11 +18,13 @@ from .tree_modifier_ops_find import (
     find_node_in_module_by_position,
     find_parent_in_module_by_position,
 )
+
 from .tree_modifier_ops_insert import (
     insert_node,
     insert_node_at_position,
     insert_node_relative,
 )
+
 from .tree_modifier_ops_parse import (
     FINE_GRAINED_REPLACE_NODE_TYPES,
     parse_annotation_snippet,
@@ -28,7 +32,8 @@ from .tree_modifier_ops_parse import (
     parse_code_snippet_or_comment,
     parse_param_snippet,
 )
-from .tree_modifier_ops_replace import replace_node, replace_range
+
+from .tree_modifier_ops_replace import replace_node, replace_node_header_only, replace_range
 
 __all__ = [
     "FINE_GRAINED_REPLACE_NODE_TYPES",
@@ -41,6 +46,7 @@ __all__ = [
     "find_node_in_module_by_position",
     "find_parent_in_module_by_position",
     "replace_node",
+    "replace_node_header_only",
     "replace_range",
     "insert_node_at_position",
     "insert_node",

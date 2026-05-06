@@ -18,33 +18,179 @@ import libcst as cst
 
 
 class TreeOperationType(str, Enum):
-    """Type of tree operation."""
+    """Type of tree operation.
+
+    Attributes:
+        REPLACE: Replace a node with new code.
+        REPLACE_RANGE: Replace a range of sibling nodes with new code.
+        INSERT: Insert new code relative to a node.
+        DELETE: Delete a node.
+        MOVE: Move a node to a new location.
+    """
 
     REPLACE = "replace"
     REPLACE_RANGE = "replace_range"
     INSERT = "insert"
     DELETE = "delete"
     MOVE = "move"
+
+
+@dataclass
+class DocstringMeta:
+    """Structured docstring stored in node metadata and migrated with the node.
+
+    Analogous to stable_id: survives tree rebuilds via _build_tree_index and
+    is applied to the LibCST node automatically during cst_save_tree, so
+    new_code in cst_modify_tree never needs a hand-written docstring.
+
+    For methods/functions: set summary, args, returns.
+    For classes: set summary, attributes.
+    For legacy unstructured docstrings: set docstring_body only.
+
+    Attributes:
+        summary: One-line description (first line of docstring).
+        args: Mapping of parameter name to its description.
+        returns: Return value description.
+        attributes: Mapping of attribute name to its description.
+        docstring_body: Raw body text for legacy unstructured docstrings.
+    """
+
+    summary: str = ""
+    args: Dict[str, str] = field(default_factory=dict)
+    returns: str = ""
+    attributes: Dict[str, str] = field(default_factory=dict)
+    docstring_body: str = ""
+
+    def is_empty(self) -> bool:
+        """Return True when no docstring content is set.
+
+        Returns:
+            True when all fields are empty or default.
+        """
+        return not any([self.summary, self.args, self.returns, self.attributes, self.docstring_body])
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Serialize to a JSON-safe dict for sidecar storage.
+
+        Returns:
+            Dict containing only non-empty fields.
+        """
+        result: Dict[str, Any] = {}
+        if self.summary:
+            result["summary"] = self.summary
+        if self.args:
+            result["args"] = dict(self.args)
+        if self.returns:
+            result["returns"] = self.returns
+        if self.attributes:
+            result["attributes"] = dict(self.attributes)
+        if self.docstring_body:
+            result["docstring_body"] = self.docstring_body
+        return result
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "DocstringMeta":
+        """Deserialize from sidecar dict.
+
+        Args:
+            data: Dict produced by :meth:`to_dict`.
+
+        Returns:
+            DocstringMeta instance with fields populated from data.
+        """
+        return cls(
+            summary=str(data.get("summary", "")),
+            args=dict(data.get("args") or {}),
+            returns=str(data.get("returns", "")),
+            attributes=dict(data.get("attributes") or {}),
+            docstring_body=str(data.get("docstring_body", "")),
+        )
+
+    @classmethod
+    def from_raw(cls, raw: str) -> "DocstringMeta":
+        """Parse a raw docstring string into structured form where possible.
+
+        Recognises Google-style sections (Args:, Returns:, Attributes:).
+        Falls back to docstring_body when no sections are found.
+
+        Args:
+            raw: Raw docstring text without triple quotes.
+
+        Returns:
+            DocstringMeta with parsed fields, or docstring_body as fallback.
+        """
+        lines = raw.strip().splitlines()
+        if not lines:
+            return cls()
+        summary = lines[0].strip()
+        args: Dict[str, str] = {}
+        returns = ""
+        attributes: Dict[str, str] = {}
+        current_section: Optional[str] = None
+        current_param: Optional[str] = None
+        for line in lines[1:]:
+            stripped = line.strip()
+            if stripped in ("Args:", "Arguments:"):
+                current_section = "args"
+                current_param = None
+            elif stripped == "Returns:":
+                current_section = "returns"
+                current_param = None
+            elif stripped == "Attributes:":
+                current_section = "attributes"
+                current_param = None
+            elif current_section == "args" and ":" in stripped:
+                name, _, desc = stripped.partition(":")
+                current_param = name.strip()
+                args[current_param] = desc.strip()
+            elif current_section == "args" and current_param and stripped:
+                args[current_param] += " " + stripped
+            elif current_section == "returns" and stripped:
+                returns = (returns + " " + stripped).strip()
+            elif current_section == "attributes" and ":" in stripped:
+                name, _, desc = stripped.partition(":")
+                current_param = name.strip()
+                attributes[current_param] = desc.strip()
+            elif current_section == "attributes" and current_param and stripped:
+                attributes[current_param] += " " + stripped
+        if args or returns or attributes:
+            return cls(summary=summary, args=args, returns=returns, attributes=attributes)
+        return cls(summary=summary, docstring_body=raw.strip())
 # @node-id: 0caef3d7-2202-42f7-bbcc-5e4468d668d1
 
 
 @dataclass(frozen=True)
 class TreeNodeMetadata:
-    """
-    Metadata for a CST node.
+    """Metadata for a CST node.
 
-    This is a lightweight representation of a node that can be sent to clients
-    without the full CST tree structure.
-
+    Lightweight representation sent to clients without the full CST tree.
     stable_id is assigned once at node creation and never changes across rebuilds.
     node_id may be reassigned after index rebuild; stable_id always points back
     to the original UUID so callers can use it as a durable handle.
+    docstring migrates with the node the same way stable_id does.
+
+    Attributes:
+        node_id: Internal node identifier; may change after index rebuild.
+        stable_id: UUID assigned at creation; never changes on rebuild.
+        type: LibCST node type (e.g., FunctionDef, ClassDef).
+        kind: Node kind (e.g., function, class, method, stmt, smallstmt).
+        name: Simple name of the node if applicable.
+        qualname: Qualified name including class context.
+        start_line: 1-based start line in source file.
+        start_col: 0-based start column.
+        end_line: 1-based end line.
+        end_col: 0-based end column.
+        children_count: Number of direct children.
+        children_ids: Ordered list of child node_ids.
+        parent_id: Parent node_id, or None for root.
+        code: Optional source code snippet for this node.
+        docstring: Structured docstring metadata; migrates with stable_id.
     """
 
     node_id: str
-    stable_id: str  # Original UUID assigned at creation, never changes on rebuild
-    type: str  # LibCST node type (e.g., "FunctionDef", "ClassDef")
-    kind: str  # Node kind (e.g., "function", "class", "method", "stmt", "smallstmt")
+    stable_id: str
+    type: str
+    kind: str
     name: Optional[str] = None
     qualname: Optional[str] = None
     start_line: int = 1
@@ -55,12 +201,16 @@ class TreeNodeMetadata:
     children_ids: List[str] = field(default_factory=list)
     parent_id: Optional[str] = None
     code: Optional[str] = None
-    # @node-id: 35484752-a42e-44fd-b7c3-1a6e9b337ce6
+    docstring: Optional["DocstringMeta"] = None
 
     def to_dict(self) -> Dict[str, Any]:
-        """Convert to dictionary."""
+        """Convert to dictionary.
+
+        Returns:
+            Dict with node fields. node_id is intentionally excluded from the
+            public API; use stable_id as the durable node handle.
+        """
         result: Dict[str, Any] = {
-            "node_id": self.node_id,
             "stable_id": self.stable_id,
             "type": self.type,
             "kind": self.kind,
@@ -80,18 +230,28 @@ class TreeNodeMetadata:
             result["parent_id"] = self.parent_id
         if self.code is not None:
             result["code"] = self.code
+        if self.docstring is not None and not self.docstring.is_empty():
+            result["docstring"] = self.docstring.to_dict()
         return result
-    # @node-id: 59cd5cd2-4ab4-4a45-aae6-0214f845e944
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> TreeNodeMetadata:
-        """Build metadata from :meth:`to_dict` / sidecar JSON."""
+    def from_dict(cls, data: Dict[str, Any]) -> "TreeNodeMetadata":
+        """Build metadata from :meth:`to_dict` / sidecar JSON.
+
+        Args:
+            data: Dictionary produced by :meth:`to_dict` or read from sidecar.
+
+        Returns:
+            TreeNodeMetadata instance reconstructed from the dictionary.
+        """
         children_ids = data.get("children_ids")
         if children_ids is not None and not isinstance(children_ids, list):
             children_ids = []
+        docstring_data = data.get("docstring")
+        docstring = DocstringMeta.from_dict(docstring_data) if docstring_data else None
         return cls(
-            node_id=str(data["node_id"]),
-            stable_id=str(data.get("stable_id") or data["node_id"]),
+            node_id=str(data.get("node_id") or data.get("stable_id", "")),
+            stable_id=str(data.get("stable_id") or data.get("node_id", "")),
             type=str(data["type"]),
             kind=str(data["kind"]),
             name=data.get("name"),
@@ -106,41 +266,43 @@ class TreeNodeMetadata:
                 str(data["parent_id"]) if data.get("parent_id") is not None else None
             ),
             code=data.get("code"),
+            docstring=docstring,
         )
 # @node-id: 088d4371-27fa-4418-b3aa-0a5cc3f0baca
 
 
 @dataclass
 class TreeOperation:
-    """
-    Operation to modify a CST tree.
+    """Operation to modify a CST tree.
 
     Operations are validated before being applied. All operations in a batch
     are applied atomically (either all succeed or all fail).
+
+    Attributes:
+        action: Operation type (replace, insert, delete, etc.).
+        node_id: Target node for replace/delete operations.
+        code: New code as a single string for replace/insert.
+        code_lines: New code as list of lines (alternative to code).
+        position: Insertion position: before|after|first|last|end for insert; first|last|after for move.
+        position_after_index: 0-based sibling index for position after.
+        parent_node_id: Parent node for insert/move; use __root__ for module level.
+        target_node_id: Target node for insert (alternative to parent_node_id).
+        start_node_id: Start node for replace_range.
+        end_node_id: End node for replace_range.
     """
 
     action: TreeOperationType
     node_id: str = (
         ""  # Node ID for replace/delete operations (empty for insert with target_node_id)
     )
-    code: Optional[str] = None  # New code for replace/insert (single string)
-    code_lines: Optional[List[str]] = (
-        None  # New code as list of lines (alternative to code)
-    )
-    position: Optional[str] = (
-        None  # "before"|"after"|"first"|"last"|"end" for insert; "first"|"last"|"after" for move
-    )
-    position_after_index: Optional[int] = (
-        None  # 0-based sibling index for position "after" (insert/move after this child)
-    )
-    parent_node_id: Optional[str] = (
-        None  # Parent node for insert/move (use __root__ for module level)
-    )
-    target_node_id: Optional[str] = (
-        None  # Target node for insert (alternative to parent_node_id)
-    )
-    start_node_id: Optional[str] = None  # Start node for replace_range
-    end_node_id: Optional[str] = None  # End node for replace_range
+    code: Optional[str] = None
+    code_lines: Optional[List[str]] = None
+    position: Optional[str] = None
+    position_after_index: Optional[int] = None
+    parent_node_id: Optional[str] = None
+    target_node_id: Optional[str] = None
+    start_node_id: Optional[str] = None
+    end_node_id: Optional[str] = None
 
 
 # Reserved node_id: denotes the Module (root) node of the tree.
@@ -150,11 +312,25 @@ ROOT_NODE_ID_SENTINEL = "__root__"
 
 @dataclass
 class CSTTree:
-    """
-    CST tree with metadata.
+    """CST tree with metadata.
 
     The full CST tree is stored in memory on the server.
     Clients receive only metadata about nodes.
+
+    Attributes:
+        tree_id: Unique identifier for this tree session.
+        file_path: Absolute path to the source file.
+        module: Parsed LibCST module object.
+        node_map: Mapping from node_id to LibCST node object.
+        metadata_map: Mapping from node_id to TreeNodeMetadata.
+        parent_map: Mapping from node_id to parent node_id.
+        node_id_aliases: Mapping old_node_id to current_node_id after mutations.
+        root_node_id: Node ID of the module root node.
+        loaded_at: Monotonic timestamp when the tree was loaded.
+        last_accessed_at: Monotonic timestamp of last access for TTL tracking.
+        disk_source_sha256_hex: SHA-256 hex of UTF-8 file bytes at last disk sync.
+        disk_source_length: Byte length of file at last disk sync.
+        module_source_sha256_hex: SHA-256 hex of module.code at last sync.
     """
 
     tree_id: str
@@ -168,27 +344,30 @@ class CSTTree:
     # Populated after each _build_tree_index call so that stale UUIDs from
     # previous cst_modify_tree calls are automatically resolved to current ones.
     # Cleared on reload_tree_from_file (full UUID reset from disk).
-    root_node_id: Optional[str] = (
-        None  # Set at index build; used to resolve ROOT_NODE_ID_SENTINEL
-    )
+    root_node_id: Optional[str] = None
     loaded_at: float = field(default_factory=time.monotonic)
     last_accessed_at: float = field(default_factory=time.monotonic)
-    # Snapshot of UTF-8 file text at last disk sync (load/reload); None/0 = no snapshot.
     disk_source_sha256_hex: Optional[str] = None
     disk_source_length: int = 0
     module_source_sha256_hex: Optional[str] = None
-    # @node-id: a26289ef-ea9e-4aac-987a-6366cb4f8041
 
     @classmethod
-    def create(cls, file_path: str, module: cst.Module) -> CSTTree:
-        """Create a new CSTTree with generated tree_id."""
+    def create(cls, file_path: str, module: cst.Module) -> "CSTTree":
+        """Create a new CSTTree with generated tree_id.
+
+        Args:
+            file_path: Absolute path to the source file.
+            module: Parsed LibCST module object.
+
+        Returns:
+            New CSTTree instance with a freshly generated tree_id.
+        """
         tree_id = str(uuid.uuid4())
         return cls(
             tree_id=tree_id,
             file_path=file_path,
             module=module,
         )
-    # @node-id: 31856faa-ff2c-4600-8339-b2f7f02794c3
 
     def find_by_stable_id(self, stable_id: str) -> Optional[TreeNodeMetadata]:
         """Find node metadata by stable_id.
@@ -197,12 +376,58 @@ class CSTTree:
         even after tree rebuilds caused by insert/delete operations.
 
         Args:
-            stable_id: The stable user-facing node identifier
+            stable_id: The stable user-facing node identifier.
 
         Returns:
-            TreeNodeMetadata if found, None otherwise
+            TreeNodeMetadata if found, None otherwise.
         """
         for meta in self.metadata_map.values():
             if meta.stable_id == stable_id:
                 return meta
         return None
+
+    def set_docstring(self, stable_id: str, docstring: "DocstringMeta") -> bool:
+        """Set docstring metadata for a node by stable_id without reloading the tree.
+
+        The docstring is stored in metadata_map and applied to the LibCST node
+        automatically during cst_save_tree.
+
+        Args:
+            stable_id: The stable node identifier.
+            docstring: Structured docstring to assign to the node.
+
+        Returns:
+            True if the node was found and updated, False otherwise.
+        """
+        for node_id, meta in self.metadata_map.items():
+            if meta.stable_id == stable_id:
+                self.metadata_map[node_id] = TreeNodeMetadata(
+                    node_id=meta.node_id,
+                    stable_id=meta.stable_id,
+                    type=meta.type,
+                    kind=meta.kind,
+                    name=meta.name,
+                    qualname=meta.qualname,
+                    start_line=meta.start_line,
+                    start_col=meta.start_col,
+                    end_line=meta.end_line,
+                    end_col=meta.end_col,
+                    children_count=meta.children_count,
+                    children_ids=meta.children_ids,
+                    parent_id=meta.parent_id,
+                    code=meta.code,
+                    docstring=docstring,
+                )
+                return True
+        return False
+
+    def set_docstrings(self, docstrings: Dict[str, "DocstringMeta"]) -> Dict[str, bool]:
+        """Set docstrings for multiple nodes in one call.
+
+        Args:
+            docstrings: Mapping of stable_id to DocstringMeta.
+
+        Returns:
+            Mapping of stable_id to True if node found and updated, False otherwise.
+        """
+        return {sid: self.set_docstring(sid, doc) for sid, doc in docstrings.items()}

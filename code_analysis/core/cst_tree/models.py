@@ -14,7 +14,6 @@ from enum import Enum
 from typing import Any, Dict, List, Optional
 
 import libcst as cst
-# @node-id: 2755b7c6-b880-41e3-a847-8a9b18a19c92
 
 
 class TreeOperationType(str, Enum):
@@ -156,7 +155,6 @@ class DocstringMeta:
         if args or returns or attributes:
             return cls(summary=summary, args=args, returns=returns, attributes=attributes)
         return cls(summary=summary, docstring_body=raw.strip())
-# @node-id: 0caef3d7-2202-42f7-bbcc-5e4468d668d1
 
 
 @dataclass(frozen=True)
@@ -268,46 +266,11 @@ class TreeNodeMetadata:
             code=data.get("code"),
             docstring=docstring,
         )
-# @node-id: 088d4371-27fa-4418-b3aa-0a5cc3f0baca
-
-
-@dataclass
-class TreeOperation:
-    """Operation to modify a CST tree.
-
-    Operations are validated before being applied. All operations in a batch
-    are applied atomically (either all succeed or all fail).
-
-    Attributes:
-        action: Operation type (replace, insert, delete, etc.).
-        node_id: Target node for replace/delete operations.
-        code: New code as a single string for replace/insert.
-        code_lines: New code as list of lines (alternative to code).
-        position: Insertion position: before|after|first|last|end for insert; first|last|after for move.
-        position_after_index: 0-based sibling index for position after.
-        parent_node_id: Parent node for insert/move; use __root__ for module level.
-        target_node_id: Target node for insert (alternative to parent_node_id).
-        start_node_id: Start node for replace_range.
-        end_node_id: End node for replace_range.
-    """
-
-    action: TreeOperationType
-    node_id: str = (
-        ""  # Node ID for replace/delete operations (empty for insert with target_node_id)
-    )
-    code: Optional[str] = None
-    code_lines: Optional[List[str]] = None
-    position: Optional[str] = None
-    position_after_index: Optional[int] = None
-    parent_node_id: Optional[str] = None
-    target_node_id: Optional[str] = None
-    start_node_id: Optional[str] = None
-    end_node_id: Optional[str] = None
+replace_all_child_nodes: bool = True
 
 
 # Reserved node_id: denotes the Module (root) node of the tree.
 ROOT_NODE_ID_SENTINEL = "__root__"
-# @node-id: 59046bff-9e30-4c51-b544-6093cd25a219
 
 
 @dataclass

@@ -27,7 +27,11 @@ from .cst_modify_tree_helpers import (
 from .cst_modify_tree_metadata import get_cst_modify_tree_metadata
 from .cst_modify_tree_ops_build import build_tree_operations
 from ..core.cst_tree.models import TreeNodeMetadata, TreeOperation, TreeOperationType
-from ..core.cst_tree.tree_builder import get_tree, rollback_tree_to_code
+from ..core.cst_tree.tree_builder import (
+    _attach_disk_snapshot,
+    get_tree,
+    rollback_tree_to_code,
+)
 from ..core.cst_tree.tree_modifier import modify_tree
 from ..core.cst_tree.tree_save_verification import (
     CST_REPLAY_MISMATCH,
@@ -43,7 +47,6 @@ logger = logging.getLogger(__name__)
 
 # Re-export for callers that import from this module
 __all__ = ["CSTModifyTreeCommand", "InvalidNodeIdError"]
-# @node-id: 3f45eddf-1477-40f4-9915-a426d7a3ef8d
 
 
 class CSTModifyTreeCommand(BaseMCPCommand):
@@ -56,12 +59,11 @@ class CSTModifyTreeCommand(BaseMCPCommand):
     author = "Vasiliy Zdanovskiy"
     email = "vasilyvz@gmail.com"
     use_queue = False
-    # @node-id: edd54b82-0f60-4010-9ef7-99dfc95dd59f
 
     @classmethod
     def get_schema(cls) -> Dict[str, Any]:
         return get_cst_modify_tree_schema()
-    # @node-id: 903c1da4-7528-4eff-8cb6-2d13ac940a64
+
 
     def validate_params(self, params: Dict[str, Any]) -> Dict[str, Any]:
         """Validate params and reject unknown project_id when present."""
@@ -69,7 +71,7 @@ class CSTModifyTreeCommand(BaseMCPCommand):
         if params.get("project_id"):
             BaseMCPCommand._validate_project_id_exists(params["project_id"])
         return params
-    # @node-id: 8f52706d-c986-4a0e-8358-caf4526fb8c2
+
 
     async def execute(
         self,
@@ -316,6 +318,10 @@ class CSTModifyTreeCommand(BaseMCPCommand):
                     data["file_path"] = str(absolute_file_path)
                     if save_result.get("backup_uuid"):
                         data["backup_uuid"] = save_result["backup_uuid"]
+                    # BUG FIX: refresh module_source_sha256_hex after combined save
+                    _saved_tree = get_tree(tree_id)
+                    if _saved_tree is not None:
+                        _attach_disk_snapshot(_saved_tree, _saved_tree.module.code)
                 finally:
                     database.disconnect()
 
@@ -357,7 +363,7 @@ class CSTModifyTreeCommand(BaseMCPCommand):
             return ErrorResult(
                 message=f"cst_modify_tree failed: {e}", code="CST_MODIFY_ERROR"
             )
-    # @node-id: d5142187-ae06-435a-acd7-a5483b683913
+
 
     @classmethod
     def metadata(cls: type["CSTModifyTreeCommand"]) -> Dict[str, Any]:

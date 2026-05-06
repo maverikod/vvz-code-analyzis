@@ -118,21 +118,20 @@ def _validate_method_docstring(
         errors.append(f"Method {location} is missing docstring")
         return errors  # Can't check further without docstring
 
-    # 2. Extract method parameters (excluding self/cls)
+    # 2. Extract method parameters (excluding self/cls always)
     args = method_node.args
     param_names = []
     for arg in args.args:
         param_name = arg.arg
-        # Skip self/cls for methods
-        if class_name and param_name in ("self", "cls"):
+        if param_name in ("self", "cls"):
             continue
         param_names.append(param_name)
 
-    # 3. Check type hints for parameters (skip self/cls)
+    # 3. Check type hints for parameters (skip self/cls always)
     missing_type_hints = []
     for arg in args.args:
         param_name = arg.arg
-        if class_name and param_name in ("self", "cls"):
+        if param_name in ("self", "cls"):
             continue
         if not arg.annotation:
             missing_type_hints.append(param_name)

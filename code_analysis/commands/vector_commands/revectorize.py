@@ -13,8 +13,11 @@ from typing import Any, Dict
 from mcp_proxy_adapter.commands.result import SuccessResult, ErrorResult
 
 from ..base_mcp_command import BaseMCPCommand
+from ...core.config import get_driver_config
 from ...core.faiss_manager import FaissIndexManager
+from ...core.pgvector_embedding import numpy_embedding_to_pgvector_text
 from ...core.storage_paths import resolve_storage_paths, get_faiss_index_path
+from ...core.vector_search_backend import effective_vector_search_backend
 
 logger = logging.getLogger(__name__)
 
@@ -119,6 +122,13 @@ class RevectorizeCommand(BaseMCPCommand):
                 # Get vector dimension
                 code_analysis_config = config_dict.get("code_analysis", config_dict)
                 vector_dim = int(code_analysis_config.get("vector_dim", 384))
+                driver_cfg = get_driver_config(config_dict) or {}
+                driver_type = str(driver_cfg.get("type") or "").strip().lower()
+                ann = effective_vector_search_backend(
+                    driver_type,
+                    code_analysis_config.get("vector_search_backend"),
+                )
+                use_pgvector = ann == "pgvector"
 
                 # Initialize SVO client manager
                 from ...core.svo_client_manager import SVOClientManager
@@ -129,6 +139,20 @@ class RevectorizeCommand(BaseMCPCommand):
                 await svo_client_manager.initialize()
 
                 try:
+                    from ...core.docs_markdown_vector_gate import (
+                        docs_markdown_embeddings_disabled_by_policy,
+                    )
+
+                    ca_blk = config_dict.get("code_analysis")
+                    di_blk = (
+                        ca_blk.get("docs_indexing")
+                        if isinstance(ca_blk, dict)
+                        else None
+                    )
+                    omit_docs_markdown = docs_markdown_embeddings_disabled_by_policy(
+                        di_blk
+                    )
+
                     # One index per project: revectorize all chunks in project
                     result = await self._revectorize_project(
                         database,
@@ -137,16 +161,19 @@ class RevectorizeCommand(BaseMCPCommand):
                         project_id,
                         vector_dim,
                         force,
+                        omit_docs_markdown=omit_docs_markdown,
+                        use_pgvector=use_pgvector,
                     )
 
-                    return SuccessResult(
-                        data={
-                            "project_id": project_id,
-                            "chunks_revectorized": result["chunks_revectorized"],
-                            "vectors_in_index": result.get("vectors_in_index", 0),
-                            "index_path": result.get("index_path"),
-                        }
-                    )
+                    payload: Dict[str, Any] = {
+                        "project_id": project_id,
+                        "chunks_revectorized": result["chunks_revectorized"],
+                        "vectors_in_index": result.get("vectors_in_index", 0),
+                        "index_path": result.get("index_path"),
+                    }
+                    if result.get("vector_backend"):
+                        payload["vector_backend"] = result["vector_backend"]
+                    return SuccessResult(data=payload)
                 finally:
                     await svo_client_manager.close()
             finally:
@@ -180,7 +207,9 @@ class RevectorizeCommand(BaseMCPCommand):
             "email": cls.email,
             "detailed_description": (
                 "The revectorize command regenerates embeddings for code chunks and updates "
-                "the FAISS index. One index per project.\n\n"
+                "vector search storage: FAISS on disk (SQLite or Postgres with "
+                "vector_search_backend=faiss) or pgvector in PostgreSQL when "
+                "vector_search_backend resolves to pgvector.\n\n"
                 "Operation flow:\n"
                 "1. Validates root_dir exists and is a directory\n"
                 "2. Validates project_id matches root_dir/projectid file\n"
@@ -190,15 +219,15 @@ class RevectorizeCommand(BaseMCPCommand):
                 "6. Initializes SVOClientManager for embedding generation\n"
                 "7. Gets chunks that need revectorization for the project\n"
                 "8. For each chunk: gets text, calls SVO for embedding, updates DB, sets vector_id to NULL\n"
-                "9. Rebuilds FAISS index from updated embeddings\n"
+                "9. Rebuilds FAISS index from updated embeddings, or writes embedding_vec on Postgres\n"
                 "10. Returns revectorization statistics\n\n"
                 "Revectorization Process:\n"
                 "- Finds chunks without embeddings or with force=True (all chunks)\n"
                 "- Generates new embeddings using SVO (Semantic Vector Operations) service\n"
                 "- Updates code_chunks.embedding_vector in database\n"
                 "- Updates code_chunks.embedding_model with model name\n"
-                "- Sets vector_id to NULL (normalized during FAISS rebuild)\n"
-                "- Rebuilds FAISS index after revectorization\n\n"
+                "- Sets vector_id to NULL; with pgvector also sets embedding_vec from the new embedding\n"
+                "- Rebuilds FAISS index after revectorization when using FAISS; optional REINDEX HNSW for pgvector\n\n"
                 "Force Mode:\n"
                 "- If force=False: Only revectorizes chunks without embeddings\n"
                 "- If force=True: Revectorizes all chunks (regenerates all embeddings)\n"
@@ -362,11 +391,12 @@ class RevectorizeCommand(BaseMCPCommand):
             "best_practices": [
                 "Use force=False to only process missing embeddings (faster)",
                 "Use force=True after embedding model changes",
-                "Run revectorize before rebuild_faiss if embeddings are missing",
+                "Run revectorize before rebuild_faiss if embeddings are missing (FAISS mode)",
                 "Monitor chunks_revectorized to track progress",
-                "Check vectors_in_index to verify FAISS index was rebuilt",
+                "Check vectors_in_index to verify FAISS index was rebuilt (FAISS mode)",
+                "With pgvector, success payload includes vector_backend=pgvector and index_path=null",
                 "Ensure SVO service is configured and accessible",
-                "Run rebuild_faiss after revectorize to ensure index is updated",
+                "Run rebuild_faiss after revectorize to resync pgvector from JSON if needed",
             ],
         }
 
@@ -378,6 +408,9 @@ class RevectorizeCommand(BaseMCPCommand):
         project_id: str,
         vector_dim: int,
         force: bool,
+        *,
+        omit_docs_markdown: bool = False,
+        use_pgvector: bool = False,
     ) -> Dict[str, Any]:
         """Revectorize chunks for a project (one index per project).
 
@@ -388,18 +421,21 @@ class RevectorizeCommand(BaseMCPCommand):
             project_id: Project UUID.
             vector_dim: Vector dimension.
             force: Force revectorization even if embeddings exist.
+            omit_docs_markdown: Skip ``docs_markdown`` chunks when policy disables doc vectors.
+            use_pgvector: When True, skip FAISS and write pgvector column on Postgres.
 
         Returns:
             Dictionary with revectorization statistics.
         """
-        # One index per project: {faiss_dir}/{project_id}.bin
-        index_path = get_faiss_index_path(storage_paths.faiss_dir, project_id)
-
-        # Initialize FAISS manager
-        faiss_manager = FaissIndexManager(
-            index_path=str(index_path),
-            vector_dim=vector_dim,
-        )
+        index_path = None
+        faiss_manager = None
+        if not use_pgvector:
+            # One index per project: {faiss_dir}/{project_id}.bin
+            index_path = get_faiss_index_path(storage_paths.faiss_dir, project_id)
+            faiss_manager = FaissIndexManager(
+                index_path=str(index_path),
+                vector_dim=vector_dim,
+            )
 
         try:
             # Get chunks for this project that need revectorization
@@ -421,11 +457,17 @@ class RevectorizeCommand(BaseMCPCommand):
                     if not c.get("embedding_vector") or not c.get("embedding_model")
                 ]
 
+            if omit_docs_markdown:
+                from ...core.docs_markdown_vector_gate import is_docs_markdown_chunk
+
+                chunks = [c for c in chunks if not is_docs_markdown_chunk(chunk=c)]
+
             if not chunks:
                 return {
                     "project_id": project_id,
                     "chunks_revectorized": 0,
-                    "index_path": str(index_path),
+                    "index_path": None if use_pgvector else str(index_path),
+                    "vector_backend": "pgvector" if use_pgvector else "faiss",
                 }
 
             # Revectorize chunks and update FAISS index
@@ -459,15 +501,41 @@ class RevectorizeCommand(BaseMCPCommand):
                             embedding_array = np.array(embedding, dtype="float32")
                             embedding_json = json.dumps(embedding_array.tolist())
 
-                            # Update database with new embedding
-                            database.execute(
-                                """
-                                UPDATE code_chunks
-                                SET embedding_vector = ?, embedding_model = ?, vector_id = NULL
-                                WHERE id = ?
-                                """,
-                                (embedding_json, embedding_model, chunk_id),
-                            )
+                            # Postgres + pgvector: store normalized vector in embedding_vec
+                            if (
+                                use_pgvector
+                                and getattr(database, "_driver_type", None)
+                                == "postgres"
+                            ):
+                                norm = FaissIndexManager._normalize_vector(
+                                    embedding_array
+                                )
+                                vt = numpy_embedding_to_pgvector_text(norm)
+                                database.execute(
+                                    """
+                                    UPDATE code_chunks
+                                    SET embedding_vector = ?,
+                                        embedding_model = ?,
+                                        vector_id = NULL,
+                                        embedding_vec = ?::vector
+                                    WHERE id = ?
+                                    """,
+                                    (
+                                        embedding_json,
+                                        embedding_model,
+                                        vt,
+                                        chunk_id,
+                                    ),
+                                )
+                            else:
+                                database.execute(
+                                    """
+                                    UPDATE code_chunks
+                                    SET embedding_vector = ?, embedding_model = ?, vector_id = NULL
+                                    WHERE id = ?
+                                    """,
+                                    (embedding_json, embedding_model, chunk_id),
+                                )
 
                             revectorized_count += 1
                 except Exception as e:
@@ -475,11 +543,29 @@ class RevectorizeCommand(BaseMCPCommand):
                         f"Failed to revectorize chunk {chunk_id}: {e}", exc_info=True
                     )
 
+            if use_pgvector:
+                try:
+                    database.execute("REINDEX INDEX idx_code_chunks_embedding_vec_hnsw")
+                except Exception as re_ix_e:
+                    logger.warning(
+                        "REINDEX idx_code_chunks_embedding_vec_hnsw skipped: %s",
+                        re_ix_e,
+                    )
+                return {
+                    "project_id": project_id,
+                    "chunks_revectorized": revectorized_count,
+                    "vectors_in_index": revectorized_count,
+                    "index_path": None,
+                    "vector_backend": "pgvector",
+                }
+
+            assert faiss_manager is not None
             # Rebuild FAISS index for this project
             vectors_count = await faiss_manager.rebuild_from_database(
                 database,
                 svo_client_manager,
                 project_id=project_id,
+                omit_docs_markdown=omit_docs_markdown,
             )
 
             return {
@@ -487,6 +573,8 @@ class RevectorizeCommand(BaseMCPCommand):
                 "chunks_revectorized": revectorized_count,
                 "vectors_in_index": vectors_count,
                 "index_path": str(index_path),
+                "vector_backend": "faiss",
             }
         finally:
-            faiss_manager.close()
+            if faiss_manager is not None:
+                faiss_manager.close()

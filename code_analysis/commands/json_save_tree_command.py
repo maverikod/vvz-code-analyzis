@@ -19,6 +19,7 @@ from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 
 from .base_mcp_command import BaseMCPCommand
 from .project_text_file_guard import reject_if_write_under_project_venv
+from ..core.git_integration import commit_after_write
 from ..core.json_tree.json_saver import save_json_tree_to_file
 from ..core.json_tree.tree_builder import get_tree, reload_tree_from_file
 
@@ -192,7 +193,6 @@ class JsonSaveTreeCommand(BaseMCPCommand):
                     project_id=project_id,
                     database=database,
                     backup=backup,
-                    commit_message=commit_message,
                 )
             finally:
                 database.disconnect()
@@ -212,6 +212,21 @@ class JsonSaveTreeCommand(BaseMCPCommand):
                     logger.warning("json_save_tree auto_reload failed: %s", e)
                     result["tree_reloaded"] = False
                     result["reload_error"] = str(e)
+
+            cm = (
+                commit_message.strip()
+                if isinstance(commit_message, str) and commit_message.strip()
+                else None
+            )
+            git_ok, git_err = commit_after_write(
+                root_dir,
+                [absolute_path],
+                "json_save_tree",
+                commit_message_override=cm,
+                config_data=BaseMCPCommand._get_raw_config(),
+            )
+            if not git_ok and git_err:
+                logger.warning("Git commit after json_save_tree: %s", git_err)
 
             logger.info(
                 "[TIMING] command=json_save_tree elapsed_sec=%.4f",

@@ -41,6 +41,59 @@ def _extract_args(node: ast.FunctionDef | ast.AsyncFunctionDef) -> list[str]:
     return args
 
 
+def _flatten_assign_target_names(target: ast.AST) -> list[str]:
+    """Collect simple names from assignment targets (``x``, ``a, b``, ``self.attr``)."""
+    if isinstance(target, ast.Name):
+        return [target.id]
+    if isinstance(target, (ast.Tuple, ast.List)):
+        out: list[str] = []
+        for elt in target.elts:
+            out.extend(_flatten_assign_target_names(elt))
+        return out
+    if isinstance(target, ast.Attribute) and isinstance(target.value, ast.Name):
+        if target.value.id == "self":
+            return [target.attr]
+    return []
+
+
+def _names_from_assign_like(node: ast.AST) -> list[str]:
+    if isinstance(node, ast.AnnAssign):
+        return _flatten_assign_target_names(node.target)
+    if isinstance(node, ast.Assign):
+        names: list[str] = []
+        for t in node.targets:
+            names.extend(_flatten_assign_target_names(t))
+        return names
+    if isinstance(node, ast.AugAssign):
+        return _flatten_assign_target_names(node.target)
+    return []
+
+
+def _fts_symbol_overlay(*parts: str) -> str:
+    """Space-separated unique tokens for FTS ``docstring`` augmentation."""
+    seen: set[str] = set()
+    ordered: list[str] = []
+    for p in parts:
+        s = (p or "").strip()
+        if not s or s in seen:
+            continue
+        seen.add(s)
+        ordered.append(s)
+    return " ".join(ordered)
+
+
+def _merge_docstring_and_symbols(
+    docstring: str | None, *symbol_parts: str
+) -> str | None:
+    """Append symbol tokens to docstring for FTS (identifiers, class names, args)."""
+    tail = _fts_symbol_overlay(*symbol_parts)
+    if docstring and tail:
+        return f"{docstring}\n{tail}"
+    if docstring:
+        return docstring
+    return tail or None
+
+
 def index_entities(
     database: Any,
     file_id: int,
@@ -74,7 +127,12 @@ def index_entities(
     # Build in-memory CST for cst_node_id resolution (required for entity writes).
     try:
         abs_path = str(Path(rel_path).resolve())
-        cst_tree = create_tree_from_code(abs_path, file_content)
+        ap = Path(abs_path)
+        cst_tree = create_tree_from_code(
+            abs_path,
+            file_content,
+            persist_sidecar=ap.is_file(),
+        )
     except Exception as e:
         logger.error("Failed to build CST for entity indexing in %s: %s", rel_path, e)
         raise ValueError(f"Failed to build CST for {rel_path}: {e}") from e
@@ -83,13 +141,19 @@ def index_entities(
         module_docstring = ast.get_docstring(tree)
     except Exception:
         module_docstring = None
+
+    module_symbols: list[str] = []
+    for item in tree.body:
+        if isinstance(item, (ast.Assign, ast.AnnAssign, ast.AugAssign)):
+            module_symbols.extend(_names_from_assign_like(item))
+
     try:
         database.add_code_content(
             file_id=file_id,
             entity_type="file",
             entity_name=str(rel_path),
             content=file_content,
-            docstring=module_docstring,
+            docstring=_merge_docstring_and_symbols(module_docstring, *module_symbols),
             entity_id=file_id,
         )
     except Exception as e:
@@ -99,6 +163,35 @@ def index_entities(
             e,
             exc_info=True,
         )
+
+    for item in tree.body:
+        if not isinstance(item, (ast.Assign, ast.AnnAssign, ast.AugAssign)):
+            continue
+        names = _names_from_assign_like(item)
+        if not names:
+            continue
+        seg = ast.get_source_segment(file_content, item) or ""
+        overlay = _fts_symbol_overlay(*names)
+        for nm in names:
+            if nm == "_":
+                continue
+            try:
+                database.add_code_content(
+                    file_id=file_id,
+                    entity_type="variable",
+                    entity_name=nm,
+                    content=seg,
+                    docstring=overlay or None,
+                    entity_id=None,
+                )
+            except Exception as e:
+                logger.debug(
+                    "Failed to add module variable to FTS (%s %s): %s",
+                    rel_path,
+                    nm,
+                    e,
+                    exc_info=True,
+                )
 
     for node in ast.walk(tree):
         if isinstance(node, ast.ClassDef):
@@ -139,7 +232,9 @@ def index_entities(
                     entity_type="class",
                     entity_name=node.name,
                     content=class_src or "",
-                    docstring=docstring,
+                    docstring=_merge_docstring_and_symbols(
+                        docstring, node.name, *bases
+                    ),
                     entity_id=class_id,
                 )
             except Exception as e:
@@ -196,7 +291,12 @@ def index_entities(
                             entity_type="method",
                             entity_name=f"{node.name}.{item.name}",
                             content=method_src or "",
-                            docstring=method_docstring,
+                            docstring=_merge_docstring_and_symbols(
+                                method_docstring,
+                                f"{node.name}.{item.name}",
+                                item.name,
+                                *method_args,
+                            ),
                             entity_id=method_id,
                         )
                     except Exception as e:
@@ -208,6 +308,32 @@ def index_entities(
                             e,
                             exc_info=True,
                         )
+
+                elif isinstance(item, (ast.Assign, ast.AnnAssign, ast.AugAssign)):
+                    for aname in _names_from_assign_like(item):
+                        if aname == "_":
+                            continue
+                        try:
+                            a_src = ast.get_source_segment(file_content, item) or ""
+                            database.add_code_content(
+                                file_id=file_id,
+                                entity_type="attribute",
+                                entity_name=f"{node.name}.{aname}",
+                                content=a_src,
+                                docstring=_fts_symbol_overlay(
+                                    node.name, aname, f"{node.name}.{aname}"
+                                )
+                                or None,
+                                entity_id=None,
+                            )
+                        except Exception as e:
+                            logger.debug(
+                                "Failed to add class attribute to FTS (%s.%s): %s",
+                                rel_path,
+                                aname,
+                                e,
+                                exc_info=True,
+                            )
 
     for node in ast.walk(tree):
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
@@ -254,7 +380,7 @@ def index_entities(
                     entity_type="function",
                     entity_name=node.name,
                     content=func_src or "",
-                    docstring=docstring,
+                    docstring=_merge_docstring_and_symbols(docstring, node.name, *args),
                     entity_id=function_id,
                 )
             except Exception as e:

@@ -13,12 +13,14 @@ email: vasilyvz@gmail.com
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 from typing import Any, Dict, Optional, Type
 
 from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 
 from ..core.file_handlers.registry import HANDLER_TEXT, RegistryError, resolve_handler
+from ..core.git_integration import commit_after_write
 from ..core.venv_path_policy import (
     build_allowlisted_site_packages_py_files,
     load_venv_site_packages_index_allowlist_from_config,
@@ -26,6 +28,8 @@ from ..core.venv_path_policy import (
 from .base_mcp_command import BaseMCPCommand
 from .file_management.mark_file_deleted import MarkFileDeletedCommand
 from .project_text_file_guard import reject_if_write_under_project_venv
+
+logger = logging.getLogger(__name__)
 
 _REGISTRY_NOTE_NON_TEXT = (
     "Partial or structured deletes for this file type require universal_file_delete "
@@ -90,7 +94,7 @@ class DeleteFileMCPCommand(BaseMCPCommand):
     """Mark a file as deleted and move it to file trash (soft delete)."""
 
     name = "delete_file"
-    version = "1.1.0"
+    version = "1.2.0"
     descr = (
         "Move file to trash (recycle bin): soft-delete — mark in DB and store under "
         "trash_dir; original path is not kept in the project tree. Registry validation "
@@ -314,6 +318,20 @@ class DeleteFileMCPCommand(BaseMCPCommand):
                 data["legacy_full_file_delete"] = True
                 if handler_id != HANDLER_TEXT:
                     data["registry_note"] = _REGISTRY_NOTE_NON_TEXT
+
+                try:
+                    orig_git = (project_root / relative_norm).resolve()
+                    git_ok, git_err = commit_after_write(
+                        project_root,
+                        [orig_git],
+                        "delete_file",
+                        config_data=self._get_raw_config(),
+                    )
+                    if not git_ok and git_err:
+                        logger.warning("Git commit after delete_file: %s", git_err)
+                except Exception as exc:
+                    logger.warning("Git integration after delete_file: %s", exc)
+
                 return SuccessResult(data=data)
             finally:
                 database.disconnect()

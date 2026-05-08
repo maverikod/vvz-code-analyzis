@@ -20,8 +20,10 @@ from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 
 from ..core.backup_manager import BackupManager
 from ..core.cst_module import ReplaceOp, Selector, apply_replace_ops, unified_diff
+from ..core.git_integration import commit_after_write
 from ..core.exceptions import CSTModulePatchError
 from ..core.file_lock import file_lock
+from .base_mcp_command import BaseMCPCommand
 
 logger = logging.getLogger(__name__)
 
@@ -423,6 +425,15 @@ def run_replace_flow(
     )
     if write_error is not None:
         return write_error
+    git_ok, git_err = commit_after_write(
+        root_path,
+        [target],
+        "query_cst",
+        commit_message_override=None,
+        config_data=BaseMCPCommand._get_raw_config(),
+    )
+    if not git_ok and git_err:
+        logger.warning("Git commit after query_cst replace: %s", git_err)
     logger.info(
         "[TIMING] command=query_cst total_elapsed_sec=%.4f",
         time.perf_counter() - t_start,

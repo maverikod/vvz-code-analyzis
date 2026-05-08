@@ -24,6 +24,7 @@ from .project_text_file_guard import (
     reject_if_write_under_project_venv,
 )
 from ..core.backup_manager import BackupManager
+from ..core.git_integration import commit_after_write
 from ..core.exceptions import ValidationError
 from ..core.file_handlers.registry import (
     HANDLER_JSON,
@@ -476,6 +477,15 @@ class CreateTextFileMCPCommand(BaseMCPCommand):
             }
             if backup_uuid:
                 payload_out["backup_uuid"] = backup_uuid
+            git_ok, git_err = commit_after_write(
+                root_dir.resolve(),
+                [absolute_path],
+                "create_text_file",
+                commit_message_override=None,
+                config_data=BaseMCPCommand._get_raw_config(),
+            )
+            if not git_ok and git_err:
+                logger.warning("Git commit after create_text_file: %s", git_err)
             return SuccessResult(data=payload_out)
 
         except ValidationError as e:

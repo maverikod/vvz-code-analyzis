@@ -113,22 +113,25 @@ def delete_file_data(
     """
     t0 = time.perf_counter()
 
-    select_ops = [
-        ("SELECT id FROM classes WHERE file_id = ?", (file_id,)),
-        ("SELECT id FROM code_content WHERE file_id = ?", (file_id,)),
-    ]
-    select_results = database.execute_batch(select_ops, transaction_id)
-    if len(select_results) < 2:
-        logger.warning("_delete_file_data: execute_batch returned < 2 results")
+    select_results = database.execute_batch(
+        [("SELECT id FROM classes WHERE file_id = ?", (file_id,))],
+        transaction_id,
+    )
+    if len(select_results) < 1:
+        logger.warning("_delete_file_data: execute_batch returned no results")
         return
     class_data = (
         select_results[0].get("data", []) if isinstance(select_results[0], dict) else []
     )
-    content_data = (
-        select_results[1].get("data", []) if isinstance(select_results[1], dict) else []
-    )
     class_ids = [row["id"] for row in class_data]
-    content_ids = [row["id"] for row in content_data]
+
+    content_ids: List[Any] = []
+    if database_has_sqlite_code_content_fts(database):
+        crow = database.execute(
+            "SELECT rowid FROM code_content WHERE file_id = ?", (file_id,)
+        )
+        content_rows = crow.get("data", []) if isinstance(crow, dict) else []
+        content_ids = [row["rowid"] for row in content_rows]
 
     delete_ops: List[tuple] = []
     # FTS5 virtual table only exists on SQLite; skip DELETE on PostgreSQL.

@@ -27,7 +27,6 @@ from .base_mcp_command import BaseMCPCommand
 from .compose_cst_validation import ops_from_params
 from .project_text_file_guard import reject_if_write_under_project_venv
 from .compose_cst_db import backup_file_data
-from ..core.database.file_edit_lock import acquire_file_edit_lock_with_retry
 from .compose_cst_writer import apply_changes as writer_apply_changes
 from .compose_cst_writer import validate_and_write_temp
 
@@ -49,16 +48,13 @@ def run_ops_mode(
     t_prev: float,
     tree_id: Optional[str] = None,
     validate_syntax_only: bool = False,
-    validate_docstrings: bool = True,
 ) -> SuccessResult | ErrorResult:
     """
     Execute ops-based compose: build ReplaceOp list, apply_replace_ops, optionally write.
 
     When apply=false, only return diff/stats. When apply=true, backup + validate + write.
     When ops contain selector kind node_id (UUID4), tree_id from cst_load_file is required.
-    When validate_syntax_only=true, skip linter and type checker; docstring
-    validation follows validate_docstrings. When validate_syntax_only=false,
-    docstring validation is still gated by validate_docstrings.
+    When validate_syntax_only=true, skip linter/mypy and only check syntax.
     """
     target_path = (root_path / file_path).resolve()
     if target_path.suffix.lower() not in (".py", ".pyi", ".pyw"):
@@ -174,10 +170,7 @@ def run_ops_mode(
 
     file_exists = target_path.exists()
     temp_file, validation_error, validation_results = validate_and_write_temp(
-        new_source,
-        target_path,
-        validate_syntax_only=validate_syntax_only,
-        validate_docstrings=validate_docstrings,
+        new_source, target_path, validate_syntax_only=validate_syntax_only
     )
     if validation_error:
         return validation_error
@@ -226,96 +219,67 @@ def run_ops_mode(
                     details={"file_path": str(target_path)},
                 )
 
-        lock_held = False
+        transaction_id = database.begin_transaction()
+        if not transaction_id:
+            if temp_file and temp_file.exists():
+                try:
+                    temp_file.unlink()
+                except Exception:
+                    pass
+            return ErrorResult(
+                message="Database transaction could not be started",
+                code="TRANSACTION_ERROR",
+                details={"hint": "Database driver may be busy or unavailable"},
+            )
+
         try:
-            transaction_id = database.begin_transaction()
-            if not transaction_id:
-                if temp_file and temp_file.exists():
-                    try:
-                        temp_file.unlink()
-                    except Exception:
-                        pass
-                return ErrorResult(
-                    message="Database transaction could not be started",
-                    code="TRANSACTION_ERROR",
-                    details={"hint": "Database driver may be busy or unavailable"},
-                )
-
-            if file_id:
-                if not acquire_file_edit_lock_with_retry(
-                    database, file_id, transaction_id=transaction_id
-                ):
-                    try:
-                        database.rollback_transaction(transaction_id)
-                    except Exception:
-                        pass
-                    if temp_file and temp_file.exists():
-                        try:
-                            temp_file.unlink()
-                        except Exception:
-                            pass
-                    return ErrorResult(
-                        message=(
-                            f"File is being edited by another process (file_id={file_id}). "
-                            "Try again in a moment."
-                        ),
-                        code="FILE_EDIT_LOCKED",
-                        details={"file_id": file_id},
-                    )
-                lock_held = True
-
-            try:
-                result = writer_apply_changes(
-                    database=database,
-                    transaction_id=transaction_id,
-                    project_id=project_id,
-                    root_path=root_path,
-                    target_path=target_path,
-                    source_code=new_source,
-                    file_id=file_id,
-                    file_data_backup=file_data_backup,
-                    backup_uuid=backup_uuid,
-                    backup_manager=backup_manager,
-                    temp_file=temp_file,
-                    _commit_message=commit_message,
-                    skip_file_edit_lock=lock_held,
-                )
-                if isinstance(result, SuccessResult) and result.data:
-                    result.data["stats"] = stats
-                    if return_diff and "diff" not in result.data:
-                        result.data["diff"] = data.get("diff")
-                    if validation_results:
-                        result.data["validation_results"] = {
-                            vt: {
-                                "success": vr.success,
-                                "error_message": vr.error_message,
-                                "errors_count": len(vr.errors),
-                            }
-                            for vt, vr in validation_results.items()
+            result = writer_apply_changes(
+                database=database,
+                transaction_id=transaction_id,
+                project_id=project_id,
+                root_path=root_path,
+                target_path=target_path,
+                source_code=new_source,
+                file_id=file_id,
+                file_data_backup=file_data_backup,
+                backup_uuid=backup_uuid,
+                backup_manager=backup_manager,
+                temp_file=temp_file,
+                _commit_message=commit_message,
+            )
+            if isinstance(result, SuccessResult) and result.data:
+                result.data["stats"] = stats
+                if return_diff and "diff" not in result.data:
+                    result.data["diff"] = data.get("diff")
+                if validation_results:
+                    result.data["validation_results"] = {
+                        vt: {
+                            "success": vr.success,
+                            "error_message": vr.error_message,
+                            "errors_count": len(vr.errors),
                         }
-                if isinstance(result, SuccessResult):
-                    commit_after_write(
-                        root_path,
-                        [target_path],
-                        _OPS_BACKUP_COMMAND,
-                        commit_message_override=commit_message,
-                        config_data=BaseMCPCommand._get_raw_config(),
-                    )
-                logger.info(
-                    "[PROFILE] %s (ops) total elapsed=%.3fs",
+                        for vt, vr in validation_results.items()
+                    }
+            if isinstance(result, SuccessResult):
+                commit_after_write(
+                    root_path,
+                    [target_path],
                     _OPS_BACKUP_COMMAND,
-                    time.perf_counter() - t_start,
+                    commit_message_override=commit_message,
+                    config_data=BaseMCPCommand._get_raw_config(),
                 )
-                return result
-            except Exception as err:
-                if temp_file and temp_file.exists():
-                    try:
-                        temp_file.unlink()
-                    except Exception:
-                        pass
-                raise err
-        finally:
-            # Lock is released inside writer_apply_changes before commit when held.
-            pass
+            logger.info(
+                "[PROFILE] %s (ops) total elapsed=%.3fs",
+                _OPS_BACKUP_COMMAND,
+                time.perf_counter() - t_start,
+            )
+            return result
+        except Exception as err:
+            if temp_file and temp_file.exists():
+                try:
+                    temp_file.unlink()
+                except Exception:
+                    pass
+            raise err
     finally:
         database.disconnect()

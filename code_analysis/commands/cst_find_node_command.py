@@ -7,69 +7,51 @@ Author: Vasiliy Zdanovskiy
 email: vasilyvz@gmail.com
 """
 
-
 from __future__ import annotations
-
 
 
 import logging
 
 
-
 import time
-
 
 
 from typing import Any, Dict, Optional
 
-from mcp_proxy_adapter.commands.result import CommandResult, ErrorResult, SuccessResult
-
+from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 
 
 from .base_mcp_command import BaseMCPCommand
 
 
-
 from ..core.cst_tree.tree_finder import find_nodes
 
 
-
 logger = logging.getLogger(__name__)
-# @node-id: 24898366-ec57-4024-b13f-057ccad816e2
 
-class CSTFindNodeCommand:
-    
-    
+
+class CSTFindNodeCommand(BaseMCPCommand):
     """Find nodes in CST tree."""
-    
-    
+
     name = "cst_find_node"
-    
-    
+
     version = "1.0.0"
-    
-    
+
     descr = (
         "Find nodes in a CST tree using simple or XPath-like (CSTQuery) selectors. "
         "XPath supports: // (recursive descendant), @ prefix for attributes, "
         "numeric operators >=/<=/>/< on start_line/end_line/children_count, "
         "and :not(selector) pseudo-class."
     )
-    
-    
+
     category = "cst"
-    
-    
+
     author = "Vasiliy Zdanovskiy"
-    
-    
+
     email = "vasilyvz@gmail.com"
-    
-    
+
     use_queue = False
-    # @node-id: 8e987820-a74c-45e3-983e-115026fa1dbc
-    
-    
+
     @classmethod
     def get_schema(cls) -> Dict[str, Any]:
         return {
@@ -137,9 +119,8 @@ class CSTFindNodeCommand:
             "required": ["tree_id"],
             "additionalProperties": False,
         }
-    # @node-id: 8725e963-4a2d-4c39-93ee-1b4b06e9ad83
-    
-    async def execute(self, **kwargs: Any) -> CommandResult:
+
+    async def execute(self, **kwargs: Any) -> SuccessResult | ErrorResult:  # type: ignore[override]
         t_start = time.perf_counter()
         tree_id: str = kwargs["tree_id"]
         search_type: str = kwargs.get("search_type", "xpath")
@@ -169,11 +150,12 @@ class CSTFindNodeCommand:
                 time.perf_counter() - t0,
                 len(matches),
             )
-    
+
             if require_one:
                 if len(matches) == 0:
                     return ErrorResult(
                         message="Selector matched no nodes",
+                        code="NoMatch",
                         details={
                             "tree_id": tree_id,
                             "query": query,
@@ -192,6 +174,7 @@ class CSTFindNodeCommand:
                     ]
                     return ErrorResult(
                         message=f"Selector matched {len(matches)} nodes; exactly one required",
+                        code="NonUniqueMatch",
                         details={
                             "tree_id": tree_id,
                             "query": query,
@@ -199,10 +182,14 @@ class CSTFindNodeCommand:
                             "candidates": candidates,
                         },
                     )
-    
-            # Convert to dictionaries
-            nodes = [meta.to_dict() for meta in matches]
-    
+
+            # Convert to dictionaries; include node_id for tree commands (to_dict omits it).
+            nodes: list[Dict[str, Any]] = []
+            for meta in matches:
+                d = meta.to_dict()
+                d["node_id"] = meta.node_id
+                nodes.append(d)
+
             data: Dict[str, Any] = {
                 "success": True,
                 "tree_id": tree_id,
@@ -211,16 +198,17 @@ class CSTFindNodeCommand:
                 "total_matches": len(nodes),
             }
             if require_one and len(nodes) == 1:
+                meta0 = matches[0]
                 data["node"] = nodes[0]
-                data["stable_id"] = nodes[0].get("stable_id")
-                data["node_id"] = nodes[0].get("node_id")
-    
+                data["stable_id"] = meta0.stable_id
+                data["node_id"] = meta0.node_id
+
             logger.info(
                 "[TIMING] command=cst_find_node total_elapsed_sec=%.4f",
                 time.perf_counter() - t_start,
             )
             return SuccessResult(data=data)
-    
+
         except ValueError as e:
             return ErrorResult(
                 message=f"Invalid search parameters: {e}",
@@ -229,17 +217,15 @@ class CSTFindNodeCommand:
         except Exception as e:
             logger.exception("cst_find_node failed: %s", e)
             return ErrorResult(message=f"cst_find_node failed: {e}")
-    # @node-id: e969d775-2204-49eb-9cfd-9b3a54a15097
-    
-    
+
     @classmethod
     def metadata(cls: type["CSTFindNodeCommand"]) -> Dict[str, Any]:
         """
-            Get detailed command metadata for AI models.
-    
-            Returns:
-                Dictionary with command metadata.
-            """
+        Get detailed command metadata for AI models.
+
+        Returns:
+            Dictionary with command metadata.
+        """
         return {
             "name": cls.name,
             "version": cls.version,
@@ -566,4 +552,3 @@ class CSTFindNodeCommand:
                 "node_id from results is stable within the session (use with cst_modify_tree)",
             ],
         }
-    

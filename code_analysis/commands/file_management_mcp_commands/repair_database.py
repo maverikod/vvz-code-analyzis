@@ -11,6 +11,7 @@ from typing import Any, Dict, Optional
 
 from mcp_proxy_adapter.commands.result import SuccessResult, ErrorResult
 
+from ...core.git_integration import commit_after_write
 from ..base_mcp_command import BaseMCPCommand
 from ..file_management import RepairDatabaseCommand
 
@@ -21,7 +22,7 @@ class RepairDatabaseMCPCommand(BaseMCPCommand):
     """Repair database integrity - restore correct file status based on actual file presence."""
 
     name = "repair_database"
-    version = "1.0.0"
+    version = "1.1.0"
     descr = "Repair database integrity - restore correct file status based on actual file presence in project and versions"
     category = "file_management"
     author = "Vasiliy Zdanovskiy"
@@ -101,6 +102,20 @@ class RepairDatabaseMCPCommand(BaseMCPCommand):
                     trash_dir=trash_dir,
                 )
                 result = await command.execute()
+                if not dry_run:
+                    path_strs = result.get("repair_git_paths") or []
+                    if path_strs:
+                        paths = [Path(s).resolve() for s in path_strs]
+                        git_ok, git_err = commit_after_write(
+                            root_path.resolve(),
+                            paths,
+                            "repair_database",
+                            config_data=BaseMCPCommand._get_raw_config(),
+                        )
+                        if not git_ok and git_err:
+                            logger.warning(
+                                "Git commit after repair_database: %s", git_err
+                            )
                 return SuccessResult(data=result)
             finally:
                 database.disconnect()

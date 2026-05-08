@@ -23,7 +23,11 @@ class FulltextSearchMCPCommand(BaseMCPCommand):
 
     name = "fulltext_search"
     version = "1.0.0"
-    descr = "Perform full-text search in code content and docstrings"
+    descr = (
+        "Indexed full-text search (database FTS) over code content, docstrings, "
+        "entity names, and indexed symbol rows (variables, class attributes). "
+        "For line scan on disk without the index, use ``fs_grep``."
+    )
     category = "search"
     author = "Vasiliy Zdanovskiy"
     email = "vasilyvz@gmail.com"
@@ -51,8 +55,11 @@ class FulltextSearchMCPCommand(BaseMCPCommand):
                 },
                 "entity_type": {
                     "type": "string",
-                    "description": "Filter by entity type (class, method, function)",
-                    "examples": ["class"],
+                    "description": (
+                        "Optional filter by entity_type stored in code_content "
+                        "(file, class, method, function, variable, attribute)"
+                    ),
+                    "examples": ["class", "variable"],
                 },
                 "limit": {
                     "type": "integer",
@@ -121,14 +128,15 @@ class FulltextSearchMCPCommand(BaseMCPCommand):
             "email": cls.email,
             "detailed_description": (
                 "The fulltext_search command performs full-text search over indexed code content "
-                "using SQLite FTS5 (Full-Text Search 5). It searches through code content, docstrings, "
-                "and entity names to find matches for the query text.\n\n"
+                "using SQLite FTS5 (Full-Text Search 5) or PostgreSQL tsvector. It searches through "
+                "code content, docstrings (including merged symbol lines for classes, functions, and "
+                "methods), entity names, and dedicated rows for module variables and class attributes.\n\n"
                 "Operation flow:\n"
                 "1. Validates root_dir exists and is a directory\n"
                 "2. Opens database connection\n"
                 "3. Resolves project_id (from parameter or inferred from root_dir)\n"
                 "4. Performs FTS5 search in code_content_fts table (BM25 ranking)\n"
-                "5. Filters by entity_type if provided (class, method, function)\n"
+                "5. Filters by entity_type if provided (file, class, method, function, variable, attribute)\n"
                 "6. Limits results to specified limit\n"
                 "7. Returns matching chunks with file paths and metadata\n\n"
                 "Search Capabilities:\n"
@@ -161,7 +169,8 @@ class FulltextSearchMCPCommand(BaseMCPCommand):
                 },
                 "query": {
                     "description": (
-                        "Search query text. Searches in code content, docstrings, and entity names. "
+                        "Search query text. Searches in code content, docstrings (including merged "
+                        "symbol lines), entity names, and variable/attribute index rows. "
                         "Supports partial word matching and is case-insensitive."
                     ),
                     "type": "string",
@@ -175,13 +184,20 @@ class FulltextSearchMCPCommand(BaseMCPCommand):
                 },
                 "entity_type": {
                     "description": (
-                        "Optional filter by entity type. Options: 'class', 'method', 'function'. "
-                        "If not provided, searches all entity types."
+                        "Optional filter by entity type. Options: 'file', 'class', 'method', "
+                        "'function', 'variable', 'attribute'. If not provided, searches all types."
                     ),
                     "type": "string",
                     "required": False,
-                    "enum": ["class", "method", "function"],
-                    "examples": ["class", "method"],
+                    "enum": [
+                        "file",
+                        "class",
+                        "method",
+                        "function",
+                        "variable",
+                        "attribute",
+                    ],
+                    "examples": ["class", "variable"],
                 },
                 "limit": {
                     "description": (

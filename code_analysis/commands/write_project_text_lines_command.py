@@ -26,6 +26,7 @@ from .registration import (
     REGISTRY_SCHEMA_DISCOVERY_SHORT,
 )
 from ..core.backup_manager import BackupManager
+from ..core.git_integration import commit_after_write
 from ..core.file_handlers.text_handler import (
     TEXT_SUFFIXES,
     compute_replace_lines_single_range,
@@ -351,6 +352,8 @@ class WriteProjectTextLinesCommand(BaseMCPCommand):
             source_code = join_lines_unix(new_content_lines)
 
             backup_uuid = None
+            normalized_for_lock = normalize_path_simple(str(absolute_path))
+
             with file_lock(absolute_path):
                 if backup:
                     backup_manager = BackupManager(root_dir)
@@ -361,7 +364,10 @@ class WriteProjectTextLinesCommand(BaseMCPCommand):
                     backup_uuid = backup_manager.create_backup(
                         absolute_path,
                         command="write_project_text_lines",
-                        comment=f"Before write_project_text_lines {start_line}-{end_line}",
+                        comment=(
+                            f"Before write_project_text_lines "
+                            f"{start_line}-{end_line}"
+                        ),
                     )
                     if not backup_uuid:
                         return ErrorResult(
@@ -386,12 +392,11 @@ class WriteProjectTextLinesCommand(BaseMCPCommand):
                     backup_manager.restore_file(rel, backup_uuid)
 
                 try:
-                    normalized_path = normalize_path_simple(str(absolute_path))
                     meta_result = persist_plain_text_file_metadata(
                         database=database,
                         project_id=project_id,
                         absolute_path=absolute_path,
-                        normalized_path=normalized_path,
+                        normalized_path=normalized_for_lock,
                         source_code=source_code,
                     )
 
@@ -405,6 +410,18 @@ class WriteProjectTextLinesCommand(BaseMCPCommand):
                         )
 
                     file_id = meta_result.get("file_id")
+
+                    git_ok, git_err = commit_after_write(
+                        root_dir.resolve(),
+                        [absolute_path],
+                        "write_project_text_lines",
+                        commit_message_override=None,
+                        config_data=BaseMCPCommand._get_raw_config(),
+                    )
+                    if not git_ok and git_err:
+                        logger.warning(
+                            "Git commit after write_project_text_lines: %s", git_err
+                        )
 
                     return SuccessResult(
                         data={

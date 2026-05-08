@@ -34,11 +34,18 @@ from ..core.cst_tree.tree_metadata import get_node_parent
 from ..core.cst_tree.tree_range_finder import find_node_by_range
 
 logger = logging.getLogger(__name__)
-# @node-id: 47c85e84-c4e9-4e2c-bb04-3e504c0a301c
-
-
 class CSTLoadFileCommand(BaseMCPCommand):
-    """Load file into CST tree."""
+    """Load file into CST tree and return tree_id with node metadata.
+
+    Attributes:
+        name: Command name identifier.
+        version: Command version string.
+        descr: Human-readable command description.
+        category: Command category.
+        author: Author name.
+        email: Author email.
+        use_queue: Whether to use async queue for execution.
+    """
 
     name = "cst_load_file"
     version = "1.0.0"
@@ -47,10 +54,14 @@ class CSTLoadFileCommand(BaseMCPCommand):
     author = "Vasiliy Zdanovskiy"
     email = "vasilyvz@gmail.com"
     use_queue = False
-    # @node-id: 45cd2545-9ba1-45cf-967b-23360ee3e343
 
     @classmethod
     def get_schema(cls) -> Dict[str, Any]:
+        """Return JSON schema for command parameters.
+
+        Returns:
+            Dict describing accepted parameters and their types.
+        """
         return {
             "type": "object",
             "properties": {
@@ -79,10 +90,11 @@ class CSTLoadFileCommand(BaseMCPCommand):
                 "return_format": {
                     "type": "string",
                     "enum": ["full", "declarative", "skeleton"],
-                    "default": "full",
+                    "default": "declarative",
                     "description": (
-                        "full: return tree_id and full node list. "
-                        "declarative: return high-level overview (signatures, docstrings, node_ids, hidden bodies). "
+                        "declarative: return high-level overview (signatures, docstrings, "
+                        "node_ids, hidden bodies) — default and recommended for AI models. "
+                        "full: return tree_id and complete node list (all CST nodes). "
                         "skeleton is a backward-compatible alias to declarative."
                     ),
                 },
@@ -116,14 +128,19 @@ class CSTLoadFileCommand(BaseMCPCommand):
             "required": ["project_id", "file_path"],
             "additionalProperties": False,
         }
-    # @node-id: 18e1e930-f921-424b-8438-f1735496eaed
 
     def validate_params(self, params: Dict[str, Any]) -> Dict[str, Any]:
-        """Validate params and reject unknown project_id immediately."""
+        """Validate params and reject unknown project_id immediately.
+
+        Args:
+            params: Raw parameter dictionary from the MCP request.
+
+        Returns:
+            Validated and normalised parameter dictionary.
+        """
         params = super().validate_params(params)
         BaseMCPCommand._validate_project_id_exists(params["project_id"])
         return params
-    # @node-id: edb976e3-a2a0-4a65-96e9-7b1d7a5cb417
 
     async def execute(
         self,
@@ -132,10 +149,26 @@ class CSTLoadFileCommand(BaseMCPCommand):
         node_types: Optional[List[str]] = None,
         max_depth: Optional[int] = None,
         include_children: bool = True,
-        return_format: str = "full",
+        return_format: str = "declarative",
         selector: Optional[Any] = None,
         **kwargs: Any,
     ) -> SuccessResult:
+        """Load a Python file into CST tree and return structured metadata.
+
+        Args:
+            project_id: Project UUID4 (must exist in the database).
+            file_path: Path to the target .py file relative to project root.
+            node_types: Optional list of CST node type names to include.
+            max_depth: Optional maximum traversal depth for node filtering.
+            include_children: When True, each node includes direct children IDs.
+            return_format: Response shape: declarative (default), full, or skeleton.
+            selector: Optional XPath query, node UUID list, or dict with query/node_ids.
+            **kwargs: Ignored extra keyword arguments.
+
+        Returns:
+            SuccessResult with tree_id, declarative overview or full node list,
+            and optionally selected_nodes and syntax_errors_fixed.
+        """
         t_start = time.perf_counter()
         resolved_path: Optional[Path] = None
         try:
@@ -395,9 +428,15 @@ class CSTLoadFileCommand(BaseMCPCommand):
                 code="CST_LOAD_ERROR",
                 details=details,
             )
-    # @node-id: ea6bbee7-2166-4365-9356-09a1a783df74
 
     @classmethod
     def metadata(cls: type["CSTLoadFileCommand"]) -> Dict[str, Any]:
-        """Get detailed command metadata for AI models."""
+        """Get detailed command metadata for AI models.
+
+        Args:
+            cls: The command class.
+
+        Returns:
+            Dictionary with command metadata including parameter descriptions.
+        """
         return get_cst_load_file_metadata(cls)

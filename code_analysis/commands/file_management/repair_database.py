@@ -72,6 +72,7 @@ class RepairDatabaseCommand:
         self.dry_run = dry_run
         self.trash_dir = trash_dir
         self.force = force
+        self._repair_git_paths: List[Path] = []
 
     async def execute(self) -> Dict[str, Any]:
         """
@@ -88,6 +89,7 @@ class RepairDatabaseCommand:
             "workers_stopped": {},
             "dry_run": self.dry_run,
         }
+        self._repair_git_paths.clear()
 
         try:
             # Stop all workers before repair
@@ -203,6 +205,7 @@ class RepairDatabaseCommand:
                                             project_id=self.project_id,
                                             version_dir=self.version_dir,
                                         )
+                                    self._append_repair_git_path(check_path)
                             result["files_in_versions_marked_deleted"].append(
                                 {"id": file_id, "path": check_path}
                             )
@@ -250,7 +253,25 @@ class RepairDatabaseCommand:
             logger.error(f"Error in repair database command: {e}", exc_info=True)
             result["error"] = str(e)
 
+        uniq: Dict[str, Path] = {}
+        for p in self._repair_git_paths:
+            rp = p.resolve()
+            uniq[str(rp)] = rp
+        result["repair_git_paths"] = sorted(uniq.keys())
+
         return result
+
+    def _append_repair_git_path(self, path_str: str) -> None:
+        """Record a project-tree path for git staging (under root_dir only)."""
+        raw = Path(path_str)
+        candidate = (
+            raw.resolve() if raw.is_absolute() else (self.root_dir / path_str).resolve()
+        )
+        try:
+            candidate.relative_to(self.root_dir.resolve())
+        except ValueError:
+            return
+        self._repair_git_paths.append(candidate)
 
     async def _restore_file_from_cst(
         self,
@@ -349,6 +370,12 @@ class RepairDatabaseCommand:
                     )
 
             logger.info("Restored file %s from DB to %s", file_path, target_path)
+            tp = target_path.resolve()
+            try:
+                tp.relative_to(self.root_dir.resolve())
+                self._repair_git_paths.append(tp)
+            except ValueError:
+                pass
             return True
 
         except Exception as e:

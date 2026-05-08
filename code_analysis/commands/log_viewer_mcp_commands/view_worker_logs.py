@@ -18,6 +18,16 @@ from .view_worker_logs_metadata import get_view_worker_logs_metadata
 
 logger = logging.getLogger(__name__)
 
+_LOG_ID_ENUM = frozenset(
+    {
+        "mcp_server",
+        "code_analysis",
+        "vectorization",
+        "file_watcher",
+        "indexing_worker",
+    }
+)
+
 
 class ViewWorkerLogsMCPCommand(BaseMCPCommand):
     """View worker logs with filtering by time and event type."""
@@ -116,6 +126,18 @@ class ViewWorkerLogsMCPCommand(BaseMCPCommand):
             "required": [],
             "additionalProperties": False,
         }
+
+    def validate_params(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        """Accept log_id with optional ``.log`` suffix (e.g. ``mcp_server.log``)."""
+        normalized = dict(params)
+        lid = normalized.get("log_id")
+        if isinstance(lid, str):
+            s = lid.strip()
+            if s.endswith(".log"):
+                base = s[:-4].strip()
+                if base in _LOG_ID_ENUM:
+                    normalized["log_id"] = base
+        return super().validate_params(normalized)
 
     async def execute(
         self,

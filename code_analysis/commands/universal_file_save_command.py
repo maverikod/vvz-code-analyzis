@@ -23,6 +23,7 @@ from .registration import (
     REGISTRY_SCHEMA_DISCOVERY_SHORT,
 )
 from ..core.backup_manager import BackupManager
+from ..core.git_integration import commit_after_write
 from ..core.exceptions import ValidationError
 from ..core.file_handlers.base import FileHandlerRequest, FileHandlerResult
 from ..core.file_handlers.json_handler import JsonFileHandler
@@ -299,6 +300,21 @@ class UniversalFileSaveCommand(BaseMCPCommand):
 
             if not fr.success:
                 return _error_from_handler(fr)
+            if not dry_run:
+                cm = (
+                    commit_message.strip()
+                    if isinstance(commit_message, str) and commit_message.strip()
+                    else None
+                )
+                git_ok, git_err = commit_after_write(
+                    root_dir.resolve(),
+                    [absolute_path],
+                    "universal_file_save",
+                    commit_message_override=cm,
+                    config_data=BaseMCPCommand._get_raw_config(),
+                )
+                if not git_ok and git_err:
+                    logger.warning("Git commit after universal_file_save: %s", git_err)
             return _success_from_handler(fr, operation="save")
 
         except ValidationError as e:
@@ -332,6 +348,8 @@ class UniversalFileSaveCommand(BaseMCPCommand):
             bm.restore_file(rel, uuid_)
 
         with file_lock(absolute_path):
+            normalized_path = normalize_path_simple(str(absolute_path))
+
             backup_uuid: Optional[str] = None
             if not dry_run and backup and absolute_path.exists():
                 bm = BackupManager(root_dir)
@@ -371,7 +389,6 @@ class UniversalFileSaveCommand(BaseMCPCommand):
             if dry_run:
                 return fr
 
-            normalized_path = normalize_path_simple(str(absolute_path))
             meta = persist_plain_text_file_metadata(
                 database=database,
                 project_id=req.project_id,

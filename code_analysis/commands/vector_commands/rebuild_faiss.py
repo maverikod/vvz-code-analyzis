@@ -7,14 +7,19 @@ Author: Vasiliy Zdanovskiy
 email: vasilyvz@gmail.com
 """
 
+import json
 import logging
 from typing import Any, Dict
 
+import numpy as np
 from mcp_proxy_adapter.commands.result import SuccessResult, ErrorResult
 
 from ..base_mcp_command import BaseMCPCommand
+from ...core.config import get_driver_config
 from ...core.faiss_manager import FaissIndexManager
+from ...core.pgvector_embedding import numpy_embedding_to_pgvector_text
 from ...core.storage_paths import resolve_storage_paths, get_faiss_index_path
+from ...core.vector_search_backend import effective_vector_search_backend
 
 logger = logging.getLogger(__name__)
 
@@ -109,6 +114,73 @@ class RebuildFaissCommand(BaseMCPCommand):
                 code_analysis_config = config_dict.get("code_analysis", config_dict)
                 vector_dim = int(code_analysis_config.get("vector_dim", 384))
 
+                from ...core.docs_markdown_vector_gate import (
+                    docs_markdown_embeddings_disabled_by_policy,
+                )
+
+                ca_blk = config_dict.get("code_analysis")
+                di_blk = (
+                    ca_blk.get("docs_indexing") if isinstance(ca_blk, dict) else None
+                )
+                omit_docs_markdown = docs_markdown_embeddings_disabled_by_policy(di_blk)
+
+                driver_cfg = get_driver_config(config_dict) or {}
+                driver_type = str(driver_cfg.get("type") or "").strip().lower()
+                ann = effective_vector_search_backend(
+                    driver_type,
+                    code_analysis_config.get("vector_search_backend"),
+                )
+                if ann == "pgvector":
+                    sel = database.execute(
+                        """
+                        SELECT id, embedding_vector
+                        FROM code_chunks
+                        WHERE project_id = ?
+                          AND embedding_model IS NOT NULL
+                          AND embedding_vector IS NOT NULL
+                        """,
+                        (project_id,),
+                    )
+                    rows = sel.get("data", []) if isinstance(sel, dict) else []
+                    ops: list[tuple[str, tuple[Any, ...]]] = []
+                    for row in rows:
+                        ev = row.get("embedding_vector")
+                        cid = row.get("id")
+                        if not ev or cid is None:
+                            continue
+                        try:
+                            arr = np.array(json.loads(ev), dtype="float32")
+                        except Exception:
+                            continue
+                        norm = FaissIndexManager._normalize_vector(arr)
+                        vt = numpy_embedding_to_pgvector_text(norm)
+                        ops.append(
+                            (
+                                "UPDATE code_chunks SET embedding_vec = ?::vector WHERE id = ?",
+                                (vt, str(cid)),
+                            )
+                        )
+                    if ops:
+                        database.execute_batch(ops)
+                    try:
+                        database.execute(
+                            "REINDEX INDEX idx_code_chunks_embedding_vec_hnsw"
+                        )
+                    except Exception as re_ix_e:
+                        logger.warning(
+                            "REINDEX idx_code_chunks_embedding_vec_hnsw skipped: %s",
+                            re_ix_e,
+                        )
+                    return SuccessResult(
+                        data={
+                            "project_id": project_id,
+                            "vector_backend": "pgvector",
+                            "rows_updated": len(ops),
+                            "index_path": None,
+                            "omit_docs_markdown": omit_docs_markdown,
+                        }
+                    )
+
                 index_path = get_faiss_index_path(storage_paths.faiss_dir, project_id)
 
                 # Initialize SVO client manager (root_dir = config dir for cert paths)
@@ -129,6 +201,7 @@ class RebuildFaissCommand(BaseMCPCommand):
                         database,
                         svo_client_manager,
                         project_id=project_id,
+                        omit_docs_markdown=omit_docs_markdown,
                     )
 
                     faiss_manager.close()
@@ -138,6 +211,7 @@ class RebuildFaissCommand(BaseMCPCommand):
                             "project_id": project_id,
                             "index_path": str(index_path),
                             "vectors_count": vectors_count,
+                            "vector_backend": "faiss",
                         }
                     )
                 finally:

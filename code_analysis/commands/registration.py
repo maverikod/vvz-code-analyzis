@@ -44,6 +44,10 @@ def register_file_management_commands(reg: Any) -> None:
     Args:
         reg: ``mcp_proxy_adapter.commands.command_registry.registry`` implementation.
     """
+    from .project_file_transfer_by_id_commands import (
+        ProjectFileTransferDownloadBeginCommand,
+        ProjectFileTransferUploadSaveCommand,
+    )
     from .read_project_text_file_command import ReadProjectTextFileCommand
     from .universal_file_delete_command import UniversalFileDeleteCommand
     from .universal_file_read_command import UniversalFileReadCommand
@@ -57,3 +61,5 @@ def register_file_management_commands(reg: Any) -> None:
     reg.register(UniversalFileReplaceCommand, "custom")
     reg.register(UniversalFileDeleteCommand, "custom")
     reg.register(WriteProjectTextLinesCommand, "custom")
+    reg.register(ProjectFileTransferDownloadBeginCommand, "custom")
+    reg.register(ProjectFileTransferUploadSaveCommand, "custom")

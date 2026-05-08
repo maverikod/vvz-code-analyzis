@@ -17,6 +17,7 @@ from mcp_proxy_adapter.commands.result import ErrorResult, SuccessResult
 from .base_mcp_command import BaseMCPCommand
 from ..core.backup_manager import BackupManager
 from ..core.code_quality import format_code_with_black
+from ..core.git_integration import commit_after_write
 
 logger = logging.getLogger(__name__)
 
@@ -175,6 +176,17 @@ class FormatCodeCommand(Command):
                     logger.warning(
                         f"Error updating database after formatting: {e}", exc_info=True
                     )
+
+            if project_id:
+                git_ok, git_err = commit_after_write(
+                    root_path,
+                    [path],
+                    "format_code",
+                    commit_message_override=None,
+                    config_data=BaseMCPCommand._get_raw_config(),
+                )
+                if not git_ok and git_err:
+                    logger.warning("Git commit after format_code: %s", git_err)
 
             return SuccessResult(
                 data={

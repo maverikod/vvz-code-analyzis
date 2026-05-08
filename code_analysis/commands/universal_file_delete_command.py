@@ -35,6 +35,7 @@ from .registration import (
 )
 from ..core.backup_manager import BackupManager
 from ..core.exceptions import ValidationError
+from ..core.git_integration import commit_after_write
 from ..core.file_handlers.base import FileHandlerRequest, FileHandlerResult
 from ..core.file_handlers.json_handler import JsonFileHandler
 from ..core.file_handlers.python_handler import PythonFileHandler
@@ -248,7 +249,7 @@ class UniversalFileDeleteCommand(BaseMCPCommand):
     """Delete regions or entire files via the universal handler registry."""
 
     name = "universal_file_delete"
-    version = "1.0.0"
+    version = "1.1.0"
     descr = (
         "Deletes via universal handler routing. Explicit delete_mode is required "
         "(file, range, yaml_path, node, json_pointer, cst_selector, node_id) so "
@@ -568,6 +569,19 @@ class UniversalFileDeleteCommand(BaseMCPCommand):
 
             if not fr.success:
                 return _error_from_handler(fr)
+            if not fr.dry_run and fr.changed:
+                msg: Optional[str] = None
+                if isinstance(commit_message, str) and commit_message.strip():
+                    msg = commit_message.strip()
+                git_ok, git_err = commit_after_write(
+                    root_dir.resolve(),
+                    [absolute_path.resolve()],
+                    "universal_file_delete",
+                    commit_message_override=msg,
+                    config_data=BaseMCPCommand._get_raw_config(),
+                )
+                if not git_ok and git_err:
+                    logger.warning("Git commit after universal_file_delete: %s", git_err)
             return _success_from_handler(fr, operation="delete")
 
         except ValidationError as e:
@@ -626,6 +640,8 @@ class UniversalFileDeleteCommand(BaseMCPCommand):
                 if pre_val is not None:
                     return pre_val
 
+            normalized_path = normalize_path_simple(str(absolute_path))
+
             backup_uuid: Optional[str] = None
             if not dry_run and backup and absolute_path.exists():
                 bm = BackupManager(root_dir)
@@ -664,8 +680,6 @@ class UniversalFileDeleteCommand(BaseMCPCommand):
 
             if dry_run:
                 return fr
-
-            normalized_path = normalize_path_simple(str(absolute_path))
 
             # Full-file unlink: no plaintext metadata row to refresh.
             if dm == DELETE_MODE_FILE or not absolute_path.exists():

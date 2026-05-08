@@ -11,10 +11,27 @@ from typing import Any, Dict, Optional
 from mcp_proxy_adapter.commands.result import SuccessResult, ErrorResult
 
 from .base_mcp_command import BaseMCPCommand
+from ..core.config import get_driver_config
 from ..core.faiss_manager import FaissIndexManager
+from ..core.pgvector_embedding import numpy_embedding_to_pgvector_text
 from ..core.storage_paths import resolve_storage_paths, get_faiss_index_path
+from ..core.vector_search_backend import (
+    driver_requires_faiss,
+    effective_vector_search_backend,
+)
 
 logger = logging.getLogger(__name__)
+
+
+def _omit_semantic_hit_for_docs_markdown(
+    source_type: Optional[Any],
+    *,
+    docs_markdown_vectorize_enabled: bool,
+) -> bool:
+    """When ``docs_indexing.vectorize`` is false, drop ``docs_markdown`` chunk hits (defense in depth)."""
+    if docs_markdown_vectorize_enabled:
+        return False
+    return str(source_type or "") == "docs_markdown"
 
 
 class SemanticSearchMCPCommand(BaseMCPCommand):
@@ -131,6 +148,153 @@ class SemanticSearchMCPCommand(BaseMCPCommand):
                 code_analysis_config = config_dict.get("code_analysis", config_dict)
                 vector_dim = int(code_analysis_config.get("vector_dim", 384))
 
+                driver_cfg = get_driver_config(config_dict) or {}
+                driver_type = str(driver_cfg.get("type") or "").strip().lower()
+                configured_vsb = code_analysis_config.get("vector_search_backend")
+                if driver_requires_faiss(driver_type) and (
+                    str(configured_vsb or "").strip().lower() == "pgvector"
+                ):
+                    logger.warning(
+                        "vector_search_backend=pgvector is invalid for driver %s; "
+                        "FAISS is always used (config validator should reject this combination)",
+                        driver_type,
+                    )
+                ann_backend = effective_vector_search_backend(
+                    driver_type, configured_vsb
+                )
+                logger.debug(
+                    "semantic_search ANN backend effective=%s driver=%s",
+                    ann_backend,
+                    driver_type,
+                )
+
+                raw_docs_indexing = code_analysis_config.get("docs_indexing")
+                docs_di = (
+                    raw_docs_indexing if isinstance(raw_docs_indexing, dict) else {}
+                )
+                docs_markdown_vectorize_enabled = bool(docs_di.get("vectorize"))
+
+                if ann_backend == "pgvector":
+                    from ..core.svo_client_manager import SVOClientManager
+
+                    import numpy as np
+
+                    config_root = config_path.parent
+                    svo_pg = SVOClientManager(config_dict, root_dir=config_root)
+                    await svo_pg.initialize()
+                    try:
+
+                        class _QChunk:
+                            def __init__(self, text: str) -> None:
+                                self.body = text
+                                self.text = text
+
+                        q_emb = await svo_pg.get_embeddings([_QChunk(query)])
+                        if not q_emb or not hasattr(q_emb[0], "embedding"):
+                            return ErrorResult(
+                                message="Failed to get embedding for query from real service",
+                                code="EMBEDDING_SERVICE_ERROR",
+                            )
+                        qv = np.array(getattr(q_emb[0], "embedding"), dtype="float32")
+                        n = float(np.linalg.norm(qv))
+                        if n <= 0:
+                            return ErrorResult(
+                                message="Invalid embedding vector (zero norm)",
+                                code="EMBEDDING_SERVICE_ERROR",
+                            )
+                        query_vec = qv / n
+                    finally:
+                        await svo_pg.close()
+
+                    cnt_pg = database.execute(
+                        """
+                        SELECT COUNT(*) AS c FROM code_chunks
+                        WHERE project_id = ?
+                          AND embedding_vec IS NOT NULL
+                        """,
+                        (project_id,),
+                    )
+                    cr = (cnt_pg.get("data") or [{}])[0]
+                    n_pg = int(cr.get("c") or cr.get("C") or 0)
+                    if n_pg <= 0:
+                        return ErrorResult(
+                            message=(
+                                "No rows with embedding_vec for this project. "
+                                "Run vectorization worker or rebuild_faiss (pgvector sync)."
+                            ),
+                            code="PGVECTOR_INDEX_EMPTY",
+                            details={"project_id": project_id},
+                        )
+
+                    qtxt = numpy_embedding_to_pgvector_text(query_vec)
+                    pq = database.execute(
+                        """
+                        SELECT
+                            c.id AS chunk_id,
+                            c.file_id,
+                            c.vector_id,
+                            c.chunk_uuid,
+                            c.chunk_type,
+                            c.chunk_text,
+                            c.line,
+                            c.source_type,
+                            f.path AS file_path,
+                            c.bm25_score,
+                            c.token_count,
+                            (c.embedding_vec <=> ?::vector) AS dist
+                        FROM code_chunks c
+                        JOIN files f ON f.id = c.file_id
+                        WHERE c.project_id = ?
+                          AND c.embedding_vec IS NOT NULL
+                        ORDER BY c.embedding_vec <=> ?::vector
+                        LIMIT ?
+                        """,
+                        (qtxt, project_id, qtxt, int(limit)),
+                    )
+                    prow = pq.get("data", []) if isinstance(pq, dict) else []
+                    results_pg: list[dict[str, Any]] = []
+                    for row in prow:
+                        dist = float(row.get("dist") or 0.0)
+                        score = 1.0 / (1.0 + dist)
+                        if min_score is not None and score < float(min_score):
+                            continue
+                        if _omit_semantic_hit_for_docs_markdown(
+                            row.get("source_type"),
+                            docs_markdown_vectorize_enabled=docs_markdown_vectorize_enabled,
+                        ):
+                            continue
+                        item_pg: dict[str, Any] = {
+                            "score": score,
+                            "distance": dist,
+                            "vector_id": row.get("vector_id"),
+                            "chunk_id": row.get("chunk_id"),
+                            "file_id": row.get("file_id"),
+                            "chunk_uuid": row.get("chunk_uuid"),
+                            "chunk_type": row.get("chunk_type"),
+                            "file_path": row.get("file_path"),
+                            "line": row.get("line"),
+                            "text": row.get("chunk_text"),
+                            "vector_backend": "pgvector",
+                        }
+                        if row.get("bm25_score") is not None:
+                            item_pg["bm25_score"] = float(row["bm25_score"])
+                        if row.get("token_count") is not None:
+                            item_pg["token_count"] = int(row["token_count"])
+                        results_pg.append(item_pg)
+
+                    return SuccessResult(
+                        data={
+                            "query": query,
+                            "limit": int(limit),
+                            "min_score": min_score,
+                            "index_path": None,
+                            "vector_backend": "pgvector",
+                            "project_id": project_id,
+                            "results": results_pg,
+                            "count": len(results_pg),
+                        }
+                    )
+
                 # Resolve storage paths (one index per project)
                 storage_paths = resolve_storage_paths(
                     config_data=config_dict, config_path=config_path
@@ -138,23 +302,41 @@ class SemanticSearchMCPCommand(BaseMCPCommand):
 
                 # One index per project: {faiss_dir}/{project_id}.bin
                 index_path = get_faiss_index_path(storage_paths.faiss_dir, project_id)
+                missing_index_file = not index_path.exists()
 
-                if not index_path.exists():
-                    return ErrorResult(
-                        message="FAISS index not found. Run update_indexes first.",
-                        code="FAISS_INDEX_NOT_FOUND",
-                        details={
-                            "index_path": str(index_path),
-                            "project_id": project_id,
-                        },
+                if missing_index_file:
+                    count_res = database.execute(
+                        """
+                        SELECT COUNT(*) AS c FROM code_chunks
+                        WHERE project_id = ?
+                          AND embedding_model IS NOT NULL
+                          AND embedding_vector IS NOT NULL
+                        """,
+                        (project_id,),
                     )
+                    rows = count_res.get("data") or []
+                    emb_row = rows[0] if rows else {}
+                    emb_count = int(emb_row.get("c") or emb_row.get("C") or 0)
+                    if emb_count == 0:
+                        return ErrorResult(
+                            message=(
+                                "FAISS index file not found and no embedded chunks in the "
+                                "database for this project. Run vectorization / indexing first."
+                            ),
+                            code="FAISS_INDEX_NOT_FOUND",
+                            details={
+                                "index_path": str(index_path),
+                                "project_id": project_id,
+                            },
+                        )
 
                 try:
                     faiss_manager = FaissIndexManager(
                         index_path=str(index_path),
                         vector_dim=vector_dim,
                     )
-                    faiss_manager._load_index()
+                    if not missing_index_file:
+                        faiss_manager._load_index()
                 except ImportError as e:
                     return SuccessResult(
                         data={
@@ -175,6 +357,45 @@ class SemanticSearchMCPCommand(BaseMCPCommand):
                 await svo_client_manager.initialize()
 
                 try:
+                    if missing_index_file:
+                        from ...core.docs_markdown_vector_gate import (
+                            docs_markdown_embeddings_disabled_by_policy,
+                        )
+
+                        ca_blk = config_dict.get("code_analysis")
+                        di_blk = (
+                            ca_blk.get("docs_indexing")
+                            if isinstance(ca_blk, dict)
+                            else None
+                        )
+                        omit_md_search = docs_markdown_embeddings_disabled_by_policy(
+                            di_blk
+                        )
+                        logger.info(
+                            "FAISS index file missing at %s; rebuilding from database "
+                            "for project %s",
+                            index_path,
+                            project_id,
+                        )
+                        loaded = await faiss_manager.rebuild_from_database(
+                            database,
+                            svo_client_manager,
+                            project_id=project_id,
+                            omit_docs_markdown=omit_md_search,
+                        )
+                        if loaded <= 0:
+                            return ErrorResult(
+                                message=(
+                                    "FAISS index file was missing; rebuild from database "
+                                    "loaded no vectors."
+                                ),
+                                code="FAISS_INDEX_NOT_FOUND",
+                                details={
+                                    "index_path": str(index_path),
+                                    "project_id": project_id,
+                                },
+                            )
+
                     # Create dummy chunk object for embedding
                     class QueryChunk:
                         def __init__(self, text: str):
@@ -258,6 +479,7 @@ class SemanticSearchMCPCommand(BaseMCPCommand):
                         c.chunk_type,
                         c.chunk_text,
                         c.line,
+                        c.source_type,
                         f.path AS file_path,
                         c.bm25_score,
                         c.token_count
@@ -280,6 +502,11 @@ class SemanticSearchMCPCommand(BaseMCPCommand):
                         continue
                     row = by_vector_id.get(int(vid))
                     if not row:
+                        continue
+                    if _omit_semantic_hit_for_docs_markdown(
+                        row.get("source_type"),
+                        docs_markdown_vectorize_enabled=docs_markdown_vectorize_enabled,
+                    ):
                         continue
                     item: dict[str, Any] = {
                         "score": score,
@@ -349,7 +576,8 @@ class SemanticSearchMCPCommand(BaseMCPCommand):
                 "2. Opens the shared database client\n"
                 "3. Loads server config (vector_dim, embedding service, storage paths)\n"
                 "4. Resolves FAISS index path (one file per project: {faiss_dir}/{project_id}.bin)\n"
-                "5. Loads the FAISS index (FaissIndexManager)\n"
+                "5. Loads the FAISS index, or rebuilds it from the database if the file is "
+                "missing and embedded chunks exist (FaissIndexManager)\n"
                 "6. Obtains and L2-normalizes the query embedding (SVOClientManager)\n"
                 "7. Runs FAISS search for up to ``limit`` neighbors (clamped 1–100, default 10)\n"
                 "8. Loads chunk metadata from SQLite and applies optional ``min_score`` filter\n"
@@ -359,7 +587,8 @@ class SemanticSearchMCPCommand(BaseMCPCommand):
                 "- Similarity score: 1.0 / (1.0 + distance)\n\n"
                 "FAISS index:\n"
                 "- One index per project under configured ``faiss_dir``\n"
-                "- Must exist (run ``update_indexes`` / vectorization pipeline first)\n\n"
+                "- If the ``.bin`` file is missing but ``code_chunks`` has embeddings for the "
+                "project, the command rebuilds the index from the database before searching\n\n"
                 "Important notes:\n"
                 "- Requires a working embedding service\n"
                 "- Requires FAISS (optional dependency); missing FAISS may yield empty results with a warning\n"

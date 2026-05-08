@@ -24,6 +24,7 @@ from .registration import (
     REGISTRY_SCHEMA_DISCOVERY_SHORT,
 )
 from ..core.backup_manager import BackupManager
+from ..core.git_integration import commit_after_write
 from ..core.exceptions import ValidationError
 from ..core.file_handlers.base import (
     VALIDATION_FAILED,
@@ -311,7 +312,7 @@ class UniversalFileReplaceCommand(BaseMCPCommand):
                 "replacements (overlapping ranges rejected before write); json — "
                 "operations; yaml — yaml_path, value; python — ops. "
                 "Optional: dry_run, diff, backup, commit_message, diff_context_lines, "
-                "validate_syntax_only (python), tree_id (python). "
+                "validate_syntax_only (python), validate_docstrings (python), tree_id (python). "
                 + REGISTRY_SCHEMA_DISCOVERY_SHORT
             ),
             "properties": {
@@ -352,6 +353,15 @@ class UniversalFileReplaceCommand(BaseMCPCommand):
                     "type": "boolean",
                     "default": False,
                     "description": "Python handler: validate syntax only when applying ops.",
+                },
+                "validate_docstrings": {
+                    "type": "boolean",
+                    "default": True,
+                    "description": (
+                        "Python handler: when False, skip docstring policy checks during validation. "
+                        "Use when patching a docstring while pre-existing docstring errors exist "
+                        "elsewhere in the same file. Linter and type checker still run."
+                    ),
                 },
                 "tree_id": {
                     "type": "string",
@@ -434,6 +444,7 @@ class UniversalFileReplaceCommand(BaseMCPCommand):
         commit_message: Optional[str] = None,
         diff_context_lines: Optional[int] = None,
         validate_syntax_only: bool = False,
+        validate_docstrings: bool = True,
         tree_id: Optional[str] = None,
         start_line: Optional[int] = None,
         end_line: Optional[int] = None,
@@ -529,6 +540,7 @@ class UniversalFileReplaceCommand(BaseMCPCommand):
                 extra["root_path"] = root_dir.resolve()
                 extra["ops"] = list(ops or [])
                 extra["validate_syntax_only"] = validate_syntax_only
+                extra["validate_docstrings"] = validate_docstrings
                 if tree_id is not None and str(tree_id).strip():
                     extra["tree_id"] = str(tree_id)
 
@@ -581,6 +593,23 @@ class UniversalFileReplaceCommand(BaseMCPCommand):
 
             if not fr.success:
                 return _error_from_handler(fr)
+            if not dry_run:
+                cm = (
+                    commit_message.strip()
+                    if isinstance(commit_message, str) and commit_message.strip()
+                    else None
+                )
+                git_ok, git_err = commit_after_write(
+                    root_dir.resolve(),
+                    [absolute_path],
+                    "universal_file_replace",
+                    commit_message_override=cm,
+                    config_data=BaseMCPCommand._get_raw_config(),
+                )
+                if not git_ok and git_err:
+                    logger.warning(
+                        "Git commit after universal_file_replace: %s", git_err
+                    )
             return _success_from_handler(fr, operation="replace")
 
         except ValidationError as e:
@@ -617,6 +646,8 @@ class UniversalFileReplaceCommand(BaseMCPCommand):
             pre_val = _validate_text_replace_local(absolute_path, req.extra, req)
             if pre_val is not None:
                 return pre_val
+
+            normalized_path = normalize_path_simple(str(absolute_path))
 
             backup_uuid: Optional[str] = None
             if not dry_run and backup and absolute_path.exists():
@@ -657,7 +688,6 @@ class UniversalFileReplaceCommand(BaseMCPCommand):
             if dry_run:
                 return fr
 
-            normalized_path = normalize_path_simple(str(absolute_path))
             meta = persist_plain_text_file_metadata(
                 database=database,
                 project_id=req.project_id,

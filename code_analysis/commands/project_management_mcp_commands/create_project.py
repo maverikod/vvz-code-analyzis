@@ -5,6 +5,7 @@ Author: Vasiliy Zdanovskiy
 email: vasilyvz@gmail.com
 """
 
+
 from ._shared import (
     Any,
     BaseMCPCommand,
@@ -18,51 +19,59 @@ from ._shared import (
     uuid,
 )
 
-
-class CreateProjectMCPCommand(BaseMCPCommand):
+class CreateProjectMCPCommand:
+    
+    
     """
-    Create or register a new project.
-
-    This command:
-    1. Validates that watched directory exists and does not contain projectid file
-    2. Validates that project directory exists
-    3. Checks if project is already registered in database
-    4. Creates projectid file with UUID4 and description
-    5. Registers project in database
-
-    Returns project ID, whether project already existed, and description.
-
-    Attributes:
-        name: MCP command name.
-        version: Command version.
-        descr: Short description.
-        category: Command category.
-        author: Command author.
-        email: Author email.
-        use_queue: Whether to run in the background queue.
-    """
-
+        Create or register a new project.
+    
+        This command:
+        1. Validates that watched directory exists and does not contain projectid file
+        2. Validates that project directory exists
+        3. Checks if project is already registered in database
+        4. Creates projectid file with UUID4 and description
+        5. Registers project in database
+    
+        Returns project ID, whether project already existed, and description.
+    
+        Attributes:
+            name: MCP command name.
+            version: Command version.
+            descr: Short description.
+            category: Command category.
+            author: Command author.
+            email: Author email.
+            use_queue: Whether to run in the background queue.
+        """
+    
+    
     name = "create_project"
+    
     version = "1.0.0"
+    
     descr = (
         "Create or register a new project. "
         "Creates projectid file and registers project in database."
     )
+    
     category = "project_management"
+    
     author = "Vasiliy Zdanovskiy"
+    
     email = "vasilyvz@gmail.com"
+    
     use_queue = False
-
+    
     @classmethod
     def get_schema(
         cls: type["CreateProjectMCPCommand"],
     ) -> Dict[str, Any]:
         """
         Get JSON schema for command parameters.
-
+    
         Args:
             cls: Command class.
-
+    
         Returns:
             JSON schema dict.
         """
@@ -70,9 +79,13 @@ class CreateProjectMCPCommand(BaseMCPCommand):
             "type": "object",
             "description": (
                 "Create a new project atomically. "
-                "Default (old behaviour): creates project subdirectory in watch_dir, projectid file, and registers; "
-                "if directory already exists, fails with PROJECT_DIR_EXISTS. "
-                "Optional use_existing_dir=true: for existing directory, create only projectid file and register."
+                "Default: creates project subdirectory in watch_dir, "
+                "projectid file, and registers in DB. "
+                "Optional use_existing_dir=true: for existing directory, "
+                "create only projectid file and register. "
+                "Optional create_venv=true (default): creates .venv. "
+                "Optional apply_template=true (default): deploys "
+                ".cursor/agents, docs/PROJECT_RULES.md, README.md, etc."
             ),
             "properties": {
                 "watch_dir_id": {
@@ -91,29 +104,68 @@ class CreateProjectMCPCommand(BaseMCPCommand):
                 },
                 "description": {
                     "type": "string",
-                    "description": (
-                        "Human-readable description of the project. Required."
-                    ),
+                    "description": "Human-readable description of the project. Required.",
                 },
                 "project_id": {
                     "type": "string",
                     "description": (
-                        "Optional project ID (UUID4). If not provided, will be generated automatically."
+                        "Optional project ID (UUID4). "
+                        "If not provided, will be generated automatically."
                     ),
                 },
                 "use_existing_dir": {
                     "type": "boolean",
                     "description": (
-                        "Optional. Default false (old behaviour: fail with PROJECT_DIR_EXISTS if directory exists). "
-                        "If true: when project directory already exists, create only projectid file and register."
+                        "Optional. Default false. "
+                        "If true: when project directory already exists, "
+                        "create only projectid file and register."
                     ),
                     "default": False,
+                },
+                "create_venv": {
+                    "type": "boolean",
+                    "description": (
+                        "Optional. Default true. "
+                        "Create .venv virtual environment in the project "
+                        "using python -m venv. "
+                        "Python and pip availability are checked first. "
+                        "Warnings are returned but do not fail the command."
+                    ),
+                    "default": True,
+                },
+                "apply_template": {
+                    "type": "boolean",
+                    "description": (
+                        "Optional. Default true. "
+                        "Deploy the embedded rules_template into the project: "
+                        ".cursor/agents/*.md, .cursor/rules/project_canonical.mdc, "
+                        "docs/PROJECT_RULES.md, docs/agents/*.md, "
+                        "README.md, scripts/.gitkeep. "
+                        "Warnings are returned but do not fail the command."
+                    ),
+                    "default": True,
+                },
+                "template_path": {
+                    "type": "string",
+                    "description": (
+                        "Optional. Path to an external rules_template zip. "
+                        "If not provided, the embedded template is used."
+                    ),
+                },
+                "python_executable": {
+                    "type": "string",
+                    "description": (
+                        "Optional. Python interpreter for venv creation. "
+                        "Default: 'python3'."
+                    ),
+                    "default": "python3",
                 },
             },
             "required": ["watch_dir_id", "project_name", "description"],
             "additionalProperties": False,
         }
-
+    
+    
     def validate_params(
         self: "CreateProjectMCPCommand", params: Dict[str, Any]
     ) -> Dict[str, Any]:
@@ -121,7 +173,7 @@ class CreateProjectMCPCommand(BaseMCPCommand):
         params = super().validate_params(params)
         BaseMCPCommand._validate_watch_dir_id_exists(params["watch_dir_id"])
         return params
-
+    
     async def execute(
         self: "CreateProjectMCPCommand",
         watch_dir_id: str,
@@ -129,29 +181,43 @@ class CreateProjectMCPCommand(BaseMCPCommand):
         description: str,
         project_id: Optional[str] = None,
         use_existing_dir: bool = False,
+        create_venv: bool = True,
+        apply_template: bool = True,
+        template_path: Optional[str] = None,
+        python_executable: str = "python3",
         **kwargs: Any,
     ) -> SuccessResult | ErrorResult:
         """
         Execute create project command.
-
+    
+        Steps:
+        1. Create project (projectid file + DB registration).
+        2. Scaffold standard directories (tests/, docs/plans/, etc.).
+        3. Optionally create .venv.
+        4. Optionally deploy rules_template.
+    
         Args:
             self: Command instance.
             watch_dir_id: Watch directory ID from watch_dirs table.
             project_name: Name of project subdirectory to create.
             description: Project description (required).
             project_id: Optional project ID (UUID4).
-            use_existing_dir: If True, create only projectid in existing directory and register.
+            use_existing_dir: If True, create only projectid in existing dir.
+            create_venv: If True (default), create .venv virtual environment.
+            apply_template: If True (default), deploy embedded rules_template.
+            template_path: Path to external template zip (overrides embedded).
+            python_executable: Python interpreter for venv. Default 'python3'.
             **kwargs: Extra args (unused).
-
+    
         Returns:
-            SuccessResult with project_id or ErrorResult on failure.
+            SuccessResult with project_id and bootstrap details,
+            or ErrorResult on failure.
         """
         try:
             database = self._open_database_from_config(auto_analyze=False)
             try:
-                # Import and execute command
                 from ..project_creation import CreateProjectCommand
-
+    
                 cmd = CreateProjectCommand(
                     database=database,
                     watch_dir_id=watch_dir_id,
@@ -161,7 +227,7 @@ class CreateProjectMCPCommand(BaseMCPCommand):
                     use_existing_dir=use_existing_dir,
                 )
                 result = await cmd.execute()
-
+    
                 if not result.get("success"):
                     error_code = result.get("error", "CREATE_PROJECT_ERROR")
                     return self._handle_error(
@@ -173,32 +239,102 @@ class CreateProjectMCPCommand(BaseMCPCommand):
                         error_code,
                         "create_project",
                     )
-
-                # Return only project_id as requested
-                return SuccessResult(
-                    data={"project_id": result.get("project_id")},
-                    message=result.get("message", "Project created successfully"),
-                )
             finally:
                 database.disconnect()
+    
+            # ── Bootstrap steps ─────────────────────────────────────
+            import pathlib
+            from ..project_creation import CreateProjectCommand  # noqa: F811
+    
+            # Resolve project root from watch_dir path + project_name.
+            # watch_dir_id is in the DB; we can get the path from result.
+            project_root_str = result.get("project_root") or result.get(
+                "project_path"
+            )
+            bootstrap_warnings: List[str] = []
+    
+            if project_root_str:
+                project_root = pathlib.Path(project_root_str)
+            else:
+                # Fallback: locate via watch_dir in config
+                project_root = self._resolve_project_root(
+                    watch_dir_id, project_name
+                )
+    
+            if project_root is not None and project_root.is_dir():
+                from ..core.project_bootstrap import (
+                    DirScaffold,
+                    TemplateDeployer,
+                    VenvCreator,
+                )
+    
+                # 1. Standard directory layout
+                scaffold = DirScaffold(project_root)
+                scaffold_result = scaffold.scaffold()
+                if not scaffold_result.success:
+                    bootstrap_warnings.extend(
+                        f"scaffold: {e}" for e in scaffold_result.errors
+                    )
+    
+                # 2. .venv virtual environment
+                if create_venv:
+                    venv = VenvCreator(
+                        project_root, python_executable=python_executable
+                    )
+                    venv_result = venv.create()
+                    if not venv_result.success:
+                        bootstrap_warnings.append(
+                            f"venv: {venv_result.message}"
+                        )
+                    if venv_result.errors:
+                        bootstrap_warnings.extend(
+                            f"venv_warn: {e}" for e in venv_result.errors
+                        )
+    
+                # 3. rules_template deployment
+                if apply_template:
+                    tpl_path = (
+                        pathlib.Path(template_path)
+                        if template_path
+                        else None
+                    )
+                    deployer = TemplateDeployer(project_root, tpl_path)
+                    deploy_result = deployer.deploy()
+                    if not deploy_result.success:
+                        bootstrap_warnings.extend(
+                            f"template: {e}" for e in deploy_result.errors
+                        )
+            else:
+                bootstrap_warnings.append(
+                    "project_root not found; skipped bootstrap steps"
+                )
+    
+            return SuccessResult(
+                data={
+                    "project_id": result.get("project_id"),
+                    "bootstrap_warnings": bootstrap_warnings,
+                },
+                message=result.get("message", "Project created successfully"),
+            )
         except Exception as e:
             return self._handle_error(e, "CREATE_PROJECT_ERROR", "create_project")
-
+    
+    
     @classmethod
     def metadata(cls: type["CreateProjectMCPCommand"]) -> Dict[str, Any]:
         """
-        Get detailed command metadata for AI models.
-
-        This method provides comprehensive information about the command,
-        including detailed descriptions, usage examples, and edge cases.
-        The metadata should be as detailed and clear as a man page.
-
-        Args:
-            cls: Command class.
-
-        Returns:
-            Dictionary with command metadata.
-        """
+            Get detailed command metadata for AI models.
+    
+            This method provides comprehensive information about the command,
+            including detailed descriptions, usage examples, and edge cases.
+            The metadata should be as detailed and clear as a man page.
+    
+            Args:
+                cls: Command class.
+    
+            Returns:
+                Dictionary with command metadata.
+            """
         return {
             "name": cls.name,
             "version": cls.version,
@@ -474,3 +610,4 @@ class CreateProjectMCPCommand(BaseMCPCommand):
                 "watch_dir_id is returned in response and can be used for CST commands",
             ],
         }
+    

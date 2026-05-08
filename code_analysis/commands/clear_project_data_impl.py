@@ -54,7 +54,7 @@ def build_delete_project_full_clear_batch(
         ops.append(
             (
                 "DELETE FROM code_content_fts WHERE rowid IN ("
-                "SELECT id FROM code_content WHERE file_id IN (" + _FILES_OF + "))",
+                "SELECT rowid FROM code_content WHERE file_id IN (" + _FILES_OF + "))",
                 (pid,),
             )
         )

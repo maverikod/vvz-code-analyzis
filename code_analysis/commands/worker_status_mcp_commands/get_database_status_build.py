@@ -84,7 +84,6 @@ def build_status_ops(driver_type: str) -> List[Tuple[str, Any]]:
             + """ AND cc.vector_id IS NOT NULL) as files_vectorized
         FROM projects p
         ORDER BY p.name
-        LIMIT 10
         """,
             None,
         ),

@@ -9,24 +9,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from typing import Any, Dict, List, Optional, cast
+from typing import Any, Dict, List, Optional
 from mcp_proxy_adapter.commands.result import CommandResult, SuccessResult
-
-
-from ...core.project_ignore_policy import (
-    filter_paths_for_default_project_listing,
-    path_is_under_project_local_venv,
-)
-
-from ...core.venv_path_policy import (
-    build_allowlisted_site_packages_py_files,
-    expand_ignore_exception_all_files,
-    expand_ignore_exception_py_files,
-    iter_project_files_excluding_venv,
-    iter_project_python_files_excluding_venv,
-    load_ignore_exceptions_from_config,
-    load_venv_site_packages_index_allowlist_from_config,
-)
 
 from ..base_mcp_command import BaseMCPCommand
 from ..file_management.relative_path_list_pattern import (
@@ -34,172 +18,89 @@ from ..file_management.relative_path_list_pattern import (
     effective_listing_pattern,
     relative_path_matches_listing_pattern,
 )
+from ..project_fs_enumerate import enumerate_project_paths
 
 
-def _relative_key_for_db_file(project_root: Path, file_obj: Any) -> str:
-    """Normalize DB file row path to the same key as :func:`canonical_relative_path`.
-
-    Args:
-        project_root: Project root directory used to resolve relative paths.
-        file_obj: File record object with ``relative_path`` or ``path`` attribute.
-
-    Returns:
-        Canonical posix relative path string for joining with FS-derived keys.
-    """
-    rel = getattr(file_obj, "relative_path", None)
-    if rel:
-        return Path(str(rel)).as_posix()
-    raw = getattr(file_obj, "path", None) or ""
-    p = Path(str(raw))
-    root = project_root.resolve()
-    try:
-        if p.is_absolute():
-            return p.resolve().relative_to(root).as_posix()
-    except ValueError:
-        pass
-    try:
-        return (root / p).resolve().relative_to(root).as_posix()
-    except ValueError:
-        return Path(str(raw)).as_posix()
+def _build_file_id_lookup(rows: List[Dict[str, Any]]) -> Dict[str, str]:
+    """Map path keys (relative_path and path as stored) -> files.id string."""
+    m: Dict[str, str] = {}
+    for row in rows:
+        raw_id = row.get("id")
+        if raw_id is None:
+            continue
+        fid = str(raw_id).strip()
+        if not fid:
+            continue
+        rel = str(row.get("relative_path") or "").strip().replace("\\", "/")
+        path_col = str(row.get("path") or "").strip().replace("\\", "/")
+        if rel:
+            m[rel] = fid
+            if rel.startswith("./"):
+                m[rel[2:]] = fid
+        if path_col:
+            m[path_col] = fid
+    return m
 
 
-def _build_db_map_by_rel_key(project_root: Path, files: List[Any]) -> Dict[str, Any]:
-    """Map canonical relative path to file object (first wins).
-
-    Args:
-        project_root: Project root directory for path normalization.
-        files: List of DB file record objects.
-
-    Returns:
-        Dict mapping canonical posix relative path to the first matching file object.
-    """
-    out: Dict[str, Any] = {}
-    for f in files:
-        key = _relative_key_for_db_file(project_root, f)
-        if key not in out:
-            out[key] = f
-    return out
-
-
-def _enumerate_project_paths(
-    project_root: Path,
-    show_venv: bool,
+def _resolve_file_id_for_row(
     *,
-    python_only: bool,
-    include_venv_ignore_exceptions: bool = False,
-    show_hidden: bool = False,
-) -> List[Path]:
-    """Filesystem paths for ``list_project_files``.
-
-    When ``python_only`` is false (default), walks all non-skipped ordinary files under
-    the project, merges ``ignore_exceptions`` for any matched file type, and optionally
-    appends RECORD-derived ``.py`` from allowlisted venv distributions when ``show_venv``.
-
-    When ``python_only`` is true, uses the legacy Python-only walk plus ``.py``-only
-    ignore_exceptions (parity with indexing).
-
-    Args:
-        project_root: Project root directory to enumerate.
-        show_venv: If True, include allowlisted venv site-packages ``.py`` files.
-        python_only: If True, enumerate only ``.py`` files (legacy mode).
-        include_venv_ignore_exceptions: If True, include venv paths from ignore_exceptions.
-        show_hidden: If True, list like ls -a: descend into dot-prefixed directories except
-            project .venv/venv roots, and into cache basenames (__pycache__, .mypy_cache, …).
-
-    Returns:
-        Sorted list of absolute paths found under the project root.
-    """
-    root = project_root.resolve()
-    found: List[Path]
-    if python_only:
-        found = list(
-            iter_project_python_files_excluding_venv(root, show_hidden=show_hidden)
-        )
-        exc_expand = expand_ignore_exception_py_files
-    else:
-        found = list(iter_project_files_excluding_venv(root, show_hidden=show_hidden))
-        exc_expand = expand_ignore_exception_all_files
-    if show_venv:
-        allowlist = load_venv_site_packages_index_allowlist_from_config()
-        found.extend(build_allowlisted_site_packages_py_files(root, allowlist))
-    exc_patterns = load_ignore_exceptions_from_config()
-    if exc_patterns:
-        extra = list(exc_expand(root, exc_patterns))
-        if not include_venv_ignore_exceptions:
-            extra = [
-                p
-                for p in extra
-                if not path_is_under_project_local_venv(p.resolve(), root)
-            ]
-        found.extend(extra)
-    uniq = {p.resolve() for p in found}
-    ordered = sorted(uniq, key=lambda p: canonical_relative_path(root, p))
-    return filter_paths_for_default_project_listing(
-        ordered,
-        root,
-        include_venv=show_venv,
-        include_venv_ignore_exceptions=include_venv_ignore_exceptions,
-        show_hidden=show_hidden,
-    )
+    rel: str,
+    abs_path_str: str,
+    id_by_key: Dict[str, str],
+) -> Optional[str]:
+    """Match a disk row to ``files.id`` using relative and absolute path keys."""
+    fid = id_by_key.get(rel)
+    if fid:
+        return fid
+    norm_abs = abs_path_str.replace("\\", "/")
+    fid = id_by_key.get(norm_abs)
+    if fid:
+        return fid
+    try:
+        fid = id_by_key.get(Path(abs_path_str).resolve().as_posix())
+    except (OSError, ValueError):
+        fid = None
+    return fid
 
 
-def _file_obj_to_dict(f: Any) -> Dict[str, Any]:
-    """Convert a DB file record object to a plain dict.
-
-    Args:
-        f: File record object with optional ``to_db_row`` method.
-
-    Returns:
-        Plain dict representation of the file record.
-    """
-    if hasattr(f, "to_db_row"):
-        d = cast(Dict[str, Any], f.to_db_row())
-        d["deleted"] = bool(f.deleted)
-        return d
-    if isinstance(f, dict):
-        return dict(f)
-    return {}
-
-
-def _fs_only_file_dict(
-    project_id: str, project_root: Path, absolute_path: Path
+def _fs_file_dict_with_optional_id(
+    project_id: str,
+    project_root: Path,
+    absolute_path: Path,
+    id_by_key: Dict[str, str],
 ) -> Dict[str, Any]:
-    """Minimal row compatible with DB-backed entries when the file is not indexed yet.
-
-    Args:
-        project_id: Project UUID string.
-        project_root: Project root directory for relative path computation.
-        absolute_path: Absolute filesystem path to the file.
-
-    Returns:
-        Dict with project_id, path, relative_path, and deleted fields.
-    """
+    """One listed file: disk fields plus ``file_id`` when a ``files`` row matches."""
     abs_r = absolute_path.resolve()
     rel = canonical_relative_path(project_root, abs_r)
+    abs_str = str(abs_r)
     return {
         "project_id": project_id,
-        "path": str(abs_r),
+        "path": abs_str,
         "relative_path": rel,
         "deleted": False,
+        "file_id": _resolve_file_id_for_row(
+            rel=rel, abs_path_str=abs_str, id_by_key=id_by_key
+        ),
     }
 
 
 class ListProjectFilesMCPCommand(BaseMCPCommand):
-    """Filesystem-first list of project files with optional DB metadata."""
+    """List project files from disk; enrich with ``files.id`` when the index has a match."""
 
     name = "list_project_files"
 
-    version = "1.0.0"
+    version = "1.2.0"
 
     descr = (
-        "List project files from disk first (text, configs, Python, etc.); merge DB metadata "
-        "when indexed. Optional path/name filters: ``file_pattern`` or ``glob`` — fnmatch on "
-        "the full project-relative POSIX path (``*`` crosses ``/``); literals without "
-        "``*?[]`` act as a directory prefix. Skips dot-prefixed dirs (``ls`` without ``-a``), "
-        "cache dirs (``__pycache__``, ``.mypy_cache``, …), and ``.venv``/``venv`` unless "
-        "``show_hidden`` (hidden+caches), or ``show_venv`` / ``include_venv_ignore_exceptions`` "
-        "for venv. ``ignore_exceptions`` under venv only when ``include_venv_ignore_exceptions``. "
-        "Set ``python_only`` for legacy .py-only enumeration."
+        "List project files from disk (``ls`` semantics). Each row includes ``file_id`` "
+        "(UUID from table ``files``) when the path matches an indexed non-deleted row for "
+        "this ``project_id``, otherwise ``null``. Optional filters: ``file_pattern`` or "
+        "``glob`` — fnmatch on the full project-relative POSIX path (``*`` crosses ``/``); "
+        "literals without ``*?[]`` act as a directory prefix. Skips dot-prefixed dirs "
+        "(``ls`` without ``-a``), cache dirs, and ``.venv``/``venv`` unless ``show_hidden``, "
+        "``show_venv``, or ``include_venv_ignore_exceptions``. Set ``python_only`` for legacy "
+        "``.py``-only enumeration. Indexed search remains ``fulltext_search`` / "
+        "``semantic_search`` / AST commands."
     )
 
     category = "ast"
@@ -303,7 +204,7 @@ class ListProjectFilesMCPCommand(BaseMCPCommand):
         show_hidden: bool = False,
         **kwargs: Any,
     ) -> CommandResult:
-        """List project files from filesystem merged with DB metadata.
+        """List project files from disk and attach ``file_id`` from the index when known.
 
         Args:
             project_id: Project UUID string.
@@ -323,12 +224,8 @@ class ListProjectFilesMCPCommand(BaseMCPCommand):
         """
         try:
             project_root = self._resolve_project_root(project_id).resolve()
-            db = self._open_database_from_config(auto_analyze=False)
 
-            db_files = db.get_project_files(project_id, include_deleted=False)
-            db_by_rel = _build_db_map_by_rel_key(project_root, db_files)
-
-            fs_paths = _enumerate_project_paths(
+            fs_paths = enumerate_project_paths(
                 project_root,
                 show_venv=show_venv,
                 python_only=python_only,
@@ -350,18 +247,20 @@ class ListProjectFilesMCPCommand(BaseMCPCommand):
             if offset > 0 or limit is not None:
                 fs_paths = fs_paths[offset : offset + (limit or len(fs_paths))]
 
-            files_data: List[Dict[str, Any]] = []
-            for abs_path in fs_paths:
-                key = canonical_relative_path(project_root, abs_path)
-                row = db_by_rel.get(key)
-                if row is not None:
-                    files_data.append(_file_obj_to_dict(row))
-                else:
-                    files_data.append(
-                        _fs_only_file_dict(project_id, project_root, abs_path)
-                    )
+            id_by_key: Dict[str, str] = {}
+            try:
+                db = self._open_database_from_config(auto_analyze=False)
+                rows = db.get_project_file_rows(project_id, include_deleted=False)
+                id_by_key = _build_file_id_lookup(list(rows or []))
+            except Exception:
+                id_by_key = {}
 
-            db.disconnect()
+            files_data: List[Dict[str, Any]] = [
+                _fs_file_dict_with_optional_id(
+                    project_id, project_root, abs_path, id_by_key
+                )
+                for abs_path in fs_paths
+            ]
 
             return SuccessResult(
                 data={
@@ -398,10 +297,13 @@ class ListProjectFilesMCPCommand(BaseMCPCommand):
             "author": cls.author,
             "email": cls.email,
             "detailed_description": (
-                "The list_project_files command walks the project tree on disk (by default all "
-                "ordinary text and config files, not only ``.py``), then attaches database "
-                "metadata when a non-deleted indexed row matches the same normalized relative "
-                "path. Bytecode, native libraries, and similar binary suffixes are skipped. "
+                "Filesystem ``ls`` for a registered project: walks the tree on disk, then loads "
+                "non-deleted ``files`` rows for this ``project_id`` once and attaches ``file_id`` "
+                "(primary key UUID) when ``relative_path`` or ``path`` matches the disk row. "
+                "If the DB is unavailable or the path is not indexed, ``file_id`` is ``null``. "
+                "Use ``fulltext_search``, ``semantic_search``, and AST commands for indexed or "
+                "semantic search. "
+                "Bytecode, native libraries, and similar binary suffixes are skipped. "
                 "Dot-prefixed directories (``ls -a``) and tool cache directory basenames are not "
                 "descended into unless ``show_hidden`` is true (project ``.venv``/``venv`` roots "
                 "stay excluded from free walk; use ``show_venv`` or "
@@ -410,17 +312,16 @@ class ListProjectFilesMCPCommand(BaseMCPCommand):
                 "``python_only`` to true for legacy ``.py``-only enumeration (aligned with "
                 "indexing).\n\n"
                 "Operation flow:\n"
-                "1. Resolves project root from ``project_id``\n"
-                "2. Opens database connection\n"
-                "3. Loads non-deleted file rows for the project (for metadata join)\n"
-                "4. Enumerates files on disk (project tree + ignore_exceptions matches + "
+                "1. Resolves project root from ``project_id`` (projects registry only)\n"
+                "2. Enumerates files on disk (project tree + ignore_exceptions matches + "
                 "optional allowlisted venv RECORD ``.py`` paths; dot dirs and cache dirs only if "
                 "``show_hidden``)\n"
-                "5. If ``file_pattern`` or ``glob`` is set, keeps paths whose relative POSIX path "
+                "3. If ``file_pattern`` or ``glob`` is set, keeps paths whose relative POSIX path "
                 "matches (normalized patterns, optional directory-prefix semantics; see below)\n"
-                "6. Sorts by ``relative_path``, applies ``offset`` / ``limit``\n"
-                "7. For each path, emits the DB row when present, else a minimal FS-only row "
-                "(``project_id``, ``path``, ``relative_path``, ``deleted``: false)\n\n"
+                "4. Loads ``files`` rows for ``project_id`` (non-deleted) and builds a path→id map\n"
+                "5. Sorts by ``relative_path``, applies ``offset`` / ``limit``\n"
+                "6. For each path, emits: ``project_id``, ``path``, ``relative_path``, "
+                "``deleted``: false, ``file_id``: UUID or null\n\n"
                 "Pattern / name templates (``file_pattern`` or ``glob``):\n"
                 "- Matching is against the **full** ``relative_path`` from project root (POSIX "
                 "string), not only the leaf filename; ``*.py`` therefore matches ``a/b/c.py``.\n"
@@ -434,7 +335,8 @@ class ListProjectFilesMCPCommand(BaseMCPCommand):
                 "- ``**`` is not pathlib ``rglob`` syntax; it behaves as repeated ``*`` "
                 "wildcards (e.g. ``**/*.md`` usually matches Markdown at any depth)\n\n"
                 "Important notes:\n"
-                "- Filesystem-first: DB-only rows with no on-disk file are omitted\n"
+                "- Only on-disk files appear; there is no DB-only ghost listing\n"
+                "- ``file_id`` is null when the file is not in the index or DB read failed\n"
                 "- ``total`` is the count after ``file_pattern`` / ``glob`` but before pagination; "
                 "``count`` is the number of entries returned in ``files``\n"
                 "- Pagination: ``offset`` and optional ``limit`` slice the sorted list"
@@ -544,7 +446,7 @@ class ListProjectFilesMCPCommand(BaseMCPCommand):
                         "project_id": "550e8400-e29b-41d4-a716-446655440000",
                     },
                     "explanation": (
-                        "Returns non-binary project files with DB metadata when indexed."
+                        "Returns project files from disk with ``file_id`` when the path is indexed."
                     ),
                 },
                 {
@@ -634,12 +536,9 @@ class ListProjectFilesMCPCommand(BaseMCPCommand):
                     "data": {
                         "success": "Always true on success",
                         "files": (
-                            "List of file dicts. Indexed rows mirror :meth:`File.to_db_row` "
-                            "keys present on the model (``project_id``, ``path``, ``deleted``, "
-                            "optional ``id``, ``watch_dir_id``, ``relative_path``, ``lines``, "
-                            "``has_docstring``, timestamps, …) with ``deleted`` as bool. "
-                            "Filesystem-only entries add ``project_id``, ``path``, "
-                            "``relative_path``, ``deleted``: false."
+                            "List of dicts: ``project_id``, ``path`` (absolute), ``relative_path`` "
+                            "(posix under project root), ``deleted``: false, ``file_id``: "
+                            "``files`` table UUID string or null if not indexed / no DB match."
                         ),
                         "count": "Number of files in current page (after pagination)",
                         "total": "Total number of files matching criteria (before pagination)",
@@ -649,20 +548,18 @@ class ListProjectFilesMCPCommand(BaseMCPCommand):
                         "success": True,
                         "files": [
                             {
-                                "id": 1,
                                 "project_id": "223e4567-e89b-12d3-a456-426614174000",
-                                "watch_dir_id": "550e8400-e29b-41d4-a716-446655440001",
                                 "path": "/home/proj/src/main.py",
                                 "relative_path": "src/main.py",
-                                "lines": 10,
-                                "has_docstring": 1,
                                 "deleted": False,
+                                "file_id": "aaaaaaaa-bbbb-4ccc-dddd-eeeeeeeeeeee",
                             },
                             {
                                 "path": "/home/proj/src/new.py",
                                 "relative_path": "src/new.py",
                                 "project_id": "223e4567-e89b-12d3-a456-426614174000",
                                 "deleted": False,
+                                "file_id": None,
                             },
                         ],
                         "count": 2,
@@ -685,6 +582,6 @@ class ListProjectFilesMCPCommand(BaseMCPCommand):
                 "Check total vs count to page through filtered results",
                 "Use show_venv only when config allowlists specific distributions",
                 "Use show_hidden sparingly (dotdirs + caches; noisy trees like node_modules stay out)",
-                "Compare listed paths to DB-backed rows to find unindexed files",
+                "Use ``file_id`` for transfer-by-id commands; run update_indexes if paths lack ids",
             ],
         }

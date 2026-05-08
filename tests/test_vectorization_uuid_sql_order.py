@@ -14,8 +14,8 @@ def test_faiss_rebuild_row_number_sorts_by_created_at_then_id() -> None:
 
     src = inspect.getsource(faiss_manager_rebuild.rebuild_from_database_impl)
     assert (
-        src.count("ROW_NUMBER() OVER (ORDER BY created_at, id)") >= 4
-    ), "expected ROW_NUMBER ... ORDER BY created_at, id in each rebuild branch"
+        src.count("ROW_NUMBER() OVER (ORDER BY created_at, id)") >= 2
+    ), "expected ROW_NUMBER … ORDER BY created_at, id in project + global rebuild branches"
 
 
 def test_faiss_fetch_chunks_orders_by_created_at() -> None:

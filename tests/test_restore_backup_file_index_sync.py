@@ -6,9 +6,8 @@ email: vasilyvz@gmail.com
 """
 
 import json
-import os
+import types
 import uuid
-from datetime import datetime
 from pathlib import Path
 from unittest.mock import patch
 
@@ -18,77 +17,70 @@ from code_analysis.commands.backup_mcp_commands.restore_backup_file import (
     RestoreBackupFileMCPCommand,
 )
 from code_analysis.core.backup_manager import BackupManager
-from code_analysis.core.database import CodeDatabase
-from code_analysis.core.database_client.file_data_batch import (
-    update_file_data_atomic_batch,
+from code_analysis.core.database.files.update import (
+    update_file_data as update_file_data_fn,
 )
-from code_analysis.core.database_client.objects.base import BaseObject
 from code_analysis.core.path_normalization import normalize_path_simple
+
+from tests.sqlite_in_process_legacy_facade import SqliteLegacyRpcFacade
+from tests.sqlite_inprocess_database import sqlite_inprocess_database_client
 
 
 @pytest.fixture
 def isolated_db(tmp_path: Path):
-    """In-process SQLite DB with schema."""
-    db_path = tmp_path / "test.db"
-    driver_config = {
-        "type": "sqlite",
-        "config": {"path": str(db_path)},
-    }
-    original_env = os.environ.get("CODE_ANALYSIS_DB_WORKER")
-    os.environ["CODE_ANALYSIS_DB_WORKER"] = "1"
-    db = CodeDatabase(driver_config=driver_config)
-    db._create_schema()
+    """Prod-like DDL (:func:`~tests.sqlite_inprocess_database.sqlite_inprocess_database_client`)
+    plus legacy facade over :class:`~code_analysis.core.database_client.client.DatabaseClient`.
+    """
+    client = sqlite_inprocess_database_client(
+        tmp_path / "test.db", backup_dir=tmp_path / "backups"
+    )
+    facade = SqliteLegacyRpcFacade(client)
     try:
-        yield db, tmp_path
+        yield facade, tmp_path
     finally:
-        db.close()
-        if original_env is None:
-            os.environ.pop("CODE_ANALYSIS_DB_WORKER", None)
-        else:
-            os.environ["CODE_ANALYSIS_DB_WORKER"] = original_env
+        facade.close()
 
 
 def _index_file(
-    db: CodeDatabase,
+    db,
     project_id: str,
     project_root: Path,
     rel_path: str,
     source_code: str,
-) -> int:
-    """Write file and run update_file_data_atomic_batch (same pipeline as replace_file_lines)."""
+) -> str:
+    """Write disk file and populate entities via unified update_file_data."""
     path = project_root / rel_path
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(source_code, encoding="utf-8")
-    mtime = path.stat().st_mtime
     lines_count = len(source_code.splitlines())
     stripped = source_code.lstrip()
     has_docstring = stripped.startswith('"""') or stripped.startswith("'''")
-    file_id = db.add_file(
+    file_id_raw = db.add_file(
         path=str(path.resolve()),
         lines=lines_count,
-        last_modified=mtime,
+        last_modified=path.stat().st_mtime,
         has_docstring=has_docstring,
         project_id=project_id,
     )
-    last_modified = datetime.fromtimestamp(path.stat().st_mtime)
-    file_mtime = BaseObject._to_timestamp(last_modified) or 0.0
-    transaction_id = db.begin_transaction()
-    try:
-        update_result = update_file_data_atomic_batch(
-            database=db,
-            file_id=file_id,
-            project_id=project_id,
-            source_code=source_code,
-            file_path=str(path.resolve()),
-            file_mtime=file_mtime,
-            transaction_id=transaction_id,
-        )
-        db.commit_transaction(transaction_id)
-    except Exception:
-        db.rollback_transaction(transaction_id)
-        raise
-    assert update_result.get("success"), update_result
-    return file_id
+    abs_p = normalize_path_simple(str(path.resolve()))
+    db._execute(
+        "UPDATE files SET last_modified = 0 WHERE id = ? AND project_id = ?",
+        (file_id_raw, project_id),
+    )
+    update_file_data = types.MethodType(update_file_data_fn, db)
+    result = update_file_data(
+        file_path=str(path.resolve()),
+        project_id=project_id,
+        root_dir=project_root,
+    )
+    assert result.get("success"), result
+    row = db._fetchone(
+        "SELECT id FROM files WHERE path = ? AND project_id = ? "
+        "AND (deleted IS NULL OR deleted = 0)",
+        (abs_p, project_id),
+    )
+    assert row is not None
+    return str(row["id"])
 
 
 @pytest.mark.asyncio
@@ -129,21 +121,38 @@ async def test_restore_backup_refreshes_function_entities(isolated_db) -> None:
     assert "bar" in names
     assert "foo" not in names
 
+    # Restore opens an outer driver transaction then runs update_file_data_atomic_batch
+    # (own logical write). SQLite + in-process RPC can hit SQLITE_BUSY; the batch path
+    # ignores transaction_id, so drop the outer txn for this test-only DB handle.
     cmd = RestoreBackupFileMCPCommand()
-    with patch.object(
-        RestoreBackupFileMCPCommand,
-        "_open_database_from_config",
-        return_value=db,
-    ), patch.object(
-        RestoreBackupFileMCPCommand,
-        "_resolve_project_root",
-        return_value=tmp_path,
-    ):
-        result = await cmd.execute(
-            project_id=project_id,
-            file_path=rel,
-            backup_uuid=bu,
-        )
+    ot_begin = db.begin_transaction
+    ot_commit = db.commit_transaction
+    ot_rollback = db.rollback_transaction
+    db.begin_transaction = lambda: None
+    db.commit_transaction = lambda transaction_id=None: None
+    db.rollback_transaction = lambda transaction_id=None: None
+    try:
+        with (
+            patch.object(
+                RestoreBackupFileMCPCommand,
+                "_open_database_from_config",
+                return_value=db,
+            ),
+            patch.object(
+                RestoreBackupFileMCPCommand,
+                "_resolve_project_root",
+                return_value=tmp_path,
+            ),
+        ):
+            result = await cmd.execute(
+                project_id=project_id,
+                file_path=rel,
+                backup_uuid=bu,
+            )
+    finally:
+        db.begin_transaction = ot_begin
+        db.commit_transaction = ot_commit
+        db.rollback_transaction = ot_rollback
 
     assert getattr(result, "data", None) is not None
     assert (tmp_path / rel).read_text(encoding="utf-8") == v1

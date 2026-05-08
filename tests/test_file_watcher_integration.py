@@ -8,17 +8,21 @@ email: vasilyvz@gmail.com
 import os
 import tempfile
 import time
+import json
+import uuid
 from pathlib import Path
 
 import pytest
 
+from code_analysis.core.docs_indexing_defaults import default_docs_indexing_dict
 from code_analysis.core.file_watcher_pkg.scanner import (
     scan_directory,
     should_ignore_path,
 )
 from code_analysis.core.file_watcher_pkg.processor import FileChangeProcessor, FileDelta
-from code_analysis.core.database import CodeDatabase
 from code_analysis.core.project_resolution import load_project_info
+from tests.sqlite_inprocess_database import sqlite_inprocess_database_client
+from tests.sqlite_in_process_legacy_facade import SqliteLegacyRpcFacade
 
 
 # Get test data directory
@@ -29,20 +33,17 @@ BHLFF_DIR = TEST_DATA_DIR / "bhlff"
 
 @pytest.fixture
 def temp_db(tmp_path):
-    """Create temporary database for tests (in-process SQLite)."""
+    """Create temporary database for tests (in-process SQLite RPC + legacy facade)."""
     db_path = tmp_path / "test.db"
-    driver_config = {
-        "type": "sqlite",
-        "config": {"path": str(db_path)},
-    }
+    backup_dir = tmp_path / "backups"
     original_env = os.environ.get("CODE_ANALYSIS_DB_WORKER")
     os.environ["CODE_ANALYSIS_DB_WORKER"] = "1"
+    client = sqlite_inprocess_database_client(db_path, backup_dir=backup_dir)
+    facade = SqliteLegacyRpcFacade(client)
     try:
-        db = CodeDatabase(driver_config=driver_config)
-        db.sync_schema()
-        yield db
-        db.close()
+        yield facade
     finally:
+        facade.close()
         if original_env is None:
             os.environ.pop("CODE_ANALYSIS_DB_WORKER", None)
         else:
@@ -487,3 +488,121 @@ class TestFileWatcherProcessorRealData:
         print(
             f"\nScan performance: {file_count} files in {scan_duration:.2f}s ({files_per_second:.1f} files/s)"
         )
+
+
+class TestDocsMarkdownWatcherAdmission:
+    """Synthetic tree: Markdown admission matches docs_indexing eligibility."""
+
+    @staticmethod
+    def _project_tree(base: Path) -> tuple[Path, str]:
+        proj = base / "myproj"
+        proj.mkdir()
+        pid = str(uuid.uuid4())
+        (proj / "projectid").write_text(
+            json.dumps({"id": pid, "description": "t"}),
+            encoding="utf-8",
+        )
+        (proj / "docs").mkdir(parents=True)
+        (proj / "docs" / "guide.md").write_text("# g\n", encoding="utf-8")
+        (proj / "docs" / "openapi.json").write_text(
+            '{"openapi": "3.0"}\n', encoding="utf-8"
+        )
+        (proj / "docs" / "plans").mkdir(parents=True)
+        (proj / "docs" / "plans" / "task.md").write_text("# t\n", encoding="utf-8")
+        (proj / "docs" / "note.txt").write_text("x", encoding="utf-8")
+        (proj / "main.py").write_text("x=1\n", encoding="utf-8")
+        return proj, pid
+
+    def test_scan_without_docs_config_ignores_markdown(self, tmp_path: Path) -> None:
+        proj, _ = self._project_tree(tmp_path)
+        roots = {proj.resolve()}
+        files = scan_directory(
+            tmp_path,
+            [tmp_path],
+            immediate_project_roots=roots,
+            docs_indexing=None,
+        )
+        keys = {Path(k).name for k in files}
+        assert "main.py" in keys
+        assert "guide.md" not in keys
+
+    def test_scan_with_docs_enabled_includes_eligible_md(self, tmp_path: Path) -> None:
+        proj, _ = self._project_tree(tmp_path)
+        roots = {proj.resolve()}
+        cfg = default_docs_indexing_dict()
+        cfg["enabled"] = True
+        files = scan_directory(
+            tmp_path,
+            [tmp_path],
+            immediate_project_roots=roots,
+            docs_indexing=cfg,
+        )
+        keys = {Path(k).name for k in files}
+        assert "main.py" in keys
+        assert "guide.md" in keys
+        assert "openapi.json" in keys
+        assert "task.md" not in keys
+        assert "note.txt" not in keys
+
+    def test_should_ignore_path_docs_gate(self, tmp_path: Path) -> None:
+        proj, _ = self._project_tree(tmp_path)
+        cfg = default_docs_indexing_dict()
+        cfg["enabled"] = True
+        guide = proj / "docs" / "guide.md"
+        plans_md = proj / "docs" / "plans" / "task.md"
+        txt = proj / "docs" / "note.txt"
+        assert (
+            should_ignore_path(guide, [], project_root=proj, docs_indexing=cfg) is False
+        )
+        assert (
+            should_ignore_path(plans_md, [], project_root=proj, docs_indexing=cfg)
+            is True
+        )
+        assert should_ignore_path(txt, [], project_root=proj, docs_indexing=cfg) is True
+        assert (
+            should_ignore_path(guide, [], project_root=proj, docs_indexing=None) is True
+        )
+
+
+def test_load_docs_indexing_from_config_path_disabled_returns_none(
+    tmp_path: Path,
+) -> None:
+    from code_analysis.core.docs_indexing_config_load import (
+        load_docs_indexing_from_config_path,
+    )
+
+    cfg = tmp_path / "c.json"
+    cfg.write_text(
+        json.dumps({"code_analysis": {"docs_indexing": {"enabled": False}}}),
+        encoding="utf-8",
+    )
+    assert load_docs_indexing_from_config_path(cfg) is None
+
+
+def test_load_docs_indexing_from_config_path_enabled_returns_dict(
+    tmp_path: Path,
+) -> None:
+    from code_analysis.core.docs_indexing_config_load import (
+        load_docs_indexing_from_config_path,
+    )
+
+    cfg = tmp_path / "c.json"
+    cfg.write_text(
+        json.dumps(
+            {
+                "code_analysis": {
+                    "docs_indexing": {
+                        "enabled": True,
+                        "vectorize": False,
+                        "roots": ["docs"],
+                        "include": ["docs/**/*.md"],
+                        "exclude": [],
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    snap = load_docs_indexing_from_config_path(cfg)
+    assert snap is not None
+    assert snap.get("enabled") is True

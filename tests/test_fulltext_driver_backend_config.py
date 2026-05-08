@@ -19,6 +19,7 @@ def test_full_text_search_postgres_driver_uses_tsvector_sql() -> None:
     assert "plainto_tsquery" in sql
     assert "to_tsvector" in sql
     assert "left(" in sql
+    assert "'simple'" in sql or "simple" in sql
 
 
 def test_full_text_search_sqlite_driver_uses_fts5() -> None:

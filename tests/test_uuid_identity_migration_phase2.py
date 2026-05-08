@@ -4,6 +4,9 @@ Block E step 09: Phase 1–2 UUID migration mapping (legacy INTEGER SQLite fixtu
 Uses raw SQLite INTEGER PK schema (legacy) — not post-sync_uuid logical schema — so mapping
 parity matches migration step 09.
 
+This module wires migration helpers against raw :class:`sqlite3.Connection` only;
+``_LegacySQLiteMigrConn`` is a minimal shim with ``_fetchone`` / ``_execute`` for those calls.
+
 Author: Vasiliy Zdanovskiy
 email: vasilyvz@gmail.com
 """
@@ -192,7 +195,7 @@ CREATE TABLE indexing_errors (
 
 
 class _LegacySQLiteMigrConn:
-    """Minimal CodeDatabase-shaped surface used by Phase 1–2 helpers."""
+    """Minimal SQLite connection wrapper used by Phase 1–2 migration helpers."""
 
     def __init__(self, conn: sqlite3.Connection) -> None:
         self._conn = conn
@@ -337,7 +340,7 @@ def test_phase2_legacy_sqlite_mappings_idempotent(tmp_path: Path) -> None:
 
 
 def test_preflight_execute_only_db_like_rpc_client() -> None:
-    """Preflight must not require CodeDatabase._fetchone (MCP uses DatabaseClient.execute)."""
+    """Preflight must rely on generic ``execute`` only (no private ``_fetchone`` on RPC clients)."""
     from code_analysis.core.database.migrations.uuid_identity_migration_common import (
         run_uuid_migration_preflight_phase1,
     )
@@ -362,9 +365,7 @@ def test_preflight_execute_only_db_like_rpc_client() -> None:
                 return {"data": [{"n": 0}]}
             raise AssertionError(f"unexpected sql in fake db: {sql!r}")
 
-    rep = run_uuid_migration_preflight_phase1(
-        _ExecuteOnlyDb(), check_orphan_fks=True
-    )
+    rep = run_uuid_migration_preflight_phase1(_ExecuteOnlyDb(), check_orphan_fks=True)
     assert rep.projects_uuid_ok is True
     assert rep.watch_dirs_uuid_ok is True
     assert not any("Skipping UUID" in w for w in rep.warnings)

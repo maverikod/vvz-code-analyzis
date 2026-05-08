@@ -5,31 +5,84 @@ Author: Vasiliy Zdanovskiy
 email: vasilyvz@gmail.com
 """
 
+from __future__ import annotations
+
 import json
 import os
+import types
 import time
 import uuid
+from pathlib import Path
+from typing import Any, Iterator, List, Optional
 
 import pytest
 
-from code_analysis.core.database.base import CodeDatabase
-from code_analysis.core.database.base import create_driver_config_for_worker
+from code_analysis.core.database.files import query as files_query_module
+from code_analysis.core.database.files.trash_standalone_support import (
+    clear_file_data_via_driver,
+    clear_file_vectors_via_driver,
+)
+from code_analysis.core.database.files.update import update_file_data
+from code_analysis.core.database.schema_definition import get_schema_definition
+from code_analysis.core.database_client.client import DatabaseClient
+from code_analysis.core.database_client.in_process_rpc_client import InProcessRpcClient
+from code_analysis.core.database_driver_pkg.driver_factory import create_driver
+from code_analysis.core.database_driver_pkg.drivers.sqlite import SQLiteDriver
+from code_analysis.core.database_driver_pkg.rpc_handlers import RPCHandlers
+
+
+class _AstCstChunksDbFacade:
+    """Thin facade: binds ``update_file_data`` helpers to :class:`DatabaseClient` while exposing the RPC driver."""
+
+    def __init__(self, client: DatabaseClient, driver: SQLiteDriver) -> None:
+        self._c = client
+        self._driver = driver
+        self.get_files_needing_chunking = types.MethodType(
+            files_query_module.get_files_needing_chunking, self
+        )
+        self.update_file_data = types.MethodType(update_file_data, self)
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._c, name)
+
+    def _execute(self, sql: str, params: Optional[tuple] = None) -> None:
+        self._c.execute(sql, params)
+
+    def _commit(self) -> None:
+        pass
+
+    def _fetchone(self, sql: str, params: Optional[tuple] = None):
+        r = self._c.execute(sql, params)
+        rows = r.get("data") or []
+        return rows[0] if rows else None
+
+    def _fetchall(self, sql: str, params: Optional[tuple] = None) -> List[dict]:
+        r = self._c.execute(sql, params)
+        return list(r.get("data") or [])
+
+    def _clear_file_vectors(self, file_id: Any) -> None:
+        clear_file_vectors_via_driver(self._driver, str(file_id))
+
+    def clear_file_data(self, file_id: Any) -> None:
+        clear_file_data_via_driver(self._driver, str(file_id))
 
 
 @pytest.fixture
-def temp_db_path(tmp_path):
-    """Create a temporary database file."""
-    return tmp_path / "test.db"
-
-
-@pytest.fixture
-def test_db(temp_db_path):
-    """Initialize a CodeDatabase instance with a temporary SQLite database."""
-    driver_config = create_driver_config_for_worker(temp_db_path, driver_type="sqlite")
-    db = CodeDatabase(driver_config=driver_config)
-    db.sync_schema()
-    yield db
-    db.close()
+def test_db(tmp_path: Path) -> Iterator[_AstCstChunksDbFacade]:
+    db_path = tmp_path / "test.db"
+    driver = create_driver("sqlite", {"path": str(db_path)})
+    assert isinstance(driver, SQLiteDriver)
+    handlers = RPCHandlers(driver)
+    ipc = InProcessRpcClient(handlers)
+    client = DatabaseClient(rpc_client=ipc)
+    client.connect()
+    backup_dir = tmp_path / "backups"
+    backup_dir.mkdir(parents=True, exist_ok=True)
+    client.sync_schema(get_schema_definition(), backup_dir=str(backup_dir))
+    try:
+        yield _AstCstChunksDbFacade(client, driver)
+    finally:
+        client.disconnect()
 
 
 @pytest.fixture
@@ -48,7 +101,6 @@ def test_file_with_content(test_db, test_project, tmp_path):
         "INSERT INTO projects (id, root_path, name, updated_at) VALUES (?, ?, ?, julianday('now'))",
         (test_project, str(tmp_path), tmp_path.name),
     )
-    test_db._commit()
 
     # update_file_data validates project_id against projectid file in root_dir
     (tmp_path / "projectid").write_text(
@@ -74,7 +126,6 @@ def test_file_with_content(test_db, test_project, tmp_path):
     )
     # Force full reindex: set stored last_modified to 0 so mtime check does not skip
     test_db._execute("UPDATE files SET last_modified = 0 WHERE id = ?", (file_id,))
-    test_db._commit()
 
     # Use update_file_data to analyze file and create AST/CST
     result = test_db.update_file_data(

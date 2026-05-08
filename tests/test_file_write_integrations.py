@@ -9,13 +9,25 @@ import os
 import tempfile
 import uuid
 from pathlib import Path
+from typing import Any, Optional
 
 import pytest
 
-from code_analysis.core.database import CodeDatabase
+from code_analysis.core.database.base import create_driver_config_for_worker
+from code_analysis.core.database_client.client import DatabaseClient
+from code_analysis.core.database_client.in_process_rpc_client import InProcessRpcClient
+from code_analysis.core.database_driver_pkg.driver_factory import create_driver
+from code_analysis.core.database_driver_pkg.rpc_handlers import RPCHandlers
+from tests.sqlite_legacy_schema_bootstrap import bootstrap_sqlite_schema_paths
 from code_analysis.core.refactorer_pkg.file_splitter import FileToPackageSplitter
 from code_analysis.core.refactorer_pkg.splitter import ClassSplitter
 from code_analysis.core.refactorer_pkg.extractor import SuperclassExtractor
+
+
+def _fetchone(client: DatabaseClient, sql: str, params: Optional[tuple] = None) -> Any:
+    r = client.execute(sql, params or ())
+    rows = r.get("data") or []
+    return rows[0] if rows else None
 
 
 @pytest.fixture
@@ -33,35 +45,39 @@ def project_id():
 
 @pytest.fixture
 def test_db(temp_dir):
-    """Create test database (in-process SQLite)."""
+    """Create test database (legacy schema bootstrap); client via reopened pkg driver."""
     db_path = temp_dir / "test.db"
-    driver_config = {
-        "type": "sqlite",
-        "config": {"path": str(db_path)},
-    }
-    original_env = os.environ.get("CODE_ANALYSIS_DB_WORKER")
-    os.environ["CODE_ANALYSIS_DB_WORKER"] = "1"
+    driver_config = create_driver_config_for_worker(
+        db_path,
+        driver_type="sqlite",
+        backup_dir=temp_dir / "backups",
+    )
+    path_str, backup_dir = bootstrap_sqlite_schema_paths(
+        driver_config,
+        default_backup_dir=str(temp_dir / "backups"),
+    )
+    driver = create_driver(
+        "sqlite",
+        {"path": path_str, "backup_dir": backup_dir},
+    )
+    rpc = InProcessRpcClient(RPCHandlers(driver))
+    db = DatabaseClient(rpc_client=rpc, driver_type="sqlite")
+    db.connect()
     try:
-        db = CodeDatabase(driver_config=driver_config)
-        db._create_schema()
         yield db
-        db.close()
     finally:
-        if original_env is None:
-            os.environ.pop("CODE_ANALYSIS_DB_WORKER", None)
-        else:
-            os.environ["CODE_ANALYSIS_DB_WORKER"] = original_env
+        db.disconnect()
+        driver.disconnect()
 
 
 @pytest.fixture
 def test_project(test_db, temp_dir, project_id):
     """Create test project in database and projectid file on disk."""
     project_name = temp_dir.name
-    test_db._execute(
+    test_db.execute(
         "INSERT INTO projects (id, root_path, name, updated_at) VALUES (?, ?, ?, julianday('now'))",
-        (project_id, str(temp_dir), project_name),
+        (project_id, str(temp_dir.resolve()), project_name),
     )
-    test_db._commit()
     # Create projectid file so _queue_file_for_processing can resolve project info
     import json
 
@@ -81,8 +97,6 @@ def test_file_with_content(test_db, temp_dir, test_project):
     file_path = temp_dir / "test_module.py"
     file_content = FILE_CONTENT_CLASS_A_B
     file_path.write_text(file_content, encoding="utf-8")
-
-    import os
 
     file_mtime = os.path.getmtime(file_path)
     lines = len(file_content.splitlines())
@@ -143,13 +157,14 @@ class TestFileSplitterIntegration:
         assert module_a_path.exists(), "module_a.py should exist"
         assert module_b_path.exists(), "module_b.py should exist"
 
-        # Verify database was updated for new files
-        module_a_record = test_db.get_file_by_path(str(module_a_path), project_id)
-        assert module_a_record is not None, "module_a.py should be in database"
+        # FileToPackageSplitter only writes modules on disk; DB registration is MCP/indexer.
 
-        # Verify AST and CST are saved for new files
-        if module_a_record:
-            ast_record = test_db._fetchone(
+        module_a_record = test_db.get_file_by_path(
+            str(module_a_path.resolve()), project_id
+        )
+        if module_a_record is not None:
+            ast_record = _fetchone(
+                test_db,
                 "SELECT id FROM ast_trees WHERE file_id = ?",
                 (module_a_record["id"],),
             )
@@ -227,12 +242,13 @@ class TestClassSplitterIntegration:
 
         # Verify AST and CST are updated
         if file_record:
-            ast_record = test_db._fetchone(
+            ast_record = _fetchone(
+                test_db,
                 "SELECT id FROM ast_trees WHERE file_id = ?",
                 (file_record["id"],),
             )
             # AST should be updated (might need to wait for async processing)
-            # The important thing is that update_file_data was called
+            # The important thing is that index_file was called
 
 
 class TestExtractorIntegration:
@@ -329,34 +345,29 @@ def test_function():
         content_with_comments = "# File comment\n" + content_with_comments
         file_path.write_text(content_with_comments, encoding="utf-8")
 
-        # Update file data
-        result = test_db.update_file_data(
-            file_path=str(file_path),
+        # Update file data (full index via driver RPC)
+        result = test_db.index_file(
+            file_path=str(file_path.resolve()),
             project_id=project_id,
-            root_dir=temp_dir,
         )
 
         assert result.get("success") is True, "Update should succeed"
         if result.get("skipped"):
             pytest.skip(
-                "update_file_data skipped (mtime gate); "
+                "index_file skipped (mtime gate); "
                 "cannot verify AST comment preservation in this run"
             )
-        assert result.get("ast_updated") is True, "AST should be updated"
-
-        # Verify AST contains comments
-        ast_record = test_db._fetchone(
-            "SELECT ast_json FROM ast_trees WHERE file_id = ?", (file_id,)
+        assert result.get("entities_updated"), "entities should be updated after index"
+        ast_after = _fetchone(
+            test_db, "SELECT ast_json FROM ast_trees WHERE file_id = ?", (file_id,)
         )
-        assert ast_record is not None, "AST should be saved"
+        assert ast_after is not None, "AST should be saved"
 
         # Parse AST JSON to verify comments are present
         import json
-        import ast as ast_module
 
-        ast_data = json.loads(ast_record["ast_json"])
-        # Comments should be in the AST structure
-        # The exact format depends on implementation
+        ast_data = json.loads(ast_after["ast_json"])
+        assert isinstance(ast_data, dict)
 
 
 class TestFileWatcherIntegration:
@@ -390,7 +401,6 @@ class UpdatedClass:
 '''
         file_path.write_text(new_content, encoding="utf-8")
 
-        import os
         import time
 
         mtime = os.path.getmtime(file_path)
@@ -412,13 +422,14 @@ class UpdatedClass:
 
         # Verify AST and CST are updated
         if file_record:
-            ast_record = test_db._fetchone(
+            ast_record = _fetchone(
+                test_db,
                 "SELECT id FROM ast_trees WHERE file_id = ?",
                 (file_record["id"],),
             )
             # AST should be updated
             # Note: In real scenario, this happens asynchronously
-            # But update_file_data is called synchronously
+            # But index_file is called synchronously
 
     def test_file_watcher_multiple_changes(
         self, test_db, test_file_with_content, temp_dir
@@ -447,8 +458,6 @@ class SecondClass:
         file2_path.write_text(file2_content, encoding="utf-8")
 
         # Add second file to database
-        import os
-
         file2_mtime = os.path.getmtime(file2_path)
         lines = len(file2_content.splitlines())
 

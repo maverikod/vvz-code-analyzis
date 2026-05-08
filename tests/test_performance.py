@@ -6,9 +6,9 @@ email: vasilyvz@gmail.com
 """
 
 import pytest
-import tempfile
-import time
 import json
+import time
+import types
 import uuid
 from pathlib import Path
 from code_analysis.core.path_normalization import (
@@ -21,8 +21,21 @@ from code_analysis.core.project_resolution import (
 from code_analysis.core.project_discovery import discover_projects_in_directory
 from code_analysis.core.settings_manager import get_settings
 from code_analysis.core.project_manager import ProjectManager
-from code_analysis.core.database import CodeDatabase
-from code_analysis.core.database.base import create_driver_config_for_worker
+from tests.sqlite_inprocess_database import sqlite_inprocess_database_client
+from tests.sqlite_in_process_legacy_facade import SqliteLegacyRpcFacade
+from code_analysis.core.database.files.query import get_files_needing_chunking
+from code_analysis.core.database.projects import get_or_create_project
+
+
+def _perf_sqlite_facade(tmp_path: Path) -> SqliteLegacyRpcFacade:
+    """SQLite in-process RPC with project/file query helpers used in perf tests."""
+    client = sqlite_inprocess_database_client(
+        tmp_path / "test.db", backup_dir=tmp_path / "backups"
+    )
+    db = SqliteLegacyRpcFacade(client)
+    db.get_or_create_project = types.MethodType(get_or_create_project, db)
+    db.get_files_needing_chunking = types.MethodType(get_files_needing_chunking, db)
+    return db
 
 
 # Get test data directory
@@ -183,12 +196,7 @@ class TestPerformanceProjectIdValidation:
     def test_performance_project_id_validation_1000_files(self, tmp_path):
         """Test performance of project_id validation for 1000+ files."""
         # Create test database
-        db_path = tmp_path / "test.db"
-        driver_config = create_driver_config_for_worker(
-            db_path=db_path, driver_type="sqlite"
-        )
-        db = CodeDatabase(driver_config=driver_config)
-        db.sync_schema()
+        db = _perf_sqlite_facade(tmp_path)
 
         try:
             # Create test project
@@ -298,12 +306,7 @@ class TestPerformanceDatabaseIntegration:
     def test_performance_database_integration(self, tmp_path):
         """Test performance of database operations."""
         # Create test database
-        db_path = tmp_path / "test.db"
-        driver_config = create_driver_config_for_worker(
-            db_path=db_path, driver_type="sqlite"
-        )
-        db = CodeDatabase(driver_config=driver_config)
-        db.sync_schema()
+        db = _perf_sqlite_facade(tmp_path)
 
         try:
             # Create test project
@@ -368,12 +371,7 @@ class TestPerformanceVectorization:
     def test_performance_vectorization_large_projects(self, tmp_path):
         """Test performance of vectorization on large projects."""
         # Create test database
-        db_path = tmp_path / "test.db"
-        driver_config = create_driver_config_for_worker(
-            db_path=db_path, driver_type="sqlite"
-        )
-        db = CodeDatabase(driver_config=driver_config)
-        db.sync_schema()
+        db = _perf_sqlite_facade(tmp_path)
 
         try:
             # Create test project

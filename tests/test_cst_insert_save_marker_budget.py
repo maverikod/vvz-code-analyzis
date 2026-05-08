@@ -44,6 +44,26 @@ def _make_db_mock() -> MagicMock:
     created.id = 1
     db.create_file = MagicMock(return_value=created)
     db.update_file = MagicMock(return_value=created)
+    db.begin_transaction = MagicMock(return_value="tid")
+    db.commit_transaction = MagicMock()
+    db.rollback_transaction = MagicMock()
+
+    def _execute_side_effect(
+        sql: str, params: tuple = (), *args: object, **kwargs: object
+    ) -> dict:
+        s = str(sql)
+        if "SELECT editing_pid" in s:
+            return {"affected_rows": 0, "data": [{"editing_pid": None}]}
+        if "UPDATE files SET editing_pid" in s:
+            return {"affected_rows": 1, "data": None}
+        return {"affected_rows": 1, "data": None}
+
+    db.execute = MagicMock(side_effect=_execute_side_effect)
+    db.execute_batch = MagicMock(
+        side_effect=lambda ops, **kw: [
+            {"affected_rows": 1, "data": None} for _ in ops
+        ]
+    )
     db.execute_logical_write_operation = MagicMock(
         return_value={
             "success": True,
@@ -120,10 +140,11 @@ def test_cst_save_tree_physical_lines_near_logical(tmp_path) -> None:
         )
         assert result["success"] is True
         on_disk = path.read_text(encoding="utf-8")
-        logical, _ = strip_persisted_node_ids(on_disk)
+        logical, legacy = strip_persisted_node_ids(on_disk)
         logical_n = len(logical.splitlines())
         physical_n = len(on_disk.splitlines())
-        assert physical_n <= logical_n + 12
+        assert not legacy
+        assert physical_n == logical_n
     finally:
         remove_tree(tree.tree_id)
 

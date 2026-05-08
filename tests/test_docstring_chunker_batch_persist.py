@@ -22,7 +22,7 @@ from code_analysis.core.docstring_chunker_pkg.docstring_chunker import Docstring
 
 @pytest.fixture
 def mock_db_with_execute_batch():
-    """Database mock that records upsert + execute_batch (mirrors CodeDatabase)."""
+    """Database mock that records upsert + execute_batch (DatabaseClient-shaped)."""
     mock = Mock()
     mock.execute_batch_calls = []
     mock.upsert_code_chunks_batch_calls: list = []

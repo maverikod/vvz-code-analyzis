@@ -1,43 +1,41 @@
 """
-Integration tests for entity cross-ref: update_file_data_atomic and get_entity_dependencies.
+Integration tests for entity cross-ref via usages + build_entity_cross_ref_for_file.
+
+Exercises legacy DB helpers wired through DatabaseClient over in-process RPC (see
+:class:`tests.sqlite_in_process_legacy_facade.SqliteLegacyRpcFacade`).
+
+Note: ``update_file_data_atomic`` with an active SQLite RPC transaction is not used
+here: that combination can deadlock; the asserted behavior is usages → cross-ref
+resolution and cleanup via ``clear_file_data``.
 
 Author: Vasiliy Zdanovskiy
 email: vasilyvz@gmail.com
 """
 
 import os
-import tempfile
 import uuid
-from pathlib import Path
+from typing import Any, cast
 
 import pytest
 
-from code_analysis.core.database import CodeDatabase
+from tests.sqlite_in_process_legacy_facade import make_sqlite_in_process_legacy_facade
+
+from code_analysis.core.entity_cross_ref_builder import build_entity_cross_ref_for_file
+
+
+def _nid() -> str:
+    """Return UUID4 strings for CST node placeholders (must pass UUID validation)."""
+    return str(uuid.uuid4())
 
 
 @pytest.fixture
-def temp_db():
-    """Create temporary database for testing (in-process CodeDatabase)."""
-    with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
-        db_path = Path(f.name)
-    driver_config = {
-        "type": "sqlite",
-        "config": {"path": str(db_path)},
-    }
-    original_env = os.environ.get("CODE_ANALYSIS_DB_WORKER")
-    os.environ["CODE_ANALYSIS_DB_WORKER"] = "1"
+def temp_db(tmp_path):
+    """SQLite + in-process RPC + DatabaseClient."""
+    facade, raw_client = make_sqlite_in_process_legacy_facade(tmp_path)
     try:
-        db = CodeDatabase(driver_config)
-        db.sync_schema()
-        yield db
-        db.close()
+        yield facade
     finally:
-        if original_env is None:
-            os.environ.pop("CODE_ANALYSIS_DB_WORKER", None)
-        else:
-            os.environ["CODE_ANALYSIS_DB_WORKER"] = original_env
-        if db_path.exists():
-            db_path.unlink(missing_ok=True)
+        raw_client.disconnect()
 
 
 @pytest.fixture
@@ -54,23 +52,9 @@ def test_project(temp_db, tmp_path):
 
 @pytest.fixture
 def test_file_with_call(temp_db, tmp_path, test_project):
-    """Create a file that has a function call (bar calls foo)."""
+    """File row plus ``foo`` / ``bar`` functions and one usage ``bar`` → ``foo``."""
     file_path = tmp_path / "mod.py"
-    source_code = '''"""
-Module with call.
-
-Author: Vasiliy Zdanovskiy
-email: vasilyvz@gmail.com
-"""
-
-def foo():
-    """Foo."""
-    pass
-
-def bar():
-    """Bar calls foo."""
-    foo()
-'''
+    source_code = "def foo():\n" "    pass\n\n\n" "def bar():\n" "    foo()\n"
     file_path.write_text(source_code, encoding="utf-8")
     file_mtime = os.path.getmtime(file_path)
     lines = len(source_code.splitlines())
@@ -78,54 +62,55 @@ def bar():
         path=str(file_path),
         lines=lines,
         last_modified=file_mtime,
-        has_docstring=True,
+        has_docstring=False,
         project_id=test_project,
     )
-    return file_id, file_path, test_project, tmp_path, source_code
-
-
-def test_update_file_data_atomic_builds_entity_cross_ref(temp_db, test_file_with_call):
-    """After update_file_data_atomic, entity_cross_ref has rows and get_dependencies_by_caller works."""
-    file_id, file_path, project_id, root_dir, source_code = test_file_with_call
-
-    temp_db.begin_transaction()
-    result = temp_db.update_file_data_atomic(
-        file_path=str(file_path),
-        project_id=project_id,
-        root_dir=root_dir,
-        source_code=source_code,
+    fid = str(file_id)
+    foo_id = str(uuid.uuid4())
+    bar_id = str(uuid.uuid4())
+    temp_db._execute(
+        "INSERT INTO functions (id, file_id, name, line, end_line, args, docstring, cst_node_id) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        (foo_id, fid, "foo", 1, 2, "[]", None, _nid()),
     )
-    assert result.get("success") is True, result.get("error")
-    temp_db.commit_transaction()
-
-    # Get function ids: bar (caller) and foo (callee)
-    funcs = temp_db._fetchall(
-        "SELECT id, name FROM functions WHERE file_id = ? ORDER BY line",
-        (file_id,),
+    temp_db._execute(
+        "INSERT INTO functions (id, file_id, name, line, end_line, args, docstring, cst_node_id) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        (bar_id, fid, "bar", 4, 5, "[]", None, _nid()),
     )
-    name_to_id = {r["name"]: r["id"] for r in funcs}
-    assert "foo" in name_to_id
-    assert "bar" in name_to_id
-    bar_id = name_to_id["bar"]
-    foo_id = name_to_id["foo"]
+    temp_db._execute(
+        """INSERT INTO usages (file_id, line, usage_type, target_type, target_name, target_class)
+           VALUES (?, ?, ?, ?, ?, ?)""",
+        (fid, 5, "call", "function", "foo", None),
+    )
+    temp_db._commit()
 
-    # Entity cross-ref should have been built
+    added = build_entity_cross_ref_for_file(
+        temp_db, cast(Any, fid), test_project, source_code
+    )
+    assert added >= 1
+
+    return fid, foo_id, bar_id, file_path, test_project
+
+
+def test_cross_ref_roundtrip_from_usages_clear_file_removes_cross_ref(
+    temp_db, test_file_with_call
+):
+    """Rows exist after build; ``get_dependencies_by_caller`` / ``clear_file_data`` behave."""
+    file_id, foo_id, bar_id, _path, _ = test_file_with_call
+
     rows = temp_db._fetchall(
         "SELECT * FROM entity_cross_ref WHERE file_id = ?", (file_id,)
     )
-    assert len(rows) >= 1, "Expected at least one entity_cross_ref row (bar -> foo)"
+    assert len(rows) >= 1
 
-    # get_dependencies_by_caller(bar) should return foo
     deps = temp_db.get_dependencies_by_caller("function", bar_id)
-    assert len(deps) >= 1
     callee_ids = [
         d["callee_entity_id"] for d in deps if d["callee_entity_type"] == "function"
     ]
     assert foo_id in callee_ids
 
-    # get_dependents_by_callee(foo) should return bar
     dependents = temp_db.get_dependents_by_callee("function", foo_id)
-    assert len(dependents) >= 1
     caller_ids = [
         d["caller_entity_id"]
         for d in dependents
@@ -133,33 +118,10 @@ def test_update_file_data_atomic_builds_entity_cross_ref(temp_db, test_file_with
     ]
     assert bar_id in caller_ids
 
-
-def test_clear_file_data_removes_entity_cross_ref(temp_db, test_file_with_call):
-    """clear_file_data removes entity_cross_ref rows for the file."""
-    file_id, file_path, project_id, root_dir, source_code = test_file_with_call
-
-    temp_db.begin_transaction()
-    result = temp_db.update_file_data_atomic(
-        file_path=str(file_path),
-        project_id=project_id,
-        root_dir=root_dir,
-        source_code=source_code,
-    )
-    assert result.get("success") is True
-    temp_db.commit_transaction()
-
-    rows_before = temp_db._fetchall(
-        "SELECT COUNT(*) as c FROM entity_cross_ref WHERE file_id = ?",
-        (file_id,),
-    )
-    count_before = rows_before[0]["c"] if rows_before else 0
-    assert count_before >= 1
-
     temp_db.clear_file_data(file_id)
 
     rows_after = temp_db._fetchall(
-        "SELECT COUNT(*) as c FROM entity_cross_ref WHERE file_id = ?",
-        (file_id,),
+        "SELECT COUNT(*) as c FROM entity_cross_ref WHERE file_id = ?", (file_id,)
     )
     count_after = rows_after[0]["c"] if rows_after else 0
     assert count_after == 0

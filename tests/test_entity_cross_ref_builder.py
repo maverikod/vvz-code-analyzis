@@ -11,8 +11,8 @@ from pathlib import Path
 
 import pytest
 
-from code_analysis.core.database import CodeDatabase
-from code_analysis.core.database.base import create_driver_config_for_worker
+from tests.sqlite_in_process_legacy_facade import make_sqlite_in_process_legacy_facade
+
 from code_analysis.core.entity_cross_ref_builder import (
     resolve_caller,
     resolve_callee,
@@ -35,15 +35,12 @@ def project_id():
 
 @pytest.fixture
 def test_db(temp_dir):
-    """Create test database with full schema."""
-    db_path = temp_dir / "test.db"
-    driver_config = create_driver_config_for_worker(
-        db_path, driver_type="sqlite", backup_dir=temp_dir / "backups"
-    )
-    db = CodeDatabase(driver_config=driver_config)
-    db.sync_schema()
-    yield db
-    db.close()
+    """Create test database with full schema via in-process RPC + DatabaseClient."""
+    facade, raw_client = make_sqlite_in_process_legacy_facade(temp_dir)
+    try:
+        yield facade
+    finally:
+        raw_client.disconnect()
 
 
 @pytest.fixture
@@ -67,40 +64,47 @@ def file_with_entities(test_db, test_project, temp_dir):
     """Create a file and entities with line ranges for resolve_caller."""
     file_path = temp_dir / "mod.py"
     file_path.write_text("", encoding="utf-8")
+    file_row_id = str(uuid.uuid4())
     test_db._execute(
-        """INSERT INTO files (project_id, path, lines, last_modified, has_docstring)
-           VALUES (?, ?, 10, 0, 0)""",
-        (test_project, str(file_path)),
+        """INSERT INTO files (id, project_id, path, lines, last_modified, has_docstring)
+           VALUES (?, ?, ?, 10, 0, 0)""",
+        (file_row_id, test_project, str(file_path)),
     )
     test_db._commit()
-    file_id = test_db._lastrowid()
+    file_id = file_row_id
 
     # Class lines 1-20
     class_cst_id = _make_uuid4()
+    class_row_id = str(uuid.uuid4())
     test_db._execute(
-        "INSERT INTO classes (file_id, name, line, end_line, docstring, bases, cst_node_id) VALUES (?, ?, ?, ?, ?, ?, ?)",
-        (file_id, "Foo", 1, 20, None, "[]", class_cst_id),
+        "INSERT INTO classes (id, file_id, name, line, end_line, docstring, bases, cst_node_id) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        (class_row_id, file_id, "Foo", 1, 20, None, "[]", class_cst_id),
     )
     test_db._commit()
-    class_id = test_db._lastrowid()
+    class_id = class_row_id
 
     # Method lines 3-8
     method_cst_id = _make_uuid4()
+    method_row_id = str(uuid.uuid4())
     test_db._execute(
-        "INSERT INTO methods (class_id, name, line, end_line, args, docstring, cst_node_id) VALUES (?, ?, ?, ?, ?, ?, ?)",
-        (class_id, "bar", 3, 8, "[]", None, method_cst_id),
+        "INSERT INTO methods (id, class_id, name, line, end_line, args, docstring, cst_node_id) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        (method_row_id, class_id, "bar", 3, 8, "[]", None, method_cst_id),
     )
     test_db._commit()
-    method_id = test_db._lastrowid()
+    method_id = method_row_id
 
     # Function lines 12-18
     func_cst_id = _make_uuid4()
+    function_row_id = str(uuid.uuid4())
     test_db._execute(
-        "INSERT INTO functions (file_id, name, line, end_line, args, docstring, cst_node_id) VALUES (?, ?, ?, ?, ?, ?, ?)",
-        (file_id, "baz", 12, 18, "[]", None, func_cst_id),
+        "INSERT INTO functions (id, file_id, name, line, end_line, args, docstring, cst_node_id) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        (function_row_id, file_id, "baz", 12, 18, "[]", None, func_cst_id),
     )
     test_db._commit()
-    function_id = test_db._lastrowid()
+    function_id = function_row_id
 
     return {
         "file_id": file_id,

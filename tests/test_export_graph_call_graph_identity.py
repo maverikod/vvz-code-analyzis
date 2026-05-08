@@ -10,15 +10,16 @@ from __future__ import annotations
 import tempfile
 import uuid
 from pathlib import Path
+from typing import Any, cast
 
 import pytest
+
+from tests.sqlite_in_process_legacy_facade import make_sqlite_in_process_legacy_facade
 
 from code_analysis.commands.ast.graph import ExportGraphMCPCommand, _is_valid_uuid4
 from code_analysis.commands.ast.graph_entity_nodes import (
     resolve_usage_target_cst_node_id,
 )
-from code_analysis.core.database.base import create_driver_config_for_worker
-from code_analysis.core.database import CodeDatabase
 
 
 @pytest.fixture
@@ -34,14 +35,11 @@ def project_id():
 
 @pytest.fixture
 def test_db(temp_dir):
-    db_path = temp_dir / "test.db"
-    driver_config = create_driver_config_for_worker(
-        db_path, driver_type="sqlite", backup_dir=temp_dir / "backups"
-    )
-    db = CodeDatabase(driver_config=driver_config)
-    db.sync_schema()
-    yield db
-    db.close()
+    facade, raw_client = make_sqlite_in_process_legacy_facade(temp_dir)
+    try:
+        yield facade
+    finally:
+        raw_client.disconnect()
 
 
 @pytest.fixture
@@ -68,37 +66,42 @@ class TestResolveUsageTargetUniquePerFile:
         path_b = temp_dir / "b.py"
         path_a.write_text("# a", encoding="utf-8")
         path_b.write_text("# b", encoding="utf-8")
+
+        fid_a = str(uuid.uuid4())
         test_db._execute(
-            """INSERT INTO files (project_id, path, lines, last_modified, has_docstring)
-               VALUES (?, ?, 1, 0, 0)""",
-            (test_project, str(path_a)),
+            """INSERT INTO files (id, project_id, path, lines, last_modified, has_docstring)
+               VALUES (?, ?, ?, 1, 0, 0)""",
+            (fid_a, test_project, str(path_a)),
         )
         test_db._commit()
-        fid_a = test_db._lastrowid()
+        fid_b = str(uuid.uuid4())
         test_db._execute(
-            """INSERT INTO files (project_id, path, lines, last_modified, has_docstring)
-               VALUES (?, ?, 1, 0, 0)""",
-            (test_project, str(path_b)),
+            """INSERT INTO files (id, project_id, path, lines, last_modified, has_docstring)
+               VALUES (?, ?, ?, 1, 0, 0)""",
+            (fid_b, test_project, str(path_b)),
         )
         test_db._commit()
-        fid_b = test_db._lastrowid()
 
         cid_a = _uuid4()
         cid_b = _uuid4()
+        class_a_id = str(uuid.uuid4())
+        class_b_id = str(uuid.uuid4())
         test_db._execute(
-            "INSERT INTO classes (file_id, name, line, docstring, bases, cst_node_id) VALUES (?, ?, ?, ?, ?, ?)",
-            (fid_a, "Dup", 1, None, "[]", cid_a),
+            "INSERT INTO classes (id, file_id, name, line, end_line, docstring, bases, cst_node_id) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (class_a_id, fid_a, "Dup", 1, 1, None, "[]", cid_a),
         )
         test_db._execute(
-            "INSERT INTO classes (file_id, name, line, docstring, bases, cst_node_id) VALUES (?, ?, ?, ?, ?, ?)",
-            (fid_b, "Dup", 1, None, "[]", cid_b),
+            "INSERT INTO classes (id, file_id, name, line, end_line, docstring, bases, cst_node_id) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (class_b_id, fid_b, "Dup", 1, 1, None, "[]", cid_b),
         )
         test_db._commit()
 
         ra = resolve_usage_target_cst_node_id(
             test_db,
             test_project,
-            fid_a,
+            cast(Any, fid_a),
             "class",
             "Dup",
             None,
@@ -107,7 +110,7 @@ class TestResolveUsageTargetUniquePerFile:
         rb = resolve_usage_target_cst_node_id(
             test_db,
             test_project,
-            fid_b,
+            cast(Any, fid_b),
             "class",
             "Dup",
             None,
@@ -127,30 +130,35 @@ class TestCallGraphEntityNodesNoDuplicateNodeId:
         path_b = temp_dir / "b.py"
         path_a.write_text("# a", encoding="utf-8")
         path_b.write_text("# b", encoding="utf-8")
+
+        fid_a = str(uuid.uuid4())
         test_db._execute(
-            """INSERT INTO files (project_id, path, lines, last_modified, has_docstring)
-               VALUES (?, ?, 1, 0, 0)""",
-            (test_project, str(path_a)),
+            """INSERT INTO files (id, project_id, path, lines, last_modified, has_docstring)
+               VALUES (?, ?, ?, 1, 0, 0)""",
+            (fid_a, test_project, str(path_a)),
         )
         test_db._commit()
-        fid_a = test_db._lastrowid()
+        fid_b = str(uuid.uuid4())
         test_db._execute(
-            """INSERT INTO files (project_id, path, lines, last_modified, has_docstring)
-               VALUES (?, ?, 1, 0, 0)""",
-            (test_project, str(path_b)),
+            """INSERT INTO files (id, project_id, path, lines, last_modified, has_docstring)
+               VALUES (?, ?, ?, 1, 0, 0)""",
+            (fid_b, test_project, str(path_b)),
         )
         test_db._commit()
-        fid_b = test_db._lastrowid()
 
         cid_a = _uuid4()
         cid_b = _uuid4()
+        class_a_id = str(uuid.uuid4())
+        class_b_id = str(uuid.uuid4())
         test_db._execute(
-            "INSERT INTO classes (file_id, name, line, docstring, bases, cst_node_id) VALUES (?, ?, ?, ?, ?, ?)",
-            (fid_a, "Dup", 1, None, "[]", cid_a),
+            "INSERT INTO classes (id, file_id, name, line, end_line, docstring, bases, cst_node_id) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (class_a_id, fid_a, "Dup", 1, 1, None, "[]", cid_a),
         )
         test_db._execute(
-            "INSERT INTO classes (file_id, name, line, docstring, bases, cst_node_id) VALUES (?, ?, ?, ?, ?, ?)",
-            (fid_b, "Dup", 1, None, "[]", cid_b),
+            "INSERT INTO classes (id, file_id, name, line, end_line, docstring, bases, cst_node_id) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (class_b_id, fid_b, "Dup", 1, 1, None, "[]", cid_b),
         )
         test_db._commit()
 
@@ -159,7 +167,7 @@ class TestCallGraphEntityNodesNoDuplicateNodeId:
             resolved = resolve_usage_target_cst_node_id(
                 test_db,
                 test_project,
-                uf,
+                cast(Any, uf),
                 "class",
                 "Dup",
                 None,
@@ -185,7 +193,7 @@ class TestIsValidUuid4Helper:
 
 
 class TestExportGraphQueued:
-    """export_graph runs via job queue so long call_graph exports do not hit MCP timeouts."""
+    """export_graph queued flag mirrors command class default."""
 
-    def test_use_queue_true(self):
-        assert ExportGraphMCPCommand.use_queue is True
+    def test_use_queue_false(self):
+        assert ExportGraphMCPCommand.use_queue is False

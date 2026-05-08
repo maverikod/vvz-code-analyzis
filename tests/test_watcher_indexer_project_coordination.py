@@ -1,8 +1,8 @@
 """
 Watcher vs indexer project-scoped coordination (Step 25).
 
-Uses test-only temp projects and SQLite CodeDatabase; optional PostgreSQL parity
-when CODE_ANALYSIS_POSTGRES_TEST_DSN is set. Never uses vast_srv.
+Uses test-only temp projects and SQLite via DatabaseClient + in-process RPC;
+optional PostgreSQL parity when CODE_ANALYSIS_POSTGRES_TEST_DSN is set. Never uses vast_srv.
 
 Author: Vasiliy Zdanovskiy
 email: vasilyvz@gmail.com
@@ -19,7 +19,7 @@ from typing import Any, Iterator, Tuple
 
 import pytest
 
-from code_analysis.core.database import CodeDatabase
+from code_analysis.core.database_client.client import DatabaseClient
 from code_analysis.core.database_client.transient import is_structured_retryable_error
 from code_analysis.core.database_driver_pkg.driver_factory import create_driver
 from code_analysis.core.database_driver_pkg.drivers.postgres_run import (
@@ -37,6 +37,8 @@ from code_analysis.core.worker_project_activity import (
     try_acquire_project_activity,
 )
 
+from tests.sqlite_inprocess_database import sqlite_inprocess_database_client
+
 # Project A = busy; project B = free (UUID v4-form strings for projectid files)
 PA = "11111111-1111-4111-8111-1111111111a1"
 PB = "22222222-2222-4222-8222-2222222222b2"
@@ -46,7 +48,7 @@ _LOG_PROC = "code_analysis.core.file_watcher_pkg.processor_queue"
 _PG_ENV = "CODE_ANALYSIS_POSTGRES_TEST_DSN"
 
 
-def _row_count(db: CodeDatabase, sql: str, params: Tuple[Any, ...] = ()) -> int:
+def _row_count(db: DatabaseClient, sql: str, params: Tuple[Any, ...] = ()) -> int:
     r = db.execute(sql, params)
     data = r.get("data", []) if isinstance(r, dict) else []
     if not data:
@@ -55,7 +57,9 @@ def _row_count(db: CodeDatabase, sql: str, params: Tuple[Any, ...] = ()) -> int:
     return int(v)
 
 
-def _file_cols_snapshot(db: CodeDatabase, project_id: str) -> Tuple[int, int, int, int]:
+def _file_cols_snapshot(
+    db: DatabaseClient, project_id: str
+) -> Tuple[int, int, int, int]:
     n_files = _row_count(
         db, "SELECT COUNT(*) AS c FROM files WHERE project_id = ?", (project_id,)
     )
@@ -82,33 +86,30 @@ def _file_cols_snapshot(db: CodeDatabase, project_id: str) -> Tuple[int, int, in
 
 
 @pytest.fixture
-def coord_db(tmp_path: Path) -> Iterator[CodeDatabase]:
+def coord_client(tmp_path: Path) -> Iterator[DatabaseClient]:
     db_path = tmp_path / "wic.db"
-    driver_config = {
-        "type": "sqlite",
-        "config": {"path": str(db_path)},
-    }
+    backup_dir = tmp_path / "backups"
     original = os.environ.get("CODE_ANALYSIS_DB_WORKER")
     os.environ["CODE_ANALYSIS_DB_WORKER"] = "1"
-    db = CodeDatabase(driver_config=driver_config)
+    db = None
     try:
-        db.sync_schema()
+        db = sqlite_inprocess_database_client(db_path, backup_dir=backup_dir)
         yield db
     finally:
-        db.close()
+        if db is not None:
+            db.disconnect()
         if original is None:
             os.environ.pop("CODE_ANALYSIS_DB_WORKER", None)
         else:
             os.environ["CODE_ANALYSIS_DB_WORKER"] = original
 
 
-def _insert_project(db: CodeDatabase, root: Path, pid: str) -> None:
-    db._execute(
+def _insert_project(client: DatabaseClient, root: Path, pid: str) -> None:
+    client.execute(
         "INSERT OR REPLACE INTO projects (id, root_path, name, updated_at) "
         "VALUES (?, ?, ?, julianday('now'))",
         (pid, str(root.resolve()), root.name),
     )
-    db._commit()
 
 
 def _create_projectid(root: Path, pid: str) -> None:
@@ -120,57 +121,58 @@ def _create_projectid(root: Path, pid: str) -> None:
 # --- Group 1: same-project mutation exclusion ---
 
 
-def test_indexer_skips_project_owned_by_watcher(coord_db: CodeDatabase) -> None:
+def test_indexer_skips_project_owned_by_watcher(
+    coord_client: DatabaseClient, tmp_path: Path
+) -> None:
     """Indexer path does not mutate A while watcher holds a non-expired lease."""
-    root = Path(coord_db.driver_config["config"]["path"])
-    proot = root.parent / "pidx"
+    root = tmp_path
+    proot = root / "pidx"
     proot.mkdir(parents=True, exist_ok=True)
-    _insert_project(coord_db, proot, PA)
+    _insert_project(coord_client, proot, PA)
     # Seed one file row for A
     fpath = (proot / "x.py").resolve()
     fpath.write_text("# x", encoding="utf-8")
     mtime = fpath.stat().st_mtime
-    coord_db._execute(
+    coord_client.execute(
         "INSERT INTO files (path, lines, last_modified, has_docstring, project_id, "
         "created_at, updated_at) VALUES (?, 1, ?, 0, ?, julianday('now'), julianday('now'))",
         (str(fpath), mtime, PA),
     )
-    coord_db._commit()
-    before = _file_cols_snapshot(coord_db, PA)
+    before = _file_cols_snapshot(coord_client, PA)
 
     assert try_acquire_project_activity(
-        coord_db, PA, "watcher", "w1", "watcher_staging", 300.0
+        coord_client, PA, "watcher", "w1", "watcher_staging", 300.0
     )
     # Simulate core indexing loop: would skip before SELECT batch
     assert not try_acquire_project_activity(
-        coord_db, PA, "indexer", "i1", "indexer_processing", 120.0
+        coord_client, PA, "indexer", "i1", "indexer_processing", 120.0
     )
     # No indexer mutation: counts unchanged
-    after = _file_cols_snapshot(coord_db, PA)
+    after = _file_cols_snapshot(coord_client, PA)
     assert after == before
-    assert get_project_activity(coord_db, PA) is not None
-    assert release_project_activity(coord_db, PA, "watcher", "w1")
+    assert get_project_activity(coord_client, PA) is not None
+    assert release_project_activity(coord_client, PA, "watcher", "w1")
 
 
 def test_watcher_skips_project_owned_by_indexer(
-    coord_db: CodeDatabase, caplog: pytest.LogCaptureFixture, tmp_path: Path
+    coord_client: DatabaseClient, caplog: pytest.LogCaptureFixture, tmp_path: Path
 ) -> None:
     """Watcher queue skips A when indexer holds the lease; DB unchanged for A."""
     root = tmp_path / "pwa"
     root.mkdir()
-    _insert_project(coord_db, root, PA)
+    _insert_project(coord_client, root, PA)
     fpath = (root / "only.py").resolve()
     fpath.write_text("v1", encoding="utf-8")
     mtime = fpath.stat().st_mtime
     n_before = _row_count(
-        coord_db, "SELECT COUNT(*) AS c FROM files WHERE project_id = ?", (PA,)
+        coord_client, "SELECT COUNT(*) AS c FROM files WHERE project_id = ?", (PA,)
     )
 
     assert try_acquire_project_activity(
-        coord_db, PA, "indexer", "ix0", "indexer_processing", 300.0
+        coord_client, PA, "indexer", "ix0", "indexer_processing", 300.0
     )
     try:
-        proc = FileChangeProcessor(coord_db, [root.resolve()])
+        proc = FileChangeProcessor(coord_client, [root.resolve()])
         delta = {
             PA: FileDelta(
                 new_files=[(str(fpath), mtime, 2)],
@@ -183,7 +185,7 @@ def test_watcher_skips_project_owned_by_indexer(
                 root,
                 delta,
                 watcher_coord={
-                    "database": coord_db,
+                    "database": coord_client,
                     "owner_id": "watcher-test-1",
                     "lease_ttl": 120.0,
                 },
@@ -191,7 +193,7 @@ def test_watcher_skips_project_owned_by_indexer(
         # Skipped: errors account for work units
         assert stats.get("errors", 0) >= 1
         n_after = _row_count(
-            coord_db, "SELECT COUNT(*) AS c FROM files WHERE project_id = ?", (PA,)
+            coord_client, "SELECT COUNT(*) AS c FROM files WHERE project_id = ?", (PA,)
         )
         assert n_after == n_before
         text = caplog.text
@@ -200,87 +202,84 @@ def test_watcher_skips_project_owned_by_indexer(
             or "watcher skip" in text
         )
     finally:
-        release_project_activity(coord_db, PA, "indexer", "ix0")
+        release_project_activity(coord_client, PA, "indexer", "ix0")
 
 
 def test_mutating_command_owner_blocks_watcher_and_indexer(
-    coord_db: CodeDatabase,
+    coord_client: DatabaseClient,
 ) -> None:
     assert try_acquire_project_activity(
-        coord_db, PA, "command", "c1", "command_mutation", 200.0
+        coord_client, PA, "command", "c1", "command_mutation", 200.0
     )
     try:
         assert not try_acquire_project_activity(
-            coord_db, PA, "watcher", "w1", "watcher_staging", 60.0
+            coord_client, PA, "watcher", "w1", "watcher_staging", 60.0
         )
         assert not try_acquire_project_activity(
-            coord_db, PA, "indexer", "i1", "indexer_processing", 60.0
+            coord_client, PA, "indexer", "i1", "indexer_processing", 60.0
         )
     finally:
-        release_project_activity(coord_db, PA, "command", "c1")
+        release_project_activity(coord_client, PA, "command", "c1")
 
 
 # --- Group 2: different projects ---
 
 
 def test_watcher_owned_project_does_not_block_indexer_on_other_project(
-    coord_db: CodeDatabase, tmp_path: Path
+    coord_client: DatabaseClient, tmp_path: Path
 ) -> None:
     a_root = tmp_path / "ar"
     b_root = tmp_path / "broot"
     a_root.mkdir(parents=True, exist_ok=True)
     b_root.mkdir(parents=True, exist_ok=True)
-    coord_db._execute("DELETE FROM projects WHERE id IN (?, ?)", (PA, PB))
-    coord_db._commit()
-    _insert_project(coord_db, a_root, PA)
-    _insert_project(coord_db, b_root, PB)
+    coord_client.execute("DELETE FROM projects WHERE id IN (?, ?)", (PA, PB))
+    _insert_project(coord_client, a_root, PA)
+    _insert_project(coord_client, b_root, PB)
     try_acquire_project_activity(
-        coord_db, PA, "watcher", "w1", "watcher_staging", 120.0
+        coord_client, PA, "watcher", "w1", "watcher_staging", 120.0
     )
     assert try_acquire_project_activity(
-        coord_db, PB, "indexer", "i1", "indexer_processing", 60.0
+        coord_client, PB, "indexer", "i1", "indexer_processing", 60.0
     )
-    coord_db._execute(
+    coord_client.execute(
         "INSERT INTO files (path, lines, last_modified, has_docstring, project_id, "
         "created_at, updated_at) VALUES (?, 1, 1.0, 0, ?, julianday('now'), julianday('now'))",
         (str(b_root / "b_only.py"), PB),
     )
-    coord_db._commit()
     assert (
         _row_count(
-            coord_db, "SELECT COUNT(*) AS c FROM files WHERE project_id = ?", (PA,)
+            coord_client, "SELECT COUNT(*) AS c FROM files WHERE project_id = ?", (PA,)
         )
         == 0
     )
     assert (
         _row_count(
-            coord_db, "SELECT COUNT(*) AS c FROM files WHERE project_id = ?", (PB,)
+            coord_client, "SELECT COUNT(*) AS c FROM files WHERE project_id = ?", (PB,)
         )
         == 1
     )
-    release_project_activity(coord_db, PA, "watcher", "w1")
-    release_project_activity(coord_db, PB, "indexer", "i1")
+    release_project_activity(coord_client, PA, "watcher", "w1")
+    release_project_activity(coord_client, PB, "indexer", "i1")
 
 
 def test_indexer_owned_project_does_not_block_watcher_on_other_project(
-    coord_db: CodeDatabase, tmp_path: Path
+    coord_client: DatabaseClient, tmp_path: Path
 ) -> None:
     a_root = tmp_path / "a2"
     b_root = tmp_path / "b2"
     a_root.mkdir(parents=True, exist_ok=True)
     b_root.mkdir(parents=True, exist_ok=True)
     _create_projectid(b_root, PB)
-    coord_db._execute("DELETE FROM projects WHERE id IN (?, ?)", (PA, PB))
-    coord_db._commit()
-    _insert_project(coord_db, a_root, PA)
-    _insert_project(coord_db, b_root, PB)
+    coord_client.execute("DELETE FROM projects WHERE id IN (?, ?)", (PA, PB))
+    _insert_project(coord_client, a_root, PA)
+    _insert_project(coord_client, b_root, PB)
     try_acquire_project_activity(
-        coord_db, PA, "indexer", "ix1", "indexer_processing", 120.0
+        coord_client, PA, "indexer", "ix1", "indexer_processing", 120.0
     )
     fpath = (b_root / "watched.py").resolve()
     fpath.write_text("x", encoding="utf-8")
     m = fpath.stat().st_mtime
-    proc = FileChangeProcessor(coord_db, [b_root])
+    proc = FileChangeProcessor(coord_client, [b_root])
     d = {
         PB: FileDelta(
             new_files=[(str(fpath), m, len(fpath.read_bytes()))],
@@ -292,7 +291,7 @@ def test_indexer_owned_project_does_not_block_watcher_on_other_project(
         b_root,
         d,
         watcher_coord={
-            "database": coord_db,
+            "database": coord_client,
             "owner_id": "w2",
             "lease_ttl": 200.0,
         },
@@ -300,24 +299,23 @@ def test_indexer_owned_project_does_not_block_watcher_on_other_project(
     assert st.get("new_files", 0) >= 1
     assert (
         _row_count(
-            coord_db, "SELECT COUNT(*) AS c FROM files WHERE project_id = ?", (PB,)
+            coord_client, "SELECT COUNT(*) AS c FROM files WHERE project_id = ?", (PB,)
         )
         == 1
     )
     assert (
         _row_count(
-            coord_db, "SELECT COUNT(*) AS c FROM files WHERE project_id = ?", (PA,)
+            coord_client, "SELECT COUNT(*) AS c FROM files WHERE project_id = ?", (PA,)
         )
         == 0
     )
-    release_project_activity(coord_db, PA, "indexer", "ix1")
+    release_project_activity(coord_client, PA, "indexer", "ix1")
 
 
 def test_busy_project_does_not_stop_whole_watch_dir_cycle(
-    coord_db: CodeDatabase, tmp_path: Path
+    coord_client: DatabaseClient, tmp_path: Path
 ) -> None:
-    coord_db._execute("DELETE FROM files WHERE project_id IN (?, ?)", (PA, PB))
-    coord_db._commit()
+    coord_client.execute("DELETE FROM files WHERE project_id IN (?, ?)", (PA, PB))
     watch = tmp_path / "wd"
     watch.mkdir(parents=True)
     pa = watch / "pa"
@@ -328,42 +326,43 @@ def test_busy_project_does_not_stop_whole_watch_dir_cycle(
     _create_projectid(pb, PB)
     (pa / "a.py").write_text("# a", encoding="utf-8")
     (pb / "b.py").write_text("# b", encoding="utf-8")
-    _insert_project(coord_db, pa, PA)
-    _insert_project(coord_db, pb, PB)
+    _insert_project(coord_client, pa, PA)
+    _insert_project(coord_client, pb, PB)
     # Indexer blocks A; watcher should still process B
     try_acquire_project_activity(
-        coord_db, PA, "indexer", "idx-block", "indexer_processing", 500.0
+        coord_client, PA, "indexer", "idx-block", "indexer_processing", 500.0
     )
     locks = tmp_path / "locks"
     locks.mkdir()
     wd_id = str(uuid.uuid4())
-    coord_db._execute(
+    coord_client.execute(
         "INSERT OR REPLACE INTO watch_dirs (id, name, updated_at) VALUES (?, ?, julianday('now'))",
         (wd_id, "wic-test-wd"),
     )
-    coord_db._commit()
     spec = WatchDirSpec(watch_dir=watch, watch_dir_id=wd_id, ignore_patterns=())
-    proc = FileChangeProcessor(coord_db, [watch])
-    stats = scan_watch_dir(spec, proc, coord_db, (), locks, 424242, config_path=None)
+    proc = FileChangeProcessor(coord_client, [watch])
+    stats = scan_watch_dir(
+        spec, proc, coord_client, (), locks, 424242, config_path=None
+    )
     # B should have been file-registered; A skipped for queue
     assert stats.get("errors", 0) == 0
     n_b = _row_count(
-        coord_db, "SELECT COUNT(*) AS c FROM files WHERE project_id = ?", (PB,)
+        coord_client, "SELECT COUNT(*) AS c FROM files WHERE project_id = ?", (PB,)
     )
     assert n_b >= 1
     n_a = _row_count(
-        coord_db, "SELECT COUNT(*) AS c FROM files WHERE project_id = ?", (PA,)
+        coord_client, "SELECT COUNT(*) AS c FROM files WHERE project_id = ?", (PA,)
     )
     # A may be 0 (skipped before queue) or unchanged if pre-existing
     assert n_a == 0
-    release_project_activity(coord_db, PA, "indexer", "idx-block")
+    release_project_activity(coord_client, PA, "indexer", "idx-block")
 
 
 # --- Group 3: staging / paths / ignore (feasible slice) ---
 
 
 def test_filesystem_scan_groups_staged_delta_per_project(
-    coord_db: CodeDatabase, tmp_path: Path
+    coord_client: DatabaseClient, tmp_path: Path
 ) -> None:
     """Scanned file dict keys drive per-project_id deltas (candidate sets)."""
     p1 = tmp_path / "p1"
@@ -378,7 +377,7 @@ def test_filesystem_scan_groups_staged_delta_per_project(
     f1.write_text("1", encoding="utf-8")
     f2.write_text("2", encoding="utf-8")
     scanned = scan_directory(tmp_path, [tmp_path])
-    dmap = compute_delta(coord_db, [tmp_path.resolve()], tmp_path, scanned)
+    dmap = compute_delta(coord_client, [tmp_path.resolve()], tmp_path, scanned)
     assert set(dmap.keys()) == {id1, id2}
     assert len(dmap[id1].new_files) >= 1
     assert len(dmap[id2].new_files) >= 1
@@ -400,16 +399,16 @@ def test_project_relative_path_is_posix_style(tmp_path: Path) -> None:
 
 
 def test_queue_batch_rejects_path_outside_project_root(
-    coord_db: CodeDatabase, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    coord_client: DatabaseClient, tmp_path: Path, caplog: pytest.LogCaptureFixture
 ) -> None:
     proot = tmp_path / "pout"
     proot.mkdir()
     _create_projectid(proot, PA)
-    _insert_project(coord_db, proot, PA)
+    _insert_project(coord_client, proot, PA)
     outside = (tmp_path / "outside.py").resolve()
     outside.write_text("z", encoding="utf-8")
     m = outside.stat().st_mtime
-    proc = FileChangeProcessor(coord_db, [proot])
+    proc = FileChangeProcessor(coord_client, [proot])
     d = {
         PA: FileDelta(
             new_files=[(str(outside), m, 1)], changed_files=[], deleted_files=[]
@@ -420,7 +419,7 @@ def test_queue_batch_rejects_path_outside_project_root(
             proot,
             d,
             watcher_coord={
-                "database": coord_db,
+                "database": coord_client,
                 "owner_id": "ow",
                 "lease_ttl": 200.0,
             },
@@ -429,14 +428,14 @@ def test_queue_batch_rejects_path_outside_project_root(
 
 
 def test_ignore_patterns_exclude_before_db_mutation(
-    coord_db: CodeDatabase,
+    coord_client: DatabaseClient,
     tmp_path: Path,
 ) -> None:
     """Watch-dir ignore removes paths from the scan; no DB row for ignored .tmp."""
     pr = tmp_path / "ign"
     pr.mkdir()
     _create_projectid(pr, PA)
-    _insert_project(coord_db, pr, PA)
+    _insert_project(coord_client, pr, PA)
     (pr / "keep.py").write_text("1", encoding="utf-8")
     (pr / "x.tmp").write_text("2", encoding="utf-8")
     scanned = scan_directory(
@@ -446,14 +445,14 @@ def test_ignore_patterns_exclude_before_db_mutation(
         immediate_project_roots={pr.resolve()},
     )
     assert all(not str(p).endswith(".tmp") for p in scanned.keys())
-    dmap = compute_delta(coord_db, [tmp_path.resolve()], tmp_path, scanned)
+    dmap = compute_delta(coord_client, [tmp_path.resolve()], tmp_path, scanned)
     empty = FileDelta(new_files=[], changed_files=[], deleted_files=[])
     paths = {x[0] for x in dmap.get(PA, empty).new_files}
     assert not any("x.tmp" in p for p in paths)
 
 
 def test_stale_project_removed_from_queue_when_skipped_in_cycle(
-    coord_db: CodeDatabase,
+    coord_client: DatabaseClient,
     tmp_path: Path,
 ) -> None:
     """When A is skipped, delta must not be queued for A (isolation from prior cycle)."""
@@ -463,50 +462,48 @@ def test_stale_project_removed_from_queue_when_skipped_in_cycle(
     pa.mkdir()
     _create_projectid(pa, PA)
     (pa / "f.py").write_text("u", encoding="utf-8")
-    coord_db._execute("DELETE FROM files WHERE project_id = ?", (PA,))
-    coord_db._commit()
-    _insert_project(coord_db, pa, PA)
+    coord_client.execute("DELETE FROM files WHERE project_id = ?", (PA,))
+    _insert_project(coord_client, pa, PA)
     try_acquire_project_activity(
-        coord_db, PA, "indexer", "bl", "indexer_processing", 300.0
+        coord_client, PA, "indexer", "bl", "indexer_processing", 300.0
     )
     locks = tmp_path / "lk"
     locks.mkdir()
     spec = WatchDirSpec(watch_dir=watch, watch_dir_id=str(uuid.uuid4()))
-    proc = FileChangeProcessor(coord_db, [watch])
-    scan_watch_dir(spec, proc, coord_db, (), locks, 43, config_path=None)
+    proc = FileChangeProcessor(coord_client, [watch])
+    scan_watch_dir(spec, proc, coord_client, (), locks, 43, config_path=None)
     n = _row_count(
-        coord_db, "SELECT COUNT(*) AS c FROM files WHERE project_id = ?", (PA,)
+        coord_client, "SELECT COUNT(*) AS c FROM files WHERE project_id = ?", (PA,)
     )
     assert n == 0
-    release_project_activity(coord_db, PA, "indexer", "bl")
+    release_project_activity(coord_client, PA, "indexer", "bl")
 
 
 # --- Group 4: watcher write ordering (integration on SQLite) ---
 
 
 def test_watcher_order_inserts_before_updates_and_unmatched_unchanged(
-    coord_db: CodeDatabase,
+    coord_client: DatabaseClient,
     tmp_path: Path,
 ) -> None:
     pr = tmp_path / "ord"
     pr.mkdir()
     _create_projectid(pr, PA)
-    _insert_project(coord_db, pr, PA)
+    _insert_project(coord_client, pr, PA)
     old = (pr / "old.py").resolve()
     old.write_text("same", encoding="utf-8")
     m_old = old.stat().st_mtime
-    coord_db._execute(
+    coord_client.execute(
         "INSERT INTO files (path, lines, last_modified, has_docstring, project_id, "
         "created_at, updated_at, needs_chunking) VALUES (?, 1, ?, 0, ?, "
         "julianday('now'), julianday('now'), 0)",
         (str(old), m_old, PA),
     )
-    coord_db._commit()
     newp = (pr / "new.py").resolve()
     newp.write_text("n", encoding="utf-8")
     m_new = newp.stat().st_mtime
     # Touch old to same mtime path: compute_delta should not list as changed
-    proc = FileChangeProcessor(coord_db, [pr])
+    proc = FileChangeProcessor(coord_client, [pr])
     scanned = {
         str(newp.resolve()): {
             "path": newp,
@@ -523,7 +520,7 @@ def test_watcher_order_inserts_before_updates_and_unmatched_unchanged(
             "project_root": pr.resolve(),
         },
     }
-    dmap = compute_delta(coord_db, [pr.resolve()], pr, scanned)
+    dmap = compute_delta(coord_client, [pr.resolve()], pr, scanned)
     fd = dmap[PA]
     assert any(str(newp) in t[0] for t in fd.new_files)
     assert not fd.changed_files
@@ -534,31 +531,31 @@ def test_watcher_order_inserts_before_updates_and_unmatched_unchanged(
 
 
 def test_double_queue_same_new_file_does_not_duplicate_row(
-    coord_db: CodeDatabase,
+    coord_client: DatabaseClient,
     tmp_path: Path,
 ) -> None:
     pr = tmp_path / "idp"
     pr.mkdir()
     _create_projectid(pr, PA)
-    _insert_project(coord_db, pr, PA)
+    _insert_project(coord_client, pr, PA)
     fp = (pr / "d.py").resolve()
     fp.write_text("q", encoding="utf-8")
     m = fp.stat().st_mtime
-    proc = FileChangeProcessor(coord_db, [pr])
+    proc = FileChangeProcessor(coord_client, [pr])
     d = {PA: FileDelta(new_files=[(str(fp), m, 1)], changed_files=[], deleted_files=[])}
     st1 = proc.queue_changes(
         pr,
         d,
-        watcher_coord={"database": coord_db, "owner_id": "o1", "lease_ttl": 200.0},
+        watcher_coord={"database": coord_client, "owner_id": "o1", "lease_ttl": 200.0},
     )
     st2 = proc.queue_changes(
         pr,
         d,
-        watcher_coord={"database": coord_db, "owner_id": "o1", "lease_ttl": 200.0},
+        watcher_coord={"database": coord_client, "owner_id": "o1", "lease_ttl": 200.0},
     )
     assert st1.get("new_files", 0) >= 1
     c = _row_count(
-        coord_db,
+        coord_client,
         "SELECT COUNT(*) AS c FROM files WHERE project_id = ? AND path = ?",
         (PA, str(fp)),
     )
@@ -568,30 +565,30 @@ def test_double_queue_same_new_file_does_not_duplicate_row(
 
 
 def test_rerun_watcher_does_not_delete_active_file(
-    coord_db: CodeDatabase,
+    coord_client: DatabaseClient,
     tmp_path: Path,
 ) -> None:
     pr = tmp_path / "r1"
     pr.mkdir()
     _create_projectid(pr, PA)
-    _insert_project(coord_db, pr, PA)
+    _insert_project(coord_client, pr, PA)
     fp = (pr / "keep.py").resolve()
     fp.write_text("k", encoding="utf-8")
     m = fp.stat().st_mtime
-    proc = FileChangeProcessor(coord_db, [pr])
+    proc = FileChangeProcessor(coord_client, [pr])
     d = {PA: FileDelta(new_files=[(str(fp), m, 1)], changed_files=[], deleted_files=[])}
     proc.queue_changes(
         pr,
         d,
-        watcher_coord={"database": coord_db, "owner_id": "o2", "lease_ttl": 200.0},
+        watcher_coord={"database": coord_client, "owner_id": "o2", "lease_ttl": 200.0},
     )
     proc.queue_changes(
         pr,
         d,
-        watcher_coord={"database": coord_db, "owner_id": "o2", "lease_ttl": 200.0},
+        watcher_coord={"database": coord_client, "owner_id": "o2", "lease_ttl": 200.0},
     )
     n_del = _row_count(
-        coord_db,
+        coord_client,
         "SELECT COUNT(*) AS c FROM files WHERE project_id = ? AND deleted = 1",
         (PA,),
     )
@@ -611,13 +608,13 @@ def test_unknown_commit_outcome_is_not_treated_as_safe_logical_retry() -> None:
 
 
 def test_sqlite_code_database_lock_acquire_and_release_round_trip(
-    coord_db: CodeDatabase,
+    coord_client: DatabaseClient,
 ) -> None:
     assert try_acquire_project_activity(
-        coord_db, "w6-sql", "watcher", "w1", "watcher_staging", 30.0
+        coord_client, "w6-sql", "watcher", "w1", "watcher_staging", 30.0
     )
-    assert release_project_activity(coord_db, "w6-sql", "watcher", "w1")
-    assert get_project_activity(coord_db, "w6-sql") is None
+    assert release_project_activity(coord_client, "w6-sql", "watcher", "w1")
+    assert get_project_activity(coord_client, "w6-sql") is None
 
 
 @pytest.mark.skipif(
@@ -684,20 +681,20 @@ def test_indexer_skip_message_in_indexing_worker_source() -> None:
 
 
 def test_watcher_skip_log_uses_work_coord_prefix(
-    coord_db: CodeDatabase, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    coord_client: DatabaseClient, tmp_path: Path, caplog: pytest.LogCaptureFixture
 ) -> None:
     root = tmp_path / "wsk"
     root.mkdir()
     _create_projectid(root, PA)
-    _insert_project(coord_db, root, PA)
+    _insert_project(coord_client, root, PA)
     fp = root / "x.py"
     fp.write_text("#\n", encoding="utf-8")
     m = fp.stat().st_mtime
     try_acquire_project_activity(
-        coord_db, PA, "indexer", "ix", "indexer_processing", 60.0
+        coord_client, PA, "indexer", "ix", "indexer_processing", 60.0
     )
     try:
-        proc = FileChangeProcessor(coord_db, [root])
+        proc = FileChangeProcessor(coord_client, [root])
         d = {
             PA: FileDelta(
                 new_files=[(str(fp.resolve()), m, 1)],
@@ -710,7 +707,7 @@ def test_watcher_skip_log_uses_work_coord_prefix(
                 root,
                 d,
                 watcher_coord={
-                    "database": coord_db,
+                    "database": coord_client,
                     "owner_id": "w",
                     "lease_ttl": 60.0,
                 },
@@ -719,4 +716,4 @@ def test_watcher_skip_log_uses_work_coord_prefix(
         assert "[WORKER_COORD] watcher skip" in caplog.text
         assert f"project_id={PA}" in caplog.text
     finally:
-        release_project_activity(coord_db, PA, "indexer", "ix")
+        release_project_activity(coord_client, PA, "indexer", "ix")

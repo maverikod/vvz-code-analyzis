@@ -11,9 +11,20 @@ from pathlib import Path
 
 import pytest
 
-from code_analysis.core.database import CodeDatabase
+from code_analysis.core.database.base import create_driver_config_for_worker
+from code_analysis.core.database_client.client import DatabaseClient
+from code_analysis.core.database_client.in_process_rpc_client import InProcessRpcClient
+from code_analysis.core.database_driver_pkg.driver_factory import create_driver
+from code_analysis.core.database_driver_pkg.rpc_handlers import RPCHandlers
+from tests.sqlite_legacy_schema_bootstrap import bootstrap_sqlite_schema_paths
 from code_analysis.core.refactorer_pkg.file_splitter import FileToPackageSplitter
 from code_analysis.core.refactorer_pkg.splitter import ClassSplitter
+
+
+def _fetchone(client: DatabaseClient, sql: str, params: tuple = ()) -> dict | None:
+    r = client.execute(sql, params)
+    rows = r.get("data") or []
+    return rows[0] if rows else None
 
 
 @pytest.fixture
@@ -31,32 +42,41 @@ def project_id():
 
 @pytest.fixture
 def test_db(temp_dir):
-    """Create test database with full schema (including file_tree_snapshots)."""
+    """Schema via legacy bootstrap; reopened pkg driver for DatabaseClient RPC."""
     db_path = temp_dir / "test.db"
-    backup_dir = temp_dir / "backups"
-    backup_dir.mkdir(exist_ok=True)
-    driver_config = {
-        "type": "sqlite",
-        "config": {"path": str(db_path), "backup_dir": str(backup_dir)},
-    }
-    db = CodeDatabase(driver_config=driver_config)
-    db._create_schema()
-    db.sync_schema()
-    yield db
-    db.close()
+    driver_config = create_driver_config_for_worker(
+        db_path,
+        driver_type="sqlite",
+        backup_dir=temp_dir / "backups",
+    )
+    path_str, backup_dir = bootstrap_sqlite_schema_paths(
+        driver_config,
+        default_backup_dir=str(temp_dir / "backups"),
+    )
+    driver = create_driver(
+        "sqlite",
+        {"path": path_str, "backup_dir": backup_dir},
+    )
+    rpc = InProcessRpcClient(RPCHandlers(driver))
+    db = DatabaseClient(rpc_client=rpc, driver_type="sqlite")
+    db.connect()
+    try:
+        yield db
+    finally:
+        db.disconnect()
+        driver.disconnect()
 
 
 @pytest.fixture
 def test_project(test_db, temp_dir, project_id):
-    """Create test project in database and projectid file (required by update_file_data)."""
+    """Create test project in database and projectid file (required by index_file)."""
     import json
 
     project_name = temp_dir.name
-    test_db._execute(
+    test_db.execute(
         "INSERT INTO projects (id, root_path, name, updated_at) VALUES (?, ?, ?, julianday('now'))",
-        (project_id, str(temp_dir), project_name),
+        (project_id, str(temp_dir.resolve()), project_name),
     )
-    test_db._commit()
     projectid_file = temp_dir / "projectid"
     projectid_file.write_text(
         json.dumps({"id": project_id, "description": "Test project"}),
@@ -221,13 +241,7 @@ class TestFileSplitterIntegrationReal:
             module_path = package_dir / f"{module_name}.py"
             assert module_path.exists(), f"{module_name}.py should exist"
 
-            # Verify database was updated for new file
-            module_record = test_db.get_file_by_path(str(module_path), project_id)
-            assert module_record is not None, f"{module_name}.py should be in database"
-
-            # Verify AST and CST are saved (or at least file is marked for update)
-            # Note: update_file_data is called, but AST/CST might be saved asynchronously
-            # The important thing is that update_file_data was called
+        # Splitter creates modules on disk only; DB registration is indexer/MCP.
 
         # Cleanup
         if package_dir.exists():
@@ -358,10 +372,9 @@ class TestUpdateFileDataReal:
         file_path.write_text(new_content, encoding="utf-8")
 
         # Update file data
-        result = test_db.update_file_data(
-            file_path=str(file_path),
+        result = test_db.index_file(
+            file_path=str(file_path.resolve()),
             project_id=project_id,
-            root_dir=root_dir,
         )
 
         assert (
@@ -375,13 +388,15 @@ class TestUpdateFileDataReal:
         assert updated_file_record is not None, "File should be in database"
 
         if updated_file_record:
-            ast_record = test_db._fetchone(
+            ast_record = _fetchone(
+                test_db,
                 "SELECT id FROM ast_trees WHERE file_id = ?",
                 (updated_file_record["id"],),
             )
             assert ast_record is not None, "AST tree should be saved"
 
-            cst_record = test_db._fetchone(
+            cst_record = _fetchone(
+                test_db,
                 "SELECT id FROM cst_trees WHERE file_id = ?",
                 (updated_file_record["id"],),
             )

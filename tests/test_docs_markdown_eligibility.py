@@ -1,0 +1,156 @@
+"""Table-driven tests for Markdown docs indexing eligibility."""
+
+from __future__ import annotations
+
+import pytest
+
+from code_analysis.core.docs_indexing_defaults import default_docs_indexing_dict
+from code_analysis.core.docs_indexing_eligibility import (
+    REASON_DISABLED,
+    REASON_EXCLUDED,
+    REASON_FILE_DELETED,
+    REASON_FILE_MISSING,
+    REASON_NOT_ALLOWED_DOCS_SUFFIX,
+    REASON_NOT_INCLUDED,
+    REASON_PATH_TRAVERSAL,
+    is_docs_markdown_eligible,
+)
+
+
+def _enabled_full_config():
+    d = default_docs_indexing_dict()
+    d["enabled"] = True
+    return d
+
+
+@pytest.mark.parametrize(
+    "docs_indexing,rel,file_exists,is_deleted,eligible,reasons_sub",
+    [
+        (_enabled_full_config(), "docs/guide.md", True, False, True, ()),
+        (_enabled_full_config(), "docs/sub/guide.md", True, False, True, ()),
+        (_enabled_full_config(), "docs/schema.json", True, False, True, ()),
+        (_enabled_full_config(), "docs/config.yaml", True, False, True, ()),
+        (_enabled_full_config(), "docs/legacy.yml", True, False, True, ()),
+        (_enabled_full_config(), "README.md", True, False, True, ()),
+        (
+            _enabled_full_config(),
+            "docs/plans/task.md",
+            True,
+            False,
+            False,
+            (REASON_EXCLUDED,),
+        ),
+        (
+            _enabled_full_config(),
+            "docs/guide.md",
+            False,
+            False,
+            False,
+            (REASON_FILE_MISSING,),
+        ),
+        (
+            _enabled_full_config(),
+            "docs/guide.md",
+            True,
+            True,
+            False,
+            (REASON_FILE_DELETED,),
+        ),
+        (
+            _enabled_full_config(),
+            "src/nope.md",
+            True,
+            False,
+            False,
+            (REASON_NOT_INCLUDED,),
+        ),
+        (
+            _enabled_full_config(),
+            "docs/guide.txt",
+            True,
+            False,
+            False,
+            (REASON_NOT_ALLOWED_DOCS_SUFFIX,),
+        ),
+        (
+            _enabled_full_config(),
+            "../etc/passwd.md",
+            True,
+            False,
+            False,
+            (REASON_PATH_TRAVERSAL,),
+        ),
+        (None, "docs/guide.md", True, False, False, (REASON_DISABLED,)),
+        (
+            default_docs_indexing_dict(),
+            "docs/guide.md",
+            True,
+            False,
+            False,
+            (REASON_DISABLED,),
+        ),
+    ],
+)
+def test_is_docs_markdown_eligible_table(
+    docs_indexing,
+    rel: str,
+    file_exists: bool,
+    is_deleted: bool,
+    eligible: bool,
+    reasons_sub: tuple[str, ...],
+) -> None:
+    v = is_docs_markdown_eligible(
+        docs_indexing=docs_indexing,
+        relative_path=rel,
+        file_exists=file_exists,
+        is_deleted=is_deleted,
+    )
+    assert v.eligible is eligible
+    assert v.reasons == reasons_sub
+
+
+def test_exclude_beats_include_same_path() -> None:
+    cfg = _enabled_full_config()
+    cfg["include"] = ["docs/**/*.md", "docs/*.md", "README.md", "docs/plans/**"]
+    cfg["exclude"] = ["docs/plans/**"]
+    v = is_docs_markdown_eligible(
+        docs_indexing=cfg,
+        relative_path="docs/plans/x.md",
+    )
+    assert v.eligible is False
+    assert REASON_EXCLUDED in v.reasons
+
+
+def test_vectorize_does_not_affect_eligibility() -> None:
+    cfg = _enabled_full_config()
+    cfg["vectorize"] = True
+    v = is_docs_markdown_eligible(
+        docs_indexing=cfg,
+        relative_path="docs/guide.md",
+    )
+    assert v.eligible is True
+
+
+def test_out_of_scope_not_under_roots_and_not_lifted_by_include() -> None:
+    cfg = _enabled_full_config()
+    cfg["roots"] = ["docs"]
+    cfg["include"] = ["docs/*.md", "docs/**/*.md", "README.md"]
+    cfg["exclude"] = []
+    v = is_docs_markdown_eligible(
+        docs_indexing=cfg,
+        relative_path="other/tree.md",
+    )
+    assert v.eligible is False
+    assert REASON_NOT_INCLUDED in v.reasons
+
+
+def test_broad_include_outside_roots_with_star_md() -> None:
+    cfg = _enabled_full_config()
+    cfg["roots"] = ["docs"]
+    cfg["include"] = ["**/*.md"]
+    cfg["exclude"] = []
+    v = is_docs_markdown_eligible(
+        docs_indexing=cfg,
+        relative_path="src/foo.md",
+    )
+    assert v.eligible is True

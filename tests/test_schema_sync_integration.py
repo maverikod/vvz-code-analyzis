@@ -5,14 +5,17 @@ Author: Vasiliy Zdanovskiy
 email: vasilyvz@gmail.com
 """
 
-import tempfile
 import os
+import tempfile
 from pathlib import Path
+
 import pytest
 import sqlite3
 
-from code_analysis.core.database.base import CodeDatabase
+from code_analysis.core.database.schema_definition import SCHEMA_VERSION
 from code_analysis.core.db_worker_manager import get_db_worker_manager
+
+from tests.sqlite_inprocess_database import sqlite_inprocess_database_client
 
 
 @pytest.fixture
@@ -48,6 +51,31 @@ def cleanup_workers():
             manager.stop_worker(worker_info["db_path"])
         except Exception:
             pass
+
+
+def _sqlite_client(db_path: Path, *, backup_dir: Path | None = None):
+    bd = backup_dir if backup_dir is not None else (db_path.parent / "backups")
+    bd.mkdir(parents=True, exist_ok=True)
+    original_env = os.environ.get("CODE_ANALYSIS_DB_WORKER")
+    os.environ["CODE_ANALYSIS_DB_WORKER"] = "1"
+    return sqlite_inprocess_database_client(db_path, backup_dir=bd), original_env
+
+
+def _disconnect_client(client, original_env):
+    client.disconnect()
+    if original_env is None:
+        os.environ.pop("CODE_ANALYSIS_DB_WORKER", None)
+    else:
+        os.environ["CODE_ANALYSIS_DB_WORKER"] = original_env
+
+
+def _schema_version_from_db_settings(db) -> str:
+    r = db.execute(
+        "SELECT value FROM db_settings WHERE key = 'schema_version' LIMIT 1",
+        (),
+    )
+    rows = r.get("data") or []
+    return str(rows[0]["value"]) if rows else ""
 
 
 class TestWorkerStartup:
@@ -97,218 +125,120 @@ class TestDriverIntegration:
     """Tests for driver integration with schema sync."""
 
     def test_sqlite_driver_syncs_schema_on_connect(self, temp_db_path):
-        """Test that SQLiteDriver syncs schema on connect via CodeDatabase."""
-        # Set environment variable to allow direct SQLite driver
-        original_env = os.environ.get("CODE_ANALYSIS_DB_WORKER")
-        os.environ["CODE_ANALYSIS_DB_WORKER"] = "1"
-
+        """Test that opening via DatabaseClient + in-process RPC syncs schema."""
+        db, orig = _sqlite_client(temp_db_path)
         try:
-            driver_config = {
-                "type": "sqlite",
-                "config": {"path": str(temp_db_path)},
-            }
-
-            # CodeDatabase.__init__ should call sync_schema()
-            db = CodeDatabase(driver_config)
-
-            # Verify schema was created
-            tables = db.driver.fetchall(
-                "SELECT name FROM sqlite_master WHERE type='table' AND name='db_settings'"
+            r = db.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name='db_settings'",
             )
+            tables = r.get("data") or []
             assert len(tables) > 0
 
-            # Verify version was set
-            version = db.driver._get_schema_version()
-            assert version is not None
-
-            db.close()
+            version = _schema_version_from_db_settings(db)
+            assert version
         finally:
-            if original_env is None:
-                os.environ.pop("CODE_ANALYSIS_DB_WORKER", None)
-            else:
-                os.environ["CODE_ANALYSIS_DB_WORKER"] = original_env
+            _disconnect_client(db, orig)
 
     def test_schema_changes_are_applied_correctly(self, temp_db_path):
         """Test that schema changes are applied correctly."""
-        # Set environment variable to allow direct SQLite driver
-        original_env = os.environ.get("CODE_ANALYSIS_DB_WORKER")
-        os.environ["CODE_ANALYSIS_DB_WORKER"] = "1"
+        conn = sqlite3.connect(str(temp_db_path))
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            CREATE TABLE db_settings (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL
+            )
+            """
+        )
+        cursor.execute("INSERT INTO db_settings (key, value) VALUES ('test', 'value')")
+        cursor.execute(
+            "INSERT INTO db_settings (key, value) VALUES ('schema_version', '0.9.0')"
+        )
+        conn.commit()
+        conn.close()
 
+        db, orig = _sqlite_client(temp_db_path)
         try:
-            # Create database with old schema and add some data
-            conn = sqlite3.connect(str(temp_db_path))
-            cursor = conn.cursor()
-            cursor.execute(
-                """
-                CREATE TABLE db_settings (
-                    key TEXT PRIMARY KEY,
-                    value TEXT NOT NULL
-                )
-                """
+            col = db.execute(
+                "SELECT name FROM pragma_table_info('db_settings') "
+                "WHERE name = 'updated_at' LIMIT 1",
+                (),
             )
-            cursor.execute(
-                "INSERT INTO db_settings (key, value) VALUES ('test', 'value')"
-            )
-            cursor.execute(
-                "INSERT INTO db_settings (key, value) VALUES ('schema_version', '0.9.0')"
-            )
-            conn.commit()
-            conn.close()
-
-            # Connect via CodeDatabase (should sync schema)
-            driver_config = {
-                "type": "sqlite",
-                "config": {"path": str(temp_db_path)},
-            }
-
-            db = CodeDatabase(driver_config)
-
-            # Verify new column was added
-            columns = db.driver.fetchall("PRAGMA table_info(db_settings)")
-            column_names = [col["name"] for col in columns]
-            assert "updated_at" in column_names
-
-            db.close()
+            assert len(col.get("data") or []) >= 1
         finally:
-            if original_env is None:
-                os.environ.pop("CODE_ANALYSIS_DB_WORKER", None)
-            else:
-                os.environ["CODE_ANALYSIS_DB_WORKER"] = original_env
+            _disconnect_client(db, orig)
 
 
 class TestServerStartup:
     """Tests for schema sync on server startup."""
 
     def test_schema_sync_on_server_startup(self, temp_db_path):
-        """Test schema sync on server startup (via CodeDatabase initialization)."""
-        # Set environment variable to allow direct SQLite driver
-        original_env = os.environ.get("CODE_ANALYSIS_DB_WORKER")
-        os.environ["CODE_ANALYSIS_DB_WORKER"] = "1"
-
+        """Test schema sync on startup via DatabaseClient (in-process RPC)."""
+        db, orig = _sqlite_client(temp_db_path)
         try:
-            # Simulate server startup: create CodeDatabase
-            driver_config = {
-                "type": "sqlite",
-                "config": {"path": str(temp_db_path)},
-            }
-
-            db = CodeDatabase(driver_config)
-
-            # Verify schema is synchronized
-            # Check that db_settings table exists
-            tables = db.driver.fetchall(
-                "SELECT name FROM sqlite_master WHERE type='table' AND name='db_settings'"
+            r = db.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name='db_settings'",
             )
+            tables = r.get("data") or []
             assert len(tables) > 0
 
-            # Check that version is set
-            version = db.driver._get_schema_version()
-            assert version is not None
-
-            db.close()
+            version = _schema_version_from_db_settings(db)
+            assert version
         finally:
-            if original_env is None:
-                os.environ.pop("CODE_ANALYSIS_DB_WORKER", None)
-            else:
-                os.environ["CODE_ANALYSIS_DB_WORKER"] = original_env
+            _disconnect_client(db, orig)
 
     def test_backup_created_before_changes(self, temp_db_path, temp_socket_dir):
         """Test that backup is created before schema changes."""
-        # Set environment variable to allow direct SQLite driver
-        original_env = os.environ.get("CODE_ANALYSIS_DB_WORKER")
-        os.environ["CODE_ANALYSIS_DB_WORKER"] = "1"
+        conn = sqlite3.connect(str(temp_db_path))
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            CREATE TABLE db_settings (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL
+            )
+            """
+        )
+        cursor.execute("INSERT INTO db_settings (key, value) VALUES ('test', 'value')")
+        conn.commit()
+        conn.close()
 
+        if temp_db_path.parent.name == "data":
+            backup_dir = temp_db_path.parent.parent / "backups"
+        else:
+            backup_dir = temp_db_path.parent / "backups"
+        backup_dir.mkdir(parents=True, exist_ok=True)
+
+        backup_count_before = len(list(backup_dir.glob("database-*.db")))
+
+        db, orig = _sqlite_client(temp_db_path, backup_dir=backup_dir)
         try:
-            # Create database with some data
-            conn = sqlite3.connect(str(temp_db_path))
-            cursor = conn.cursor()
-            cursor.execute(
-                """
-                CREATE TABLE db_settings (
-                    key TEXT PRIMARY KEY,
-                    value TEXT NOT NULL
-                )
-                """
-            )
-            cursor.execute(
-                "INSERT INTO db_settings (key, value) VALUES ('test', 'value')"
-            )
-            conn.commit()
-            conn.close()
-
-            # Determine backup directory
-            if temp_db_path.parent.name == "data":
-                backup_dir = temp_db_path.parent.parent / "backups"
-            else:
-                backup_dir = temp_db_path.parent / "backups"
-            backup_dir.mkdir(parents=True, exist_ok=True)
-
-            # Count backups before
-            backup_count_before = len(list(backup_dir.glob("database-*.db")))
-
-            # Connect via CodeDatabase (should sync schema and create backup)
-            driver_config = {
-                "type": "sqlite",
-                "config": {"path": str(temp_db_path), "backup_dir": str(backup_dir)},
-            }
-
-            db = CodeDatabase(driver_config)
-
-            # Count backups after
             backup_count_after = len(list(backup_dir.glob("database-*.db")))
-
-            # Backup should be created (if database had data)
-            # Note: BackupManager skips empty databases, but we added data
             assert backup_count_after >= backup_count_before
-
-            db.close()
         finally:
-            if original_env is None:
-                os.environ.pop("CODE_ANALYSIS_DB_WORKER", None)
-            else:
-                os.environ["CODE_ANALYSIS_DB_WORKER"] = original_env
+            _disconnect_client(db, orig)
 
     def test_version_updated_after_sync(self, temp_db_path):
         """Test that version is updated after sync."""
-        # Set environment variable to allow direct SQLite driver
-        original_env = os.environ.get("CODE_ANALYSIS_DB_WORKER")
-        os.environ["CODE_ANALYSIS_DB_WORKER"] = "1"
+        conn = sqlite3.connect(str(temp_db_path))
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            CREATE TABLE db_settings (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL
+            )
+            """
+        )
+        cursor.execute(
+            "INSERT INTO db_settings (key, value) VALUES ('schema_version', '0.9.0')"
+        )
+        conn.commit()
+        conn.close()
 
+        db, orig = _sqlite_client(temp_db_path)
         try:
-            # Create database with old version
-            conn = sqlite3.connect(str(temp_db_path))
-            cursor = conn.cursor()
-            cursor.execute(
-                """
-                CREATE TABLE db_settings (
-                    key TEXT PRIMARY KEY,
-                    value TEXT NOT NULL
-                )
-                """
-            )
-            cursor.execute(
-                "INSERT INTO db_settings (key, value) VALUES ('schema_version', '0.9.0')"
-            )
-            conn.commit()
-            conn.close()
-
-            # Connect via CodeDatabase (should sync schema and update version)
-            driver_config = {
-                "type": "sqlite",
-                "config": {"path": str(temp_db_path)},
-            }
-
-            db = CodeDatabase(driver_config)
-
-            # Verify version was updated
-            version = db.driver._get_schema_version()
-            from code_analysis.core.database.base import SCHEMA_VERSION
-
-            assert version == SCHEMA_VERSION
-
-            db.close()
+            assert _schema_version_from_db_settings(db) == SCHEMA_VERSION
         finally:
-            if original_env is None:
-                os.environ.pop("CODE_ANALYSIS_DB_WORKER", None)
-            else:
-                os.environ["CODE_ANALYSIS_DB_WORKER"] = original_env
+            _disconnect_client(db, orig)

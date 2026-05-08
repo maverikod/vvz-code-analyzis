@@ -5,6 +5,8 @@ Author: Vasiliy Zdanovskiy
 email: vasilyvz@gmail.com
 """
 
+import os
+
 import pytest
 import tempfile
 import json
@@ -23,8 +25,9 @@ from code_analysis.core.project_resolution import (
 from code_analysis.core.project_discovery import discover_projects_in_directory
 from code_analysis.core.settings_manager import get_settings
 from code_analysis.core.project_manager import ProjectManager
-from code_analysis.core.database import CodeDatabase
-from code_analysis.core.database.base import create_driver_config_for_worker
+from code_analysis.core.database_client.objects.project import Project
+
+from tests.sqlite_inprocess_database import sqlite_inprocess_database_client
 
 
 # Get test data directory
@@ -81,29 +84,31 @@ class TestRegressionBackwardCompatibility:
 
     def test_regression_existing_databases(self, tmp_path):
         """Test backward compatibility with existing databases."""
-        # Create test database
         db_path = tmp_path / "test.db"
-        driver_config = create_driver_config_for_worker(
-            db_path=db_path, driver_type="sqlite"
-        )
-        db = CodeDatabase(driver_config=driver_config)
-        db.sync_schema()
-
+        backup_dir = tmp_path / "backups"
+        original = os.environ.get("CODE_ANALYSIS_DB_WORKER")
+        os.environ["CODE_ANALYSIS_DB_WORKER"] = "1"
+        client = sqlite_inprocess_database_client(db_path, backup_dir=backup_dir)
         try:
-            # Should be able to create and query projects
             project_id = str(uuid.uuid4())
-            project_id = db.get_or_create_project(
-                root_path=str(tmp_path),
-                name="test_project",
+            client.create_project(
+                Project(
+                    id=project_id,
+                    root_path=str(tmp_path.resolve()),
+                    name="test_project",
+                )
             )
 
-            # Should be able to query project
-            project = db.get_project(project_id)
+            project = client.get_project(project_id)
             assert project is not None
-            assert project["id"] == project_id
+            assert project.id == project_id
 
         finally:
-            db.close()
+            client.disconnect()
+            if original is None:
+                os.environ.pop("CODE_ANALYSIS_DB_WORKER", None)
+            else:
+                os.environ["CODE_ANALYSIS_DB_WORKER"] = original
 
 
 class TestRegressionExistingProjects:
@@ -333,26 +338,25 @@ class TestRegressionExistingWorkflows:
 
     def test_regression_database_workflow(self, tmp_path):
         """Test that database workflow still works."""
-        # Create test database
         db_path = tmp_path / "test.db"
-        driver_config = create_driver_config_for_worker(
-            db_path=db_path, driver_type="sqlite"
-        )
-        db = CodeDatabase(driver_config=driver_config)
-        db.sync_schema()
-
+        backup_dir = tmp_path / "backups"
+        original = os.environ.get("CODE_ANALYSIS_DB_WORKER")
+        os.environ["CODE_ANALYSIS_DB_WORKER"] = "1"
+        client = sqlite_inprocess_database_client(db_path, backup_dir=backup_dir)
         try:
-            # Create project
-            project_id = db.get_or_create_project(
-                root_path=str(tmp_path),
-                name="test_project",
+            project_id = str(uuid.uuid4())
+            client.create_project(
+                Project(
+                    id=project_id,
+                    root_path=str(tmp_path.resolve()),
+                    name="test_project",
+                )
             )
 
-            # Add file
             test_file = tmp_path / "test.py"
             test_file.write_text("# Test\n")
 
-            file_id = db.add_file(
+            file_id = client.add_file(
                 path=str(test_file),
                 lines=1,
                 last_modified=test_file.stat().st_mtime,
@@ -360,12 +364,15 @@ class TestRegressionExistingWorkflows:
                 project_id=project_id,
             )
 
-            # Query file
-            file_record = db.get_file_by_path(
-                path=str(test_file), project_id=project_id
+            file_record = client.get_file_by_path(
+                path=str(test_file.resolve()), project_id=project_id
             )
             assert file_record is not None
-            assert file_record["id"] == file_id
+            assert str(file_record["id"]) == str(file_id)
 
         finally:
-            db.close()
+            client.disconnect()
+            if original is None:
+                os.environ.pop("CODE_ANALYSIS_DB_WORKER", None)
+            else:
+                os.environ["CODE_ANALYSIS_DB_WORKER"] = original

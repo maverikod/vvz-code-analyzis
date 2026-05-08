@@ -5,11 +5,12 @@ from __future__ import annotations
 import os
 import uuid
 from pathlib import Path
+from typing import Any
 from unittest.mock import patch
 
 import pytest
 
-from code_analysis.core.database.base import CodeDatabase
+from code_analysis.core.database_client.client import DatabaseClient
 from code_analysis.core.file_watcher_pkg.ignore_pre_scan_purge import (
     build_ignore_purge_sql_batch,
     collect_file_ids_to_purge_for_ignore_policy,
@@ -17,25 +18,25 @@ from code_analysis.core.file_watcher_pkg.ignore_pre_scan_purge import (
     run_pre_scan_ignore_purge_for_project,
 )
 
+from tests.sqlite_inprocess_database import sqlite_inprocess_database_client
+
 
 @pytest.fixture
 def temp_db(tmp_path):
-    """CodeDatabase with full schema (sync_schema)."""
+    """DatabaseClient over in-process RPC with full schema."""
     db_path = tmp_path / "ignore_purge_test.db"
     backup_dir = tmp_path / "backups"
-    backup_dir.mkdir(parents=True, exist_ok=True)
-    driver_config = {
-        "type": "sqlite",
-        "config": {"path": str(db_path), "backup_dir": str(backup_dir)},
-    }
     original_env = os.environ.get("CODE_ANALYSIS_DB_WORKER")
     os.environ["CODE_ANALYSIS_DB_WORKER"] = "1"
-    db = CodeDatabase(driver_config)
+    db = None
     try:
-        db.sync_schema()
+        db = sqlite_inprocess_database_client(
+            db_path, backup_dir=backup_dir, driver_type="sqlite"
+        )
         yield db
-        db.close()
     finally:
+        if db is not None:
+            db.disconnect()
         if original_env is None:
             os.environ.pop("CODE_ANALYSIS_DB_WORKER", None)
         else:
@@ -47,18 +48,26 @@ def temp_db(tmp_path):
                 pass
 
 
-def _insert_project(db: CodeDatabase, tmp_path: Path) -> str:
+def _fetchone(db: DatabaseClient, sql: str, params: tuple[Any, ...]) -> dict | None:
+    r = db.execute(sql, params)
+    rows = r.get("data") if isinstance(r, dict) else None
+    if not rows:
+        return None
+    row = rows[0]
+    return dict(row) if hasattr(row, "keys") else row
+
+
+def _insert_project(db: DatabaseClient, tmp_path: Path) -> str:
     pid = str(uuid.uuid4())
-    db._execute(
+    db.execute(
         "INSERT INTO projects (id, root_path, name, updated_at) VALUES (?, ?, ?, julianday('now'))",
         (pid, str(tmp_path), tmp_path.name),
     )
-    db._commit()
     return pid
 
 
 def _insert_file_in_project(
-    db: CodeDatabase, tmp_path: Path, project_id: str, rel_name: str
+    db: DatabaseClient, tmp_path: Path, project_id: str, rel_name: str
 ) -> tuple[str, Path]:
     fp = tmp_path / rel_name
     fp.parent.mkdir(parents=True, exist_ok=True)
@@ -107,24 +116,22 @@ def test_purge_removes_duplicate_occurrences_and_comprehensive(temp_db, tmp_path
     fid, _ = _insert_file_in_project(temp_db, tmp_path, pid, "zdup_one.py")
 
     dup_id = str(uuid.uuid4())
-    temp_db._execute(
+    temp_db.execute(
         "INSERT INTO code_duplicates (id, project_id, duplicate_hash, similarity) "
         "VALUES (?, ?, ?, ?)",
         (dup_id, pid, "h1", 1.0),
     )
-    temp_db._commit()
-    temp_db._execute(
+    temp_db.execute(
         "INSERT INTO duplicate_occurrences (id, duplicate_id, file_id, start_line, end_line) "
         "VALUES (?, ?, ?, ?, ?)",
         (str(uuid.uuid4()), dup_id, fid, 1, 1),
     )
-    temp_db._execute(
+    temp_db.execute(
         "INSERT INTO comprehensive_analysis_results "
         "(id, file_id, project_id, file_mtime, results_json, summary_json) "
         "VALUES (?, ?, ?, ?, ?, ?)",
         (str(uuid.uuid4()), fid, pid, 1.0, "{}", "{}"),
     )
-    temp_db._commit()
 
     n = run_pre_scan_ignore_purge_for_project(
         temp_db,
@@ -136,16 +143,21 @@ def test_purge_removes_duplicate_occurrences_and_comprehensive(temp_db, tmp_path
     )
     assert n == 1
 
-    occ = temp_db._fetchone(
-        "SELECT COUNT(*) AS c FROM duplicate_occurrences WHERE file_id = ?", (fid,)
+    occ = _fetchone(
+        temp_db,
+        "SELECT COUNT(*) AS c FROM duplicate_occurrences WHERE file_id = ?",
+        (fid,),
     )
+    assert occ is not None
     assert int(occ["c"]) == 0
-    car = temp_db._fetchone(
+    car = _fetchone(
+        temp_db,
         "SELECT COUNT(*) AS c FROM comprehensive_analysis_results WHERE file_id = ?",
         (fid,),
     )
+    assert car is not None
     assert int(car["c"]) == 0
-    frow = temp_db._fetchone("SELECT id FROM files WHERE id = ?", (fid,))
+    frow = _fetchone(temp_db, "SELECT id FROM files WHERE id = ?", (fid,))
     assert frow is None
 
 
@@ -243,10 +255,10 @@ def test_pre_scan_ignore_purge_respects_exception_and_keeps_file_on_disk(
 
     assert n == 1
     assert path_b.exists() is True
-    assert temp_db._fetchone("SELECT id FROM files WHERE id = ?", (fid_b,)) is None
-    assert temp_db._fetchone("SELECT id FROM files WHERE id = ?", (fid_a,)) is not None
+    assert _fetchone(temp_db, "SELECT id FROM files WHERE id = ?", (fid_b,)) is None
+    assert _fetchone(temp_db, "SELECT id FROM files WHERE id = ?", (fid_a,)) is not None
     assert (
-        temp_db._fetchone("SELECT id FROM files WHERE id = ?", (fid_keep,)) is not None
+        _fetchone(temp_db, "SELECT id FROM files WHERE id = ?", (fid_keep,)) is not None
     )
 
 
@@ -271,12 +283,11 @@ def test_collect_file_ids_uses_relative_posix_pattern_policy(temp_db, tmp_path):
 def test_pre_scan_ignore_purge_rollback_on_mid_batch_error(temp_db, tmp_path):
     pid = _insert_project(temp_db, tmp_path)
     fid_b, _ = _insert_file_in_project(temp_db, tmp_path, pid, "src/generated/b.py")
-    temp_db._execute(
+    temp_db.execute(
         "INSERT INTO code_chunks (file_id, project_id, chunk_uuid, chunk_type, chunk_text, chunk_ordinal, updated_at) "
         "VALUES (?, ?, ?, ?, ?, ?, julianday('now'))",
         (fid_b, pid, str(uuid.uuid4()), "DocBlock", "chunk", 0),
     )
-    temp_db._commit()
 
     broken_program = {
         "batches": [
@@ -299,10 +310,12 @@ def test_pre_scan_ignore_purge_rollback_on_mid_batch_error(temp_db, tmp_path):
                 config_path=None,
             )
 
-    file_row = temp_db._fetchone("SELECT id FROM files WHERE id = ?", (fid_b,))
-    chunk_row = temp_db._fetchone(
+    file_row = _fetchone(temp_db, "SELECT id FROM files WHERE id = ?", (fid_b,))
+    chunk_row = _fetchone(
+        temp_db,
         "SELECT COUNT(*) AS c FROM code_chunks WHERE file_id = ?",
         (fid_b,),
     )
     assert file_row is not None
+    assert chunk_row is not None
     assert int(chunk_row["c"]) == 1

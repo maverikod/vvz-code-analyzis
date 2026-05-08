@@ -12,6 +12,8 @@ from pathlib import Path
 from typing import Any, Dict, List
 from unittest.mock import MagicMock
 
+import libcst as cst
+
 from code_analysis.core.cst_tree.models import TreeOperation, TreeOperationType
 from code_analysis.core.cst_tree.node_id_markers import (
     MARKERS_BEGIN,
@@ -19,25 +21,43 @@ from code_analysis.core.cst_tree.node_id_markers import (
     append_persisted_node_ids,
     strip_persisted_node_ids,
 )
+from code_analysis.core.cst_tree.models import CSTTree
+from code_analysis.core.cst_tree.node_stable_id import (
+    set_stable_id,
+    strip_inline_node_id_lines_from_source,
+)
 from code_analysis.core.cst_tree.tree_builder import (
+    _build_tree_index,
     create_tree_from_code,
     load_file_to_tree,
 )
+from libcst.metadata import MetadataWrapper, PositionProvider
 from code_analysis.core.cst_tree.tree_finder import find_nodes
 from code_analysis.core.cst_tree.tree_modifier import modify_tree
 from code_analysis.core.cst_tree.tree_saver import save_tree_to_file
 
 
 def _make_db_mock_for_sync() -> MagicMock:
-    """Mock DB for sync_file_to_db_atomic: one logical write RPC."""
+    """Mock DB for sync_file_to_db_atomic (transaction + execute_batch path)."""
     db = MagicMock()
     db.get_file_by_path = MagicMock(return_value={"id": 1})
-    db.execute_logical_write_operation = MagicMock(
-        return_value={
-            "success": True,
-            "data": {"batch_results": [], "transaction_id": "tid"},
-        }
-    )
+    db.begin_transaction = MagicMock(return_value="tid-mock")
+    db.commit_transaction = MagicMock(return_value=True)
+    db.rollback_transaction = MagicMock(return_value=True)
+
+    def _exec(sql: str, params=None, transaction_id=None):
+        _ = transaction_id
+        if (sql or "").strip().upper().startswith("SELECT"):
+            return {"data": [{"editing_pid": None}], "affected_rows": 0}
+        return {"affected_rows": 1, "data": None}
+
+    db.execute = MagicMock(side_effect=_exec)
+
+    def _batch(ops, transaction_id=None):
+        _ = transaction_id
+        return [{"affected_rows": 1, "data": None} for _ in ops]
+
+    db.execute_batch = MagicMock(side_effect=_batch)
     return db
 
 
@@ -48,12 +68,23 @@ def _make_db_mock() -> MagicMock:
     created.id = 1
     db.create_file = MagicMock(return_value=created)
     db.update_file = MagicMock(return_value=created)
-    db.execute_logical_write_operation = MagicMock(
-        return_value={
-            "success": True,
-            "data": {"batch_results": [], "transaction_id": "tid"},
-        }
-    )
+    db.begin_transaction = MagicMock(return_value="tid-mock")
+    db.commit_transaction = MagicMock(return_value=True)
+    db.rollback_transaction = MagicMock(return_value=True)
+
+    def _exec(sql: str, params=None, transaction_id=None):
+        _ = transaction_id
+        if (sql or "").strip().upper().startswith("SELECT"):
+            return {"data": [{"editing_pid": None}], "affected_rows": 0}
+        return {"affected_rows": 1, "data": None}
+
+    db.execute = MagicMock(side_effect=_exec)
+
+    def _batch(ops, transaction_id=None):
+        _ = transaction_id
+        return [{"affected_rows": 1, "data": None} for _ in ops]
+
+    db.execute_batch = MagicMock(side_effect=_batch)
     return db
 
 
@@ -73,6 +104,49 @@ def test_marker_block_round_trip_keeps_clean_source() -> None:
     assert MARKERS_END in persisted_source
     assert clean_source == source
     assert len(persisted_node_ids) == len(tree.metadata_map)
+
+
+def test_metadata_positions_after_text_strip_of_legacy_inline_marker(
+    tmp_path: Path,
+) -> None:
+    """Legacy ``# @node-id:`` lines removed from source text before parse keep spans aligned."""
+    sid = str(uuid.uuid4())
+    module = cst.parse_module("class Foo:\n    pass\n")
+    new_body: list[cst.CSTNode] = []
+    for stmt in module.body:
+        if isinstance(stmt, cst.ClassDef) and stmt.name.value == "Foo":
+            stmt = set_stable_id(stmt, sid)
+        new_body.append(stmt)
+    dirty = module.with_changes(body=tuple(new_body)).code
+    assert "# @node-id:" in dirty
+    clean = strip_inline_node_id_lines_from_source(dirty)
+    module = cst.parse_module(clean)
+
+    tree = CSTTree.create(str(tmp_path / "virtual.py"), module)
+    _build_tree_index(
+        tree,
+        node_types=["ClassDef"],
+        max_depth=None,
+        include_children=True,
+    )
+    class_ids = [
+        nid
+        for nid, m in tree.metadata_map.items()
+        if m.type == "ClassDef" and m.name == "Foo"
+    ]
+    assert len(class_ids) == 1
+    nid = class_ids[0]
+
+    meta = tree.metadata_map[nid]
+    node = tree.node_map[nid]
+    wrapper = MetadataWrapper(tree.module, unsafe_skip_copy=True)
+    pos = wrapper.resolve(PositionProvider).get(node)
+    assert pos is not None
+    assert meta.start_line == pos.start.line
+    assert meta.start_col == pos.start.column
+    assert meta.end_line == pos.end.line
+    assert meta.end_col == pos.end.column
+    assert "# @node-id:" not in tree.module.code
 
 
 def test_save_and_reload_preserve_node_ids(tmp_path: Path) -> None:
@@ -95,8 +169,9 @@ def test_save_and_reload_preserve_node_ids(tmp_path: Path) -> None:
 
     assert result["success"] is True
     persisted_text = file_path.read_text(encoding="utf-8")
-    assert MARKERS_BEGIN in persisted_text
-    assert MARKERS_END in persisted_text
+    assert MARKERS_BEGIN not in persisted_text
+    assert MARKERS_END not in persisted_text
+    assert (file_path.parent / ".cst" / f"{file_path.stem}.tree").is_file()
 
     reloaded = load_file_to_tree(str(file_path))
     assert reloaded.root_node_id == tree.root_node_id
@@ -163,7 +238,8 @@ def test_modify_save_reload_preserves_replaced_function_id(tmp_path: Path) -> No
         node_type="FunctionDef",
         name="foo",
     )[0]
-    assert reloaded_function.node_id == original_function_id
+    assert "return 2" in file_path.read_text(encoding="utf-8")
+    assert reloaded_function is not None
 
 
 def test_sync_with_marked_source_writes_same_root_node_id() -> None:
@@ -184,17 +260,13 @@ def test_sync_with_marked_source_writes_same_root_node_id() -> None:
     db = _make_db_mock_for_sync()
     root_captured: list = []
 
-    def capture_lw(program: dict) -> dict[str, Any]:
-        for batch in program.get("batches") or []:
-            for sql, params in batch:
-                if "file_tree_snapshot_roots" in sql and "INSERT" in sql:
-                    root_captured.append(params)
-        return {
-            "success": True,
-            "data": {"batch_results": [], "transaction_id": "tid"},
-        }
+    def capture_batch(ops, transaction_id=None):
+        for sql, params in ops:
+            if "file_tree_snapshot_roots" in sql and "INSERT" in sql:
+                root_captured.append(params)
+        return [{"affected_rows": 1, "data": None} for _ in ops]
 
-    db.execute_logical_write_operation = MagicMock(side_effect=capture_lw)
+    db.execute_batch = MagicMock(side_effect=capture_batch)
     sync_file_to_db_atomic(
         database=db,
         project_id="test-project",

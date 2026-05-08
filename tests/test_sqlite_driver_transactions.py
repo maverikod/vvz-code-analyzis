@@ -1,116 +1,105 @@
 """
-Tests for SQLite driver transaction support.
+Tests for SQLite transaction support via DatabaseClient (InProcessRpcClient).
 
 Author: Vasiliy Zdanovskiy
 email: vasilyvz@gmail.com
 """
 
-import tempfile
-import os
+from __future__ import annotations
+
 from pathlib import Path
+from typing import Iterator
+
 import pytest
 
-from code_analysis.core.database.base import CodeDatabase
+from code_analysis.core.database.schema_definition import get_schema_definition
+from code_analysis.core.database_client.client import DatabaseClient
+from code_analysis.core.database_client.in_process_rpc_client import InProcessRpcClient
+from code_analysis.core.database_driver_pkg.driver_factory import create_driver
+from code_analysis.core.database_driver_pkg.rpc_handlers import RPCHandlers
 
 
 @pytest.fixture
-def temp_db():
-    """Create temporary database for testing."""
-    with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
-        db_path = Path(f.name)
-
-    driver_config = {
-        "type": "sqlite",
-        "config": {"path": str(db_path)},
-    }
-
-    # Set environment variable to allow direct SQLite driver
-    original_env = os.environ.get("CODE_ANALYSIS_DB_WORKER")
-    os.environ["CODE_ANALYSIS_DB_WORKER"] = "1"
-
+def ipc_client(tmp_path: Path) -> Iterator[DatabaseClient]:
+    db_path = tmp_path / "test.db"
+    driver = create_driver("sqlite", {"path": str(db_path)})
+    handlers = RPCHandlers(driver)
+    ipc = InProcessRpcClient(handlers)
+    client = DatabaseClient(rpc_client=ipc)
+    client.connect()
+    backup_dir = tmp_path / "backups"
+    backup_dir.mkdir(parents=True, exist_ok=True)
+    client.sync_schema(get_schema_definition(), backup_dir=str(backup_dir))
     try:
-        db = CodeDatabase(driver_config)
-        db.sync_schema()
-        yield db
-        db.close()
+        yield client
     finally:
-        if original_env is None:
-            os.environ.pop("CODE_ANALYSIS_DB_WORKER", None)
-        else:
-            os.environ["CODE_ANALYSIS_DB_WORKER"] = original_env
-
-        if db_path.exists():
-            db_path.unlink()
+        client.disconnect()
 
 
-def test_sqlite_transaction_commit(temp_db):
-    """Test SQLite transaction commit."""
-    temp_db.begin_transaction()
+def _fetchone(
+    client: DatabaseClient,
+    sql: str,
+    params: tuple | None = None,
+    *,
+    transaction_id: str | None = None,
+):
+    r = client.execute(sql, params, transaction_id=transaction_id)
+    rows = r.get("data") or []
+    return rows[0] if rows else None
 
-    # Insert data
-    temp_db._execute(
+
+def test_sqlite_transaction_commit(ipc_client: DatabaseClient) -> None:
+    tid = ipc_client.begin_transaction()
+    ipc_client.execute(
         "INSERT INTO projects (id, root_path) VALUES (?, ?)",
         ("commit-test", "/commit/path"),
+        transaction_id=tid,
     )
-
-    # Data should not be visible until commit
-    # (In SQLite, uncommitted data is visible within the same connection)
-    # But we can test that commit works
-    temp_db.commit_transaction()
-
-    # Verify data was committed
-    result = temp_db._fetchone("SELECT id FROM projects WHERE id = ?", ("commit-test",))
-    assert result is not None
-    assert result["id"] == "commit-test"
+    ipc_client.commit_transaction(tid)
+    row = _fetchone(
+        ipc_client, "SELECT id FROM projects WHERE id = ?", ("commit-test",)
+    )
+    assert row is not None
+    assert row["id"] == "commit-test"
 
 
-def test_sqlite_transaction_rollback(temp_db):
-    """Test SQLite transaction rollback."""
-    # Insert data outside transaction
-    temp_db._execute(
+def test_sqlite_transaction_rollback(ipc_client: DatabaseClient) -> None:
+    ipc_client.execute(
         "INSERT INTO projects (id, root_path) VALUES (?, ?)",
         ("before-rollback", "/before/path"),
     )
-    temp_db._commit()
-
-    temp_db.begin_transaction()
-
-    # Insert data in transaction
-    temp_db._execute(
+    tid = ipc_client.begin_transaction()
+    ipc_client.execute(
         "INSERT INTO projects (id, root_path) VALUES (?, ?)",
         ("rollback-test", "/rollback/path"),
+        transaction_id=tid,
+    )
+    ipc_client.rollback_transaction(tid)
+    assert (
+        _fetchone(
+            ipc_client, "SELECT id FROM projects WHERE id = ?", ("rollback-test",)
+        )
+        is None
+    )
+    assert (
+        _fetchone(
+            ipc_client, "SELECT id FROM projects WHERE id = ?", ("before-rollback",)
+        )
+        is not None
     )
 
-    temp_db.rollback_transaction()
 
-    # Verify data was rolled back
-    result = temp_db._fetchone(
-        "SELECT id FROM projects WHERE id = ?", ("rollback-test",)
-    )
-    assert result is None
-
-    # Verify data before transaction still exists
-    result = temp_db._fetchone(
-        "SELECT id FROM projects WHERE id = ?", ("before-rollback",)
-    )
-    assert result is not None
-
-
-def test_sqlite_no_autocommit_during_transaction(temp_db):
-    """Test that SQLite doesn't auto-commit during transaction."""
-    temp_db.begin_transaction()
-
-    # Insert data
-    temp_db._execute(
+def test_sqlite_no_autocommit_during_transaction(ipc_client: DatabaseClient) -> None:
+    tid = ipc_client.begin_transaction()
+    ipc_client.execute(
         "INSERT INTO projects (id, root_path) VALUES (?, ?)",
         ("no-autocommit", "/no/autocommit"),
+        transaction_id=tid,
     )
-
-    # Don't commit - just rollback
-    temp_db.rollback_transaction()
-
-    # Verify data was not committed
-    result = temp_db._fetchone(
-        "SELECT id FROM projects WHERE id = ?", ("no-autocommit",)
+    ipc_client.rollback_transaction(tid)
+    assert (
+        _fetchone(
+            ipc_client, "SELECT id FROM projects WHERE id = ?", ("no-autocommit",)
+        )
+        is None
     )
-    assert result is None

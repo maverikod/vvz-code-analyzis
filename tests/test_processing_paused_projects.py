@@ -8,11 +8,14 @@ email: vasilyvz@gmail.com
 from __future__ import annotations
 
 import os
+import uuid
 from pathlib import Path
+from typing import Iterator
 from unittest.mock import MagicMock, patch
 
 import pytest
 
+from code_analysis.core.database_client.client import DatabaseClient
 from code_analysis.core.database_client.objects.project import Project
 from code_analysis.core.indexing_worker_pkg.processing import (
     INDEXING_PROJECT_DISCOVERY_SQL,
@@ -20,6 +23,8 @@ from code_analysis.core.indexing_worker_pkg.processing import (
 from code_analysis.core.vectorization_worker_pkg.processing_cycle import (
     PROJECTS_PENDING_SQL,
 )
+
+from tests.sqlite_inprocess_database import sqlite_inprocess_database_client
 
 
 _VALID_UUID = "550e8400-e29b-41d4-a716-446655440000"
@@ -89,70 +94,77 @@ def test_indexing_discovery_sql_filters_processing_paused() -> None:
 
 
 def test_projects_table_has_processing_paused_after_sync_schema(tmp_path: Path) -> None:
-    from code_analysis.core.database import CodeDatabase
-
     db_path = tmp_path / "pp.db"
-    db = CodeDatabase({"type": "sqlite", "config": {"path": str(db_path)}})
+    client = sqlite_inprocess_database_client(db_path, backup_dir=tmp_path / "bp")
     try:
-        db.sync_schema()
-        info = db._get_table_info("projects")
+        info = client.get_table_info("projects")
         names = {col["name"] for col in info}
         assert "processing_paused" in names
     finally:
-        db.close()
+        client.disconnect()
 
 
-def test_indexing_discovery_returns_no_projects_when_paused(tmp_path: Path) -> None:
-    """When processing_paused=1, discovery must not return that project_id."""
-    orig = os.environ.get("CODE_ANALYSIS_DB_WORKER")
-    os.environ["CODE_ANALYSIS_DB_WORKER"] = "1"
-    try:
-        from code_analysis.core.database import CodeDatabase
-    except ImportError:
-        pytest.skip("CodeDatabase not available")
+@pytest.fixture
+def pp_disc_db_client(tmp_path: Path) -> Iterator[DatabaseClient]:
     db_path = tmp_path / "disc.db"
+    backup_dir = tmp_path / "disc_backups"
+    original = os.environ.get("CODE_ANALYSIS_DB_WORKER")
+    os.environ["CODE_ANALYSIS_DB_WORKER"] = "1"
+    db = None
+    try:
+        db = sqlite_inprocess_database_client(db_path, backup_dir=backup_dir)
+        yield db
+    finally:
+        if db is not None:
+            db.disconnect()
+        if original is None:
+            os.environ.pop("CODE_ANALYSIS_DB_WORKER", None)
+        else:
+            os.environ["CODE_ANALYSIS_DB_WORKER"] = original
+
+
+def test_indexing_discovery_returns_no_projects_when_paused(
+    pp_disc_db_client: DatabaseClient, tmp_path: Path
+) -> None:
+    """When processing_paused=1, discovery must not return that project_id."""
+    import time
+
     root = tmp_path / "proj_root"
     root.mkdir()
     py_file = root / "x.py"
     py_file.write_text("x = 1\n", encoding="utf-8")
 
-    db = CodeDatabase({"type": "sqlite", "config": {"path": str(db_path)}})
-    try:
-        db.sync_schema()
-        project_id = db.get_or_create_project(root_path=str(root), name="pp_t")
-        import time
+    project_id = str(uuid.uuid4())
+    pp_disc_db_client.execute(
+        "INSERT INTO projects (id, root_path, name, updated_at) "
+        "VALUES (?, ?, ?, julianday('now'))",
+        (project_id, str(root.resolve()), "pp_t"),
+    )
+    file_id = pp_disc_db_client.add_file(
+        path=str(py_file),
+        lines=1,
+        last_modified=time.time(),
+        has_docstring=False,
+        project_id=project_id,
+    )
+    pp_disc_db_client.execute(
+        "UPDATE files SET needs_chunking = 1 WHERE id = ?",
+        (file_id,),
+    )
+    pp_disc_db_client.execute(
+        "UPDATE projects SET processing_paused = 1 WHERE id = ?",
+        (project_id,),
+    )
+    r = pp_disc_db_client.execute(INDEXING_PROJECT_DISCOVERY_SQL, ())
+    rows = r.get("data", []) if isinstance(r, dict) else []
+    ids = [row["project_id"] for row in rows] if rows else []
+    assert project_id not in ids
 
-        file_id = db.add_file(
-            path=str(py_file),
-            lines=1,
-            last_modified=time.time(),
-            has_docstring=False,
-            project_id=project_id,
-        )
-        db._execute(
-            "UPDATE files SET needs_chunking = 1 WHERE id = ?",
-            (file_id,),
-        )
-        db._execute(
-            "UPDATE projects SET processing_paused = 1 WHERE id = ?",
-            (project_id,),
-        )
-        db._commit()
-        rows = db._fetchall(INDEXING_PROJECT_DISCOVERY_SQL, ())
-        ids = [r["project_id"] for r in rows] if rows else []
-        assert project_id not in ids
-
-        db._execute(
-            "UPDATE projects SET processing_paused = 0 WHERE id = ?",
-            (project_id,),
-        )
-        db._commit()
-        rows2 = db._fetchall(INDEXING_PROJECT_DISCOVERY_SQL, ())
-        ids2 = [r["project_id"] for r in rows2] if rows2 else []
-        assert project_id in ids2
-    finally:
-        db.close()
-        if orig is None:
-            os.environ.pop("CODE_ANALYSIS_DB_WORKER", None)
-        else:
-            os.environ["CODE_ANALYSIS_DB_WORKER"] = orig
+    pp_disc_db_client.execute(
+        "UPDATE projects SET processing_paused = 0 WHERE id = ?",
+        (project_id,),
+    )
+    r2 = pp_disc_db_client.execute(INDEXING_PROJECT_DISCOVERY_SQL, ())
+    rows2 = r2.get("data", []) if isinstance(r2, dict) else []
+    ids2 = [row["project_id"] for row in rows2] if rows2 else []
+    assert project_id in ids2

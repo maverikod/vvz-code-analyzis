@@ -17,12 +17,38 @@ from unittest.mock import patch
 
 import pytest
 
+from code_analysis.commands.file_management import RepairDatabaseCommand
+from code_analysis.commands.update_indexes_analyzer import analyze_file
 from code_analysis.core.cst_tree.tree_builder import create_tree_from_code
 from code_analysis.core.cst_tree.tree_saver import save_tree_to_file
-from code_analysis.core.database import CodeDatabase
-from code_analysis.core.database.base import create_driver_config_for_worker
-from code_analysis.commands.update_indexes_analyzer import analyze_file
-from code_analysis.commands.file_management import RepairDatabaseCommand
+
+from tests.sqlite_in_process_legacy_facade import (
+    SqliteLegacyRpcFacade,
+)
+from tests.sqlite_inprocess_database import sqlite_inprocess_database_client
+
+
+class _FileTreeReadCompatFacade:
+    """Delegates to SqliteLegacyRpcFacade; exposes dict-shaped ``get_project`` for read helpers."""
+
+    def __init__(self, facade: SqliteLegacyRpcFacade) -> None:
+        object.__setattr__(self, "_facade", facade)
+
+    def get_project(self, project_id: str):
+        p = self._facade._client.get_project(project_id)
+        if p is None:
+            return None
+        return {"id": p.id, "root_path": p.root_path}
+
+    def __getattr__(self, name: str):
+        return getattr(self._facade, name)
+
+    def __setattr__(self, name: str, value) -> None:  # noqa: ANN001
+        if name == "_facade":
+            object.__setattr__(self, name, value)
+        else:
+            setattr(self._facade, name, value)
+
 
 MOCK_FILE_UUID = "00000000-0000-4000-8000-000000000001"
 
@@ -45,16 +71,16 @@ def project_id():
 
 @pytest.fixture
 def test_db(temp_dir):
-    """CodeDatabase with schema (including file_tree_snapshots)."""
-    db_path = temp_dir / "test.db"
-    driver_config = create_driver_config_for_worker(
-        db_path=db_path, driver_type="sqlite"
+    """Full SQLite DDL + legacy RPC facade + read-compat wrapper for snapshot helpers."""
+    client = sqlite_inprocess_database_client(
+        temp_dir / "test.db", backup_dir=temp_dir / "backups"
     )
-    db = CodeDatabase(driver_config=driver_config)
-    db.sync_schema()
-    db._clear_file_vectors = lambda file_id: None  # type: ignore[attr-defined]
-    yield db
-    db.close()
+    facade = SqliteLegacyRpcFacade(client)
+    setattr(facade, "_clear_file_vectors", lambda file_id: None)
+    try:
+        yield _FileTreeReadCompatFacade(facade)
+    finally:
+        facade.close()
 
 
 @pytest.fixture
@@ -264,7 +290,7 @@ def test_file_not_reported_success_on_sync_failure(
     test_db.get_file_by_path = lambda p, pid: None
     test_db.add_file = lambda *a, **k: MOCK_FILE_UUID
     with patch(
-        "code_analysis.core.database.file_tree_sync.sync_file_to_db_atomic"
+        "code_analysis.commands.update_indexes_analyzer.sync_file_to_db_atomic"
     ) as sync_mock:
         sync_mock.return_value = {"success": False, "error": "sync failed"}
         result = analyze_file(

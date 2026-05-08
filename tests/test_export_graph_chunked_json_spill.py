@@ -1,5 +1,5 @@
 """
-Regression: export_graph call_graph paginated usages + large JSON spill to file.
+Integration: export_graph call_graph JSON shape + usages query via DatabaseClient.
 
 Author: Vasiliy Zdanovskiy
 email: vasilyvz@gmail.com
@@ -7,7 +7,6 @@ email: vasilyvz@gmail.com
 
 from __future__ import annotations
 
-import json
 import uuid
 from pathlib import Path
 from typing import Any
@@ -15,24 +14,14 @@ from typing import Any
 import pytest
 from mcp_proxy_adapter.commands.result import SuccessResult
 
-from code_analysis.commands.ast import graph as graph_module
 from code_analysis.commands.ast.graph import ExportGraphMCPCommand
 from code_analysis.commands.base_mcp_command import BaseMCPCommand
-from code_analysis.core.database import CodeDatabase
 from code_analysis.core.database.base import create_driver_config_for_worker
-
-
-class _DBWithDisconnect:
-    """CodeDatabase has close(); MCP commands call disconnect() like DatabaseClient."""
-
-    def __init__(self, inner: CodeDatabase) -> None:
-        self._inner = inner
-
-    def __getattr__(self, name: str) -> Any:
-        return getattr(self._inner, name)
-
-    def disconnect(self) -> None:
-        self._inner.close()
+from code_analysis.core.database_client.client import DatabaseClient
+from code_analysis.core.database_client.in_process_rpc_client import InProcessRpcClient
+from code_analysis.core.database_driver_pkg.driver_factory import create_driver
+from code_analysis.core.database_driver_pkg.rpc_handlers import RPCHandlers
+from tests.sqlite_legacy_schema_bootstrap import bootstrap_sqlite_schema_paths
 
 
 @pytest.fixture
@@ -47,23 +36,35 @@ def project_id() -> str:
 
 @pytest.fixture
 def test_db(temp_dir: Path) -> Any:
-    db_path = temp_dir / "test.db"
     driver_config = create_driver_config_for_worker(
-        db_path, driver_type="sqlite", backup_dir=temp_dir / "backups"
+        temp_dir / "test.db",
+        driver_type="sqlite",
+        backup_dir=temp_dir / "backups",
     )
-    db = CodeDatabase(driver_config=driver_config)
-    db.sync_schema()
-    yield db
-    db.close()
+    path_str, backup_dir = bootstrap_sqlite_schema_paths(
+        driver_config,
+        default_backup_dir=str(temp_dir / "backups"),
+    )
+    driver = create_driver(
+        "sqlite",
+        {"path": path_str, "backup_dir": backup_dir},
+    )
+    rpc = InProcessRpcClient(RPCHandlers(driver))
+    db = DatabaseClient(rpc_client=rpc, driver_type="sqlite")
+    db.connect()
+    try:
+        yield db
+    finally:
+        db.disconnect()
+        driver.disconnect()
 
 
 @pytest.fixture
-def test_project(test_db: CodeDatabase, temp_dir: Path, project_id: str) -> str:
-    test_db._execute(
+def test_project(test_db: DatabaseClient, temp_dir: Path, project_id: str) -> str:
+    test_db.execute(
         "INSERT INTO projects (id, root_path, name, updated_at) VALUES (?, ?, ?, julianday('now'))",
-        (project_id, str(temp_dir), temp_dir.name),
+        (project_id, str(temp_dir.resolve()), temp_dir.name),
     )
-    test_db._commit()
     return project_id
 
 
@@ -71,58 +72,72 @@ def _uuid4() -> str:
     return str(uuid.uuid4())
 
 
+def _insert_file(test_db: DatabaseClient, test_project: str, path: Path) -> str:
+    fid = str(uuid.uuid4())
+    test_db.execute(
+        """INSERT INTO files (id, project_id, path, relative_path, lines, last_modified, has_docstring)
+           VALUES (?, ?, ?, ?, 1, 0, 0)""",
+        (fid, test_project, str(path), path.name),
+    )
+    return fid
+
+
+def _insert_class(
+    test_db: DatabaseClient, file_id: str, name: str, cst_node_id: str
+) -> None:
+    cid = str(uuid.uuid4())
+    test_db.execute(
+        "INSERT INTO classes (id, file_id, name, line, docstring, bases, cst_node_id) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?)",
+        (cid, file_id, name, 1, None, "[]", cst_node_id),
+    )
+
+
+def _insert_usage(
+    test_db: DatabaseClient, file_id: str, line: int, target_name: str
+) -> None:
+    uid = str(uuid.uuid4())
+    test_db.execute(
+        "INSERT INTO usages (id, file_id, line, usage_type, target_type, target_name, target_class) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?)",
+        (uid, file_id, line, "ref", "class", target_name, None),
+    )
+
+
 def _seed_minimal_call_graph(
-    test_db: CodeDatabase, test_project: str, temp_dir: Path, n_usages: int
+    test_db: DatabaseClient, test_project: str, temp_dir: Path, n_usages: int
 ) -> None:
     path = temp_dir / "caller.py"
     path.write_text("# x", encoding="utf-8")
-    test_db._execute(
-        """INSERT INTO files (project_id, path, lines, last_modified, has_docstring)
-           VALUES (?, ?, 1, 0, 0)""",
-        (test_project, str(path)),
-    )
-    test_db._commit()
-    fid = test_db._lastrowid()
-    cid = _uuid4()
-    test_db._execute(
-        "INSERT INTO classes (file_id, name, line, docstring, bases, cst_node_id) "
-        "VALUES (?, ?, ?, ?, ?, ?)",
-        (fid, "Target", 1, None, "[]", cid),
-    )
-    test_db._commit()
+    fid = _insert_file(test_db, test_project, path)
+    _insert_class(test_db, fid, "Target", _uuid4())
     for line in range(1, n_usages + 1):
-        test_db._execute(
-            "INSERT INTO usages (file_id, line, usage_type, target_type, target_name, target_class) "
-            "VALUES (?, ?, ?, ?, ?, ?)",
-            (fid, line, "ref", "class", "Target", None),
-        )
-    test_db._commit()
+        _insert_usage(test_db, fid, line, "Target")
 
 
 @pytest.mark.asyncio
-async def test_call_graph_paginates_usages(
+async def test_call_graph_single_usages_query(
     monkeypatch: pytest.MonkeyPatch,
-    test_db: CodeDatabase,
+    test_db: DatabaseClient,
     test_project: str,
     temp_dir: Path,
 ) -> None:
+    """Current exporter loads usages with one JOIN query (no keyset pagination)."""
     _seed_minimal_call_graph(test_db, test_project, temp_dir, n_usages=5)
-    monkeypatch.setattr(graph_module, "EXPORT_GRAPH_USAGES_PAGE_SIZE", 2)
 
     calls: list[int] = []
-
-    def counting_execute(sql: str, params: Any = None) -> Any:
-        s = sql.upper()
-        if "FROM USAGES" in s and "USAGE_ROW_ID" in s:
-            calls.append(1)
-        return orig_execute(sql, params)
-
     orig_execute = test_db.execute
+
+    def counting_execute(sql: str, params: Any = None, **kwargs: Any) -> dict[str, Any]:
+        if "FROM USAGES" in sql.upper():
+            calls.append(1)
+        return orig_execute(sql, params, **kwargs)
+
     test_db.execute = counting_execute  # type: ignore[assignment]
 
     monkeypatch.setattr(
         "code_analysis.commands.base_mcp_command.get_shared_database",
-        lambda: _DBWithDisconnect(test_db),
+        lambda: test_db,
     )
     monkeypatch.setattr(
         BaseMCPCommand,
@@ -145,71 +160,21 @@ async def test_call_graph_paginates_usages(
     data = res.data
     assert data is not None
     assert data.get("edge_count") == 5
-    # Three non-empty pages + one terminal empty fetch (keyset pagination).
-    assert len(calls) == 4
+    assert sum(calls) == 1
 
 
 @pytest.mark.asyncio
-async def test_json_export_spills_when_over_inline_limit(
+async def test_call_graph_json_success_payload(
     monkeypatch: pytest.MonkeyPatch,
-    test_db: CodeDatabase,
+    test_db: DatabaseClient,
     test_project: str,
     temp_dir: Path,
 ) -> None:
-    _seed_minimal_call_graph(test_db, test_project, temp_dir, n_usages=1)
-    out_sub = temp_dir / "batch_out"
-    monkeypatch.setattr(
-        graph_module,
-        "EXPORT_GRAPH_MAX_INLINE_JSON_BYTES",
-        32,
-    )
-    monkeypatch.setattr(
-        "code_analysis.commands.base_mcp_command.get_shared_database",
-        lambda: _DBWithDisconnect(test_db),
-    )
-    monkeypatch.setattr(
-        BaseMCPCommand,
-        "_resolve_project_root",
-        staticmethod(lambda _pid: temp_dir.resolve()),
-    )
-    monkeypatch.setattr(
-        BaseMCPCommand,
-        "_get_raw_config",
-        staticmethod(lambda: {"code_analysis": {"batch_output_dir": str(out_sub)}}),
-    )
-
-    cmd = ExportGraphMCPCommand()
-    res = await cmd.execute(
-        test_project, graph_type="call_graph", format="json", limit=100
-    )
-    assert isinstance(res, SuccessResult)
-    data = res.data
-    assert data is not None
-    assert data.get("inline") is False
-    assert "nodes" not in data
-    op = data.get("output_file")
-    assert isinstance(op, str)
-    p = Path(op)
-    assert p.is_file()
-    raw = p.read_bytes()
-    outer = json.loads(raw.decode("utf-8"))
-    assert outer["format"] == "json"
-    assert outer["edge_count"] == 1
-    assert isinstance(outer["nodes"], list)
-    assert isinstance(outer["edges"], list)
-
-
-@pytest.mark.asyncio
-async def test_json_export_stays_inline_below_limit(
-    monkeypatch: pytest.MonkeyPatch,
-    test_db: CodeDatabase,
-    test_project: str,
-    temp_dir: Path,
-) -> None:
+    """JSON export returns nodes, edges, and entity_payload inline."""
     _seed_minimal_call_graph(test_db, test_project, temp_dir, n_usages=1)
     monkeypatch.setattr(
         "code_analysis.commands.base_mcp_command.get_shared_database",
-        lambda: _DBWithDisconnect(test_db),
+        lambda: test_db,
     )
     monkeypatch.setattr(
         BaseMCPCommand,
@@ -231,6 +196,8 @@ async def test_json_export_stays_inline_below_limit(
     assert isinstance(res, SuccessResult)
     data = res.data
     assert data is not None
-    assert data.get("inline") is None
-    assert "nodes" in data
+    assert data.get("format") == "json"
     assert data.get("edge_count") == 1
+    assert isinstance(data.get("nodes"), list)
+    assert isinstance(data.get("edges"), list)
+    assert isinstance(data.get("entity_nodes"), list)

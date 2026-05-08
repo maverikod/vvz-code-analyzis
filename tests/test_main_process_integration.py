@@ -8,33 +8,60 @@ Author: Vasiliy Zdanovskiy
 email: vasilyvz@gmail.com
 """
 
-import pytest
+import importlib
 import json
 import os
 import sys
 from pathlib import Path
-from unittest.mock import patch, MagicMock, Mock
-from typing import Dict, Any
+from typing import Any, Dict, Iterator
+from unittest.mock import MagicMock
 
-# Mock dependencies before importing main
-sys.modules["mcp_proxy_adapter"] = MagicMock()
-sys.modules["mcp_proxy_adapter.api"] = MagicMock()
-sys.modules["mcp_proxy_adapter.api.core"] = MagicMock()
-sys.modules["mcp_proxy_adapter.api.core.app_factory"] = MagicMock()
-sys.modules["mcp_proxy_adapter.core"] = MagicMock()
-sys.modules["mcp_proxy_adapter.core.config"] = MagicMock()
-sys.modules["mcp_proxy_adapter.core.config.simple_config"] = MagicMock()
-sys.modules["mcp_proxy_adapter.core.server_engine"] = MagicMock()
-sys.modules["mcp_proxy_adapter.core.app_factory"] = MagicMock()
-sys.modules["mcp_proxy_adapter.core.app_factory.ssl_config"] = MagicMock()
-sys.modules["mcp_proxy_adapter.config"] = MagicMock()
-sys.modules["mcp_proxy_adapter.commands"] = MagicMock()
-sys.modules["mcp_proxy_adapter.commands.base"] = MagicMock()
-sys.modules["mcp_proxy_adapter.commands.result"] = MagicMock()
-sys.modules["mcp_proxy_adapter.commands.hooks"] = MagicMock()
-sys.modules["mcp_proxy_adapter.commands.command_registry"] = MagicMock()
+import pytest
 
-from code_analysis.core.worker_manager import WorkerManager, WorkerStartResult
+# Populated by ``_stub_mcp_modules`` (must not bind at import time: clobbers sys.modules).
+WorkerManager: Any = None
+WorkerStartResult: Any = None
+
+_MCP_STUB_KEYS = (
+    "mcp_proxy_adapter",
+    "mcp_proxy_adapter.api",
+    "mcp_proxy_adapter.api.core",
+    "mcp_proxy_adapter.api.core.app_factory",
+    "mcp_proxy_adapter.core",
+    "mcp_proxy_adapter.core.config",
+    "mcp_proxy_adapter.core.config.simple_config",
+    "mcp_proxy_adapter.core.server_engine",
+    "mcp_proxy_adapter.core.app_factory",
+    "mcp_proxy_adapter.core.app_factory.ssl_config",
+    "mcp_proxy_adapter.config",
+    "mcp_proxy_adapter.commands",
+    "mcp_proxy_adapter.commands.base",
+    "mcp_proxy_adapter.commands.result",
+    "mcp_proxy_adapter.commands.hooks",
+    "mcp_proxy_adapter.commands.command_registry",
+)
+
+
+@pytest.fixture(scope="module", autouse=True)
+def _stub_mcp_modules(request: pytest.FixtureRequest) -> Iterator[None]:
+    """Stub MCP adapter modules only for this file; restore after (Command.run re-imports registry)."""
+    saved: Dict[str, Any] = {}
+    for key in _MCP_STUB_KEYS:
+        saved[key] = sys.modules.get(key)
+        sys.modules[key] = MagicMock()
+
+    wm_mod = importlib.import_module("code_analysis.core.worker_manager")
+    request.module.WorkerManager = wm_mod.WorkerManager
+    request.module.WorkerStartResult = wm_mod.WorkerStartResult
+
+    yield
+
+    for key in _MCP_STUB_KEYS:
+        prev = saved.get(key)
+        if prev is None:
+            sys.modules.pop(key, None)
+        else:
+            sys.modules[key] = prev
 
 
 class TestMainProcessIntegration:

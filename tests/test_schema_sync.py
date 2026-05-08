@@ -11,8 +11,10 @@ from pathlib import Path
 import pytest
 import sqlite3
 
-from code_analysis.core.database.base import CodeDatabase, SCHEMA_VERSION
-from code_analysis.core.db_driver.sqlite import SQLiteDriver
+from code_analysis.core.database.schema_definition import SCHEMA_VERSION
+from code_analysis.core.database_driver_pkg.sqlite_proxy_legacy.legacy_sqlite import (
+    SQLiteDriver,
+)
 from code_analysis.core.database.schema_sync import SchemaComparator
 from code_analysis.core.backup_manager import BackupManager
 
@@ -52,30 +54,6 @@ def sqlite_driver(temp_db_path):
     yield driver
 
     driver.disconnect()
-
-    if original_env is None:
-        os.environ.pop("CODE_ANALYSIS_DB_WORKER", None)
-    else:
-        os.environ["CODE_ANALYSIS_DB_WORKER"] = original_env
-
-
-@pytest.fixture
-def code_database(temp_db_path):
-    """Create CodeDatabase instance for testing."""
-    # Set environment variable to allow direct SQLite driver
-    original_env = os.environ.get("CODE_ANALYSIS_DB_WORKER")
-    os.environ["CODE_ANALYSIS_DB_WORKER"] = "1"
-
-    driver_config = {
-        "type": "sqlite",
-        "config": {"path": str(temp_db_path)},
-    }
-
-    db = CodeDatabase(driver_config)
-
-    yield db
-
-    db.close()
 
     if original_env is None:
         os.environ.pop("CODE_ANALYSIS_DB_WORKER", None)

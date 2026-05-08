@@ -17,6 +17,11 @@ import pytest
 from code_analysis.core.cst_tree.node_id_markers import strip_persisted_node_ids
 from code_analysis.core.cst_tree.tree_builder import create_tree_from_code
 from code_analysis.core.cst_tree.tree_saver import save_tree_to_file
+from code_analysis.core.cst_tree.tree_sidecar import (
+    read_sidecar_payload,
+    sidecar_path_for_py,
+    verify_sidecar_against_source,
+)
 
 
 def _make_db_mock() -> MagicMock:
@@ -26,6 +31,18 @@ def _make_db_mock() -> MagicMock:
     db.commit_transaction = MagicMock()
     db.rollback_transaction = MagicMock()
     db.select = MagicMock(return_value=[])
+
+    def _execute_side_effect(
+        sql: str, params: tuple = (), *args: object, **kwargs: object
+    ) -> dict:
+        s = str(sql)
+        if "SELECT editing_pid" in s:
+            return {"affected_rows": 0, "data": [{"editing_pid": None}]}
+        if "UPDATE files SET editing_pid" in s:
+            return {"affected_rows": 1, "data": None}
+        return {"affected_rows": 1, "data": None}
+
+    db.execute = MagicMock(side_effect=_execute_side_effect)
     created = MagicMock()
     created.id = 1
     db.create_file = MagicMock(return_value=created)
@@ -82,7 +99,12 @@ def test_save_tree_to_file_creates_target_and_removes_tmp(
         target.read_text(encoding="utf-8")
     )
     assert logical_source.strip() == '"""Doc."""\n\nx = 1'
-    assert persisted_node_ids
+    assert not persisted_node_ids
+    sc = sidecar_path_for_py(target)
+    assert sc.is_file()
+    payload = read_sidecar_payload(target)
+    assert payload is not None
+    assert verify_sidecar_against_source(logical_source, payload)
     assert not path_tmp.exists()
 
 

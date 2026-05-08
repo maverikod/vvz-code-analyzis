@@ -49,6 +49,10 @@ def test_compute_replace_multi_rejects_overlapping_ranges() -> None:
 
 
 @patch(
+    "code_analysis.core.database.file_edit_lock.acquire_file_edit_lock_with_retry",
+    return_value=True,
+)
+@patch(
     "code_analysis.core.database_client.file_data_batch.update_file_data_atomic_batch",
     side_effect=_reject_batch,
 )
@@ -56,12 +60,15 @@ def test_compute_replace_multi_rejects_overlapping_ranges() -> None:
 def test_persist_plain_text_file_metadata_updates_files_row_only(
     _mock_ast_parse: MagicMock,
     _mock_batch: MagicMock,
+    _mock_acquire: MagicMock,
     tmp_path: Path,
 ) -> None:
     f = tmp_path / "n.md"
     f.write_text("# hi\n", encoding="utf-8")
     db = MagicMock()
     db.select.return_value = [{"id": 7}]
+    db.begin_transaction.return_value = "tid-test"
+    db.execute.return_value = {"affected_rows": 1}
     out = persist_plain_text_file_metadata(
         database=db,
         project_id="p1",
@@ -71,8 +78,11 @@ def test_persist_plain_text_file_metadata_updates_files_row_only(
     )
     assert out["success"] is True
     assert out.get("metadata_only") is True
-    db.update_file.assert_called_once()
+    db.begin_transaction.assert_called_once()
+    assert db.execute.call_count == 2
+    db.update_file.assert_not_called()
     db.create_file.assert_not_called()
+    db.commit_transaction.assert_called_once_with("tid-test")
 
 
 def test_text_file_handler_registration_ready() -> None:

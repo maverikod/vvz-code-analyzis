@@ -10,6 +10,7 @@ email: vasilyvz@gmail.com
 
 from __future__ import annotations
 
+import libcst as cst
 import pytest
 
 from code_analysis.core.cst_tree.models import TreeOperation, TreeOperationType
@@ -32,6 +33,17 @@ FUNCTION_BODY_SOURCE = '''"""Doc."""
 def bar():
     x = 1
     return x
+'''
+
+SOURCE_MODULE_CLASS_X = '''"""Doc."""
+from .task_status import TaskStatus
+
+class X:
+    def method(self):
+        return 0
+
+def foo():
+    return 1
 '''
 
 
@@ -66,6 +78,16 @@ def _find_import_node_id(tree_id: str):
         if meta.type == "SimpleStatementLine" and meta.start_line == 2:
             return nid
     pytest.fail("No import node found in tree")
+
+
+def _find_classdef_node_id(tree_id: str, name: str = "X") -> str:
+    """Return node_id of module-level ClassDef with given name."""
+    t = get_tree(tree_id)
+    assert t is not None
+    for nid, meta in t.metadata_map.items():
+        if meta.type == "ClassDef" and meta.name == name:
+            return nid
+    pytest.fail(f"No ClassDef named {name!r} in tree")
 
 
 def _find_function_body_stmt_node_id(tree_id: str):
@@ -313,3 +335,44 @@ class TestReplaceRangeFailureDiagnostics:
         assert "Parent type:" in msg or "parent type" in msg.lower()
         assert "line" in msg.lower()
         assert "Hint:" in msg or "consecutive" in msg.lower()
+
+
+class TestReplaceClassDefStaleNodeMap:
+    """
+    node_map may reference CST nodes from a different parse than tree.module;
+    replace must still match Module.body (identity re-alignment).
+    """
+
+    def test_replace_module_level_classdef_after_stale_node_map(self, tmp_path):
+        source = SOURCE_MODULE_CLASS_X.strip()
+        path = str(tmp_path / "mod_class.py")
+        tree = create_tree_from_code(path, source)
+        tree_id = tree.tree_id
+        try:
+            class_id = _find_classdef_node_id(tree_id, "X")
+            t = get_tree(tree_id)
+            assert t is not None
+            alien = cst.parse_module(source)
+            stale = None
+            for stmt in alien.body:
+                if isinstance(stmt, cst.ClassDef) and stmt.name.value == "X":
+                    stale = stmt
+                    break
+            assert stale is not None
+            assert all(b is not stale for b in t.module.body)
+            t.node_map[class_id] = stale
+
+            modified = modify_tree(
+                tree_id,
+                [
+                    TreeOperation(
+                        action=TreeOperationType.REPLACE,
+                        node_id=class_id,
+                        code_lines=["class X:", "    pass"],
+                    )
+                ],
+            )
+            assert "class X:" in modified.module.code
+            assert "def method" not in modified.module.code
+        finally:
+            remove_tree(tree_id)

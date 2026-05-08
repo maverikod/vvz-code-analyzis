@@ -15,13 +15,16 @@ import json
 import os
 import tempfile
 import time
+import types
 import uuid
 from pathlib import Path
 
 import pytest
 
-from code_analysis.core.database import CodeDatabase
-from code_analysis.core.database.base import create_driver_config_for_worker
+from tests.sqlite_inprocess_database import sqlite_inprocess_database_client
+from tests.sqlite_in_process_legacy_facade import SqliteLegacyRpcFacade
+from code_analysis.core.database.files.update import update_file_data
+from code_analysis.core.database.projects import get_project
 
 
 # Synthetic file content: at least one top-level function and one class with method
@@ -48,32 +51,35 @@ SYNTHETIC_FILE_WITH_CLASS_ONLY = '''class Helper:
 
 def _insert_ast_cst_and_entities(
     test_db,
-    file_id: int,
+    file_id: str | uuid.UUID | int,
     project_id: str,
     file_content: str,
     file_path: Path,
     file_mtime: float,
 ) -> None:
     """Insert AST, CST and entity rows for a file (shared by real and synthetic fixtures)."""
+    fid = str(file_id)
     tree = ast.parse(file_content, filename=str(file_path))
     ast_json = json.dumps(ast.dump(tree))
     ast_hash = hashlib.sha256(ast_json.encode()).hexdigest()
 
+    ast_row_id = str(uuid.uuid4())
     test_db._execute(
         """
-        INSERT INTO ast_trees (file_id, project_id, ast_json, ast_hash, file_mtime)
-        VALUES (?, ?, ?, ?, ?)
+        INSERT INTO ast_trees (id, file_id, project_id, ast_json, ast_hash, file_mtime)
+        VALUES (?, ?, ?, ?, ?, ?)
         """,
-        (file_id, project_id, ast_json, ast_hash, file_mtime),
+        (ast_row_id, fid, project_id, ast_json, ast_hash, file_mtime),
     )
 
     cst_hash = hashlib.sha256(file_content.encode()).hexdigest()
+    cst_row_id = str(uuid.uuid4())
     test_db._execute(
         """
-        INSERT INTO cst_trees (file_id, project_id, cst_code, cst_hash, file_mtime)
-        VALUES (?, ?, ?, ?, ?)
+        INSERT INTO cst_trees (id, file_id, project_id, cst_code, cst_hash, file_mtime)
+        VALUES (?, ?, ?, ?, ?, ?)
         """,
-        (file_id, project_id, file_content, cst_hash, file_mtime),
+        (cst_row_id, fid, project_id, file_content, cst_hash, file_mtime),
     )
 
     classes_data = []
@@ -84,20 +90,16 @@ def _insert_ast_cst_and_entities(
 
     class_id_map = {}
     for class_name, line_num, docstring in classes_data:
+        class_uuid = str(uuid.uuid4())
         cst_node_id = f"fixture:{class_name}:ClassDef:{line_num}:0-0:0"
         test_db._execute(
             """
-            INSERT INTO classes (file_id, name, line, docstring, bases, cst_node_id)
-            VALUES (?, ?, ?, ?, ?, ?)
+            INSERT INTO classes (id, file_id, name, line, docstring, bases, cst_node_id)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
             """,
-            (file_id, class_name, line_num, docstring, "[]", cst_node_id),
+            (class_uuid, fid, class_name, line_num, docstring, "[]", cst_node_id),
         )
-        class_row = test_db._fetchone(
-            "SELECT id FROM classes WHERE file_id = ? AND name = ? AND line = ?",
-            (file_id, class_name, line_num),
-        )
-        if class_row:
-            class_id_map[class_name] = class_row["id"]
+        class_id_map[class_name] = class_uuid
 
     def is_method(node, tree):
         for parent in ast.walk(tree):
@@ -117,12 +119,14 @@ def _insert_ast_cst_and_entities(
 
             if parent_class and parent_class in class_id_map:
                 cst_node_id = f"fixture:{node.name}:FunctionDef:{node.lineno}:0-0:0"
+                method_id = str(uuid.uuid4())
                 test_db._execute(
                     """
-                    INSERT INTO methods (class_id, name, line, args, docstring, cst_node_id)
-                    VALUES (?, ?, ?, ?, ?, ?)
+                    INSERT INTO methods (id, class_id, name, line, args, docstring, cst_node_id)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
+                        method_id,
                         class_id_map[parent_class],
                         node.name,
                         node.lineno,
@@ -133,13 +137,15 @@ def _insert_ast_cst_and_entities(
                 )
             else:
                 cst_node_id = f"fixture:{node.name}:FunctionDef:{node.lineno}:0-0:0"
+                function_id = str(uuid.uuid4())
                 test_db._execute(
                     """
-                    INSERT INTO functions (file_id, name, line, args, docstring, cst_node_id)
-                    VALUES (?, ?, ?, ?, ?, ?)
+                    INSERT INTO functions (id, file_id, name, line, args, docstring, cst_node_id)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
-                        file_id,
+                        function_id,
+                        fid,
                         node.name,
                         node.lineno,
                         "[]",
@@ -168,11 +174,11 @@ def project_id():
 def test_db(temp_dir):
     """Create test database with schema (projects, files, etc.)."""
     db_path = temp_dir / "test.db"
-    driver_config = create_driver_config_for_worker(
-        db_path, driver_type="sqlite", backup_dir=temp_dir / "backups"
-    )
-    db = CodeDatabase(driver_config=driver_config)
-    db.sync_schema()
+    backup_dir = temp_dir / "backups"
+    client = sqlite_inprocess_database_client(db_path, backup_dir=backup_dir)
+    db = SqliteLegacyRpcFacade(client)
+    db.update_file_data = types.MethodType(update_file_data, db)
+    db.get_project = types.MethodType(get_project, db)
     yield db
     db.close()
 

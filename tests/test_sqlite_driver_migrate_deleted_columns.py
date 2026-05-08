@@ -16,7 +16,7 @@ from code_analysis.core.database.schema_creation_create import run_create_schema
 
 
 class _RawSqliteSchemaAdapter:
-    """Enough of CodeDatabase db surface for run_create_schema + tail migrations."""
+    """Minimal DB surface (execute/fetch/get_table_info) for run_create_schema + migrations."""
 
     def __init__(self, conn: sqlite3.Connection) -> None:
         self._c = conn

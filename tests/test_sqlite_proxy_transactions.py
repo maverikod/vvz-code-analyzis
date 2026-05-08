@@ -1,51 +1,45 @@
 """
-Tests for SQLite Proxy driver transaction support.
+Tests for SQLite transaction semantics via in-process RPC (:class:`DatabaseClient`).
+
+These tests assert ``begin`` / ``commit`` / ``rollback`` behavior on the SQLite driver
+wired through :class:`~tests.sqlite_in_process_legacy_facade.SqliteLegacyRpcFacade` and an
+in-process :class:`~code_analysis.core.database_client.client.DatabaseClient`.
 
 Author: Vasiliy Zdanovskiy
 email: vasilyvz@gmail.com
 """
 
-import tempfile
 from pathlib import Path
+
 import pytest
 
-from code_analysis.core.database.base import CodeDatabase
+from tests.sqlite_inprocess_database import sqlite_inprocess_database_client
+from tests.sqlite_in_process_legacy_facade import SqliteLegacyRpcFacade
 
 
 @pytest.fixture
-def temp_db_proxy():
-    """Create temporary database with proxy driver for testing."""
-    with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
-        db_path = Path(f.name)
-
-    driver_config = {
-        "type": "sqlite_proxy",
-        "config": {"path": str(db_path)},
-    }
-
+def temp_db_proxy(tmp_path: Path):
+    """Temporary DB with in-process SQLite RPC (transaction-aware)."""
+    db_path = tmp_path / "sqlite_tx.db"
+    client = sqlite_inprocess_database_client(db_path, backup_dir=tmp_path / "backups")
+    facade = SqliteLegacyRpcFacade(client)
     try:
-        db = CodeDatabase(driver_config)
-        db.sync_schema()
-        yield db
-        db.close()
+        yield facade
     finally:
-        if db_path.exists():
-            db_path.unlink()
+        facade.close()
 
 
 def test_sqlite_proxy_transaction_commit(temp_db_proxy):
-    """Test SQLite Proxy transaction commit."""
+    """Transaction commit persists rows."""
     temp_db_proxy.begin_transaction()
 
-    # Insert data
     temp_db_proxy._execute(
-        "INSERT INTO projects (id, root_path) VALUES (?, ?)",
-        ("proxy-commit", "/proxy/commit"),
+        "INSERT INTO projects (id, root_path, name, updated_at) VALUES (?, ?, ?, julianday('now'))",
+        ("proxy-commit", "/proxy/commit", "pc"),
     )
 
     temp_db_proxy.commit_transaction()
 
-    # Verify data was committed
     result = temp_db_proxy._fetchone(
         "SELECT id FROM projects WHERE id = ?", ("proxy-commit",)
     )
@@ -54,31 +48,27 @@ def test_sqlite_proxy_transaction_commit(temp_db_proxy):
 
 
 def test_sqlite_proxy_transaction_rollback(temp_db_proxy):
-    """Test SQLite Proxy transaction rollback."""
-    # Insert data outside transaction
+    """Rollback discards in-transaction inserts."""
     temp_db_proxy._execute(
-        "INSERT INTO projects (id, root_path) VALUES (?, ?)",
-        ("before-proxy-rollback", "/before/proxy/rollback"),
+        "INSERT INTO projects (id, root_path, name, updated_at) VALUES (?, ?, ?, julianday('now'))",
+        ("before-proxy-rollback", "/before/proxy/rollback", "bpr"),
     )
     temp_db_proxy._commit()
 
     temp_db_proxy.begin_transaction()
 
-    # Insert data in transaction
     temp_db_proxy._execute(
-        "INSERT INTO projects (id, root_path) VALUES (?, ?)",
-        ("proxy-rollback", "/proxy/rollback"),
+        "INSERT INTO projects (id, root_path, name, updated_at) VALUES (?, ?, ?, julianday('now'))",
+        ("proxy-rollback", "/proxy/rollback", "pr"),
     )
 
     temp_db_proxy.rollback_transaction()
 
-    # Verify data was rolled back
     result = temp_db_proxy._fetchone(
         "SELECT id FROM projects WHERE id = ?", ("proxy-rollback",)
     )
     assert result is None
 
-    # Verify data before transaction still exists
     result = temp_db_proxy._fetchone(
         "SELECT id FROM projects WHERE id = ?", ("before-proxy-rollback",)
     )
@@ -86,19 +76,15 @@ def test_sqlite_proxy_transaction_rollback(temp_db_proxy):
 
 
 def test_sqlite_proxy_parallel_transactions(temp_db_proxy):
-    """Test parallel transactions in SQLite Proxy."""
-    # Start first transaction
+    """Committed transaction inserts remain visible."""
     temp_db_proxy.begin_transaction()
     temp_db_proxy._execute(
-        "INSERT INTO projects (id, root_path) VALUES (?, ?)",
-        ("parallel-1", "/parallel/1"),
+        "INSERT INTO projects (id, root_path, name, updated_at) VALUES (?, ?, ?, julianday('now'))",
+        ("parallel-1", "/parallel/1", "p1"),
     )
 
-    # Note: We can't have two active transactions in the same database instance
-    # But we can test that transaction isolation works
     temp_db_proxy.commit_transaction()
 
-    # Verify data was committed
     result = temp_db_proxy._fetchone(
         "SELECT id FROM projects WHERE id = ?", ("parallel-1",)
     )

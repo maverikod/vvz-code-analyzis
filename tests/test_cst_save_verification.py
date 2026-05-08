@@ -57,6 +57,18 @@ def _make_db_mock() -> MagicMock:
     db.execute_logical_write_operation = MagicMock(
         return_value={"success": True, "data": {"batch_results": []}}
     )
+
+    def _execute_side_effect(
+        sql: str, params: tuple = (), *args: object, **kwargs: object
+    ) -> dict:
+        s = str(sql)
+        if "SELECT editing_pid" in s:
+            return {"affected_rows": 0, "data": [{"editing_pid": None}]}
+        if "UPDATE files SET editing_pid" in s:
+            return {"affected_rows": 1, "data": None}
+        return {"affected_rows": 1, "data": None}
+
+    db.execute = MagicMock(side_effect=_execute_side_effect)
     return db
 
 
@@ -121,6 +133,41 @@ def test_replay_operations_match_module_code_after_modify(tmp_path: Path) -> Non
         assert replayed == working.module.code
         assert_replay_matches(
             original_source=marked_source,
+            target_path=path,
+            tree=working,
+            tree_operations=ops,
+        )
+    finally:
+        remove_tree(tree_id)
+
+
+def test_assert_replay_matches_remaps_ids_across_fresh_parses(tmp_path: Path) -> None:
+    """Replay builds a new parse of ``original_source``; op node_ids must remap from working tree."""
+    path = tmp_path / "bare_replay.py"
+    path.write_text("", encoding="utf-8")
+    src = "def f():\n    return 0\n"
+    tree = create_tree_from_code(str(path), src)
+    tree_id = tree.tree_id
+    fd_id: str | None = None
+    for nid, meta in tree.metadata_map.items():
+        if meta.type == "FunctionDef" and meta.name == "f":
+            fd_id = nid
+            break
+    assert fd_id is not None
+    ops = [
+        TreeOperation(
+            action=TreeOperationType.REPLACE,
+            node_id=fd_id,
+            code_lines=["def f():\n    return 99\n"],
+        )
+    ]
+    try:
+        modify_tree(tree_id, ops)
+        working = get_tree(tree_id)
+        assert working is not None
+        assert "99" in working.module.code
+        assert_replay_matches(
+            original_source=src,
             target_path=path,
             tree=working,
             tree_operations=ops,

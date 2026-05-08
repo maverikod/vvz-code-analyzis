@@ -1,115 +1,131 @@
 """
-Tests for database transaction context manager.
+Tests for explicit transaction usage with DatabaseClient (InProcessRpcClient).
 
 Author: Vasiliy Zdanovskiy
 email: vasilyvz@gmail.com
 """
 
-import tempfile
-import os
+from __future__ import annotations
+
 from pathlib import Path
+from typing import Iterator
+
 import pytest
 
-from code_analysis.core.database.base import CodeDatabase
+from code_analysis.core.database.schema_definition import get_schema_definition
+from code_analysis.core.database_client.client import DatabaseClient
+from code_analysis.core.database_client.in_process_rpc_client import InProcessRpcClient
+from code_analysis.core.database_driver_pkg.driver_factory import create_driver
+from code_analysis.core.database_driver_pkg.rpc_handlers import RPCHandlers
 
 
 @pytest.fixture
-def temp_db():
-    """Create temporary database for testing."""
-    with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
-        db_path = Path(f.name)
-
-    driver_config = {
-        "type": "sqlite",
-        "config": {"path": str(db_path)},
-    }
-
-    # Set environment variable to allow direct SQLite driver
-    original_env = os.environ.get("CODE_ANALYSIS_DB_WORKER")
-    os.environ["CODE_ANALYSIS_DB_WORKER"] = "1"
-
+def ipc_client(tmp_path: Path) -> Iterator[DatabaseClient]:
+    db_path = tmp_path / "test.db"
+    driver = create_driver("sqlite", {"path": str(db_path)})
+    handlers = RPCHandlers(driver)
+    ipc = InProcessRpcClient(handlers)
+    client = DatabaseClient(rpc_client=ipc)
+    client.connect()
+    backup_dir = tmp_path / "backups"
+    backup_dir.mkdir(parents=True, exist_ok=True)
+    client.sync_schema(get_schema_definition(), backup_dir=str(backup_dir))
     try:
-        db = CodeDatabase(driver_config)
-        db.sync_schema()
-        yield db
-        db.close()
+        yield client
     finally:
-        if original_env is None:
-            os.environ.pop("CODE_ANALYSIS_DB_WORKER", None)
-        else:
-            os.environ["CODE_ANALYSIS_DB_WORKER"] = original_env
-
-        if db_path.exists():
-            db_path.unlink()
+        client.disconnect()
 
 
-def test_transaction_context_manager_success(temp_db):
-    """Test successful transaction via context manager."""
-    with temp_db.transaction():
-        temp_db._execute(
+def _fetchone(
+    client: DatabaseClient,
+    sql: str,
+    params: tuple | None = None,
+    *,
+    transaction_id: str | None = None,
+):
+    r = client.execute(sql, params, transaction_id=transaction_id)
+    rows = r.get("data") or []
+    return rows[0] if rows else None
+
+
+def test_transaction_manual_commit_success(ipc_client: DatabaseClient) -> None:
+    tid = ipc_client.begin_transaction()
+    try:
+        ipc_client.execute(
             "INSERT INTO projects (id, root_path) VALUES (?, ?)",
             ("context-success", "/context/success"),
+            transaction_id=tid,
         )
-
-    # Verify data was committed
-    result = temp_db._fetchone(
-        "SELECT id FROM projects WHERE id = ?", ("context-success",)
+        ipc_client.commit_transaction(tid)
+    except Exception:
+        ipc_client.rollback_transaction(tid)
+        raise
+    row = _fetchone(
+        ipc_client, "SELECT id FROM projects WHERE id = ?", ("context-success",)
     )
-    assert result is not None
-    assert result["id"] == "context-success"
+    assert row is not None
+    assert row["id"] == "context-success"
 
 
-def test_transaction_context_manager_rollback_on_error(temp_db):
-    """Test transaction rollback on exception via context manager."""
+def test_transaction_manual_rollback_on_error(ipc_client: DatabaseClient) -> None:
+    tid = ipc_client.begin_transaction()
     with pytest.raises(ValueError):
-        with temp_db.transaction():
-            temp_db._execute(
+        try:
+            ipc_client.execute(
                 "INSERT INTO projects (id, root_path) VALUES (?, ?)",
                 ("context-error", "/context/error"),
+                transaction_id=tid,
             )
             raise ValueError("Test error")
+        finally:
+            ipc_client.rollback_transaction(tid)
 
-    # Verify data was rolled back
-    result = temp_db._fetchone(
-        "SELECT id FROM projects WHERE id = ?", ("context-error",)
+    row = _fetchone(
+        ipc_client, "SELECT id FROM projects WHERE id = ?", ("context-error",)
     )
-    assert result is None
+    assert row is None
 
 
-def test_transaction_context_manager_nested_error(temp_db):
-    """Test transaction context manager with nested exception."""
+def test_transaction_nested_exception_rolls_back(ipc_client: DatabaseClient) -> None:
+    tid = ipc_client.begin_transaction()
     try:
-        with temp_db.transaction():
-            temp_db._execute(
-                "INSERT INTO projects (id, root_path) VALUES (?, ?)",
-                ("nested-error", "/nested/error"),
-            )
-            # Simulate nested error
-            raise RuntimeError("Nested error")
+        ipc_client.execute(
+            "INSERT INTO projects (id, root_path) VALUES (?, ?)",
+            ("nested-error", "/nested/error"),
+            transaction_id=tid,
+        )
+        raise RuntimeError("Nested error")
     except RuntimeError:
-        pass
+        ipc_client.rollback_transaction(tid)
 
-    # Verify data was rolled back
-    result = temp_db._fetchone(
-        "SELECT id FROM projects WHERE id = ?", ("nested-error",)
+    row = _fetchone(
+        ipc_client, "SELECT id FROM projects WHERE id = ?", ("nested-error",)
     )
-    assert result is None
+    assert row is None
 
 
-def test_transaction_context_manager_multiple_operations(temp_db):
-    """Test transaction context manager with multiple operations."""
-    with temp_db.transaction():
-        temp_db._execute(
+def test_transaction_multiple_ops_commit(ipc_client: DatabaseClient) -> None:
+    tid = ipc_client.begin_transaction()
+    try:
+        ipc_client.execute(
             "INSERT INTO projects (id, root_path) VALUES (?, ?)",
             ("multi-1", "/multi/1"),
+            transaction_id=tid,
         )
-        temp_db._execute(
+        ipc_client.execute(
             "INSERT INTO projects (id, root_path) VALUES (?, ?)",
             ("multi-2", "/multi/2"),
+            transaction_id=tid,
         )
-
-    # Verify both were committed
-    result1 = temp_db._fetchone("SELECT id FROM projects WHERE id = ?", ("multi-1",))
-    result2 = temp_db._fetchone("SELECT id FROM projects WHERE id = ?", ("multi-2",))
-    assert result1 is not None
-    assert result2 is not None
+        ipc_client.commit_transaction(tid)
+    except Exception:
+        ipc_client.rollback_transaction(tid)
+        raise
+    assert (
+        _fetchone(ipc_client, "SELECT id FROM projects WHERE id = ?", ("multi-1",))
+        is not None
+    )
+    assert (
+        _fetchone(ipc_client, "SELECT id FROM projects WHERE id = ?", ("multi-2",))
+        is not None
+    )

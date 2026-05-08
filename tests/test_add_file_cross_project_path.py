@@ -7,7 +7,8 @@ uniqueness is ``UNIQUE(project_id, path)``; cross-project logic must only consid
 the same absolute ``path`` (e.g. relocation / one canonical path via symlinks).
 
 Watcher ignore policy for non-allowlisted ``.venv`` paths is tested elsewhere;
-this module only exercises ``CodeDatabase.add_file``.
+this module exercises add_file via :class:`~tests.sqlite_in_process_legacy_facade.SqliteLegacyRpcFacade`
+over :class:`~code_analysis.core.database_client.client.DatabaseClient`.
 
 Author: Vasiliy Zdanovskiy
 email: vasilyvz@gmail.com
@@ -16,14 +17,39 @@ email: vasilyvz@gmail.com
 from __future__ import annotations
 
 import json
+import types
 import uuid
 from pathlib import Path
 from unittest.mock import patch
 
 import pytest
 
-from code_analysis.core.database import CodeDatabase
-from code_analysis.core.database.base import create_driver_config_for_worker
+from code_analysis.core.database.files import crud as crud_module
+
+from tests.sqlite_in_process_legacy_facade import SqliteLegacyRpcFacade
+from tests.sqlite_inprocess_database import sqlite_inprocess_database_client
+
+
+class _CrudAlignedRpcFacade(SqliteLegacyRpcFacade):
+    """``crud.add_file`` / ``get_file_by_path`` expect dict-shaped ``get_project``."""
+
+    def get_project(self, project_id: str):
+        p = self._client.get_project(project_id)
+        if p is None:
+            return None
+        return {
+            "id": p.id,
+            "root_path": p.root_path,
+            "name": getattr(p, "name", None),
+            "watch_dir_id": getattr(p, "watch_dir_id", None),
+        }
+
+
+def _insert_project_facade(db, root: Path, name: str, project_id: str) -> None:
+    db._execute(
+        "INSERT INTO projects (id, root_path, name, updated_at) VALUES (?, ?, ?, julianday('now'))",
+        (project_id, str(root.resolve()), name),
+    )
 
 
 def _venv_client_path(root: Path) -> Path:
@@ -42,19 +68,21 @@ def _write_projectid(project_root: Path, project_id: str) -> None:
 
 
 @pytest.fixture
-def sqlite_db(tmp_path: Path) -> CodeDatabase:
-    db_path = tmp_path / "cross_project.db"
-    driver_config = create_driver_config_for_worker(
-        db_path=db_path, driver_type="sqlite"
+def sqlite_db(tmp_path: Path):
+    client = sqlite_inprocess_database_client(
+        tmp_path / "cross.db", backup_dir=tmp_path / "backups"
     )
-    db = CodeDatabase(driver_config=driver_config)
-    db.sync_schema()
-    yield db
-    db.close()
+    facade = _CrudAlignedRpcFacade(client)
+    facade.add_file = types.MethodType(crud_module.add_file, facade)  # type: ignore[attr-defined]
+    facade.get_file_by_path = types.MethodType(crud_module.get_file_by_path, facade)  # type: ignore[attr-defined]
+    try:
+        yield facade
+    finally:
+        facade.close()
 
 
 def test_add_file_same_relative_path_two_projects_no_clear(
-    sqlite_db: CodeDatabase, tmp_path: Path
+    sqlite_db, tmp_path: Path
 ) -> None:
     """
     Same package-relative path under two project roots: both rows stay active;
@@ -77,12 +105,8 @@ def test_add_file_same_relative_path_two_projects_no_clear(
     assert path_a.resolve() != path_b.resolve()
     assert path_a.relative_to(root_a) == path_b.relative_to(root_b)
 
-    sqlite_db.get_or_create_project(
-        str(root_a.resolve()), name="project_a", project_id=pid_a
-    )
-    sqlite_db.get_or_create_project(
-        str(root_b.resolve()), name="project_b", project_id=pid_b
-    )
+    _insert_project_facade(sqlite_db, root_a, "project_a", pid_a)
+    _insert_project_facade(sqlite_db, root_b, "project_b", pid_b)
 
     lines = 1
     mtime = float(path_a.stat().st_mtime)
@@ -123,14 +147,14 @@ def test_add_file_same_relative_path_two_projects_no_clear(
 
 
 def test_add_file_same_project_same_path_updates_single_row(
-    sqlite_db: CodeDatabase, tmp_path: Path
+    sqlite_db, tmp_path: Path
 ) -> None:
     """UNIQUE(project_id, path): second add_file updates the existing row."""
     root = tmp_path / "single_proj"
     root.mkdir()
     pid = str(uuid.uuid4())
     _write_projectid(root, pid)
-    sqlite_db.get_or_create_project(str(root.resolve()), name="p", project_id=pid)
+    _insert_project_facade(sqlite_db, root, "p", pid)
     f = root / "lib" / "mod.py"
     f.parent.mkdir(parents=True)
     f.write_text("x = 1\n", encoding="utf-8")
@@ -145,13 +169,13 @@ def test_add_file_same_project_same_path_updates_single_row(
     assert id1 == id2
     n = sqlite_db._fetchone(
         "SELECT COUNT(*) AS c FROM files WHERE project_id = ? AND path = ?",
-        (pid, p),
+        (pid, "lib/mod.py"),
     )
     assert int(n["c"]) == 1
 
 
 def test_add_file_cleanup_safety_chunks_preserved_other_project(
-    sqlite_db: CodeDatabase, tmp_path: Path
+    sqlite_db, tmp_path: Path
 ) -> None:
     """Indexing project B must not clear code_chunks tied to project A's file_id."""
     watch = tmp_path / "watch2"
@@ -165,8 +189,8 @@ def test_add_file_cleanup_safety_chunks_preserved_other_project(
     _write_projectid(root_b, pid_b)
     path_a = _venv_client_path(root_a)
     path_b = _venv_client_path(root_b)
-    sqlite_db.get_or_create_project(str(root_a.resolve()), name="pa", project_id=pid_a)
-    sqlite_db.get_or_create_project(str(root_b.resolve()), name="pb", project_id=pid_b)
+    _insert_project_facade(sqlite_db, root_a, "pa", pid_a)
+    _insert_project_facade(sqlite_db, root_b, "pb", pid_b)
 
     fid_a = sqlite_db.add_file(
         path=str(path_a.resolve()),
@@ -198,7 +222,7 @@ def test_add_file_cleanup_safety_chunks_preserved_other_project(
 
 
 def test_same_absolute_path_nested_roots_second_project_triggers_cross_project_cleanup(
-    sqlite_db: CodeDatabase, tmp_path: Path
+    sqlite_db, tmp_path: Path
 ) -> None:
     """
     When one project root is nested inside another, the same absolute path can be
@@ -221,12 +245,8 @@ def test_same_absolute_path_nested_roots_second_project_triggers_cross_project_c
     pid_inner = str(uuid.uuid4())
     _write_projectid(root_outer, pid_outer)
     _write_projectid(root_inner, pid_inner)
-    sqlite_db.get_or_create_project(
-        str(root_outer.resolve()), name="outer", project_id=pid_outer
-    )
-    sqlite_db.get_or_create_project(
-        str(root_inner.resolve()), name="inner", project_id=pid_inner
-    )
+    _insert_project_facade(sqlite_db, root_outer, "outer", pid_outer)
+    _insert_project_facade(sqlite_db, root_inner, "inner", pid_inner)
 
     mtime0 = float(inner_file.stat().st_mtime)
     sqlite_db.add_file(
@@ -249,7 +269,7 @@ def test_same_absolute_path_nested_roots_second_project_triggers_cross_project_c
 
     row_outer = sqlite_db._fetchone(
         "SELECT deleted FROM files WHERE project_id = ? AND path = ?",
-        (pid_outer, p),
+        (pid_outer, "submodule/x.py"),
     )
     assert row_outer is not None
     assert row_outer["deleted"] in (1, True)

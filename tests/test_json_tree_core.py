@@ -163,10 +163,19 @@ def test_save_json_tree_to_file_atomic_mock_db(tmp_path: Path) -> None:
     db.commit_transaction = MagicMock()
     db.rollback_transaction = MagicMock()
 
-    with patch(
-        "code_analysis.core.json_tree.json_saver.update_file_data_atomic_batch",
-        return_value={"success": True},
-    ) as ufab:
+    with (
+        patch(
+            "code_analysis.core.json_tree.json_saver.update_file_data_atomic_batch",
+            return_value={"success": True},
+        ) as ufab,
+        patch(
+            "code_analysis.core.json_tree.json_saver.acquire_file_edit_lock_with_retry",
+            return_value=True,
+        ),
+        patch(
+            "code_analysis.core.json_tree.json_saver.release_file_edit_lock",
+        ),
+    ):
         result = save_json_tree_to_file(
             tree_id=tid,
             file_path=str(target),

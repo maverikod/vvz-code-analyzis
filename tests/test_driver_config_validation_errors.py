@@ -294,6 +294,8 @@ class TestDriverConfigValidationErrors:
                             "host": "localhost",
                             "port": 5432,
                             "database": "test",
+                            "user": "testuser",
+                            "password_env": "TEST_PG_PASSWORD_FOR_VALIDATOR",
                         },
                     }
                 }

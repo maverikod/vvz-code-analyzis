@@ -10,6 +10,7 @@ email: vasilyvz@gmail.com
 
 from __future__ import annotations
 
+import os
 import sqlite3
 import tempfile
 import uuid
@@ -18,8 +19,6 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from code_analysis.core.database import CodeDatabase
-from code_analysis.core.database.base import create_driver_config_for_worker
 from code_analysis.core.database_client.protocol import (
     ErrorCode,
     ErrorResult,
@@ -27,6 +26,8 @@ from code_analysis.core.database_client.protocol import (
 )
 from code_analysis.core.database_driver_pkg.driver_factory import create_driver
 from code_analysis.core.database_driver_pkg.rpc_handlers import RPCHandlers
+
+from tests.sqlite_inprocess_database import sqlite_inprocess_database_client
 
 from tests.test_fixture_content import DEFAULT_TEST_FILE_CONTENT
 
@@ -53,23 +54,33 @@ def db_path(temp_dir):
 @pytest.fixture
 def seeded_db(temp_dir, db_path, project_id):
     """Create test database with schema and one project; close before yielding (DB file ready)."""
-    driver_config = create_driver_config_for_worker(
-        db_path=db_path, driver_type="sqlite"
-    )
-    db = CodeDatabase(driver_config=driver_config)
-    db.sync_schema()
-    db._execute(
-        "INSERT INTO projects (id, root_path, name, updated_at) VALUES (?, ?, ?, julianday('now'))",
-        (project_id, str(temp_dir), temp_dir.name),
-    )
-    db._commit()
-    db.close()
+    backup_dir = temp_dir / "backups"
+    original = os.environ.get("CODE_ANALYSIS_DB_WORKER")
+    os.environ["CODE_ANALYSIS_DB_WORKER"] = "1"
+    client = None
+    try:
+        client = sqlite_inprocess_database_client(db_path, backup_dir=backup_dir)
+        client.execute(
+            "INSERT INTO projects (id, root_path, name, updated_at) "
+            "VALUES (?, ?, ?, julianday('now'))",
+            (project_id, str(temp_dir), temp_dir.name),
+        )
+    finally:
+        if client is not None:
+            client.disconnect()
+        if original is None:
+            os.environ.pop("CODE_ANALYSIS_DB_WORKER", None)
+        else:
+            os.environ["CODE_ANALYSIS_DB_WORKER"] = original
 
 
 @pytest.fixture
 def index_file_handlers(seeded_db, db_path):
     """Create RPC handlers with driver connected to the test DB."""
-    driver = create_driver("sqlite", {"path": str(db_path)})
+    driver = create_driver(
+        "sqlite",
+        {"path": str(db_path), "backup_dir": str(db_path.parent / "backups")},
+    )
     try:
         handlers = RPCHandlers(driver)
         yield handlers
@@ -80,27 +91,32 @@ def index_file_handlers(seeded_db, db_path):
 @pytest.fixture
 def valid_project_file(seeded_db, temp_dir, db_path, project_id):
     """Create a real file on disk and a file row with needs_chunking=1; return (file_path, project_id)."""
-    import os
-
     py_file = temp_dir / "test_index.py"
     py_file.write_text(DEFAULT_TEST_FILE_CONTENT, encoding="utf-8")
-    driver_config = create_driver_config_for_worker(
-        db_path=db_path, driver_type="sqlite"
-    )
-    db = CodeDatabase(driver_config=driver_config)
+    backup_dir = temp_dir / "backups"
+    original = os.environ.get("CODE_ANALYSIS_DB_WORKER")
+    os.environ["CODE_ANALYSIS_DB_WORKER"] = "1"
+    client = None
     try:
-        db.sync_schema()
-        file_id = db.add_file(
+        client = sqlite_inprocess_database_client(db_path, backup_dir=backup_dir)
+        file_id = client.add_file(
             path=str(py_file),
             lines=len(DEFAULT_TEST_FILE_CONTENT.splitlines()),
             last_modified=os.path.getmtime(py_file),
             has_docstring=True,
             project_id=project_id,
         )
-        db._execute("UPDATE files SET needs_chunking = 1 WHERE id = ?", (file_id,))
-        db._commit()
+        client.execute(
+            "UPDATE files SET needs_chunking = 1 WHERE id = ?",
+            (file_id,),
+        )
     finally:
-        db.close()
+        if client is not None:
+            client.disconnect()
+        if original is None:
+            os.environ.pop("CODE_ANALYSIS_DB_WORKER", None)
+        else:
+            os.environ["CODE_ANALYSIS_DB_WORKER"] = original
     return str(py_file.resolve()), project_id
 
 
@@ -151,13 +167,12 @@ class TestIndexFileFkDoesNotEscape:
     ):
         """When update_file_data raises IntegrityError, handler returns ErrorResult NOT_FOUND."""
         file_path, project_id = valid_project_file
-        mock_db = MagicMock()
-        mock_db.update_file_data.side_effect = sqlite3.IntegrityError(
-            "FOREIGN KEY constraint failed"
+        mock_update = MagicMock(
+            side_effect=sqlite3.IntegrityError("FOREIGN KEY constraint failed")
         )
         with patch(
-            "code_analysis.core.database.CodeDatabase.from_existing_driver",
-            return_value=mock_db,
+            "code_analysis.core.database.files.update_standalone.update_file_data_via_driver",
+            mock_update,
         ):
             result = index_file_handlers.handle_index_file(
                 {"file_path": file_path, "project_id": project_id}
@@ -196,7 +211,10 @@ class TestIndexFileValidProjectSucceeds:
         assert isinstance(result, SuccessResult)
         assert result.data is not None
         assert result.data.get("skipped") is not True
-        driver = create_driver("sqlite", {"path": str(db_path)})
+        driver = create_driver(
+            "sqlite",
+            {"path": str(db_path), "backup_dir": str(db_path.parent / "backups")},
+        )
         try:
             r = driver.execute(
                 "SELECT f.id, f.needs_chunking FROM files f WHERE f.path = ? AND f.project_id = ?",

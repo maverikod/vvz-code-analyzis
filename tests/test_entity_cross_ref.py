@@ -11,8 +11,7 @@ from pathlib import Path
 
 import pytest
 
-from code_analysis.core.database import CodeDatabase
-from code_analysis.core.database.base import create_driver_config_for_worker
+from tests.sqlite_in_process_legacy_facade import make_sqlite_in_process_legacy_facade
 
 
 @pytest.fixture
@@ -30,15 +29,12 @@ def project_id():
 
 @pytest.fixture
 def test_db(temp_dir):
-    """Create test database with schema (including entity_cross_ref)."""
-    db_path = temp_dir / "test.db"
-    driver_config = create_driver_config_for_worker(
-        db_path, driver_type="sqlite", backup_dir=temp_dir / "backups"
-    )
-    db = CodeDatabase(driver_config=driver_config)
-    db.sync_schema()
-    yield db
-    db.close()
+    """Create test database with schema via in-process RPC + DatabaseClient."""
+    facade, raw_client = make_sqlite_in_process_legacy_facade(temp_dir)
+    try:
+        yield facade
+    finally:
+        raw_client.disconnect()
 
 
 @pytest.fixture
@@ -62,37 +58,44 @@ def test_file_and_entities(test_db, temp_dir, test_project):
     """Create a file and entities (class, method, function) for cross-ref tests."""
     file_path = temp_dir / "module.py"
     file_path.write_text("", encoding="utf-8")
+    file_row_id = str(uuid.uuid4())
     test_db._execute(
-        """INSERT INTO files (project_id, path, lines, last_modified, has_docstring)
-           VALUES (?, ?, 0, 0, 0)""",
-        (test_project, str(file_path)),
+        """INSERT INTO files (id, project_id, path, lines, last_modified, has_docstring)
+           VALUES (?, ?, ?, 0, 0, 0)""",
+        (file_row_id, test_project, str(file_path)),
     )
     test_db._commit()
-    file_id = test_db._lastrowid()
+    file_id = file_row_id
 
     class_cst_id = _make_uuid4()
+    class_row_id = str(uuid.uuid4())
     test_db._execute(
-        "INSERT INTO classes (file_id, name, line, end_line, docstring, bases, cst_node_id) VALUES (?, ?, ?, ?, ?, ?, ?)",
-        (file_id, "MyClass", 1, 10, None, "[]", class_cst_id),
+        "INSERT INTO classes (id, file_id, name, line, end_line, docstring, bases, cst_node_id) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        (class_row_id, file_id, "MyClass", 1, 10, None, "[]", class_cst_id),
     )
     test_db._commit()
-    class_id = test_db._lastrowid()
+    class_id = class_row_id
 
     method_cst_id = _make_uuid4()
+    method_row_id = str(uuid.uuid4())
     test_db._execute(
-        "INSERT INTO methods (class_id, name, line, end_line, args, docstring, cst_node_id) VALUES (?, ?, ?, ?, ?, ?, ?)",
-        (class_id, "my_method", 3, 8, "[]", None, method_cst_id),
+        "INSERT INTO methods (id, class_id, name, line, end_line, args, docstring, cst_node_id) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        (method_row_id, class_id, "my_method", 3, 8, "[]", None, method_cst_id),
     )
     test_db._commit()
-    method_id = test_db._lastrowid()
+    method_id = method_row_id
 
     func_cst_id = _make_uuid4()
+    function_row_id = str(uuid.uuid4())
     test_db._execute(
-        "INSERT INTO functions (file_id, name, line, end_line, args, docstring, cst_node_id) VALUES (?, ?, ?, ?, ?, ?, ?)",
-        (file_id, "my_func", 12, 15, "[]", None, func_cst_id),
+        "INSERT INTO functions (id, file_id, name, line, end_line, args, docstring, cst_node_id) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        (function_row_id, file_id, "my_func", 12, 15, "[]", None, func_cst_id),
     )
     test_db._commit()
-    function_id = test_db._lastrowid()
+    function_id = function_row_id
 
     return {
         "file_id": file_id,
@@ -122,7 +125,9 @@ class TestAddEntityCrossRef:
         assert ref_id is not None
         assert ref_id > 0
         row = test_db._fetchone(
-            "SELECT * FROM entity_cross_ref WHERE id = ?", (ref_id,)
+            "SELECT * FROM entity_cross_ref WHERE caller_method_id = ? "
+            "AND callee_function_id = ?",
+            (ids["method_id"], ids["function_id"]),
         )
         assert row is not None
         assert row["caller_method_id"] == ids["method_id"]

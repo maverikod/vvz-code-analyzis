@@ -1,9 +1,9 @@
 """
 Integration test: update_file_data_atomic_batch writes known data; DB contents are asserted.
 
-Uses real CodeDatabase (temp_db) with execute_batch so that the batch path is exercised
-and we verify exact counts and content in ast_trees, cst_trees, classes, methods,
-functions, imports.
+Uses :class:`~tests.sqlite_in_process_legacy_facade.SqliteLegacyRpcFacade` over
+in-process RPC so the batch path is exercised and we verify exact counts and content
+in ast_trees, cst_trees, classes, methods, functions, imports.
 
 Author: Vasiliy Zdanovskiy
 email: vasilyvz@gmail.com
@@ -16,7 +16,8 @@ import uuid
 
 import pytest
 
-from code_analysis.core.database.base import CodeDatabase
+from tests.sqlite_inprocess_database import sqlite_inprocess_database_client
+from tests.sqlite_in_process_legacy_facade import SqliteLegacyRpcFacade
 from code_analysis.core.database_client.file_data_batch import (
     update_file_data_atomic_batch,
 )
@@ -48,22 +49,17 @@ class Foo:
 
 @pytest.fixture
 def temp_db(tmp_path):
-    """Create temporary database (CodeDatabase with direct sqlite, execute_batch)."""
+    """Temporary SQLite DB via in-process RPC + legacy facade."""
     db_path = tmp_path / "batch_test.db"
     backup_dir = tmp_path / "backups"
-    backup_dir.mkdir(parents=True, exist_ok=True)
-    driver_config = {
-        "type": "sqlite",
-        "config": {"path": str(db_path), "backup_dir": str(backup_dir)},
-    }
     original_env = os.environ.get("CODE_ANALYSIS_DB_WORKER")
     os.environ["CODE_ANALYSIS_DB_WORKER"] = "1"
+    client = sqlite_inprocess_database_client(db_path, backup_dir=backup_dir)
+    facade = SqliteLegacyRpcFacade(client)
     try:
-        db = CodeDatabase(driver_config)
-        db.sync_schema()
-        yield db
-        db.close()
+        yield facade
     finally:
+        facade.close()
         if original_env is None:
             os.environ.pop("CODE_ANALYSIS_DB_WORKER", None)
         else:
@@ -167,3 +163,9 @@ def test_update_file_data_atomic_batch_writes_expected_db_contents(
     )
     assert len(cst_rows) == 1
     assert cst_rows[0]["cst_code"] == BATCH_TEST_SOURCE
+
+    code_rows = temp_db._fetchall(
+        "SELECT entity_type FROM code_content WHERE file_id = ?", (file_id,)
+    )
+    assert len(code_rows) == 4
+    assert {r["entity_type"] for r in code_rows} == {"file", "class", "method", "function"}

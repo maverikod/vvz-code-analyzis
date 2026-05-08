@@ -65,3 +65,35 @@ def test_range_replace_preserves_blank_after_when_followed_by_code() -> None:
     op = ReplaceOp(Selector(kind="range", start_line=1, end_line=1), "x = 2")
     new_source, _ = apply_replace_ops(source, [op])
     assert new_source == "x = 2\n\ny = 2\n"
+
+
+def test_range_line_only_resolves_first_line_of_multiline_call() -> None:
+    """Line-only range must match the full SimpleStatementLine span, not only the first line."""
+    source = """def f():
+    if True:
+        logger.warning(
+            "hi"
+        )
+"""
+    op = ReplaceOp(Selector(kind="range", start_line=3, end_line=3), "print(42)")
+    new_source, stats = apply_replace_ops(source, [op])
+    assert stats["replaced"] == 1
+    assert stats["unmatched"] == []
+    assert "print(42)" in new_source
+    assert "logger.warning" not in new_source
+
+
+def test_range_line_only_nested_indented_block_first_line_multiline() -> None:
+    """Same resolution inside a nested IndentedBlock (not only module-level)."""
+    source = """def outer():
+    if True:
+        foo(
+            1
+        )
+"""
+    op = ReplaceOp(Selector(kind="range", start_line=3, end_line=3), "x = 0")
+    new_source, stats = apply_replace_ops(source, [op])
+    assert stats["replaced"] == 1
+    assert stats["unmatched"] == []
+    assert "x = 0" in new_source
+    assert "foo(" not in new_source

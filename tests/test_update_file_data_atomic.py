@@ -1,96 +1,92 @@
 """
-Tests for atomic file data updates in transactions.
+Tests for atomic file data updates via logical write (DatabaseClient + RPC).
+
+Exercises :func:`~code_analysis.core.database_client.file_data_batch.update_file_data_atomic_batch`,
+which runs ``execute_logical_write_operation`` in one server-side transaction (replacing the
+legacy :func:`~code_analysis.core.database.files.atomic.update_file_data_atomic` pairing with
+the historical single-connection ``_in_transaction`` guard).
 
 Author: Vasiliy Zdanovskiy
 email: vasilyvz@gmail.com
 """
 
-import tempfile
+from __future__ import annotations
+
+import os
 import uuid
 from pathlib import Path
+from typing import Iterator
+
 import pytest
-import os
 
-from code_analysis.core.database import CodeDatabase
+from code_analysis.core.database.schema_definition import get_schema_definition
+from code_analysis.core.database_client.client import DatabaseClient
+from code_analysis.core.database_client.file_data_batch import (
+    update_file_data_atomic_batch,
+)
+from code_analysis.core.database_client.in_process_rpc_client import InProcessRpcClient
+from code_analysis.core.database_driver_pkg.driver_factory import create_driver
+from code_analysis.core.database_driver_pkg.rpc_handlers import RPCHandlers
+
+from tests.test_fixture_content import DEFAULT_TEST_FILE_CONTENT
 
 
 @pytest.fixture
-def temp_db():
-    """Create temporary database for testing."""
-    with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
-        db_path = Path(f.name)
-
-    driver_config = {
-        "type": "sqlite",
-        "config": {"path": str(db_path)},
-    }
-
-    # Set environment variable to allow direct SQLite driver
-    import os
-
-    original_env = os.environ.get("CODE_ANALYSIS_DB_WORKER")
-    os.environ["CODE_ANALYSIS_DB_WORKER"] = "1"
-
+def ipc_client(tmp_path: Path) -> Iterator[DatabaseClient]:
+    db_path = tmp_path / "test.db"
+    driver = create_driver("sqlite", {"path": str(db_path)})
+    handlers = RPCHandlers(driver)
+    ipc = InProcessRpcClient(handlers)
+    client = DatabaseClient(rpc_client=ipc)
+    client.connect()
+    backup_dir = tmp_path / "backups"
+    backup_dir.mkdir(parents=True, exist_ok=True)
+    client.sync_schema(get_schema_definition(), backup_dir=str(backup_dir))
     try:
-        db = CodeDatabase(driver_config)
-        db.sync_schema()
-        # _clear_file_vectors is not attached (private); stub so clear_file_data runs.
-        db._clear_file_vectors = lambda file_id: None
-        yield db
-        db.close()
+        yield client
     finally:
-        if original_env is None:
-            os.environ.pop("CODE_ANALYSIS_DB_WORKER", None)
-        else:
-            os.environ["CODE_ANALYSIS_DB_WORKER"] = original_env
-
-        if db_path.exists():
-            db_path.unlink()
+        client.disconnect()
 
 
 @pytest.fixture
-def test_project(temp_db, tmp_path):
-    """Create test project."""
+def test_project(ipc_client: DatabaseClient, tmp_path: Path):
     project_id = str(uuid.uuid4())
-    temp_db._execute(
+    ipc_client.execute(
         "INSERT INTO projects (id, root_path, name, updated_at) VALUES (?, ?, ?, julianday('now'))",
         (project_id, str(tmp_path), tmp_path.name),
     )
-    temp_db._commit()
     return project_id
 
 
 @pytest.fixture
-def test_file(temp_db, tmp_path, test_project):
-    """Create test file in database (substantial content for search tests)."""
-    from tests.test_fixture_content import DEFAULT_TEST_FILE_CONTENT
-
+def test_file(ipc_client: DatabaseClient, tmp_path: Path, test_project: str):
     file_path = tmp_path / "test_file.py"
     file_content = DEFAULT_TEST_FILE_CONTENT
     file_path.write_text(file_content, encoding="utf-8")
-
     file_mtime = os.path.getmtime(file_path)
     lines = len(file_content.splitlines())
-
-    file_id = temp_db.add_file(
+    file_id = ipc_client.add_file(
         path=str(file_path),
         lines=lines,
         last_modified=file_mtime,
         has_docstring=True,
         project_id=test_project,
     )
-
     return file_id, file_path, test_project, tmp_path
 
 
-def test_update_file_data_atomic_success(temp_db, test_file):
-    """Test successful atomic file data update."""
-    file_id, file_path, project_id, root_dir = test_file
+def _fetchall(client: DatabaseClient, sql: str, params: tuple | None = None):
+    r = client.execute(sql, params)
+    return list(r.get("data") or [])
 
-    # Begin transaction
-    temp_db.begin_transaction()
 
-    # New source code
+def _fetchone(client: DatabaseClient, sql: str, params: tuple | None = None):
+    rows = _fetchall(client, sql, params)
+    return rows[0] if rows else None
+
+
+def test_update_file_data_batch_success(ipc_client: DatabaseClient, test_file):
+    file_id, file_path, project_id, _root_dir = test_file
     new_source = '''"""
 Updated test file.
 
@@ -109,288 +105,182 @@ def new_function():
     """New function."""
     pass
 '''
-
-    # Update file data atomically
-    result = temp_db.update_file_data_atomic(
-        file_path=str(file_path),
+    file_path.write_text(new_source, encoding="utf-8")
+    mtime = os.path.getmtime(file_path)
+    result = update_file_data_atomic_batch(
+        ipc_client,
+        file_id=file_id,
         project_id=project_id,
-        root_dir=root_dir,
         source_code=new_source,
+        file_path=str(file_path.resolve()),
+        file_mtime=mtime,
     )
-
-    assert (
-        result.get("success") is True
-    ), f"Update should succeed: {result.get('error')}"
-    assert result.get("file_id") == file_id, "File ID should match"
-    assert result.get("ast_updated") is True, "AST should be updated"
-    assert result.get("cst_updated") is True, "CST should be updated"
-    assert result.get("entities_updated") > 0, "Entities should be updated"
-
-    # Commit transaction
-    temp_db.commit_transaction()
-
-    # Verify new entities exist
-    classes = temp_db._fetchall(
-        "SELECT name FROM classes WHERE file_id = ?", (file_id,)
+    assert result.get("success") is True, result
+    classes = _fetchall(
+        ipc_client, "SELECT name FROM classes WHERE file_id = ?", (file_id,)
     )
-    class_names = [c["name"] for c in classes]
-    assert "UpdatedClass" in class_names, "Updated class should exist"
-
-    functions = temp_db._fetchall(
-        "SELECT name FROM functions WHERE file_id = ?", (file_id,)
+    names = [c["name"] for c in classes]
+    assert "UpdatedClass" in names
+    funcs = _fetchall(
+        ipc_client, "SELECT name FROM functions WHERE file_id = ?", (file_id,)
     )
-    function_names = [f["name"] for f in functions]
-    assert "new_function" in function_names, "New function should exist"
-
-    # Verify CST was saved
-    cst_records = temp_db._fetchall(
-        "SELECT cst_code FROM cst_trees WHERE file_id = ?", (file_id,)
+    assert "new_function" in [f["name"] for f in funcs]
+    cst = _fetchone(
+        ipc_client, "SELECT cst_code FROM cst_trees WHERE file_id = ?", (file_id,)
     )
-    assert len(cst_records) > 0, "CST should be saved"
-    assert new_source in [
-        r["cst_code"] for r in cst_records
-    ], "CST should contain new source"
+    assert cst is not None
+    assert new_source in (cst.get("cst_code") or "")
 
 
-def test_update_file_data_atomic_rollback_on_parse_error(temp_db, test_file):
-    """Test rollback when parsing fails."""
-    file_id, file_path, project_id, root_dir = test_file
-
-    # Begin transaction
-    temp_db.begin_transaction()
-
-    # Invalid source code (syntax error)
-    invalid_source = "def invalid_syntax("  # Missing closing parenthesis
-
-    # Update file data atomically
-    result = temp_db.update_file_data_atomic(
-        file_path=str(file_path),
+def test_update_file_data_batch_syntax_error(ipc_client: DatabaseClient, test_file):
+    file_id, file_path, project_id, _root = test_file
+    invalid_source = "def invalid_syntax("
+    result = update_file_data_atomic_batch(
+        ipc_client,
+        file_id=file_id,
         project_id=project_id,
-        root_dir=root_dir,
         source_code=invalid_source,
+        file_path=str(file_path.resolve()),
+        file_mtime=0.0,
     )
-
-    assert result.get("success") is False, "Update should fail"
-    assert "error" in result, "Error should be present"
-    assert "Syntax error" in result.get("error", ""), "Should report syntax error"
-
-    # Rollback transaction
-    temp_db.rollback_transaction()
-
-    # Verify old data still exists (not updated)
-    classes = temp_db._fetchall(
-        "SELECT name FROM classes WHERE file_id = ?", (file_id,)
-    )
-    # Should have old class or no classes (depending on initial state)
-    assert len(classes) >= 0, "Transaction should be rolled back"
+    assert result.get("success") is False
+    assert "Syntax error" in (result.get("error") or "")
 
 
-def test_update_file_data_atomic_without_transaction(temp_db, test_file):
-    """Test that calling without active transaction raises error."""
-    file_id, file_path, project_id, root_dir = test_file
-
-    new_source = '''"""
-Updated test file.
-
-Author: Vasiliy Zdanovskiy
-email: vasilyvz@gmail.com
-"""
-
-class UpdatedClass:
-    """Updated test class."""
-    pass
-'''
-
-    # Try to update without transaction
-    with pytest.raises(RuntimeError, match="must be called within a transaction"):
-        temp_db.update_file_data_atomic(
-            file_path=str(file_path),
-            project_id=project_id,
-            root_dir=root_dir,
-            source_code=new_source,
-        )
-
-
-def test_update_file_data_atomic_rollback_on_ast_error(temp_db, test_file):
-    """Test rollback when AST save fails."""
-    file_id, file_path, project_id, root_dir = test_file
-
-    # Begin transaction
-    temp_db.begin_transaction()
-
-    # Valid source code
-    new_source = '''"""
-Updated test file.
-
-Author: Vasiliy Zdanovskiy
-email: vasilyvz@gmail.com
-"""
-
-class UpdatedClass:
-    """Updated test class."""
-    pass
-'''
-
-    # Mock save_ast_tree to raise exception (if possible)
-    # For now, just test that rollback works
-    result = temp_db.update_file_data_atomic(
-        file_path=str(file_path),
+def test_update_file_data_batch_no_outer_transaction_required(
+    ipc_client: DatabaseClient, test_file
+):
+    """Logical write is self-transacted; no outer ``_in_transaction`` guard."""
+    file_id, file_path, project_id, _root = test_file
+    new_source = "x = 1\n"
+    file_path.write_text(new_source, encoding="utf-8")
+    result = update_file_data_atomic_batch(
+        ipc_client,
+        file_id=file_id,
         project_id=project_id,
-        root_dir=root_dir,
         source_code=new_source,
+        file_path=str(file_path.resolve()),
+        file_mtime=os.path.getmtime(file_path),
+    )
+    assert result.get("success") is True, result
+
+
+def test_update_file_data_batch_clears_old_entities(
+    ipc_client: DatabaseClient, test_file
+):
+    file_id, file_path, project_id, _root = test_file
+    oc_id = str(uuid.uuid4())
+    of_id = str(uuid.uuid4())
+    ipc_client.execute(
+        """
+        INSERT INTO classes (id, file_id, name, line, docstring, bases, cst_node_id)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            oc_id,
+            file_id,
+            "OldClass",
+            1,
+            "d",
+            "[]",
+            "00000000-0000-4000-8000-000000000001",
+        ),
+    )
+    ipc_client.execute(
+        """
+        INSERT INTO functions (id, file_id, name, line, args, docstring, cst_node_id)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            of_id,
+            file_id,
+            "old_function",
+            10,
+            "[]",
+            "d",
+            "00000000-0000-4000-8000-000000000002",
+        ),
     )
 
-    # If update succeeds, commit; if fails, rollback
-    if result.get("success"):
-        temp_db.commit_transaction()
-    else:
-        temp_db.rollback_transaction()
-
-
-def test_update_file_data_atomic_rollback_on_cst_error(temp_db, test_file):
-    """Test rollback when CST save fails."""
-    file_id, file_path, project_id, root_dir = test_file
-
-    # Begin transaction
-    temp_db.begin_transaction()
-
-    # Valid source code
-    new_source = '''"""
-Updated test file.
-
-Author: Vasiliy Zdanovskiy
-email: vasilyvz@gmail.com
-"""
-
-class UpdatedClass:
-    """Updated test class."""
-    pass
-'''
-
-    # Mock save_cst_tree to raise exception (if possible)
-    # For now, just test that rollback works
-    result = temp_db.update_file_data_atomic(
-        file_path=str(file_path),
-        project_id=project_id,
-        root_dir=root_dir,
-        source_code=new_source,
-    )
-
-    # If update succeeds, commit; if fails, rollback
-    if result.get("success"):
-        temp_db.commit_transaction()
-    else:
-        temp_db.rollback_transaction()
-
-
-def test_update_file_data_atomic_clears_old_data(temp_db, test_file):
-    """Test that atomic update clears old data."""
-    file_id, file_path, project_id, root_dir = test_file
-
-    # First, add some old entities (cst_node_id required for entity writes)
-    old_class_id = temp_db.add_class(
-        file_id,
-        "OldClass",
-        1,
-        "Old docstring",
-        [],
-        cst_node_id="00000000-0000-4000-8000-000000000001",
-    )
-    old_function_id = temp_db.add_function(
-        file_id,
-        "old_function",
-        10,
-        "",
-        "Old docstring",
-        cst_node_id="00000000-0000-4000-8000-000000000002",
-    )
-    temp_db._commit()
-
-    # Begin transaction
-    temp_db.begin_transaction()
-
-    # New source code with different entities
-    new_source = '''"""
-Updated test file.
-
-Author: Vasiliy Zdanovskiy
-email: vasilyvz@gmail.com
-"""
-
+    new_source = '''"""u."""
 class NewClass:
-    """New test class."""
+    """N."""
     pass
 
 def new_function():
-    """New function."""
+    """N."""
     pass
 '''
-
-    # Update file data atomically
-    result = temp_db.update_file_data_atomic(
-        file_path=str(file_path),
+    file_path.write_text(new_source, encoding="utf-8")
+    mtime = os.path.getmtime(file_path)
+    result = update_file_data_atomic_batch(
+        ipc_client,
+        file_id=file_id,
         project_id=project_id,
-        root_dir=root_dir,
         source_code=new_source,
+        file_path=str(file_path.resolve()),
+        file_mtime=mtime,
+    )
+    assert result.get("success") is True, result
+    assert (
+        _fetchone(ipc_client, "SELECT id FROM classes WHERE id = ?", (oc_id,)) is None
+    )
+    assert (
+        _fetchone(ipc_client, "SELECT id FROM functions WHERE id = ?", (of_id,)) is None
+    )
+    assert (
+        _fetchone(
+            ipc_client,
+            "SELECT name FROM classes WHERE file_id = ? AND name = ?",
+            (file_id, "NewClass"),
+        )
+        is not None
     )
 
-    assert result.get("success") is True, "Update should succeed"
 
-    # Commit transaction
-    temp_db.commit_transaction()
-
-    # Verify old entities are gone
-    old_class = temp_db._fetchone(
-        "SELECT id FROM classes WHERE id = ?", (old_class_id,)
+def test_add_file_revives_soft_deleted_row_same_path(
+    ipc_client: DatabaseClient, tmp_path: Path, test_project: str
+) -> None:
+    """UNIQUE(project_id, path) still holds for deleted=1; add_file must UPDATE not INSERT."""
+    file_path = tmp_path / "tombstone_probe.py"
+    file_path.write_text("x = 1\n", encoding="utf-8")
+    abs_path = str(file_path.resolve())
+    mtime = os.path.getmtime(file_path)
+    pid = test_project
+    fid1 = ipc_client.add_file(
+        path=abs_path,
+        lines=1,
+        last_modified=mtime,
+        has_docstring=False,
+        project_id=pid,
     )
-    assert old_class is None, "Old class should be removed"
-
-    old_function = temp_db._fetchone(
-        "SELECT id FROM functions WHERE id = ?", (old_function_id,)
+    ipc_client.execute("UPDATE files SET deleted = 1 WHERE id = ?", (fid1,))
+    assert ipc_client.get_file_by_path(abs_path, pid, include_deleted=False) is None
+    rows_deleted = _fetchall(
+        ipc_client,
+        "SELECT id FROM files WHERE project_id = ? AND path = ?",
+        (pid, "tombstone_probe.py"),
     )
-    assert old_function is None, "Old function should be removed"
-
-    # Verify new entities exist
-    new_class = temp_db._fetchone(
-        "SELECT name FROM classes WHERE file_id = ? AND name = ?", (file_id, "NewClass")
+    assert len(rows_deleted) == 1
+    fid2 = ipc_client.add_file(
+        path=abs_path,
+        lines=2,
+        last_modified=mtime + 1.0,
+        has_docstring=False,
+        project_id=pid,
     )
-    assert new_class is not None, "New class should exist"
-
-    new_function = temp_db._fetchone(
-        "SELECT name FROM functions WHERE file_id = ? AND name = ?",
-        (file_id, "new_function"),
+    assert str(fid2) == str(fid1)
+    row = _fetchone(
+        ipc_client,
+        "SELECT id, deleted, lines FROM files WHERE project_id = ? AND path = ?",
+        (pid, "tombstone_probe.py"),
     )
-    assert new_function is not None, "New function should exist"
-
-
-def test_update_file_data_atomic_file_not_found(temp_db, test_project, tmp_path):
-    """Test atomic update when file is not in database."""
-    # Begin transaction
-    temp_db.begin_transaction()
-
-    # Try to update non-existent file
-    non_existent_path = tmp_path / "non_existent.py"
-    new_source = '''"""
-Test file.
-
-Author: Vasiliy Zdanovskiy
-email: vasilyvz@gmail.com
-"""
-
-def test():
-    """Test."""
-    pass
-'''
-
-    result = temp_db.update_file_data_atomic(
-        file_path=str(non_existent_path),
-        project_id=test_project,
-        root_dir=tmp_path,
-        source_code=new_source,
+    assert row is not None
+    assert int(row.get("deleted") or 0) == 0
+    assert int(row["lines"]) == 2
+    dup_count = _fetchone(
+        ipc_client,
+        "SELECT COUNT(*) AS c FROM files WHERE project_id = ? AND path = ?",
+        (pid, "tombstone_probe.py"),
     )
-
-    assert result.get("success") is False, "Update should fail"
-    assert "File not found" in result.get("error", ""), "Should report file not found"
-
-    # Rollback transaction
-    temp_db.rollback_transaction()
+    assert int(dup_count["c"]) == 1

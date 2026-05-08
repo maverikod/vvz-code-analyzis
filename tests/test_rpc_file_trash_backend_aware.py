@@ -23,23 +23,20 @@ class _Handler(_RPCHandlersFileTrashMixin):
         self.driver = driver
 
 
-def test_mark_file_deleted_without_db_path_uses_existing_driver(monkeypatch) -> None:
-    class _FakeDB:
-        def mark_file_deleted(self, **kwargs: Any) -> bool:
-            return True
-
+def test_mark_file_deleted_passes_driver_to_standalone(monkeypatch) -> None:
     calls: list[object] = []
 
-    def _fake_from_existing_driver(driver: object) -> _FakeDB:
+    def _fake_via_driver(driver: object, **kwargs: Any) -> bool:
         calls.append(driver)
-        return _FakeDB()
-
-    from code_analysis.core.database import CodeDatabase
+        del kwargs
+        return True
 
     monkeypatch.setattr(
-        CodeDatabase, "from_existing_driver", _fake_from_existing_driver
+        "code_analysis.core.database_driver_pkg.rpc_handlers_file_trash."
+        "mark_file_deleted_via_driver",
+        _fake_via_driver,
     )
-    driver = object()  # No db_path attribute (PostgreSQL-like)
+    driver = object()
     handler = _Handler(driver)
 
     result = handler.handle_mark_file_deleted(
@@ -51,15 +48,17 @@ def test_mark_file_deleted_without_db_path_uses_existing_driver(monkeypatch) -> 
     assert calls == [driver]
 
 
-def test_get_deleted_files_without_db_path_returns_data_result(monkeypatch) -> None:
-    class _FakeDB:
-        def get_deleted_files(self, project_id: str) -> list[Dict[str, Any]]:
-            return [{"id": 1, "path": "/tmp/trash/p1/a.txt", "project_id": project_id}]
+def test_get_deleted_files_returns_data_result(monkeypatch) -> None:
+    def _fake_get_deleted(driver: object, project_id: str) -> list[Dict[str, Any]]:
+        del driver
+        return [{"id": 1, "path": "/tmp/trash/p1/a.txt", "project_id": project_id}]
 
-    from code_analysis.core.database import CodeDatabase
-
-    monkeypatch.setattr(CodeDatabase, "from_existing_driver", lambda _driver: _FakeDB())
-    handler = _Handler(object())  # No db_path attribute
+    monkeypatch.setattr(
+        "code_analysis.core.database_driver_pkg.rpc_handlers_file_trash."
+        "get_deleted_files_via_driver",
+        _fake_get_deleted,
+    )
+    handler = _Handler(object())
 
     result = handler.handle_get_deleted_files({"project_id": "p1"})
 
@@ -67,20 +66,22 @@ def test_get_deleted_files_without_db_path_returns_data_result(monkeypatch) -> N
     assert result.data and result.data[0]["id"] == 1
 
 
-def test_unmark_file_deleted_without_db_path_returns_success(monkeypatch) -> None:
-    class _FakeDB:
-        def unmark_file_deleted(
-            self,
-            file_path: str,
-            project_id: str,
-            out_error: Dict[str, str] | None = None,
-        ) -> bool:
-            return file_path == "notes/a.txt" and project_id == "p1"
+def test_unmark_file_deleted_returns_success(monkeypatch) -> None:
+    def _fake_unmark(
+        driver: object,
+        file_path: str,
+        project_id: str,
+        out_error: Dict[str, str] | None = None,
+    ) -> bool:
+        del driver, out_error
+        return file_path == "notes/a.txt" and project_id == "p1"
 
-    from code_analysis.core.database import CodeDatabase
-
-    monkeypatch.setattr(CodeDatabase, "from_existing_driver", lambda _driver: _FakeDB())
-    handler = _Handler(object())  # No db_path attribute
+    monkeypatch.setattr(
+        "code_analysis.core.database_driver_pkg.rpc_handlers_file_trash."
+        "unmark_file_deleted_via_driver",
+        _fake_unmark,
+    )
+    handler = _Handler(object())
 
     result = handler.handle_unmark_file_deleted(
         {"project_id": "p1", "file_path": "notes/a.txt"}
@@ -92,7 +93,6 @@ def test_unmark_file_deleted_without_db_path_returns_success(monkeypatch) -> Non
 
 def test_cleanup_deleted_files_dry_run_with_client_without_db_path() -> None:
     class _FakeClient:
-        # Intentionally no db_path attribute
         def get_deleted_files(self, project_id: str) -> list[Dict[str, Any]]:
             return [
                 {
@@ -116,24 +116,22 @@ def test_cleanup_deleted_files_dry_run_with_client_without_db_path() -> None:
     assert result["total_files"] == 1
 
 
-def test_sqlite_driver_compatibility_still_uses_from_existing_driver(
-    monkeypatch,
-) -> None:
-    class _FakeDB:
-        def mark_file_deleted(self, **kwargs: Any) -> bool:
-            return True
-
+def test_mark_file_deleted_with_sqlite_like_driver(monkeypatch) -> None:
     class _SQLiteLikeDriver:
         db_path = "/tmp/code_analysis.db"
 
     captured: list[object] = []
-    from code_analysis.core.database import CodeDatabase
 
-    def _capture(driver: object) -> _FakeDB:
+    def _capture(driver: object, **kwargs: Any) -> bool:
         captured.append(driver)
-        return _FakeDB()
+        del kwargs
+        return True
 
-    monkeypatch.setattr(CodeDatabase, "from_existing_driver", _capture)
+    monkeypatch.setattr(
+        "code_analysis.core.database_driver_pkg.rpc_handlers_file_trash."
+        "mark_file_deleted_via_driver",
+        _capture,
+    )
     driver = _SQLiteLikeDriver()
     handler = _Handler(driver)
 
@@ -149,13 +147,14 @@ def test_sqlite_driver_compatibility_still_uses_from_existing_driver(
 def test_hard_delete_file_accepts_uuid_string(monkeypatch) -> None:
     captured: list[object] = []
 
-    class _FakeDB:
-        def hard_delete_file(self, file_id: object) -> None:
-            captured.append(file_id)
+    def _fake_hard(driver: object, file_id: object) -> None:
+        captured.append(file_id)
 
-    from code_analysis.core.database import CodeDatabase
-
-    monkeypatch.setattr(CodeDatabase, "from_existing_driver", lambda _driver: _FakeDB())
+    monkeypatch.setattr(
+        "code_analysis.core.database_driver_pkg.rpc_handlers_file_trash."
+        "hard_delete_file_via_driver",
+        _fake_hard,
+    )
     handler = _Handler(object())
     fid = "550e8400-e29b-41d4-a716-446655440000"
     result = handler.handle_hard_delete_file({"file_id": fid})
@@ -168,36 +167,40 @@ def test_hard_delete_file_accepts_uuid_string(monkeypatch) -> None:
 def test_hard_delete_file_still_accepts_int(monkeypatch) -> None:
     captured: list[object] = []
 
-    class _FakeDB:
-        def hard_delete_file(self, file_id: object) -> None:
-            captured.append(file_id)
+    def _fake_hard(driver: object, file_id: object) -> None:
+        captured.append(file_id)
 
-    from code_analysis.core.database import CodeDatabase
-
-    monkeypatch.setattr(CodeDatabase, "from_existing_driver", lambda _driver: _FakeDB())
+    monkeypatch.setattr(
+        "code_analysis.core.database_driver_pkg.rpc_handlers_file_trash."
+        "hard_delete_file_via_driver",
+        _fake_hard,
+    )
     handler = _Handler(object())
     result = handler.handle_hard_delete_file({"file_id": 42})
 
     assert isinstance(result, SuccessResult)
+    assert result.data == {"success": True}
     assert captured == [42]
 
 
 def test_missing_trash_file_returns_structured_error(monkeypatch) -> None:
-    class _FakeDB:
-        def unmark_file_deleted(
-            self,
-            file_path: str,
-            project_id: str,
-            out_error: Dict[str, str] | None = None,
-        ) -> bool:
-            if out_error is not None:
-                out_error["error_code"] = "TRASH_FILE_NOT_FOUND"
-                out_error["message"] = "Trash file is missing at /tmp/trash/p1/a.txt"
-            return False
+    def _fake_unmark(
+        driver: object,
+        file_path: str,
+        project_id: str,
+        out_error: Dict[str, str] | None = None,
+    ) -> bool:
+        del driver, file_path, project_id
+        if out_error is not None:
+            out_error["error_code"] = "TRASH_FILE_NOT_FOUND"
+            out_error["message"] = "Trash file is missing at /tmp/trash/p1/a.txt"
+        return False
 
-    from code_analysis.core.database import CodeDatabase
-
-    monkeypatch.setattr(CodeDatabase, "from_existing_driver", lambda _driver: _FakeDB())
+    monkeypatch.setattr(
+        "code_analysis.core.database_driver_pkg.rpc_handlers_file_trash."
+        "unmark_file_deleted_via_driver",
+        _fake_unmark,
+    )
     handler = _Handler(object())
 
     result = handler.handle_unmark_file_deleted(

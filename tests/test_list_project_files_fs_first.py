@@ -1,5 +1,5 @@
 """
-Tests for list_project_files filesystem-first listing and DB enrichment.
+Tests for list_project_files filesystem-only listing.
 
 Author: Vasiliy Zdanovskiy
 email: vasilyvz@gmail.com
@@ -7,6 +7,7 @@ email: vasilyvz@gmail.com
 
 from __future__ import annotations
 
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -15,38 +16,36 @@ from code_analysis.commands.ast.list_files import ListProjectFilesMCPCommand
 from code_analysis.commands.file_management.relative_path_list_pattern import (
     relative_path_matches_listing_pattern,
 )
-from code_analysis.core.database_client.objects.file import File
+
+
+@pytest.fixture(autouse=True)
+def _list_project_files_mock_db_rows(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Avoid real DB in unit tests; default index has no file rows."""
+
+    mock_db = MagicMock()
+    mock_db.get_project_file_rows.return_value = []
+
+    def _open(_self: object, auto_analyze: bool = False) -> MagicMock:
+        return mock_db
+
+    monkeypatch.setattr(
+        ListProjectFilesMCPCommand,
+        "_open_database_from_config",
+        _open,
+    )
 
 
 @pytest.mark.asyncio
-async def test_list_project_files_enriches_when_db_row_matches(tmp_path) -> None:
+async def test_list_project_files_lists_file_on_disk(tmp_path) -> None:
     proj = tmp_path / "proj"
     proj.mkdir()
     (proj / "src").mkdir()
     (proj / "src" / "app.py").write_text("x=1\n")
 
     pid = "00000000-0000-0000-0000-000000000001"
-    db_file = File(
-        id=42,
-        project_id=pid,
-        path=str((proj / "src" / "app.py").resolve()),
-        relative_path="src/app.py",
-        deleted=False,
-    )
 
-    mock_db = MagicMock()
-    mock_db.get_project_files.return_value = [db_file]
-    mock_db.disconnect = MagicMock()
-
-    with (
-        patch.object(
-            ListProjectFilesMCPCommand, "_resolve_project_root", return_value=proj
-        ),
-        patch.object(
-            ListProjectFilesMCPCommand,
-            "_open_database_from_config",
-            return_value=mock_db,
-        ),
+    with patch.object(
+        ListProjectFilesMCPCommand, "_resolve_project_root", return_value=proj
     ):
         cmd = ListProjectFilesMCPCommand()
         result = await cmd.execute(project_id=pid)
@@ -54,7 +53,8 @@ async def test_list_project_files_enriches_when_db_row_matches(tmp_path) -> None
     assert result.data is not None
     data = result.data
     assert data["total"] == 1
-    assert data["files"][0].get("id") == 42
+    assert data["files"][0]["relative_path"] == "src/app.py"
+    assert data["files"][0].get("file_id") is None
 
 
 @pytest.mark.asyncio
@@ -64,56 +64,67 @@ async def test_list_project_files_fs_only_without_db_row(tmp_path) -> None:
     (proj / "only_fs.py").write_text("#\n")
 
     pid = "00000000-0000-0000-0000-000000000002"
-    mock_db = MagicMock()
-    mock_db.get_project_files.return_value = []
-    mock_db.disconnect = MagicMock()
 
-    with (
-        patch.object(
-            ListProjectFilesMCPCommand, "_resolve_project_root", return_value=proj
-        ),
-        patch.object(
-            ListProjectFilesMCPCommand,
-            "_open_database_from_config",
-            return_value=mock_db,
-        ),
+    with patch.object(
+        ListProjectFilesMCPCommand, "_resolve_project_root", return_value=proj
     ):
         cmd = ListProjectFilesMCPCommand()
         result = await cmd.execute(project_id=pid)
 
     assert result.data is not None
     row = result.data["files"][0]
-    assert row.get("id") is None
+    assert row.get("file_id") is None
     assert row["relative_path"] == "only_fs.py"
     assert row["project_id"] == pid
 
 
 @pytest.mark.asyncio
-async def test_db_row_without_fs_file_is_omitted(tmp_path) -> None:
+async def test_list_project_files_sets_file_id_from_index(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    proj = tmp_path / "proj"
+    proj.mkdir()
+    (proj / "src").mkdir()
+    (proj / "src" / "app.py").write_text("x=1\n")
+
+    pid = "00000000-0000-0000-0000-0000000000aa"
+    fid = "aaaaaaaa-bbbb-4ccc-dddd-eeeeeeeeeeee"
+
+    mock_db = MagicMock()
+    mock_db.get_project_file_rows.return_value = [
+        {"id": fid, "relative_path": "src/app.py", "path": "src/app.py"},
+    ]
+
+    def _open(_self: object, auto_analyze: bool = False) -> MagicMock:
+        return mock_db
+
+    monkeypatch.setattr(
+        ListProjectFilesMCPCommand,
+        "_open_database_from_config",
+        _open,
+    )
+
+    with patch.object(
+        ListProjectFilesMCPCommand, "_resolve_project_root", return_value=proj
+    ):
+        cmd = ListProjectFilesMCPCommand()
+        result = await cmd.execute(project_id=pid)
+
+    assert result.data is not None
+    row = result.data["files"][0]
+    assert row["relative_path"] == "src/app.py"
+    assert row["file_id"] == fid
+
+
+@pytest.mark.asyncio
+async def test_empty_project_lists_no_files(tmp_path) -> None:
     proj = tmp_path / "proj"
     proj.mkdir()
 
     pid = "00000000-0000-0000-0000-000000000003"
-    db_file = File(
-        id=99,
-        project_id=pid,
-        path=str((proj / "missing.py").resolve()),
-        relative_path="missing.py",
-        deleted=False,
-    )
-    mock_db = MagicMock()
-    mock_db.get_project_files.return_value = [db_file]
-    mock_db.disconnect = MagicMock()
 
-    with (
-        patch.object(
-            ListProjectFilesMCPCommand, "_resolve_project_root", return_value=proj
-        ),
-        patch.object(
-            ListProjectFilesMCPCommand,
-            "_open_database_from_config",
-            return_value=mock_db,
-        ),
+    with patch.object(
+        ListProjectFilesMCPCommand, "_resolve_project_root", return_value=proj
     ):
         cmd = ListProjectFilesMCPCommand()
         result = await cmd.execute(project_id=pid)
@@ -132,19 +143,8 @@ async def test_default_skips_venv_tree(tmp_path) -> None:
     vpy.parent.mkdir(parents=True)
     vpy.write_text("#\n")
 
-    mock_db = MagicMock()
-    mock_db.get_project_files.return_value = []
-    mock_db.disconnect = MagicMock()
-
-    with (
-        patch.object(
-            ListProjectFilesMCPCommand, "_resolve_project_root", return_value=root
-        ),
-        patch.object(
-            ListProjectFilesMCPCommand,
-            "_open_database_from_config",
-            return_value=mock_db,
-        ),
+    with patch.object(
+        ListProjectFilesMCPCommand, "_resolve_project_root", return_value=root
     ):
         cmd = ListProjectFilesMCPCommand()
         result = await cmd.execute(project_id="00000000-0000-0000-0000-000000000004")
@@ -165,19 +165,9 @@ async def test_default_skips_cache_dir_show_hidden_lists_it(tmp_path) -> None:
     cache.write_text("{}", encoding="utf-8")
 
     pid = "00000000-0000-0000-0000-0000000000c1"
-    mock_db = MagicMock()
-    mock_db.get_project_files.return_value = []
-    mock_db.disconnect = MagicMock()
 
-    with (
-        patch.object(
-            ListProjectFilesMCPCommand, "_resolve_project_root", return_value=root
-        ),
-        patch.object(
-            ListProjectFilesMCPCommand,
-            "_open_database_from_config",
-            return_value=mock_db,
-        ),
+    with patch.object(
+        ListProjectFilesMCPCommand, "_resolve_project_root", return_value=root
     ):
         cmd = ListProjectFilesMCPCommand()
         off = await cmd.execute(project_id=pid)
@@ -206,21 +196,12 @@ async def test_show_venv_adds_only_allowlisted_record_files(tmp_path) -> None:
     (dist / "METADATA").write_text("Metadata-Version: 2.1\nName: mypkg\nVersion: 1.0\n")
     (dist / "RECORD").write_text("mypkg/mod.py,sha256=abc,12\n", encoding="utf-8")
 
-    mock_db = MagicMock()
-    mock_db.get_project_files.return_value = []
-    mock_db.disconnect = MagicMock()
-
     with (
         patch.object(
             ListProjectFilesMCPCommand, "_resolve_project_root", return_value=root
         ),
-        patch.object(
-            ListProjectFilesMCPCommand,
-            "_open_database_from_config",
-            return_value=mock_db,
-        ),
         patch(
-            "code_analysis.commands.ast.list_files.load_venv_site_packages_index_allowlist_from_config",
+            "code_analysis.commands.project_fs_enumerate.load_venv_site_packages_index_allowlist_from_config",
             return_value=["mypkg"],
         ),
     ):
@@ -247,21 +228,12 @@ async def test_ignore_exceptions_under_venv_not_listed_by_default(tmp_path) -> N
     vdir.mkdir()
     (vdir / "forced.py").write_text("x = 1\n", encoding="utf-8")
 
-    mock_db = MagicMock()
-    mock_db.get_project_files.return_value = []
-    mock_db.disconnect = MagicMock()
-
     with (
         patch.object(
             ListProjectFilesMCPCommand, "_resolve_project_root", return_value=root
         ),
-        patch.object(
-            ListProjectFilesMCPCommand,
-            "_open_database_from_config",
-            return_value=mock_db,
-        ),
         patch(
-            "code_analysis.commands.ast.list_files.load_ignore_exceptions_from_config",
+            "code_analysis.commands.project_fs_enumerate.load_ignore_exceptions_from_config",
             return_value=[".venv/forced.py"],
         ),
     ):
@@ -286,21 +258,12 @@ async def test_include_venv_ignore_exceptions_lists_forced_venv_file(tmp_path) -
     vdir.mkdir()
     (vdir / "forced.py").write_text("x = 1\n", encoding="utf-8")
 
-    mock_db = MagicMock()
-    mock_db.get_project_files.return_value = []
-    mock_db.disconnect = MagicMock()
-
     with (
         patch.object(
             ListProjectFilesMCPCommand, "_resolve_project_root", return_value=root
         ),
-        patch.object(
-            ListProjectFilesMCPCommand,
-            "_open_database_from_config",
-            return_value=mock_db,
-        ),
         patch(
-            "code_analysis.commands.ast.list_files.load_ignore_exceptions_from_config",
+            "code_analysis.commands.project_fs_enumerate.load_ignore_exceptions_from_config",
             return_value=[".venv/forced.py"],
         ),
     ):
@@ -332,21 +295,12 @@ async def test_show_venv_empty_allowlist_adds_no_venv_files(tmp_path) -> None:
     (dist / "METADATA").write_text("Name: mypkg\nVersion: 1.0\n")
     (dist / "RECORD").write_text("mypkg/mod.py,sha256=abc,12\n", encoding="utf-8")
 
-    mock_db = MagicMock()
-    mock_db.get_project_files.return_value = []
-    mock_db.disconnect = MagicMock()
-
     with (
         patch.object(
             ListProjectFilesMCPCommand, "_resolve_project_root", return_value=root
         ),
-        patch.object(
-            ListProjectFilesMCPCommand,
-            "_open_database_from_config",
-            return_value=mock_db,
-        ),
         patch(
-            "code_analysis.commands.ast.list_files.load_venv_site_packages_index_allowlist_from_config",
+            "code_analysis.commands.project_fs_enumerate.load_venv_site_packages_index_allowlist_from_config",
             return_value=[],
         ),
     ):
@@ -369,19 +323,8 @@ async def test_pagination_stable_sort(tmp_path) -> None:
     (root / "a.py").write_text("#\n")
     (root / "b.py").write_text("#\n")
 
-    mock_db = MagicMock()
-    mock_db.get_project_files.return_value = []
-    mock_db.disconnect = MagicMock()
-
-    with (
-        patch.object(
-            ListProjectFilesMCPCommand, "_resolve_project_root", return_value=root
-        ),
-        patch.object(
-            ListProjectFilesMCPCommand,
-            "_open_database_from_config",
-            return_value=mock_db,
-        ),
+    with patch.object(
+        ListProjectFilesMCPCommand, "_resolve_project_root", return_value=root
     ):
         cmd = ListProjectFilesMCPCommand()
         result = await cmd.execute(
@@ -403,19 +346,8 @@ async def test_file_pattern_filter(tmp_path) -> None:
     (root / "keep.py").write_text("#\n")
     (root / "skip.txt").write_text("not py\n")
 
-    mock_db = MagicMock()
-    mock_db.get_project_files.return_value = []
-    mock_db.disconnect = MagicMock()
-
-    with (
-        patch.object(
-            ListProjectFilesMCPCommand, "_resolve_project_root", return_value=root
-        ),
-        patch.object(
-            ListProjectFilesMCPCommand,
-            "_open_database_from_config",
-            return_value=mock_db,
-        ),
+    with patch.object(
+        ListProjectFilesMCPCommand, "_resolve_project_root", return_value=root
     ):
         cmd = ListProjectFilesMCPCommand()
         result = await cmd.execute(
@@ -435,19 +367,8 @@ async def test_lists_markdown_and_python_by_default(tmp_path) -> None:
     (root / "a.py").write_text("#\n")
     (root / "notes.md").write_text("# doc\n")
 
-    mock_db = MagicMock()
-    mock_db.get_project_files.return_value = []
-    mock_db.disconnect = MagicMock()
-
-    with (
-        patch.object(
-            ListProjectFilesMCPCommand, "_resolve_project_root", return_value=root
-        ),
-        patch.object(
-            ListProjectFilesMCPCommand,
-            "_open_database_from_config",
-            return_value=mock_db,
-        ),
+    with patch.object(
+        ListProjectFilesMCPCommand, "_resolve_project_root", return_value=root
     ):
         cmd = ListProjectFilesMCPCommand()
         result = await cmd.execute(project_id="00000000-0000-0000-0000-000000000010")
@@ -467,20 +388,9 @@ async def test_plan_directory_pattern_returns_steps_and_readme(tmp_path) -> None
     (plan / "step_02_postgres.md").write_text("#\n")
     (plan / "audit_steps.py").write_text("x=1\n")
 
-    mock_db = MagicMock()
-    mock_db.get_project_files.return_value = []
-    mock_db.disconnect = MagicMock()
-
     pat = "docs/plans/db_retry_worker_coordination_100_qwen/*"
-    with (
-        patch.object(
-            ListProjectFilesMCPCommand, "_resolve_project_root", return_value=root
-        ),
-        patch.object(
-            ListProjectFilesMCPCommand,
-            "_open_database_from_config",
-            return_value=mock_db,
-        ),
+    with patch.object(
+        ListProjectFilesMCPCommand, "_resolve_project_root", return_value=root
     ):
         cmd = ListProjectFilesMCPCommand()
         result = await cmd.execute(
@@ -507,19 +417,8 @@ async def test_python_only_restricts_to_py(tmp_path) -> None:
     (root / "a.py").write_text("#\n")
     (root / "b.md").write_text("#\n")
 
-    mock_db = MagicMock()
-    mock_db.get_project_files.return_value = []
-    mock_db.disconnect = MagicMock()
-
-    with (
-        patch.object(
-            ListProjectFilesMCPCommand, "_resolve_project_root", return_value=root
-        ),
-        patch.object(
-            ListProjectFilesMCPCommand,
-            "_open_database_from_config",
-            return_value=mock_db,
-        ),
+    with patch.object(
+        ListProjectFilesMCPCommand, "_resolve_project_root", return_value=root
     ):
         cmd = ListProjectFilesMCPCommand()
         result = await cmd.execute(
@@ -538,19 +437,8 @@ async def test_pagination_total_count_offset(tmp_path) -> None:
     for name in ("m1.md", "m2.md", "m3.md"):
         (root / name).write_text("#\n")
 
-    mock_db = MagicMock()
-    mock_db.get_project_files.return_value = []
-    mock_db.disconnect = MagicMock()
-
-    with (
-        patch.object(
-            ListProjectFilesMCPCommand, "_resolve_project_root", return_value=root
-        ),
-        patch.object(
-            ListProjectFilesMCPCommand,
-            "_open_database_from_config",
-            return_value=mock_db,
-        ),
+    with patch.object(
+        ListProjectFilesMCPCommand, "_resolve_project_root", return_value=root
     ):
         cmd = ListProjectFilesMCPCommand()
         result = await cmd.execute(
@@ -575,19 +463,8 @@ async def test_nested_commands_pattern_fnmatch(tmp_path) -> None:
     deep.mkdir(parents=True)
     (deep / "x.py").write_text("#\n")
 
-    mock_db = MagicMock()
-    mock_db.get_project_files.return_value = []
-    mock_db.disconnect = MagicMock()
-
-    with (
-        patch.object(
-            ListProjectFilesMCPCommand, "_resolve_project_root", return_value=root
-        ),
-        patch.object(
-            ListProjectFilesMCPCommand,
-            "_open_database_from_config",
-            return_value=mock_db,
-        ),
+    with patch.object(
+        ListProjectFilesMCPCommand, "_resolve_project_root", return_value=root
     ):
         cmd = ListProjectFilesMCPCommand()
         result = await cmd.execute(
@@ -625,20 +502,9 @@ async def test_plan_directory_literal_prefix_without_star(tmp_path) -> None:
     (plan / "README.md").write_text("#\n")
     (plan / "step_01.md").write_text("#\n")
 
-    mock_db = MagicMock()
-    mock_db.get_project_files.return_value = []
-    mock_db.disconnect = MagicMock()
-
     prefix = "docs/plans/db_retry_worker_coordination_100_qwen"
-    with (
-        patch.object(
-            ListProjectFilesMCPCommand, "_resolve_project_root", return_value=root
-        ),
-        patch.object(
-            ListProjectFilesMCPCommand,
-            "_open_database_from_config",
-            return_value=mock_db,
-        ),
+    with patch.object(
+        ListProjectFilesMCPCommand, "_resolve_project_root", return_value=root
     ):
         cmd = ListProjectFilesMCPCommand()
         result = await cmd.execute(
@@ -663,20 +529,9 @@ async def test_plan_directory_literal_prefix_with_trailing_slash(tmp_path) -> No
     (plan / "README.md").write_text("#\n")
     (plan / "step_01.md").write_text("#\n")
 
-    mock_db = MagicMock()
-    mock_db.get_project_files.return_value = []
-    mock_db.disconnect = MagicMock()
-
     prefix = "docs/plans/db_retry_worker_coordination_100_qwen/"
-    with (
-        patch.object(
-            ListProjectFilesMCPCommand, "_resolve_project_root", return_value=root
-        ),
-        patch.object(
-            ListProjectFilesMCPCommand,
-            "_open_database_from_config",
-            return_value=mock_db,
-        ),
+    with patch.object(
+        ListProjectFilesMCPCommand, "_resolve_project_root", return_value=root
     ):
         cmd = ListProjectFilesMCPCommand()
         result = await cmd.execute(
@@ -699,19 +554,8 @@ async def test_glob_param_alias(tmp_path) -> None:
     (root / "a.py").write_text("#\n")
     (root / "b.txt").write_text("x\n")
 
-    mock_db = MagicMock()
-    mock_db.get_project_files.return_value = []
-    mock_db.disconnect = MagicMock()
-
-    with (
-        patch.object(
-            ListProjectFilesMCPCommand, "_resolve_project_root", return_value=root
-        ),
-        patch.object(
-            ListProjectFilesMCPCommand,
-            "_open_database_from_config",
-            return_value=mock_db,
-        ),
+    with patch.object(
+        ListProjectFilesMCPCommand, "_resolve_project_root", return_value=root
     ):
         cmd = ListProjectFilesMCPCommand()
         result = await cmd.execute(
@@ -731,19 +575,8 @@ async def test_file_pattern_wins_over_glob(tmp_path) -> None:
     (root / "a.py").write_text("#\n")
     (root / "b.md").write_text("#\n")
 
-    mock_db = MagicMock()
-    mock_db.get_project_files.return_value = []
-    mock_db.disconnect = MagicMock()
-
-    with (
-        patch.object(
-            ListProjectFilesMCPCommand, "_resolve_project_root", return_value=root
-        ),
-        patch.object(
-            ListProjectFilesMCPCommand,
-            "_open_database_from_config",
-            return_value=mock_db,
-        ),
+    with patch.object(
+        ListProjectFilesMCPCommand, "_resolve_project_root", return_value=root
     ):
         cmd = ListProjectFilesMCPCommand()
         result = await cmd.execute(
@@ -764,19 +597,8 @@ async def test_backslashes_in_pattern_normalized(tmp_path) -> None:
     sub.mkdir(parents=True)
     (sub / "z.py").write_text("#\n")
 
-    mock_db = MagicMock()
-    mock_db.get_project_files.return_value = []
-    mock_db.disconnect = MagicMock()
-
-    with (
-        patch.object(
-            ListProjectFilesMCPCommand, "_resolve_project_root", return_value=root
-        ),
-        patch.object(
-            ListProjectFilesMCPCommand,
-            "_open_database_from_config",
-            return_value=mock_db,
-        ),
+    with patch.object(
+        ListProjectFilesMCPCommand, "_resolve_project_root", return_value=root
     ):
         cmd = ListProjectFilesMCPCommand()
         result = await cmd.execute(

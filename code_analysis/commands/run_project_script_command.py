@@ -471,7 +471,7 @@ class RunProjectScriptCommand(BaseMCPCommand):
                 return ErrorResult(
                     code="VALIDATION_ERROR",
                     message=e.message,
-                    data=getattr(e, "details", {}),
+                    details=getattr(e, "details", {}),
                 )
             logger.exception("run_project_script failed: %s", e)
             return ErrorResult(

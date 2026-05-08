@@ -175,7 +175,7 @@ def test_watcher_skips_project_owned_by_indexer(
         proc = FileChangeProcessor(coord_client, [root.resolve()])
         delta = {
             PA: FileDelta(
-                new_files=[(str(fpath), mtime, 2)],
+                new_files=[("only.py", mtime, 2)],
                 changed_files=[],
                 deleted_files=[],
             )
@@ -282,7 +282,7 @@ def test_indexer_owned_project_does_not_block_watcher_on_other_project(
     proc = FileChangeProcessor(coord_client, [b_root])
     d = {
         PB: FileDelta(
-            new_files=[(str(fpath), m, len(fpath.read_bytes()))],
+            new_files=[("watched.py", m, len(fpath.read_bytes()))],
             changed_files=[],
             deleted_files=[],
         )
@@ -497,7 +497,7 @@ def test_watcher_order_inserts_before_updates_and_unmatched_unchanged(
         "INSERT INTO files (path, lines, last_modified, has_docstring, project_id, "
         "created_at, updated_at, needs_chunking) VALUES (?, 1, ?, 0, ?, "
         "julianday('now'), julianday('now'), 0)",
-        (str(old), m_old, PA),
+        ("old.py", m_old, PA),
     )
     newp = (pr / "new.py").resolve()
     newp.write_text("n", encoding="utf-8")
@@ -522,7 +522,8 @@ def test_watcher_order_inserts_before_updates_and_unmatched_unchanged(
     }
     dmap = compute_delta(coord_client, [pr.resolve()], pr, scanned)
     fd = dmap[PA]
-    assert any(str(newp) in t[0] for t in fd.new_files)
+    new_paths = {t[0] for t in fd.new_files}
+    assert "new.py" in new_paths
     assert not fd.changed_files
     assert not fd.deleted_files
 
@@ -542,7 +543,7 @@ def test_double_queue_same_new_file_does_not_duplicate_row(
     fp.write_text("q", encoding="utf-8")
     m = fp.stat().st_mtime
     proc = FileChangeProcessor(coord_client, [pr])
-    d = {PA: FileDelta(new_files=[(str(fp), m, 1)], changed_files=[], deleted_files=[])}
+    d = {PA: FileDelta(new_files=[("d.py", m, 1)], changed_files=[], deleted_files=[])}
     st1 = proc.queue_changes(
         pr,
         d,
@@ -557,7 +558,7 @@ def test_double_queue_same_new_file_does_not_duplicate_row(
     c = _row_count(
         coord_client,
         "SELECT COUNT(*) AS c FROM files WHERE project_id = ? AND path = ?",
-        (PA, str(fp)),
+        (PA, "d.py"),
     )
     assert c == 1
     # Second run: ON CONFLICT DO NOTHING — still one row
@@ -576,7 +577,9 @@ def test_rerun_watcher_does_not_delete_active_file(
     fp.write_text("k", encoding="utf-8")
     m = fp.stat().st_mtime
     proc = FileChangeProcessor(coord_client, [pr])
-    d = {PA: FileDelta(new_files=[(str(fp), m, 1)], changed_files=[], deleted_files=[])}
+    d = {
+        PA: FileDelta(new_files=[("keep.py", m, 1)], changed_files=[], deleted_files=[])
+    }
     proc.queue_changes(
         pr,
         d,
@@ -697,7 +700,7 @@ def test_watcher_skip_log_uses_work_coord_prefix(
         proc = FileChangeProcessor(coord_client, [root])
         d = {
             PA: FileDelta(
-                new_files=[(str(fp.resolve()), m, 1)],
+                new_files=[("x.py", m, 1)],
                 changed_files=[],
                 deleted_files=[],
             )

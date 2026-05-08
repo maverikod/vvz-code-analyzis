@@ -96,17 +96,22 @@ class BaseMCPCommand(Command):
     def _get_project_id_by_root_path(
         db: DatabaseClient, root_path: str
     ) -> Optional[str]:
-        """Get project ID by root path (for internal use e.g. project_creation)."""
-        rows = db.select("projects", where={"root_path": root_path}, columns=["id"])
-        if rows:
-            return rows[0].get("id")
-        return None
+        """Get project ID by resolved absolute root path (for internal use e.g. project_creation)."""
+        from code_analysis.core.project_root_path import (
+            find_project_id_by_resolved_absolute_root,
+        )
+
+        return find_project_id_by_resolved_absolute_root(db, root_path)
 
     @staticmethod
     def _get_project_id(
         db: DatabaseClient, root_path: Path, project_id: Optional[str] = None
     ) -> Optional[str]:
         """Resolve or create project ID. Prefer passing project_id and using _resolve_project_root."""
+        from code_analysis.core.project_root_path import (
+            persist_projects_root_path_stored_value,
+        )
+
         if project_id:
             project = db.get_project(project_id)
             if project:
@@ -123,9 +128,14 @@ class BaseMCPCommand(Command):
                     },
                 )
             project_name = root_path.name
+            root_stored = persist_projects_root_path_stored_value(
+                project_root_absolute=root_path,
+                watch_dir_id=None,
+                database=db,
+            )
             result = db.execute(
                 "INSERT INTO projects (id, root_path, name, updated_at) VALUES (?, ?, ?, julianday('now'))",
-                (project_id, str(root_path), project_name),
+                (project_id, root_stored, project_name),
             )
             affected = 0
             if isinstance(result, dict):
@@ -142,9 +152,14 @@ class BaseMCPCommand(Command):
         if existing_id:
             return existing_id
         new_id = str(uuid.uuid4())
+        root_stored = persist_projects_root_path_stored_value(
+            project_root_absolute=root_path,
+            watch_dir_id=None,
+            database=db,
+        )
         result = db.execute(
             "INSERT INTO projects (id, root_path, name, updated_at) VALUES (?, ?, ?, julianday('now'))",
-            (new_id, str(root_path), root_path.name),
+            (new_id, root_stored, root_path.name),
         )
         affected = 0
         if isinstance(result, dict):

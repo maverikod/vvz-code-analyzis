@@ -809,20 +809,25 @@ def find_missing_files(
     Find files that exist in database but not on disk.
 
     Args:
-        scanned_files: Files found on disk (from scan_directory), keyed by normalized absolute path
+        scanned_files: Files found on disk for this project, keyed by **project-relative**
+            POSIX path (same keys as :func:`compute_delta` uses per project).
         db_files: Files in database (``path`` may be project-relative or legacy absolute)
-        project_root: Project root for resolving DB rows to absolute paths
+        project_root: Project root for resolving DB rows
 
     Returns:
-        Set of absolute file paths that are missing on disk
+        Set of **project-relative** POSIX paths that are missing on disk
     """
     from ..path_normalization import normalize_path_simple
-    from ..file_identity import absolute_path_for_indexed_file
+    from ..file_identity import absolute_path_for_indexed_file, relative_path_for_project
 
     missing: set[str] = set()
-    root = project_root
+    root = project_root.resolve()
     for db_file in db_files:
         abs_key = normalize_path_simple(absolute_path_for_indexed_file(root, db_file))
-        if abs_key not in scanned_files:
-            missing.add(abs_key)
+        try:
+            rel_key = relative_path_for_project(abs_key, root)
+        except ValueError:
+            continue
+        if rel_key not in scanned_files:
+            missing.add(rel_key)
     return missing

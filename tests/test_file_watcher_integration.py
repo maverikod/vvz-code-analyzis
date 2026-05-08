@@ -19,6 +19,7 @@ from code_analysis.core.file_watcher_pkg.scanner import (
     scan_directory,
     should_ignore_path,
 )
+from code_analysis.core.file_identity import relative_path_for_project
 from code_analysis.core.file_watcher_pkg.processor import FileChangeProcessor, FileDelta
 from code_analysis.core.project_resolution import load_project_info
 from tests.sqlite_inprocess_database import sqlite_inprocess_database_client
@@ -303,9 +304,12 @@ class TestFileWatcherProcessorRealData:
         assert project_id in delta
         project_delta = delta[project_id]
         assert isinstance(project_delta, FileDelta)
-        # File should be in changed_files (mtime differs)
+        # File should be in changed_files (mtime differs); delta paths are project-relative
         changed_paths = {path for path, _, _ in project_delta.changed_files}
-        assert file_path in changed_paths
+        rel_expected = relative_path_for_project(
+            Path(file_path).resolve(), VAST_SRV_DIR.resolve()
+        )
+        assert rel_expected in changed_paths
 
     def test_compute_delta_deleted_files(self, temp_db):
         """Test computing delta for deleted files."""
@@ -373,8 +377,11 @@ class TestFileWatcherProcessorRealData:
             assert project_id in delta
             project_delta = delta[project_id]
             assert isinstance(project_delta, FileDelta)
-            # File should be in deleted_files
-            assert file_path in project_delta.deleted_files
+            # File should be in deleted_files (project-relative POSIX)
+            rel_deleted = relative_path_for_project(
+                Path(file_path).resolve(), VAST_SRV_DIR.resolve()
+            )
+            assert rel_deleted in project_delta.deleted_files
 
         finally:
             # Cleanup

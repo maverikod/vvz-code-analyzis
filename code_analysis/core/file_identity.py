@@ -97,6 +97,29 @@ def relative_path_for_project(abs_path: PathLike, project_root: PathLike) -> str
     return rel.as_posix()
 
 
+def project_relative_file_posix(file_path: PathLike, project_root: PathLike) -> str:
+    """
+    Normalize ``file_path`` to a project-relative POSIX string under ``project_root``.
+
+    Absolute paths that lie under the project root are trimmed to the relative suffix.
+    Paths that are already project-relative are normalized (forward slashes; no ``./`` prefix).
+
+    Raises:
+        ValueError: If ``file_path`` is absolute and not under ``project_root``.
+    """
+    root = Path(project_root).resolve()
+    s = str(file_path).strip().replace("\\", "/")
+    if not s:
+        return ""
+    p = Path(s)
+    if p.is_absolute():
+        return relative_path_for_project(normalize_path_simple(p), root)
+    rel = Path(s).as_posix()
+    while rel.startswith("./"):
+        rel = rel[2:]
+    return rel
+
+
 def is_same_absolute_file(path_a: PathLike, path_b: PathLike) -> bool:
     """True if both paths denote the same normalized absolute file path."""
     return normalize_path_simple(path_a) == normalize_path_simple(path_b)

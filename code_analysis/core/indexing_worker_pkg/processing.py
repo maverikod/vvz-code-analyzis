@@ -63,6 +63,26 @@ INDEXING_PROJECT_DISCOVERY_SQL = (
 _INDEXER_LEASE_TTL_S = 120.0
 
 
+def _docs_relative_path_from_row_path(*, path: str, project_root: Path) -> str:
+    """
+    Project-relative POSIX path for ``is_docs_markdown_eligible``.
+
+    ``files.path`` is often project-relative; resolving ``Path(path)`` alone uses
+    process cwd and breaks ``relative_to(project_root)``. Join project root first
+    when the path is not absolute.
+    """
+    raw = (path or "").strip().replace("\\", "/")
+    if not raw:
+        return ""
+    try:
+        pr = project_root.resolve()
+        p = Path(raw)
+        abs_p = p.resolve() if p.is_absolute() else (pr / p).resolve()
+        return str(abs_p.relative_to(pr))
+    except (OSError, ValueError):
+        return ""
+
+
 async def process_cycle(self: Any, poll_interval: int = 30) -> Dict[str, Any]:
     """Run indexing cycles until stop: query projects with needs_chunking=1, index batch per project.
 
@@ -385,14 +405,10 @@ async def process_cycle(self: Any, poll_interval: int = 30) -> Dict[str, Any]:
                                         and docs_cfg_loaded is not None
                                         and proj_root_for_docs is not None
                                     ):
-                                        try:
-                                            rel_docs = str(
-                                                Path(path)
-                                                .resolve()
-                                                .relative_to(proj_root_for_docs)
-                                            )
-                                        except ValueError:
-                                            rel_docs = ""
+                                        rel_docs = _docs_relative_path_from_row_path(
+                                            path=path,
+                                            project_root=proj_root_for_docs,
+                                        )
                                         verdict_docs = is_docs_markdown_eligible(
                                             docs_indexing=docs_cfg_loaded,
                                             relative_path=rel_docs,

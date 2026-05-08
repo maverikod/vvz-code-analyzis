@@ -135,7 +135,7 @@ def get_tables_core() -> Dict[str, Any]:
                     "on_delete": "SET NULL",
                 }
             ],
-            "unique_constraints": [{"columns": ["root_path"]}],
+            "unique_constraints": [{"columns": ["watch_dir_id", "root_path"]}],
             "check_constraints": [],
         },
         "files": {

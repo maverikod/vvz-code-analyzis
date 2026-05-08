@@ -354,6 +354,31 @@ def run_migrate_schema(db: Any) -> None:
         except Exception as e:
             logger.warning(f"Could not add editing_pid column to files: {e}")
 
+    try:
+        from code_analysis.core.database.migrations.projects_root_segment_postgres import (
+            migrate_projects_root_segment_postgres,
+        )
+
+        migrate_projects_root_segment_postgres(db)
+    except Exception as e:
+        logger.debug("projects_root_segment_postgres migration skipped: %s", e)
+
+    if getattr(db, "_driver_type", None) != "postgres":
+        try:
+            db._execute(
+                """
+                CREATE UNIQUE INDEX IF NOT EXISTS ux_projects_watch_dir_id_root_path
+                ON projects(watch_dir_id, root_path)
+                """
+            )
+            db._commit()
+        except Exception as e:
+            logger.debug(
+                "SQLite ux_projects_watch_dir_id_root_path index (may conflict until "
+                "root_path values are migrated): %s",
+                e,
+            )
+
 
 def run_uuid_migration_phase2(db: Any, *, skip_preflight: bool = False) -> Any:
     """

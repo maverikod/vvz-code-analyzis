@@ -474,11 +474,19 @@ def apply_ignore_purge_split_to_deltas(
         ign: List[str] = []
         exc_pat = list(ignore_exception_patterns or ())
         for path_str in d.deleted_files:
-            p = Path(path_str)
-            try:
-                p_res = p.resolve()
-            except OSError:
-                p_res = p
+            raw = str(path_str).strip().replace("\\", "/")
+            p = Path(raw)
+            if p.is_absolute():
+                try:
+                    p_res = p.resolve()
+                except OSError:
+                    p_res = p
+            else:
+                p_res = root_res / p
+                try:
+                    p_res = p_res.resolve()
+                except OSError:
+                    p_res = root_res / p
             if should_ignore_path(
                 p_res,
                 list(ignore_patterns),

@@ -11,6 +11,8 @@ import logging
 from pathlib import Path
 from typing import Any, List
 
+from code_analysis.core.project_root_path import persist_projects_root_path_stored_value
+
 from ..sql_portable import sql_julian_timestamp_now_expr
 from ..worker_db_rpc_priority import BACKGROUND_WORKER_DB_RPC_PRIORITY
 from .multi_project_worker_specs import WatchDirSpec
@@ -286,6 +288,11 @@ def initialize_watch_dirs(database: Any, watch_dirs: List[WatchDirSpec]) -> None
                             )
                     else:
                         project_name = project_root_obj.root_path.name
+                        root_stored = persist_projects_root_path_stored_value(
+                            project_root_absolute=project_root_obj.root_path,
+                            watch_dir_id=wid or None,
+                            database=database,
+                        )
                         database.execute(
                             f"""
                             INSERT INTO projects (id, root_path, name, comment, watch_dir_id, updated_at)
@@ -293,7 +300,7 @@ def initialize_watch_dirs(database: Any, watch_dirs: List[WatchDirSpec]) -> None
                             """,
                             (
                                 project_root_obj.project_id,
-                                str(project_root_obj.root_path),
+                                root_stored,
                                 project_name,
                                 project_root_obj.description,
                                 wid,

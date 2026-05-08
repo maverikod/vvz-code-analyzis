@@ -12,6 +12,8 @@ import uuid
 from pathlib import Path
 from typing import Any, Dict, Optional, Set, Tuple
 
+from code_analysis.core.project_root_path import persist_projects_root_path_stored_value
+
 from ..project_ignore_policy import filter_ignore_exception_py_paths_for_watcher
 from ..venv_path_policy import (
     build_allowlisted_site_packages_py_files,
@@ -283,6 +285,13 @@ def scan_watch_dir(
                         project_name = project_root_obj.root_path.name
                         project_description = project_root_obj.description
                         watch_dir_id = spec.watch_dir_id
+                        root_stored = persist_projects_root_path_stored_value(
+                            project_root_absolute=project_root_obj.root_path,
+                            watch_dir_id=(
+                                str(watch_dir_id) if watch_dir_id is not None else None
+                            ),
+                            database=database,
+                        )
                         database.execute(
                             """
                             INSERT INTO projects (id, root_path, name, comment, watch_dir_id, updated_at)
@@ -290,7 +299,7 @@ def scan_watch_dir(
                             """,
                             (
                                 project_root_obj.project_id,
-                                str(project_root_obj.root_path),
+                                root_stored,
                                 project_name,
                                 project_description,
                                 watch_dir_id,

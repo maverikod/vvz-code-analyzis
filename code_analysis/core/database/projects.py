@@ -18,6 +18,11 @@ from code_analysis.core.sql_portable import (
     WHERE_PROCESSING_ACTIVE_P,
     database_has_sqlite_code_content_fts,
 )
+from code_analysis.core.project_root_path import (
+    enrich_project_dict_resolve_root_path,
+    find_project_id_by_resolved_absolute_root,
+    persist_projects_root_path_stored_value,
+)
 from code_analysis.core.vector_search_backend import uses_pgvector_ann_for_database
 
 logger = logging.getLogger(__name__)
@@ -43,14 +48,19 @@ def get_or_create_project(
     Returns:
         Project ID (UUID4 string)
     """
-    row = self._fetchone("SELECT id FROM projects WHERE root_path = ?", (root_path,))
-    if row:
-        return row["id"]
+    existing = find_project_id_by_resolved_absolute_root(self, root_path)
+    if existing:
+        return existing
     new_id = project_id if project_id else str(uuid.uuid4())
     project_name = name or Path(root_path).name
+    stored = persist_projects_root_path_stored_value(
+        project_root_absolute=Path(root_path),
+        watch_dir_id=None,
+        database=self,
+    )
     self._execute(
         "\n                INSERT INTO projects (id, root_path, name, comment, updated_at)\n                VALUES (?, ?, ?, ?, julianday('now'))\n            ",
-        (new_id, root_path, project_name, comment),
+        (new_id, stored, project_name, comment),
     )
     self._commit()
     return new_id
@@ -61,13 +71,12 @@ def get_project_id(self, root_path: str) -> Optional[str]:
     Get project ID by root path.
 
     Args:
-        root_path: Root directory path of the project
+        root_path: Resolved absolute root directory path of the project
 
     Returns:
         Project ID (UUID4 string) or None if not found
     """
-    row = self._fetchone("SELECT id FROM projects WHERE root_path = ?", (root_path,))
-    return row["id"] if row else None
+    return find_project_id_by_resolved_absolute_root(self, root_path)
 
 
 def get_project(self, project_id: str) -> Optional[Dict[str, Any]]:
@@ -80,7 +89,12 @@ def get_project(self, project_id: str) -> Optional[Dict[str, Any]]:
     Returns:
         Project record as dictionary or None if not found
     """
-    return self._fetchone("SELECT * FROM projects WHERE id = ?", (project_id,))
+    row = self._fetchone("SELECT * FROM projects WHERE id = ?", (project_id,))
+    if not row:
+        return None
+    if isinstance(row, dict):
+        return enrich_project_dict_resolve_root_path(row, self)
+    return enrich_project_dict_resolve_root_path(dict(row), self)
 
 
 def relocate_project_root_after_disk_move(
@@ -119,15 +133,39 @@ def relocate_project_root_after_disk_move(
             self._commit()
         return True
 
-    other = self._fetchone(
-        "SELECT id FROM projects WHERE root_path = ? AND id != ? LIMIT 1",
-        (str(new_r), project_id),
+    cur = self._fetchone(
+        "SELECT watch_dir_id FROM projects WHERE id = ?", (project_id,)
     )
+    effective_wd = (
+        str(new_watch_dir_id)
+        if new_watch_dir_id is not None
+        else (
+            str(cur.get("watch_dir_id"))
+            if isinstance(cur, dict) and cur.get("watch_dir_id")
+            else ""
+        )
+    )
+    new_stored = persist_projects_root_path_stored_value(
+        project_root_absolute=new_r,
+        watch_dir_id=effective_wd or None,
+        database=self,
+    )
+    if effective_wd:
+        other = self._fetchone(
+            "SELECT id FROM projects WHERE watch_dir_id IS NOT NULL AND watch_dir_id = ? "
+            "AND root_path = ? AND id != ? LIMIT 1",
+            (effective_wd, new_stored, project_id),
+        )
+    else:
+        other = self._fetchone(
+            "SELECT id FROM projects WHERE root_path = ? AND id != ? LIMIT 1",
+            (new_stored, project_id),
+        )
     if other:
         logger.error(
             "relocate_project_root_after_disk_move: root_path %s already used by "
             "project %s; refusing to move project %s from %s",
-            new_r,
+            new_stored,
             other.get("id"),
             project_id,
             old_r,
@@ -145,13 +183,13 @@ def relocate_project_root_after_disk_move(
         self._execute(
             "UPDATE projects SET root_path = ?, name = ?, watch_dir_id = ?, "
             "updated_at = julianday('now') WHERE id = ?",
-            (str(new_r), new_name, new_watch_dir_id, project_id),
+            (new_stored, new_name, new_watch_dir_id, project_id),
         )
     else:
         self._execute(
             "UPDATE projects SET root_path = ?, name = ?, updated_at = julianday('now') "
             "WHERE id = ?",
-            (str(new_r), new_name, project_id),
+            (new_stored, new_name, project_id),
         )
 
     self._commit()

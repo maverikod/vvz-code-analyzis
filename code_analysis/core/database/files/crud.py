@@ -12,6 +12,9 @@ from pathlib import Path
 
 from typing import Any, Dict, List, Optional, cast
 
+from code_analysis.core.project_root_path import (
+    resolve_projects_root_path_row_to_absolute_str,
+)
 from code_analysis.core.sql_portable import (
     WHERE_FILES_ACTIVE,
     WHERE_FILES_ACTIVE_F,
@@ -47,7 +50,7 @@ def _cross_project_active_file_same_absolute(
 
     rows = self._fetchall(
         f"""
-        SELECT f.id, f.project_id, p.root_path, f.path, f.relative_path
+        SELECT f.id, f.project_id, p.root_path, p.watch_dir_id, f.path, f.relative_path
         FROM files f
         INNER JOIN projects p ON p.id = f.project_id
         WHERE f.project_id != ?
@@ -58,7 +61,17 @@ def _cross_project_active_file_same_absolute(
     )
     for row in rows:
         try:
-            if absolute_path_for_indexed_file(row["root_path"], row) == want:
+            resolved_root = resolve_projects_root_path_row_to_absolute_str(
+                root_path_stored=str(row.get("root_path") or ""),
+                watch_dir_id=(
+                    str(row["watch_dir_id"])
+                    if row.get("watch_dir_id") is not None
+                    else None
+                ),
+                database=self,
+            )
+            row_for_abs = {**row, "root_path": resolved_root}
+            if absolute_path_for_indexed_file(resolved_root, row_for_abs) == want:
                 return {"id": row["id"], "project_id": row["project_id"]}
         except Exception:
             continue

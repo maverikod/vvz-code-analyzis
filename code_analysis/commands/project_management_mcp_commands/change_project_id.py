@@ -21,6 +21,7 @@ from ._shared import (
     uuid,
 )
 from ...core.exceptions import CodeAnalysisError
+from ...core.project_root_path import persist_projects_root_path_stored_value
 from .change_project_id_schema import get_metadata as _get_metadata
 from .change_project_id_schema import get_schema as _get_schema
 
@@ -258,8 +259,11 @@ class ChangeProjectIdMCPCommand(BaseMCPCommand):
                 pre_db = self._open_database_from_config(auto_analyze=False)
                 try:
                     existing_new = pre_db.get_project(new_project_id)
-                    if existing_new is not None and not _db_row_root_matches_project_root(
-                        root_path, str(existing_new.root_path)
+                    if (
+                        existing_new is not None
+                        and not _db_row_root_matches_project_root(
+                            root_path, str(existing_new.root_path)
+                        )
                     ):
                         return self._handle_error(
                             CodeAnalysisError(
@@ -428,6 +432,11 @@ class ChangeProjectIdMCPCommand(BaseMCPCommand):
                                     )
                         else:
                             # Project doesn't exist in database, create it with new ID and description
+                            root_stored = persist_projects_root_path_stored_value(
+                                project_root_absolute=root_path,
+                                watch_dir_id=None,
+                                database=database,
+                            )
                             database.execute(
                                 """
                                 INSERT INTO projects (id, root_path, name, comment, updated_at)
@@ -435,7 +444,7 @@ class ChangeProjectIdMCPCommand(BaseMCPCommand):
                                 """,
                                 (
                                     new_project_id,
-                                    str(root_path),
+                                    root_stored,
                                     root_path.name,
                                     new_description,
                                 ),

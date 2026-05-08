@@ -182,7 +182,7 @@
             "**/.mypy_cache/**",
             "**/.eggs/**",
             "**/eggs/**",
-            "**/old-code/**",
+            "**/old_code/**",
             "**/data/**",
             "**/*.egg-info/**",
             "**/*.egg",
@@ -226,6 +226,7 @@
       "ignore_patterns": [
         "**/__pycache__/**",
         "**/.git/**",
+        "**/old_code/**",
         "**/node_modules/**",
         "**/.venv/**",
         "**/venv/**",

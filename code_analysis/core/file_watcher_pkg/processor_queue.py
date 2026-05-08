@@ -43,6 +43,23 @@ logger = logging.getLogger(__name__)
 _WATCHER_PHASE_HB = 50
 
 
+def _watcher_path_input_to_absolute(file_path_str: str, project_root: Path) -> str:
+    """Resolve queue/delta path (project-relative or absolute) to a normalized absolute path."""
+    from code_analysis.core.path_normalization import normalize_path_simple
+
+    raw = (file_path_str or "").strip()
+    if not raw:
+        return ""
+    p = Path(raw.replace("\\", "/"))
+    if p.is_absolute():
+        return normalize_path_simple(p)
+    try:
+        root = project_root.resolve()
+    except OSError:
+        root = project_root
+    return normalize_path_simple(root / p)
+
+
 def _watch_dir_id_for_project(database: Any, project_id: str) -> Optional[str]:
     gp = getattr(database, "get_project", None)
     if not callable(gp):
@@ -289,8 +306,11 @@ class ProcessorQueueOps:
                 out: List[Row],
             ) -> bool:
                 try:
+                    abs_for_norm = _watcher_path_input_to_absolute(
+                        file_path_str, project_root
+                    )
                     normalized = normalize_file_path(
-                        file_path_str,
+                        abs_for_norm,
                         watch_dirs=watch_dirs,
                         project_root=project_root,
                     )
@@ -462,8 +482,12 @@ class ProcessorQueueOps:
                     raise RuntimeError("watcher phase marking_deleted not acquired")
 
             if delta.ignore_purge_paths:
+                abs_ignore_purge = [
+                    _watcher_path_input_to_absolute(p, project_root)
+                    for p in delta.ignore_purge_paths
+                ]
                 ids_purge = collect_file_ids_for_active_paths(
-                    self.database, project_id, delta.ignore_purge_paths
+                    self.database, project_id, abs_ignore_purge
                 )
                 if ids_purge:
                     lw = getattr(self.database, "execute_logical_write_operation", None)
@@ -497,8 +521,12 @@ class ProcessorQueueOps:
                             try_unlink_faiss_index_for_project(project_id, config_path)
 
             if delta.deleted_files:
+                abs_deleted = [
+                    _watcher_path_input_to_absolute(p, project_root)
+                    for p in delta.deleted_files
+                ]
                 fids = collect_file_ids_for_active_paths(
-                    self.database, project_id, delta.deleted_files
+                    self.database, project_id, abs_deleted
                 )
                 if fids:
                     ph = ",".join(["?"] * len(fids))
@@ -513,11 +541,15 @@ class ProcessorQueueOps:
                     )
                 del_sql = (
                     "UPDATE files SET deleted = TRUE, updated_at = julianday('now') "
-                    "WHERE path = ? AND project_id = ?"
+                    f"WHERE project_id = ? AND {FILE_ROW_PATH_MATCH_SQL}"
                 )
-                del_ops: List[Tuple[str, Optional[tuple]]] = [
-                    (del_sql, (path, project_id)) for path in delta.deleted_files
-                ]
+                del_ops: List[Tuple[str, Optional[tuple]]] = []
+                for path in delta.deleted_files:
+                    abs_p = _watcher_path_input_to_absolute(path, project_root)
+                    r1, r2, r3 = file_row_path_match_values(
+                        project_root=project_root, absolute_path=abs_p
+                    )
+                    del_ops.append((del_sql, (project_id, r1, r2, r3)))
                 try:
                     self._db_execute_batch(del_ops)
                     stats["deleted_files"] += len(delta.deleted_files)
@@ -573,8 +605,11 @@ class ProcessorQueueOps:
 
         try:
             watch_dirs: List[str | Path] = list(self.watch_dirs_resolved)
+            path_for_norm = file_path
+            if project_root is not None:
+                path_for_norm = _watcher_path_input_to_absolute(file_path, project_root)
             normalized = normalize_file_path(
-                file_path,
+                path_for_norm,
                 watch_dirs=watch_dirs,
                 project_root=project_root,
             )

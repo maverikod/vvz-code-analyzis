@@ -14,8 +14,12 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from ..worker_db_rpc_priority import BACKGROUND_WORKER_DB_RPC_PRIORITY
+from code_analysis.core.project_root_path import (
+    resolve_projects_root_path_row_to_absolute_str,
+)
+
 from ..path_normalization import normalize_path_simple
-from ..file_identity import absolute_path_for_indexed_file
+from ..file_identity import absolute_path_for_indexed_file, project_relative_file_posix
 
 from .scanner import find_missing_files
 
@@ -45,7 +49,11 @@ def last_modified_to_unix(value: Any) -> Optional[float]:
 
 @dataclass
 class FileDelta:
-    """File change delta computed during scan phase."""
+    """File change delta computed during scan phase.
+
+    Path strings in ``new_files``, ``changed_files``, and ``deleted_files`` are
+    **project-relative POSIX** paths (absolute scan keys are trimmed to the root suffix).
+    """
 
     new_files: List[tuple[str, float, int]]
     changed_files: List[tuple[str, float, int]]
@@ -73,11 +81,24 @@ def compute_delta(
         if not project_id:
             logger.warning(f"File {file_path_str} has no project_id, skipping")
             continue
-        files_by_project[project_id][file_path_str] = file_info
+        project_root = file_info.get("project_root")
+        if not project_root:
+            logger.warning(f"File {file_path_str} has no project_root, skipping")
+            continue
+        try:
+            rel_key = project_relative_file_posix(file_path_str, Path(project_root))
+        except ValueError:
+            logger.warning(
+                "File %s is not under declared project_root %s; skipping",
+                file_path_str,
+                project_root,
+            )
+            continue
+        if not rel_key:
+            continue
+        files_by_project[project_id][rel_key] = file_info
         if project_id not in project_roots:
-            project_root = file_info.get("project_root")
-            if project_root:
-                project_roots[project_id] = Path(project_root)
+            project_roots[project_id] = Path(project_root)
 
     deltas: Dict[str, FileDelta] = {}
 
@@ -113,29 +134,38 @@ def compute_delta(
                 abs_key = normalize_path_simple(
                     absolute_path_for_indexed_file(project_root, row_for_abs)
                 )
+                try:
+                    rel_key = project_relative_file_posix(abs_key, project_root)
+                except ValueError:
+                    logger.warning(
+                        "DB file row id=%s resolves outside project root %s; skipping delta",
+                        fid,
+                        project_root,
+                    )
+                    continue
                 db_files.append(
                     {
                         "id": fid,
-                        "path": abs_key,
+                        "path": rel_key,
                         "last_modified": last_modified_to_unix(lm),
                     }
                 )
 
             db_files_map = {f["path"]: f for f in db_files}
 
-            for file_path_str, file_info in project_files.items():
+            for rel_path_str, file_info in project_files.items():
                 try:
                     mtime = file_info["mtime"]
                     size = file_info.get("size", 0)
-                    db_file = db_files_map.get(file_path_str)
+                    db_file = db_files_map.get(rel_path_str)
                     if not db_file:
-                        new_files.append((file_path_str, mtime, size))
+                        new_files.append((rel_path_str, mtime, size))
                     else:
                         db_mtime = db_file.get("last_modified")
                         if db_mtime is None or abs(mtime - float(db_mtime)) > 0.1:
-                            changed_files.append((file_path_str, mtime, size))
+                            changed_files.append((rel_path_str, mtime, size))
                 except Exception as e:
-                    logger.error(f"Error computing delta for file {file_path_str}: {e}")
+                    logger.error(f"Error computing delta for file {rel_path_str}: {e}")
 
             deleted_files = list(
                 find_missing_files(project_files, db_files_list, project_root)
@@ -171,7 +201,7 @@ def compute_delta(
             all_projects = (
                 database.select(
                     "projects",
-                    columns=["id", "root_path"],
+                    columns=["id", "root_path", "watch_dir_id"],
                     priority=BACKGROUND_WORKER_DB_RPC_PRIORITY,
                 )
                 or []
@@ -179,7 +209,7 @@ def compute_delta(
         else:
             all_projects = (
                 database.execute(
-                    "SELECT id, root_path FROM projects",
+                    "SELECT id, root_path, watch_dir_id FROM projects",
                     None,
                     priority=BACKGROUND_WORKER_DB_RPC_PRIORITY,
                 ).get("data")
@@ -190,7 +220,17 @@ def compute_delta(
 
         for project_row in all_projects:
             db_project_id = project_row["id"]
-            db_root_path_str = project_row["root_path"]
+            db_root_path_str = resolve_projects_root_path_row_to_absolute_str(
+                root_path_stored=str(project_row.get("root_path") or ""),
+                watch_dir_id=(
+                    str(project_row["watch_dir_id"])
+                    if project_row.get("watch_dir_id") is not None
+                    else None
+                ),
+                database=database,
+            )
+            if not (db_root_path_str or "").strip():
+                continue
             if db_project_id in deltas:
                 continue
             try:

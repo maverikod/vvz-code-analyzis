@@ -47,7 +47,7 @@ def run_create_schema(db: Any) -> None:
         """
             CREATE TABLE IF NOT EXISTS projects (
                 id TEXT PRIMARY KEY,
-                root_path TEXT UNIQUE NOT NULL,
+                root_path TEXT NOT NULL,
                 name TEXT,
                 comment TEXT,
                 watch_dir_id TEXT,
@@ -59,6 +59,16 @@ def run_create_schema(db: Any) -> None:
             )
         """
     )
+    try:
+        db._execute(
+            """
+            CREATE UNIQUE INDEX IF NOT EXISTS ux_projects_watch_dir_id_root_path
+            ON projects(watch_dir_id, root_path)
+            """
+        )
+        db._commit()
+    except Exception:
+        pass
     # Create index on watch_dir_id for performance
     try:
         db._execute(

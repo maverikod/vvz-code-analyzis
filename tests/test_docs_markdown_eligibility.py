@@ -154,3 +154,33 @@ def test_broad_include_outside_roots_with_star_md() -> None:
         relative_path="src/foo.md",
     )
     assert v.eligible is True
+
+
+def test_docs_relative_path_from_row_path_joins_project_root(tmp_path):
+    """Indexer must not resolve project-relative DB paths against process cwd."""
+    from code_analysis.core.indexing_worker_pkg.processing import (
+        _docs_relative_path_from_row_path,
+    )
+
+    proj = tmp_path / "proj"
+    (proj / "docs" / "plans" / "sub").mkdir(parents=True)
+    md = proj / "docs" / "plans" / "sub" / "x.md"
+    md.write_text("# t\n", encoding="utf-8")
+    rel = _docs_relative_path_from_row_path(
+        path="docs/plans/sub/x.md",
+        project_root=proj,
+    )
+    assert rel == "docs/plans/sub/x.md"
+
+
+def test_docs_relative_path_from_row_path_absolute_under_root(tmp_path):
+    from code_analysis.core.indexing_worker_pkg.processing import (
+        _docs_relative_path_from_row_path,
+    )
+
+    proj = tmp_path / "proj"
+    (proj / "a").mkdir(parents=True)
+    f = proj / "a" / "b.md"
+    f.write_text("x", encoding="utf-8")
+    rel = _docs_relative_path_from_row_path(path=str(f), project_root=proj)
+    assert rel == "a/b.md"

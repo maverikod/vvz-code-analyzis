@@ -71,27 +71,48 @@ def _execute_with_optional_tid(
 
 
 def _project_root_path_str(database: Any, project_id: str) -> Optional[str]:
+    from code_analysis.core.project_root_path import (
+        resolve_projects_root_path_row_to_absolute_str,
+    )
+
     gp = getattr(database, "get_project", None)
     if callable(gp):
         p = gp(project_id)
         if isinstance(p, dict):
-            return str(p.get("root_path") or "") or None
+            s = str(p.get("root_path") or "").strip()
+            return s or None
         if p is not None:
             rp = getattr(p, "root_path", None)
-            return str(rp) if rp else None
+            s = str(rp).strip() if rp else ""
+            return s or None
+    row = None
     if hasattr(database, "_fetchone"):
         row = database._fetchone(
-            "SELECT root_path FROM projects WHERE id = ?", (project_id,)
+            "SELECT root_path, watch_dir_id FROM projects WHERE id = ?",
+            (project_id,),
         )
-        if isinstance(row, dict) and row.get("root_path"):
-            return str(row["root_path"])
-    ex = getattr(database, "execute", None)
-    if callable(ex):
-        r = ex("SELECT root_path FROM projects WHERE id = ?", (project_id,))
-        if isinstance(r, dict):
-            rows = r.get("data") or []
-            if rows and isinstance(rows[0], dict) and rows[0].get("root_path"):
-                return str(rows[0]["root_path"])
+    if row is None:
+        ex = getattr(database, "execute", None)
+        if callable(ex):
+            r = ex(
+                "SELECT root_path, watch_dir_id FROM projects WHERE id = ?",
+                (project_id,),
+            )
+            if isinstance(r, dict):
+                rows = r.get("data") or []
+                if rows and isinstance(rows[0], dict):
+                    row = rows[0]
+    if isinstance(row, dict) and row.get("root_path"):
+        resolved = resolve_projects_root_path_row_to_absolute_str(
+            root_path_stored=str(row.get("root_path") or ""),
+            watch_dir_id=(
+                str(row["watch_dir_id"])
+                if row.get("watch_dir_id") is not None
+                else None
+            ),
+            database=database,
+        )
+        return resolved or None
     return None
 
 

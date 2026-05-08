@@ -13,6 +13,11 @@ import logging
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from code_analysis.core.project_root_path import (
+    enrich_project_dict_resolve_root_path,
+    persist_projects_root_path_stored_value,
+)
+
 from ..sql_portable import (
     WHERE_FILES_ACTIVE,
     WHERE_FILES_ACTIVE_F,
@@ -30,6 +35,23 @@ from .objects.mappers import (
 from .objects.project import Project
 
 logger = logging.getLogger(__name__)
+
+
+def _project_row_root_path_for_write(
+    database: Any, data: Dict[str, Any]
+) -> Dict[str, Any]:
+    """Normalize ``root_path`` for DB insert/update (segment under watch when applicable)."""
+    out = dict(data)
+    rp = out.get("root_path")
+    if rp is None or str(rp).strip() == "":
+        return out
+    wd = out.get("watch_dir_id")
+    out["root_path"] = persist_projects_root_path_stored_value(
+        project_root_absolute=Path(str(rp)),
+        watch_dir_id=str(wd).strip() if wd is not None and str(wd).strip() else None,
+        database=database,
+    )
+    return out
 
 
 class _ClientAPIProjectsMixin(_DatabaseClientBase):
@@ -53,7 +75,7 @@ class _ClientAPIProjectsMixin(_DatabaseClientBase):
         if table_name is None:
             raise ValueError("Unknown table for Project object")
 
-        data = object_to_db_row(project)
+        data = _project_row_root_path_for_write(self, object_to_db_row(project))
         self.insert(table_name, data)
 
         # Fetch created project to get all fields including timestamps
@@ -61,7 +83,8 @@ class _ClientAPIProjectsMixin(_DatabaseClientBase):
         if not rows:
             raise ValueError(f"Failed to create project {project.id}")
 
-        return db_row_to_object(rows[0], Project)
+        row = enrich_project_dict_resolve_root_path(dict(rows[0]), self)
+        return db_row_to_object(row, Project)
 
     def get_project(self, project_id: str) -> Optional[Project]:
         """Get project by ID.
@@ -80,7 +103,8 @@ class _ClientAPIProjectsMixin(_DatabaseClientBase):
         if not rows:
             return None
 
-        return db_row_to_object(rows[0], Project)
+        row = enrich_project_dict_resolve_root_path(dict(rows[0]), self)
+        return db_row_to_object(row, Project)
 
     def update_project(self, project: Project) -> Project:
         """Update existing project in database.
@@ -102,7 +126,7 @@ class _ClientAPIProjectsMixin(_DatabaseClientBase):
             raise ValueError(f"Project {project.id} not found")
 
         # Update project
-        data = object_to_db_row(project)
+        data = _project_row_root_path_for_write(self, object_to_db_row(project))
         # Remove id from update data (it's in where clause)
         update_data = {k: v for k, v in data.items() if k != "id"}
         self.update("projects", where={"id": project.id}, data=update_data)
@@ -243,15 +267,37 @@ class _ClientAPIProjectsMixin(_DatabaseClientBase):
                 )
             return True
 
-        other = _fetchone(
-            "SELECT id FROM projects WHERE root_path = ? AND id != ? LIMIT 1",
-            (str(new_r), project_id),
+        cur = _fetchone("SELECT watch_dir_id FROM projects WHERE id = ?", (project_id,))
+        effective_wd = (
+            str(new_watch_dir_id)
+            if new_watch_dir_id is not None
+            else (
+                str(cur.get("watch_dir_id"))
+                if isinstance(cur, dict) and cur.get("watch_dir_id")
+                else ""
+            )
         )
+        new_stored = persist_projects_root_path_stored_value(
+            project_root_absolute=new_r,
+            watch_dir_id=effective_wd or None,
+            database=self,
+        )
+        if effective_wd:
+            other = _fetchone(
+                "SELECT id FROM projects WHERE watch_dir_id IS NOT NULL AND watch_dir_id = ? "
+                "AND root_path = ? AND id != ? LIMIT 1",
+                (effective_wd, new_stored, project_id),
+            )
+        else:
+            other = _fetchone(
+                "SELECT id FROM projects WHERE root_path = ? AND id != ? LIMIT 1",
+                (new_stored, project_id),
+            )
         if other:
             logger.error(
                 "relocate_project_root_after_disk_move: root_path %s already used by "
                 "project %s; refusing to move project %s from %s",
-                new_r,
+                new_stored,
                 other.get("id"),
                 project_id,
                 old_r,
@@ -270,13 +316,13 @@ class _ClientAPIProjectsMixin(_DatabaseClientBase):
             self.execute(
                 f"UPDATE projects SET root_path = ?, name = ?, watch_dir_id = ?, "
                 f"updated_at = {now_sql} WHERE id = ?",
-                (str(new_r), new_name, new_watch_dir_id, project_id),
+                (new_stored, new_name, new_watch_dir_id, project_id),
             )
         else:
             self.execute(
                 f"UPDATE projects SET root_path = ?, name = ?, updated_at = {now_sql} "
                 "WHERE id = ?",
-                (str(new_r), new_name, project_id),
+                (new_stored, new_name, project_id),
             )
 
         logger.info(

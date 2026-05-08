@@ -24,6 +24,7 @@ dependencies = [
     "mcp-proxy-adapter>=8.10.10",
     "queuemgr>=1.0.19",
     "psycopg[binary]>=3.1",
+    "pgvector>=0.2.5",
 ]
 # PostgreSQL logical backup (backup_database / restore_database) also needs OS binaries
 # pg_dump and pg_restore (e.g. Debian/Ubuntu: apt install postgresql-client). Pip cannot

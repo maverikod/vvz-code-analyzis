@@ -1,0 +1,6 @@
+import zipfile
+zip_path = '/home/vasilyvz/projects/tools/code_analysis/rules_template_agents_protocols_updated.zip'
+with zipfile.ZipFile(zip_path) as z:
+    for name in z.namelist():
+        info = z.getinfo(name)
+        print(f'SIZE={info.file_size} {name}')

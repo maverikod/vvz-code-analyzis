@@ -173,3 +173,6 @@ test_*.py
 .code-analysis-server.pid
 test_reports/
 backups/
+
+
+.cst/

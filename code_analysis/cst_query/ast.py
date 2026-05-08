@@ -16,7 +16,6 @@ from dataclasses import dataclass
 from enum import Enum
 
 from typing import Optional
-# @node-id: 47455b38-606b-430d-be2e-ee8a46b0fca3
 
 
 
@@ -25,7 +24,6 @@ class Combinator(str, Enum):
 
     DESCENDANT = " "
     CHILD = ">"
-# @node-id: 714f8fe0-0c3b-4801-a7d6-d30019878881
 
 class PredicateOp(str, Enum):
     """Predicate operator for attribute tests."""
@@ -39,7 +37,6 @@ class PredicateOp(str, Enum):
     LT = "<"
     GTE = ">="
     LTE = "<="
-# @node-id: a0f17710-64b1-4ce2-ad13-ba0389d92033
 
 
 
@@ -50,7 +47,6 @@ class Predicate:
     attr: str
     op: PredicateOp
     value: str
-# @node-id: 6a98f09d-b290-48dd-a741-fa574a4d4f69
 
 class PseudoKind(str, Enum):
     """Pseudo-class / functional pseudo."""
@@ -59,7 +55,6 @@ class PseudoKind(str, Enum):
     LAST = "last"
     NTH = "nth"
     NOT = "not"
-# @node-id: abd96f2e-d87a-4e8f-8827-b2d15037b84f
 
 
 
@@ -69,7 +64,6 @@ class Pseudo:
 
     kind: PseudoKind
     index: Optional[int] = None
-# @node-id: 29e87898-658e-4d5d-bd95-03801193f2f0
 
 @dataclass(frozen=True)
 class SelectorStep:
@@ -87,7 +81,6 @@ class SelectorStep:
     predicates: tuple[Predicate, ...] = ()
     pseudos: tuple[Pseudo, ...] = ()
     not_selector: Optional["Query"] = None
-# @node-id: 501068c2-1c7f-494c-b50b-a006b8f6af67
 
 
 

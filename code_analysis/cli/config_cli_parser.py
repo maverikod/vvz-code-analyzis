@@ -281,6 +281,41 @@ def build_parser(
         type=str,
         help="File watcher version directory (default: data/versions)",
     )
+    gen_parser.add_argument(
+        "--code-analysis-docs-indexing-enabled",
+        action="store_true",
+        help="Set code_analysis.docs_indexing.enabled true (docs: .md/.json/.yaml/.yml; default off)",
+    )
+    gen_parser.add_argument(
+        "--code-analysis-docs-indexing-disabled",
+        action="store_true",
+        help="Set code_analysis.docs_indexing.enabled false (default)",
+    )
+    gen_parser.add_argument(
+        "--code-analysis-docs-indexing-vectorize",
+        action="store_true",
+        help="Set code_analysis.docs_indexing.vectorize true (default off; eligibility ignores)",
+    )
+    gen_parser.add_argument(
+        "--code-analysis-docs-indexing-no-vectorize",
+        action="store_true",
+        help="Set code_analysis.docs_indexing.vectorize false (default)",
+    )
+    gen_parser.add_argument(
+        "--code-analysis-docs-indexing-roots",
+        type=str,
+        help="Comma-separated docs_indexing.roots (default: docs)",
+    )
+    gen_parser.add_argument(
+        "--code-analysis-docs-indexing-include",
+        type=str,
+        help="Comma-separated docs_indexing.include globs (each must reference .md/.json/.yaml/.yml)",
+    )
+    gen_parser.add_argument(
+        "--code-analysis-docs-indexing-exclude",
+        type=str,
+        help="Comma-separated docs_indexing.exclude globs",
+    )
     gen_parser.set_defaults(func=cmd_generate)
 
     val_parser = subparsers.add_parser(

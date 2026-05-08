@@ -13,7 +13,12 @@ from typing import Any
 from ..core.config_generator import CodeAnalysisConfigGenerator
 from ..core.config_validator import CodeAnalysisConfigValidator
 
-from .config_cli_helpers import _file_watcher_enabled, _indexing_worker_enabled
+from .config_cli_helpers import (
+    _docs_indexing_enabled,
+    _docs_indexing_vectorize,
+    _file_watcher_enabled,
+    _indexing_worker_enabled,
+)
 
 
 def cmd_generate(args: argparse.Namespace) -> int:
@@ -173,6 +178,23 @@ def cmd_generate(args: argparse.Namespace) -> int:
             allow_line_commands_on_healthy_files=(
                 True
                 if getattr(args, "allow_line_commands_on_healthy_files", False)
+                else None
+            ),
+            code_analysis_docs_indexing_enabled=_docs_indexing_enabled(args),
+            code_analysis_docs_indexing_vectorize=_docs_indexing_vectorize(args),
+            code_analysis_docs_indexing_roots=(
+                args.code_analysis_docs_indexing_roots
+                if hasattr(args, "code_analysis_docs_indexing_roots")
+                else None
+            ),
+            code_analysis_docs_indexing_include=(
+                args.code_analysis_docs_indexing_include
+                if hasattr(args, "code_analysis_docs_indexing_include")
+                else None
+            ),
+            code_analysis_docs_indexing_exclude=(
+                args.code_analysis_docs_indexing_exclude
+                if hasattr(args, "code_analysis_docs_indexing_exclude")
                 else None
             ),
         )

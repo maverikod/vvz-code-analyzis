@@ -29,29 +29,26 @@ Search Types:
    - Multiple filters can be combined (AND logic)
 2. XPath-like search (search_type='xpath'):
    - Uses CSTQuery selector syntax
-   - Supports all CSTQuery features (combinators, predicates, pseudos)
-   - Examples: class[name="MyClass"], function[name="f"] smallstmt[type="Return"]:first
-   - See query_cst command metadata for full CSTQuery syntax
+   - Supported combinators:
+     - `A B` — descendant (B anywhere inside A)
+     - `A > B` — direct child
+     - `//B` — B anywhere in the tree (shorthand for recursive descendant from root)
+   - Supported predicates: `[attr OP value]` or `[@attr OP value]` (`@` is optional)
+     - String operators: `=`, `!=`, `~=` (contains), `^=` (starts-with), `$=` (ends-with)
+     - Numeric operators: `>`, `<`, `>=`, `<=` — compare integer attribute values
+     - Numeric attributes: `start_line`, `end_line`, `children_count`
+     - String attributes: `name`, `qualname`, `type`, `kind`, `module`
+   - Supported pseudos:
+     - `:first`, `:last`, `:nth(N)` — positional filters among siblings
+     - `:not(selector)` — exclude nodes matching inner selector
+   - Type wildcard: `Def:*` matches any type ending with `Def` (e.g. FunctionDef, ClassDef)
+   - Examples:
+     - `function[name='foo']` — function named foo
+     - `//FunctionDef[@name='foo']` — same, XPath-style
+     - `function[start_line>=100]` — functions at line 100+
+     - `function[@name^='_']:not([name^='__'])` — private but not dunder
+     - `class > method:first` — first method of each class
 
-Advantages:
-- Search is performed on server (no need to transfer tree)
-- Fast search on full tree structure
-- Supports complex queries with CSTQuery
-- Returns only matching nodes (efficient)
-
-Use cases:
-- Find specific nodes for modification
-- Analyze code patterns
-- Locate nodes by type or name
-- Complex queries with CSTQuery selectors
-
-Important notes:
-- Tree must be loaded first with cst_load_file
-- XPath search requires query parameter
-- Simple search can use any combination of filters (node_type, name, qualname, line range)
-- For finding by name/type via a selector string (e.g. `function[name='main']`), use **xpath**; **simple** is for explicit parameters. If `query` is provided with `search_type=simple`, it is evaluated as xpath for consistency.
-- Returns node metadata (not full nodes)
-- Use node_id from results with cst_modify_tree
 
 ---
 

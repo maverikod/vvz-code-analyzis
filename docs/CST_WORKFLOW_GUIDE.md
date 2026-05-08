@@ -26,7 +26,7 @@ Quick decision guide: which CST command to use for a given task, and what to try
 
 **Notes:**
 
-- **`cst_apply_buffer`** / **`universal_file_replace`** (Python): selector `kind: "range"` (only `start_line` / `end_line`) replaces the matching top-level statement and **keeps blank lines above** it (spacing before an import or `class` after `def`). Selector shapes match `cst_modify_tree`-style CST ops; use server `help` for `cst_apply_buffer` or see `cst_modify_tree.md`.
+- **`cst_apply_buffer`** / **`universal_file_replace`** (Python): selector `kind: "range"` (only `start_line` / `end_line`) finds the **narrowest `BaseStatement` whose line span contains `[start_line, end_line]`** and replaces it. This means: for a single-line call `start_line=end_line=N`, it finds the statement whose span includes line N (even if that statement spans multiple lines). If no statement contains the range, the op goes to `unmatched` — no silent `replaced=1` with empty diff. **Keeps blank lines above** the replaced statement (important for spacing before `class`/`def`). Optional `start_col`/`end_col` for exact character span.
 - Use **`project_id`** (from `list_projects` or `projectid` file) for project-scoped commands; see [COMMANDS_GUIDE.md](COMMANDS_GUIDE.md) for schema.
 - Prefer **`code_lines`** (array of strings) for multi-line code in `cst_modify_tree` and `query_cst` to avoid JSON escaping.
 - For **insert** in `cst_modify_tree`: `parent_node_id` must be a container (Module, FunctionDef, ClassDef); use `__root__` for module level; use the function’s node_id for function body, not its IndentedBlock child.

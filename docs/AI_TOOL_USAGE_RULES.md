@@ -1217,7 +1217,7 @@ mcp_MCP-Proxy-2_call_server(
 - `{"kind": "method", "name": "ClassName.method"}` - Find by qualified method name
 - `{"kind": "node_id", "node_id": "..."}` - Use node ID from `query_cst`
 - `{"kind": "cst_query", "query": "..."}` - Use CSTQuery selector string
-- `{"kind": "range", "start_line": 10, "end_line": 20}` - Replace the **statement** whose LibCST line span equals that inclusive 1-based range; **blank lines above** that statement are preserved (important for import-line edits and spacing before classes). Optional `start_col` / `end_col` for an exact character span (e.g. after resolving `node_id`).
+- `{"kind": "range", "start_line": 10, "end_line": 20}` - Finds the **narrowest `BaseStatement` whose line span contains `[start_line, end_line]`** and replaces it. For a single line `start_line=end_line=N`, this is the statement that spans line N (even if it spans multiple lines in source). If no statement contains the range → goes to `unmatched`, no false `replaced=1`. **Blank lines above** that statement are preserved. Optional `start_col` / `end_col` for an exact character span (e.g. after resolving `node_id`).
 
 ### 9.3 Refactoring Large File
 
@@ -1433,4 +1433,3 @@ mcp_MCP-Proxy-2_call_server(
 ---
 
 **Remember**: This project is a tool for AI. The goal is not just writing code, but creating a tool that works primarily through MCP. CLI is just a fallback option.
-

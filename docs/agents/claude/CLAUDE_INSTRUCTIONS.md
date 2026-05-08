@@ -81,4 +81,24 @@ The following files in the repo define the canonical standards. Claude reads the
 ## Language
 
 - Chat: **Russian (ru)**
-- All artifacts, code, comments, docstrings, docs: **English (en)**
+
+## Session log
+
+### 2026-05-06 (UUID 8772a086)
+
+**Done:**
+
+- **Баг #2 XPath в `cst_find_node` [ЗАКРЫТ]** — `//`, `@attr`, `>=/<=/>/< `, `:not()`. 43/43 тестов ✅
+- **XPath metadata [ЗАВЕРШЕНО]** — обновлены `descr`, `get_schema().query.description`, `metadata()` в `cst_find_node_command.py` с полным описанием всех 4 XPath-фич и примерами.
+- **Баг #3 `kind: range` silent no-op [ЗАКРЫТ]** — fix в `patcher.py`:
+  - Причина: ключ `(start_line, end_line)` пользователя не совпадал с `(pos.start.line, pos.end.line)` узла при многострочных операторах (напр. вызов с переносами строк).
+  - Fix: `_narrowest_stmt_line_span_containing_range` — находит узкий оператор, чей диапазон строк **содержит** `[us, ue]`; в словарь кладётся разрешённый span узла; нет матча → `unmatched`, без ложного `replaced`.
+  - `position_map` резолвится один раз до цикла по ops.
+  - 5 регрессионных тестов в `tests/test_cst_module_patcher_range_trivia.py`, 22 в `test_compose_cst_module_ops.py`.
+
+**Open:**
+
+| # | Task | Status |
+|---|------|--------|
+| #4 | Delete debug files (`debug_classdef_replace.py` etc.) | Pending |
+| #5 | Remove legacy tails in `cst_mcp_sandbox_*` | Pending |

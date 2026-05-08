@@ -7,12 +7,10 @@ email: vasilyvz@gmail.com
 
 import argparse
 import json
-import os
 import sys
 from pathlib import Path
 
 from ..core.config_validator import CodeAnalysisConfigValidator
-from ..core.database import CodeDatabase
 from ..core.env_loader import load_dotenv_near_config
 
 from .config_cli_helpers import (
@@ -51,17 +49,22 @@ def cmd_schema(args: argparse.Namespace) -> int:
                 file=sys.stderr,
             )
 
-    os.environ["CODE_ANALYSIS_DB_DRIVER"] = "1"
-    driver_config = {
-        "type": "sqlite",
-        "config": {"path": str(db_path)},
-    }
+    from code_analysis.core.database_driver_pkg.drivers.sqlite import SQLiteDriver
+    from code_analysis.core.database.schema_definition import get_schema_definition
+
     try:
         print("Connecting...", flush=True)
-        db = CodeDatabase(driver_config)
+        driver = SQLiteDriver()
+        driver.connect({"path": str(db_path)})
         print("Applying schema (compare, backup if needed, migrate)...", flush=True)
-        result = db.sync_schema()
-        db.close()
+        schema_definition = get_schema_definition()
+        db_path_obj = Path(str(db_path))
+        if db_path_obj.parent.name == "data":
+            backup_dir = str(db_path_obj.parent.parent / "backups")
+        else:
+            backup_dir = str(db_path_obj.parent / "backups")
+        result = driver.sync_schema(schema_definition, backup_dir)
+        driver.disconnect()
         n = len(result.get("changes_applied") or [])
         if result.get("backup_uuid"):
             print(f"Backup: {result['backup_uuid']}", flush=True)

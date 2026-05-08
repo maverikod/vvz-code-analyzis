@@ -30,6 +30,24 @@ def _file_watcher_enabled(args: argparse.Namespace) -> Optional[bool]:
     return None
 
 
+def _docs_indexing_enabled(args: argparse.Namespace) -> Optional[bool]:
+    """Resolve docs_indexing.enabled from CLI (None = use generator default False)."""
+    if getattr(args, "code_analysis_docs_indexing_disabled", False):
+        return False
+    if getattr(args, "code_analysis_docs_indexing_enabled", False):
+        return True
+    return None
+
+
+def _docs_indexing_vectorize(args: argparse.Namespace) -> Optional[bool]:
+    """Resolve docs_indexing.vectorize from CLI (None = default False in generated block)."""
+    if getattr(args, "code_analysis_docs_indexing_no_vectorize", False):
+        return False
+    if getattr(args, "code_analysis_docs_indexing_vectorize", False):
+        return True
+    return None
+
+
 def _get_db_path_from_config(config: Dict[str, Any]) -> Path:
     """Get database path from code_analysis config."""
     ca = config.get("code_analysis", {})

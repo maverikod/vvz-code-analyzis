@@ -100,14 +100,12 @@ INT: /[0-9]+/
 
 
 _parser = Lark(_GRAMMAR, parser="lalr", start="start")
-# @node-id: 3a4e8c0c-1240-475f-b1c9-30d6580d6630
 
 @dataclass(frozen=True)
 class _ParsedPseudo:
     name: str
     index: Optional[int]
     not_query: Optional["Query"] = None
-# @node-id: c79e0a29-3f68-41e9-a396-a556b6ea0c96
 
 class _ToAst(Transformer):
     """Lark transformer: converts parse tree into CSTQuery AST nodes."""
@@ -249,7 +247,6 @@ class _ToAst(Transformer):
                 continue
             raise QueryParseError("Invalid selector sequence")
         return Query(first=first, rest=tuple(rest))
-# @node-id: e1695844-4214-4bb1-9465-a4aec2162403
 def _pseudo_from_parsed(p: _ParsedPseudo) -> Pseudo:
     name = p.name.lower()
     if name == PseudoKind.FIRST.value:
@@ -267,7 +264,6 @@ def _pseudo_from_parsed(p: _ParsedPseudo) -> Pseudo:
     if name == PseudoKind.NOT.value:
         return Pseudo(kind=PseudoKind.NOT)
     raise QueryParseError(f"Unsupported pseudo: {p.name}")
-# @node-id: 837efd5d-d9d6-447c-85de-76e9cb0d04f4
 
 
 

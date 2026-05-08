@@ -1,0 +1,16 @@
+{
+  "code_analysis": {
+    "database": {
+      "driver": {
+        "type": "postgres",
+        "config": {
+          "host": "1csrv-postgres-app-1",
+          "port": 5432,
+          "dbname": "code_analysis",
+          "user": "code_analysis",
+          "password_env": "MIGRATE_SOURCE_POSTGRES_PASSWORD"
+        }
+      }
+    }
+  }
+}

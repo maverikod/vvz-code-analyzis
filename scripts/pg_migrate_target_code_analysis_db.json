@@ -1,0 +1,16 @@
+{
+  "code_analysis": {
+    "database": {
+      "driver": {
+        "type": "postgres",
+        "config": {
+          "host": "code-analysis-db",
+          "port": 5432,
+          "dbname": "code_analysis",
+          "user": "code_analysis",
+          "password_env": "CODE_ANALYSIS_POSTGRES_PASSWORD"
+        }
+      }
+    }
+  }
+}
